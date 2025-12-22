@@ -1,10 +1,10 @@
-#include <assisi/core/core.hpp>
+#include <Assisi/Core/Core.hpp>
 #include <iostream>
 
-namespace assisi::core
+namespace Assisi::Core
 {
 void Hello()
 {
-    std::cout << "Hello from assisi::core\n";
+    std::cout << "Hello from Assisi::Core\n";
 }
-} // namespace assisi::core
+} // namespace Assisi::Core

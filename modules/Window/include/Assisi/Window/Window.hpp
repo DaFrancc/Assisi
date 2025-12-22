@@ -1,6 +1,6 @@
 #pragma once
 
-namespace Assisi::Core
+namespace Assisi::Window
 {
 void Hello();
 }

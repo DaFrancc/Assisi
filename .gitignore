@@ -363,3 +363,4 @@ MigrationBackup/
 FodyWeavers.xsd
 /external/glm
 /external/stb
+/external/glfw

@@ -1,11 +1,18 @@
-add_executable(assisi-sandbox)
+add_executable(Assisi-Sandbox src/main.cpp)
 
-target_sources(assisi-sandbox
+target_sources(Assisi-Sandbox
   PRIVATE
     src/main.cpp
 )
 
-target_link_libraries(assisi-sandbox
+find_package(OpenGL REQUIRED)
+
+target_link_libraries(Assisi-Sandbox
   PRIVATE
-    assisi::core
+    Assisi::Render
+    Assisi::Scene
+    Assisi::Window
+    Assisi::Deps
+    Assisi::glad
+    OpenGL::GL
 )

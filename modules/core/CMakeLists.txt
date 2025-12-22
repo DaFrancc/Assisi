@@ -1,12 +1,12 @@
-assisi_add_module(assisi-core)
+Assisi_add_module(Assisi-Core)
 
-target_sources(assisi-core
+target_sources(Assisi-Core
   PRIVATE
-    src/core.cpp
+    "src/Core.cpp"
   PUBLIC
-    include/assisi/core/core.hpp
+    include/Assisi/Core/Core.hpp
 )
 
-assisi_module_include(assisi-core)
+Assisi_module_include(Assisi-Core)
 
-add_library(assisi::core ALIAS assisi-core)
+add_library(Assisi::Core ALIAS Assisi-Core)
