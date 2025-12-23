@@ -21,6 +21,8 @@ bool RenderSystem::InitializeOpenGL(const Assisi::Window::WindowContext &window)
         return false;
     }
 
+    glEnable(GL_DEPTH_TEST);
+
     return true;
 }
 } /* namespace Assisi::Render */
