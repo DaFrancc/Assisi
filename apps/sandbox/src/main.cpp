@@ -160,13 +160,11 @@ int main()
         return -1;
     }
 
-    glEnable(GL_DEPTH_TEST);
-
     InputState input;
 
     // build and compile our shader zprogram
     // ------------------------------------
-    Assisi::Render::Shader ourShader("glsl/Tricolor/tricolor.vs", "glsl/Tricolor/tricolor.fs");
+    Assisi::Render::Shader ourShader("shaders/basic/basic.vs", "shaders/basic/basic.fs");
 
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
