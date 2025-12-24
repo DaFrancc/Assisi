@@ -1,3 +1,4 @@
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Render/Backend/GraphicsBackend.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Shader.hpp>

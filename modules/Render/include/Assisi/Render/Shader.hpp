@@ -1,16 +1,18 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
-#ifndef SHADER_HPP
-#define SHADER_HPP
+#ifndef ASSISI_RENDER_SHADER_HPP
+#define ASSISI_RENDER_SHADER_HPP
 
 #include <glad/glad.h>
 
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
 
-#include <fstream>
+#include <expected>
 #include <iostream>
-#include <sstream>
 #include <string>
+#include <string_view>
 
 namespace Assisi::Render
 {
@@ -19,65 +21,80 @@ class Shader
   public:
     Shader() = default;
 
-    explicit Shader(const char *vertexShaderFilePath, const char *fragmentShaderFilePath)
+    /**
+     * @brief Builds a shader program from virtual asset paths.
+     *
+     * @param vertexVPath Virtual path under the asset root (e.g., "shaders/basic.vert").
+     * @param fragmentVPath Virtual path under the asset root (e.g., "shaders/basic.frag").
+     *
+     * @warning Preconditions:
+     *  - Assisi::Core::AssetSystem is initialized.
+     *  - Files exist and contain valid GLSL for the active context/profile.
+     */
+    explicit Shader(std::string_view vertexVPath, std::string_view fragmentVPath)
     {
-        /* Read shader source code from files. */
-        std::string vertexShaderSourceCode;
-        std::string fragmentShaderSourceCode;
+        (void)LoadFromAssets(vertexVPath, fragmentVPath);
+    }
 
-        std::ifstream vertexShaderFileStream;
-        std::ifstream fragmentShaderFileStream;
+    /**
+     * @brief Loads/compiles/links from virtual asset paths.
+     *
+     * @return std::expected<void, Assisi::Core::AssetError>
+     *   - Success: the program is ready.
+     *   - Failure: an AssetError if reading/resolving fails. GLSL failures are logged.
+     */
+    std::expected<void, Assisi::Core::AssetError> LoadFromAssets(std::string_view vertexVPath,
+                                                                 std::string_view fragmentVPath) noexcept
+    {
+        /* Reset any existing program. */
+        Destroy();
 
-        vertexShaderFileStream.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-        fragmentShaderFileStream.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-
-        try
+        /* Read shader sources via the asset system. */
+        auto vert = Assisi::Core::AssetSystem::ReadText(vertexVPath);
+        if (!vert)
         {
-            vertexShaderFileStream.open(vertexShaderFilePath);
-            fragmentShaderFileStream.open(fragmentShaderFilePath);
-
-            std::stringstream vertexShaderStringStream;
-            std::stringstream fragmentShaderStringStream;
-
-            vertexShaderStringStream << vertexShaderFileStream.rdbuf();
-            fragmentShaderStringStream << fragmentShaderFileStream.rdbuf();
-
-            vertexShaderFileStream.close();
-            fragmentShaderFileStream.close();
-
-            vertexShaderSourceCode = vertexShaderStringStream.str();
-            fragmentShaderSourceCode = fragmentShaderStringStream.str();
-        }
-        catch (const std::exception &)
-        {
-            std::cout << "Shader: Failed to read shader files." << std::endl;
+            return std::unexpected(vert.error());
         }
 
-        const char *vertexShaderSourceCodeCString = vertexShaderSourceCode.c_str();
-        const char *fragmentShaderSourceCodeCString = fragmentShaderSourceCode.c_str();
+        auto frag = Assisi::Core::AssetSystem::ReadText(fragmentVPath);
+        if (!frag)
+        {
+            return std::unexpected(frag.error());
+        }
 
-        /* Compile the vertex shader. */
-        unsigned int vertexShaderIdentifier = glCreateShader(GL_VERTEX_SHADER);
-        glShaderSource(vertexShaderIdentifier, 1, &vertexShaderSourceCodeCString, nullptr);
-        glCompileShader(vertexShaderIdentifier);
-        PrintShaderCompileErrors(vertexShaderIdentifier, "VERTEX");
+        const char *vsrc = vert->c_str();
+        const char *fsrc = frag->c_str();
 
-        /* Compile the fragment shader. */
-        unsigned int fragmentShaderIdentifier = glCreateShader(GL_FRAGMENT_SHADER);
-        glShaderSource(fragmentShaderIdentifier, 1, &fragmentShaderSourceCodeCString, nullptr);
-        glCompileShader(fragmentShaderIdentifier);
-        PrintShaderCompileErrors(fragmentShaderIdentifier, "FRAGMENT");
+        /* Compile stages. */
+        const unsigned int vs = CompileStage(GL_VERTEX_SHADER, vsrc, "VERTEX");
+        if (vs == 0u)
+        {
+            return {};
+        }
 
-        /* Link the program. */
+        const unsigned int fs = CompileStage(GL_FRAGMENT_SHADER, fsrc, "FRAGMENT");
+        if (fs == 0u)
+        {
+            glDeleteShader(vs);
+            return {};
+        }
+
+        /* Link program. */
         _programIdentifier = glCreateProgram();
-        glAttachShader(_programIdentifier, vertexShaderIdentifier);
-        glAttachShader(_programIdentifier, fragmentShaderIdentifier);
+        glAttachShader(_programIdentifier, vs);
+        glAttachShader(_programIdentifier, fs);
         glLinkProgram(_programIdentifier);
-        PrintProgramLinkErrors(_programIdentifier);
 
-        /* The individual shaders are no longer needed after linking. */
-        glDeleteShader(vertexShaderIdentifier);
-        glDeleteShader(fragmentShaderIdentifier);
+        /* Stages are no longer needed after linking. */
+        glDeleteShader(vs);
+        glDeleteShader(fs);
+
+        if (!PrintProgramLinkErrors(_programIdentifier))
+        {
+            Destroy();
+        }
+
+        return {};
     }
 
     void Use() const { glUseProgram(_programIdentifier); }
@@ -144,40 +161,90 @@ class Shader
         glUniformMatrix4fv(glGetUniformLocation(_programIdentifier, uniformName.c_str()), 1, GL_FALSE, &value[0][0]);
     }
 
-  private:
-    static void PrintShaderCompileErrors(unsigned int shaderIdentifier, const std::string &shaderStageName)
+    ~Shader() { Destroy(); }
+
+    Shader(const Shader &) = delete;
+    Shader &operator=(const Shader &) = delete;
+
+    Shader(Shader &&other) noexcept { *this = std::move(other); }
+
+    Shader &operator=(Shader &&other) noexcept
     {
-        int compilationSucceeded = 0;
-        glGetShaderiv(shaderIdentifier, GL_COMPILE_STATUS, &compilationSucceeded);
-
-        if (compilationSucceeded != 1)
+        if (this != &other)
         {
-            char errorMessageBuffer[1024];
-            glGetShaderInfoLog(shaderIdentifier, 1024, nullptr, errorMessageBuffer);
-
-            std::cout << "Shader: Compilation failed for stage: " << shaderStageName << std::endl;
-            std::cout << errorMessageBuffer << std::endl;
+            Destroy();
+            _programIdentifier = other._programIdentifier;
+            other._programIdentifier = 0u;
         }
-    }
-
-    static void PrintProgramLinkErrors(unsigned int programIdentifier)
-    {
-        int linkingSucceeded = 0;
-        glGetProgramiv(programIdentifier, GL_LINK_STATUS, &linkingSucceeded);
-
-        if (linkingSucceeded != 1)
-        {
-            char errorMessageBuffer[1024];
-            glGetProgramInfoLog(programIdentifier, 1024, nullptr, errorMessageBuffer);
-
-            std::cout << "Shader: Program linking failed." << std::endl;
-            std::cout << errorMessageBuffer << std::endl;
-        }
+        return *this;
     }
 
   private:
-    unsigned int _programIdentifier = 0;
+    static unsigned int CompileStage(unsigned int stage, const char *source, const std::string &stageName)
+    {
+        const unsigned int shader = glCreateShader(stage);
+        glShaderSource(shader, 1, &source, nullptr);
+        glCompileShader(shader);
+
+        if (!PrintShaderCompileErrors(shader, stageName))
+        {
+            glDeleteShader(shader);
+            return 0u;
+        }
+
+        return shader;
+    }
+
+    static bool PrintShaderCompileErrors(unsigned int shaderIdentifier, const std::string &shaderStageName)
+    {
+        int ok = 0;
+        glGetShaderiv(shaderIdentifier, GL_COMPILE_STATUS, &ok);
+
+        if (ok == 1)
+        {
+            return true;
+        }
+
+        char buffer[1024];
+        glGetShaderInfoLog(shaderIdentifier, 1024, nullptr, buffer);
+
+        std::cout << "Shader: Compilation failed for stage: " << shaderStageName << std::endl;
+        std::cout << buffer << std::endl;
+
+        return false;
+    }
+
+    static bool PrintProgramLinkErrors(unsigned int programIdentifier)
+    {
+        int ok = 0;
+        glGetProgramiv(programIdentifier, GL_LINK_STATUS, &ok);
+
+        if (ok == 1)
+        {
+            return true;
+        }
+
+        char buffer[1024];
+        glGetProgramInfoLog(programIdentifier, 1024, nullptr, buffer);
+
+        std::cout << "Shader: Program linking failed." << std::endl;
+        std::cout << buffer << std::endl;
+
+        return false;
+    }
+
+    void Destroy() noexcept
+    {
+        if (_programIdentifier != 0u)
+        {
+            glDeleteProgram(_programIdentifier);
+            _programIdentifier = 0u;
+        }
+    }
+
+  private:
+    unsigned int _programIdentifier = 0u;
 };
-} /* namespace Assisi::Render */
+} // namespace Assisi::Render
 
-#endif /* SHADER_HPP */
+#endif /* ASSISI_RENDER_SHADER_HPP */

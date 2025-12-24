@@ -3,7 +3,7 @@ add_library(Assisi-Scene)
 target_sources(Assisi-Scene
   PRIVATE
     src/Camera.cpp
-)
+ "src/SpawnSystem.cpp")
 
 target_include_directories(Assisi-Scene
   PUBLIC
