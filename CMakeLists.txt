@@ -75,7 +75,8 @@ add_library(Assisi::Deps ALIAS Assisi-Deps)
 
 add_subdirectory(modules/Core)
 add_subdirectory(modules/Render)
-add_subdirectory(modules/Scene)
+add_subdirectory(modules/ECS)
+add_subdirectory(modules/Game)
 add_subdirectory(modules/Window)
 add_subdirectory(modules/Math)
 

@@ -1,10 +1,10 @@
 #pragma once
 
+#include <Assisi/Game/WorldObject.hpp>
 #include <Assisi/Render/DefaultMeshes.hpp>
 #include <Assisi/Render/OpenGL/MeshBuffer.hpp>
-#include <Assisi/Scene/WorldObject.hpp>
 
-namespace Assisi::Scene
+namespace Assisi::Game
 {
 inline WorldObject CreateDefaultCube()
 {

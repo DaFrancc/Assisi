@@ -7,6 +7,7 @@ target_sources(Assisi-Core
   PUBLIC
     "include/Assisi/Core/Core.hpp"
     "include/Assisi/Core/AssetSystem.hpp"
+    "include/Assisi/Prelude.hpp"
 )
 
 Assisi_module_include(Assisi-Core)

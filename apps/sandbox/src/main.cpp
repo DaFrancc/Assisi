@@ -1,10 +1,11 @@
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Game/Camera.hpp>
+#include <Assisi/Game/DefaultWorldObjects.hpp>
+#include <Assisi/Game/WorldObject.hpp>
+#include <Assisi/Prelude.hpp>
 #include <Assisi/Render/Backend/GraphicsBackend.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Shader.hpp>
-#include <Assisi/Scene/Camera.hpp>
-#include <Assisi/Scene/DefaultWorldObjects.hpp>
-#include <Assisi/Scene/WorldObject.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -145,12 +146,12 @@ static void InstallInputCallbacks(GLFWwindow *window, InputState *state)
 
 int main()
 {
-    using Assisi::Render::Backend::GraphicsBackend;
-    using Assisi::Render::RenderSystem;
+    using Render::Backend::GraphicsBackend;
+    using Render::RenderSystem;
 
-    Assisi::Window::WindowConfiguration configuration{
+    Window::WindowConfiguration configuration{
         .Width = WINDOW_WIDTH, .Height = WINDOW_HEIGHT, .Title = "Assisi", .EnableVSync = true};
-    Assisi::Window::WindowContext window(configuration, framebuffer_size_callback);
+    Window::WindowContext window(configuration, framebuffer_size_callback);
     if (!window.IsValid())
     {
         return -1;
@@ -165,12 +166,12 @@ int main()
 
     // build and compile our shader zprogram
     // ------------------------------------
-    Assisi::Render::Shader ourShader("shaders/basic/basic.vs", "shaders/basic/basic.fs");
+    Render::Shader ourShader("shaders/basic/basic.vs", "shaders/basic/basic.fs");
 
     // set up vertex data (and buffer(s)) and configure vertex attributes
     // ------------------------------------------------------------------
     
-    Assisi::Scene::WorldObject cube = Assisi::Scene::CreateDefaultCube();
+    Game::WorldObject cube = Assisi::Game::CreateDefaultCube();
     // clang-format off
     
     glm::vec3 cubePositions[] = {
@@ -194,7 +195,7 @@ int main()
     ourShader.SetInt("texture1", 0);
     ourShader.SetInt("texture2", 1);
 
-    Assisi::Scene::Camera camera;
+    Game::Camera camera;
 
     glm::mat4 model = glm::mat4(1.0f);
     model = glm::rotate(model, glm::radians(-55.0f), glm::vec3(1.0f, 0.0f, 0.0f));
