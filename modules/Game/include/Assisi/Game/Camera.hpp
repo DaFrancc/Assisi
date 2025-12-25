@@ -5,7 +5,7 @@
 
 #include <Assisi/Math/GLM.hpp>
 
-namespace Assisi::Scene
+namespace Assisi::Game
 {
 class Camera
 {

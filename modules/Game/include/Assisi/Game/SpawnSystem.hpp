@@ -4,9 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <Assisi/Scene/WorldObject.hpp>
+#include <Assisi/Game/WorldObject.hpp>
 
-namespace Assisi::Scene
+namespace Assisi::Game
 {
 
 /**
