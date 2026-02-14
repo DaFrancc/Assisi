@@ -30,6 +30,7 @@ git clone https://github.com/DaFrancc/Assisi.git
 ```bash
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
   ```
+ - Note: If you do not have the dependencies already installed and built, this process will take several minutes depending on your internet speed and your hardware.
 #### Linux:
 - WIP
 #### MacOS:
