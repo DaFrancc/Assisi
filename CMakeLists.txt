@@ -58,7 +58,7 @@ function(Assisi_apply_defaults target_name)
 endfunction()
 
 
-# ---- Baseline compile behavior (applies to your targets only when you link Options)
+# ---- Baseline compile behavior (applies to targets only when Options are linked)
 if (MSVC)
   target_compile_options(Assisi-Options INTERFACE
     /permissive-
@@ -125,7 +125,6 @@ endif()
 # ---- Sanitizers: enabled only when ASSISI_ENABLE_SANITIZERS=ON (via presets)
 if (ASSISI_ENABLE_SANITIZERS)
   if (MSVC)
-    # MSVC: keep this conservative (AddressSanitizer is the practical option).
     target_compile_options(Assisi-Sanitize INTERFACE /fsanitize=address /Zi)
     target_link_options(Assisi-Sanitize INTERFACE /fsanitize=address)
   else()
