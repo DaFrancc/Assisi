@@ -209,7 +209,7 @@ add_subdirectory(modules/Math)
 add_subdirectory(modules/Window)
 add_subdirectory(modules/Render)
 add_subdirectory(modules/ECS)
-add_subdirectory(modules/Game)
+add_subdirectory(modules/Runtime)
 
 add_subdirectory(apps/Sandbox)
 
