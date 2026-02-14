@@ -161,7 +161,64 @@ Write-Host ""
 
 # 5) Wait and report results
 Write-Heading "Waiting for Conan"
-Wait-Job $jobs | Out-Null
+
+# Show live progress while Conan runs (jobs are background).
+$total = $jobs.Count
+$start = Get-Date
+$spinner = @('|','/','-','\\')
+$tick = 0
+
+function Get-JobLogTail([string]$preset) {
+  $logPath = Join-Path (Join-Path $buildRoot $preset) "conan-install.log"
+  if (-not (Test-Path $logPath)) { return $null }
+  try {
+    # Read a small tail to show that work is happening.
+    return (Get-Content -Path $logPath -Tail 1 -ErrorAction Stop)
+  } catch {
+    return $null
+  }
+}
+
+while ($true) {
+  $running   = @($jobs | Where-Object { $_.State -eq 'Running' -or $_.State -eq 'NotStarted' })
+  $completed = @($jobs | Where-Object { $_.State -eq 'Completed' })
+  $failedNow = @($jobs | Where-Object { $_.State -eq 'Failed' -or $_.State -eq 'Stopped' })
+
+  $elapsed = (New-TimeSpan -Start $start -End (Get-Date))
+  $percent = 0
+  if ($total -gt 0) { $percent = [int](($completed.Count / $total) * 100) }
+
+  $elapsedStr = $elapsed.ToString("mm\:ss")
+  $status = "{0} Running: {1}/{2} | Done: {3}/{2} | Elapsed: {4}" -f $spinner[$tick % $spinner.Count], $running.Count, $total, $completed.Count, $elapsedStr
+  Write-Progress -Activity "Waiting for Conan" -Status $status -PercentComplete $percent
+
+  # Every ~2 seconds, show a hint of activity from logs (one line per running preset).
+  if (($tick % 2) -eq 0 -and $running.Count -gt 0) {
+    foreach ($j in $running) {
+      $preset = $j.Name -replace '^conan-',''
+      $tail = Get-JobLogTail $preset
+      if ($tail) {
+        Write-Info ("{0}: {1}" -f $preset, $tail)
+      } else {
+        Write-Info ("{0}: (working... see out/build/{0}/conan-install.log)" -f $preset)
+      }
+    }
+    Write-Host ""
+  }
+
+  if ($failedNow.Count -gt 0 -or $running.Count -eq 0) { break }
+
+  # Wait briefly so we do not spam the console, but keep progress responsive.
+  # IMPORTANT: Always pass the job objects; calling Wait-Job with no jobs prompts for Id interactively.
+  if ($running.Count -gt 0) {
+    $null = Wait-Job -Job $running -Any -Timeout 1 -ErrorAction SilentlyContinue
+  } else {
+    Start-Sleep -Seconds 1
+  }
+  $tick++
+}
+
+Write-Progress -Activity "Waiting for Conan" -Completed
 
 $failed = @()
 foreach ($j in $jobs) {
