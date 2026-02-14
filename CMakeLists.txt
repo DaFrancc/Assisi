@@ -1,183 +1,221 @@
-﻿# Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc")
+﻿cmake_minimum_required(VERSION 3.23)
 
-cmake_minimum_required(VERSION 3.22)
+project(Assisi
+  VERSION 0.1.0
+  LANGUAGES C CXX
+)
 
-# ============================================================
-# MSVC debug info policy
-# ============================================================
-
-if (POLICY CMP0141)
-  cmake_policy(SET CMP0141 NEW)
-  set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT
-    "$<IF:$<AND:$<C_COMPILER_ID:MSVC>,$<CXX_COMPILER_ID:MSVC>>,\
-$<$<CONFIG:Debug,RelWithDebInfo>:EditAndContinue>,\
-$<$<CONFIG:Debug,RelWithDebInfo>:ProgramDatabase>>")
-endif()
-
-# ============================================================
-# Project
-# ============================================================
-
-project(Assisi LANGUAGES C CXX)
-
+# ------------------------------------------------------------
+# Global language policy
+# ------------------------------------------------------------
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+# Tooling (reflection/codegen can consume compile_commands.json later)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
-include(AssisiOptions)
-include(AssisiModule)
+set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 
-# ============================================================
-# Build knobs (driven by Makefile)
-# ============================================================
+# ------------------------------------------------------------
+# Project-wide knobs (driven by presets/CI, not hand-edited cache)
+# ------------------------------------------------------------
+option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors (recommended for CI)" OFF)
 
-option(ASSISI_DEBUG_WARNINGS "Enable strong debug warnings" OFF)
-option(ASSISI_RELEASE_OPTIMIZED "Optimize aggressively for speed" OFF)
-option(ASSISI_ENABLE_ASAN "Enable AddressSanitizer" OFF)
-option(ASSISI_ASAN_HARDCORE "Enable max sanitizer + warning set (Clang)" OFF)
+# Sanitizers: primarily valuable on Linux; MSVC support is limited.
+option(ASSISI_ENABLE_SANITIZERS "Enable sanitizers for this build" OFF)
+set(ASSISI_SANITIZER_SET "address;undefined" CACHE STRING
+    "Semicolon-separated list: address;undefined;thread (support varies)")
 
-# ============================================================
-# Per-target flags (apply ONLY to Assisi targets)
-# ============================================================
+# Release performance knobs
+option(ASSISI_ENABLE_FAST_MATH "Enable fast-math in Release" ON)
 
+# ------------------------------------------------------------
+# Central interface targets (clean and explicit)
+# ------------------------------------------------------------
+add_library(Assisi-Options INTERFACE)
 add_library(Assisi-Warnings INTERFACE)
 add_library(Assisi-Sanitize INTERFACE)
+add_library(Assisi-Perf INTERFACE)
 
-# Debug warnings ("-Wall" equivalent)
-if (ASSISI_DEBUG_WARNINGS)
+add_library(Assisi::Options  ALIAS Assisi-Options)
+add_library(Assisi::Warnings ALIAS Assisi-Warnings)
+add_library(Assisi::Sanitize ALIAS Assisi-Sanitize)
+add_library(Assisi::Perf     ALIAS Assisi-Perf)
+
+function(Assisi_apply_defaults target_name)
+  if (NOT TARGET "${target_name}")
+    message(FATAL_ERROR "Assisi_apply_defaults: target '${target_name}' does not exist")
+  endif()
+
+  target_link_libraries("${target_name}"
+    PUBLIC
+      Assisi::Options
+      Assisi::Warnings
+      Assisi::Perf
+      Assisi::Sanitize
+  )
+endfunction()
+
+
+# ---- Baseline compile behavior (applies to your targets only when you link Options)
+if (MSVC)
+  target_compile_options(Assisi-Options INTERFACE
+    /permissive-
+    /Zc:__cplusplus
+    /Zc:preprocessor
+    /EHsc
+  )
+  target_compile_definitions(Assisi-Options INTERFACE
+    NOMINMAX
+    WIN32_LEAN_AND_MEAN
+    _CRT_SECURE_NO_WARNINGS
+  )
+else()
+  target_compile_options(Assisi-Options INTERFACE
+    -fno-omit-frame-pointer
+  )
+endif()
+
+# ---- Warnings (always ON; warnings-as-errors is a separate switch)
+if (MSVC)
+  target_compile_options(Assisi-Warnings INTERFACE
+    /W4
+    /w14640   # implicit fallthrough
+    /w14242   # possible data loss
+    /w14254   # operator precedence
+    /w14263   # override
+    /w14265   # virtual dtor
+    /w14287   # signed/unsigned mix
+    /w14296   # always true/false
+  )
+  if (ASSISI_WARNINGS_AS_ERRORS)
+    target_compile_options(Assisi-Warnings INTERFACE /WX)
+  endif()
+else()
+  target_compile_options(Assisi-Warnings INTERFACE
+    -Wall
+    -Wextra
+    -Wpedantic
+    -Wshadow
+    -Wconversion
+    -Wsign-conversion
+    -Wundef
+    -Wdouble-promotion
+    -Wformat=2
+  )
+  if (ASSISI_WARNINGS_AS_ERRORS)
+    target_compile_options(Assisi-Warnings INTERFACE -Werror)
+  endif()
+endif()
+
+# ---- Perf knobs: enabled for Release via generator expressions
+if (ASSISI_ENABLE_FAST_MATH)
   if (MSVC)
-    target_compile_options(Assisi-Warnings INTERFACE
-      /W4
-      /permissive-
-      /Zc:__cplusplus
-      /Zc:preprocessor
-      /EHsc
-
-      # High-signal warnings (do NOT use /Wall)
-      /w14640   # implicit fallthrough
-      /w14242   # possible data loss
-      /w14254   # operator precedence
-      /w14263   # override
-      /w14265   # virtual dtor
-      /w14287   # signed/unsigned mix
-      /w14296   # always true/false
+    target_compile_options(Assisi-Perf INTERFACE
+      $<$<CONFIG:Release>:/fp:fast>
     )
   else()
-    target_compile_options(Assisi-Warnings INTERFACE
-      -Wall
-      -Wextra
-      -Wpedantic
-      -Wshadow
-      -Wconversion
-      -Wsign-conversion
-      -Wnon-virtual-dtor
-      -Woverloaded-virtual
-      -Wnull-dereference
-      -Wdouble-promotion
+    target_compile_options(Assisi-Perf INTERFACE
+      $<$<CONFIG:Release>:-ffast-math>
     )
   endif()
 endif()
 
-# ASan (Windows: clang-cl/MSVC-mode safe)
-# IMPORTANT: don't pass /fsanitize=address to lld-link directly on your setup.
-if (ASSISI_ENABLE_ASAN AND MSVC)
-  target_compile_options(Assisi-Sanitize INTERFACE /fsanitize=address /Zi /Od)
+# ---- Sanitizers: enabled only when ASSISI_ENABLE_SANITIZERS=ON (via presets)
+if (ASSISI_ENABLE_SANITIZERS)
+  if (MSVC)
+    # MSVC: keep this conservative (AddressSanitizer is the practical option).
+    target_compile_options(Assisi-Sanitize INTERFACE /fsanitize=address /Zi)
+    target_link_options(Assisi-Sanitize INTERFACE /fsanitize=address)
+  else()
+    string(REPLACE ";" "," _assisi_san_list "${ASSISI_SANITIZER_SET}")
+    target_compile_options(Assisi-Sanitize INTERFACE
+      -fsanitize=${_assisi_san_list}
+      -fno-omit-frame-pointer
+      -g
+    )
+    target_link_options(Assisi-Sanitize INTERFACE
+      -fsanitize=${_assisi_san_list}
+    )
+  endif()
 endif()
 
-# Extra warnings for Clang (safe on clang-cl too)
-if (ASSISI_ASAN_HARDCORE AND CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  target_compile_options(Assisi-Sanitize INTERFACE
-    -Wall -Wextra -Wpedantic
-    -Wshadow
-    -Wconversion -Wsign-conversion
-    -Wnon-virtual-dtor
-    -Woverloaded-virtual
-    -Wnull-dereference
-    -Wdouble-promotion
-  )
-endif()
-
-# Release optimization (speed)
-if (ASSISI_RELEASE_OPTIMIZED AND MSVC)
-  target_compile_options(Assisi-Warnings INTERFACE
-    /O2
-    /Ob3
-    /Oi
-    /Ot
-    /GL
-  )
-  target_link_options(Assisi-Warnings INTERFACE /LTCG)
-endif()
-
-# ============================================================
-# External dependencies
-# ============================================================
-
-set(ASSISI_EXTERNAL_DIR "${CMAKE_CURRENT_SOURCE_DIR}/external")
-
-if (NOT EXISTS "${ASSISI_EXTERNAL_DIR}/glfw/CMakeLists.txt")
-  message(FATAL_ERROR "Missing external/glfw. Run: git submodule update --init --recursive")
-endif()
-
-if (NOT EXISTS "${ASSISI_EXTERNAL_DIR}/glm/glm.hpp")
-  message(FATAL_ERROR "Missing external/glm/glm/glm.hpp. Run: git submodule update --init --recursive")
-endif()
-
-if (NOT EXISTS "${ASSISI_EXTERNAL_DIR}/stb/stb_image.h")
-  message(FATAL_ERROR "Missing external/stb/stb_image.h. Run: git submodule update --init --recursive")
-endif()
-
-set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-
-add_subdirectory("${ASSISI_EXTERNAL_DIR}/glfw" "${CMAKE_BINARY_DIR}/glfw-build")
-
-add_library(Assisi-stb INTERFACE)
-target_include_directories(Assisi-stb
-  SYSTEM INTERFACE
-    "${ASSISI_EXTERNAL_DIR}/stb"
-)
-
-add_library(Assisi-glm INTERFACE)
-target_include_directories(Assisi-glm
-  SYSTEM INTERFACE
-    "${ASSISI_EXTERNAL_DIR}/glm"
-)
-
-add_library(Assisi-glad STATIC
-  "${ASSISI_EXTERNAL_DIR}/glad/src/glad.c"
-)
-
-target_include_directories(Assisi-glad
-  SYSTEM PUBLIC
-    "${ASSISI_EXTERNAL_DIR}/glad/include"
-)
-
-add_library(Assisi::glad ALIAS Assisi-glad)
+# ------------------------------------------------------------
+# Dependencies (Conan CMakeDeps + CMakeToolchain)
+# ------------------------------------------------------------
+# Assumes you run:
+#   conan install ... -of <buildDir> -g CMakeDeps -g CMakeToolchain
+# and then configure with CMAKE_TOOLCHAIN_FILE pointing at <buildDir>/conan_toolchain.cmake
+find_package(glfw3 CONFIG REQUIRED)
+find_package(glm CONFIG REQUIRED)
+find_package(stb CONFIG REQUIRED)
+find_package(glad CONFIG REQUIRED)
+find_package(assimp CONFIG REQUIRED)
 
 add_library(Assisi-Deps INTERFACE)
-target_link_libraries(Assisi-Deps
-  INTERFACE
-    glfw
-    Assisi-stb
-    Assisi-glm
-    Assisi-glad
-)
-
 add_library(Assisi::Deps ALIAS Assisi-Deps)
 
-# ============================================================
-# Project modules / apps
-# ============================================================
+# Conan target names vary by recipe; prefer modern imported targets but fall back gracefully.
+if (TARGET glfw::glfw)
+  target_link_libraries(Assisi-Deps INTERFACE glfw::glfw)
+elseif (TARGET glfw)
+  target_link_libraries(Assisi-Deps INTERFACE glfw)
+elseif (TARGET glfw3::glfw3)
+  target_link_libraries(Assisi-Deps INTERFACE glfw3::glfw3)
+elseif (TARGET glfw3)
+  target_link_libraries(Assisi-Deps INTERFACE glfw3)
+else()
+  message(FATAL_ERROR "glfw3 package found, but no known GLFW target was exported (tried glfw::glfw, glfw, glfw3::glfw3, glfw3).")
+endif()
 
+
+if (TARGET glm::glm)
+  target_link_libraries(Assisi-Deps INTERFACE glm::glm)
+elseif (TARGET glm)
+  target_link_libraries(Assisi-Deps INTERFACE glm)
+else()
+  message(FATAL_ERROR "glm target not found (expected glm::glm or glm).")
+endif()
+
+if (TARGET stb::stb)
+  target_link_libraries(Assisi-Deps INTERFACE stb::stb)
+elseif (TARGET stb)
+  target_link_libraries(Assisi-Deps INTERFACE stb)
+else()
+  message(FATAL_ERROR "stb target not found (expected stb::stb or stb).")
+endif()
+
+if (TARGET glad::glad)
+  target_link_libraries(Assisi-Deps INTERFACE glad::glad)
+elseif (TARGET glad)
+  target_link_libraries(Assisi-Deps INTERFACE glad)
+else()
+  message(FATAL_ERROR "glad target not found (expected glad::glad or glad).")
+endif()
+
+if (TARGET assimp::assimp)
+  target_link_libraries(Assisi-Deps INTERFACE assimp::assimp)
+elseif (TARGET assimp)
+  target_link_libraries(Assisi-Deps INTERFACE assimp)
+else()
+  message(FATAL_ERROR "assimp target not found (expected assimp::assimp or assimp).")
+endif()
+
+# ------------------------------------------------------------
+# Project modules / apps (based on your existing layout)
+# ------------------------------------------------------------
 add_subdirectory(modules/Core)
+add_subdirectory(modules/Math)
+add_subdirectory(modules/Window)
 add_subdirectory(modules/Render)
 add_subdirectory(modules/ECS)
 add_subdirectory(modules/Game)
-add_subdirectory(modules/Window)
-add_subdirectory(modules/Math)
 
 add_subdirectory(apps/Sandbox)
+
+
+# Notes for your module CMakeLists:
+# - Each module target should link:
+#     Assisi::Options, Assisi::Warnings, Assisi::Perf, Assisi::Deps
+#   and optionally Assisi::Sanitize (it is inert unless enabled by preset).
