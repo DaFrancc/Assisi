@@ -12,7 +12,7 @@ target_link_libraries(Assisi-Sandbox
   PRIVATE
     Assisi::Render
     Assisi::ECS
-    Assisi::Game
+    Assisi::Runtime
     Assisi::Window
     Assisi::Deps
     OpenGL::GL
