@@ -1,4 +1,5 @@
-Assisi_add_module(Assisi-Core)
+add_library(Assisi-Core)
+Assisi_apply_defaults(Assisi-Core)
 
 target_sources(Assisi-Core
   PRIVATE
@@ -10,6 +11,9 @@ target_sources(Assisi-Core
     "include/Assisi/Prelude.hpp"
 )
 
-Assisi_module_include(Assisi-Core)
+target_include_directories(Assisi-Core
+  PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/include"
+)
 
 add_library(Assisi::Core ALIAS Assisi-Core)

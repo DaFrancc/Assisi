@@ -1,0 +1,13 @@
+[settings]
+os=Windows
+arch=x86_64
+compiler=msvc
+compiler.version=195
+compiler.cppstd=23
+compiler.runtime=dynamic
+compiler.runtime_type=Release
+build_type=Release
+
+[conf]
+tools.cmake.cmaketoolchain:generator=Ninja
+tools.cmake.cmaketoolchain:user_presets=

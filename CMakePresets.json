@@ -1,128 +1,210 @@
 ﻿{
-    "version": 6,
-    "configurePresets": [
-        {
-            "name": "windows-base",
-            "hidden": true,
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/build/${presetName}",
-            "installDir": "${sourceDir}/out/install/${presetName}",
-            "cacheVariables": {
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            },
-            "condition": {
-                "type": "equals",
-                "lhs": "${hostSystemName}",
-                "rhs": "Windows"
-            }
-        },
-        {
-            "name": "x64-debug",
-            "displayName": "x64 Debug",
-            "inherits": "windows-base",
-            "architecture": {
-                "value": "x64",
-                "strategy": "external"
-            },
-            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
-        },
-        {
-            "name": "x64-release",
-            "displayName": "x64 Release",
-            "inherits": "windows-base",
-            "architecture": {
-                "value": "x64",
-                "strategy": "external"
-            },
-            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
-        },
-        {
-            "name": "x86-debug",
-            "displayName": "x86 Debug",
-            "inherits": "windows-base",
-            "architecture": {
-                "value": "x86",
-                "strategy": "external"
-            },
-            "cacheVariables": { "CMAKE_BUILD_TYPE": "Debug" }
-        },
-        {
-            "name": "x86-release",
-            "displayName": "x86 Release",
-            "inherits": "windows-base",
-            "architecture": {
-                "value": "x86",
-                "strategy": "external"
-            },
-            "cacheVariables": { "CMAKE_BUILD_TYPE": "Release" }
-        },
-        {
-            "name": "linux-debug",
-            "displayName": "Linux Debug",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/build/${presetName}",
-            "installDir": "${sourceDir}/out/install/${presetName}",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            },
-            "condition": {
-                "type": "equals",
-                "lhs": "${hostSystemName}",
-                "rhs": "Linux"
-            },
-            "vendor": {
-                "microsoft.com/VisualStudioRemoteSettings/CMake/1.0": {
-                    "sourceDir": "$env{HOME}/.vs/$ms{projectDirName}"
-                }
-            }
-        },
-        {
-            "name": "macos-debug",
-            "displayName": "macOS Debug",
-            "generator": "Ninja",
-            "binaryDir": "${sourceDir}/out/build/${presetName}",
-            "installDir": "${sourceDir}/out/install/${presetName}",
-            "cacheVariables": {
-                "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
-            },
-            "condition": {
-                "type": "equals",
-                "lhs": "${hostSystemName}",
-                "rhs": "Darwin"
-            },
-            "vendor": {
-                "microsoft.com/VisualStudioRemoteSettings/CMake/1.0": {
-                    "sourceDir": "$env{HOME}/.vs/$ms{projectDirName}"
-                }
-            }
-        }
-    ],
-    "buildPresets": [
-        {
-            "name": "x64-debug",
-            "configurePreset": "x64-debug"
-        },
-        {
-            "name": "x64-release",
-            "configurePreset": "x64-release"
-        },
-        {
-            "name": "x86-debug",
-            "configurePreset": "x86-debug"
-        },
-        {
-            "name": "x86-release",
-            "configurePreset": "x86-release"
-        },
-        {
-            "name": "linux-debug",
-            "configurePreset": "linux-debug"
-        },
-        {
-            "name": "macos-debug",
-            "configurePreset": "macos-debug"
-        }
-    ]
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 23,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "base",
+      "hidden": true,
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "ASSISI_WARNINGS_AS_ERRORS": "OFF",
+        "ASSISI_ENABLE_FAST_MATH": "ON",
+        "ASSISI_ENABLE_SANITIZERS": "OFF",
+        "ASSISI_SANITIZER_SET": "address;undefined"
+      }
+    },
+
+    {
+      "name": "msvc-debug",
+      "inherits": "base",
+      "description": "Windows + MSVC + Debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-debug/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "msvc-release",
+      "inherits": "base",
+      "description": "Windows + MSVC + Release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-release/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "msvc-sanitize",
+      "inherits": "base",
+      "description": "Windows + MSVC + Sanitized (best-effort ASan; Linux is the primary sanitizer platform)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "ASSISI_ENABLE_SANITIZERS": "ON",
+        "ASSISI_SANITIZER_SET": "address",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-sanitize/conan_toolchain.cmake"
+      }
+    },
+
+    {
+      "name": "gcc-debug",
+      "inherits": "base",
+      "description": "Linux + GCC + Debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-debug/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "gcc-release",
+      "inherits": "base",
+      "description": "Linux + GCC + Release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-release/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "gcc-sanitize",
+      "inherits": "base",
+      "description": "Linux + GCC + Sanitized (ASan+UBSan default)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++",
+        "ASSISI_ENABLE_SANITIZERS": "ON",
+        "ASSISI_SANITIZER_SET": "address;undefined",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-sanitize/conan_toolchain.cmake"
+      }
+    },
+
+    {
+      "name": "clang-debug",
+      "inherits": "base",
+      "description": "Linux + Clang + Debug",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-debug/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "clang-release",
+      "inherits": "base",
+      "description": "Linux + Clang + Release",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-release/conan_toolchain.cmake"
+      }
+    },
+    {
+      "name": "clang-sanitize",
+      "inherits": "base",
+      "description": "Linux + Clang + Sanitized (ASan+UBSan default)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "ASSISI_ENABLE_SANITIZERS": "ON",
+        "ASSISI_SANITIZER_SET": "address;undefined",
+        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-sanitize/conan_toolchain.cmake"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "msvc-debug",
+      "configurePreset": "msvc-debug"
+    },
+    {
+      "name": "msvc-release",
+      "configurePreset": "msvc-release"
+    },
+    {
+      "name": "msvc-sanitize",
+      "configurePreset": "msvc-sanitize"
+    },
+
+    {
+      "name": "gcc-debug",
+      "configurePreset": "gcc-debug"
+    },
+    {
+      "name": "gcc-release",
+      "configurePreset": "gcc-release"
+    },
+    {
+      "name": "gcc-sanitize",
+      "configurePreset": "gcc-sanitize"
+    },
+
+    {
+      "name": "clang-debug",
+      "configurePreset": "clang-debug"
+    },
+    {
+      "name": "clang-release",
+      "configurePreset": "clang-release"
+    },
+    {
+      "name": "clang-sanitize",
+      "configurePreset": "clang-sanitize"
+    }
+  ]
 }
