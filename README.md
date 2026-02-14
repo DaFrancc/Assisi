@@ -28,7 +28,7 @@ git clone https://github.com/DaFrancc/Assisi.git
 #### Windows:
 - Run ```setup.ps1``` and follow the instructions to create your game directory and install dependencies using [Conan](https://conan.io/).
 ```bash
-  powershell -ExecutionPolicy Bypass -File .\setup.ps1
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
   ```
 #### Linux:
 - WIP
