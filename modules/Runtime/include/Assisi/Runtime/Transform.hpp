@@ -5,7 +5,7 @@
 
 #include <Assisi/Math/GLM.hpp>
 
-namespace Assisi::Game
+namespace Assisi::Runtime
 {
 class Transform
 {
@@ -87,6 +87,6 @@ class Transform
 
     glm::vec3 _worldScale{1.0f, 1.0f, 1.0f};
 };
-} /* namespace Assisi::Game */
+} /* namespace Assisi::Runtime */
 
 #endif /* TRANSFORM_HPP */

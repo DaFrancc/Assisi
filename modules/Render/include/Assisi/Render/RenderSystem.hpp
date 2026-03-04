@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef RENDERSYSTEM_HPP
-#define RENDERSYSTEM_HPP
-
 #include <iostream>
 
 #include <Assisi/Render/Backend/GraphicsBackend.hpp>
@@ -55,5 +52,3 @@ class RenderSystem
     }
 };
 } /* namespace Assisi::Render */
-
-#endif /* RENDERSYSTEM_HPP */
