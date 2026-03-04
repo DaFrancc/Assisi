@@ -1,11 +1,11 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <Assisi/Game/SpawnSystem.hpp>
+#include <Assisi/Runtime/SpawnSystem.hpp>
 
 #include <new>     /* ::operator new, std::align_val_t */
 #include <utility> /* std::exchange */
 
-namespace Assisi::Game
+namespace Assisi::Runtime
 {
 
 SpawnSystem::SpawnSystem(std::size_t initialSlots) : _nextPageSlots(initialSlots == 0 ? 1 : initialSlots)
@@ -164,4 +164,4 @@ std::size_t SpawnSystem::CapacitySlots() const noexcept
     return _capacitySlots;
 }
 
-} /* namespace Assisi::Game */
+} /* namespace Assisi::Runtime */

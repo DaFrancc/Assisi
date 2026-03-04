@@ -1,10 +1,10 @@
 #pragma once
 
-#include <Assisi/Game/Transform.hpp>
+#include <Assisi/Runtime/Transform.hpp>
 #include <Assisi/Render/DefaultResources.hpp>
 #include <Assisi/Render/OpenGL/MeshBuffer.hpp>
 
-namespace Assisi::Game
+namespace Assisi::Runtime
 {
 class WorldObject
 {
@@ -18,8 +18,8 @@ class WorldObject
     {
     }
 
-    Assisi::Game::Transform &Transform() { return _transform; }
-    const Assisi::Game::Transform &Transform() const { return _transform; }
+    Assisi::Runtime::Transform &Transform() { return _transform; }
+    const Assisi::Runtime::Transform &Transform() const { return _transform; }
 
     bool HasMeshBuffer() const { return _meshBuffer != nullptr; }
 
@@ -49,11 +49,11 @@ class WorldObject
     unsigned int CustomDiffuseTextureIdentifier() const { return _customDiffuseTextureIdentifier; }
 
   private:
-    Assisi::Game::Transform _transform;
+    Assisi::Runtime::Transform _transform;
 
     /* Non-owning pointer. The referenced MeshBuffer must outlive this WorldObject. */
     const Assisi::Render::OpenGL::MeshBuffer *_meshBuffer = nullptr;
 
     unsigned int _customDiffuseTextureIdentifier = 0;
 };
-} /* namespace Assisi::Game */
+} /* namespace Assisi::Runtime */

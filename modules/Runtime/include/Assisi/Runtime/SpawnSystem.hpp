@@ -4,9 +4,9 @@
 #include <cstddef>
 #include <cstdint>
 
-#include <Assisi/Game/WorldObject.hpp>
+#include <Assisi/Runtime/WorldObject.hpp>
 
-namespace Assisi::Game
+namespace Assisi::Runtime
 {
 
 /**
@@ -97,4 +97,4 @@ class SpawnSystem
     std::size_t _nextPageSlots = 0;
 };
 
-} /* namespace Assisi::Scene */
+} /* namespace Assisi::Runtime */
