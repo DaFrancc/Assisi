@@ -4,6 +4,13 @@
 #ifndef ASSISI_RENDER_SHADER_HPP
 #define ASSISI_RENDER_SHADER_HPP
 
+/// @file Shader.hpp
+/// @brief GLSL shader program wrapper with asset-system integration.
+///
+/// `Shader` compiles a vertex/fragment pair sourced through `AssetSystem`,
+/// links them into an OpenGL program, and exposes typed uniform setters.
+/// Move-only; copying is disabled.
+
 #include <glad/glad.h>
 
 #include <Assisi/Core/AssetSystem.hpp>
@@ -16,6 +23,7 @@
 
 namespace Assisi::Render
 {
+/// @brief Owns a linked OpenGL shader program.
 class Shader
 {
   public:
@@ -24,12 +32,10 @@ class Shader
     /**
      * @brief Builds a shader program from virtual asset paths.
      *
-     * @param vertexVPath Virtual path under the asset root (e.g., "shaders/basic.vert").
-     * @param fragmentVPath Virtual path under the asset root (e.g., "shaders/basic.frag").
+     * @param vertexVPath   Virtual path to the vertex shader source (e.g. `"shaders/basic.vert"`).
+     * @param fragmentVPath Virtual path to the fragment shader source.
      *
-     * @warning Preconditions:
-     *  - Assisi::Core::AssetSystem is initialized.
-     *  - Files exist and contain valid GLSL for the active context/profile.
+     * @pre Assisi::Core::AssetSystem is initialized and the files exist.
      */
     explicit Shader(std::string_view vertexVPath, std::string_view fragmentVPath)
     {
@@ -37,11 +43,14 @@ class Shader
     }
 
     /**
-     * @brief Loads/compiles/links from virtual asset paths.
+     * @brief (Re)loads, compiles, and links the shader from virtual asset paths.
      *
-     * @return std::expected<void, Assisi::Core::AssetError>
-     *   - Success: the program is ready.
-     *   - Failure: an AssetError if reading/resolving fails. GLSL failures are logged.
+     * Any previously loaded program is destroyed first.  GLSL compilation
+     * and link errors are logged to stdout.
+     *
+     * @return Success if the program was linked, or an AssetError if reading
+     *         the source files failed.  GLSL failures are logged but do not
+     *         produce an AssetError — check IsValid() after the call.
      */
     std::expected<void, Assisi::Core::AssetError> LoadFromAssets(std::string_view vertexVPath,
                                                                  std::string_view fragmentVPath) noexcept
@@ -97,10 +106,17 @@ class Shader
         return {};
     }
 
+    /// @brief Binds this program as the active shader.
     void Use() const { glUseProgram(_programIdentifier); }
 
+    /// @brief Returns the raw OpenGL program ID (0 if not loaded).
     unsigned int ProgramIdentifier() const { return _programIdentifier; }
 
+    /// @name Uniform setters
+    /// Locate a uniform by name and upload a value.  The program must be bound
+    /// via Use() before calling these, or use glUniform* directly with
+    /// ProgramIdentifier() if you prefer explicit binding.
+    ///@{
     void SetBool(const std::string &uniformName, bool value) const
     {
         glUniform1i(glGetUniformLocation(_programIdentifier, uniformName.c_str()), static_cast<int>(value));
@@ -160,6 +176,7 @@ class Shader
     {
         glUniformMatrix4fv(glGetUniformLocation(_programIdentifier, uniformName.c_str()), 1, GL_FALSE, &value[0][0]);
     }
+    ///@}
 
     ~Shader() { Destroy(); }
 
@@ -180,6 +197,7 @@ class Shader
     }
 
   private:
+    /// @brief Compiles a single shader stage and returns its ID, or 0 on failure.
     static unsigned int CompileStage(unsigned int stage, const char *source, const std::string &stageName)
     {
         const unsigned int shader = glCreateShader(stage);
@@ -195,6 +213,7 @@ class Shader
         return shader;
     }
 
+    /// @brief Logs compile errors for a shader stage.  Returns true if compilation succeeded.
     static bool PrintShaderCompileErrors(unsigned int shaderIdentifier, const std::string &shaderStageName)
     {
         int ok = 0;
@@ -214,6 +233,7 @@ class Shader
         return false;
     }
 
+    /// @brief Logs link errors for a program.  Returns true if linking succeeded.
     static bool PrintProgramLinkErrors(unsigned int programIdentifier)
     {
         int ok = 0;
@@ -233,6 +253,7 @@ class Shader
         return false;
     }
 
+    /// @brief Deletes the OpenGL program and resets the identifier to 0.
     void Destroy() noexcept
     {
         if (_programIdentifier != 0u)
@@ -243,6 +264,7 @@ class Shader
     }
 
   private:
+    /// @brief OpenGL program object ID.  0 means unloaded or failed.
     unsigned int _programIdentifier = 0u;
 };
 } // namespace Assisi::Render

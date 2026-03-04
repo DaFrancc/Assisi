@@ -3,7 +3,9 @@ Assisi_apply_defaults(Assisi-Window)
 
 target_sources(Assisi-Window
   PRIVATE
+    "src/GlfwLibrary.cpp"
     "src/Window.cpp"
+    "src/WindowContext.cpp"
 )
 
 target_include_directories(Assisi-Window

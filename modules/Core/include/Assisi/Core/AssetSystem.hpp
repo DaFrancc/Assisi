@@ -1,6 +1,13 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
+/// @file AssetSystem.hpp
+/// @brief Virtual-path asset system for discovering and reading engine assets.
+///
+/// All public functions are static; `AssetSystem` acts as a process-wide
+/// singleton service.  Call Initialize() (or SetRoot()) once before using
+/// Resolve(), ReadText(), or ReadBinary().
+
 #include <cstddef>
 #include <expected>
 #include <filesystem>

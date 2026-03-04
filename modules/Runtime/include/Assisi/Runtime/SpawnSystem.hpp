@@ -1,6 +1,13 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
+/// @file SpawnSystem.hpp
+/// @brief Page-based pool allocator for managing WorldObject lifetimes.
+///
+/// Objects are allocated in byte pages with an intrusive free list for
+/// O(1) create/destroy.  A separate intrusive live list enables efficient
+/// iteration over only live objects during Tick().
+
 #include <cstddef>
 #include <cstdint>
 
