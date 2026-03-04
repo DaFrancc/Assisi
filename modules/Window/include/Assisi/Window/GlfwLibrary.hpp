@@ -1,40 +1,30 @@
 #pragma once
 
-#ifndef GLFWLIBRARY_HPP
-#define GLFWLIBRARY_HPP
+/// @file GlfwLibrary.hpp
+/// @brief RAII guard for the GLFW library lifetime.
+///
+/// `GlfwLibrary` calls `glfwInit()` on construction and `glfwTerminate()` on
+/// destruction.  Exactly one instance is kept alive for the whole process via
+/// the `Acquire()` singleton helper; callers share ownership through
+/// `std::shared_ptr<GlfwLibrary>`, so GLFW is torn down automatically when
+/// the last owner is released.
 
-#define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h>
-
-#include <iostream>
 #include <memory>
 
 namespace Assisi::Window
 {
+/// @brief RAII owner of the GLFW library.
+///
+/// Non-copyable and non-movable; always accessed through a shared_ptr
+/// returned by Acquire().
 class GlfwLibrary
 {
   public:
-    GlfwLibrary()
-    {
-        /* Initialize GLFW. */
-        if (glfwInit() != GLFW_TRUE)
-        {
-            std::cout << "Failed to initialize GLFW." << std::endl;
-            _isValid = false;
-            return;
-        }
+    /// @brief Calls `glfwInit()`.  Sets `_isValid` to false on failure.
+    GlfwLibrary();
 
-        _isValid = true;
-    }
-
-    ~GlfwLibrary()
-    {
-        /* Terminate GLFW. */
-        if (_isValid)
-        {
-            glfwTerminate();
-        }
-    }
+    /// @brief Calls `glfwTerminate()` if the library was successfully initialised.
+    ~GlfwLibrary();
 
     GlfwLibrary(const GlfwLibrary &) = delete;
     GlfwLibrary &operator=(const GlfwLibrary &) = delete;
@@ -42,26 +32,20 @@ class GlfwLibrary
     GlfwLibrary(GlfwLibrary &&) = delete;
     GlfwLibrary &operator=(GlfwLibrary &&) = delete;
 
-    bool IsValid() const { return _isValid; }
+    /// @brief Returns true if `glfwInit()` succeeded.
+    [[nodiscard]] bool IsValid() const;
 
-    static std::shared_ptr<GlfwLibrary> Acquire()
-    {
-        /* Create exactly one shared library guard for the whole process. */
-        static std::weak_ptr<GlfwLibrary> weakInstance;
-
-        std::shared_ptr<GlfwLibrary> instance = weakInstance.lock();
-        if (!instance)
-        {
-            instance = std::make_shared<GlfwLibrary>();
-            weakInstance = instance;
-        }
-
-        return instance;
-    }
+    /// @brief Returns the process-wide shared GlfwLibrary instance.
+    ///
+    /// Uses a `std::weak_ptr` internally so the instance is destroyed when
+    /// every caller releases its `shared_ptr`.  A new instance is created
+    /// transparently if none is currently alive.
+    ///
+    /// @return A shared_ptr to the singleton GlfwLibrary.
+    [[nodiscard]] static std::shared_ptr<GlfwLibrary> Acquire();
 
   private:
+    /// @brief True after a successful `glfwInit()`.
     bool _isValid = false;
 };
 } /* namespace Assisi::Window */
-
-#endif /* GLFWLIBRARY_HPP */
