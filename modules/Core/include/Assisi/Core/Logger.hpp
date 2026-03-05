@@ -99,7 +99,7 @@ struct LocFmtStr
 namespace Log
 {
 
-template <typename... Args> void Trace(std::format_string<Args...> fmt, Args &&...args);
+template <typename... Args> void Trace(std::format_string<Args...> fmt, Args &&...args)
 {
     GetLogger().Log(LogLevel::Trace, std::format(fmt, std::forward<Args>(args)...));
 }
