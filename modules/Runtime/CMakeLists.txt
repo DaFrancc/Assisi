@@ -4,7 +4,6 @@ Assisi_apply_defaults(Assisi-Runtime)
 target_sources(Assisi-Runtime
   PRIVATE
     "src/Camera.cpp"
-    "src/SpawnSystem.cpp"
 )
 
 target_include_directories(Assisi-Runtime
