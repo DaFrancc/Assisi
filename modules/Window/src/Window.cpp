@@ -1,5 +1,5 @@
-#include <Assisi/Window/Window.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Window/Window.hpp>
 
 namespace Assisi::Window
 {

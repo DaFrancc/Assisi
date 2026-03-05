@@ -23,17 +23,17 @@ using NativeWindowHandle = GLFWwindow;
 /// @brief Width and height of a window or framebuffer, in pixels.
 struct WindowSize
 {
-    int Width = 0;   ///< Pixel width.
-    int Height = 0;  ///< Pixel height.
+    int Width = 0;  ///< Pixel width.
+    int Height = 0; ///< Pixel height.
 };
 
 /// @brief Parameters passed to the WindowContext constructor.
 struct WindowConfiguration
 {
-    int Width = 1280;           ///< Initial window width in pixels.
-    int Height = 720;           ///< Initial window height in pixels.
+    int Width = 1280;             ///< Initial window width in pixels.
+    int Height = 720;             ///< Initial window height in pixels.
     const char *Title = "Assisi"; ///< Window title bar text.
-    bool EnableVSync = true;    ///< Whether to enable vertical synchronisation.
+    bool EnableVSync = true;      ///< Whether to enable vertical synchronisation.
 
     /// @brief When false, GLFW skips client API context creation (e.g. for Vulkan).
     bool CreateClientApiContext = true;
@@ -75,7 +75,7 @@ class WindowContext
     [[nodiscard]] NativeWindowHandle *NativeHandle() const;
 
     /// @brief Processes pending OS events.
-    void PollEvents() const;
+    static void PollEvents();
 
     /// @brief Returns true if the user or OS has requested the window to close.
     [[nodiscard]] bool ShouldClose() const;

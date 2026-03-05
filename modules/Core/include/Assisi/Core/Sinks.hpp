@@ -34,7 +34,7 @@ struct ConsoleSink : Sink
 struct FileSink : Sink
 {
     /// @brief Opens (or creates) the file at the given path in append mode.
-    explicit FileSink(const std::filesystem::path& path);
+    explicit FileSink(const std::filesystem::path &path);
 
     void Write(LogLevel level, std::string_view message) override;
 

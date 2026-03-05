@@ -3,35 +3,41 @@
 namespace Assisi::ECS
 {
 
-std::expected<Scene*, SceneError> SceneRegistry::Create(std::string_view name)
+std::expected<Scene *, SceneError> SceneRegistry::Create(std::string_view name)
 {
     if (Has(name))
+    {
         return std::unexpected(SceneError::NameAlreadyTaken);
+    }
 
-    auto [it, _] = _scenes.emplace(std::string(name), std::make_unique<Scene>());
-    return it->second.get();
+    auto [iter, inserted] = _scenes.emplace(std::string(name), std::make_unique<Scene>());
+    return iter->second.get();
 }
 
 void SceneRegistry::Destroy(std::string_view name)
 {
-    auto it = _scenes.find(std::string(name));
-    if (it == _scenes.end())
+    auto iter = _scenes.find(std::string(name));
+    if (iter == _scenes.end())
+    {
         return;
-    if (_active == it->second.get())
+    }
+    if (_active == iter->second.get())
+    {
         _active = nullptr;
-    _scenes.erase(it);
+    }
+    _scenes.erase(iter);
 }
 
-Scene* SceneRegistry::Get(std::string_view name)
+Scene *SceneRegistry::Get(std::string_view name)
 {
-    auto it = _scenes.find(std::string(name));
-    return it != _scenes.end() ? it->second.get() : nullptr;
+    auto iter = _scenes.find(std::string(name));
+    return iter != _scenes.end() ? iter->second.get() : nullptr;
 }
 
-const Scene* SceneRegistry::Get(std::string_view name) const
+const Scene *SceneRegistry::Get(std::string_view name) const
 {
-    auto it = _scenes.find(std::string(name));
-    return it != _scenes.end() ? it->second.get() : nullptr;
+    auto iter = _scenes.find(std::string(name));
+    return iter != _scenes.end() ? iter->second.get() : nullptr;
 }
 
 bool SceneRegistry::Has(std::string_view name) const
@@ -41,15 +47,23 @@ bool SceneRegistry::Has(std::string_view name) const
 
 std::expected<void, SceneError> SceneRegistry::SetActive(std::string_view name)
 {
-    auto it = _scenes.find(std::string(name));
-    if (it == _scenes.end())
+    auto iter = _scenes.find(std::string(name));
+    if (iter == _scenes.end())
+    {
         return std::unexpected(SceneError::NotFound);
+    }
 
-    _active = it->second.get();
+    _active = iter->second.get();
     return {};
 }
 
-Scene*       SceneRegistry::Active()       { return _active; }
-const Scene* SceneRegistry::Active() const { return _active; }
+Scene *SceneRegistry::Active()
+{
+    return _active;
+}
+const Scene *SceneRegistry::Active() const
+{
+    return _active;
+}
 
 } // namespace Assisi::ECS

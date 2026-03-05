@@ -1,5 +1,5 @@
-#include <Assisi/Core/Core.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/core.hpp>
 
 namespace Assisi::Core
 {

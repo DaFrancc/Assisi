@@ -19,7 +19,7 @@ Entity Registry::Create()
 
         /* Return the slot with its current generation, which was incremented
            when the previous occupant was destroyed. */
-        return { index, _generations[index] };
+        return {.index = index, .generation = _generations[index]};
     }
 
     /* No free slots — grow the generations array with a new slot at index 0. */
@@ -27,16 +27,20 @@ Entity Registry::Create()
     _generations.push_back(0);
 
     ++_aliveCount;
-    return { index, 0 };
+    return {.index = index, .generation = 0};
 }
 
 void Registry::Destroy(Entity entity)
 {
     if (!IsAlive(entity))
+    {
         return;
+    }
 
-    for (auto& entry : _pools)
+    for (auto &entry : _pools)
+    {
         entry.remove(entry.pool, entity);
+    }
 
     /* Bump the generation so any stored handles to this entity become stale. */
     ++_generations[entity.index];
@@ -47,19 +51,19 @@ void Registry::Destroy(Entity entity)
     --_aliveCount;
 }
 
-void Registry::UnregisterPool(void* pool)
+void Registry::UnregisterPool(void *pool)
 {
-    auto it = std::find_if(_pools.begin(), _pools.end(),
-        [pool](const PoolEntry& entry) { return entry.pool == pool; });
-    if (it != _pools.end())
-        _pools.erase(it);
+    auto iter = std::ranges::find_if(_pools, [pool](const PoolEntry &entry) { return entry.pool == pool; });
+    if (iter != _pools.end())
+    {
+        _pools.erase(iter);
+    }
 }
 
 bool Registry::IsAlive(Entity entity) const
 {
     /* Bounds check first to safely handle NullEntity and out-of-range indices. */
-    return entity.index < _generations.size()
-        && _generations[entity.index] == entity.generation;
+    return entity.index < _generations.size() && _generations[entity.index] == entity.generation;
 }
 
 std::size_t Registry::AliveCount() const

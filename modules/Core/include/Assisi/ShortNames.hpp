@@ -9,11 +9,11 @@
 /* Short aliases (opt-in). */
 namespace A = Assisi;
 
-namespace Core		= A::Core;
-namespace Math		= A::Math;
-namespace Render	= A::Render;
-namespace Window	= A::Window;
-namespace ECS		= A::ECS;
-namespace Runtime	= A::Runtime;
-namespace Physics	= A::Physics;
-namespace Input		= A::Input;
+namespace Core = A::Core;
+namespace Math = A::Math;
+namespace Render = A::Render;
+namespace Window = A::Window;
+namespace ECS = A::ECS;
+namespace Runtime = A::Runtime;
+namespace Physics = A::Physics;
+namespace Input = A::Input;

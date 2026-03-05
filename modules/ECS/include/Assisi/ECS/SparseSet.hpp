@@ -30,12 +30,10 @@ enum class SparseSetError
     AlreadyExists, ///< Returned by Add() if the entity already has a component.
 };
 
-template<typename T>
-struct SparseSet
+template <typename T> struct SparseSet
 {
-    static_assert(std::is_trivially_copyable_v<T>,
-        "SparseSet<T>: components must be trivially copyable. "
-        "Use a handle/ID to reference heap-allocated data instead.");
+    static_assert(std::is_trivially_copyable_v<T>, "SparseSet<T>: components must be trivially copyable. "
+                                                   "Use a handle/ID to reference heap-allocated data instead.");
 
     /// @brief Sentinel stored in the sparse array for slots with no component.
     static constexpr uint32_t Invalid = UINT32_MAX;
@@ -44,7 +42,7 @@ struct SparseSet
     ///
     /// @return Pointer to the new component on success, or
     ///         SparseSetError::AlreadyExists if the entity already has one.
-    [[nodiscard]] std::expected<T*, SparseSetError> Add(Entity entity, T component = {})
+    [[nodiscard]] std::expected<T *, SparseSetError> Add(Entity entity, T component = {})
     {
         if (Has(entity))
             return std::unexpected(SparseSetError::AlreadyExists);
@@ -57,7 +55,7 @@ struct SparseSet
         _sparse[entity.index] = static_cast<uint32_t>(_dense.size());
 
         /* Append the entity index and the component value. */
-        _entities.push_back(entity.index);
+        _entities.push_back(entity);
         return &_dense.emplace_back(component);
     }
 
@@ -71,7 +69,7 @@ struct SparseSet
             return;
 
         const uint32_t removedPos = _sparse[entity.index];
-        const uint32_t lastPos    = static_cast<uint32_t>(_dense.size()) - 1;
+        const uint32_t lastPos = static_cast<uint32_t>(_dense.size()) - 1;
 
         if (removedPos != lastPos)
         {
@@ -80,7 +78,7 @@ struct SparseSet
             _entities[removedPos] = _entities[lastPos];
 
             /* Update the sparse entry for the entity that was moved. */
-            _sparse[_entities[removedPos]] = removedPos;
+            _sparse[_entities[removedPos].index] = removedPos;
         }
 
         /* Clear the sparse entry and shrink the dense arrays. */
@@ -90,23 +88,21 @@ struct SparseSet
     }
 
     /// @brief Returns true if the entity has a component in this set.
-    bool Has(Entity entity) const
-    {
-        return entity.index < _sparse.size()
-            && _sparse[entity.index] != Invalid;
-    }
+    bool Has(Entity entity) const { return entity.index < _sparse.size() && _sparse[entity.index] != Invalid; }
 
     /// @brief Returns a pointer to the entity's component, or nullptr if not present.
-    T* Get(Entity entity)
+    T *Get(Entity entity)
     {
-        if (!Has(entity)) return nullptr;
+        if (!Has(entity))
+            return nullptr;
         return &_dense[_sparse[entity.index]];
     }
 
     /// @brief Returns a const pointer to the entity's component, or nullptr if not present.
-    const T* Get(Entity entity) const
+    const T *Get(Entity entity) const
     {
-        if (!Has(entity)) return nullptr;
+        if (!Has(entity))
+            return nullptr;
         return &_dense[_sparse[entity.index]];
     }
 
@@ -117,18 +113,18 @@ struct SparseSet
     bool Empty() const { return _dense.empty(); }
 
     /// @brief Iterators over the dense component array for cache-friendly iteration.
-    std::vector<T>::iterator       begin()       { return _dense.begin(); }
-    std::vector<T>::iterator       end()         { return _dense.end(); }
+    std::vector<T>::iterator begin() { return _dense.begin(); }
+    std::vector<T>::iterator end() { return _dense.end(); }
     std::vector<T>::const_iterator begin() const { return _dense.begin(); }
-    std::vector<T>::const_iterator end()   const { return _dense.end(); }
+    std::vector<T>::const_iterator end() const { return _dense.end(); }
 
-    /// @brief Direct access to the packed entity index array (parallel to dense).
-    const std::vector<uint32_t>& Entities() const { return _entities; }
+    /// @brief Direct access to the packed entity array (parallel to dense).
+    const std::vector<Entity> &Entities() const { return _entities; }
 
   private:
-    std::vector<uint32_t> _sparse;   ///< Indexed by entity index → dense position.
-    std::vector<T>        _dense;    ///< Packed component values.
-    std::vector<uint32_t> _entities; ///< Entity index that owns each dense slot.
+    std::vector<uint32_t> _sparse; ///< Indexed by entity index → dense position.
+    std::vector<T> _dense;         ///< Packed component values.
+    std::vector<Entity> _entities; ///< Entity that owns each dense slot.
 };
 
 } // namespace Assisi::ECS

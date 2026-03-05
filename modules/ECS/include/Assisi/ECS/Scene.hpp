@@ -11,6 +11,7 @@
 #include <typeindex>
 #include <unordered_map>
 
+#include <Assisi/ECS/Query.hpp>
 #include <Assisi/ECS/Registry.hpp>
 
 namespace Assisi::ECS
@@ -20,7 +21,7 @@ struct Scene
 {
     ~Scene()
     {
-        for (auto& [type, storage] : _pools)
+        for (auto &[type, storage] : _pools)
             storage.destroy(storage.pool);
     }
 
@@ -41,81 +42,118 @@ struct Scene
     /// Creates the component pool on first use.
     /// @return Pointer to the new component on success, or
     ///         SparseSetError::AlreadyExists if the entity already has one.
-    template<typename T>
-    [[nodiscard]] std::expected<T*, SparseSetError> Add(Entity entity, T component = {})
+    template <typename T> [[nodiscard]] std::expected<T *, SparseSetError> Add(Entity entity, T component = {})
     {
         return GetOrCreatePool<T>().Add(entity, component);
     }
 
     /// @brief Returns a pointer to the entity's component of type T, or nullptr if not present.
-    template<typename T>
-    T* Get(Entity entity)
+    template <typename T> T *Get(Entity entity)
     {
         auto it = _pools.find(typeid(T));
-        if (it == _pools.end()) return nullptr;
-        return static_cast<SparseSet<T>*>(it->second.pool)->Get(entity);
+        if (it == _pools.end())
+            return nullptr;
+        return static_cast<SparseSet<T> *>(it->second.pool)->Get(entity);
     }
 
     /// @brief Returns a const pointer to the entity's component of type T, or nullptr if not present.
-    template<typename T>
-    const T* Get(Entity entity) const
+    template <typename T> const T *Get(Entity entity) const
     {
         auto it = _pools.find(typeid(T));
-        if (it == _pools.end()) return nullptr;
-        return static_cast<const SparseSet<T>*>(it->second.pool)->Get(entity);
+        if (it == _pools.end())
+            return nullptr;
+        return static_cast<const SparseSet<T> *>(it->second.pool)->Get(entity);
     }
 
     /// @brief Returns true if the entity has a component of type T.
-    template<typename T>
-    bool Has(Entity entity) const
+    template <typename T> bool Has(Entity entity) const
     {
         auto it = _pools.find(typeid(T));
-        return it != _pools.end() && static_cast<const SparseSet<T>*>(it->second.pool)->Has(entity);
+        return it != _pools.end() && static_cast<const SparseSet<T> *>(it->second.pool)->Has(entity);
     }
 
     /// @brief Removes the component of type T from the entity.
-    template<typename T>
-    void Remove(Entity entity)
+    template <typename T> void Remove(Entity entity)
     {
         auto it = _pools.find(typeid(T));
         if (it != _pools.end())
-            static_cast<SparseSet<T>*>(it->second.pool)->Remove(entity);
+            static_cast<SparseSet<T> *>(it->second.pool)->Remove(entity);
+    }
+
+    /// @brief Returns a lazy view over all entities that have every component in Ts.
+    ///
+    /// Iterates the smallest matching pool and skips entities absent from the others.
+    /// Supports structured bindings: `for (auto [e, pos, vel] : scene.Query<Position, Velocity>())`
+    template <typename... Ts> QueryView<Ts...> Query()
+    {
+        std::tuple<SparseSet<Ts> *...> pools = {GetPool<Ts>()...};
+
+        /* If any pool is missing, there are no matching entities. */
+        bool anyNull = false;
+        std::apply([&](auto *...ps) { anyNull = (... || (ps == nullptr)); }, pools);
+        if (anyNull)
+        {
+            return QueryView<Ts...>{pools, nullptr};
+        }
+
+        /* Drive iteration from the smallest pool to minimise skipped entities. */
+        const std::vector<Entity> *primary = nullptr;
+        std::size_t minSize = SIZE_MAX;
+        std::apply(
+            [&](auto *...ps)
+            {
+                auto check = [&](auto *p)
+                {
+                    if (p->Size() < minSize)
+                    {
+                        minSize = p->Size();
+                        primary = &p->Entities();
+                    }
+                };
+                (check(ps), ...);
+            },
+            pools);
+
+        return QueryView<Ts...>{pools, primary};
     }
 
   private:
     struct PoolStorage
     {
-        void* pool;
-        void (*remove)(void* pool, Entity entity);
-        void (*destroy)(void* pool);
+        void *pool;
+        void (*remove)(void *pool, Entity entity);
+        void (*destroy)(void *pool);
     };
 
-    template<typename T>
-    static void RemoveFn(void* pool, Entity entity)
+    template <typename T> static void RemoveFn(void *pool, Entity entity)
     {
-        static_cast<SparseSet<T>*>(pool)->Remove(entity);
+        static_cast<SparseSet<T> *>(pool)->Remove(entity);
     }
 
-    template<typename T>
-    static void DestroyFn(void* pool)
+    template <typename T> static void DestroyFn(void *pool) { delete static_cast<SparseSet<T> *>(pool); }
+
+    /// @brief Returns a pointer to the pool for T, or nullptr if it has never been created.
+    template <typename T> SparseSet<T> *GetPool()
     {
-        delete static_cast<SparseSet<T>*>(pool);
+        auto it = _pools.find(typeid(T));
+        if (it == _pools.end())
+            return nullptr;
+        return static_cast<SparseSet<T> *>(it->second.pool);
     }
 
-    template<typename T>
-    SparseSet<T>& GetOrCreatePool()
+    template <typename T> SparseSet<T> &GetOrCreatePool()
     {
         auto it = _pools.find(typeid(T));
         if (it != _pools.end())
-            return *static_cast<SparseSet<T>*>(it->second.pool);
+            return *static_cast<SparseSet<T> *>(it->second.pool);
 
-        auto* pool = new SparseSet<T>();
+        auto *pool = new SparseSet<T>();
         _registry.RegisterPool(pool);
-        _pools.emplace(typeid(T), PoolStorage{ pool, &RemoveFn<T>, &DestroyFn<T> });
+        _pools.emplace(typeid(T), PoolStorage{pool, &RemoveFn<T>, &DestroyFn<T>});
         return *pool;
     }
 
-    Registry                                         _registry;
+    Registry _registry;
     std::unordered_map<std::type_index, PoolStorage> _pools;
 };
 

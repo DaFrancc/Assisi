@@ -22,7 +22,7 @@ CheckOptions:
   - key: readability-identifier-naming.FunctionCase
     value: CamelCase
   - key: readability-identifier-naming.ParameterCase
-    value: camelCase
+    value: camelBack
 
 WarningsAsErrors: ''
 HeaderFilterRegex: 'modules/.*\.hpp'

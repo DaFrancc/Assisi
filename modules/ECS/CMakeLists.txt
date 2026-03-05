@@ -5,6 +5,7 @@ target_sources(Assisi-ECS
   PUBLIC
     "include/Assisi/ECS/ECS.hpp"
     "include/Assisi/ECS/Entity.hpp"
+    "include/Assisi/ECS/Query.hpp"
     "include/Assisi/ECS/Registry.hpp"
     "include/Assisi/ECS/Scene.hpp"
     "include/Assisi/ECS/SceneRegistry.hpp"

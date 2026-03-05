@@ -3,8 +3,8 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 
-#include <glad/glad.h>
 #include <GLFW/glfw3.h>
+#include <glad/glad.h>
 
 namespace Assisi::Render
 {
@@ -14,7 +14,7 @@ bool RenderSystem::InitializeOpenGL(const Assisi::Window::WindowContext &window)
     glfwMakeContextCurrent(window.NativeHandle());
 
     /* Load OpenGL function pointers using GLAD. */
-    if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
+    if (gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)) == 0)
     {
         Assisi::Core::Log::Error("RenderSystem: Failed to initialize GLAD.");
         return false;

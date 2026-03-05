@@ -15,7 +15,7 @@ namespace Assisi::ECS
 
 struct Entity
 {
-    uint32_t index      = 0;
+    uint32_t index = 0;
     uint32_t generation = 0;
 
     bool operator==(const Entity &) const = default;
@@ -26,6 +26,6 @@ struct Entity
 };
 
 /// @brief Sentinel value representing the absence of an entity.
-inline constexpr Entity NullEntity = { UINT32_MAX, UINT32_MAX };
+inline constexpr Entity NullEntity = {UINT32_MAX, UINT32_MAX};
 
 } // namespace Assisi::ECS

@@ -8,12 +8,28 @@
 /* Ensure the namespaces exist (forward declarations). */
 namespace Assisi
 {
-	namespace Core		{}
-	namespace Math		{}
-    namespace Render	{}
-	namespace Window	{}
-	namespace ECS		{}
-	namespace Runtime	{}
-	namespace Physics	{}
-	namespace Input		{}
+namespace Core
+{
+}
+namespace Math
+{
+}
+namespace Render
+{
+}
+namespace Window
+{
+}
+namespace ECS
+{
+}
+namespace Runtime
+{
+}
+namespace Physics
+{
+}
+namespace Input
+{
+}
 } // namespace Assisi

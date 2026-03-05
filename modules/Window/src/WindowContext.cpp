@@ -95,14 +95,14 @@ NativeWindowHandle *WindowContext::NativeHandle() const
     return _nativeWindowHandle;
 }
 
-void WindowContext::PollEvents() const
+void WindowContext::PollEvents()
 {
     glfwPollEvents();
 }
 
 bool WindowContext::ShouldClose() const
 {
-    return glfwWindowShouldClose(_nativeWindowHandle);
+    return glfwWindowShouldClose(_nativeWindowHandle) != 0;
 }
 
 void WindowContext::RequestClose() const
