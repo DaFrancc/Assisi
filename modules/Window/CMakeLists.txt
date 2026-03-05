@@ -2,6 +2,10 @@ add_library(Assisi-Window)
 Assisi_apply_defaults(Assisi-Window)
 
 target_sources(Assisi-Window
+  PUBLIC
+    "include/Assisi/Window/GlfwLibrary.hpp"
+    "include/Assisi/Window/Window.hpp"
+    "include/Assisi/Window/WindowContext.hpp"
   PRIVATE
     "src/GlfwLibrary.cpp"
     "src/Window.cpp"

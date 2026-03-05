@@ -3,8 +3,7 @@
 /// @file RenderSystem.hpp
 /// @brief Entry point for initializing the graphics backend.
 
-#include <iostream>
-
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/Backend/GraphicsBackend.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
@@ -26,18 +25,18 @@ class RenderSystem
     ///
     /// @param graphicsBackend  The backend to initialize.
     /// @param window           A valid, current WindowContext.
-    /// @return true on success, false on any error (logged to stdout).
+    /// @return true on success, false on any error.
     static bool Initialize(Backend::GraphicsBackend graphicsBackend, const Assisi::Window::WindowContext &window)
     {
         if (!window.IsValid())
         {
-            std::cout << "RenderSystem: Window is not valid." << std::endl;
+            Assisi::Core::Log::Error("RenderSystem: Window is not valid.");
             return false;
         }
 
         if (graphicsBackend == Backend::GraphicsBackend::None)
         {
-            std::cout << "RenderSystem: No graphics backend selected." << std::endl;
+            Assisi::Core::Log::Error("RenderSystem: No graphics backend selected.");
             return false;
         }
 
@@ -51,7 +50,7 @@ class RenderSystem
             return InitializeVulkan(window);
         }
 
-        std::cout << "RenderSystem: Unsupported graphics backend." << std::endl;
+        Assisi::Core::Log::Error("RenderSystem: Unsupported graphics backend.");
         return false;
     }
 
@@ -63,7 +62,7 @@ class RenderSystem
     static bool InitializeVulkan(const Assisi::Window::WindowContext &window)
     {
         /* Vulkan initialization will live in Assisi::Render::Vulkan later. */
-        std::cout << "RenderSystem: Vulkan backend is not implemented yet." << std::endl;
+        Assisi::Core::Log::Warn("RenderSystem: Vulkan backend is not implemented yet.");
         (void)window;
         return false;
     }

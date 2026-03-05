@@ -1,9 +1,9 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Window/GlfwLibrary.hpp>
 
-#include <iostream>
 #include <memory>
 
 namespace Assisi::Window
@@ -13,7 +13,7 @@ GlfwLibrary::GlfwLibrary()
     /* Initialize GLFW. */
     if (glfwInit() != GLFW_TRUE)
     {
-        std::cout << "Failed to initialize GLFW." << std::endl;
+        Assisi::Core::Log::Error("Failed to initialize GLFW.");
         _isValid = false;
         return;
     }

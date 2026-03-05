@@ -1,9 +1,8 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Window/WindowContext.hpp>
-
-#include <iostream>
 
 namespace Assisi::Window
 {
@@ -27,7 +26,7 @@ WindowContext::WindowContext(const WindowConfiguration &configuration, GLFWframe
 
     if (_nativeWindowHandle == nullptr)
     {
-        std::cout << "Failed to create GLFW window." << std::endl;
+        Assisi::Core::Log::Error("Failed to create GLFW window.");
         return;
     }
 

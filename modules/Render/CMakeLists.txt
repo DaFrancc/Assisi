@@ -2,8 +2,18 @@ add_library(Assisi-Render)
 Assisi_apply_defaults(Assisi-Render)
 
 target_sources(Assisi-Render
+  PUBLIC
+    "include/Assisi/Render/Backend/GraphicsBackend.hpp"
+    "include/Assisi/Render/OpenGL/DefaultTextures.hpp"
+    "include/Assisi/Render/OpenGL/MeshBuffer.hpp"
+    "include/Assisi/Render/Buffer.hpp"
+    "include/Assisi/Render/DefaultMeshes.hpp"
+    "include/Assisi/Render/DefaultResources.hpp"
+    "include/Assisi/Render/MeshData.hpp"
+    "include/Assisi/Render/RenderSystem.hpp"
+    "include/Assisi/Render/Shader.hpp"
   PRIVATE
-    "src/shader.cpp"
+    "src/Shader.cpp"
     "src/Buffer.cpp"
     "src/DefaultResources.cpp"
     "src/RenderSystemOpenGL.cpp"

@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef DEFAULTMESHES_HPP
-#define DEFAULTMESHES_HPP
-
 /// @file DefaultMeshes.hpp
 /// @brief Factory functions for built-in primitive meshes.
 
@@ -64,5 +61,3 @@ inline MeshData CreateUnitCubeMesh()
     return mesh;
 }
 } /* namespace Assisi::Render */
-
-#endif /* DEFAULTMESHES_HPP */

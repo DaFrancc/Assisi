@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-ECS)
 
 target_sources(Assisi-ECS
   PUBLIC
+    "include/Assisi/ECS/ECS.hpp"
     "include/Assisi/ECS/Entity.hpp"
     "include/Assisi/ECS/Registry.hpp"
     "include/Assisi/ECS/Scene.hpp"

@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef GRAPHICSBACKEND_HPP
-#define GRAPHICSBACKEND_HPP
-
 /// @file GraphicsBackend.hpp
 /// @brief Enumeration of supported graphics backends.
 
@@ -16,5 +13,3 @@ enum class GraphicsBackend
     Vulkan  ///< Vulkan backend (not yet implemented).
 };
 } // namespace Assisi::Render::Backend
-
-#endif /* GRAPHICSBACKEND_HPP */

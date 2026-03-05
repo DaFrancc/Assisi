@@ -1,9 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
-#ifndef ASSISI_RENDER_SHADER_HPP
-#define ASSISI_RENDER_SHADER_HPP
-
 /// @file Shader.hpp
 /// @brief GLSL shader program wrapper with asset-system integration.
 ///
@@ -14,10 +11,10 @@
 #include <glad/glad.h>
 
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 #include <expected>
-#include <iostream>
 #include <string>
 #include <string_view>
 
@@ -46,7 +43,7 @@ class Shader
      * @brief (Re)loads, compiles, and links the shader from virtual asset paths.
      *
      * Any previously loaded program is destroyed first.  GLSL compilation
-     * and link errors are logged to stdout.
+     * and link errors are logged via the Assisi logger.
      *
      * @return Success if the program was linked, or an AssetError if reading
      *         the source files failed.  GLSL failures are logged but do not
@@ -111,6 +108,9 @@ class Shader
 
     /// @brief Returns the raw OpenGL program ID (0 if not loaded).
     unsigned int ProgramIdentifier() const { return _programIdentifier; }
+
+    /// @brief Returns true if the shader program is loaded and linked successfully.
+    bool IsValid() const { return _programIdentifier != 0u; }
 
     /// @name Uniform setters
     /// Locate a uniform by name and upload a value.  The program must be bound
@@ -227,8 +227,7 @@ class Shader
         char buffer[1024];
         glGetShaderInfoLog(shaderIdentifier, 1024, nullptr, buffer);
 
-        std::cout << "Shader: Compilation failed for stage: " << shaderStageName << std::endl;
-        std::cout << buffer << std::endl;
+        Assisi::Core::Log::Error("Shader: Compilation failed for stage: {}\n{}", shaderStageName, buffer);
 
         return false;
     }
@@ -247,8 +246,7 @@ class Shader
         char buffer[1024];
         glGetProgramInfoLog(programIdentifier, 1024, nullptr, buffer);
 
-        std::cout << "Shader: Program linking failed." << std::endl;
-        std::cout << buffer << std::endl;
+        Assisi::Core::Log::Error("Shader: Program linking failed.\n{}", buffer);
 
         return false;
     }
@@ -268,5 +266,3 @@ class Shader
     unsigned int _programIdentifier = 0u;
 };
 } // namespace Assisi::Render
-
-#endif /* ASSISI_RENDER_SHADER_HPP */

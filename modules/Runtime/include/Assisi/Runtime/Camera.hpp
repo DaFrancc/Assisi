@@ -1,14 +1,11 @@
 #pragma once
 
-#ifndef CAMERA_HPP
-#define CAMERA_HPP
-
 /// @file Camera.hpp
 /// @brief A look-at camera that produces a view matrix from world-space state.
 
 #include <Assisi/Math/GLM.hpp>
 
-namespace Assisi::Game
+namespace Assisi::Runtime
 {
 /// @brief Represents a view camera defined by a position and a look-at target.
 ///
@@ -61,6 +58,4 @@ class Camera
     /// @brief Reference direction used to resolve camera roll.
     glm::vec3 _worldUpDirection{0.0f, 1.0f, 0.0f};
 };
-} // namespace Assisi::Game
-
-#endif /* CAMERA_HPP */
+} // namespace Assisi::Runtime
