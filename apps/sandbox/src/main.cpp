@@ -17,8 +17,13 @@
 #include <cassert>
 #include <cstdlib>
 
-/// Example component — must be trivially copyable (SparseSet requirement).
+/// Example components — must be trivially copyable (SparseSet requirement).
 struct Position
+{
+    float x, y, z;
+};
+
+struct Velocity
 {
     float x, y, z;
 };
@@ -98,7 +103,43 @@ int main()
     assert(!level.IsAlive(e));
     assert(!level.Has<Position>(e));
 
-    Assisi::Core::Log::Info("ECS: all assertions passed.");
+    Assisi::Core::Log::Info("ECS: basic assertions passed.");
+
+    // -------------------------------------------------------------------------
+    // ECS — Query
+    // -------------------------------------------------------------------------
+
+    // Spawn a few entities with different component combinations.
+    Assisi::ECS::Scene& query_scene = *scenes.Create("QueryDemo").value();
+
+    Assisi::ECS::Entity a = query_scene.Create();
+    Assisi::ECS::Entity b = query_scene.Create();
+    Assisi::ECS::Entity c = query_scene.Create();
+
+    query_scene.Add<Position>(a, { 1.f, 0.f, 0.f });
+    query_scene.Add<Velocity>(a, { 0.1f, 0.f, 0.f });
+
+    query_scene.Add<Position>(b, { 2.f, 0.f, 0.f });
+    query_scene.Add<Velocity>(b, { 0.2f, 0.f, 0.f });
+
+    // Entity c has Position but NO Velocity — should be skipped by the query.
+    query_scene.Add<Position>(c, { 3.f, 0.f, 0.f });
+
+    // Query<Position, Velocity> yields only entities a and b.
+    // Structured bindings give direct references into the component arrays.
+    int count = 0;
+    for (auto [entity, pos, vel] : query_scene.Query<Position, Velocity>())
+    {
+        pos.x += vel.x;
+        ++count;
+    }
+
+    assert(count == 2);
+    assert(query_scene.Get<Position>(a)->x == 1.1f);
+    assert(query_scene.Get<Position>(b)->x == 2.2f);
+    assert(query_scene.Get<Position>(c)->x == 3.f); // untouched
+
+    Assisi::Core::Log::Info("ECS: query iterated {} entities (expected 2).", count);
 
     // -------------------------------------------------------------------------
     // Window
