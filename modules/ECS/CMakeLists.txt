@@ -2,8 +2,16 @@ add_library(Assisi-ECS)
 Assisi_apply_defaults(Assisi-ECS)
 
 target_sources(Assisi-ECS
+  PUBLIC
+    "include/Assisi/ECS/Entity.hpp"
+    "include/Assisi/ECS/Registry.hpp"
+    "include/Assisi/ECS/Scene.hpp"
+    "include/Assisi/ECS/SceneRegistry.hpp"
+    "include/Assisi/ECS/SparseSet.hpp"
   PRIVATE
     "src/ECS.cpp"
+    "src/Registry.cpp"
+    "src/SceneRegistry.cpp"
 )
 
 target_include_directories(Assisi-ECS
