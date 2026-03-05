@@ -10,9 +10,11 @@ target_sources(Assisi-Core
   PUBLIC
     "include/Assisi/Core/Core.hpp"
     "include/Assisi/Core/AssetSystem.hpp"
+    "include/Assisi/Core/Errors.hpp"
     "include/Assisi/Core/Logger.hpp"
     "include/Assisi/Core/Sinks.hpp"
     "include/Assisi/Prelude.hpp"
+    "include/Assisi/ShortNames.hpp"
 )
 
 target_include_directories(Assisi-Core
