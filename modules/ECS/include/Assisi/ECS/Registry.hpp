@@ -19,8 +19,8 @@ namespace Assisi::ECS
 
 struct PoolEntry
 {
-    void*  pool;
-    void (*remove)(void* pool, Entity entity);
+    void *pool;
+    void (*remove)(void *pool, Entity entity);
 };
 
 struct Registry
@@ -43,25 +43,20 @@ struct Registry
 
     /// @brief Registers a component pool so Destroy() removes the entity from it.
     /// The pool must outlive the registry (or be unregistered before destruction).
-    template<typename T>
-    void RegisterPool(SparseSet<T>* pool)
-    {
-        _pools.push_back({ pool, &RemoveFn<T> });
-    }
+    template <typename T> void RegisterPool(SparseSet<T> *pool) { _pools.push_back({pool, &RemoveFn<T>}); }
 
     /// @brief Unregisters a previously registered pool.
-    void UnregisterPool(void* pool);
+    void UnregisterPool(void *pool);
 
   private:
-    template<typename T>
-    static void RemoveFn(void* pool, Entity entity)
+    template <typename T> static void RemoveFn(void *pool, Entity entity)
     {
-        static_cast<SparseSet<T>*>(pool)->Remove(entity);
+        static_cast<SparseSet<T> *>(pool)->Remove(entity);
     }
 
-    std::vector<uint32_t>  _generations; ///< One generation counter per slot.
-    std::vector<uint32_t>  _freeSlots;   ///< Slots available for reuse.
-    std::vector<PoolEntry> _pools;       ///< Registered component pools.
+    std::vector<uint32_t> _generations; ///< One generation counter per slot.
+    std::vector<uint32_t> _freeSlots;   ///< Slots available for reuse.
+    std::vector<PoolEntry> _pools;      ///< Registered component pools.
 
     std::size_t _aliveCount = 0;
 };

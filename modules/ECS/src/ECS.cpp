@@ -1,5 +1,5 @@
-#include <Assisi/ECS/ECS.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/ECS.hpp>
 
 namespace Assisi::ECS
 {

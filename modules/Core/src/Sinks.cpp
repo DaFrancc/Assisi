@@ -20,12 +20,18 @@ static std::string_view LevelColor(LogLevel level)
 {
     switch (level)
     {
-        case LogLevel::Trace: return "\033[35m";   // magenta
-        case LogLevel::Debug: return "\033[36m";   // cyan
-        case LogLevel::Info:  return "\033[97m";   // bright white
-        case LogLevel::Warn:  return "\033[33m";   // yellow
-        case LogLevel::Error: return "\033[31m";   // red
-        case LogLevel::Fatal: return "\033[1;31m"; // bold red
+    case LogLevel::Trace:
+        return "\033[35m"; // magenta
+    case LogLevel::Debug:
+        return "\033[36m"; // cyan
+    case LogLevel::Info:
+        return "\033[97m"; // bright white
+    case LogLevel::Warn:
+        return "\033[33m"; // yellow
+    case LogLevel::Error:
+        return "\033[31m"; // red
+    case LogLevel::Fatal:
+        return "\033[1;31m"; // bold red
     }
     return "";
 }
@@ -37,12 +43,14 @@ static std::string_view LevelColor(LogLevel level)
 ConsoleSink::ConsoleSink()
 {
 #ifdef _WIN32
-    auto enableAnsi = [](DWORD handle)
+    auto enableAnsi = [](DWORD stdHandle)
     {
-        HANDLE h = GetStdHandle(handle);
+        HANDLE handle = GetStdHandle(stdHandle);
         DWORD mode = 0;
-        if (GetConsoleMode(h, &mode))
-            SetConsoleMode(h, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        if (GetConsoleMode(handle, &mode))
+        {
+            SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+        }
     };
     enableAnsi(STD_OUTPUT_HANDLE);
     enableAnsi(STD_ERROR_HANDLE);
@@ -60,15 +68,16 @@ void ConsoleSink::Write(LogLevel level, std::string_view message)
 // FileSink
 // -------------------------------------------------------------------------
 
-FileSink::FileSink(const std::filesystem::path& path)
-    : _file(path, std::ios::app)
+FileSink::FileSink(const std::filesystem::path &path) : _file(path, std::ios::app)
 {
 }
 
 void FileSink::Write(LogLevel /*level*/, std::string_view message)
 {
     if (_file.is_open())
+    {
         _file << message << '\n';
+    }
 }
 
 } // namespace Assisi::Core

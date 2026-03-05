@@ -71,7 +71,7 @@ struct Logger
 };
 
 /// @brief Returns the global logger instance.
-Logger& GetLogger();
+Logger &GetLogger();
 
 // -------------------------------------------------------------------------
 // LocFmtStr — source_location + format string helper
@@ -84,20 +84,12 @@ Logger& GetLogger();
 /// site — no macros required.
 struct LocFmtStr
 {
-    std::string_view     fmt;
+    std::string_view fmt;
     std::source_location loc;
 
-    LocFmtStr(const char* s,
-              std::source_location loc = std::source_location::current())
-        : fmt(s), loc(loc)
-    {
-    }
+    LocFmtStr(const char *s, std::source_location loc = std::source_location::current()) : fmt(s), loc(loc) {}
 
-    LocFmtStr(std::string_view s,
-              std::source_location loc = std::source_location::current())
-        : fmt(s), loc(loc)
-    {
-    }
+    LocFmtStr(std::string_view s, std::source_location loc = std::source_location::current()) : fmt(s), loc(loc) {}
 };
 
 // -------------------------------------------------------------------------
@@ -107,26 +99,22 @@ struct LocFmtStr
 namespace Log
 {
 
-template<typename... Args>
-void Trace(std::format_string<Args...> fmt, Args&&... args)
+template <typename... Args> void Trace(std::format_string<Args...> fmt, Args &&...args);
 {
     GetLogger().Log(LogLevel::Trace, std::format(fmt, std::forward<Args>(args)...));
 }
 
-template<typename... Args>
-void Debug(std::format_string<Args...> fmt, Args&&... args)
+template <typename... Args> void Debug(std::format_string<Args...> fmt, Args &&...args)
 {
     GetLogger().Log(LogLevel::Debug, std::format(fmt, std::forward<Args>(args)...));
 }
 
-template<typename... Args>
-void Info(std::format_string<Args...> fmt, Args&&... args)
+template <typename... Args> void Info(std::format_string<Args...> fmt, Args &&...args)
 {
     GetLogger().Log(LogLevel::Info, std::format(fmt, std::forward<Args>(args)...));
 }
 
-template<typename... Args>
-void Warn(std::format_string<Args...> fmt, Args&&... args)
+template <typename... Args> void Warn(std::format_string<Args...> fmt, Args &&...args)
 {
     GetLogger().Log(LogLevel::Warn, std::format(fmt, std::forward<Args>(args)...));
 }
@@ -134,21 +122,17 @@ void Warn(std::format_string<Args...> fmt, Args&&... args)
 /// @brief Logs an error with automatic file/line capture.
 ///
 /// Example: Log::Error("Entity {} not found", id);
-template<typename... Args>
-void Error(LocFmtStr fmtLoc, Args&&... args)
+template <typename... Args> void Error(LocFmtStr fmtLoc, Args &&...args)
 {
-    GetLogger().Log(LogLevel::Error, fmtLoc.loc,
-        std::vformat(fmtLoc.fmt, std::make_format_args(args...)));
+    GetLogger().Log(LogLevel::Error, fmtLoc.loc, std::vformat(fmtLoc.fmt, std::make_format_args(args...)));
 }
 
 /// @brief Logs a fatal error with automatic file/line capture.
 ///
 /// Example: Log::Fatal("Unrecoverable state: {}", reason);
-template<typename... Args>
-void Fatal(LocFmtStr fmtLoc, Args&&... args)
+template <typename... Args> void Fatal(LocFmtStr fmtLoc, Args &&...args)
 {
-    GetLogger().Log(LogLevel::Fatal, fmtLoc.loc,
-        std::vformat(fmtLoc.fmt, std::make_format_args(args...)));
+    GetLogger().Log(LogLevel::Fatal, fmtLoc.loc, std::vformat(fmtLoc.fmt, std::make_format_args(args...)));
 }
 
 } // namespace Log
