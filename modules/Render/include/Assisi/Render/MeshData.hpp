@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef MESHDATA_HPP
-#define MESHDATA_HPP
-
 /// @file MeshData.hpp
 /// @brief CPU-side mesh representation used as input to MeshBuffer::Upload().
 
@@ -27,5 +24,3 @@ struct MeshData
     std::vector<unsigned int> Indices; ///< Triangle list; every 3 indices form one triangle.
 };
 } /* namespace Assisi::Render */
-
-#endif /* MESHDATA_HPP */

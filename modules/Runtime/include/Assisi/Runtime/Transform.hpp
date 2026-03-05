@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef TRANSFORM_HPP
-#define TRANSFORM_HPP
-
 /// @file Transform.hpp
 /// @brief World-space transform (position, rotation, scale) with quaternion storage.
 ///
@@ -110,5 +107,3 @@ class Transform
     glm::vec3 _worldScale{1.0f, 1.0f, 1.0f};
 };
 } /* namespace Assisi::Runtime */
-
-#endif /* TRANSFORM_HPP */

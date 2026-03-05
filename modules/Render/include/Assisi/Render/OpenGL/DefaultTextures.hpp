@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef DEFAULTTEXTURES_HPP
-#define DEFAULTTEXTURES_HPP
-
 /// @file DefaultTextures.hpp
 /// @brief Lazily-created built-in OpenGL textures.
 
@@ -49,5 +46,3 @@ class DefaultTextures
     }
 };
 } /* namespace Assisi::Render::OpenGL */
-
-#endif /* DEFAULTTEXTURES_HPP */

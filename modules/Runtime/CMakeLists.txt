@@ -2,6 +2,9 @@ add_library(Assisi-Runtime)
 Assisi_apply_defaults(Assisi-Runtime)
 
 target_sources(Assisi-Runtime
+  PUBLIC
+    "include/Assisi/Runtime/Camera.hpp"
+    "include/Assisi/Runtime/Transform.hpp"
   PRIVATE
     "src/Camera.cpp"
 )

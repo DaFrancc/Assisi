@@ -1,10 +1,10 @@
 #include <Assisi/ECS/ECS.hpp>
-#include <iostream>
+#include <Assisi/Core/Logger.hpp>
 
 namespace Assisi::ECS
 {
 void Hello()
 {
-    std::cout << "Hello from Assisi::ECS\n";
+    Assisi::Core::Log::Info("Hello from Assisi::ECS");
 }
 } // namespace Assisi::ECS

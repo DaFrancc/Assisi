@@ -1,8 +1,5 @@
 #pragma once
 
-#ifndef MESHBUFFER_HPP
-#define MESHBUFFER_HPP
-
 /// @file MeshBuffer.hpp
 /// @brief GPU-side mesh storage backed by OpenGL buffer objects.
 ///
@@ -145,5 +142,3 @@ class MeshBuffer
     unsigned int _indexCount = 0; ///< Cached index count for draw calls.
 };
 } /* namespace Assisi::Render::OpenGL */
-
-#endif /* MESHBUFFER_HPP */
