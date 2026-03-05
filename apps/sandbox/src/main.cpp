@@ -2,10 +2,13 @@
 /// @brief Assisi Sandbox — demonstrates currently implemented systems.
 ///
 /// Systems covered:
+///   - Logger: ConsoleSink, FileSink, free functions with std::format style
 ///   - ECS: SceneRegistry, Scene, Entity creation/destruction, component Add/Get/Has/Remove
 ///   - Window: WindowContext creation and event loop
 ///   - Render: RenderSystem initialization (OpenGL backend)
 
+#include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Sinks.hpp>
 #include <Assisi/ECS/SceneRegistry.hpp>
 #include <Assisi/Render/Backend/GraphicsBackend.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
@@ -13,7 +16,6 @@
 
 #include <cassert>
 #include <cstdlib>
-#include <iostream>
 
 /// Example component — must be trivially copyable (SparseSet requirement).
 struct Position
@@ -23,6 +25,26 @@ struct Position
 
 int main()
 {
+    // -------------------------------------------------------------------------
+    // Logger
+    // -------------------------------------------------------------------------
+
+    // Register sinks on the global logger before any logging takes place.
+    // Multiple sinks can be active simultaneously.
+    Assisi::Core::GetLogger().AddSink(std::make_shared<Assisi::Core::ConsoleSink>());
+    Assisi::Core::GetLogger().AddSink(std::make_shared<Assisi::Core::FileSink>("assisi.log"));
+
+    // Trace/Debug/Info/Warn — compile-time format checking, no location capture.
+    Assisi::Core::Log::Trace("Trace: verbose internal detail, {} items", 3);
+    Assisi::Core::Log::Debug("Debug: useful during development");
+    Assisi::Core::Log::Info("Info:  general status messages");
+    Assisi::Core::Log::Warn("Warn:  something unexpected but recoverable");
+
+    // Error/Fatal — file and line are captured automatically at the call site.
+    // No need to pass __FILE__ or __LINE__ manually.
+    Assisi::Core::Log::Error("Error: something failed");
+    Assisi::Core::Log::Fatal("Fatal: unrecoverable, shutting down");
+
     // -------------------------------------------------------------------------
     // ECS
     // -------------------------------------------------------------------------
@@ -76,7 +98,7 @@ int main()
     assert(!level.IsAlive(e));
     assert(!level.Has<Position>(e));
 
-    std::cout << "ECS: all assertions passed.\n";
+    Assisi::Core::Log::Info("ECS: all assertions passed.");
 
     // -------------------------------------------------------------------------
     // Window
@@ -95,7 +117,7 @@ int main()
 
     if (!window.IsValid())
     {
-        std::cerr << "Failed to create window.\n";
+        Assisi::Core::Log::Error("Failed to create window.");
         return EXIT_FAILURE;
     }
 
@@ -108,9 +130,11 @@ int main()
     if (!Assisi::Render::RenderSystem::Initialize(
             Assisi::Render::Backend::GraphicsBackend::OpenGL, window))
     {
-        std::cerr << "Failed to initialize render system.\n";
+        Assisi::Core::Log::Error("Failed to initialize render system.");
         return EXIT_FAILURE;
     }
+
+    Assisi::Core::Log::Info("Render system initialized.");
 
     // -------------------------------------------------------------------------
     // Main loop

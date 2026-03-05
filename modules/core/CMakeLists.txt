@@ -5,9 +5,13 @@ target_sources(Assisi-Core
   PRIVATE
     "src/Core.cpp"
     "src/AssetSystem.cpp"
+    "src/Logger.cpp"
+    "src/Sinks.cpp"
   PUBLIC
     "include/Assisi/Core/Core.hpp"
     "include/Assisi/Core/AssetSystem.hpp"
+    "include/Assisi/Core/Logger.hpp"
+    "include/Assisi/Core/Sinks.hpp"
     "include/Assisi/Prelude.hpp"
 )
 
