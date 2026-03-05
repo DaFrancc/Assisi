@@ -3,8 +3,8 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 
-#include <GLFW/glfw3.h>
 #include <glad/glad.h>
+#include <GLFW/glfw3.h>
 
 namespace Assisi::Render
 {
