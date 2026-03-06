@@ -3,12 +3,10 @@ Assisi_apply_defaults(Assisi-Core)
 
 target_sources(Assisi-Core
   PRIVATE
-    "src/Core.cpp"
     "src/AssetSystem.cpp"
     "src/Logger.cpp"
     "src/Sinks.cpp"
   PUBLIC
-    "include/Assisi/Core/Core.hpp"
     "include/Assisi/Core/AssetSystem.hpp"
     "include/Assisi/Core/Errors.hpp"
     "include/Assisi/Core/Logger.hpp"

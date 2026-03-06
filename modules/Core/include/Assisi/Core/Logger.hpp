@@ -14,6 +14,7 @@
 #include <memory>
 #include <source_location>
 #include <string_view>
+#include <type_traits>
 #include <vector>
 
 namespace Assisi::Core
@@ -77,19 +78,22 @@ Logger &GetLogger();
 // LocFmtStr — source_location + format string helper
 // -------------------------------------------------------------------------
 
-/// @brief Bundles a format string with the call-site source location.
+/// @brief Bundles a compile-time format string with the call-site source location.
 ///
 /// When Error() or Fatal() are called with a string literal, this type is
 /// implicitly constructed, capturing source_location::current() at the call
 /// site — no macros required.
+template <typename... Args>
 struct LocFmtStr
 {
-    std::string_view fmt;
+    std::format_string<Args...> fmt;
     std::source_location loc;
 
-    LocFmtStr(const char *s, std::source_location loc = std::source_location::current()) : fmt(s), loc(loc) {}
-
-    LocFmtStr(std::string_view s, std::source_location loc = std::source_location::current()) : fmt(s), loc(loc) {}
+    template <typename T>
+    consteval LocFmtStr(T &&f, std::source_location sloc = std::source_location::current())
+        : fmt(std::forward<T>(f)), loc(sloc)
+    {
+    }
 };
 
 // -------------------------------------------------------------------------
@@ -122,17 +126,17 @@ template <typename... Args> void Warn(std::format_string<Args...> fmt, Args &&..
 /// @brief Logs an error with automatic file/line capture.
 ///
 /// Example: Log::Error("Entity {} not found", id);
-template <typename... Args> void Error(LocFmtStr fmtLoc, Args &&...args)
+template <typename... Args> void Error(LocFmtStr<std::type_identity_t<Args>...> fmtLoc, Args &&...args)
 {
-    GetLogger().Log(LogLevel::Error, fmtLoc.loc, std::vformat(fmtLoc.fmt, std::make_format_args(args...)));
+    GetLogger().Log(LogLevel::Error, fmtLoc.loc, std::format(fmtLoc.fmt, std::forward<Args>(args)...));
 }
 
 /// @brief Logs a fatal error with automatic file/line capture.
 ///
 /// Example: Log::Fatal("Unrecoverable state: {}", reason);
-template <typename... Args> void Fatal(LocFmtStr fmtLoc, Args &&...args)
+template <typename... Args> void Fatal(LocFmtStr<std::type_identity_t<Args>...> fmtLoc, Args &&...args)
 {
-    GetLogger().Log(LogLevel::Fatal, fmtLoc.loc, std::vformat(fmtLoc.fmt, std::make_format_args(args...)));
+    GetLogger().Log(LogLevel::Fatal, fmtLoc.loc, std::format(fmtLoc.fmt, std::forward<Args>(args)...));
 }
 
 } // namespace Log

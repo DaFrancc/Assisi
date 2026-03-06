@@ -226,7 +226,7 @@ add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
 add_subdirectory(modules/App)
 
-add_subdirectory(apps/Sandbox)
+add_subdirectory(apps/sandbox)
 
 
 # Notes for module CMakeLists:
