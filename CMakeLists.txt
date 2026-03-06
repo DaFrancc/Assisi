@@ -153,6 +153,7 @@ find_package(glad CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
 find_package(imgui CONFIG REQUIRED)
+find_package(nlohmann_json CONFIG REQUIRED)
 
 # Derive the imgui package root (needed to compile backend source files from res/bindings/).
 if(DEFINED imgui_PACKAGE_FOLDER_DEBUG)
@@ -223,6 +224,7 @@ add_subdirectory(modules/ECS)
 add_subdirectory(modules/Runtime)
 add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
+add_subdirectory(modules/App)
 
 add_subdirectory(apps/Sandbox)
 

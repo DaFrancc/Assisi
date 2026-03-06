@@ -10,12 +10,6 @@ find_package(OpenGL REQUIRED)
 
 target_link_libraries(Assisi-Sandbox
   PRIVATE
-    Assisi::Render
-    Assisi::Debug
-    Assisi::ECS
-    Assisi::Runtime
-    Assisi::Physics
-    Assisi::Window
-    Assisi::Deps
+    Assisi::App
     OpenGL::GL
 )
