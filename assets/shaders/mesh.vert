@@ -9,9 +9,10 @@ uniform mat4 uModel;
 uniform mat4 uView;
 uniform mat4 uProjection;
 
-out vec3 vFragPos;
-out vec2 vTexCoords;
-out mat3 vTBN;
+out vec3  vFragPos;
+out vec2  vTexCoords;
+out mat3  vTBN;
+out float vViewZ; // view-space Z, used for cluster index computation
 
 void main()
 {
@@ -25,5 +26,8 @@ void main()
     vec3 B = cross(N, T) * aTangent.w;
     vTBN   = mat3(T, B, N);
 
-    gl_Position = uProjection * uView * vec4(vFragPos, 1.0);
+    vec4 viewPos = uView * vec4(vFragPos, 1.0);
+    vViewZ       = viewPos.z; // negative for objects in front of camera
+
+    gl_Position = uProjection * viewPos;
 }

@@ -13,8 +13,11 @@ target_sources(Assisi-Render
     "include/Assisi/Render/MeshData.hpp"
     "include/Assisi/Render/RenderSystem.hpp"
     "include/Assisi/Render/Shader.hpp"
+    "include/Assisi/Render/ComputeShader.hpp"
+    "include/Assisi/Render/ClusterGrid.hpp"
   PRIVATE
     "src/Shader.cpp"
+    "src/ClusterGrid.cpp"
     "src/Buffer.cpp"
     "src/DefaultResources.cpp"
     "src/RenderSystemOpenGL.cpp"

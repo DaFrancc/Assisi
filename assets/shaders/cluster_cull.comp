@@ -1,0 +1,117 @@
+#version 460 core
+
+/// cluster_cull.comp
+/// Tests every light against every cluster AABB (sphere-vs-AABB test) and
+/// writes per-cluster light index lists into a shared flat buffer.
+/// Dispatch: (kNumX, kNumY, kNumZ) workgroups with local_size (1,1,1).
+/// Run every frame, after uploading light data to the light SSBOs.
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+// Maximum lights tracked per cluster in local scratch arrays.
+// Lights beyond this cap are silently ignored for that cluster.
+#define MAX_LIGHTS_PER_CLUSTER 64
+
+// Flat buffer offset where spot light indices start.
+// Must match ClusterGrid::kMaxLightIndices.
+#define MAX_LIGHT_INDICES 65536
+
+// ---- Structs (must match ClusterGrid GPU structs) ----
+
+struct AABB        { vec4 minPoint; vec4 maxPoint; };
+
+struct PointLight  { vec4 positionRadius; vec4 colorIntensity; };
+
+struct SpotLight
+{
+    vec4  positionRadius;
+    vec4  directionInner;
+    vec4  colorIntensity;
+    float outerCutoff;
+    float _p0, _p1, _p2;
+};
+
+struct LightGrid
+{
+    uint pointOffset;
+    uint pointCount;
+    uint spotOffset;
+    uint spotCount;
+};
+
+// ---- SSBOs ----
+
+layout(std430, binding = 0) readonly  buffer ClusterAABBs   { AABB       clusterAABBs[];   };
+layout(std430, binding = 1) readonly  buffer PointLights    { PointLight  pointLights[];    };
+layout(std430, binding = 2) readonly  buffer SpotLights     { SpotLight   spotLights[];     };
+layout(std430, binding = 4) writeonly buffer LightIndexList { uint        lightIndexList[];  };
+layout(std430, binding = 5) writeonly buffer LightGrids     { LightGrid   lightGrids[];     };
+layout(std430, binding = 6) coherent  buffer GlobalCount    { uint globalPointCount; uint globalSpotCount; };
+
+uniform uvec3 uGridDim;
+uniform uint  uPointLightCount;
+uniform uint  uSpotLightCount;
+uniform mat4  uView; // transforms world-space light positions to view space
+
+// ---- Helpers ----
+
+bool sphereVsAABB(vec3 center, float radius, vec3 aabbMin, vec3 aabbMax)
+{
+    vec3 closest = clamp(center, aabbMin, aabbMax);
+    vec3 d       = closest - center;
+    return dot(d, d) <= radius * radius;
+}
+
+void main()
+{
+    uvec3 gid = gl_GlobalInvocationID;
+    if (any(greaterThanEqual(gid, uGridDim)))
+        return;
+
+    uint clusterIdx = gid.x
+                    + gid.y * uGridDim.x
+                    + gid.z * uGridDim.x * uGridDim.y;
+
+    vec3 cMin = clusterAABBs[clusterIdx].minPoint.xyz;
+    vec3 cMax = clusterAABBs[clusterIdx].maxPoint.xyz;
+
+    // ---- Point lights ----
+    uint localPointIdx[MAX_LIGHTS_PER_CLUSTER];
+    uint pointCount = 0u;
+    for (uint i = 0u; i < uPointLightCount && pointCount < MAX_LIGHTS_PER_CLUSTER; i++)
+    {
+        vec3  viewPos = vec3(uView * vec4(pointLights[i].positionRadius.xyz, 1.0));
+        float radius  = pointLights[i].positionRadius.w;
+        if (sphereVsAABB(viewPos, radius, cMin, cMax))
+            localPointIdx[pointCount++] = i;
+    }
+
+    // ---- Spot lights (culled by bounding sphere for simplicity) ----
+    uint localSpotIdx[MAX_LIGHTS_PER_CLUSTER];
+    uint spotCount = 0u;
+    for (uint i = 0u; i < uSpotLightCount && spotCount < MAX_LIGHTS_PER_CLUSTER; i++)
+    {
+        vec3  viewPos = vec3(uView * vec4(spotLights[i].positionRadius.xyz, 1.0));
+        float radius  = spotLights[i].positionRadius.w;
+        if (sphereVsAABB(viewPos, radius, cMin, cMax))
+            localSpotIdx[spotCount++] = i;
+    }
+
+    // ---- Atomically reserve slots in the global index list ----
+    uint pointOffset = 0u;
+    uint spotOffset  = 0u;
+    if (pointCount > 0u) pointOffset = atomicAdd(globalPointCount, pointCount);
+    if (spotCount  > 0u) spotOffset  = atomicAdd(globalSpotCount,  spotCount);
+
+    // Point indices occupy [0, MAX_LIGHT_INDICES); spot indices start at MAX_LIGHT_INDICES.
+    for (uint i = 0u; i < pointCount; i++)
+        lightIndexList[pointOffset + i] = localPointIdx[i];
+    for (uint i = 0u; i < spotCount; i++)
+        lightIndexList[MAX_LIGHT_INDICES + spotOffset + i] = localSpotIdx[i];
+
+    // ---- Write light grid entry for this cluster ----
+    lightGrids[clusterIdx].pointOffset = pointOffset;
+    lightGrids[clusterIdx].pointCount  = pointCount;
+    lightGrids[clusterIdx].spotOffset  = spotOffset;
+    lightGrids[clusterIdx].spotCount   = spotCount;
+}
