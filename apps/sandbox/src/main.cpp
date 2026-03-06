@@ -32,6 +32,7 @@ class SandboxApp : public Assisi::App::Application
     void OnUpdate(float dt);
     void OnRender();
     void OnImGui();
+    void OnResize(int w, int h) override;
 
   private:
     Assisi::ECS::SceneRegistry    _scenes;
@@ -62,12 +63,12 @@ class SandboxApp : public Assisi::App::Application
 void SandboxApp::OnStart()
 {
     // Logger examples
-    Assisi::Core::Log::Trace("Trace: verbose internal detail, {} items", 3);
-    Assisi::Core::Log::Debug("Debug: useful during development");
-    Assisi::Core::Log::Info("Info:  general status messages");
-    Assisi::Core::Log::Warn("Warn:  something unexpected but recoverable");
-    Assisi::Core::Log::Error("Error: something failed");
-    Assisi::Core::Log::Fatal("Fatal: unrecoverable, shutting down");
+    // Assisi::Core::Log::Trace("Trace: verbose internal detail, {} items", 3);
+    // Assisi::Core::Log::Debug("Debug: useful during development");
+    // Assisi::Core::Log::Info("Info:  general status messages");
+    // Assisi::Core::Log::Warn("Warn:  something unexpected but recoverable");
+    // Assisi::Core::Log::Error("Error: something failed");
+    // Assisi::Core::Log::Fatal("Fatal: unrecoverable, shutting down");
 
     _scene = _scenes.Create("Main").value();
 
@@ -95,7 +96,7 @@ void SandboxApp::OnStart()
         Assisi::ECS::Entity floor = _scene->Create();
         std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
             floor, {.position = {0.f, -0.25f, 0.f}, .rotation = {1.f, 0.f, 0.f, 0.f}, .scale = {10.f, 0.5f, 10.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(floor, {.mesh = &_cubeMesh, .textureId = 0u});
+        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(floor, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
         std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(
             floor, _physics.AddBox({0.f, -0.25f, 0.f}, {1.f, 0.f, 0.f, 0.f}, {5.f, 0.25f, 5.f},
                                    Assisi::Physics::BodyMotion::Static));
@@ -109,10 +110,15 @@ void SandboxApp::OnStart()
         Assisi::ECS::Entity cube = _scene->Create();
         std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
             cube, {.position = _spawnPos, .rotation = _cornerRot, .scale = {1.f, 1.f, 1.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(cube, {.mesh = &_cubeMesh, .textureId = 0u});
+        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(cube, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
         _cubeRb = _physics.AddBox(_spawnPos, _cornerRot, {0.5f, 0.5f, 0.5f}, Assisi::Physics::BodyMotion::Dynamic);
         std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(cube, _cubeRb);
     }
+}
+
+void SandboxApp::OnResize(int /*w*/, int /*h*/)
+{
+    _projection = MakeProjection(_fovDegrees);
 }
 
 void SandboxApp::OnFixedUpdate(float dt)
@@ -191,12 +197,11 @@ void SandboxApp::OnUpdate(float dt)
 void SandboxApp::OnRender()
 {
     _shader.Use();
-    _shader.SetVec3("uViewPos",            _camera.WorldPosition());
-    _shader.SetVec3("uDirLight.direction", {-0.4f, -1.0f, -0.5f});
-    _shader.SetVec3("uDirLight.ambient",   {0.15f, 0.15f, 0.15f});
-    _shader.SetVec3("uDirLight.diffuse",   {0.9f,  0.9f,  0.9f });
-    _shader.SetVec3("uDirLight.specular",  {0.5f,  0.5f,  0.5f });
-    _shader.SetFloat("uShininess",         32.f);
+    _shader.SetVec3("uViewPos",             _camera.WorldPosition());
+    _shader.SetVec3("uDirLight.direction",  {-0.4f, -1.0f, -0.5f});
+    _shader.SetVec3("uDirLight.color",      {1.0f,  1.0f,  1.0f });
+    _shader.SetFloat("uDirLight.intensity", 3.0f);
+    _shader.SetVec3("uAmbient",             {0.03f, 0.03f, 0.03f});
 
     Assisi::Runtime::DrawScene(*_scene, _camera, _projection, _shader);
 }
@@ -235,7 +240,7 @@ void SandboxApp::OnImGui()
         std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
             newCube, {.position = spawnPos, .rotation = _cornerRot, .scale = {1.f, 1.f, 1.f}});
         std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(
-            newCube, {.mesh = &_cubeMesh, .textureId = 0u});
+            newCube, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
         const auto newRb = _physics.AddBox(spawnPos, _cornerRot, {0.5f, 0.5f, 0.5f},
                                            Assisi::Physics::BodyMotion::Dynamic);
         std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(newCube, newRb);
