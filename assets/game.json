@@ -1,0 +1,14 @@
+{
+    "window": {
+        "title": "Assisi Sandbox",
+        "width": 1280,
+        "height": 720
+    },
+    "render": {
+        "clearColor": [0.15, 0.15, 0.18, 1.0]
+    },
+    "timing": {
+        "physicsHz": 60,
+        "renderHz": 144
+    }
+}
