@@ -15,6 +15,9 @@ InputContext::InputContext(const WindowContext &window) : _window(window.NativeH
     glfwGetCursorPos(_window, &xPos, &yPos);
     _currMousePos = {static_cast<float>(xPos), static_cast<float>(yPos)};
     _prevMousePos = _currMousePos;
+
+    glfwSetWindowUserPointer(_window, this);
+    glfwSetScrollCallback(_window, ScrollCallback);
 }
 
 void InputContext::Poll()
@@ -37,6 +40,9 @@ void InputContext::Poll()
     glfwGetCursorPos(_window, &xPos, &yPos);
     _currMousePos = {static_cast<float>(xPos), static_cast<float>(yPos)};
     _mouseDelta = _currMousePos - _prevMousePos;
+
+    _scrollDelta = _scrollAccum;
+    _scrollAccum = 0.f;
 }
 
 bool InputContext::IsKeyDown(Key key) const
@@ -94,6 +100,20 @@ void InputContext::SetMouseCaptured(bool captured)
 bool InputContext::IsMouseCaptured() const
 {
     return _mouseCaptured;
+}
+
+float InputContext::ScrollDelta() const
+{
+    return _scrollDelta;
+}
+
+void InputContext::ScrollCallback(GLFWwindow *window, double /*xoffset*/, double yoffset)
+{
+    auto *ctx = static_cast<InputContext *>(glfwGetWindowUserPointer(window));
+    if (ctx != nullptr)
+    {
+        ctx->_scrollAccum += static_cast<float>(yoffset);
+    }
 }
 
 } // namespace Assisi::Window

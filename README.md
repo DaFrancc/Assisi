@@ -31,6 +31,7 @@ git clone https://github.com/DaFrancc/Assisi.git
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
   ```
  - Note: If you do not have the dependencies already installed and built, this process will take several minutes depending on your internet speed and your hardware. If you have already run the script once successfully, running it again will only take seconds.
+ - Note: If you add new packages via Conan, run ```make``` to regenerate the build files.
 #### Linux:
 - WIP
 #### MacOS:
@@ -52,16 +53,16 @@ It abstracts away platform-specific details and provides a unified interface for
 You will most likely never touch this module directly, as it is used internally by the Core module to create and manage the application window.
 However, you are certainly free to use it directly if you need more control over the windowing system or if you want to implement custom window behavior.
 
-## Render
+### Render
 The Render module is responsible for rendering graphics to the screen. It provides an abstraction layer over the underlying graphics API (currently OpenGL, 
 but in the future it may support other APIs like Vulkan or DirectX). Hopefully in the future it will be as customizable as Unity's rendering pipeline, 
 allowing you to create custom render passes, shaders, and materials to achieve the exact look you want for your game.
 
-## ECS
+### ECS
 The ECS (Entity-Component-System) module provides a framework for working with entity IDs, component storage, sparse sets, queries, etc.
 It is designed to be flexible and efficient, allowing you to create complex game objects and systems without worrying about the underlying data structures or performance implications.
 
-## Runtime
+### Runtime
 The Runtime module mostly contains a bunch of useful prefabs, components, and systems that you can use out of the box to get your game up and running quickly. 
 It includes things like a basic camera controller, spawning systems, and other things that are common in every game, but don't necessarily belong in the core engine. 
 It is meant to be a collection of reusable game logic and functionality that can be easily integrated into your projects.

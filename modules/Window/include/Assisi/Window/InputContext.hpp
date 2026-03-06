@@ -82,6 +82,9 @@ class InputContext
     /// @brief Cursor movement since the previous Poll() call.
     [[nodiscard]] glm::vec2 MouseDelta() const;
 
+    /// @brief Scroll wheel movement since the previous Poll() call (positive = up).
+    [[nodiscard]] float ScrollDelta() const;
+
     // -------------------------------------------------------------------------
     // Cursor mode
     // -------------------------------------------------------------------------
@@ -114,6 +117,11 @@ class InputContext
     glm::vec2 _mouseDelta{0.f, 0.f};
 
     bool _mouseCaptured = false;
+
+    float _scrollDelta = 0.f;
+    float _scrollAccum = 0.f;
+
+    static void ScrollCallback(GLFWwindow *window, double xoffset, double yoffset);
 };
 
 } // namespace Assisi::Window
