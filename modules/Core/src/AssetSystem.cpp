@@ -1,8 +1,15 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "Assisi/Core/AssetSystem.hpp"
 
+#include <array>
 #include <cstdlib>
 #include <fstream>
+
+#ifdef _WIN32
+#    include <windows.h>
+#else
+#    include <unistd.h>
+#endif
 
 namespace Assisi::Core
 {
@@ -202,7 +209,7 @@ std::expected<std::filesystem::path, AssetError> AssetSystem::DiscoverRoot() noe
     try
     {
         /* Prefer an explicit environment override if present. */
-#if defined(_WIN32)
+#ifdef _WIN32
         char *env = nullptr;
         size_t len = 0;
 
@@ -228,22 +235,51 @@ std::expected<std::filesystem::path, AssetError> AssetSystem::DiscoverRoot() noe
         }
 #endif
 
-        /* Walk upward from the current working directory. */
-        auto dir = std::filesystem::current_path();
-        for (int i = 0; i < 10; ++i)
+        /* Helper: walk upward from a starting directory looking for assets/. */
+        auto walkUp = [](std::filesystem::path dir) -> std::optional<std::filesystem::path>
         {
-            auto candidate = dir / "assets";
-            if (std::filesystem::is_directory(candidate))
+            for (int i = 0; i < 10; ++i)
             {
-                return candidate;
+                auto candidate = dir / "assets";
+                if (std::filesystem::is_directory(candidate))
+                {
+                    return candidate;
+                }
+                if (!dir.has_parent_path())
+                {
+                    break;
+                }
+                dir = dir.parent_path();
             }
+            return std::nullopt;
+        };
 
-            if (!dir.has_parent_path())
+        /* Walk upward from the executable's directory first — works regardless of CWD. */
+#ifdef _WIN32
+        std::array<wchar_t, MAX_PATH> exeBuf = {};
+        if (GetModuleFileNameW(nullptr, exeBuf.data(), MAX_PATH) != 0)
+        {
+            if (auto found = walkUp(std::filesystem::path(exeBuf.data()).parent_path()))
             {
-                break;
+                return *found;
             }
+        }
+#else
+        std::array<char, 4096> exeBuf = {};
+        const ssize_t exeLen = readlink("/proc/self/exe", exeBuf.data(), exeBuf.size() - 1);
+        if (exeLen > 0)
+        {
+            if (auto found = walkUp(std::filesystem::path(exeBuf.data()).parent_path()))
+            {
+                return *found;
+            }
+        }
+#endif
 
-            dir = dir.parent_path();
+        /* Fall back to walking upward from the current working directory. */
+        if (auto found = walkUp(std::filesystem::current_path()))
+        {
+            return *found;
         }
 
         return std::unexpected(AssetError::RootNotFound);
