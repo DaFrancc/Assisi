@@ -43,6 +43,8 @@ class Application
     virtual void OnRender()                 = 0;
     virtual void OnImGui()                  {}
     virtual void OnShutdown()               {}
+    /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
+    virtual void OnResize(int /*width*/, int /*height*/) {}
 
     Window::WindowContext &GetWindow() const { return *_window; }
     Window::InputContext  &GetInput()  const { return *_input; }
@@ -53,6 +55,10 @@ class Application
     double    GetSleepResolutionMs() const { return _sleepResolutionMs; }
 
   private:
+    static void FramebufferSizeCallback(Window::NativeWindowHandle *window, int width, int height);
+    static void WindowRefreshCallback(Window::NativeWindowHandle *window);
+    void        RenderFrame();
+
     AppConfig _config;
 
     std::unique_ptr<Window::WindowContext> _window;
