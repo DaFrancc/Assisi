@@ -67,21 +67,35 @@ find_package(OpenGL REQUIRED)
 
 target_link_libraries(Assisi-$gameName
   PRIVATE
-    Assisi::Render
-    Assisi::ECS
-    Assisi::Game
-    Assisi::Window
-    Assisi::Deps
+    Assisi::App
     OpenGL::GL
+)
+
+add_custom_command(TARGET Assisi-$gameName POST_BUILD
+    COMMAND `${CMAKE_COMMAND} -E copy_directory
+        `"`${CMAKE_SOURCE_DIR}/assets`"
+        `"`$<TARGET_FILE_DIR:Assisi-$gameName>/assets`"
+    COMMENT `"Copying assets next to Assisi-$gameName`"
 )
 "@ | Set-Content -Encoding UTF8 (Join-Path $gameDir "CMakeLists.txt")
 
 @"
-#include <iostream>
+#include <Assisi/App/Application.hpp>
 
-int main() {
-  std::cout << "${gameName}: Hello from Assisi!" << std::endl;
-  return 0;
+class ${gameName}App : public Assisi::App::Application
+{
+  public:
+    void OnStart() override {}
+    void OnFixedUpdate(float dt) override { (void)dt; }
+    void OnUpdate(float dt) override { (void)dt; }
+    void OnRender() override {}
+};
+
+int main()
+{
+    ${gameName}App app;
+    app.Run();
+    return 0;
 }
 "@ | Set-Content -Encoding UTF8 (Join-Path $srcDir "main.cpp")
 
@@ -129,10 +143,10 @@ if (-not (Get-Command make -ErrorAction SilentlyContinue)) {
 }
 
 # Run the Makefile target that performs the conan installs sequentially
-Write-Info "Running: make"
-& make
+Write-Info "Running: make conan-msvc"
+& make conan-msvc
 if ($LASTEXITCODE -ne 0) {
-  throw "make failed (exit $LASTEXITCODE)"
+  throw "make conan-msvc failed (exit $LASTEXITCODE)"
 }
 
 Write-Ok "All Conan installs completed successfully."
