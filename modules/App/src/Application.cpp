@@ -3,12 +3,15 @@
 // --- Platform timer (must come before other Windows headers) ----------------
 #ifdef _WIN32
 #    include <windows.h>
+#    include <dbghelp.h>
 #    include <timeapi.h>
+#    pragma comment(lib, "dbghelp.lib")
 #    pragma comment(lib, "winmm.lib")
 #endif
 
 // --- OpenGL (must precede any GLFW include) ---------------------------------
 #include <glad/glad.h>
+#include <GLFW/glfw3.h>
 
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
@@ -21,11 +24,73 @@
 
 // --- Standard ---------------------------------------------------------------
 #include <chrono>
+#include <csignal>
 #include <cstdlib>
 #include <thread>
 
+#ifdef _WIN32
+
+static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
+{
+    const DWORD code = info->ExceptionRecord->ExceptionCode;
+
+    const char *name = "UNKNOWN";
+    switch (code)
+    {
+    case EXCEPTION_ACCESS_VIOLATION:    name = "ACCESS_VIOLATION";    break;
+    case EXCEPTION_ILLEGAL_INSTRUCTION: name = "ILLEGAL_INSTRUCTION"; break;
+    case EXCEPTION_STACK_OVERFLOW:      name = "STACK_OVERFLOW";      break;
+    case EXCEPTION_INT_DIVIDE_BY_ZERO:  name = "INT_DIVIDE_BY_ZERO";  break;
+    case EXCEPTION_FLT_DIVIDE_BY_ZERO:  name = "FLT_DIVIDE_BY_ZERO";  break;
+    case EXCEPTION_IN_PAGE_ERROR:       name = "IN_PAGE_ERROR";       break;
+    default:                            break;
+    }
+
+    Assisi::Core::Log::Fatal("Crash: unhandled exception 0x{:08X} ({})", static_cast<unsigned int>(code), name);
+
+    HANDLE hFile = CreateFileA("crash.dmp", GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile != INVALID_HANDLE_VALUE)
+    {
+        MINIDUMP_EXCEPTION_INFORMATION mei{};
+        mei.ThreadId          = GetCurrentThreadId();
+        mei.ExceptionPointers = info;
+        mei.ClientPointers    = FALSE;
+        MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &mei, nullptr, nullptr);
+        CloseHandle(hFile);
+        Assisi::Core::Log::Fatal("Crash: minidump written to crash.dmp");
+    }
+
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+
+static void AbortHandler(int)
+{
+    Assisi::Core::Log::Fatal("Crash: abort() called (assertion failure or std::terminate).");
+}
+
+#endif // _WIN32
+
 namespace Assisi::App
 {
+
+// ImGui's GLFW backend also uses glfwSetWindowUserPointer, which would overwrite
+// an Application* stored there. Use a plain static instead.
+static Application *s_instance = nullptr;
+
+void Application::FramebufferSizeCallback(Window::NativeWindowHandle * /*window*/, int width, int height)
+{
+    if (width <= 0 || height <= 0)
+    {
+        return; // minimized — nothing to do
+    }
+
+    glViewport(0, 0, width, height);
+    if (s_instance)
+    {
+        s_instance->OnResize(width, height);
+    }
+}
+
 
 #ifdef _WIN32
 struct TimerResolutionScope
@@ -44,6 +109,11 @@ Application::Application()
     Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
     Core::GetLogger().AddSink(std::make_shared<Core::FileSink>("assisi.log"));
 
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(CrashHandler);
+    std::signal(SIGABRT, AbortHandler);
+#endif
+
     if (auto result = Core::AssetSystem::Initialize(); !result)
     {
         Core::Log::Fatal("Failed to initialize asset system.");
@@ -57,7 +127,7 @@ Application::Application()
     winCfg.Height = _config.height;
     winCfg.Title  = _config.title.c_str();
 
-    _window = std::make_unique<Window::WindowContext>(winCfg, nullptr);
+    _window = std::make_unique<Window::WindowContext>(winCfg, FramebufferSizeCallback);
     if (!_window->IsValid())
     {
         Core::Log::Fatal("Failed to create window.");
@@ -72,6 +142,10 @@ Application::Application()
 
     glEnable(GL_DEPTH_TEST);
 
+    s_instance = this;
+
+    glfwSetWindowRefreshCallback(_window->NativeHandle(), WindowRefreshCallback);
+
     Debug::DebugUI::Initialize(*_window);
 
     _input = std::make_unique<Window::InputContext>(*_window);
@@ -79,6 +153,7 @@ Application::Application()
 
 Application::~Application()
 {
+    s_instance = nullptr;
     Debug::DebugUI::Shutdown();
 }
 
@@ -89,7 +164,12 @@ void Application::RequestClose()
 
 glm::mat4 Application::MakeProjection(float fovDegrees, float zNear, float zFar) const
 {
-    const float aspect = static_cast<float>(_config.width) / static_cast<float>(_config.height);
+    const Window::WindowSize fb = _window->GetFramebufferSize();
+    if (fb.Width <= 0 || fb.Height <= 0)
+    {
+        return glm::mat4(1.f);
+    }
+    const float aspect = static_cast<float>(fb.Width) / static_cast<float>(fb.Height);
     return glm::perspective(glm::radians(fovDegrees), aspect, zNear, zFar);
 }
 
@@ -176,20 +256,33 @@ void Application::Run()
             }
         }
 
-        glClearColor(_config.clearColor.r, _config.clearColor.g,
-                     _config.clearColor.b, _config.clearColor.a);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-
-        OnRender();
-
-        Debug::DebugUI::BeginFrame();
-        OnImGui();
-        Debug::DebugUI::EndFrame();
-
-        _window->SwapBuffers();
+        RenderFrame();
     }
 
     OnShutdown();
+}
+
+void Application::RenderFrame()
+{
+    glClearColor(_config.clearColor.r, _config.clearColor.g,
+                 _config.clearColor.b, _config.clearColor.a);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    OnRender();
+
+    Debug::DebugUI::BeginFrame();
+    OnImGui();
+    Debug::DebugUI::EndFrame();
+
+    _window->SwapBuffers();
+}
+
+void Application::WindowRefreshCallback(Window::NativeWindowHandle * /*window*/)
+{
+    if (s_instance)
+    {
+        s_instance->RenderFrame();
+    }
 }
 
 } // namespace Assisi::App
