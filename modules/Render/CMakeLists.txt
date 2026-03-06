@@ -6,6 +6,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/Backend/GraphicsBackend.hpp"
     "include/Assisi/Render/OpenGL/DefaultTextures.hpp"
     "include/Assisi/Render/OpenGL/MeshBuffer.hpp"
+    "include/Assisi/Render/OpenGL/Texture2D.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/DefaultMeshes.hpp"
     "include/Assisi/Render/DefaultResources.hpp"
@@ -17,6 +18,7 @@ target_sources(Assisi-Render
     "src/Buffer.cpp"
     "src/DefaultResources.cpp"
     "src/RenderSystemOpenGL.cpp"
+    "src/Texture2D.cpp"
 )
 
 target_include_directories(Assisi-Render

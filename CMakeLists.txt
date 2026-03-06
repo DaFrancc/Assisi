@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.23)
+cmake_minimum_required(VERSION 3.23)
 
 project(Assisi
   VERSION 0.1.0
@@ -31,7 +31,7 @@ set(ASSISI_SANITIZER_SET "address;undefined" CACHE STRING
 option(ASSISI_ENABLE_FAST_MATH "Enable fast-math in Release" ON)
 
 # ------------------------------------------------------------
-# Central interface targets (clean and explicit)
+# Central interface targets
 # ------------------------------------------------------------
 add_library(Assisi-Options INTERFACE)
 add_library(Assisi-Warnings INTERFACE)
@@ -151,6 +151,17 @@ find_package(glm CONFIG REQUIRED)
 find_package(stb CONFIG REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
+find_package(Jolt CONFIG REQUIRED)
+find_package(imgui CONFIG REQUIRED)
+
+# Derive the imgui package root (needed to compile backend source files from res/bindings/).
+if(DEFINED imgui_PACKAGE_FOLDER_DEBUG)
+    set(ASSISI_IMGUI_ROOT "${imgui_PACKAGE_FOLDER_DEBUG}")
+elseif(DEFINED imgui_PACKAGE_FOLDER_RELEASE)
+    set(ASSISI_IMGUI_ROOT "${imgui_PACKAGE_FOLDER_RELEASE}")
+else()
+    message(FATAL_ERROR "Cannot locate imgui package root — ensure imgui is installed via Conan.")
+endif()
 
 add_library(Assisi-Deps INTERFACE)
 add_library(Assisi::Deps ALIAS Assisi-Deps)
@@ -210,11 +221,13 @@ add_subdirectory(modules/Window)
 add_subdirectory(modules/Render)
 add_subdirectory(modules/ECS)
 add_subdirectory(modules/Runtime)
+add_subdirectory(modules/Physics)
+add_subdirectory(modules/Debug)
 
 add_subdirectory(apps/Sandbox)
 
 
-# Notes for your module CMakeLists:
+# Notes for module CMakeLists:
 # - Each module target should link:
 #     Assisi::Options, Assisi::Warnings, Assisi::Perf, Assisi::Deps
 #   and optionally Assisi::Sanitize (it is inert unless enabled by preset).
