@@ -26,14 +26,15 @@ git clone https://github.com/DaFrancc/Assisi.git
 
 ### 3. Initialization
 #### Windows:
-- Run ```setup.ps1``` and follow the instructions to create your game directory and install dependencies using [Conan](https://conan.io/).
-```bash
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
-  ```
- - Note: If you do not have the dependencies already installed and built, this process will take several minutes depending on your internet speed and your hardware. If you have already run the script once successfully, running it again will only take seconds.
- - Note: If you add new packages via Conan, run ```make``` to regenerate the build files.
+ - Run ```setup.ps1``` and follow the instructions to create your game directory and install dependencies using [Conan](https://conan.io/).
+    ```bash
+    powershell -ExecutionPolicy Bypass -File .\setup.ps1
+    ```
+   - Note: If you do not have the dependencies already installed and built, this process will take several minutes depending on your internet speed and your hardware. If you have already run the script once successfully, running it again will only take seconds.
+   - Note: If you add new packages via Conan, run ```make``` to regenerate the build files.
 #### Linux:
-- WIP
+ - Run ```./setup.sh``` and follow the instructions to create your game directory and install dependencies using [Conan](https://conan.io/).
+   - Note: If the script won't start, try giving it execution permissions with ```chmod +x ./setup.sh```.
 #### MacOS:
 - Currently unsupported, but you are free to fiddle around with it and submit a pull request.
 
