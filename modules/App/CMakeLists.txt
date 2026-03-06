@@ -5,9 +5,11 @@ target_sources(Assisi-App
   PUBLIC
     "include/Assisi/App/AppConfig.hpp"
     "include/Assisi/App/Application.hpp"
+    "include/Assisi/App/OptionsConfig.hpp"
   PRIVATE
     "src/AppConfig.cpp"
     "src/Application.cpp"
+    "src/OptionsConfig.cpp"
 )
 
 target_include_directories(Assisi-App
