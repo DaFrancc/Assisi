@@ -8,7 +8,8 @@ Checks: >
   -readability-avoid-const-params-in-decls,
   -readability-named-parameter,
   -readability-magic-numbers,
-  -bugprone-easily-swappable-parameters
+  -bugprone-easily-swappable-parameters,
+  -readability-uppercase-literal-suffix
 
 CheckOptions:
   - key: modernize-use-default-member-init.UseAssignment

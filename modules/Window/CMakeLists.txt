@@ -4,10 +4,13 @@ Assisi_apply_defaults(Assisi-Window)
 target_sources(Assisi-Window
   PUBLIC
     "include/Assisi/Window/GlfwLibrary.hpp"
+    "include/Assisi/Window/InputContext.hpp"
+    "include/Assisi/Window/Key.hpp"
     "include/Assisi/Window/Window.hpp"
     "include/Assisi/Window/WindowContext.hpp"
   PRIVATE
     "src/GlfwLibrary.cpp"
+    "src/InputContext.cpp"
     "src/Window.cpp"
     "src/WindowContext.cpp"
 )
