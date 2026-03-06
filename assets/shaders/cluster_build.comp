@@ -1,0 +1,90 @@
+#version 460 core
+
+/// cluster_build.comp
+/// Computes a view-space AABB for each cluster in the 3-D grid.
+/// Dispatch: (kNumX, kNumY, kNumZ) workgroups with local_size (1,1,1).
+/// Run once on init and again after every viewport / projection change.
+
+layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+
+struct AABB
+{
+    vec4 minPoint;
+    vec4 maxPoint;
+};
+
+layout(std430, binding = 0) writeonly buffer ClusterAABBs
+{
+    AABB clusterAABBs[];
+};
+
+uniform uvec3 uGridDim;       // e.g. (16, 9, 24)
+uniform vec2  uScreenSize;    // framebuffer size in pixels
+uniform float uNearZ;         // positive near clip distance
+uniform float uFarZ;          // positive far clip distance
+uniform mat4  uInvProjection; // inverse of the projection matrix
+
+// Unproject a screen-space pixel position to a view-space point on the near plane.
+// Camera is at the origin in view space; -Z is forward.
+vec3 screenToViewNear(vec2 screenPos)
+{
+    vec2 ndc  = (screenPos / uScreenSize) * 2.0 - 1.0;
+    vec4 clip = vec4(ndc, -1.0, 1.0); // NDC z = -1  →  near plane
+    vec4 view = uInvProjection * clip;
+    return view.xyz / view.w;
+}
+
+// Scale a view-space direction so its z component equals targetZ.
+// Both dir.z and targetZ are negative (objects in front of camera).
+vec3 rayAtZ(vec3 dir, float targetZ)
+{
+    return dir * (targetZ / dir.z);
+}
+
+void main()
+{
+    uvec3 gid = gl_GlobalInvocationID;
+    if (any(greaterThanEqual(gid, uGridDim)))
+        return;
+
+    // Tile extent in screen pixels
+    vec2 tileSize = uScreenSize / vec2(uGridDim.xy);
+    vec2 tileMin  = vec2(gid.xy) * tileSize;
+    vec2 tileMax  = tileMin + tileSize;
+
+    // Four corner ray directions (view-space points on the near plane)
+    vec3 bl = screenToViewNear(tileMin);
+    vec3 br = screenToViewNear(vec2(tileMax.x, tileMin.y));
+    vec3 tl = screenToViewNear(vec2(tileMin.x, tileMax.y));
+    vec3 tr = screenToViewNear(tileMax);
+
+    // Z-slice depths in view space (negative — camera looks down -Z)
+    float zNear = -uNearZ * pow(uFarZ / uNearZ, float(gid.z)       / float(uGridDim.z));
+    float zFar  = -uNearZ * pow(uFarZ / uNearZ, float(gid.z + 1u)  / float(uGridDim.z));
+
+    // 8 view-space corners of this cluster's frustum sub-volume
+    vec3 corners[8];
+    corners[0] = rayAtZ(bl, zNear);
+    corners[1] = rayAtZ(br, zNear);
+    corners[2] = rayAtZ(tl, zNear);
+    corners[3] = rayAtZ(tr, zNear);
+    corners[4] = rayAtZ(bl, zFar);
+    corners[5] = rayAtZ(br, zFar);
+    corners[6] = rayAtZ(tl, zFar);
+    corners[7] = rayAtZ(tr, zFar);
+
+    vec3 aabbMin = corners[0];
+    vec3 aabbMax = corners[0];
+    for (int i = 1; i < 8; i++)
+    {
+        aabbMin = min(aabbMin, corners[i]);
+        aabbMax = max(aabbMax, corners[i]);
+    }
+
+    uint idx = gid.x
+             + gid.y * uGridDim.x
+             + gid.z * uGridDim.x * uGridDim.y;
+
+    clusterAABBs[idx].minPoint = vec4(aabbMin, 0.0);
+    clusterAABBs[idx].maxPoint = vec4(aabbMax, 0.0);
+}

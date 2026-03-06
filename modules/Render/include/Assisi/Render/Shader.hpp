@@ -167,6 +167,16 @@ class Shader
         glUniformMatrix2fv(glGetUniformLocation(_programIdentifier, uniformName.c_str()), 1, GL_FALSE, &value[0][0]);
     }
 
+    void SetUInt(const std::string &uniformName, unsigned int value) const
+    {
+        glUniform1ui(glGetUniformLocation(_programIdentifier, uniformName.c_str()), value);
+    }
+
+    void SetUVec3(const std::string &uniformName, unsigned int x, unsigned int y, unsigned int z) const
+    {
+        glUniform3ui(glGetUniformLocation(_programIdentifier, uniformName.c_str()), x, y, z);
+    }
+
     void SetMat3(const std::string &uniformName, const glm::mat3 &value) const
     {
         glUniformMatrix3fv(glGetUniformLocation(_programIdentifier, uniformName.c_str()), 1, GL_FALSE, &value[0][0]);
