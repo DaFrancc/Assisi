@@ -5,11 +5,16 @@
 ///        override the hooks, and call Run() from main().
 
 #include <Assisi/App/AppConfig.hpp>
+#include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/OpenGL/Framebuffer.hpp>
+#include <Assisi/Render/OpenGL/ScreenQuad.hpp>
+#include <Assisi/Render/Shader.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
 #include <memory>
+#include <optional>
 
 namespace Assisi::App
 {
@@ -58,11 +63,20 @@ class Application
     static void FramebufferSizeCallback(Window::NativeWindowHandle *window, int width, int height);
     static void WindowRefreshCallback(Window::NativeWindowHandle *window);
     void        RenderFrame();
+    void        RebuildPostProcess();
+    void        DrawOptionsWindow();
 
-    AppConfig _config;
+    AppConfig     _config;
+    OptionsConfig _options;
 
     std::unique_ptr<Window::WindowContext> _window;
     std::unique_ptr<Window::InputContext>  _input;
+
+    Render::OpenGL::Framebuffer                 _mainFB;
+    Render::OpenGL::Framebuffer                 _resolveFB;
+    std::optional<Render::OpenGL::ScreenQuad>   _screenQuad;
+    Render::Shader                              _fxaaShader;
+    bool                                        _showOptionsWindow = false;
 
     int    _fps               = 0;
     double _sleepResolutionMs = 0.0;

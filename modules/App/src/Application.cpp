@@ -21,6 +21,9 @@
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Render/Backend/GraphicsBackend.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
+#include <Assisi/Window/Key.hpp>
+
+#include <imgui.h>
 
 // --- Standard ---------------------------------------------------------------
 #include <chrono>
@@ -88,6 +91,7 @@ void Application::FramebufferSizeCallback(Window::NativeWindowHandle * /*window*
     if (s_instance)
     {
         s_instance->OnResize(width, height);
+        s_instance->RebuildPostProcess();
     }
 }
 
@@ -149,6 +153,11 @@ Application::Application()
     Debug::DebugUI::Initialize(*_window);
 
     _input = std::make_unique<Window::InputContext>(*_window);
+
+    _options = OptionsConfig::LoadFromJson();
+    _screenQuad.emplace();
+    _fxaaShader = Render::Shader("shaders/screen.vert", "shaders/fxaa.frag");
+    RebuildPostProcess();
 }
 
 Application::~Application()
@@ -220,6 +229,11 @@ void Application::Run()
         Window::WindowContext::PollEvents();
         _input->Poll();
 
+        if (_input->IsKeyPressed(Window::Key::F12))
+        {
+            _showOptionsWindow = !_showOptionsWindow;
+        }
+
         accumulator += dt;
         while (accumulator >= physicsStep)
         {
@@ -264,17 +278,155 @@ void Application::Run()
 
 void Application::RenderFrame()
 {
-    glClearColor(_config.clearColor.r, _config.clearColor.g,
-                 _config.clearColor.b, _config.clearColor.a);
-    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+    const AaMode              mode = _options.aaMode;
+    const Window::WindowSize  fb   = _window->GetFramebufferSize();
 
-    OnRender();
+    // --- Scene render pass (to FBO or default) ----------------------------
+    if (mode == AaMode::None)
+    {
+        Render::OpenGL::Framebuffer::BindDefault();
+        glClearColor(_config.clearColor.r, _config.clearColor.g,
+                     _config.clearColor.b, _config.clearColor.a);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        OnRender();
+    }
+    else
+    {
+        _mainFB.Bind();
+        glClearColor(_config.clearColor.r, _config.clearColor.g,
+                     _config.clearColor.b, _config.clearColor.a);
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        OnRender();
+    }
 
+    // --- Post-process / resolve pass --------------------------------------
+    if (mode == AaMode::MSAA)
+    {
+        _mainFB.BlitToScreen(fb.Width, fb.Height);
+    }
+    else if (mode == AaMode::FXAA)
+    {
+        Render::OpenGL::Framebuffer::BindDefault();
+        glDisable(GL_DEPTH_TEST);
+        _fxaaShader.Use();
+        _mainFB.BindColorTexture(0);
+        _fxaaShader.SetInt("uScreenTexture", 0);
+        _fxaaShader.SetVec2("uTexelSize",
+                            1.f / static_cast<float>(fb.Width),
+                            1.f / static_cast<float>(fb.Height));
+        _screenQuad->Draw();
+        glEnable(GL_DEPTH_TEST);
+    }
+    else if (mode == AaMode::MSAA_FXAA)
+    {
+        _mainFB.BlitTo(_resolveFB);
+        Render::OpenGL::Framebuffer::BindDefault();
+        glDisable(GL_DEPTH_TEST);
+        _fxaaShader.Use();
+        _resolveFB.BindColorTexture(0);
+        _fxaaShader.SetInt("uScreenTexture", 0);
+        _fxaaShader.SetVec2("uTexelSize",
+                            1.f / static_cast<float>(fb.Width),
+                            1.f / static_cast<float>(fb.Height));
+        _screenQuad->Draw();
+        glEnable(GL_DEPTH_TEST);
+    }
+
+    // --- ImGui (always to default framebuffer) ----------------------------
+    Render::OpenGL::Framebuffer::BindDefault();
     Debug::DebugUI::BeginFrame();
     OnImGui();
+    DrawOptionsWindow();
     Debug::DebugUI::EndFrame();
 
     _window->SwapBuffers();
+}
+
+void Application::RebuildPostProcess()
+{
+    const Window::WindowSize fb = _window->GetFramebufferSize();
+    if (fb.Width <= 0 || fb.Height <= 0)
+    {
+        return;
+    }
+
+    const int w       = fb.Width;
+    const int h       = fb.Height;
+    const int samples = _options.msaaSamples;
+
+    _mainFB    = Render::OpenGL::Framebuffer{};
+    _resolveFB = Render::OpenGL::Framebuffer{};
+
+    switch (_options.aaMode)
+    {
+    case AaMode::None:
+        break;
+    case AaMode::MSAA:
+        _mainFB = Render::OpenGL::Framebuffer(w, h, samples);
+        break;
+    case AaMode::FXAA:
+        _mainFB = Render::OpenGL::Framebuffer(w, h, 1);
+        break;
+    case AaMode::MSAA_FXAA:
+        _mainFB    = Render::OpenGL::Framebuffer(w, h, samples);
+        _resolveFB = Render::OpenGL::Framebuffer(w, h, 1);
+        break;
+    }
+}
+
+void Application::DrawOptionsWindow()
+{
+    if (!_showOptionsWindow)
+    {
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(300, 110), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Options", &_showOptionsWindow))
+    {
+        static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
+        int                modeIndex    = static_cast<int>(_options.aaMode);
+        if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))
+        {
+            _options.aaMode = static_cast<AaMode>(modeIndex);
+            RebuildPostProcess();
+            _options.SaveToJson();
+        }
+
+        const bool msaaActive = (_options.aaMode == AaMode::MSAA || _options.aaMode == AaMode::MSAA_FXAA);
+        if (!msaaActive)
+        {
+            ImGui::BeginDisabled();
+        }
+
+        static const char *kSampleNames[]  = {"2x", "4x", "8x"};
+        static const int   kSampleValues[] = {2, 4, 8};
+        int                sampleIndex     = 1;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (kSampleValues[i] == _options.msaaSamples)
+            {
+                sampleIndex = i;
+                break;
+            }
+        }
+
+        if (ImGui::Combo("MSAA Samples", &sampleIndex, kSampleNames, 3))
+        {
+            _options.msaaSamples = kSampleValues[sampleIndex];
+            if (msaaActive)
+            {
+                RebuildPostProcess();
+            }
+            _options.SaveToJson();
+        }
+
+        if (!msaaActive)
+        {
+            ImGui::EndDisabled();
+        }
+    }
+    ImGui::End();
 }
 
 void Application::WindowRefreshCallback(Window::NativeWindowHandle * /*window*/)
