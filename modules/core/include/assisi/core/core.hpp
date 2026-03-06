@@ -1,6 +1,0 @@
-#pragma once
-
-namespace Assisi::Core
-{
-void Hello();
-}

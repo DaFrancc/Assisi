@@ -19,6 +19,12 @@ WindowContext::WindowContext(const WindowConfiguration &configuration, GLFWframe
     {
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     }
+    else
+    {
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    }
 
     /* Create the GLFW window. */
     _nativeWindowHandle =

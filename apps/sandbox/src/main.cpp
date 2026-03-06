@@ -211,7 +211,7 @@ void SandboxApp::OnImGui()
 
     auto [cubePos, cubeRot] = _physics.GetBodyTransform(_cubeRb);
     ImGui::SeparatorText("Dynamic Cube");
-    ImGui::Text("Position  %.2f  %.2f  %.2f", cubePos.x, cubePos.y, cubePos.z);
+    ImGui::Text("Position  %.2f  %.2f  %.2f", static_cast<double>(cubePos.x), static_cast<double>(cubePos.y), static_cast<double>(cubePos.z));
     if (ImGui::Button("Reset Cube"))
     {
         _physics.SetBodyTransform(_cubeRb, _spawnPos, _cornerRot);
