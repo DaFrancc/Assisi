@@ -43,6 +43,14 @@ class SandboxApp : public Assisi::App::Application
     Assisi::Runtime::Camera            _camera;
     glm::mat4                          _projection{1.f};
 
+    // Camera control state
+    float _yaw         = -116.6f; // initialised in OnStart from camera direction
+    float _pitch       =  -24.1f;
+    float _fovDegrees  =   60.f;
+
+    static constexpr float kMoveSpeed        = 8.f;   // units/s
+    static constexpr float kMouseSensitivity = 0.1f;  // degrees/pixel
+
     Assisi::Physics::RigidBodyComponent _cubeRb{};
     glm::quat                           _cornerRot{1.f, 0.f, 0.f, 0.f};
     glm::vec3                           _spawnPos{0.f, 6.f, 0.f};
@@ -73,8 +81,14 @@ void SandboxApp::OnStart()
         return;
     }
 
-    _camera     = Assisi::Runtime::Camera({5.f, 5.f, 10.f}, {0.f, 0.f, 0.f});
-    _projection = MakeProjection();
+    _camera = Assisi::Runtime::Camera({5.f, 5.f, 10.f}, {0.f, 0.f, 0.f});
+
+    // Derive initial yaw/pitch from camera direction so mouse control is consistent.
+    const glm::vec3 forward = _camera.ForwardDirection();
+    _pitch = glm::degrees(glm::asin(forward.y));
+    _yaw   = glm::degrees(glm::atan(forward.z, forward.x));
+
+    _projection = MakeProjection(_fovDegrees);
 
     // Floor — static box
     {
@@ -107,7 +121,7 @@ void SandboxApp::OnFixedUpdate(float dt)
     _physics.SyncTransforms(*_scene);
 }
 
-void SandboxApp::OnUpdate(float /*dt*/)
+void SandboxApp::OnUpdate(float dt)
 {
     auto &input = GetInput();
 
@@ -126,6 +140,50 @@ void SandboxApp::OnUpdate(float /*dt*/)
         else
         {
             RequestClose();
+        }
+    }
+
+    if (input.IsMouseCaptured())
+    {
+        // --- Mouse rotation ---
+        const glm::vec2 delta = input.MouseDelta();
+        _yaw   += delta.x * kMouseSensitivity;
+        _pitch -= delta.y * kMouseSensitivity;
+        _pitch  = glm::clamp(_pitch, -89.f, 89.f);
+
+        const glm::vec3 forward = {
+            glm::cos(glm::radians(_pitch)) * glm::cos(glm::radians(_yaw)),
+            glm::sin(glm::radians(_pitch)),
+            glm::cos(glm::radians(_pitch)) * glm::sin(glm::radians(_yaw))};
+
+        // --- WASD + Space/Ctrl movement ---
+        const glm::vec3 right = _camera.RightDirection();
+        glm::vec3 move{0.f};
+        if (input.IsKeyDown(Assisi::Window::Key::W))           { move += forward; }
+        if (input.IsKeyDown(Assisi::Window::Key::S))           { move -= forward; }
+        if (input.IsKeyDown(Assisi::Window::Key::D))           { move += right; }
+        if (input.IsKeyDown(Assisi::Window::Key::A))           { move -= right; }
+        if (input.IsKeyDown(Assisi::Window::Key::Space))       { move.y += 1.f; }
+        if (input.IsKeyDown(Assisi::Window::Key::LeftControl)) { move.y -= 1.f; }
+
+        glm::vec3 pos = _camera.WorldPosition();
+        if (glm::length(move) > 0.f)
+        {
+            pos += glm::normalize(move) * (kMoveSpeed * dt);
+        }
+
+        _camera.SetWorldPosition(pos);
+        _camera.SetLookAtTarget(pos + forward);
+    }
+
+    // --- Scroll to adjust FOV ---
+    if (!ImGui::GetIO().WantCaptureMouse)
+    {
+        const float scroll = input.ScrollDelta();
+        if (scroll != 0.f)
+        {
+            _fovDegrees = glm::clamp(_fovDegrees - (scroll * 5.f), 10.f, 120.f);
+            _projection = MakeProjection(_fovDegrees);
         }
     }
 }
@@ -187,7 +245,8 @@ void SandboxApp::OnImGui()
     ImGui::Text("(%d spawned)", _spawnCount);
 
     ImGui::SeparatorText("Hint");
-    ImGui::TextDisabled("LMB: capture camera  |  Esc: release / quit");
+    ImGui::TextDisabled("LMB: capture  |  WASD: move  |  Space/Ctrl: up/down");
+    ImGui::TextDisabled("Mouse: look  |  Scroll: FOV  |  Esc: release / quit");
 
     ImGui::End();
 }
