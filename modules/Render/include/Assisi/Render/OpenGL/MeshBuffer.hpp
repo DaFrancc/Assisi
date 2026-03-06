@@ -101,6 +101,10 @@ class MeshBuffer
         glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Assisi::Render::Vertex),
                               reinterpret_cast<void *>(sizeof(glm::vec3) + sizeof(glm::vec3)));
 
+        glEnableVertexAttribArray(3);
+        glVertexAttribPointer(3, 4, GL_FLOAT, GL_FALSE, sizeof(Assisi::Render::Vertex),
+                              reinterpret_cast<void *>(sizeof(glm::vec3) + sizeof(glm::vec3) + sizeof(glm::vec2)));
+
         glBindVertexArray(0);
     }
 

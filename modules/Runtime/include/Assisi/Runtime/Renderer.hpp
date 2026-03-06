@@ -15,12 +15,13 @@ namespace Assisi::Runtime
 ///        MeshRendererComponent.
 ///
 /// The shader must expose:
-///   - uniform mat4  uModel
-///   - uniform mat4  uView
-///   - uniform mat4  uProjection
-///   - uniform sampler2D uTexture  (bound to texture unit 0)
+///   - uniform mat4       uModel, uView, uProjection
+///   - uniform sampler2D  uAlbedo    (unit 0)
+///   - uniform sampler2D  uNormal    (unit 1)
+///   - uniform sampler2D  uMetallic  (unit 2)
+///   - uniform sampler2D  uRoughness (unit 3)
 ///
-/// Entities whose MeshRendererComponent::textureId is 0 fall back to a 1×1 white texture.
+/// Zero texture IDs in MeshRendererComponent fall back to engine defaults.
 /// Entities whose MeshRendererComponent::mesh is null are skipped silently.
 ///
 /// @param scene       ECS scene to query.
