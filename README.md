@@ -15,14 +15,25 @@ git clone https://github.com/DaFrancc/Assisi.git
 
 ### 2. Install Dependencies
 #### Tools:
+- Make
 - CMake
 - Conan
+
+The following compilers have been tested for the following operating systems:
+- Windows
+  - MSVC
+- Linux
+  - GCC
+  - Clang
 #### Libraries (installed in next step):
 - GLFW
 - GLM
 - Assimp
 - StbImage
 - Glad
+- Jolt Physics
+- Dear ImGUI
+- NlohmannJson
 
 ### 3. Initialization
 #### Windows:
