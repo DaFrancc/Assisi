@@ -11,6 +11,7 @@
 #include <Assisi/Render/DefaultMeshes.hpp>
 #include <Assisi/Render/OpenGL/MeshBuffer.hpp>
 #include <Assisi/Render/Shader.hpp>
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
@@ -50,17 +51,16 @@ class SandboxApp : public Assisi::App::Application
 
     Assisi::Render::OpenGL::MeshBuffer _cubeMesh;
     Assisi::Render::Shader             _shader;
-    Assisi::Runtime::Camera            _camera;
     Assisi::Runtime::LightingSystem    _lighting;
     glm::mat4                          _projection{1.f};
 
-    static constexpr float kNearZ = 0.1f;
-    static constexpr float kFarZ  = 200.f;
+    // Camera entity lives in its own scene so level loads don't destroy it.
+    Assisi::ECS::Scene  _cameraScene;
+    Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
 
-    // Camera control state
-    float _yaw        = -116.6f;
-    float _pitch      =  -24.1f;
-    float _fovDegrees =   60.f;
+    // Camera controller state (Euler angles, authoritative source for orientation).
+    float _yaw   = -116.6f;
+    float _pitch =  -24.1f;
 
     static constexpr float kMoveSpeed        = 8.f;   // units/s
     static constexpr float kMouseSensitivity = 0.1f;  // degrees/pixel
@@ -86,13 +86,33 @@ void SandboxApp::OnStart()
         return;
     }
 
-    _camera = Assisi::Runtime::Camera({5.f, 5.f, 10.f}, {0.f, 0.f, 0.f});
+    // Create camera entity — lives in a separate scene so level loads don't destroy it.
+    {
+        const glm::vec3 camPos{5.f, 5.f, 10.f};
+        const glm::vec3 forward = glm::normalize(-camPos); // look toward origin
+
+        _pitch = glm::degrees(glm::asin(forward.y));
+        _yaw   = glm::degrees(glm::atan(forward.z, forward.x));
+
+        const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
+        const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
+
+        Assisi::Runtime::TransformComponent camTransform;
+        camTransform.position = camPos;
+        camTransform.rotation = glm::quat_cast(glm::mat3(right, up, -forward));
+
+        _cameraEntity = _cameraScene.Create();
+        (void)_cameraScene.Add<Assisi::Runtime::TransformComponent>(_cameraEntity, camTransform);
+        (void)_cameraScene.Add<Assisi::Runtime::CameraComponent>(_cameraEntity,
+                                                                  Assisi::Runtime::CameraComponent{60.f, 0.1f, 200.f, true});
+    }
 
     // Lighting system — must be initialised after the OpenGL context is ready.
     {
-        const auto size = GetWindow().GetFramebufferSize();
-        _projection     = MakeProjection(_fovDegrees, kNearZ, kFarZ);
-        if (!_lighting.Initialize(size.Width, size.Height, kNearZ, kFarZ, _projection))
+        const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+        const auto  size = GetWindow().GetFramebufferSize();
+        _projection = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
+        if (!_lighting.Initialize(size.Width, size.Height, cam->nearZ, cam->farZ, _projection))
         {
             Assisi::Core::Log::Error("Failed to initialise LightingSystem.");
             RequestClose();
@@ -101,18 +121,14 @@ void SandboxApp::OnStart()
         _lighting.SetupMeshShader(_shader);
     }
 
-    // Derive initial yaw/pitch from camera direction so mouse control is consistent.
-    const glm::vec3 forward = _camera.ForwardDirection();
-    _pitch = glm::degrees(glm::asin(forward.y));
-    _yaw   = glm::degrees(glm::atan(forward.z, forward.x));
-
     ScanLevels();
 }
 
 void SandboxApp::OnResize(int width, int height)
 {
-    _projection = MakeProjection(_fovDegrees, kNearZ, kFarZ);
-    _lighting.Resize(width, height, kNearZ, kFarZ, _projection);
+    const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    _projection = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
+    _lighting.Resize(width, height, cam->nearZ, cam->farZ, _projection);
     _lighting.SetupMeshShader(_shader);
 }
 
@@ -153,8 +169,12 @@ void SandboxApp::OnUpdate(float dt)
             glm::sin(glm::radians(_pitch)),
             glm::cos(glm::radians(_pitch)) * glm::sin(glm::radians(_yaw))};
 
+        const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
+        const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
+
+        auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
+
         // --- WASD + Space/Ctrl movement ---
-        const glm::vec3 right = _camera.RightDirection();
         glm::vec3 move{0.f};
         if (input.IsKeyDown(Assisi::Window::Key::W))           { move += forward; }
         if (input.IsKeyDown(Assisi::Window::Key::S))           { move -= forward; }
@@ -163,12 +183,10 @@ void SandboxApp::OnUpdate(float dt)
         if (input.IsKeyDown(Assisi::Window::Key::Space))       { move.y += 1.f; }
         if (input.IsKeyDown(Assisi::Window::Key::LeftControl)) { move.y -= 1.f; }
 
-        glm::vec3 pos = _camera.WorldPosition();
         if (glm::length(move) > 0.f)
-            pos += glm::normalize(move) * (kMoveSpeed * dt);
+            camTransform->position += glm::normalize(move) * (kMoveSpeed * dt);
 
-        _camera.SetWorldPosition(pos);
-        _camera.SetLookAtTarget(pos + forward);
+        camTransform->rotation = glm::quat_cast(glm::mat3(right, up, -forward));
     }
 
     // --- Scroll to adjust FOV ---
@@ -177,22 +195,26 @@ void SandboxApp::OnUpdate(float dt)
         const float scroll = input.ScrollDelta();
         if (scroll != 0.f)
         {
-            _fovDegrees = glm::clamp(_fovDegrees - (scroll * 5.f), 10.f, 120.f);
-            _projection = MakeProjection(_fovDegrees, kNearZ, kFarZ);
+            auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+            cam->fovDegrees = glm::clamp(cam->fovDegrees - (scroll * 5.f), 10.f, 120.f);
+            _projection = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
         }
     }
 }
 
 void SandboxApp::OnRender()
 {
-    _lighting.Update(*_scene, _camera.ViewMatrix());
+    const auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
+    const glm::mat4 view = Assisi::Runtime::ViewMatrix(*camTransform);
+
+    _lighting.Update(*_scene, view);
 
     _shader.Use();
-    _shader.SetVec3("uViewPos", _camera.WorldPosition());
+    _shader.SetVec3("uViewPos", camTransform->position);
     _shader.SetVec3("uAmbient", {0.03f, 0.03f, 0.03f});
     _shader.SetInt("uDirLightCount", static_cast<int>(_lighting.DirLightCount()));
 
-    Assisi::Runtime::DrawScene(*_scene, _camera, _projection, _shader);
+    Assisi::Runtime::DrawScene(*_scene, view, _projection, _shader);
 }
 
 void SandboxApp::OnImGui()

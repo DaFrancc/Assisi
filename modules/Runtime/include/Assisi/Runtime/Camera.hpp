@@ -1,61 +1,40 @@
 #pragma once
 
 /// @file Camera.hpp
-/// @brief A look-at camera that produces a view matrix from world-space state.
+/// @brief Camera utility functions derived from ECS components.
+///
+/// A camera is represented as an entity with both a TransformComponent
+/// (position and orientation) and a CameraComponent (projection parameters).
+///
+/// Orientation convention: the camera looks along its local -Z axis.
+/// Set TransformComponent::rotation so that `rotation * (0,0,-1)` points in
+/// the desired view direction, or use glm::quat_cast on a basis matrix built
+/// from (right, up, -forward).
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Runtime/Components.hpp>
 
 namespace Assisi::Runtime
 {
-/// @brief Represents a view camera defined by a position and a look-at target.
+
+/// @brief Returns the view matrix derived from the transform's position and rotation.
 ///
-/// The view matrix is computed on-demand from the stored world-space state.
-/// Roll is resolved using the configurable up direction.
-class Camera
-{
-  public:
-    Camera() = default;
+/// The camera looks along its local -Z axis (OpenGL convention).
+glm::mat4 ViewMatrix(const TransformComponent &transform);
 
-    /// @param worldPosition  Camera position in world space.
-    /// @param lookAtTarget   World-space point the camera looks at.
-    explicit Camera(const glm::vec3 &worldPosition, const glm::vec3 &lookAtTarget)
-        : _worldPosition(worldPosition), _lookAtTarget(lookAtTarget)
-    {
-    }
+/// @brief Returns a perspective projection matrix from the camera's parameters.
+///
+/// @param camera      Camera projection parameters (fovDegrees, nearZ, farZ).
+/// @param aspectRatio Viewport width / height.
+glm::mat4 ProjectionMatrix(const CameraComponent &camera, float aspectRatio);
 
-    /* World-space state accessors */
-    glm::vec3 WorldPosition() const { return _worldPosition; }
-    glm::vec3 LookAtTarget() const { return _lookAtTarget; }
-    glm::vec3 WorldUpDirection() const { return _worldUpDirection; }
+/// @brief World-space forward direction (-Z axis rotated by the transform's quaternion).
+glm::vec3 ForwardDirection(const TransformComponent &transform);
 
-    /* World-space mutators */
-    void SetWorldPosition(const glm::vec3 &worldPosition) { _worldPosition = worldPosition; }
+/// @brief World-space right direction (+X axis rotated by the transform's quaternion).
+glm::vec3 RightDirection(const TransformComponent &transform);
 
-    void SetLookAtTarget(const glm::vec3 &lookAtTarget) { _lookAtTarget = lookAtTarget; }
+/// @brief World-space up direction (+Y axis rotated by the transform's quaternion).
+glm::vec3 UpDirection(const TransformComponent &transform);
 
-    /// @brief Sets the reference up vector used to resolve camera roll.
-    void SetWorldUpDirection(const glm::vec3 &worldUpDirection) { _worldUpDirection = worldUpDirection; }
-
-    /// @brief Returns the view matrix computed from current position, target, and up direction.
-    glm::mat4 ViewMatrix() const { return glm::lookAt(_worldPosition, _lookAtTarget, _worldUpDirection); }
-
-    /// @name Derived camera-space directions
-    /// These are recomputed each call; cache if used frequently.
-    ///@{
-    glm::vec3 ForwardDirection() const { return glm::normalize(_lookAtTarget - _worldPosition); }
-
-    /// @brief Right axis, orthogonal to forward and the world up reference.
-    glm::vec3 RightDirection() const { return glm::normalize(glm::cross(ForwardDirection(), _worldUpDirection)); }
-
-    /// @brief True camera up, orthogonal to both right and forward.
-    glm::vec3 UpDirection() const { return glm::normalize(glm::cross(RightDirection(), ForwardDirection())); }
-    ///@}
-
-  private:
-    glm::vec3 _worldPosition{0.0f, 0.0f, 3.0f};
-    glm::vec3 _lookAtTarget{0.0f, 0.0f, 0.0f};
-
-    /// @brief Reference direction used to resolve camera roll.
-    glm::vec3 _worldUpDirection{0.0f, 1.0f, 0.0f};
-};
 } // namespace Assisi::Runtime

@@ -45,4 +45,20 @@ struct MeshRendererComponent
     AFIELD(transient) unsigned int roughnessTextureId = 0u;
 };
 
+/// @brief Projection and activation parameters for a camera entity.
+///
+/// Pair with TransformComponent to form a complete camera: the TransformComponent
+/// provides world-space position and orientation; this component stores projection
+/// settings and identifies which camera is active.
+///
+/// Call Runtime::ViewMatrix(transform) and Runtime::ProjectionMatrix(camera, aspect)
+/// to obtain the matrices needed for rendering.
+struct CameraComponent
+{
+    float fovDegrees = 60.f;  ///< Vertical field of view in degrees.
+    float nearZ      = 0.1f;  ///< Near clip plane distance.
+    float farZ       = 200.f; ///< Far clip plane distance.
+    bool  isActive   = false; ///< True for the scene's active camera.
+};
+
 } // namespace Assisi::Runtime

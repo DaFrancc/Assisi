@@ -6,7 +6,6 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/Shader.hpp>
-#include <Assisi/Runtime/Camera.hpp>
 
 namespace Assisi::Runtime
 {
@@ -25,10 +24,10 @@ namespace Assisi::Runtime
 /// Entities whose MeshRendererComponent::mesh is null are skipped silently.
 ///
 /// @param scene       ECS scene to query.
-/// @param camera      Provides the view matrix.
-/// @param projection  Projection matrix (e.g. glm::perspective).
+/// @param view        View matrix (e.g. from Runtime::ViewMatrix).
+/// @param projection  Projection matrix (e.g. from Runtime::ProjectionMatrix).
 /// @param shader      Shader program to use; must already be loaded.
-void DrawScene(Assisi::ECS::Scene &scene, const Camera &camera, const glm::mat4 &projection,
+void DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm::mat4 &projection,
                Assisi::Render::Shader &shader);
 
 } // namespace Assisi::Runtime
