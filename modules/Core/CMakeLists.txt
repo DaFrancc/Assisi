@@ -5,11 +5,13 @@ target_sources(Assisi-Core
   PRIVATE
     "src/AssetSystem.cpp"
     "src/ComponentRegistry.cpp"
+    "src/EventQueue.cpp"
     "src/Logger.cpp"
     "src/Sinks.cpp"
   PUBLIC
     "include/Assisi/Core/AssetSystem.hpp"
     "include/Assisi/Core/Errors.hpp"
+    "include/Assisi/Core/EventQueue.hpp"
     "include/Assisi/Core/Logger.hpp"
     "include/Assisi/Core/Sinks.hpp"
     "include/Assisi/Core/Reflect/Annotations.hpp"

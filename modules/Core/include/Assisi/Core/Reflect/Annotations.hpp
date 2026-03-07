@@ -14,3 +14,8 @@
 
 #define ACOMP(...)
 #define AFIELD(...)
+
+/// AEVENT() — marks a struct as an event type.
+/// Compiles to nothing today; reserved for future reflectgen support
+/// (serialization, network replication interception).
+#define AEVENT(...)
