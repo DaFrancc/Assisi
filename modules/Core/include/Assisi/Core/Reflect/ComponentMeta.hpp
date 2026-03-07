@@ -40,6 +40,14 @@ struct ComponentMeta
     std::function<void(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen,
                        const nlohmann::json &j)>
         addToScene;
+
+    /// @brief Iterate all entities in a scene that have this component type.
+    ///
+    /// Type-erased for the same reason as addToScene.
+    ///   scene_ptr — pointer to an ECS::Scene, cast to void*.
+    ///   cb        — called once per entity: (entity_index, entity_gen, component_ptr).
+    std::function<void(void *scene_ptr, std::function<void(uint32_t, uint32_t, const void *)>)>
+        iterateEntities;
 };
 
 } // namespace Assisi::Core::Reflect
