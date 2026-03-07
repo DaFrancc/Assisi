@@ -22,4 +22,10 @@ target_link_libraries(Assisi-Physics
     Jolt::Jolt
 )
 
+assisi_reflect(
+  TARGET Assisi-Physics
+  HEADERS
+    include/Assisi/Physics/PhysicsComponents.hpp
+)
+
 add_library(Assisi::Physics ALIAS Assisi-Physics)

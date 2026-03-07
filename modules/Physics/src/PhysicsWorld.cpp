@@ -120,7 +120,8 @@ struct PhysicsWorld::Impl
                                        static_cast<int>(std::thread::hardware_concurrency()) - 1};
     JPH::PhysicsSystem physicsSystem;
 
-    std::vector<JPH::BodyID> dynamicBodyIds; ///< Tracked so we can wake them on gravity changes.
+    std::vector<JPH::BodyID> allBodyIds;     ///< Every body ever added; used by Clear().
+    std::vector<JPH::BodyID> dynamicBodyIds; ///< Subset of allBodyIds; used to wake on gravity change.
 };
 
 // ---------------------------------------------------------------------------
@@ -165,17 +166,29 @@ RigidBodyComponent PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, 
     JPH::BodyCreationSettings settings(
         new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z)),
         JPH::RVec3(position.x, position.y, position.z),
-        JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w), joltMotion, layer);
+        JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(), joltMotion, layer);
 
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::BodyID bodyId = bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
 
+    _impl->allBodyIds.push_back(bodyId);
     if (motion == BodyMotion::Dynamic)
-    {
         _impl->dynamicBodyIds.push_back(bodyId);
-    }
 
     return RigidBodyComponent{bodyId};
+}
+
+void PhysicsWorld::Clear()
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    for (const JPH::BodyID &id : _impl->allBodyIds)
+    {
+        if (bodies.IsAdded(id))
+            bodies.RemoveBody(id);
+        bodies.DestroyBody(id);
+    }
+    _impl->allBodyIds.clear();
+    _impl->dynamicBodyIds.clear();
 }
 
 void PhysicsWorld::Update(float deltaTime)

@@ -61,6 +61,9 @@ class PhysicsWorld
     /// @brief Teleports a body to the given position and rotation, and reactivates it.
     void SetBodyTransform(const RigidBodyComponent &body, glm::vec3 position, glm::quat rotation);
 
+    /// @brief Removes and destroys all bodies, resetting the world to an empty state.
+    void Clear();
+
     /// @brief Sets the gravity vector (default: {0, −9.81, 0}).
     void SetGravity(glm::vec3 gravity);
 

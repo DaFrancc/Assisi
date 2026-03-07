@@ -1,8 +1,9 @@
 /// @file main.cpp
-/// @brief Assisi Sandbox — physics demo built on the Application layer.
+/// @brief Assisi Sandbox — level viewer built on the Application layer.
 
 #include <Assisi/App/Application.hpp>
 
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/SceneRegistry.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -10,19 +11,19 @@
 #include <Assisi/Render/DefaultMeshes.hpp>
 #include <Assisi/Render/OpenGL/MeshBuffer.hpp>
 #include <Assisi/Render/Shader.hpp>
-
-#include <glad/glad.h>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cstdlib>
-#include <tuple>
+#include <filesystem>
+#include <string>
 
 // ---------------------------------------------------------------------------
 // SandboxApp
@@ -36,13 +37,16 @@ class SandboxApp : public Assisi::App::Application
     void OnUpdate(float dt);
     void OnRender();
     void OnImGui();
-    void OnShutdown() override;
     void OnResize(int width, int height) override;
 
   private:
-    Assisi::ECS::SceneRegistry    _scenes;
-    Assisi::ECS::Scene           *_scene = nullptr;
-    Assisi::Physics::PhysicsWorld _physics;
+    void ScanLevels();
+    void LoadLevel(const std::string &name);
+    void SaveLevel(const std::string &name);
+
+    Assisi::ECS::SceneRegistry         _scenes;
+    Assisi::ECS::Scene                *_scene = nullptr;
+    Assisi::Physics::PhysicsWorld      _physics;
 
     Assisi::Render::OpenGL::MeshBuffer _cubeMesh;
     Assisi::Render::Shader             _shader;
@@ -54,33 +58,22 @@ class SandboxApp : public Assisi::App::Application
     static constexpr float kFarZ  = 200.f;
 
     // Camera control state
-    float _yaw         = -116.6f; // initialised in OnStart from camera direction
-    float _pitch       =  -24.1f;
-    float _fovDegrees  =   60.f;
+    float _yaw        = -116.6f;
+    float _pitch      =  -24.1f;
+    float _fovDegrees =   60.f;
 
     static constexpr float kMoveSpeed        = 8.f;   // units/s
     static constexpr float kMouseSensitivity = 0.1f;  // degrees/pixel
 
-    std::vector<unsigned int>           _testTextures; // owned by sandbox, deleted in OnShutdown
-
-    Assisi::Physics::RigidBodyComponent _cubeRb{};
-    glm::quat                           _cornerRot{1.f, 0.f, 0.f, 0.f};
-    glm::vec3                           _spawnPos{0.f, 6.f, 0.f};
-    int                                 _spawnCount = 0;
+    std::vector<std::string> _levelFiles;
+    int                      _selectedLevel = 0;
+    char                     _saveAsName[128] = {};
 };
 
 // ---------------------------------------------------------------------------
 
 void SandboxApp::OnStart()
 {
-    // Logger examples
-    // Assisi::Core::Log::Trace("Trace: verbose internal detail, {} items", 3);
-    // Assisi::Core::Log::Debug("Debug: useful during development");
-    // Assisi::Core::Log::Info("Info:  general status messages");
-    // Assisi::Core::Log::Warn("Warn:  something unexpected but recoverable");
-    // Assisi::Core::Log::Error("Error: something failed");
-    // Assisi::Core::Log::Fatal("Fatal: unrecoverable, shutting down");
-
     _scene = _scenes.Create("Main").value();
 
     _cubeMesh = Assisi::Render::OpenGL::MeshBuffer(Assisi::Render::CreateUnitCubeMesh());
@@ -95,7 +88,7 @@ void SandboxApp::OnStart()
 
     _camera = Assisi::Runtime::Camera({5.f, 5.f, 10.f}, {0.f, 0.f, 0.f});
 
-    // Lighting system — must be initialised after the OpenGL context is ready
+    // Lighting system — must be initialised after the OpenGL context is ready.
     {
         const auto size = GetWindow().GetFramebufferSize();
         _projection     = MakeProjection(_fovDegrees, kNearZ, kFarZ);
@@ -113,133 +106,7 @@ void SandboxApp::OnStart()
     _pitch = glm::degrees(glm::asin(forward.y));
     _yaw   = glm::degrees(glm::atan(forward.z, forward.x));
 
-    // Directional light (sun)
-    {
-        Assisi::ECS::Entity sun = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::DirectionalLightComponent>(
-            sun, {.direction = {-0.4f, -1.0f, -0.5f}, .color = {1.f, 1.f, 1.f}, .intensity = 0.5f});
-    }
-
-    // Floor — static box
-    {
-        Assisi::ECS::Entity floor = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            floor, {.position = {0.f, -0.25f, 0.f}, .rotation = {1.f, 0.f, 0.f, 0.f}, .scale = {10.f, 0.5f, 10.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(floor, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(
-            floor, _physics.AddBox({0.f, -0.25f, 0.f}, {1.f, 0.f, 0.f, 0.f}, {5.f, 0.25f, 5.f},
-                                   Assisi::Physics::BodyMotion::Static));
-    }
-
-    // Dynamic cube — tilted to land on a corner
-    _cornerRot = glm::normalize(
-        glm::angleAxis(glm::radians(45.f), glm::vec3(0.f, 0.f, 1.f)) *
-        glm::angleAxis(glm::radians(45.f), glm::vec3(1.f, 0.f, 0.f)));
-    {
-        Assisi::ECS::Entity cube = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            cube, {.position = _spawnPos, .rotation = _cornerRot, .scale = {1.f, 1.f, 1.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(cube, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
-        _cubeRb = _physics.AddBox(_spawnPos, _cornerRot, {0.5f, 0.5f, 0.5f}, Assisi::Physics::BodyMotion::Dynamic);
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(cube, _cubeRb);
-    }
-
-    // Helper: create a 1×1 sRGB texture for a given colour / value
-    auto makeTex = [&](uint8_t r, uint8_t g, uint8_t b) -> unsigned int
-    {
-        unsigned int id = 0;
-        glGenTextures(1, &id);
-        glBindTexture(GL_TEXTURE_2D, id);
-        const uint8_t px[4] = {r, g, b, 255};
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, px);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-        _testTextures.push_back(id);
-        return id;
-    };
-
-    // Albedos
-    const unsigned int texGold  = makeTex(255, 200,  50); // warm gold
-    const unsigned int texRed   = makeTex(200,  35,  35); // saturated red
-    const unsigned int texBlue  = makeTex( 55, 100, 220); // cool blue
-
-    // Roughness values (R channel used; white = 1.0, black = 0.0)
-    const unsigned int roughLow  = makeTex(  8,   8,   8); // ~0.03 — near-mirror
-    const unsigned int roughHigh = makeTex(245, 245, 245); // ~0.96 — very rough
-    const unsigned int roughMed  = makeTex(128, 128, 128); // ~0.50 — semi-rough
-
-    // Metallic values
-    const unsigned int metalFull = makeTex(255, 255, 255); // 1.0 — fully metallic
-    const unsigned int metalNone = makeTex(  0,   0,   0); // 0.0 — dielectric
-    const unsigned int metalMed  = makeTex(128, 128, 128); // 0.5 — partial
-
-    // --- Test cube 1: polished gold metal (high metallic, near-zero roughness) ---
-    {
-        constexpr glm::vec3 pos{-3.f, 0.5f, -2.f};
-        Assisi::ECS::Entity cube = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(cube, {.position = pos});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(
-            cube, {.mesh = &_cubeMesh, .albedoTextureId = texGold,
-                   .metallicTextureId = metalFull, .roughnessTextureId = roughLow});
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(
-            cube, _physics.AddBox(pos, {1.f, 0.f, 0.f, 0.f}, {0.5f, 0.5f, 0.5f},
-                                  Assisi::Physics::BodyMotion::Dynamic));
-    }
-
-    // --- Test cube 2: rough red plastic (no metallic, high roughness) ---
-    {
-        constexpr glm::vec3 pos{0.f, 0.5f, -3.f};
-        Assisi::ECS::Entity cube = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(cube, {.position = pos});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(
-            cube, {.mesh = &_cubeMesh, .albedoTextureId = texRed,
-                   .metallicTextureId = metalNone, .roughnessTextureId = roughHigh});
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(
-            cube, _physics.AddBox(pos, {1.f, 0.f, 0.f, 0.f}, {0.5f, 0.5f, 0.5f},
-                                  Assisi::Physics::BodyMotion::Dynamic));
-    }
-
-    // --- Test cube 3: semi-rough blue ceramic (partial metallic, medium roughness) ---
-    {
-        constexpr glm::vec3 pos{3.f, 0.5f, -2.f};
-        Assisi::ECS::Entity cube = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(cube, {.position = pos});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(
-            cube, {.mesh = &_cubeMesh, .albedoTextureId = texBlue,
-                   .metallicTextureId = metalMed, .roughnessTextureId = roughMed});
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(
-            cube, _physics.AddBox(pos, {1.f, 0.f, 0.f, 0.f}, {0.5f, 0.5f, 0.5f},
-                                  Assisi::Physics::BodyMotion::Dynamic));
-    }
-
-    // --- Point lights ---
-
-    // White — overhead centre
-    {
-        Assisi::ECS::Entity light = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            light, {.position = {0.f, 4.f, -1.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::PointLightComponent>(
-            light, {.color = {1.f, 1.f, 1.f}, .intensity = 150.f, .radius = 30.f});
-    }
-
-    // Blue — left side
-    {
-        Assisi::ECS::Entity light = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            light, {.position = {-5.f, 2.5f, 0.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::PointLightComponent>(
-            light, {.color = {0.2f, 0.4f, 1.f}, .intensity = 200.f, .radius = 30.f});
-    }
-
-    // Red — right side
-    {
-        Assisi::ECS::Entity light = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            light, {.position = {5.f, 2.5f, 0.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::PointLightComponent>(
-            light, {.color = {1.f, 0.1f, 0.1f}, .intensity = 200.f, .radius = 30.f});
-    }
+    ScanLevels();
 }
 
 void SandboxApp::OnResize(int width, int height)
@@ -268,13 +135,9 @@ void SandboxApp::OnUpdate(float dt)
     if (input.IsKeyPressed(Assisi::Window::Key::Escape))
     {
         if (input.IsMouseCaptured())
-        {
             input.SetMouseCaptured(false);
-        }
         else
-        {
             RequestClose();
-        }
     }
 
     if (input.IsMouseCaptured())
@@ -302,9 +165,7 @@ void SandboxApp::OnUpdate(float dt)
 
         glm::vec3 pos = _camera.WorldPosition();
         if (glm::length(move) > 0.f)
-        {
             pos += glm::normalize(move) * (kMoveSpeed * dt);
-        }
 
         _camera.SetWorldPosition(pos);
         _camera.SetLookAtTarget(pos + forward);
@@ -336,58 +197,114 @@ void SandboxApp::OnRender()
 
 void SandboxApp::OnImGui()
 {
-    ImGui::Begin("World");
-
+    // ── Diagnostics ─────────────────────────────────────────────────────────
+    ImGui::Begin("Diagnostics");
     ImGui::Text("FPS: %d", GetFps());
     ImGui::Text("Sleep resolution: %.2f ms", GetSleepResolutionMs());
     ImGui::Separator();
-
-    auto [cubePos, cubeRot] = _physics.GetBodyTransform(_cubeRb);
-    ImGui::SeparatorText("Dynamic Cube");
-    ImGui::Text("Position  %.2f  %.2f  %.2f", static_cast<double>(cubePos.x), static_cast<double>(cubePos.y), static_cast<double>(cubePos.z));
-    if (ImGui::Button("Reset Cube"))
-    {
-        _physics.SetBodyTransform(_cubeRb, _spawnPos, _cornerRot);
-    }
-
-    ImGui::SeparatorText("Physics");
-    glm::vec3 gravity = _physics.GetGravity();
-    if (ImGui::SliderFloat("Gravity Y", &gravity.y, -20.f, 0.f))
-    {
-        _physics.SetGravity(gravity);
-    }
-
-    ImGui::SeparatorText("Spawn");
-    if (ImGui::Button("Spawn Cube"))
-    {
-        const float offsetX = static_cast<float>((_spawnCount % 5) - 2) * 1.5f;
-        const float offsetZ = static_cast<float>((_spawnCount / 5 % 5) - 2) * 1.5f;
-        const glm::vec3 spawnPos = {offsetX, 8.f, offsetZ};
-
-        Assisi::ECS::Entity newCube = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            newCube, {.position = spawnPos, .rotation = _cornerRot, .scale = {1.f, 1.f, 1.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(
-            newCube, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
-        const auto newRb = _physics.AddBox(spawnPos, _cornerRot, {0.5f, 0.5f, 0.5f},
-                                           Assisi::Physics::BodyMotion::Dynamic);
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(newCube, newRb);
-        ++_spawnCount;
-    }
-    ImGui::SameLine();
-    ImGui::Text("(%d spawned)", _spawnCount);
-
-    ImGui::SeparatorText("Hint");
     ImGui::TextDisabled("LMB: capture  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Mouse: look  |  Scroll: FOV  |  Esc: release / quit");
+    ImGui::End();
+
+    // ── Level Loader ────────────────────────────────────────────────────────
+    ImGui::Begin("Levels");
+
+    if (ImGui::Button("Refresh"))
+        ScanLevels();
+
+    if (_levelFiles.empty())
+    {
+        ImGui::TextDisabled("No .json files found in assets/levels/");
+    }
+    else
+    {
+        ImGui::SetNextItemWidth(-1.0f);
+        if (ImGui::BeginCombo("##level", _levelFiles[_selectedLevel].c_str()))
+        {
+            for (int i = 0; i < static_cast<int>(_levelFiles.size()); ++i)
+            {
+                const bool selected = (i == _selectedLevel);
+                if (ImGui::Selectable(_levelFiles[i].c_str(), selected))
+                    _selectedLevel = i;
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+        const float halfW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        if (ImGui::Button("Load", ImVec2(halfW, 0.0f)))
+            LoadLevel(_levelFiles[_selectedLevel]);
+        ImGui::SameLine();
+        if (ImGui::Button("Save", ImVec2(-1.0f, 0.0f)))
+            SaveLevel(_levelFiles[_selectedLevel]);
+    }
+
+    ImGui::Separator();
+    ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Save As").x - ImGui::GetStyle().ItemSpacing.x
+                            - ImGui::GetStyle().FramePadding.x * 2.0f);
+    ImGui::InputText("##saveas", _saveAsName, sizeof(_saveAsName));
+    ImGui::SameLine();
+    if (ImGui::Button("Save As") && _saveAsName[0] != '\0')
+    {
+        SaveLevel(_saveAsName);
+        ScanLevels();
+        // Select the newly created file in the dropdown.
+        const std::string newName(_saveAsName);
+        const auto it = std::find(_levelFiles.begin(), _levelFiles.end(), newName);
+        if (it != _levelFiles.end())
+            _selectedLevel = static_cast<int>(std::distance(_levelFiles.begin(), it));
+    }
 
     ImGui::End();
 }
 
-void SandboxApp::OnShutdown()
+void SandboxApp::ScanLevels()
 {
-    if (!_testTextures.empty())
-        glDeleteTextures(static_cast<int>(_testTextures.size()), _testTextures.data());
+    _levelFiles.clear();
+    const auto resolved = Assisi::Core::AssetSystem::Resolve("levels");
+    if (!resolved)
+        return;
+
+    for (const auto &entry : std::filesystem::directory_iterator(*resolved))
+    {
+        if (entry.is_regular_file() && entry.path().extension() == ".alvl")
+            _levelFiles.push_back(entry.path().stem().string());
+    }
+    std::sort(_levelFiles.begin(), _levelFiles.end());
+    _selectedLevel = 0;
+}
+
+void SandboxApp::SaveLevel(const std::string &name)
+{
+    const auto resolved = Assisi::Core::AssetSystem::Resolve("levels/" + name + ".alvl");
+    if (!resolved)
+    {
+        Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", name);
+        return;
+    }
+    Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved);
+}
+
+void SandboxApp::LoadLevel(const std::string &name)
+{
+    if (!Assisi::Runtime::SceneSerializer::LoadFromFile(*_scene, "levels/" + name + ".alvl"))
+        return;
+
+    _physics.Clear();
+
+    // MeshRendererComponent::mesh is transient — re-bind after load.
+    for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRendererComponent>())
+        mrc.mesh = &_cubeMesh;
+
+    // Create Jolt bodies for entities that have a RigidBodyDescriptor.
+    for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::TransformComponent,
+                                             Assisi::Physics::RigidBodyDescriptor>())
+    {
+        const auto motion = desc.isStatic ? Assisi::Physics::BodyMotion::Static
+                                          : Assisi::Physics::BodyMotion::Dynamic;
+        (void)_scene->Add<Assisi::Physics::RigidBodyComponent>(
+            e, _physics.AddBox(tc.position, tc.rotation, desc.halfExtents, motion));
+    }
 }
 
 // ---------------------------------------------------------------------------
