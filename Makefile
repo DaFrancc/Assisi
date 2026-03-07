@@ -1,4 +1,4 @@
-.PHONY: conan-gcc conan-clang conan-msvc init
+.PHONY: conan-gcc conan-clang conan-msvc init clean-debug clean-release clean-sanitize clean
 
 # Linux — GCC presets
 conan-gcc:
@@ -20,3 +20,15 @@ conan-msvc:
 
 # Default init: installs all Linux presets (GCC + Clang)
 init: conan-gcc conan-clang
+
+# Clean build outputs (without rebuilding)
+clean-debug:
+	cmake --build --preset msvc-debug --target clean
+
+clean-release:
+	cmake --build --preset msvc-release --target clean
+
+clean-sanitize:
+	cmake --build --preset msvc-sanitize --target clean
+
+clean: clean-debug clean-release clean-sanitize
