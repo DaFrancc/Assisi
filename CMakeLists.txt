@@ -74,6 +74,13 @@ if (MSVC)
 else()
   target_compile_options(Assisi-Options INTERFACE
     -fno-omit-frame-pointer
+    # Jolt Physics is compiled with AVX2/F16C/FMA/LZCNT/TZCNT; MSVC enables
+    # these implicitly on x64, but GCC/Clang require explicit -m flags.
+    -mavx2
+    -mf16c
+    -mfma
+    -mlzcnt
+    -mbmi   # provides TZCNT
   )
 endif()
 
