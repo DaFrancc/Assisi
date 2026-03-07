@@ -5,9 +5,10 @@ namespace Assisi::Runtime
 
 glm::mat4 ViewMatrix(const TransformComponent &transform)
 {
-    const glm::vec3 forward = transform.rotation * glm::vec3(0.f, 0.f, -1.f);
-    const glm::vec3 up      = transform.rotation * glm::vec3(0.f, 1.f,  0.f);
-    return glm::lookAt(transform.position, transform.position + forward, up);
+    const glm::vec3 position = glm::vec3(transform.worldMatrix[3]);
+    const glm::vec3 forward  = -glm::normalize(glm::vec3(transform.worldMatrix[2]));
+    const glm::vec3 up       =  glm::normalize(glm::vec3(transform.worldMatrix[1]));
+    return glm::lookAt(position, position + forward, up);
 }
 
 glm::mat4 ProjectionMatrix(const CameraComponent &camera, float aspectRatio)
@@ -17,17 +18,17 @@ glm::mat4 ProjectionMatrix(const CameraComponent &camera, float aspectRatio)
 
 glm::vec3 ForwardDirection(const TransformComponent &transform)
 {
-    return transform.rotation * glm::vec3(0.f, 0.f, -1.f);
+    return -glm::normalize(glm::vec3(transform.worldMatrix[2]));
 }
 
 glm::vec3 RightDirection(const TransformComponent &transform)
 {
-    return transform.rotation * glm::vec3(1.f, 0.f, 0.f);
+    return glm::normalize(glm::vec3(transform.worldMatrix[0]));
 }
 
 glm::vec3 UpDirection(const TransformComponent &transform)
 {
-    return transform.rotation * glm::vec3(0.f, 1.f, 0.f);
+    return glm::normalize(glm::vec3(transform.worldMatrix[1]));
 }
 
 } // namespace Assisi::Runtime

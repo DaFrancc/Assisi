@@ -14,13 +14,19 @@
 namespace Assisi::Runtime
 {
 
-/// @brief World-space TRS stored as plain data — required to be trivially copyable.
+/// @brief Local-space TRS with a cached world matrix updated by PropagateTransforms().
+///
+/// Write to position/rotation/scale to move an entity. Read worldMatrix for
+/// rendering or any system that needs actual world-space coordinates.
+/// worldMatrix is not serialized — it is recomputed every frame.
 ACOMP()
 struct TransformComponent
 {
     AFIELD() glm::vec3 position{0.f, 0.f, 0.f};
-    AFIELD() glm::quat rotation{1.f, 0.f, 0.f, 0.f}; ///< Identity quaternion.
+    AFIELD() glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     AFIELD() glm::vec3 scale{1.f, 1.f, 1.f};
+
+    glm::mat4 worldMatrix{1.f}; ///< Computed by PropagateTransforms(). Do not set manually.
 };
 
 /// @brief Associates a GPU mesh and PBR material textures with an entity.
@@ -53,12 +59,13 @@ struct MeshRendererComponent
 ///
 /// Call Runtime::ViewMatrix(transform) and Runtime::ProjectionMatrix(camera, aspect)
 /// to obtain the matrices needed for rendering.
+ACOMP()
 struct CameraComponent
 {
-    float fovDegrees = 60.f;  ///< Vertical field of view in degrees.
-    float nearZ      = 0.1f;  ///< Near clip plane distance.
-    float farZ       = 200.f; ///< Far clip plane distance.
-    bool  isActive   = false; ///< True for the scene's active camera.
+    AFIELD() float fovDegrees = 60.f;  ///< Vertical field of view in degrees.
+    AFIELD() float nearZ      = 0.1f;  ///< Near clip plane distance.
+    AFIELD() float farZ       = 200.f; ///< Far clip plane distance.
+    AFIELD() bool  isActive   = false; ///< True for the scene's active camera.
 };
 
 } // namespace Assisi::Runtime
