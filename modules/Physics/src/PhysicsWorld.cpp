@@ -17,6 +17,7 @@
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
 
+#include <algorithm>
 #include <thread>
 #include <vector>
 
@@ -168,6 +169,10 @@ RigidBodyComponent PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, 
         JPH::RVec3(position.x, position.y, position.z),
         JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(), joltMotion, layer);
 
+    // Always allocate motion properties so the motion type can be changed at runtime
+    // (e.g. making a Static body Dynamic via SetBodyMotionType).
+    settings.mAllowDynamicOrKinematic = true;
+
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::BodyID bodyId = bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
 
@@ -229,11 +234,42 @@ std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBodyCo
 void PhysicsWorld::SetBodyTransform(const RigidBodyComponent &body, glm::vec3 position, glm::quat rotation)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+
+    const bool isStatic = bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static;
+
     bodies.SetPositionAndRotation(body.bodyId, JPH::RVec3(position.x, position.y, position.z),
                                   JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w),
-                                  JPH::EActivation::Activate);
-    bodies.SetLinearVelocity(body.bodyId, JPH::Vec3::sZero());
-    bodies.SetAngularVelocity(body.bodyId, JPH::Vec3::sZero());
+                                  isStatic ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
+
+    // Velocity is only meaningful for dynamic bodies; static bodies have no active motion.
+    if (!isStatic)
+    {
+        bodies.SetLinearVelocity(body.bodyId, JPH::Vec3::sZero());
+        bodies.SetAngularVelocity(body.bodyId, JPH::Vec3::sZero());
+    }
+}
+
+void PhysicsWorld::SetBodyMotionType(const RigidBodyComponent &body, BodyMotion motion)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+
+    if (motion == BodyMotion::Static)
+    {
+        // Jolt asserts that a body is inactive before switching it to Static.
+        bodies.DeactivateBody(body.bodyId);
+        bodies.SetMotionType(body.bodyId, JPH::EMotionType::Static, JPH::EActivation::DontActivate);
+
+        auto &ids = _impl->dynamicBodyIds;
+        ids.erase(std::remove(ids.begin(), ids.end(), body.bodyId), ids.end());
+    }
+    else
+    {
+        bodies.SetMotionType(body.bodyId, JPH::EMotionType::Dynamic, JPH::EActivation::Activate);
+
+        auto &ids = _impl->dynamicBodyIds;
+        if (std::find(ids.begin(), ids.end(), body.bodyId) == ids.end())
+            ids.push_back(body.bodyId);
+    }
 }
 
 void PhysicsWorld::SetGravity(glm::vec3 gravity)

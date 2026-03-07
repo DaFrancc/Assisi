@@ -61,6 +61,13 @@ class PhysicsWorld
     /// @brief Teleports a body to the given position and rotation, and reactivates it.
     void SetBodyTransform(const RigidBodyComponent &body, glm::vec3 position, glm::quat rotation);
 
+    /// @brief Changes the motion type of an existing body at runtime.
+    ///
+    /// Useful for temporarily freezing a dynamic body (e.g. while editing in an
+    /// inspector) and restoring it afterwards.  Switching to Dynamic also activates
+    /// the body so gravity takes effect immediately.
+    void SetBodyMotionType(const RigidBodyComponent &body, BodyMotion motion);
+
     /// @brief Removes and destroys all bodies, resetting the world to an empty state.
     void Clear();
 
