@@ -83,3 +83,17 @@ They themselves do not make up a whole game, but they are meant to be building b
 - [Issue Tracker](<add-link>)
 - [Community/Support](<add-link>)
 <!-- links-block: end -->
+
+## AI Notice
+This project uses AI to help develop this project for the main purpose of education alongside some code generation, documentation,
+bug spotting, bug fixing, and temporary art creation (i.e. placeholders for the sake of development, but never to end
+up in full releases).
+
+You are free to commit code that was written with the use of AI, and it will be reviewed to the same standard as code
+that was not written with AI. You do not need to disclose exactly which ideas, lines, or commits were aided with the
+use of AI, but you are free to do so. The only exception is that you must clearly disclose any art assets that
+were created with AI such as: textures, 3D models, photos, videos, audio, and any other form of creative media that
+goes into this engine. 
+
+This notice only applies to this repo. Any forks of this repo or software made using this engine do not need to follow
+these guidelines regarding the use of AI.
