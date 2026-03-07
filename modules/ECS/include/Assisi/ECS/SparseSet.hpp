@@ -118,6 +118,14 @@ template <typename T> struct SparseSet
     std::vector<T>::const_iterator begin() const { return _dense.begin(); }
     std::vector<T>::const_iterator end() const { return _dense.end(); }
 
+    /// @brief Removes all components, resetting the set to an empty state.
+    void Clear()
+    {
+        _sparse.clear();
+        _dense.clear();
+        _entities.clear();
+    }
+
     /// @brief Direct access to the packed entity array (parallel to dense).
     const std::vector<Entity> &Entities() const { return _entities; }
 

@@ -48,6 +48,18 @@ struct Registry
     /// @brief Unregisters a previously registered pool.
     void UnregisterPool(void *pool);
 
+    /// @brief Resets all entity counters to zero.
+    ///
+    /// Clears the generation table and the free-slot list so the next Create()
+    /// returns Entity{0, 0} again.  Caller is responsible for clearing all
+    /// component pools before calling this (Scene::Clear() does both).
+    void Reset()
+    {
+        _generations.clear();
+        _freeSlots.clear();
+        _aliveCount = 0;
+    }
+
   private:
     template <typename T> static void RemoveFn(void *pool, Entity entity)
     {
