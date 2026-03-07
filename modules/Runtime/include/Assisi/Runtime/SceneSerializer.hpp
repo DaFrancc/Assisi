@@ -31,11 +31,14 @@
 /// (e.g. MeshRendererComponent) are saved as an empty object `{}` — their
 /// presence on the entity is preserved but no data is restored.
 
+#include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string_view>
 
 #include <nlohmann/json.hpp>
 
+#include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
 
 namespace Assisi::Runtime
@@ -63,6 +66,18 @@ class SceneSerializer
     /// @param assetPath  Virtual path relative to the asset root (e.g. "levels/main.json").
     /// @return true on success, false on any IO or parse error.
     static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath);
+
+    /// @brief Map a live entity to its stable serial index during the current Save.
+    ///
+    /// Only valid to call from within a component's serialize lambda.
+    /// Returns nullopt if the entity is unknown or no save is in progress.
+    static std::optional<uint32_t> EntityToIndex(ECS::Entity entity);
+
+    /// @brief Map a serial index to the live entity created during the current Load.
+    ///
+    /// Only valid to call from within a component's addToScene lambda.
+    /// Returns NullEntity if the index is out of range or no load is in progress.
+    static ECS::Entity IndexToEntity(uint32_t index);
 };
 
 } // namespace Assisi::Runtime

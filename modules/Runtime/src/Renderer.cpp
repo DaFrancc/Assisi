@@ -29,9 +29,7 @@ void DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm::mat4
             continue;
         }
 
-        const glm::mat4 model = glm::translate(glm::mat4(1.f), transform.position) *
-                                glm::mat4_cast(transform.rotation) * glm::scale(glm::mat4(1.f), transform.scale);
-        shader.SetMat4("uModel", model);
+        shader.SetMat4("uModel", transform.worldMatrix);
 
         const unsigned int albedoId =
             meshRenderer.albedoTextureId != 0u

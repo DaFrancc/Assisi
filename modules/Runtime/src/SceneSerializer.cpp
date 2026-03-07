@@ -6,16 +6,73 @@
 
 #include <fstream>
 #include <map>
+#include <optional>
+#include <unordered_map>
+#include <vector>
 
 namespace Assisi::Runtime
 {
+
+// ---------------------------------------------------------------------------
+// Thread-local serialization context
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+struct SerializationContext
+{
+    // Save: entity key (gen<<32|idx) → serial index
+    std::unordered_map<uint64_t, uint32_t> entityToIndex;
+
+    // Load: serial index → live Entity
+    std::vector<ECS::Entity> indexToEntity;
+};
+
+thread_local std::optional<SerializationContext> s_context;
+
+inline uint64_t EntityKey(uint32_t idx, uint32_t gen)
+{
+    return (static_cast<uint64_t>(gen) << 32) | idx;
+}
+
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Public context accessors (called from component serialize/addToScene lambdas)
+// ---------------------------------------------------------------------------
+
+std::optional<uint32_t> SceneSerializer::EntityToIndex(ECS::Entity entity)
+{
+    if (!s_context)
+        return std::nullopt;
+
+    const uint64_t key = EntityKey(entity.index, entity.generation);
+    const auto it = s_context->entityToIndex.find(key);
+    if (it == s_context->entityToIndex.end())
+        return std::nullopt;
+
+    return it->second;
+}
+
+ECS::Entity SceneSerializer::IndexToEntity(uint32_t index)
+{
+    if (!s_context || index >= s_context->indexToEntity.size())
+        return ECS::NullEntity;
+
+    return s_context->indexToEntity[index];
+}
+
+// ---------------------------------------------------------------------------
+// Save
+// ---------------------------------------------------------------------------
 
 nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
 {
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    // Build a map from entity key → component JSON objects.
-    // Using std::map keeps entities in a deterministic (index-sorted) order.
+    // Pass 1: collect all entity keys into a sorted map so serial indices
+    // match the final array order. No serialization yet.
     std::map<uint64_t, nlohmann::json> entityMap;
 
     for (const auto &meta : registry.All())
@@ -23,12 +80,34 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
         if (!meta.iterateEntities)
             continue;
 
+        meta.iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *)
+        {
+            entityMap.emplace(EntityKey(idx, gen), nlohmann::json{});
+        });
+    }
+
+    // Build entityToIndex from the sorted map (deterministic order).
+    SerializationContext ctx;
+    uint32_t serialIdx = 0;
+    for (const auto &entry : entityMap)
+        ctx.entityToIndex.emplace(entry.first, serialIdx++);
+
+    s_context = std::move(ctx);
+
+    // Pass 2: serialize components (context is live so EntityToIndex works).
+    for (const auto &meta : registry.All())
+    {
+        if (!meta.iterateEntities)
+            continue;
+
         meta.iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *compPtr)
         {
-            const uint64_t key = (static_cast<uint64_t>(gen) << 32) | idx;
+            const uint64_t key = EntityKey(idx, gen);
             entityMap[key]["components"][meta.name] = meta.serialize(compPtr);
         });
     }
+
+    s_context.reset();
 
     nlohmann::json result;
     result["version"]  = 1;
@@ -39,6 +118,10 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
 
     return result;
 }
+
+// ---------------------------------------------------------------------------
+// Load
+// ---------------------------------------------------------------------------
 
 void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
 {
@@ -53,9 +136,12 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
 
     scene.Clear();
 
+    s_context = SerializationContext{};
+
     for (const auto &entityJson : j.at("entities"))
     {
         const ECS::Entity e = scene.Create();
+        s_context->indexToEntity.push_back(e);
 
         if (!entityJson.contains("components"))
             continue;
@@ -71,7 +157,13 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
             meta->addToScene(&scene, e.index, e.generation, compData);
         }
     }
+
+    s_context.reset();
 }
+
+// ---------------------------------------------------------------------------
+// File I/O helpers
+// ---------------------------------------------------------------------------
 
 bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path &path)
 {
