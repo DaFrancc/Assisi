@@ -3,6 +3,7 @@
 /// @file PhysicsComponents.hpp
 /// @brief ECS component that links an entity to a Jolt rigid body.
 
+#include <Assisi/Prelude.hpp>
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/BodyID.h>
 
