@@ -9,11 +9,11 @@
 namespace Assisi::Runtime
 {
 
-void DrawScene(Assisi::ECS::Scene &scene, const Camera &camera, const glm::mat4 &projection,
+void DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm::mat4 &projection,
                Assisi::Render::Shader &shader)
 {
     shader.Use();
-    shader.SetMat4("uView", camera.ViewMatrix());
+    shader.SetMat4("uView", view);
     shader.SetMat4("uProjection", projection);
 
     // Bind sampler uniforms to their fixed texture units
