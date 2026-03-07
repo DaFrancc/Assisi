@@ -15,6 +15,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -217,6 +218,9 @@ void SandboxApp::OnUpdate(float dt)
 
 void SandboxApp::OnRender()
 {
+    Assisi::Runtime::PropagateTransforms(_cameraScene);
+    Assisi::Runtime::PropagateTransforms(*_scene);
+
     const auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
     const glm::mat4 view = Assisi::Runtime::ViewMatrix(*camTransform);
 
@@ -420,9 +424,7 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
 
     for (auto [e, tc] : _scene->Query<Assisi::Runtime::TransformComponent>())
     {
-        glm::mat4 model = glm::translate(glm::mat4(1.f), tc.position);
-        model           = model * glm::toMat4(tc.rotation);
-        model           = glm::scale(model, tc.scale);
+        const glm::mat4 model = tc.worldMatrix;
 
         float t = 0.f;
         if (RayOBBIntersect(rayOrigin, rayDir, model, t) && t < closestT)

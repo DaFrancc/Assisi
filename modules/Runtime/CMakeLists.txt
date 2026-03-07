@@ -5,6 +5,7 @@ target_sources(Assisi-Runtime
   PUBLIC
     "include/Assisi/Runtime/Camera.hpp"
     "include/Assisi/Runtime/Components.hpp"
+    "include/Assisi/Runtime/Hierarchy.hpp"
     "include/Assisi/Runtime/LightComponents.hpp"
     "include/Assisi/Runtime/LightingSystem.hpp"
     "include/Assisi/Runtime/Renderer.hpp"
@@ -12,6 +13,7 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/Transform.hpp"
   PRIVATE
     "src/Camera.cpp"
+    "src/Hierarchy.cpp"
     "src/LightingSystem.cpp"
     "src/Renderer.cpp"
     "src/SceneSerializer.cpp"
@@ -34,6 +36,7 @@ assisi_reflect(
   TARGET Assisi-Runtime
   HEADERS
     include/Assisi/Runtime/Components.hpp
+    include/Assisi/Runtime/Hierarchy.hpp
     include/Assisi/Runtime/LightComponents.hpp
 )
 

@@ -22,6 +22,7 @@ enum class FieldType
     Vec4,
     Quat,
     Mat4,
+    EntityRef, ///< ECS::Entity serialized as a stable serial index via SceneSerializer.
     Unknown,
 };
 

@@ -15,7 +15,6 @@
 /// the dense array gap-free at all times.
 
 #include <cstdint>
-#include <cstring>
 #include <expected>
 #include <type_traits>
 #include <vector>
@@ -32,8 +31,6 @@ enum class SparseSetError
 
 template <typename T> struct SparseSet
 {
-    static_assert(std::is_trivially_copyable_v<T>, "SparseSet<T>: components must be trivially copyable. "
-                                                   "Use a handle/ID to reference heap-allocated data instead.");
 
     /// @brief Sentinel stored in the sparse array for slots with no component.
     static constexpr uint32_t Invalid = UINT32_MAX;
@@ -73,8 +70,8 @@ template <typename T> struct SparseSet
 
         if (removedPos != lastPos)
         {
-            /* Copy the last element into the removed slot. */
-            std::memcpy(&_dense[removedPos], &_dense[lastPos], sizeof(T));
+            /* Move the last element into the removed slot. */
+            _dense[removedPos]    = std::move(_dense[lastPos]);
             _entities[removedPos] = _entities[lastPos];
 
             /* Update the sparse entry for the entity that was moved. */
