@@ -37,6 +37,18 @@ struct Scene
     /// @brief Returns the number of currently live entities.
     std::size_t AliveCount() const { return _registry.AliveCount(); }
 
+    /// @brief Removes all entities and components, resetting index counters to zero.
+    ///
+    /// After this call the scene is equivalent to a freshly constructed one:
+    /// the next Create() returns Entity{0, 0}.  All component pools are kept
+    /// alive (no allocations freed) so they can be refilled without realloc.
+    void Clear()
+    {
+        for (auto &[type, storage] : _pools)
+            storage.clear(storage.pool);
+        _registry.Reset();
+    }
+
     /// @brief Adds a component of type T to the entity.
     ///
     /// Creates the component pool on first use.
@@ -122,6 +134,7 @@ struct Scene
     {
         void *pool;
         void (*remove)(void *pool, Entity entity);
+        void (*clear)(void *pool);
         void (*destroy)(void *pool);
     };
 
@@ -129,6 +142,8 @@ struct Scene
     {
         static_cast<SparseSet<T> *>(pool)->Remove(entity);
     }
+
+    template <typename T> static void ClearFn(void *pool) { static_cast<SparseSet<T> *>(pool)->Clear(); }
 
     template <typename T> static void DestroyFn(void *pool) { delete static_cast<SparseSet<T> *>(pool); }
 
@@ -149,7 +164,7 @@ struct Scene
 
         auto *pool = new SparseSet<T>();
         _registry.RegisterPool(pool);
-        _pools.emplace(typeid(T), PoolStorage{pool, &RemoveFn<T>, &DestroyFn<T>});
+        _pools.emplace(typeid(T), PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>});
         return *pool;
     }
 

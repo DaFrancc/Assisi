@@ -7,6 +7,7 @@
 /// SparseSet<T>. Use TransformComponent for position/rotation/scale and
 /// MeshRendererComponent to associate a mesh and texture with an entity.
 
+#include <Assisi/Prelude.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/OpenGL/MeshBuffer.hpp>
 
@@ -14,11 +15,12 @@ namespace Assisi::Runtime
 {
 
 /// @brief World-space TRS stored as plain data — required to be trivially copyable.
+ACOMP()
 struct TransformComponent
 {
-    glm::vec3 position{0.f, 0.f, 0.f};
-    glm::quat rotation{1.f, 0.f, 0.f, 0.f}; ///< Identity quaternion.
-    glm::vec3 scale{1.f, 1.f, 1.f};
+    AFIELD() glm::vec3 position{0.f, 0.f, 0.f};
+    AFIELD() glm::quat rotation{1.f, 0.f, 0.f, 0.f}; ///< Identity quaternion.
+    AFIELD() glm::vec3 scale{1.f, 1.f, 1.f};
 };
 
 /// @brief Associates a GPU mesh and PBR material textures with an entity.
@@ -30,13 +32,17 @@ struct TransformComponent
 ///   - normalTextureId   → 1×1 flat normal (0, 0, 1) in tangent space
 ///   - metallicTextureId → 1×1 black (metallic = 0, fully dielectric)
 ///   - roughnessTextureId → 1×1 mid-grey (roughness ≈ 0.5)
+///
+/// The pointer and texture IDs are runtime-only (transient); asset paths are
+/// resolved by the scene loader and are not stored on the component itself.
+ACOMP()
 struct MeshRendererComponent
 {
-    const Assisi::Render::OpenGL::MeshBuffer *mesh = nullptr;
-    unsigned int albedoTextureId   = 0u;
-    unsigned int normalTextureId   = 0u;
-    unsigned int metallicTextureId = 0u;
-    unsigned int roughnessTextureId = 0u;
+    AFIELD(transient) const Assisi::Render::OpenGL::MeshBuffer *mesh = nullptr;
+    AFIELD(transient) unsigned int albedoTextureId   = 0u;
+    AFIELD(transient) unsigned int normalTextureId   = 0u;
+    AFIELD(transient) unsigned int metallicTextureId = 0u;
+    AFIELD(transient) unsigned int roughnessTextureId = 0u;
 };
 
 } // namespace Assisi::Runtime

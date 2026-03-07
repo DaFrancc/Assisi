@@ -28,4 +28,11 @@ target_link_libraries(Assisi-Runtime
     Assisi::Render
 )
 
+assisi_reflect(
+  TARGET Assisi-Runtime
+  HEADERS
+    include/Assisi/Runtime/Components.hpp
+    include/Assisi/Runtime/LightComponents.hpp
+)
+
 add_library(Assisi::Runtime ALIAS Assisi-Runtime)
