@@ -8,11 +8,13 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/LightComponents.hpp"
     "include/Assisi/Runtime/LightingSystem.hpp"
     "include/Assisi/Runtime/Renderer.hpp"
+    "include/Assisi/Runtime/SceneSerializer.hpp"
     "include/Assisi/Runtime/Transform.hpp"
   PRIVATE
     "src/Camera.cpp"
     "src/LightingSystem.cpp"
     "src/Renderer.cpp"
+    "src/SceneSerializer.cpp"
 )
 
 target_include_directories(Assisi-Runtime

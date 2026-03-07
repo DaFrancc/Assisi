@@ -417,6 +417,12 @@ static const bool {var_name} = []() -> bool
         [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
         {{
 {deserialize}
+        }},
+        [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)
+        {{
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            for (auto [e, comp] : scene.Query<T>())
+                cb(e.index, e.generation, &comp);
         }}
     }});
     return true;
