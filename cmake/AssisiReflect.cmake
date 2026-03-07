@@ -1,5 +1,5 @@
 # AssisiReflect.cmake
-# Provides the assisi_reflect() function for wiring reflectgen into a module's build.
+# Provides the assisi_reflect() and assisi_link_reflections() functions.
 #
 # Usage in a module's CMakeLists.txt:
 #
@@ -11,11 +11,18 @@
 #   )
 #
 # For each listed header that contains ACOMP annotations, a .generated.cpp is
-# produced in ${CMAKE_CURRENT_BINARY_DIR}/generated/ and added as a private
-# source to TARGET.  The #include path inside each generated file is
-# auto-detected from the 'include/' path segment (e.g.
-# modules/Runtime/include/Assisi/Runtime/Components.hpp ->
-# Assisi/Runtime/Components.hpp).
+# produced in ${CMAKE_CURRENT_BINARY_DIR}/generated/.  The sources are compiled
+# into a separate OBJECT library (${TARGET}-Generated) rather than into the
+# module's static library.  This avoids the MSVC linker stripping unreferenced
+# translation units from static libraries, which would silently discard all
+# static-initializer registrations.
+#
+# In the CMakeLists.txt of every final executable that needs reflection:
+#
+#   assisi_link_reflections(Assisi-Sandbox)
+#
+# This adds $<TARGET_OBJECTS:...> for every OBJECT library produced by
+# assisi_reflect() so the registration code is always included in the link.
 
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 
@@ -60,7 +67,27 @@ function(assisi_reflect)
         list(APPEND _generated_sources "${_out}")
     endforeach()
 
-    target_sources("${_ARG_TARGET}" PRIVATE ${_generated_sources})
-    # Generated files include <Assisi/ECS/Scene.hpp> — make sure ECS headers
-    # are reachable.  (Modules that call assisi_reflect already link ECS.)
+    # Compile generated sources as a separate OBJECT library.
+    # OBJECT libraries are always fully included in the final link — unlike
+    # static libraries, the linker never strips their translation units.
+    set(_obj_target "${_ARG_TARGET}-Generated")
+    add_library("${_obj_target}" OBJECT ${_generated_sources})
+
+    # Inherit the reflected module's include paths and compile settings
+    # (Options/Warnings/Perf come through transitively since the module
+    # links them PUBLIC via Assisi_apply_defaults).
+    target_link_libraries("${_obj_target}" PRIVATE "${_ARG_TARGET}")
+
+    # Register this OBJECT library globally so assisi_link_reflections()
+    # can gather all of them.
+    set_property(GLOBAL APPEND PROPERTY ASSISI_REFLECT_OBJECT_TARGETS "${_obj_target}")
+endfunction()
+
+# Call once on each final executable (or shared library) to force-include
+# all reflection registration code produced by assisi_reflect() calls.
+function(assisi_link_reflections target)
+    get_property(_reflect_targets GLOBAL PROPERTY ASSISI_REFLECT_OBJECT_TARGETS)
+    foreach(_rt ${_reflect_targets})
+        target_sources("${target}" PRIVATE "$<TARGET_OBJECTS:${_rt}>")
+    endforeach()
 endfunction()

@@ -14,6 +14,8 @@ target_link_libraries(Assisi-Sandbox
     OpenGL::GL
 )
 
+assisi_link_reflections(Assisi-Sandbox)
+
 add_custom_command(TARGET Assisi-Sandbox POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets"
