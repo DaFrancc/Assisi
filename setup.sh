@@ -117,8 +117,18 @@ EOF
 
 ok "Created apps/$GAME_NAME with a starter CMakeLists.txt and main.cpp"
 
+# 3) Register app in root CMakeLists.txt
+ROOT_CMAKE="$REPO_ROOT/CMakeLists.txt"
+ENTRY="add_subdirectory(apps/$GAME_NAME)"
+if ! grep -qF "$ENTRY" "$ROOT_CMAKE"; then
+  printf '\n%s\n' "$ENTRY" >> "$ROOT_CMAKE"
+  ok "Registered apps/$GAME_NAME in CMakeLists.txt"
+else
+  warn "apps/$GAME_NAME already registered in CMakeLists.txt"
+fi
+
 # -----------------------
-# 3) CMakeUserPresets.json
+# 4) CMakeUserPresets.json
 # -----------------------
 heading "User Presets"
 USER_PRESETS_PATH="$REPO_ROOT/CMakeUserPresets.json"
@@ -154,26 +164,10 @@ EOF
 ok "Wrote CMakeUserPresets.json (compiler=$COMPILER, ASSISI_APP=$GAME_NAME)"
 
 # -----------------------
-# 4) Conan installs
-# -----------------------
-heading "Dependencies (Conan via Make)"
-
-if ! command -v make &>/dev/null; then
-  err "make not found in PATH."
-  exit 1
-fi
-
-info "Running: make conan-${COMPILER}"
-make "conan-${COMPILER}"
-
-ok "All Conan installs completed successfully."
-
-# -----------------------
 # Done
 # -----------------------
 echo ""
-info "You can configure/build now with:"
-printf '  cmake --preset %s-debug-user\n' "$COMPILER"
+info "Run 'make configure-${COMPILER}' to install dependencies and configure, then build with:"
 printf '  cmake --build --preset %s-debug-user\n' "$COMPILER"
 
 heading "Done"

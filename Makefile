@@ -1,4 +1,6 @@
-.PHONY: conan-gcc conan-clang conan-msvc init clean-debug clean-release clean-sanitize clean
+.PHONY: conan-gcc conan-clang conan-msvc configure-msvc configure-gcc configure-clang msvc gcc clang \
+        msvc-debug msvc-release msvc-sanitize gcc-debug gcc-release gcc-sanitize clang-debug clang-release clang-sanitize \
+        md mr ms gd gr gs cd cr cs init clean-debug clean-release clean-sanitize clean
 
 # Linux — GCC presets
 conan-gcc:
@@ -17,6 +19,76 @@ conan-msvc:
 	conan install . -of=out/build/msvc-debug    -pr:h=.\profiles\msvc-debug    -pr:b=.\profiles\msvc-debug    -g CMakeDeps -g CMakeToolchain --build=missing
 	conan install . -of=out/build/msvc-release  -pr:h=.\profiles\msvc-release  -pr:b=.\profiles\msvc-release  -g CMakeDeps -g CMakeToolchain --build=missing
 	conan install . -of=out/build/msvc-sanitize -pr:h=.\profiles\msvc-sanitize -pr:b=.\profiles\msvc-sanitize -g CMakeDeps -g CMakeToolchain --build=missing
+
+# Configure presets (runs conan install first, then cmake configure)
+configure-msvc: conan-msvc
+	cmake --preset msvc-debug
+	cmake --preset msvc-release
+	cmake --preset msvc-sanitize
+
+configure-gcc: conan-gcc
+	cmake --preset gcc-debug
+	cmake --preset gcc-release
+	cmake --preset gcc-sanitize
+
+configure-clang: conan-clang
+	cmake --preset clang-debug
+	cmake --preset clang-release
+	cmake --preset clang-sanitize
+
+# Full setup + build (conan install → cmake configure → cmake build)
+msvc: configure-msvc
+	cmake --build --preset msvc-debug
+	cmake --build --preset msvc-release
+#	cmake --build --preset msvc-sanitize
+
+msvc-debug:
+	cmake --build --preset msvc-debug
+
+msvc-release:
+	cmake --build --preset msvc-release
+
+msvc-sanitize:
+	cmake --build --preset msvc-sanitize
+
+gcc-debug:
+	cmake --build --preset gcc-debug
+
+gcc-release:
+	cmake --build --preset gcc-release
+
+gcc-sanitize:
+	cmake --build --preset gcc-sanitize
+
+clang-debug:
+	cmake --build --preset clang-debug
+
+clang-release:
+	cmake --build --preset clang-release
+
+clang-sanitize:
+	cmake --build --preset clang-sanitize
+
+# Aliases
+md: msvc-debug
+mr: msvc-release
+ms: msvc-sanitize
+gd: gcc-debug
+gr: gcc-release
+gs: gcc-sanitize
+cd: clang-debug
+cr: clang-release
+cs: clang-sanitize
+
+gcc: configure-gcc
+	cmake --build --preset gcc-debug
+	cmake --build --preset gcc-release
+#	cmake --build --preset gcc-sanitize
+
+clang: configure-clang
+	cmake --build --preset clang-debug
+	cmake --build --preset clang-release
+#	cmake --build --preset clang-sanitize
 
 # Default init: installs all Linux presets (GCC + Clang)
 init: conan-gcc conan-clang

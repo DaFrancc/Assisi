@@ -259,3 +259,5 @@ add_subdirectory(apps/sandbox)
 # - Each module target should link:
 #     Assisi::Options, Assisi::Warnings, Assisi::Perf, Assisi::Deps
 #   and optionally Assisi::Sanitize (it is inert unless enabled by preset).
+
+#add_subdirectory(apps/CustomAppName)

@@ -339,6 +339,7 @@ void SandboxApp::DrawDiagnosticsWindow()
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Scroll: FOV  |  LMB: select  |  Esc: quit");
+    ImGui::TextDisabled("F12: graphics settings");
     ImGui::End();
 }
 

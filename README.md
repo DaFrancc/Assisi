@@ -36,29 +36,58 @@ The following compilers have been tested for the following operating systems:
 - Dear ImGui
 - nlohmann_json
 
-### 3. Initialization
+### 3. Install Dependencies (Conan + CMake configure)
 #### Windows:
- - Run `setup.ps1` and follow the instructions to install dependencies using [Conan](https://conan.io/).
-    ```bash
-    powershell -ExecutionPolicy Bypass -File .\setup.ps1
-    ```
-   - Note: If you do not have the dependencies already installed and built, this process will take several minutes depending on your internet speed and your hardware. If you have already run the script once successfully, running it again will only take seconds.
-   - Note: If you add new packages via Conan, run `make conan-msvc` to regenerate the build files.
+```bash
+make configure-msvc
+```
 #### Linux:
- - Run `./setup.sh` and follow the instructions to install dependencies using [Conan](https://conan.io/).
-   - Note: If the script won't start, try giving it execution permissions with `chmod +x ./setup.sh`.
-   - Note: If you add new packages via Conan, run `make init` to regenerate the build files (installs GCC and Clang presets).
+```bash
+make configure-gcc    # GCC
+make configure-clang  # Clang
+```
+- Note: If you do not have the Conan packages cached, this will take several minutes the first time. Subsequent runs are fast.
+- Note: If you add new packages via Conan, re-run the relevant `configure-*` target to regenerate the build files.
 #### MacOS:
 - Currently unsupported, but you are free to fiddle around with it and submit a pull request.
 
-### 4. Configure & Build
+### 3b. (Optional) Create a New App
+The setup scripts scaffold a new app under `apps/` and generate a `CMakeUserPresets.json` for it:
+#### Windows:
 ```bash
-# Configure (Windows example)
+powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```
+#### Linux:
+```bash
+chmod +x ./setup.sh && ./setup.sh
+```
+
+### 4. Configure & Build
+After initialization, you can build individual presets or use the all-in-one Makefile targets:
+
+```bash
+# All-in-one: conan install + configure + build all presets for a toolchain
+make msvc    # Windows
+make gcc     # Linux (GCC)
+make clang   # Linux (Clang)
+
+# Or build a specific preset
+make msvc-debug     # (alias: md)
+make msvc-release   # (alias: mr)
+make msvc-sanitize  # (alias: ms)
+make gcc-debug      # (alias: gd)
+make gcc-release    # (alias: gr)
+make gcc-sanitize   # (alias: gs)
+make clang-debug    # (alias: cd)
+make clang-release  # (alias: cr)
+make clang-sanitize # (alias: cs)
+
+# Or use cmake directly
 cmake --preset msvc-debug
-
-# Build
 cmake --build --preset msvc-debug
+```
 
+```bash
 # Run the sandbox
 ./out/build/msvc-debug/apps/sandbox/Assisi-Sandbox.exe
 ```
