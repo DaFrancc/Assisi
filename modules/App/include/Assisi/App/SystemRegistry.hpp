@@ -29,6 +29,7 @@
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Window/ActionMap.hpp>
 #include <Assisi/Window/InputContext.hpp>
 
 #include <array>
@@ -44,9 +45,10 @@ namespace Assisi::App
 /// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, PostUpdate).
 struct SystemContext
 {
-    ECS::Scene           &scene;
-    float                 dt;
-    Window::InputContext &input;
+    ECS::Scene            &scene;
+    float                  dt;
+    Window::InputContext  &input;
+    Window::ActionMap     &actions;
 };
 
 /// @brief Passed to render systems (Render phase only).

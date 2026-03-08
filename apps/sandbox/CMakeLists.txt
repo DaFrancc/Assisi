@@ -12,6 +12,7 @@ target_link_libraries(Assisi-Sandbox
   PRIVATE
     Assisi::App
     OpenGL::GL
+    nlohmann_json::nlohmann_json
 )
 
 assisi_link_reflections(Assisi-Sandbox)

@@ -3,6 +3,7 @@
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
+#include <Assisi/Window/ActionMap.hpp>
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
@@ -25,9 +26,12 @@
 
 #include <imgui.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <limits>
 #include <string>
 
@@ -84,6 +88,7 @@ class SandboxApp : public Assisi::App::Application
 
     // --- Systems ---
     Assisi::App::SystemRegistry _systems;
+    Assisi::Window::ActionMap   _actions;
 
     // --- State ---
     Assisi::ECS::SceneRegistry         _scenes;
@@ -158,6 +163,24 @@ void SandboxApp::SetupLighting()
 
 void SandboxApp::OnStart()
 {
+    // Load action bindings from game.json
+    {
+        const auto pathResult = Assisi::Core::AssetSystem::Resolve("game.json");
+        if (pathResult)
+        {
+            if (std::ifstream file(pathResult.value()); file.is_open())
+            {
+                try
+                {
+                    const auto json = nlohmann::json::parse(file);
+                    if (json.contains("input") && json.at("input").contains("actions"))
+                        _actions.LoadFromJson(json.at("input").at("actions"));
+                }
+                catch (const nlohmann::json::exception &) {}
+            }
+        }
+    }
+
     _scene    = _scenes.Create("Main").value();
     _cubeMesh = Assisi::Render::OpenGL::MeshBuffer(Assisi::Render::CreateUnitCubeMesh());
 
@@ -214,7 +237,7 @@ void SandboxApp::OnFixedUpdate(float dt)
 void SandboxApp::HandleEntityPicking()
 {
     auto &input = GetInput();
-    if (input.IsMouseButtonPressed(Assisi::Window::MouseButton::Left) &&
+    if (_actions.IsActionPressed("Select", input) &&
         !input.IsMouseCaptured() && !ImGui::GetIO().WantCaptureMouse)
     {
         Assisi::Core::EventQueue::Instance().Push(
@@ -227,9 +250,9 @@ void SandboxApp::UpdateCamera(float dt)
     auto      &input          = GetInput();
     const bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
 
-    if (input.IsMouseButtonPressed(Assisi::Window::MouseButton::Right) && !imguiWantsMouse)
+    if (_actions.IsActionPressed("LookMode", input) && !imguiWantsMouse)
         input.SetMouseCaptured(true);
-    if (input.IsMouseButtonReleased(Assisi::Window::MouseButton::Right))
+    if (_actions.IsActionReleased("LookMode", input))
         input.SetMouseCaptured(false);
 
     if (input.IsMouseCaptured())
@@ -251,12 +274,12 @@ void SandboxApp::UpdateCamera(float dt)
             _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
 
         glm::vec3 move{0.f};
-        if (input.IsKeyDown(Assisi::Window::Key::W))           { move += forward; }
-        if (input.IsKeyDown(Assisi::Window::Key::S))           { move -= forward; }
-        if (input.IsKeyDown(Assisi::Window::Key::D))           { move += right; }
-        if (input.IsKeyDown(Assisi::Window::Key::A))           { move -= right; }
-        if (input.IsKeyDown(Assisi::Window::Key::Space))       { move.y += 1.f; }
-        if (input.IsKeyDown(Assisi::Window::Key::LeftControl)) { move.y -= 1.f; }
+        if (_actions.IsActionDown("MoveForward",  input)) { move += forward; }
+        if (_actions.IsActionDown("MoveBackward", input)) { move -= forward; }
+        if (_actions.IsActionDown("MoveRight",    input)) { move += right; }
+        if (_actions.IsActionDown("MoveLeft",     input)) { move -= right; }
+        if (_actions.IsActionDown("MoveUp",       input)) { move.y += 1.f; }
+        if (_actions.IsActionDown("MoveDown",     input)) { move.y -= 1.f; }
 
         if (glm::length(move) > 0.f)
             camTransform->position += glm::normalize(move) * (kMoveSpeed * dt);
@@ -282,8 +305,8 @@ void SandboxApp::OnUpdate(float dt)
     if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGui::GetIO().WantCaptureKeyboard)
         RequestClose();
 
-    _systems.Run(Assisi::App::SystemPhase::Update,     {*_scene, dt, input});
-    _systems.Run(Assisi::App::SystemPhase::PostUpdate,  {*_scene, dt, input});
+    _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions});
+    _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions});
 }
 
 void SandboxApp::OnRender()

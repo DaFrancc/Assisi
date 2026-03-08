@@ -36,4 +36,7 @@ assisi.log
 
 # Scratch / experiments
 sample/
+
+# AI
 CLAUDE.md
+.claude/

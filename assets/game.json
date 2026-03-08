@@ -10,5 +10,18 @@
     "timing": {
         "physicsHz": 60,
         "renderHz": 144
+    },
+    "input": {
+        "actions": {
+            "MoveForward":  [{"key": "W"}, {"key": "Up"}],
+            "MoveBackward": [{"key": "S"}, {"key": "Down"}],
+            "MoveLeft":     [{"key": "A"}, {"key": "Left"}],
+            "MoveRight":    [{"key": "D"}, {"key": "Right"}],
+            "MoveUp":       [{"key": "Space"}],
+            "MoveDown":     [{"key": "LeftControl"}],
+            "Sprint":       [{"key": "LeftShift"}],
+            "LookMode":     [{"button": "Right"}],
+            "Select":       [{"button": "Left"}]
+        }
     }
 }
