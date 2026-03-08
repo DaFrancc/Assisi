@@ -16,6 +16,7 @@
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
@@ -271,6 +272,7 @@ void Application::Run()
         }
 
         RenderFrame();
+        Core::EventQueue::Instance().Flush();
     }
 
     OnShutdown();

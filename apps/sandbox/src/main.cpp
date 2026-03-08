@@ -2,8 +2,10 @@
 /// @brief Assisi Sandbox — level viewer built on the Application layer.
 
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/SystemRegistry.hpp>
 
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/SceneRegistry.hpp>
@@ -30,6 +32,18 @@
 #include <string>
 
 // ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+/// @brief Emitted when the user clicks to select (or deselect) an entity.
+/// NullEntity means the click landed on empty space.
+AEVENT()
+struct EntitySelectionChangedEvent
+{
+    Assisi::ECS::Entity entity;
+};
+
+// ---------------------------------------------------------------------------
 // SandboxApp
 // ---------------------------------------------------------------------------
 
@@ -44,13 +58,34 @@ class SandboxApp : public Assisi::App::Application
     void OnResize(int width, int height) override;
 
   private:
+    // --- Setup ---
+    void SetupCamera();
+    void SetupLighting();
+
+    // --- Per-frame helpers ---
+    void HandleEntityPicking();
+    void UpdateCamera(float dt);
+
+    // --- ImGui panels ---
+    void DrawDiagnosticsWindow();
+    void DrawLevelsWindow();
+    void DrawInspector();
+
+    // --- Inspector helpers ---
+    bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
+    void HandlePhysicsEditing(bool anyFieldEdited);
+
+    // --- Level management ---
     void ScanLevels();
     void LoadLevel(const std::string &name);
     void SaveLevel(const std::string &name);
 
     Assisi::ECS::Entity PickEntity(glm::vec2 mousePos);
-    void                DrawInspector();
 
+    // --- Systems ---
+    Assisi::App::SystemRegistry _systems;
+
+    // --- State ---
     Assisi::ECS::SceneRegistry         _scenes;
     Assisi::ECS::Scene                *_scene = nullptr;
     Assisi::Physics::PhysicsWorld      _physics;
@@ -60,16 +95,14 @@ class SandboxApp : public Assisi::App::Application
     Assisi::Runtime::LightingSystem    _lighting;
     glm::mat4                          _projection{1.f};
 
-    // Camera entity lives in its own scene so level loads don't destroy it.
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
 
-    // Camera controller state (Euler angles, authoritative source for orientation).
     float _yaw   = -116.6f;
     float _pitch =  -24.1f;
 
-    static constexpr float kMoveSpeed        = 8.f;   // units/s
-    static constexpr float kMouseSensitivity = 0.1f;  // degrees/pixel
+    static constexpr float kMoveSpeed        = 8.f;
+    static constexpr float kMouseSensitivity = 0.1f;
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
     bool                _wasDragging    = false;
@@ -80,11 +113,52 @@ class SandboxApp : public Assisi::App::Application
 };
 
 // ---------------------------------------------------------------------------
+// Setup helpers
+// ---------------------------------------------------------------------------
+
+void SandboxApp::SetupCamera()
+{
+    const glm::vec3 camPos{5.f, 5.f, 10.f};
+    const glm::vec3 forward = glm::normalize(-camPos);
+
+    _pitch = glm::degrees(glm::asin(forward.y));
+    _yaw   = glm::degrees(glm::atan(forward.z, forward.x));
+
+    const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
+    const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
+
+    Assisi::Runtime::TransformComponent camTransform;
+    camTransform.position = camPos;
+    camTransform.rotation = glm::quat_cast(glm::mat3(right, up, -forward));
+
+    _cameraEntity = _cameraScene.Create();
+    (void)_cameraScene.Add<Assisi::Runtime::TransformComponent>(_cameraEntity, camTransform);
+    (void)_cameraScene.Add<Assisi::Runtime::CameraComponent>(
+        _cameraEntity, Assisi::Runtime::CameraComponent{60.f, 0.1f, 200.f, true});
+}
+
+void SandboxApp::SetupLighting()
+{
+    const auto *cam  = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    const auto  size = GetWindow().GetFramebufferSize();
+    _projection      = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
+
+    if (!_lighting.Initialize(size.Width, size.Height, cam->nearZ, cam->farZ, _projection))
+    {
+        Assisi::Core::Log::Error("Failed to initialise LightingSystem.");
+        RequestClose();
+        return;
+    }
+    _lighting.SetupMeshShader(_shader);
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
 
 void SandboxApp::OnStart()
 {
-    _scene = _scenes.Create("Main").value();
-
+    _scene    = _scenes.Create("Main").value();
     _cubeMesh = Assisi::Render::OpenGL::MeshBuffer(Assisi::Render::CreateUnitCubeMesh());
 
     _shader = Assisi::Render::Shader("shaders/mesh.vert", "shaders/mesh.frag");
@@ -95,48 +169,34 @@ void SandboxApp::OnStart()
         return;
     }
 
-    // Create camera entity — lives in a separate scene so level loads don't destroy it.
-    {
-        const glm::vec3 camPos{5.f, 5.f, 10.f};
-        const glm::vec3 forward = glm::normalize(-camPos); // look toward origin
-
-        _pitch = glm::degrees(glm::asin(forward.y));
-        _yaw   = glm::degrees(glm::atan(forward.z, forward.x));
-
-        const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
-        const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
-
-        Assisi::Runtime::TransformComponent camTransform;
-        camTransform.position = camPos;
-        camTransform.rotation = glm::quat_cast(glm::mat3(right, up, -forward));
-
-        _cameraEntity = _cameraScene.Create();
-        (void)_cameraScene.Add<Assisi::Runtime::TransformComponent>(_cameraEntity, camTransform);
-        (void)_cameraScene.Add<Assisi::Runtime::CameraComponent>(_cameraEntity,
-                                                                  Assisi::Runtime::CameraComponent{60.f, 0.1f, 200.f, true});
-    }
-
-    // Lighting system — must be initialised after the OpenGL context is ready.
-    {
-        const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
-        const auto  size = GetWindow().GetFramebufferSize();
-        _projection = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
-        if (!_lighting.Initialize(size.Width, size.Height, cam->nearZ, cam->farZ, _projection))
-        {
-            Assisi::Core::Log::Error("Failed to initialise LightingSystem.");
-            RequestClose();
-            return;
-        }
-        _lighting.SetupMeshShader(_shader);
-    }
-
+    SetupCamera();
+    SetupLighting();
     ScanLevels();
+
+    // --- Systems ---
+    _systems.Register(Assisi::App::SystemPhase::Update, "EntityPicking",
+                      [this](Assisi::App::SystemContext &) { HandleEntityPicking(); });
+
+    _systems.Register(Assisi::App::SystemPhase::Update, "CameraController",
+                      [this](Assisi::App::SystemContext &ctx) { UpdateCamera(ctx.dt); })
+        .After("EntityPicking");
+
+    _systems.Register(Assisi::App::SystemPhase::PostUpdate, "ProcessEntitySelection",
+                      [this](Assisi::App::SystemContext &)
+                      {
+                          for (const auto &e :
+                               Assisi::Core::EventQueue::Instance()
+                                   .Read<EntitySelectionChangedEvent>())
+                          {
+                              _selectedEntity = e.entity;
+                          }
+                      });
 }
 
 void SandboxApp::OnResize(int width, int height)
 {
     const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
-    _projection = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
+    _projection     = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
     _lighting.Resize(width, height, cam->nearZ, cam->farZ, _projection);
     _lighting.SetupMeshShader(_shader);
 }
@@ -147,32 +207,33 @@ void SandboxApp::OnFixedUpdate(float dt)
     _physics.SyncTransforms(*_scene);
 }
 
-void SandboxApp::OnUpdate(float dt)
-{
-    auto       &input         = GetInput();
-    const bool  imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
+// ---------------------------------------------------------------------------
+// Per-frame helpers
+// ---------------------------------------------------------------------------
 
-    // --- RMB: engage / disengage camera look ---
+void SandboxApp::HandleEntityPicking()
+{
+    auto &input = GetInput();
+    if (input.IsMouseButtonPressed(Assisi::Window::MouseButton::Left) &&
+        !input.IsMouseCaptured() && !ImGui::GetIO().WantCaptureMouse)
+    {
+        Assisi::Core::EventQueue::Instance().Push(
+            EntitySelectionChangedEvent{PickEntity(input.MousePosition())});
+    }
+}
+
+void SandboxApp::UpdateCamera(float dt)
+{
+    auto      &input          = GetInput();
+    const bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
+
     if (input.IsMouseButtonPressed(Assisi::Window::MouseButton::Right) && !imguiWantsMouse)
         input.SetMouseCaptured(true);
     if (input.IsMouseButtonReleased(Assisi::Window::MouseButton::Right))
         input.SetMouseCaptured(false);
 
-    // --- Escape: quit (capture is managed by RMB; don't intercept while ImGui has keyboard) ---
-    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGui::GetIO().WantCaptureKeyboard)
-        RequestClose();
-
-    // --- LMB (not captured, not over ImGui): pick entity ---
-    if (input.IsMouseButtonPressed(Assisi::Window::MouseButton::Left) &&
-        !input.IsMouseCaptured() && !imguiWantsMouse)
-    {
-        _selectedEntity = PickEntity(input.MousePosition());
-    }
-
-    // --- Camera movement while RMB is held ---
     if (input.IsMouseCaptured())
     {
-        // Mouse rotation
         const glm::vec2 delta = input.MouseDelta();
         _yaw   += delta.x * kMouseSensitivity;
         _pitch -= delta.y * kMouseSensitivity;
@@ -186,9 +247,9 @@ void SandboxApp::OnUpdate(float dt)
         const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
         const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
 
-        auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
+        auto *camTransform =
+            _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
 
-        // WASD + Space/Ctrl movement
         glm::vec3 move{0.f};
         if (input.IsKeyDown(Assisi::Window::Key::W))           { move += forward; }
         if (input.IsKeyDown(Assisi::Window::Key::S))           { move -= forward; }
@@ -203,17 +264,26 @@ void SandboxApp::OnUpdate(float dt)
         camTransform->rotation = glm::quat_cast(glm::mat3(right, up, -forward));
     }
 
-    // --- Scroll to adjust FOV ---
     if (!imguiWantsMouse)
     {
         const float scroll = input.ScrollDelta();
         if (scroll != 0.f)
         {
-            auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+            auto *cam       = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
             cam->fovDegrees = glm::clamp(cam->fovDegrees - (scroll * 5.f), 10.f, 120.f);
-            _projection = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
+            _projection     = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
         }
     }
+}
+
+void SandboxApp::OnUpdate(float dt)
+{
+    auto &input = GetInput();
+    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGui::GetIO().WantCaptureKeyboard)
+        RequestClose();
+
+    _systems.Run(Assisi::App::SystemPhase::Update,     {*_scene, dt, input});
+    _systems.Run(Assisi::App::SystemPhase::PostUpdate,  {*_scene, dt, input});
 }
 
 void SandboxApp::OnRender()
@@ -221,8 +291,8 @@ void SandboxApp::OnRender()
     Assisi::Runtime::PropagateTransforms(_cameraScene);
     Assisi::Runtime::PropagateTransforms(*_scene);
 
-    const auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
-    const glm::mat4 view = Assisi::Runtime::ViewMatrix(*camTransform);
+    const auto     *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
+    const glm::mat4 view         = Assisi::Runtime::ViewMatrix(*camTransform);
 
     _lighting.Update(*_scene, view);
 
@@ -234,9 +304,12 @@ void SandboxApp::OnRender()
     Assisi::Runtime::DrawScene(*_scene, view, _projection, _shader);
 }
 
-void SandboxApp::OnImGui()
+// ---------------------------------------------------------------------------
+// ImGui panels
+// ---------------------------------------------------------------------------
+
+void SandboxApp::DrawDiagnosticsWindow()
 {
-    // ── Diagnostics ─────────────────────────────────────────────────────────
     ImGui::Begin("Diagnostics");
     ImGui::Text("FPS: %d", GetFps());
     ImGui::Text("Sleep resolution: %.2f ms", GetSleepResolutionMs());
@@ -244,8 +317,10 @@ void SandboxApp::OnImGui()
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Scroll: FOV  |  LMB: select  |  Esc: quit");
     ImGui::End();
+}
 
-    // ── Level Loader ────────────────────────────────────────────────────────
+void SandboxApp::DrawLevelsWindow()
+{
     ImGui::Begin("Levels");
 
     if (ImGui::Button("Refresh"))
@@ -270,7 +345,9 @@ void SandboxApp::OnImGui()
             }
             ImGui::EndCombo();
         }
-        const float halfW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+
+        const float halfW =
+            (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
         if (ImGui::Button("Load", ImVec2(halfW, 0.0f)))
             LoadLevel(_levelFiles[_selectedLevel]);
         ImGui::SameLine();
@@ -287,157 +364,137 @@ void SandboxApp::OnImGui()
     {
         SaveLevel(_saveAsName);
         ScanLevels();
-        // Select the newly created file in the dropdown.
         const std::string newName(_saveAsName);
-        const auto it = std::find(_levelFiles.begin(), _levelFiles.end(), newName);
+        const auto        it = std::find(_levelFiles.begin(), _levelFiles.end(), newName);
         if (it != _levelFiles.end())
             _selectedLevel = static_cast<int>(std::distance(_levelFiles.begin(), it));
     }
 
     ImGui::End();
+}
 
+void SandboxApp::OnImGui()
+{
+    DrawDiagnosticsWindow();
+    DrawLevelsWindow();
     DrawInspector();
 }
 
-void SandboxApp::ScanLevels()
-{
-    _levelFiles.clear();
-    const auto resolved = Assisi::Core::AssetSystem::Resolve("levels");
-    if (!resolved)
-        return;
-
-    for (const auto &entry : std::filesystem::directory_iterator(*resolved))
-    {
-        if (entry.is_regular_file() && entry.path().extension() == ".alvl")
-            _levelFiles.push_back(entry.path().stem().string());
-    }
-    std::sort(_levelFiles.begin(), _levelFiles.end());
-    _selectedLevel = 0;
-}
-
-void SandboxApp::SaveLevel(const std::string &name)
-{
-    const auto resolved = Assisi::Core::AssetSystem::Resolve("levels/" + name + ".alvl");
-    if (!resolved)
-    {
-        Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", name);
-        return;
-    }
-    Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved);
-}
-
-void SandboxApp::LoadLevel(const std::string &name)
-{
-    if (!Assisi::Runtime::SceneSerializer::LoadFromFile(*_scene, "levels/" + name + ".alvl"))
-        return;
-
-    _selectedEntity = Assisi::ECS::NullEntity;
-    _physics.Clear();
-
-    // MeshRendererComponent::mesh is transient — re-bind after load.
-    for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRendererComponent>())
-        mrc.mesh = &_cubeMesh;
-
-    // Create Jolt bodies for entities that have a RigidBodyDescriptor.
-    for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::TransformComponent,
-                                             Assisi::Physics::RigidBodyDescriptor>())
-    {
-        const auto motion = desc.isStatic ? Assisi::Physics::BodyMotion::Static
-                                          : Assisi::Physics::BodyMotion::Dynamic;
-        (void)_scene->Add<Assisi::Physics::RigidBodyComponent>(
-            e, _physics.AddBox(tc.position, tc.rotation, desc.halfExtents, motion));
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Helpers
+// Inspector
 // ---------------------------------------------------------------------------
 
-namespace
+bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
 {
+    using namespace Assisi::Core::Reflect;
 
-/// @brief Ray vs OBB intersection using the slab method in local space.
-/// @param model  Model matrix of the OBB (unit cube [-0.5, 0.5] locally).
-/// @param tOut   Distance along the ray to the intersection (valid when true).
-bool RayOBBIntersect(glm::vec3 origin, glm::vec3 dir, const glm::mat4 &model, float &tOut)
-{
-    const glm::mat4 inv    = glm::inverse(model);
-    const glm::vec3 lOrig  = glm::vec3(inv * glm::vec4(origin, 1.f));
-    const glm::vec3 lDir   = glm::vec3(inv * glm::vec4(dir, 0.f));
+    bool anyEditable   = false;
+    bool anyFieldEdited = false;
 
-    float tMin = -std::numeric_limits<float>::max();
-    float tMax =  std::numeric_limits<float>::max();
-
-    for (int i = 0; i < 3; ++i)
+    for (const auto &field : meta.fields)
     {
-        if (std::abs(lDir[i]) < 1e-8f)
+        if (field.transient)
+            continue;
+        anyEditable = true;
+
+        void *fp = static_cast<char *>(mut) + field.offset;
+        ImGui::PushID(field.name.c_str());
+
+        bool edited = false;
+        switch (field.type)
         {
-            if (lOrig[i] < -0.5f || lOrig[i] > 0.5f)
-                return false;
+        case FieldType::Float:
+            edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+            break;
+        case FieldType::Double:
+            edited = ImGui::InputDouble(field.name.c_str(), static_cast<double *>(fp));
+            break;
+        case FieldType::Int:
+        case FieldType::Int32:
+            edited = ImGui::DragInt(field.name.c_str(), static_cast<int *>(fp));
+            break;
+        case FieldType::UInt32:
+            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f);
+            break;
+        case FieldType::Bool:
+            edited = ImGui::Checkbox(field.name.c_str(), static_cast<bool *>(fp));
+            break;
+        case FieldType::Vec2:
+            edited = ImGui::DragFloat2(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+            break;
+        case FieldType::Vec3:
+            edited = ImGui::DragFloat3(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+            break;
+        case FieldType::Vec4:
+            edited = ImGui::DragFloat4(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+            break;
+        case FieldType::Quat:
+        {
+            auto     *quat  = static_cast<glm::quat *>(fp);
+            glm::vec3 euler = glm::degrees(glm::eulerAngles(*quat));
+            if (ImGui::DragFloat3(field.name.c_str(), &euler.x, 0.5f))
+            {
+                *quat  = glm::normalize(glm::quat(glm::radians(euler)));
+                edited = true;
+            }
+            break;
         }
-        else
-        {
-            float t1 = (-0.5f - lOrig[i]) / lDir[i];
-            float t2 = ( 0.5f - lOrig[i]) / lDir[i];
-            if (t1 > t2)
-                std::swap(t1, t2);
-            tMin = std::max(tMin, t1);
-            tMax = std::min(tMax, t2);
-            if (tMin > tMax)
-                return false;
+        default:
+            ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
+            break;
         }
+
+        anyFieldEdited |= edited;
+        ImGui::PopID();
     }
 
-    if (tMax < 0.f)
-        return false;
+    if (!anyEditable)
+        ImGui::TextDisabled("(runtime-only)");
 
-    tOut = tMin > 0.f ? tMin : tMax;
-    return true;
+    return anyFieldEdited;
 }
 
-} // namespace
-
-// ---------------------------------------------------------------------------
-
-Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
+void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
 {
-    if (!_scene)
-        return Assisi::ECS::NullEntity;
-
-    const auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
-    const glm::mat4 view     = Assisi::Runtime::ViewMatrix(*camTransform);
-    const auto      fbSize   = GetWindow().GetFramebufferSize();
-    const float     w        = static_cast<float>(fbSize.Width);
-    const float     h        = static_cast<float>(fbSize.Height);
-
-    // NDC click position → view-space direction → world-space ray direction
-    const float     ndcX    = (2.f * mousePos.x / w) - 1.f;
-    const float     ndcY    = 1.f - (2.f * mousePos.y / h);
-    glm::vec4       viewDir = glm::inverse(_projection) * glm::vec4(ndcX, ndcY, -1.f, 1.f);
-    viewDir.z = -1.f;
-    viewDir.w =  0.f;
-    const glm::vec3 rayDir    = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
-    const glm::vec3 rayOrigin = camTransform->position;
-
-    float               closestT = std::numeric_limits<float>::max();
-    Assisi::ECS::Entity result   = Assisi::ECS::NullEntity;
-
-    for (auto [e, tc] : _scene->Query<Assisi::Runtime::TransformComponent>())
+    if (anyFieldEdited)
     {
-        const glm::mat4 model = tc.worldMatrix;
+        const auto *tc  = _scene->Get<Assisi::Runtime::TransformComponent>(_selectedEntity);
+        const auto *rbc = _scene->Get<Assisi::Physics::RigidBodyComponent>(_selectedEntity);
+        if (tc && rbc)
+            _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+    }
 
-        float t = 0.f;
-        if (RayOBBIntersect(rayOrigin, rayDir, model, t) && t < closestT)
+    const bool nowDragging = ImGui::IsAnyItemActive();
+    if (nowDragging != _wasDragging)
+    {
+        const auto *rbc =
+            (_selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity))
+                ? _scene->Get<Assisi::Physics::RigidBodyComponent>(_selectedEntity)
+                : nullptr;
+
+        if (rbc)
         {
-            closestT = t;
-            result   = e;
+            if (nowDragging)
+            {
+                _physics.SetBodyMotionType(*rbc, Assisi::Physics::BodyMotion::Static);
+            }
+            else
+            {
+                const auto *desc     = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
+                const bool  isStatic = desc && desc->isStatic;
+                _physics.SetBodyMotionType(*rbc, isStatic ? Assisi::Physics::BodyMotion::Static
+                                                          : Assisi::Physics::BodyMotion::Dynamic);
+                if (!isStatic)
+                {
+                    const auto *tc = _scene->Get<Assisi::Runtime::TransformComponent>(_selectedEntity);
+                    if (tc)
+                        _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+                }
+            }
         }
     }
-
-    return result;
+    _wasDragging = nowDragging;
 }
-
-// ---------------------------------------------------------------------------
 
 void SandboxApp::DrawInspector()
 {
@@ -480,117 +537,144 @@ void SandboxApp::DrawInspector()
             continue;
 
         ImGui::PushID(meta.name.c_str());
-        void *mut = const_cast<void *>(compPtr);
-
-        bool anyEditable = false;
-        for (const auto &field : meta.fields)
-        {
-            if (field.transient)
-                continue;
-            anyEditable = true;
-
-            void *fp = static_cast<char *>(mut) + field.offset;
-            ImGui::PushID(field.name.c_str());
-
-            bool edited = false;
-            switch (field.type)
-            {
-                case FieldType::Float:
-                    edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-                    break;
-                case FieldType::Double:
-                    edited = ImGui::InputDouble(field.name.c_str(), static_cast<double *>(fp));
-                    break;
-                case FieldType::Int:
-                case FieldType::Int32:
-                    edited = ImGui::DragInt(field.name.c_str(), static_cast<int *>(fp));
-                    break;
-                case FieldType::UInt32:
-                    edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f);
-                    break;
-                case FieldType::Bool:
-                    edited = ImGui::Checkbox(field.name.c_str(), static_cast<bool *>(fp));
-                    break;
-                case FieldType::Vec2:
-                    edited = ImGui::DragFloat2(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-                    break;
-                case FieldType::Vec3:
-                    edited = ImGui::DragFloat3(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-                    break;
-                case FieldType::Vec4:
-                    edited = ImGui::DragFloat4(field.name.c_str(), static_cast<float *>(fp), 0.01f);
-                    break;
-                case FieldType::Quat:
-                {
-                    auto     *quat  = static_cast<glm::quat *>(fp);
-                    glm::vec3 euler = glm::degrees(glm::eulerAngles(*quat));
-                    if (ImGui::DragFloat3(field.name.c_str(), &euler.x, 0.5f))
-                    {
-                        *quat  = glm::normalize(glm::quat(glm::radians(euler)));
-                        edited = true;
-                    }
-                    break;
-                }
-                default:
-                    ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
-                    break;
-            }
-            anyFieldEdited |= edited;
-
-            ImGui::PopID();
-        }
-
-        if (!anyEditable)
-            ImGui::TextDisabled("(runtime-only)");
-
+        anyFieldEdited |= EditComponentFields(const_cast<void *>(compPtr), meta);
         ImGui::PopID();
     }
 
+    HandlePhysicsEditing(anyFieldEdited);
     ImGui::End();
+}
 
-    // Push edited transform into the Jolt body whenever a field changes.
-    if (anyFieldEdited)
+// ---------------------------------------------------------------------------
+// Level management
+// ---------------------------------------------------------------------------
+
+void SandboxApp::ScanLevels()
+{
+    _levelFiles.clear();
+    const auto resolved = Assisi::Core::AssetSystem::Resolve("levels");
+    if (!resolved)
+        return;
+
+    for (const auto &entry : std::filesystem::directory_iterator(*resolved))
     {
-        const auto *tc  = _scene->Get<Assisi::Runtime::TransformComponent>(_selectedEntity);
-        const auto *rbc = _scene->Get<Assisi::Physics::RigidBodyComponent>(_selectedEntity);
-        if (tc && rbc)
-            _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+        if (entry.is_regular_file() && entry.path().extension() == ".alvl")
+            _levelFiles.push_back(entry.path().stem().string());
     }
+    std::sort(_levelFiles.begin(), _levelFiles.end());
+    _selectedLevel = 0;
+}
 
-    // Freeze / unfreeze the selected entity's physics body on drag start / end.
-    // All bodies are created with mAllowDynamicOrKinematic=true, so any body can
-    // be switched between Static and Dynamic at runtime.
-    const bool nowDragging = ImGui::IsAnyItemActive();
-    if (nowDragging != _wasDragging)
+void SandboxApp::SaveLevel(const std::string &name)
+{
+    const auto resolved = Assisi::Core::AssetSystem::Resolve("levels/" + name + ".alvl");
+    if (!resolved)
     {
-        const auto *rbc = (_selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity))
-                              ? _scene->Get<Assisi::Physics::RigidBodyComponent>(_selectedEntity)
-                              : nullptr;
-        if (rbc)
+        Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", name);
+        return;
+    }
+    Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved);
+}
+
+void SandboxApp::LoadLevel(const std::string &name)
+{
+    if (!Assisi::Runtime::SceneSerializer::LoadFromFile(*_scene, "levels/" + name + ".alvl"))
+        return;
+
+    _selectedEntity = Assisi::ECS::NullEntity;
+    _physics.Clear();
+
+    for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRendererComponent>())
+        mrc.mesh = &_cubeMesh;
+
+    for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::TransformComponent,
+                                             Assisi::Physics::RigidBodyDescriptor>())
+    {
+        const auto motion = desc.isStatic ? Assisi::Physics::BodyMotion::Static
+                                          : Assisi::Physics::BodyMotion::Dynamic;
+        (void)_scene->Add<Assisi::Physics::RigidBodyComponent>(
+            e, _physics.AddBox(tc.position, tc.rotation, desc.halfExtents, motion));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Ray picking
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+bool RayOBBIntersect(glm::vec3 origin, glm::vec3 dir, const glm::mat4 &model, float &tOut)
+{
+    const glm::mat4 inv   = glm::inverse(model);
+    const glm::vec3 lOrig = glm::vec3(inv * glm::vec4(origin, 1.f));
+    const glm::vec3 lDir  = glm::vec3(inv * glm::vec4(dir, 0.f));
+
+    float tMin = -std::numeric_limits<float>::max();
+    float tMax =  std::numeric_limits<float>::max();
+
+    for (int i = 0; i < 3; ++i)
+    {
+        if (std::abs(lDir[i]) < 1e-8f)
         {
-            if (nowDragging)
-            {
-                // Freeze: switch to Static so Jolt won't apply forces while editing.
-                // If the body is already Static this is a no-op inside Jolt.
-                _physics.SetBodyMotionType(*rbc, Assisi::Physics::BodyMotion::Static);
-            }
-            else
-            {
-                // Restore: apply whatever isStatic says now (user may have changed it).
-                const auto *desc     = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
-                const bool  isStatic = desc && desc->isStatic;
-                _physics.SetBodyMotionType(*rbc, isStatic ? Assisi::Physics::BodyMotion::Static
-                                                          : Assisi::Physics::BodyMotion::Dynamic);
-                if (!isStatic)
-                {
-                    const auto *tc = _scene->Get<Assisi::Runtime::TransformComponent>(_selectedEntity);
-                    if (tc)
-                        _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
-                }
-            }
+            if (lOrig[i] < -0.5f || lOrig[i] > 0.5f)
+                return false;
+        }
+        else
+        {
+            float t1 = (-0.5f - lOrig[i]) / lDir[i];
+            float t2 = ( 0.5f - lOrig[i]) / lDir[i];
+            if (t1 > t2)
+                std::swap(t1, t2);
+            tMin = std::max(tMin, t1);
+            tMax = std::min(tMax, t2);
+            if (tMin > tMax)
+                return false;
         }
     }
-    _wasDragging = nowDragging;
+
+    if (tMax < 0.f)
+        return false;
+
+    tOut = tMin > 0.f ? tMin : tMax;
+    return true;
+}
+
+} // namespace
+
+Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
+{
+    if (!_scene)
+        return Assisi::ECS::NullEntity;
+
+    const auto     *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
+    const glm::mat4 view         = Assisi::Runtime::ViewMatrix(*camTransform);
+    const auto      fbSize       = GetWindow().GetFramebufferSize();
+    const float     w            = static_cast<float>(fbSize.Width);
+    const float     h            = static_cast<float>(fbSize.Height);
+
+    const float     ndcX    = (2.f * mousePos.x / w) - 1.f;
+    const float     ndcY    = 1.f - (2.f * mousePos.y / h);
+    glm::vec4       viewDir = glm::inverse(_projection) * glm::vec4(ndcX, ndcY, -1.f, 1.f);
+    viewDir.z = -1.f;
+    viewDir.w =  0.f;
+    const glm::vec3 rayDir    = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
+    const glm::vec3 rayOrigin = camTransform->position;
+
+    float               closestT = std::numeric_limits<float>::max();
+    Assisi::ECS::Entity result   = Assisi::ECS::NullEntity;
+
+    for (auto [e, tc] : _scene->Query<Assisi::Runtime::TransformComponent>())
+    {
+        float t = 0.f;
+        if (RayOBBIntersect(rayOrigin, rayDir, tc.worldMatrix, t) && t < closestT)
+        {
+            closestT = t;
+            result   = e;
+        }
+    }
+
+    return result;
 }
 
 // ---------------------------------------------------------------------------

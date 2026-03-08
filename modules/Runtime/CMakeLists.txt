@@ -8,6 +8,7 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/Hierarchy.hpp"
     "include/Assisi/Runtime/LightComponents.hpp"
     "include/Assisi/Runtime/LightingSystem.hpp"
+    "include/Assisi/Runtime/Lifecycle.hpp"
     "include/Assisi/Runtime/Renderer.hpp"
     "include/Assisi/Runtime/SceneSerializer.hpp"
     "include/Assisi/Runtime/Transform.hpp"
