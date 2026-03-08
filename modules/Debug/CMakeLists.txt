@@ -7,8 +7,8 @@ target_sources(Assisi-Debug
   PRIVATE
     "src/DebugUI.cpp"
     # Dear ImGui platform/renderer backends (compiled as part of this module)
-    "${ASSISI_IMGUI_ROOT}/res/bindings/imgui_impl_glfw.cpp"
-    "${ASSISI_IMGUI_ROOT}/res/bindings/imgui_impl_opengl3.cpp"
+    "${ASSISI_IMGUI_ROOT}/backends/imgui_impl_glfw.cpp"
+    "${ASSISI_IMGUI_ROOT}/backends/imgui_impl_opengl3.cpp"
 )
 
 target_include_directories(Assisi-Debug
@@ -16,7 +16,7 @@ target_include_directories(Assisi-Debug
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   PRIVATE
     # Backend headers live alongside their source files
-    "${ASSISI_IMGUI_ROOT}/res/bindings"
+    "${ASSISI_IMGUI_ROOT}/backends"
 )
 
 target_link_libraries(Assisi-Debug
