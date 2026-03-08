@@ -73,43 +73,43 @@ TYPES: dict[str, TypeCodegen] = {
     'float':     TypeCodegen(
         'Float',
         '{a}',
-        'comp.{f} = j.at("{f}").get<float>();'),
+        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<float>();'),
     'double':    TypeCodegen(
         'Double',
         '{a}',
-        'comp.{f} = j.at("{f}").get<double>();'),
+        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<double>();'),
     'int':       TypeCodegen(
         'Int',
         '{a}',
-        'comp.{f} = j.at("{f}").get<int>();'),
+        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<int>();'),
     'int32_t':   TypeCodegen(
         'Int32',
         '{a}',
-        'comp.{f} = j.at("{f}").get<int32_t>();'),
+        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<int32_t>();'),
     'uint32_t':  TypeCodegen(
         'UInt32',
         '{a}',
-        'comp.{f} = j.at("{f}").get<uint32_t>();'),
+        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<uint32_t>();'),
     'bool':      TypeCodegen(
         'Bool',
         '{a}',
-        'comp.{f} = j.at("{f}").get<bool>();'),
+        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<bool>();'),
     'glm::vec2': TypeCodegen(
         'Vec2',
         '{{ {a}.x, {a}.y }}',
-        '{{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>() }}; }}'),
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>() }}; }} }}'),
     'glm::vec3': TypeCodegen(
         'Vec3',
         '{{ {a}.x, {a}.y, {a}.z }}',
-        '{{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>() }}; }}'),
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>() }}; }} }}'),
     'glm::vec4': TypeCodegen(
         'Vec4',
         '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
-        '{{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }}'),
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
     'glm::quat': TypeCodegen(
         'Quat',
         '{{ {a}.w, {a}.x, {a}.y, {a}.z }}',
-        '{{ const auto& _v = j.at("{f}"); comp.{f} = glm::quat{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }}'),
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = glm::quat{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
     'glm::mat4': TypeCodegen(
         'Mat4',
         'nullptr /* TODO: mat4 serialize */',

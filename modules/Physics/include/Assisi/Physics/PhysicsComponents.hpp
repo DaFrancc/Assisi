@@ -28,7 +28,8 @@ ACOMP()
 struct RigidBodyDescriptor
 {
     AFIELD() glm::vec3 halfExtents{0.5f, 0.5f, 0.5f}; ///< Box half-extents in world units.
-    AFIELD() bool      isStatic = false;               ///< True = immovable static body.
+    AFIELD() bool      isStatic  = false;              ///< True = immovable static body.
+    AFIELD() bool      enableCCD = false;              ///< Enable continuous collision detection (dynamic only).
 };
 
 } // namespace Assisi::Physics
