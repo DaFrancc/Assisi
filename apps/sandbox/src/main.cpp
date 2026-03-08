@@ -481,10 +481,13 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
 {
     if (anyFieldEdited)
     {
-        const auto *tc  = _scene->Get<Assisi::Runtime::TransformComponent>(_selectedEntity);
-        const auto *rbc = _scene->Get<Assisi::Physics::RigidBodyComponent>(_selectedEntity);
+        const auto *tc   = _scene->Get<Assisi::Runtime::TransformComponent>(_selectedEntity);
+        const auto *rbc  = _scene->Get<Assisi::Physics::RigidBodyComponent>(_selectedEntity);
+        const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
         if (tc && rbc)
             _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+        if (rbc && desc)
+            _physics.SetBodyCCD(*rbc, desc->enableCCD);
     }
 
     const bool nowDragging = ImGui::IsAnyItemActive();
@@ -615,8 +618,10 @@ void SandboxApp::LoadLevel(const std::string &name)
     {
         const auto motion = desc.isStatic ? Assisi::Physics::BodyMotion::Static
                                           : Assisi::Physics::BodyMotion::Dynamic;
-        (void)_scene->Add<Assisi::Physics::RigidBodyComponent>(
-            e, _physics.AddBox(tc.position, tc.rotation, desc.halfExtents, motion));
+        const auto rbc    = _physics.AddBox(tc.position, tc.rotation, desc.halfExtents, motion);
+        if (desc.enableCCD)
+            _physics.SetBodyCCD(rbc, true);
+        (void)_scene->Add<Assisi::Physics::RigidBodyComponent>(e, rbc);
     }
 }
 

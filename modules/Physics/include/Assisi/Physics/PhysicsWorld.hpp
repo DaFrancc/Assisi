@@ -61,6 +61,12 @@ class PhysicsWorld
     /// @brief Teleports a body to the given position and rotation, and reactivates it.
     void SetBodyTransform(const RigidBodyComponent &body, glm::vec3 position, glm::quat rotation);
 
+    /// @brief Enables or disables continuous collision detection (CCD) on a body.
+    ///
+    /// Only meaningful for dynamic bodies; no-op on static bodies.
+    /// Uses Jolt's LinearCast motion quality for CCD, Discrete otherwise.
+    void SetBodyCCD(const RigidBodyComponent &body, bool enable);
+
     /// @brief Changes the motion type of an existing body at runtime.
     ///
     /// Useful for temporarily freezing a dynamic body (e.g. while editing in an

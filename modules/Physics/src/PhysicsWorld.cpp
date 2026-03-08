@@ -249,6 +249,21 @@ void PhysicsWorld::SetBodyTransform(const RigidBodyComponent &body, glm::vec3 po
     }
 }
 
+void PhysicsWorld::SetBodyCCD(const RigidBodyComponent &body, bool enable)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+        return;
+
+    // CCD is only supported on dynamic bodies; static bodies are always discrete.
+    if (bodies.GetMotionType(body.bodyId) != JPH::EMotionType::Dynamic)
+        return;
+
+    const JPH::EMotionQuality quality =
+        enable ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
+    bodies.SetMotionQuality(body.bodyId, quality);
+}
+
 void PhysicsWorld::SetBodyMotionType(const RigidBodyComponent &body, BodyMotion motion)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
