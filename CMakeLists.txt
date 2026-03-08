@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.23)
+cmake_minimum_required(VERSION 3.28)
 
 project(Assisi
   VERSION 0.1.0
@@ -159,17 +159,31 @@ find_package(stb CONFIG REQUIRED)
 find_package(glad CONFIG REQUIRED)
 find_package(assimp CONFIG REQUIRED)
 find_package(Jolt CONFIG REQUIRED)
-find_package(imgui CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
-# Derive the imgui package root (needed to compile backend source files from res/bindings/).
-if(DEFINED imgui_PACKAGE_FOLDER_DEBUG)
-    set(ASSISI_IMGUI_ROOT "${imgui_PACKAGE_FOLDER_DEBUG}")
-elseif(DEFINED imgui_PACKAGE_FOLDER_RELEASE)
-    set(ASSISI_IMGUI_ROOT "${imgui_PACKAGE_FOLDER_RELEASE}")
-else()
-    message(FATAL_ERROR "Cannot locate imgui package root — ensure imgui is installed via Conan.")
-endif()
+# --- Dear ImGui (docking branch, fetched from GitHub)
+include(FetchContent)
+FetchContent_Declare(
+    imgui
+    GIT_REPOSITORY https://github.com/ocornut/imgui.git
+    GIT_TAG        docking
+    GIT_SHALLOW    TRUE
+    DOWNLOAD_ONLY  YES
+)
+FetchContent_MakeAvailable(imgui)
+
+add_library(Assisi-ImGui STATIC
+    "${imgui_SOURCE_DIR}/imgui.cpp"
+    "${imgui_SOURCE_DIR}/imgui_draw.cpp"
+    "${imgui_SOURCE_DIR}/imgui_tables.cpp"
+    "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
+    "${imgui_SOURCE_DIR}/imgui_demo.cpp"
+)
+target_include_directories(Assisi-ImGui PUBLIC "${imgui_SOURCE_DIR}")
+# ImGui doesn't use our strict warning flags, so don't apply Assisi defaults
+add_library(imgui::imgui ALIAS Assisi-ImGui)
+
+set(ASSISI_IMGUI_ROOT "${imgui_SOURCE_DIR}")
 
 add_library(Assisi-Deps INTERFACE)
 add_library(Assisi::Deps ALIAS Assisi-Deps)

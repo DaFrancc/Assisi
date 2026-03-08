@@ -5,7 +5,6 @@ assimp/5.4.3
 stb/cci.20230920
 glad/0.1.36
 joltphysics/5.2.0
-imgui/1.92.5
 nlohmann_json/3.11.3
 
 [options]
