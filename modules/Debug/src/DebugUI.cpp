@@ -22,6 +22,7 @@ void DebugUI::Initialize(const Window::WindowContext &window)
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     io.ConfigFlags |= ImGuiConfigFlags_ViewportsEnable;
+    io.ConfigDragClickToInputText = true;
 
     ImGui::StyleColorsDark();
 
