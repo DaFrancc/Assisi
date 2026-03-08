@@ -249,6 +249,16 @@ void PhysicsWorld::SetBodyTransform(const RigidBodyComponent &body, glm::vec3 po
     }
 }
 
+void PhysicsWorld::ReshapeBox(const RigidBodyComponent &body, glm::vec3 halfExtents)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+        return;
+
+    JPH::ShapeRefC newShape = new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z));
+    bodies.SetShape(body.bodyId, newShape, /*inUpdateMassProperties=*/true, JPH::EActivation::DontActivate);
+}
+
 void PhysicsWorld::SetBodyCCD(const RigidBodyComponent &body, bool enable)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();

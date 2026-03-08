@@ -61,6 +61,12 @@ class PhysicsWorld
     /// @brief Teleports a body to the given position and rotation, and reactivates it.
     void SetBodyTransform(const RigidBodyComponent &body, glm::vec3 position, glm::quat rotation);
 
+    /// @brief Replaces the collision shape of an existing box body with new half-extents.
+    ///
+    /// Use this to apply inspector edits to `halfExtents` at runtime without
+    /// recreating the body.
+    void ReshapeBox(const RigidBodyComponent &body, glm::vec3 halfExtents);
+
     /// @brief Enables or disables continuous collision detection (CCD) on a body.
     ///
     /// Only meaningful for dynamic bodies; no-op on static bodies.

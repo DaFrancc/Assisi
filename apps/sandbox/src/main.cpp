@@ -487,7 +487,10 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
         if (tc && rbc)
             _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
         if (rbc && desc)
+        {
+            _physics.ReshapeBox(*rbc, desc->halfExtents);
             _physics.SetBodyCCD(*rbc, desc->enableCCD);
+        }
     }
 
     const bool nowDragging = ImGui::IsAnyItemActive();
