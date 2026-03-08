@@ -41,6 +41,7 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Window/ActionMap.hpp>
 
 namespace Assisi::App
 {
@@ -70,6 +71,7 @@ class GameApplication : public Application
     ECS::Scene              _scene;
     Physics::PhysicsWorld   _physics;
     SystemRegistry          _systems;
+    Window::ActionMap       _actions;
 
   private:
     void OnStart()           final;
