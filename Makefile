@@ -22,13 +22,37 @@ conan-msvc:
 init: conan-gcc conan-clang
 
 # Clean build outputs (without rebuilding)
-clean-debug:
+clean-msvc-debug:
 	cmake --build --preset msvc-debug --target clean
 
-clean-release:
+clean-msvc-release:
 	cmake --build --preset msvc-release --target clean
 
-clean-sanitize:
+clean-msvc-sanitize:
 	cmake --build --preset msvc-sanitize --target clean
 
-clean: clean-debug clean-release clean-sanitize
+clean-msvc: clean-msvc-debug clean-msvc-release clean-msvc-sanitize
+
+clean-gcc-debug:
+	cmake --build --preset gcc-debug --target clean
+
+clean-gcc-release:
+	cmake --build --preset gcc-release --target clean
+
+clean-gcc-sanitize:
+	cmake --build --preset gcc-sanitize --target clean
+
+clean-gcc: clean-gcc-debug clean-gcc-release clean-gcc-sanitize
+
+clean-clang-debug:
+	cmake --build --preset clang-debug --target clean
+
+clean-clang-release:
+	cmake --build --preset clang-release --target clean
+
+clean-clang-sanitize:
+	cmake --build --preset clang-sanitize --target clean
+
+clean-clang: clean-clang-debug clean-clang-release clean-clang-sanitize
+
+clean: clean-msvc clean-gcc clean-clang
