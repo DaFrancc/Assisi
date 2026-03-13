@@ -6,7 +6,7 @@ compiler.version=195
 compiler.cppstd=23
 compiler.runtime=dynamic
 compiler.runtime_type=Release
-build_type=Release
+build_type=RelWithDebInfo
 
 [conf]
 tools.cmake.cmaketoolchain:generator=Ninja

@@ -1,130 +1,113 @@
-.PHONY: conan-gcc conan-clang conan-msvc configure-msvc configure-gcc configure-clang msvc gcc clang \
-        msvc-debug msvc-release msvc-sanitize gcc-debug gcc-release gcc-sanitize clang-debug clang-release clang-sanitize \
-        md mr ms gd gr gs cd cr cs init clean-debug clean-release clean-sanitize clean
+.PHONY: configure-msvc configure-gcc configure-clang msvc gcc clang \
+        msvc-debug msvc-dev msvc-ship gcc-debug gcc-dev gcc-ship clang-debug clang-dev clang-ship \
+        md mv ms gd gv gs cd cv cs \
+        clean-msvc-debug clean-msvc-dev clean-msvc-ship clean-msvc \
+        clean-gcc-debug clean-gcc-dev clean-gcc-ship clean-gcc \
+        clean-clang-debug clean-clang-dev clean-clang-ship clean-clang clean
 
-# Linux — GCC presets
-conan-gcc:
-	conan install . -of=out/build/gcc-debug     -pr:h=./profiles/gcc-debug     -pr:b=./profiles/gcc-debug     -g CMakeDeps -g CMakeToolchain --build=missing
-	conan install . -of=out/build/gcc-release   -pr:h=./profiles/gcc-release   -pr:b=./profiles/gcc-release   -g CMakeDeps -g CMakeToolchain --build=missing
-	conan install . -of=out/build/gcc-sanitize  -pr:h=./profiles/gcc-sanitize  -pr:b=./profiles/gcc-sanitize  -g CMakeDeps -g CMakeToolchain --build=missing
-
-# Linux — Clang presets
-conan-clang:
-	conan install . -of=out/build/clang-debug    -pr:h=./profiles/clang-debug    -pr:b=./profiles/clang-debug    -g CMakeDeps -g CMakeToolchain --build=missing
-	conan install . -of=out/build/clang-release  -pr:h=./profiles/clang-release  -pr:b=./profiles/clang-release  -g CMakeDeps -g CMakeToolchain --build=missing
-	conan install . -of=out/build/clang-sanitize -pr:h=./profiles/clang-sanitize -pr:b=./profiles/clang-sanitize -g CMakeDeps -g CMakeToolchain --build=missing
-
-# Windows — MSVC presets (run from PowerShell/cmd with backslash paths)
-conan-msvc:
-	conan install . -of=out/build/msvc-debug    -pr:h=.\profiles\msvc-debug    -pr:b=.\profiles\msvc-debug    -g CMakeDeps -g CMakeToolchain --build=missing
-	conan install . -of=out/build/msvc-release  -pr:h=.\profiles\msvc-release  -pr:b=.\profiles\msvc-release  -g CMakeDeps -g CMakeToolchain --build=missing
-	conan install . -of=out/build/msvc-sanitize -pr:h=.\profiles\msvc-sanitize -pr:b=.\profiles\msvc-sanitize -g CMakeDeps -g CMakeToolchain --build=missing
-
-# Configure presets (runs conan install first, then cmake configure)
-configure-msvc: conan-msvc
+# Configure presets (FetchContent downloads deps on first configure)
+configure-msvc:
 	cmake --preset msvc-debug
-	cmake --preset msvc-release
-	cmake --preset msvc-sanitize
+	cmake --preset msvc-dev
+	cmake --preset msvc-ship
 
-configure-gcc: conan-gcc
+configure-gcc:
 	cmake --preset gcc-debug
-	cmake --preset gcc-release
-	cmake --preset gcc-sanitize
+	cmake --preset gcc-dev
+	cmake --preset gcc-ship
 
-configure-clang: conan-clang
+configure-clang:
 	cmake --preset clang-debug
-	cmake --preset clang-release
-	cmake --preset clang-sanitize
+	cmake --preset clang-dev
+	cmake --preset clang-ship
 
-# Full setup + build (conan install → cmake configure → cmake build)
+# Full setup + build (cmake configure -> cmake build)
 msvc: configure-msvc
 	cmake --build --preset msvc-debug
-	cmake --build --preset msvc-release
-#	cmake --build --preset msvc-sanitize
+	cmake --build --preset msvc-dev
+	cmake --build --preset msvc-ship
 
+gcc: configure-gcc
+	cmake --build --preset gcc-debug
+	cmake --build --preset gcc-dev
+	cmake --build --preset gcc-ship
+
+clang: configure-clang
+	cmake --build --preset clang-debug
+	cmake --build --preset clang-dev
+	cmake --build --preset clang-ship
+
+# Individual build targets
 msvc-debug:
 	cmake --build --preset msvc-debug
 
-msvc-release:
-	cmake --build --preset msvc-release
+msvc-dev:
+	cmake --build --preset msvc-dev
 
-msvc-sanitize:
-	cmake --build --preset msvc-sanitize
+msvc-ship:
+	cmake --build --preset msvc-ship
 
 gcc-debug:
 	cmake --build --preset gcc-debug
 
-gcc-release:
-	cmake --build --preset gcc-release
+gcc-dev:
+	cmake --build --preset gcc-dev
 
-gcc-sanitize:
-	cmake --build --preset gcc-sanitize
+gcc-ship:
+	cmake --build --preset gcc-ship
 
 clang-debug:
 	cmake --build --preset clang-debug
 
-clang-release:
-	cmake --build --preset clang-release
+clang-dev:
+	cmake --build --preset clang-dev
 
-clang-sanitize:
-	cmake --build --preset clang-sanitize
+clang-ship:
+	cmake --build --preset clang-ship
 
-# Aliases
+# Aliases (d=debug, v=dev, s=ship)
 md: msvc-debug
-mr: msvc-release
-ms: msvc-sanitize
+mv: msvc-dev
+ms: msvc-ship
 gd: gcc-debug
-gr: gcc-release
-gs: gcc-sanitize
+gv: gcc-dev
+gs: gcc-ship
 cd: clang-debug
-cr: clang-release
-cs: clang-sanitize
+cv: clang-dev
+cs: clang-ship
 
-gcc: configure-gcc
-	cmake --build --preset gcc-debug
-	cmake --build --preset gcc-release
-#	cmake --build --preset gcc-sanitize
-
-clang: configure-clang
-	cmake --build --preset clang-debug
-	cmake --build --preset clang-release
-#	cmake --build --preset clang-sanitize
-
-# Default init: installs all Linux presets (GCC + Clang)
-init: conan-gcc conan-clang
-
-# Clean build outputs (without rebuilding)
+# Clean build outputs
 clean-msvc-debug:
 	cmake --build --preset msvc-debug --target clean
 
-clean-msvc-release:
-	cmake --build --preset msvc-release --target clean
+clean-msvc-dev:
+	cmake --build --preset msvc-dev --target clean
 
-clean-msvc-sanitize:
-	cmake --build --preset msvc-sanitize --target clean
+clean-msvc-ship:
+	cmake --build --preset msvc-ship --target clean
 
-clean-msvc: clean-msvc-debug clean-msvc-release clean-msvc-sanitize
+clean-msvc: clean-msvc-debug clean-msvc-dev clean-msvc-ship
 
 clean-gcc-debug:
 	cmake --build --preset gcc-debug --target clean
 
-clean-gcc-release:
-	cmake --build --preset gcc-release --target clean
+clean-gcc-dev:
+	cmake --build --preset gcc-dev --target clean
 
-clean-gcc-sanitize:
-	cmake --build --preset gcc-sanitize --target clean
+clean-gcc-ship:
+	cmake --build --preset gcc-ship --target clean
 
-clean-gcc: clean-gcc-debug clean-gcc-release clean-gcc-sanitize
+clean-gcc: clean-gcc-debug clean-gcc-dev clean-gcc-ship
 
 clean-clang-debug:
 	cmake --build --preset clang-debug --target clean
 
-clean-clang-release:
-	cmake --build --preset clang-release --target clean
+clean-clang-dev:
+	cmake --build --preset clang-dev --target clean
 
-clean-clang-sanitize:
-	cmake --build --preset clang-sanitize --target clean
+clean-clang-ship:
+	cmake --build --preset clang-ship --target clean
 
-clean-clang: clean-clang-debug clean-clang-release clean-clang-sanitize
+clean-clang: clean-clang-debug clean-clang-dev clean-clang-ship
 
 clean: clean-msvc clean-gcc clean-clang

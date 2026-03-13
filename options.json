@@ -1,0 +1,6 @@
+{
+    "antiAliasing": {
+        "mode": "msaa+fxaa",
+        "msaaSamples": 4
+    }
+}
