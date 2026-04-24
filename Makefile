@@ -76,39 +76,38 @@ cd: clang-debug
 cv: clang-dev
 cs: clang-ship
 
-# Clean build outputs
-# Use --build-dir instead of --preset to avoid CMake 4.x scanning build
-# subdirectories for CMakePresets.json and failing on stale files.
+# Clean build outputs — removes the entire build directory.
+# After cleaning, re-run the relevant configure-* target before building.
 clean-msvc-debug:
-	cmake --build "$(CURDIR)/out/build/msvc-debug" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/msvc-debug"
 
 clean-msvc-dev:
-	cmake --build "$(CURDIR)/out/build/msvc-dev" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/msvc-dev"
 
 clean-msvc-ship:
-	cmake --build "$(CURDIR)/out/build/msvc-ship" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/msvc-ship"
 
 clean-msvc: clean-msvc-debug clean-msvc-dev clean-msvc-ship
 
 clean-gcc-debug:
-	cmake --build "$(CURDIR)/out/build/gcc-debug" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/gcc-debug"
 
 clean-gcc-dev:
-	cmake --build "$(CURDIR)/out/build/gcc-dev" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/gcc-dev"
 
 clean-gcc-ship:
-	cmake --build "$(CURDIR)/out/build/gcc-ship" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/gcc-ship"
 
 clean-gcc: clean-gcc-debug clean-gcc-dev clean-gcc-ship
 
 clean-clang-debug:
-	cmake --build "$(CURDIR)/out/build/clang-debug" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/clang-debug"
 
 clean-clang-dev:
-	cmake --build "$(CURDIR)/out/build/clang-dev" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/clang-dev"
 
 clean-clang-ship:
-	cmake --build "$(CURDIR)/out/build/clang-ship" --target clean
+	cmake -E rm -rf "$(CURDIR)/out/build/clang-ship"
 
 clean-clang: clean-clang-debug clean-clang-dev clean-clang-ship
 

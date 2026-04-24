@@ -301,6 +301,11 @@ add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
 add_subdirectory(modules/App)
 
+# CMake 4.x scans each binary subdir for CMakePresets.json immediately after
+# creating it, before the subdirectory's CMakeLists.txt is processed. Pre-create
+# empty stubs so the scan succeeds. Must be done before add_subdirectory.
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/sandbox")
+file(WRITE "${CMAKE_BINARY_DIR}/apps/sandbox/CMakePresets.json" "{\"version\":10}")
 add_subdirectory(apps/sandbox)
 
 
