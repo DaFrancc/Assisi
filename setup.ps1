@@ -125,20 +125,20 @@ $userPresets = @{
       cacheVariables = @{ ASSISI_APP = $gameName }
     },
     @{
-      name = "msvc-release-user"
-      inherits = "msvc-release"
+      name = "msvc-dev-user"
+      inherits = "msvc-dev"
       cacheVariables = @{ ASSISI_APP = $gameName }
     },
     @{
-      name = "msvc-sanitize-user"
-      inherits = "msvc-sanitize"
+      name = "msvc-ship-user"
+      inherits = "msvc-ship"
       cacheVariables = @{ ASSISI_APP = $gameName }
     }
   )
   buildPresets = @(
     @{ name = "msvc-debug-user"; configurePreset = "msvc-debug-user" },
-    @{ name = "msvc-release-user"; configurePreset = "msvc-release-user" },
-    @{ name = "msvc-sanitize-user"; configurePreset = "msvc-sanitize-user" }
+    @{ name = "msvc-dev-user";   configurePreset = "msvc-dev-user"   },
+    @{ name = "msvc-ship-user";  configurePreset = "msvc-ship-user"  }
   )
 }
 
@@ -146,7 +146,7 @@ $userPresets = @{
 Write-Ok "Wrote CMakeUserPresets.json (selects ASSISI_APP=$gameName)"
 
 Write-Host ""
-Write-Info "Run 'make configure-msvc' to install dependencies and configure, then build with:"
+Write-Info "Run 'make configure-msvc' to configure, then build with:"
 Write-Host "  cmake --build --preset msvc-debug-user" -ForegroundColor White
 
 Write-Heading "Done"

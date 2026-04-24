@@ -1,4 +1,4 @@
-﻿{
+{
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
@@ -23,52 +23,47 @@
     {
       "name": "msvc-debug",
       "inherits": "base",
-      "description": "Windows + MSVC + Debug",
+      "description": "Windows + MSVC + Debug (unoptimized, full symbols)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-debug/conan_toolchain.cmake"
+        "CMAKE_BUILD_TYPE": "Debug"
       }
     },
     {
-      "name": "msvc-release",
+      "name": "msvc-dev",
       "inherits": "base",
-      "description": "Windows + MSVC + Release",
+      "description": "Windows + MSVC + Development (optimized, partial symbols)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-release/conan_toolchain.cmake"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
-      "name": "msvc-sanitize",
+      "name": "msvc-ship",
       "inherits": "base",
-      "description": "Windows + MSVC + Sanitized (best-effort ASan; Linux is the primary sanitizer platform)",
+      "description": "Windows + MSVC + Shipping (fully optimized, no debug info)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "ASSISI_ENABLE_SANITIZERS": "ON",
-        "ASSISI_SANITIZER_SET": "address",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-sanitize/conan_toolchain.cmake"
+        "CMAKE_BUILD_TYPE": "Release"
       }
     },
 
     {
       "name": "gcc-debug",
       "inherits": "base",
-      "description": "Linux + GCC + Debug",
+      "description": "Linux + GCC + Debug (unoptimized, full symbols)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -77,14 +72,28 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-debug/conan_toolchain.cmake"
+        "CMAKE_CXX_COMPILER": "g++"
       }
     },
     {
-      "name": "gcc-release",
+      "name": "gcc-dev",
       "inherits": "base",
-      "description": "Linux + GCC + Release",
+      "description": "Linux + GCC + Development (optimized, partial symbols)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "gcc-ship",
+      "inherits": "base",
+      "description": "Linux + GCC + Shipping (fully optimized, no debug info)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -93,33 +102,14 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-release/conan_toolchain.cmake"
-      }
-    },
-    {
-      "name": "gcc-sanitize",
-      "inherits": "base",
-      "description": "Linux + GCC + Sanitized (ASan+UBSan default)",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
-        "ASSISI_ENABLE_SANITIZERS": "ON",
-        "ASSISI_SANITIZER_SET": "address;undefined",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-sanitize/conan_toolchain.cmake"
+        "CMAKE_CXX_COMPILER": "g++"
       }
     },
 
     {
       "name": "clang-debug",
       "inherits": "base",
-      "description": "Linux + Clang + Debug",
+      "description": "Linux + Clang + Debug (unoptimized, full symbols)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -128,14 +118,28 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-debug/conan_toolchain.cmake"
+        "CMAKE_CXX_COMPILER": "clang++"
       }
     },
     {
-      "name": "clang-release",
+      "name": "clang-dev",
       "inherits": "base",
-      "description": "Linux + Clang + Release",
+      "description": "Linux + Clang + Development (optimized, partial symbols)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "clang-ship",
+      "inherits": "base",
+      "description": "Linux + Clang + Shipping (fully optimized, no debug info)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -144,67 +148,21 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-release/conan_toolchain.cmake"
-      }
-    },
-    {
-      "name": "clang-sanitize",
-      "inherits": "base",
-      "description": "Linux + Clang + Sanitized (ASan+UBSan default)",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "ASSISI_ENABLE_SANITIZERS": "ON",
-        "ASSISI_SANITIZER_SET": "address;undefined",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-sanitize/conan_toolchain.cmake"
+        "CMAKE_CXX_COMPILER": "clang++"
       }
     }
   ],
   "buildPresets": [
-    {
-      "name": "msvc-debug",
-      "configurePreset": "msvc-debug"
-    },
-    {
-      "name": "msvc-release",
-      "configurePreset": "msvc-release"
-    },
-    {
-      "name": "msvc-sanitize",
-      "configurePreset": "msvc-sanitize"
-    },
+    { "name": "msvc-debug",  "configurePreset": "msvc-debug"  },
+    { "name": "msvc-dev",    "configurePreset": "msvc-dev"    },
+    { "name": "msvc-ship",   "configurePreset": "msvc-ship"   },
 
-    {
-      "name": "gcc-debug",
-      "configurePreset": "gcc-debug"
-    },
-    {
-      "name": "gcc-release",
-      "configurePreset": "gcc-release"
-    },
-    {
-      "name": "gcc-sanitize",
-      "configurePreset": "gcc-sanitize"
-    },
+    { "name": "gcc-debug",   "configurePreset": "gcc-debug"   },
+    { "name": "gcc-dev",     "configurePreset": "gcc-dev"     },
+    { "name": "gcc-ship",    "configurePreset": "gcc-ship"    },
 
-    {
-      "name": "clang-debug",
-      "configurePreset": "clang-debug"
-    },
-    {
-      "name": "clang-release",
-      "configurePreset": "clang-release"
-    },
-    {
-      "name": "clang-sanitize",
-      "configurePreset": "clang-sanitize"
-    }
+    { "name": "clang-debug", "configurePreset": "clang-debug" },
+    { "name": "clang-dev",   "configurePreset": "clang-dev"   },
+    { "name": "clang-ship",  "configurePreset": "clang-ship"  }
   ]
 }

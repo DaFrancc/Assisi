@@ -148,23 +148,109 @@ if (ASSISI_ENABLE_SANITIZERS)
 endif()
 
 # ------------------------------------------------------------
-# Dependencies (Conan CMakeDeps + CMakeToolchain)
+# Dependencies (FetchContent — no Conan required)
 # ------------------------------------------------------------
-# Assumes you run:
-#   conan install ... -of <buildDir> -g CMakeDeps -g CMakeToolchain
-# and then configure with CMAKE_TOOLCHAIN_FILE pointing at <buildDir>/conan_toolchain.cmake
-find_package(glfw3 CONFIG REQUIRED)
-find_package(glm CONFIG REQUIRED)
-find_package(stb CONFIG REQUIRED)
-find_package(glad CONFIG REQUIRED)
-find_package(assimp CONFIG REQUIRED)
-find_package(Jolt CONFIG REQUIRED)
-find_package(nlohmann_json CONFIG REQUIRED)
-
-# --- Dear ImGui (docking branch, fetched from GitHub)
 include(FetchContent)
-FetchContent_Declare(
-    imgui
+
+# Share git clones across all presets so sources are only downloaded once.
+# Build artifacts still live per-preset in ${CMAKE_BINARY_DIR}/_deps/.
+set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/out/deps" CACHE PATH "")
+# Skip remote update checks on subsequent configures (fast reconfigure).
+set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "" FORCE)
+
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+
+# --- GLFW
+set(GLFW_BUILD_DOCS     OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS    OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_INSTALL        OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(glfw3
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG        3.4
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(glfw3)
+
+# --- GLM (header-only)
+set(GLM_BUILD_TESTS   OFF CACHE BOOL "" FORCE)
+set(GLM_BUILD_INSTALL OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(glm
+    GIT_REPOSITORY https://github.com/g-truc/glm.git
+    GIT_TAG        1.0.1
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(glm)
+
+# --- stb (header-only; no CMake build)
+FetchContent_Declare(stb
+    GIT_REPOSITORY https://github.com/nothings/stb.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+    DOWNLOAD_ONLY  YES
+)
+FetchContent_MakeAvailable(stb)
+add_library(stb-headers INTERFACE)
+target_include_directories(stb-headers INTERFACE "${stb_SOURCE_DIR}")
+add_library(stb::stb ALIAS stb-headers)
+
+# --- glad (vendored, pre-generated for OpenGL 4.6 core)
+add_library(glad_gl STATIC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/glad/src/glad.c")
+target_include_directories(glad_gl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/glad/include")
+add_library(glad::glad ALIAS glad_gl)
+
+# --- Assimp
+set(ASSIMP_BUILD_TESTS        OFF CACHE BOOL "" FORCE)
+set(ASSIMP_INSTALL            OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_NO_EXPORT          ON  CACHE BOOL "" FORCE)
+FetchContent_Declare(assimp
+    GIT_REPOSITORY https://github.com/assimp/assimp.git
+    GIT_TAG        v5.4.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(assimp)
+if (NOT TARGET assimp::assimp)
+    add_library(assimp::assimp ALIAS assimp)
+endif()
+
+# --- Jolt Physics
+set(FLOATING_POINT_EXCEPTIONS_ENABLED    OFF CACHE BOOL "" FORCE)
+set(USE_ASSERTS                          OFF CACHE BOOL "" FORCE)
+set(USE_STATIC_MSVC_RUNTIME_LIBRARY      OFF CACHE BOOL "" FORCE)
+set(TARGET_UNIT_TESTS                    OFF CACHE BOOL "" FORCE)
+set(TARGET_HELLO_WORLD                OFF CACHE BOOL "" FORCE)
+set(TARGET_PERFORMANCE_TEST           OFF CACHE BOOL "" FORCE)
+set(TARGET_SAMPLES                    OFF CACHE BOOL "" FORCE)
+set(TARGET_VIEWER                     OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(JoltPhysics
+    GIT_REPOSITORY https://github.com/jrouwe/JoltPhysics.git
+    GIT_TAG        v5.2.0
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  Build
+)
+FetchContent_MakeAvailable(JoltPhysics)
+# Jolt v5.2.0 enables /WX; newer Windows SDK (10.0.26100+) emits a warning in
+# wingdi.h that would fail the build. Downgrade to warning-only for Jolt only.
+if (MSVC)
+    target_compile_options(Jolt PRIVATE /WX-)
+endif()
+if (NOT TARGET Jolt::Jolt)
+    add_library(Jolt::Jolt ALIAS Jolt)
+endif()
+
+# --- nlohmann/json
+set(JSON_BuildTests OFF CACHE BOOL "" FORCE)
+set(JSON_Install    OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nlohmann_json)
+
+# --- Dear ImGui (docking branch)
+FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        docking
     GIT_SHALLOW    TRUE
@@ -185,54 +271,17 @@ add_library(imgui::imgui ALIAS Assisi-ImGui)
 
 set(ASSISI_IMGUI_ROOT "${imgui_SOURCE_DIR}")
 
+# --- Assisi-Deps: aggregate third-party deps into one interface target
 add_library(Assisi-Deps INTERFACE)
 add_library(Assisi::Deps ALIAS Assisi-Deps)
-
-# Conan target names vary by recipe; prefer modern imported targets but fall back gracefully.
-if (TARGET glfw::glfw)
-  target_link_libraries(Assisi-Deps INTERFACE glfw::glfw)
-elseif (TARGET glfw)
-  target_link_libraries(Assisi-Deps INTERFACE glfw)
-elseif (TARGET glfw3::glfw3)
-  target_link_libraries(Assisi-Deps INTERFACE glfw3::glfw3)
-elseif (TARGET glfw3)
-  target_link_libraries(Assisi-Deps INTERFACE glfw3)
-else()
-  message(FATAL_ERROR "glfw3 package found, but no known GLFW target was exported (tried glfw::glfw, glfw, glfw3::glfw3, glfw3).")
-endif()
-
-
-if (TARGET glm::glm)
-  target_link_libraries(Assisi-Deps INTERFACE glm::glm)
-elseif (TARGET glm)
-  target_link_libraries(Assisi-Deps INTERFACE glm)
-else()
-  message(FATAL_ERROR "glm target not found (expected glm::glm or glm).")
-endif()
-
-if (TARGET stb::stb)
-  target_link_libraries(Assisi-Deps INTERFACE stb::stb)
-elseif (TARGET stb)
-  target_link_libraries(Assisi-Deps INTERFACE stb)
-else()
-  message(FATAL_ERROR "stb target not found (expected stb::stb or stb).")
-endif()
-
-if (TARGET glad::glad)
-  target_link_libraries(Assisi-Deps INTERFACE glad::glad)
-elseif (TARGET glad)
-  target_link_libraries(Assisi-Deps INTERFACE glad)
-else()
-  message(FATAL_ERROR "glad target not found (expected glad::glad or glad).")
-endif()
-
-if (TARGET assimp::assimp)
-  target_link_libraries(Assisi-Deps INTERFACE assimp::assimp)
-elseif (TARGET assimp)
-  target_link_libraries(Assisi-Deps INTERFACE assimp)
-else()
-  message(FATAL_ERROR "assimp target not found (expected assimp::assimp or assimp).")
-endif()
+target_link_libraries(Assisi-Deps INTERFACE
+    glfw
+    glm::glm
+    stb::stb
+    glad::glad
+    assimp::assimp
+    imgui::imgui
+)
 
 # ------------------------------------------------------------
 # Tooling
@@ -252,6 +301,11 @@ add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
 add_subdirectory(modules/App)
 
+# CMake 4.x scans each binary subdir for CMakePresets.json immediately after
+# creating it, before the subdirectory's CMakeLists.txt is processed. Pre-create
+# empty stubs so the scan succeeds. Must be done before add_subdirectory.
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/sandbox")
+file(WRITE "${CMAKE_BINARY_DIR}/apps/sandbox/CMakePresets.json" "{\"version\":10}")
 add_subdirectory(apps/sandbox)
 
 
