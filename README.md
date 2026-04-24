@@ -13,31 +13,19 @@ with the license. I kindly ask that you credit the engine and myself
 git clone https://github.com/DaFrancc/Assisi.git
 ```
 
-### 2. Install Dependencies
-#### Tools:
+### 2. Install Tools
 - Make
-- CMake
-- Conan 2
+- CMake 3.28+
+- Ninja
 
-The following compilers have been tested for the following operating systems:
-- Windows
-  - MSVC
-- Linux
-  - GCC
-  - Clang
+The following compilers have been tested:
+- Windows — MSVC (Visual Studio 2022+)
+- Linux — GCC, Clang
 
-#### Libraries (installed in next step via Conan):
-- GLFW
-- GLM
-- Assimp
-- stb
-- Glad
-- Jolt Physics
-- Dear ImGui
-- nlohmann_json
+All library dependencies (GLFW, GLM, Assimp, stb, Glad, Jolt Physics, Dear ImGui, nlohmann_json) are fetched automatically by CMake on first configure — no separate package manager required.
 
-### 3. Install Dependencies (Conan + CMake configure)
-#### Windows:
+### 3. Configure
+#### Windows (from a Visual Studio Developer Command Prompt):
 ```bash
 make configure-msvc
 ```
@@ -46,8 +34,7 @@ make configure-msvc
 make configure-gcc    # GCC
 make configure-clang  # Clang
 ```
-- Note: If you do not have the Conan packages cached, this will take several minutes the first time. Subsequent runs are fast.
-- Note: If you add new packages via Conan, re-run the relevant `configure-*` target to regenerate the build files.
+- Note: The first configure will download and build all dependencies. This takes several minutes. Subsequent runs are fast.
 #### MacOS:
 - Currently unsupported, but you are free to fiddle around with it and submit a pull request.
 
@@ -66,21 +53,21 @@ chmod +x ./setup.sh && ./setup.sh
 After initialization, you can build individual presets or use the all-in-one Makefile targets:
 
 ```bash
-# All-in-one: conan install + configure + build all presets for a toolchain
+# Configure + build all presets for a toolchain
 make msvc    # Windows
 make gcc     # Linux (GCC)
 make clang   # Linux (Clang)
 
 # Or build a specific preset
-make msvc-debug     # (alias: md)
-make msvc-release   # (alias: mr)
-make msvc-sanitize  # (alias: ms)
-make gcc-debug      # (alias: gd)
-make gcc-release    # (alias: gr)
-make gcc-sanitize   # (alias: gs)
-make clang-debug    # (alias: cd)
-make clang-release  # (alias: cr)
-make clang-sanitize # (alias: cs)
+make msvc-debug  # (alias: md)
+make msvc-dev    # (alias: mv)
+make msvc-ship   # (alias: ms)
+make gcc-debug   # (alias: gd)
+make gcc-dev     # (alias: gv)
+make gcc-ship    # (alias: gs)
+make clang-debug # (alias: cd)
+make clang-dev   # (alias: cv)
+make clang-ship  # (alias: cs)
 
 # Or use cmake directly
 cmake --preset msvc-debug

@@ -143,20 +143,20 @@ cat > "$USER_PRESETS_PATH" <<EOF
       "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
     },
     {
-      "name": "${COMPILER}-release-user",
-      "inherits": "${COMPILER}-release",
+      "name": "${COMPILER}-dev-user",
+      "inherits": "${COMPILER}-dev",
       "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
     },
     {
-      "name": "${COMPILER}-sanitize-user",
-      "inherits": "${COMPILER}-sanitize",
+      "name": "${COMPILER}-ship-user",
+      "inherits": "${COMPILER}-ship",
       "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
     }
   ],
   "buildPresets": [
-    { "name": "${COMPILER}-debug-user",    "configurePreset": "${COMPILER}-debug-user" },
-    { "name": "${COMPILER}-release-user",  "configurePreset": "${COMPILER}-release-user" },
-    { "name": "${COMPILER}-sanitize-user", "configurePreset": "${COMPILER}-sanitize-user" }
+    { "name": "${COMPILER}-debug-user", "configurePreset": "${COMPILER}-debug-user" },
+    { "name": "${COMPILER}-dev-user",   "configurePreset": "${COMPILER}-dev-user"   },
+    { "name": "${COMPILER}-ship-user",  "configurePreset": "${COMPILER}-ship-user"  }
   ]
 }
 EOF
@@ -167,7 +167,7 @@ ok "Wrote CMakeUserPresets.json (compiler=$COMPILER, ASSISI_APP=$GAME_NAME)"
 # Done
 # -----------------------
 echo ""
-info "Run 'make configure-${COMPILER}' to install dependencies and configure, then build with:"
+info "Run 'make configure-${COMPILER}' to configure, then build with:"
 printf '  cmake --build --preset %s-debug-user\n' "$COMPILER"
 
 heading "Done"
