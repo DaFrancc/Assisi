@@ -6,12 +6,9 @@ target_sources(Assisi-Sandbox
     "src/main.cpp"
 )
 
-find_package(OpenGL REQUIRED)
-
 target_link_libraries(Assisi-Sandbox
   PRIVATE
     Assisi::App
-    OpenGL::GL
     nlohmann_json::nlohmann_json
 )
 

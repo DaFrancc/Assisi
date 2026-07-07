@@ -194,11 +194,6 @@ add_library(stb-headers INTERFACE)
 target_include_directories(stb-headers INTERFACE "${stb_SOURCE_DIR}")
 add_library(stb::stb ALIAS stb-headers)
 
-# --- glad (vendored, pre-generated for OpenGL 4.6 core)
-add_library(glad_gl STATIC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/glad/src/glad.c")
-target_include_directories(glad_gl PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/glad/include")
-add_library(glad::glad ALIAS glad_gl)
-
 # --- Assimp
 set(ASSIMP_BUILD_TESTS        OFF CACHE BOOL "" FORCE)
 set(ASSIMP_INSTALL            OFF CACHE BOOL "" FORCE)
@@ -304,7 +299,6 @@ target_link_libraries(Assisi-Deps INTERFACE
     glfw
     glm::glm
     stb::stb
-    glad::glad
     assimp::assimp
     imgui::imgui
 )
@@ -333,11 +327,6 @@ add_subdirectory(modules/App)
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/sandbox")
 file(WRITE "${CMAKE_BINARY_DIR}/apps/sandbox/CMakePresets.json" "{\"version\":10}")
 add_subdirectory(apps/sandbox)
-
-file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/vk_triangle")
-file(WRITE "${CMAKE_BINARY_DIR}/apps/vk_triangle/CMakePresets.json" "{\"version\":10}")
-add_subdirectory(apps/vk_triangle)
-
 
 # Notes for module CMakeLists:
 # - Each module target should link:

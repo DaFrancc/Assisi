@@ -3,7 +3,6 @@ Assisi_apply_defaults(Assisi-Render)
 
 target_sources(Assisi-Render
   PUBLIC
-    "include/Assisi/Render/OpenGL/MeshBuffer.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/DefaultMeshes.hpp"
     "include/Assisi/Render/DefaultResources.hpp"

@@ -12,12 +12,9 @@ target_sources(${_app_target}
         "src/main.cpp"
 )
 
-find_package(OpenGL REQUIRED)
-
 target_link_libraries(${_app_target}
     PRIVATE
         Assisi::App
-        OpenGL::GL
         nlohmann_json::nlohmann_json
 )
 

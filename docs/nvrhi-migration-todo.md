@@ -13,8 +13,7 @@ Everything below assumes that goal.
   there's no Vulkan SDK installed in this dev environment (driver-only) — see that
   file's header comment for the exact pattern, mirrors NVIDIA's Donut framework.
 - `apps/vk_triangle` — standalone spike, proved the whole pattern before it went into
-  the real engine. Now that the real engine has it working, this can probably be
-  deleted (or kept as a minimal reference — worth deciding, low stakes either way).
+  the real engine. Deleted once the real engine had it working for good — see section 6.
 - A hardcoded test cube renders correctly through the real `Assisi-Sandbox` app
   (`SetupVulkanCube()`/`OnRenderVulkan()` in `apps/sandbox/src/main.cpp`) — this proved
   vertex/index buffers, push-constant matrices, depth-tested pipelines, and SPIR-V
@@ -419,33 +418,46 @@ Final state, in `apps/sandbox/CMakeLists.txt`:
   normal/metallic/roughness-map pipeline `cube_min.frag` doesn't have yet (see
   section 3's clustered-lighting bullet — fixed constants stand in for those maps
   currently), and `fxaa.frag`/`screen.vert` is the pre-migration post-process pass
-  for whenever that's revisited (see the still-open post-process bullet in section 3).
+  (superseded — the real Vulkan-native versions are `assets/shaders/fullscreen.vert`/
+  `fxaa.frag`, see the post-process bullet above).
 - Each shader's `.spv` compile and its copy next to the exe are each their own
   `add_custom_command(OUTPUT ...)` with a real `DEPENDS` edge (a stamp file for the
   copy, since ninja needs a literal `OUTPUT` path — `$<TARGET_FILE_DIR:...>` only
   works inside `COMMAND`) — **not** a `POST_BUILD` hook on `Assisi-Sandbox`, which is
   what caused the original staleness bug (`POST_BUILD` only re-runs when the
   *executable itself* relinks, not on asset-only changes).
-- `apps/vk_triangle` (standalone spike, doesn't link `Assisi::Render`) is untouched,
-  still uses `glslang-standalone` directly with its own hardcoded file list — low
-  stakes either way given section 6's still-open question about deleting it.
+- `apps/vk_triangle` (standalone spike, doesn't link `Assisi::Render`) has since been
+  deleted outright — see section 6.
 
-### 5. Vendor/dependency cleanup (final pass, do last)
+### 5. Vendor/dependency cleanup (final pass, do last) — DONE
 
-- Remove `glad` (vendored OpenGL loader) from `vendor/` and CMake once nothing
-  references it.
-- Remove `find_package(OpenGL)` / `OpenGL::GL` linkage in `apps/sandbox/CMakeLists.txt`.
-- Double check nothing else pulls in raw `<GL/...>` or `glad/glad.h` anywhere
-  (`grep -rl "glad/glad.h" modules apps` should come back empty at the end).
+- `vendor/glad` (the vendored OpenGL loader), its `add_library(glad_gl ...)`/
+  `glad::glad` alias in the top-level `CMakeLists.txt`, and its entry in
+  `Assisi-Deps`'s `target_link_libraries` are all gone.
+- `find_package(OpenGL)` / `OpenGL::GL` linkage removed from `apps/sandbox/CMakeLists.txt`
+  and `apps/editor/CMakeLists.txt` (the latter isn't even wired into the build via
+  `add_subdirectory` — dead scaffolding from the original conan→cmake migration, missing
+  its own `src/main.cpp` — but it referenced OpenGL too, so cleaned up for consistency
+  rather than left half-migrated).
+- `modules/Render/include/Assisi/Render/OpenGL/` (the whole folder — `Framebuffer.hpp`,
+  `MeshBuffer.hpp`, `ScreenQuad.hpp`; `Texture2D.hpp`/`DefaultTextures.hpp` were already
+  gone from the material-textures work) deleted — confirmed fully unreferenced first
+  (`grep -rl "Render::OpenGL\|Render/OpenGL/" modules apps` came back empty except the
+  files themselves).
+- Confirmed empty: `grep -rl "glad/glad.h\|glad\.h" modules apps` and
+  `grep -rln "glad\|OpenGL::GL\|find_package(OpenGL)" --include=CMakeLists.txt .`.
 
-### 6. Housekeeping
+### 6. Housekeeping — DONE
 
-- Decide the fate of `apps/vk_triangle` (delete now that the real engine works, or keep
-  as a minimal reference/smoke-test app).
-- Update module-level docs/comments that still describe the OpenGL renderer once the
-  port is done.
-- Branch strategy — done. Work happens directly on the `nvrhi` branch (no separate
-  `dev` branch in play).
+- `apps/vk_triangle` deleted outright (its standalone-spike job — proving the
+  NVRHI+Vulkan+GLFW bring-up pattern before it went into the real engine — is done; the
+  real engine is the reference now). Removed its `add_subdirectory` and matching
+  `CMakePresets.json` pre-creation stub from the top-level `CMakeLists.txt`.
+- Module-level docs/comments describing the OpenGL renderer were already updated
+  incrementally as each piece was ported (section 3) rather than left for a final pass —
+  nothing OpenGL-flavored left scanning through `modules/Render`/`modules/App`.
+- Branch strategy — work happens directly on the `nvrhi` branch (no separate `dev`
+  branch in play).
 
 ## Key gotchas to remember (carried over from earlier in this migration)
 
