@@ -271,6 +271,32 @@ add_library(imgui::imgui ALIAS Assisi-ImGui)
 
 set(ASSISI_IMGUI_ROOT "${imgui_SOURCE_DIR}")
 
+# --- NVRHI (Vulkan backend only; DX11/DX12 disabled — Windows+Linux via Vulkan)
+set(NVRHI_WITH_VULKAN     ON  CACHE BOOL "" FORCE)
+set(NVRHI_WITH_DX11       OFF CACHE BOOL "" FORCE)
+set(NVRHI_WITH_DX12       OFF CACHE BOOL "" FORCE)
+set(NVRHI_WITH_VALIDATION ON  CACHE BOOL "" FORCE)
+set(NVRHI_INSTALL         OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(nvrhi
+    GIT_REPOSITORY https://github.com/NVIDIA-RTX/NVRHI.git
+    GIT_TAG        8e8c36e37558acec333204619b95d9d2fcdc4a79 # NVRHI has no tagged releases; pinned to a specific commit
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(nvrhi)
+
+# --- glslang (GLSL -> SPIR-V compiler, used as a build-time tool only)
+set(ENABLE_OPT              OFF CACHE BOOL "" FORCE) # avoids needing SPIRV-Tools-opt / update_glslang_sources.py
+set(ENABLE_HLSL             OFF CACHE BOOL "" FORCE)
+set(ENABLE_GLSLANG_BINARIES ON  CACHE BOOL "" FORCE) # builds the glslang-standalone compiler executable
+set(GLSLANG_TESTS           OFF CACHE BOOL "" FORCE)
+set(GLSLANG_ENABLE_INSTALL  OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(glslang
+    GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
+    GIT_TAG        vulkan-sdk-1.4.350.1
+    GIT_SHALLOW    TRUE
+)
+FetchContent_MakeAvailable(glslang)
+
 # --- Assisi-Deps: aggregate third-party deps into one interface target
 add_library(Assisi-Deps INTERFACE)
 add_library(Assisi::Deps ALIAS Assisi-Deps)
@@ -307,6 +333,10 @@ add_subdirectory(modules/App)
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/sandbox")
 file(WRITE "${CMAKE_BINARY_DIR}/apps/sandbox/CMakePresets.json" "{\"version\":10}")
 add_subdirectory(apps/sandbox)
+
+file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/vk_triangle")
+file(WRITE "${CMAKE_BINARY_DIR}/apps/vk_triangle/CMakePresets.json" "{\"version\":10}")
+add_subdirectory(apps/vk_triangle)
 
 
 # Notes for module CMakeLists:
