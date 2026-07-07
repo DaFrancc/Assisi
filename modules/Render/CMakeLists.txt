@@ -15,6 +15,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/Shader.hpp"
     "include/Assisi/Render/ComputeShader.hpp"
     "include/Assisi/Render/ClusterGrid.hpp"
+    "include/Assisi/Render/Vulkan/VulkanContext.hpp"
   PRIVATE
     "src/Shader.cpp"
     "src/ClusterGrid.cpp"
@@ -22,6 +23,7 @@ target_sources(Assisi-Render
     "src/DefaultResources.cpp"
     "src/RenderSystemOpenGL.cpp"
     "src/Texture2D.cpp"
+    "src/VulkanContext.cpp"
 )
 
 target_include_directories(Assisi-Render
@@ -35,6 +37,9 @@ target_link_libraries(Assisi-Render
     Assisi::Math
     Assisi::Window
     Assisi::Deps
+    nvrhi
+    nvrhi_vk
+    Vulkan::Headers
 )
 
 add_library(Assisi::Render ALIAS Assisi-Render)

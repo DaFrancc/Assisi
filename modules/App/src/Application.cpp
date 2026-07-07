@@ -83,15 +83,31 @@ static Application *s_instance = nullptr;
 
 void Application::FramebufferSizeCallback(Window::NativeWindowHandle * /*window*/, int width, int height)
 {
-    if (width <= 0 || height <= 0)
+    // GLFW can fire this during window creation/show (e.g. a DPI-driven WM_SIZE on
+    // Windows) — before s_instance is assigned and before RenderSystem::Initialize
+    // has run. Bail out entirely rather than falling through to a GL/Vulkan call
+    // against a backend that isn't set up yet.
+    if (width <= 0 || height <= 0 || s_instance == nullptr)
     {
-        return; // minimized — nothing to do
+        return;
     }
 
-    glViewport(0, 0, width, height);
-    if (s_instance)
+    const bool isVulkan = s_instance->_config.backend == Render::Backend::GraphicsBackend::Vulkan;
+    if (isVulkan)
     {
-        s_instance->OnResize(width, height);
+        if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
+        {
+            vulkanContext->Resize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
+        }
+    }
+    else
+    {
+        glViewport(0, 0, width, height);
+    }
+
+    s_instance->OnResize(width, height);
+    if (!isVulkan)
+    {
         s_instance->RebuildPostProcess();
     }
 }
@@ -127,10 +143,13 @@ Application::Application()
 
     _config = AppConfig::LoadFromJson();
 
+    const bool isOpenGL = _config.backend == Render::Backend::GraphicsBackend::OpenGL;
+
     Window::WindowConfiguration winCfg;
     winCfg.Width  = _config.width;
     winCfg.Height = _config.height;
     winCfg.Title  = _config.title.c_str();
+    winCfg.CreateClientApiContext = isOpenGL;
 
     _window = std::make_unique<Window::WindowContext>(winCfg, FramebufferSizeCallback);
     if (!_window->IsValid())
@@ -139,32 +158,38 @@ Application::Application()
         std::exit(EXIT_FAILURE);
     }
 
-    if (!Render::RenderSystem::Initialize(Render::Backend::GraphicsBackend::OpenGL, *_window))
+    if (!Render::RenderSystem::Initialize(_config.backend, *_window))
     {
         Core::Log::Fatal("Failed to initialize render system.");
         std::exit(EXIT_FAILURE);
     }
 
-    glEnable(GL_DEPTH_TEST);
-
     s_instance = this;
 
     glfwSetWindowRefreshCallback(_window->NativeHandle(), WindowRefreshCallback);
 
-    Debug::DebugUI::Initialize(*_window);
-
     _input = std::make_unique<Window::InputContext>(*_window);
-
     _options = OptionsConfig::LoadFromJson();
-    _screenQuad.emplace();
-    _fxaaShader = Render::Shader("shaders/screen.vert", "shaders/fxaa.frag");
-    RebuildPostProcess();
+
+    // The Vulkan backend is under active migration: depth testing, post-process
+    // (MSAA/FXAA), and the ImGui/options overlay are OpenGL-only for now.
+    if (isOpenGL)
+    {
+        glEnable(GL_DEPTH_TEST);
+        Debug::DebugUI::Initialize(*_window);
+        _screenQuad.emplace();
+        _fxaaShader = Render::Shader("shaders/screen.vert", "shaders/fxaa.frag");
+        RebuildPostProcess();
+    }
 }
 
 Application::~Application()
 {
     s_instance = nullptr;
-    Debug::DebugUI::Shutdown();
+    if (_config.backend == Render::Backend::GraphicsBackend::OpenGL)
+    {
+        Debug::DebugUI::Shutdown();
+    }
 }
 
 void Application::RequestClose()
@@ -279,6 +304,12 @@ void Application::Run()
 
 void Application::RenderFrame()
 {
+    if (_config.backend == Render::Backend::GraphicsBackend::Vulkan)
+    {
+        RenderFrameVulkan();
+        return;
+    }
+
     const AaMode              mode = _options.aaMode;
     const Window::WindowSize  fb   = _window->GetFramebufferSize();
 
@@ -341,6 +372,36 @@ void Application::RenderFrame()
     Debug::DebugUI::EndFrame();
 
     _window->SwapBuffers();
+}
+
+void Application::RenderFrameVulkan()
+{
+    // Vulkan backend is under active migration: scene rendering, post-process, and
+    // ImGui are OpenGL-only so far. This clears to the configured colour and
+    // presents — nothing else — until those are ported.
+    auto *vulkanContext = Render::RenderSystem::GetVulkanContext();
+    if (!vulkanContext)
+    {
+        return;
+    }
+
+    auto frame = vulkanContext->BeginFrame();
+    if (!frame.has_value())
+    {
+        return; // minimized, or swapchain is stale and about to be resized
+    }
+
+    frame->commandList->clearTextureFloat(
+        frame->colorTexture, nvrhi::AllSubresources,
+        nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
+    if (frame->depthTexture)
+    {
+        frame->commandList->clearDepthStencilTexture(frame->depthTexture, nvrhi::AllSubresources, true, 1.0f, false, 0);
+    }
+
+    OnRenderVulkan(*frame);
+
+    vulkanContext->EndFrame();
 }
 
 void Application::RebuildPostProcess()

@@ -43,3 +43,31 @@ add_custom_target(Assisi-CopyAssets ALL
 )
 
 add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
+
+# --- Vulkan shaders: compile GLSL -> SPIR-V at build time (OpenGL shaders are
+# compiled at runtime instead; these Vulkan-only shaders are the exception
+# during the migration, matching apps/vk_triangle's approach).
+set(_sandbox_vk_shader_dir "${CMAKE_SOURCE_DIR}/assets/shaders")
+set(_sandbox_vk_spv_outputs "")
+
+foreach(_shader_name cube_min.vert cube_min.frag)
+    set(_shader_in "${_sandbox_vk_shader_dir}/${_shader_name}")
+    set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_name}.spv")
+    add_custom_command(
+        OUTPUT "${_shader_out}"
+        COMMAND $<TARGET_FILE:glslang-standalone> -V "${_shader_in}" -o "${_shader_out}"
+        DEPENDS "${_shader_in}" glslang-standalone
+        COMMENT "Compiling ${_shader_name} to SPIR-V"
+        VERBATIM
+    )
+    list(APPEND _sandbox_vk_spv_outputs "${_shader_out}")
+endforeach()
+
+add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_vk_spv_outputs})
+add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)
+
+add_custom_command(TARGET Assisi-Sandbox POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Assisi-Sandbox>/shaders"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_sandbox_vk_spv_outputs} "$<TARGET_FILE_DIR:Assisi-Sandbox>/shaders"
+    COMMENT "Copying compiled Vulkan shaders next to Assisi-Sandbox"
+)

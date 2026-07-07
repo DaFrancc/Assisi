@@ -15,6 +15,8 @@
 #include <Assisi/Render/DefaultMeshes.hpp>
 #include <Assisi/Render/OpenGL/MeshBuffer.hpp>
 #include <Assisi/Render/Shader.hpp>
+#include <Assisi/Render/Vulkan/VulkanContext.hpp>
+#include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -60,6 +62,7 @@ class SandboxApp : public Assisi::App::Application
     void OnRender();
     void OnImGui();
     void OnResize(int width, int height) override;
+    void OnRenderVulkan(Assisi::Render::Vulkan::VulkanFrame &frame) override;
 
   private:
     // --- Setup ---
@@ -99,6 +102,19 @@ class SandboxApp : public Assisi::App::Application
     Assisi::Render::Shader             _shader;
     Assisi::Runtime::LightingSystem    _lighting;
     glm::mat4                          _projection{1.f};
+
+    // --- Vulkan (temporary hardcoded cube milestone; will be replaced once
+    // real mesh/lighting rendering is ported off OpenGL) ---
+    void SetupVulkanCube();
+
+    nvrhi::BufferHandle         _vkCubeVertexBuffer;
+    nvrhi::BufferHandle         _vkCubeIndexBuffer;
+    uint32_t                   _vkCubeIndexCount = 0;
+    nvrhi::InputLayoutHandle    _vkCubeInputLayout;
+    nvrhi::BindingLayoutHandle  _vkCubeBindingLayout;
+    nvrhi::BindingSetHandle     _vkCubeBindingSet;
+    nvrhi::GraphicsPipelineHandle _vkCubePipeline;
+    float                       _vkCubeRotation = 0.f;
 
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
@@ -181,7 +197,17 @@ void SandboxApp::OnStart()
         }
     }
 
-    _scene    = _scenes.Create("Main").value();
+    _scene = _scenes.Create("Main").value();
+
+    if (GetBackend() != Assisi::Render::Backend::GraphicsBackend::OpenGL)
+    {
+        // Real scene rendering (mesh/shader/lighting) is OpenGL-only during the
+        // Vulkan migration — draw a hardcoded rotating cube instead, as a
+        // milestone on the way to porting the real renderer.
+        SetupVulkanCube();
+        return;
+    }
+
     _cubeMesh = Assisi::Render::OpenGL::MeshBuffer(Assisi::Render::CreateUnitCubeMesh());
 
     _shader = Assisi::Render::Shader("shaders/mesh.vert", "shaders/mesh.frag");
@@ -218,10 +244,166 @@ void SandboxApp::OnStart()
 
 void SandboxApp::OnResize(int width, int height)
 {
+    if (GetBackend() != Assisi::Render::Backend::GraphicsBackend::OpenGL)
+    {
+        return; // no camera/lighting set up yet under the Vulkan backend
+    }
+
     const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
     _projection     = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
     _lighting.Resize(width, height, cam->nearZ, cam->farZ, _projection);
     _lighting.SetupMeshShader(_shader);
+}
+
+namespace
+{
+std::vector<char> ReadSpirvFile(const std::string &path)
+{
+    std::ifstream file(path, std::ios::ate | std::ios::binary);
+    if (!file.is_open())
+    {
+        Assisi::Core::Log::Error("Failed to open shader file: {}", path);
+        return {};
+    }
+    const size_t size = static_cast<size_t>(file.tellg());
+    std::vector<char> buffer(size);
+    file.seekg(0);
+    file.read(buffer.data(), static_cast<std::streamsize>(size));
+    return buffer;
+}
+} // namespace
+
+void SandboxApp::SetupVulkanCube()
+{
+    auto *vulkanContext = Assisi::Render::RenderSystem::GetVulkanContext();
+    if (!vulkanContext)
+    {
+        return;
+    }
+    nvrhi::IDevice *device = vulkanContext->GetDevice();
+
+    const Assisi::Render::MeshData cube = Assisi::Render::CreateUnitCubeMesh();
+    _vkCubeIndexCount = static_cast<uint32_t>(cube.Indices.size());
+
+    nvrhi::BufferDesc vbDesc;
+    vbDesc.byteSize = cube.Vertices.size() * sizeof(Assisi::Render::Vertex);
+    vbDesc.isVertexBuffer = true;
+    vbDesc.debugName = "CubeVertexBuffer";
+    vbDesc.initialState = nvrhi::ResourceStates::VertexBuffer;
+    vbDesc.keepInitialState = true;
+    _vkCubeVertexBuffer = device->createBuffer(vbDesc);
+
+    nvrhi::BufferDesc ibDesc;
+    ibDesc.byteSize = cube.Indices.size() * sizeof(uint32_t);
+    ibDesc.isIndexBuffer = true;
+    ibDesc.debugName = "CubeIndexBuffer";
+    ibDesc.initialState = nvrhi::ResourceStates::IndexBuffer;
+    ibDesc.keepInitialState = true;
+    _vkCubeIndexBuffer = device->createBuffer(ibDesc);
+
+    nvrhi::CommandListHandle uploadCommandList = device->createCommandList();
+    uploadCommandList->open();
+    uploadCommandList->writeBuffer(_vkCubeVertexBuffer, cube.Vertices.data(), vbDesc.byteSize);
+    uploadCommandList->writeBuffer(_vkCubeIndexBuffer, cube.Indices.data(), ibDesc.byteSize);
+    uploadCommandList->close();
+    device->executeCommandList(uploadCommandList);
+
+    const std::vector<char> vertSpv = ReadSpirvFile("shaders/cube_min.vert.spv");
+    const std::vector<char> fragSpv = ReadSpirvFile("shaders/cube_min.frag.spv");
+    if (vertSpv.empty() || fragSpv.empty())
+    {
+        Assisi::Core::Log::Error("Failed to load Vulkan cube shaders.");
+        RequestClose();
+        return;
+    }
+
+    nvrhi::ShaderDesc vertDesc;
+    vertDesc.shaderType = nvrhi::ShaderType::Vertex;
+    vertDesc.debugName = "cube_min.vert";
+    nvrhi::ShaderHandle vertexShader = device->createShader(vertDesc, vertSpv.data(), vertSpv.size());
+
+    nvrhi::ShaderDesc fragDesc;
+    fragDesc.shaderType = nvrhi::ShaderType::Pixel;
+    fragDesc.debugName = "cube_min.frag";
+    nvrhi::ShaderHandle fragmentShader = device->createShader(fragDesc, fragSpv.data(), fragSpv.size());
+
+    const nvrhi::VertexAttributeDesc attributes[] = {
+        nvrhi::VertexAttributeDesc()
+            .setName("POSITION")
+            .setFormat(nvrhi::Format::RGB32_FLOAT)
+            .setOffset(offsetof(Assisi::Render::Vertex, Position))
+            .setElementStride(sizeof(Assisi::Render::Vertex)),
+        nvrhi::VertexAttributeDesc()
+            .setName("NORMAL")
+            .setFormat(nvrhi::Format::RGB32_FLOAT)
+            .setOffset(offsetof(Assisi::Render::Vertex, Normal))
+            .setElementStride(sizeof(Assisi::Render::Vertex)),
+        nvrhi::VertexAttributeDesc()
+            .setName("TEXCOORD")
+            .setFormat(nvrhi::Format::RG32_FLOAT)
+            .setOffset(offsetof(Assisi::Render::Vertex, TextureCoordinates))
+            .setElementStride(sizeof(Assisi::Render::Vertex)),
+        nvrhi::VertexAttributeDesc()
+            .setName("TANGENT")
+            .setFormat(nvrhi::Format::RGBA32_FLOAT)
+            .setOffset(offsetof(Assisi::Render::Vertex, Tangent))
+            .setElementStride(sizeof(Assisi::Render::Vertex)),
+    };
+    _vkCubeInputLayout = device->createInputLayout(attributes, 4, vertexShader);
+
+    nvrhi::BindingLayoutDesc bindingLayoutDesc;
+    bindingLayoutDesc.visibility = nvrhi::ShaderType::Vertex;
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(glm::mat4)));
+    _vkCubeBindingLayout = device->createBindingLayout(bindingLayoutDesc);
+
+    nvrhi::BindingSetDesc bindingSetDesc;
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::mat4)));
+    _vkCubeBindingSet = device->createBindingSet(bindingSetDesc, _vkCubeBindingLayout);
+
+    nvrhi::GraphicsPipelineDesc pipelineDesc;
+    pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
+    pipelineDesc.inputLayout = _vkCubeInputLayout;
+    pipelineDesc.VS = vertexShader;
+    pipelineDesc.PS = fragmentShader;
+    pipelineDesc.addBindingLayout(_vkCubeBindingLayout);
+    pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
+    pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
+    pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
+
+    _vkCubePipeline = device->createGraphicsPipeline(pipelineDesc, vulkanContext->GetFramebufferInfo());
+}
+
+void SandboxApp::OnRenderVulkan(Assisi::Render::Vulkan::VulkanFrame &frame)
+{
+    if (!_vkCubePipeline)
+    {
+        return;
+    }
+
+    _vkCubeRotation += 0.01f;
+    const glm::mat4 model = glm::rotate(glm::mat4(1.f), _vkCubeRotation, glm::vec3(0.3f, 1.f, 0.2f));
+    const glm::mat4 view =
+        glm::lookAt(glm::vec3(2.5f, 2.5f, 4.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
+    const float aspect = frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height) : 1.f;
+    glm::mat4 projection = glm::perspective(glm::radians(60.f), aspect, 0.1f, 100.f);
+    projection[1][1] *= -1.f; // Vulkan clip space has Y pointing down, unlike OpenGL
+    const glm::mat4 mvp = projection * view * model;
+
+    nvrhi::GraphicsState state;
+    state.pipeline = _vkCubePipeline;
+    state.framebuffer = frame.framebuffer;
+    state.addBindingSet(_vkCubeBindingSet);
+    state.viewport.addViewportAndScissorRect(
+        nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
+    state.addVertexBuffer(nvrhi::VertexBufferBinding{_vkCubeVertexBuffer, 0, 0});
+    state.indexBuffer = nvrhi::IndexBufferBinding{_vkCubeIndexBuffer, nvrhi::Format::R32_UINT, 0};
+    frame.commandList->setGraphicsState(state);
+
+    frame.commandList->setPushConstants(&mvp, sizeof(mvp));
+
+    nvrhi::DrawArguments drawArgs;
+    drawArgs.vertexCount = _vkCubeIndexCount;
+    frame.commandList->drawIndexed(drawArgs);
 }
 
 void SandboxApp::OnFixedUpdate(float dt)

@@ -10,6 +10,7 @@
 #include <Assisi/Render/OpenGL/Framebuffer.hpp>
 #include <Assisi/Render/OpenGL/ScreenQuad.hpp>
 #include <Assisi/Render/Shader.hpp>
+#include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
@@ -48,6 +49,10 @@ class Application
     virtual void OnRender()                 = 0;
     virtual void OnImGui()                  {}
     virtual void OnShutdown()               {}
+    /// @brief Vulkan equivalent of OnRender(), called between BeginFrame() and
+    /// EndFrame() once the color/depth targets are cleared. No-op by default —
+    /// override to draw while the Vulkan backend is under active migration.
+    virtual void OnRenderVulkan(Render::Vulkan::VulkanFrame & /*frame*/) {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int /*width*/, int /*height*/) {}
 
@@ -57,12 +62,18 @@ class Application
     void      RequestClose();
     glm::mat4 MakeProjection(float fovDegrees = 60.f, float zNear = 0.1f, float zFar = 200.f) const;
     int       GetFps()             const { return _fps; }
-    double    GetSleepResolutionMs() const { return _sleepResolutionMs; }
+
+    /// @brief Which graphics API this Application was configured to use. The
+    /// Vulkan backend is under active migration — scene rendering, post-process,
+    /// and ImGui are OpenGL-only so far; derived apps should skip GL-specific
+    /// setup when this isn't OpenGL.
+    Render::Backend::GraphicsBackend GetBackend() const { return _config.backend; }
 
   private:
     static void FramebufferSizeCallback(Window::NativeWindowHandle *window, int width, int height);
     static void WindowRefreshCallback(Window::NativeWindowHandle *window);
     void        RenderFrame();
+    void        RenderFrameVulkan();
     void        RebuildPostProcess();
     void        DrawOptionsWindow();
 

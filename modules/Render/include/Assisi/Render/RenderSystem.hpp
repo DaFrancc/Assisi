@@ -5,14 +5,16 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/Backend/GraphicsBackend.hpp>
+#include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
+
+#include <memory>
 
 namespace Assisi::Render
 {
 /// @brief Static service that initializes and owns the graphics backend.
 ///
-/// Call Initialize() once after creating a WindowContext.  Only OpenGL is
-/// currently implemented; Vulkan returns false immediately.
+/// Call Initialize() once after creating a WindowContext.
 class RenderSystem
 {
   public:
@@ -54,17 +56,20 @@ class RenderSystem
         return false;
     }
 
+    /// @brief Returns the Vulkan context created by Initialize(Vulkan, ...), or
+    /// nullptr if the Vulkan backend was never (successfully) initialized.
+    static Vulkan::VulkanContext *GetVulkanContext() { return s_vulkanContext.get(); }
+
   private:
     /// @brief Loads OpenGL function pointers via Glad and configures initial state.
     static bool InitializeOpenGL(const Assisi::Window::WindowContext &window);
 
-    /// @brief Stub — Vulkan support is not yet implemented.
     static bool InitializeVulkan(const Assisi::Window::WindowContext &window)
     {
-        /* Vulkan initialization will live in Assisi::Render::Vulkan later. */
-        Assisi::Core::Log::Warn("RenderSystem: Vulkan backend is not implemented yet.");
-        (void)window;
-        return false;
+        s_vulkanContext = Vulkan::VulkanContext::Create(window);
+        return s_vulkanContext != nullptr;
     }
+
+    static inline std::unique_ptr<Vulkan::VulkanContext> s_vulkanContext;
 };
 } /* namespace Assisi::Render */
