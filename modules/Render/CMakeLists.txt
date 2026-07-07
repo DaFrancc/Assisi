@@ -3,9 +3,7 @@ Assisi_apply_defaults(Assisi-Render)
 
 target_sources(Assisi-Render
   PUBLIC
-    "include/Assisi/Render/OpenGL/DefaultTextures.hpp"
     "include/Assisi/Render/OpenGL/MeshBuffer.hpp"
-    "include/Assisi/Render/OpenGL/Texture2D.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/DefaultMeshes.hpp"
     "include/Assisi/Render/DefaultResources.hpp"
@@ -15,6 +13,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/RenderSystem.hpp"
     "include/Assisi/Render/Shader.hpp"
     "include/Assisi/Render/ShaderModule.hpp"
+    "include/Assisi/Render/Texture.hpp"
     "include/Assisi/Render/ComputeShader.hpp"
     "include/Assisi/Render/ClusterGrid.hpp"
     "include/Assisi/Render/Vulkan/VulkanContext.hpp"
@@ -25,7 +24,7 @@ target_sources(Assisi-Render
     "src/Buffer.cpp"
     "src/DefaultResources.cpp"
     "src/MeshPass.cpp"
-    "src/Texture2D.cpp"
+    "src/Texture.cpp"
     "src/VulkanContext.cpp"
 )
 

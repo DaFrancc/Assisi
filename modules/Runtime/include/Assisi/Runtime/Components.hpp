@@ -10,6 +10,7 @@
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
+#include <Assisi/Render/Texture.hpp>
 
 namespace Assisi::Runtime
 {
@@ -29,27 +30,21 @@ struct TransformComponent
     glm::mat4 worldMatrix{1.f}; ///< Computed by PropagateTransforms(). Do not set manually.
 };
 
-/// @brief Associates a GPU mesh and PBR material textures with an entity.
+/// @brief Associates a GPU mesh and albedo texture with an entity.
 ///
-/// `mesh` is a non-owning pointer — the MeshBuffer must outlive the component.
-/// The texture ID fields are not yet consumed by the NVRHI render path
-/// (materials are deferred, see docs/nvrhi-migration-todo.md); once wired up,
-/// 0 should fall back to an appropriate engine default:
-///   - albedoTextureId   → 1×1 white texture
-///   - normalTextureId   → 1×1 flat normal (0, 0, 1) in tangent space
-///   - metallicTextureId → 1×1 black (metallic = 0, fully dielectric)
-///   - roughnessTextureId → 1×1 mid-grey (roughness ≈ 0.5)
+/// `mesh` and `albedoTexture` are non-owning pointers — the referenced objects
+/// must outlive the component. A null `albedoTexture` falls back to a flat
+/// white default (see Render::DefaultResources::WhiteTexture). Normal/
+/// metallic/roughness maps aren't wired up yet — see
+/// docs/nvrhi-migration-todo.md.
 ///
-/// The pointer and texture IDs are runtime-only (transient); asset paths are
-/// resolved by the scene loader and are not stored on the component itself.
+/// The pointers are runtime-only (transient); asset paths are resolved by the
+/// scene loader and are not stored on the component itself.
 ACOMP()
 struct MeshRendererComponent
 {
     AFIELD(transient) const Assisi::Render::MeshBuffer *mesh = nullptr;
-    AFIELD(transient) unsigned int albedoTextureId   = 0u;
-    AFIELD(transient) unsigned int normalTextureId   = 0u;
-    AFIELD(transient) unsigned int metallicTextureId = 0u;
-    AFIELD(transient) unsigned int roughnessTextureId = 0u;
+    AFIELD(transient) const Assisi::Render::Texture *albedoTexture = nullptr;
 };
 
 /// @brief Projection and activation parameters for a camera entity.

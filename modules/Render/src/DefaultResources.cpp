@@ -3,27 +3,17 @@
  */
 
 #include <Assisi/Render/DefaultResources.hpp>
-#include <Assisi/Render/OpenGL/DefaultTextures.hpp>
+#include <Assisi/Render/Texture.hpp>
 
 namespace Assisi::Render
 {
-unsigned int DefaultResources::WhiteTextureId()
+nvrhi::ITexture *DefaultResources::WhiteTexture(nvrhi::IDevice *device)
 {
-    return Assisi::Render::OpenGL::DefaultTextures::WhiteTexture();
-}
-
-unsigned int DefaultResources::FlatNormalTextureId()
-{
-    return Assisi::Render::OpenGL::DefaultTextures::FlatNormalTexture();
-}
-
-unsigned int DefaultResources::BlackTextureId()
-{
-    return Assisi::Render::OpenGL::DefaultTextures::BlackTexture();
-}
-
-unsigned int DefaultResources::GreyTextureId()
-{
-    return Assisi::Render::OpenGL::DefaultTextures::GreyTexture();
+    static Texture texture;
+    if (!texture.IsValid())
+    {
+        texture.UploadSolidColor(device, 255, 255, 255, 255, "DefaultResources::White");
+    }
+    return texture.NativeTexture();
 }
 } /* namespace Assisi::Render */

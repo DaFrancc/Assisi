@@ -20,8 +20,10 @@ void DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm::mat4
         }
 
         const glm::mat4 modelViewProjection = viewProjection * transform.worldMatrix;
+        nvrhi::ITexture *albedoTexture =
+            meshRenderer.albedoTexture != nullptr ? meshRenderer.albedoTexture->NativeTexture() : nullptr;
         meshPass.Draw(commandList, framebuffer, viewportWidth, viewportHeight, modelViewProjection,
-                      *meshRenderer.mesh);
+                      *meshRenderer.mesh, albedoTexture);
     }
 }
 

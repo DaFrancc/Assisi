@@ -15,6 +15,7 @@
 #include <Assisi/Render/DefaultMeshes.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/MeshPass.hpp>
+#include <Assisi/Render/Texture.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -96,9 +97,10 @@ class SandboxApp : public Assisi::App::Application
     Assisi::Physics::PhysicsWorld      _physics;
 
     // --- Rendering (NVRHI/Vulkan) ---
-    // Every entity currently shares this one mesh — the scene has no per-entity
-    // asset loading yet, see docs/nvrhi-migration-todo.md section 1.
+    // Every entity currently shares this one mesh/texture — the scene has no
+    // per-entity asset loading yet, see docs/nvrhi-migration-todo.md section 1.
     Assisi::Render::MeshBuffer _cubeMesh;
+    Assisi::Render::Texture    _albedoTexture;
     Assisi::Render::MeshPass   _meshPass;
 
     Assisi::ECS::Scene  _cameraScene;
@@ -210,6 +212,11 @@ void SandboxApp::SetupScene()
     }
 
     _cubeMesh.Upload(vulkanContext->GetDevice(), Assisi::Render::CreateUnitCubeMesh());
+
+    if (auto loaded = _albedoTexture.LoadFromAssets(vulkanContext->GetDevice(), "textures/checker.png"); !loaded)
+    {
+        Assisi::Core::Log::Warn("Failed to load textures/checker.png — entities will render flat white.");
+    }
 }
 
 void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)
@@ -228,8 +235,11 @@ void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)
 
     const float aspect =
         frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height) : 1.f;
-    glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(*cam, aspect);
-    projection[1][1] *= -1.f; // Vulkan clip space has Y pointing down, unlike OpenGL
+    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(*cam, aspect);
+    // No manual Y-flip here: NVRHI's Vulkan backend already sets a negative-height
+    // viewport (VKViewportWithDXCoords) to flip Y back to the standard top-left
+    // convention, so glm::perspective's output is correct as-is. Flipping here too
+    // double-compensates and renders upside down.
 
     Assisi::Runtime::DrawScene(*_scene, view, projection, frame.commandList, frame.framebuffer, frame.width,
                                frame.height, _meshPass);
@@ -622,7 +632,10 @@ void SandboxApp::LoadLevel(const std::string &name)
     _physics.Clear();
 
     for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRendererComponent>())
+    {
         mrc.mesh = &_cubeMesh;
+        mrc.albedoTexture = _albedoTexture.IsValid() ? &_albedoTexture : nullptr;
+    }
 
     for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::TransformComponent,
                                              Assisi::Physics::RigidBodyDescriptor>())

@@ -165,25 +165,46 @@ All bullets below landed as planned:
   the clustered-lighting SSBOs, needs an NVRHI buffer wrapper. Distinct from
   `Render::MeshBuffer` (vertex/index only, done in section 1) — this one is for
   arbitrary structured/storage data.
-- `Render::DefaultResources` (`DefaultResources.hpp/cpp`) — default white/black/
-  flat-normal/grey placeholder textures as raw GL texture IDs → NVRHI textures.
-- `Runtime::Renderer.cpp`'s `DrawScene` — **done**, see section 1. Already NVRHI-only.
-- `Runtime::LightingSystem` — manages clustered-lighting framebuffers/shaders, GL-only
-  today. Needs a full NVRHI port (compute-based light culling + a light data buffer).
-- `Application::RebuildPostProcess`/the MSAA/FXAA post-process pass in `RenderFrame()`
-  — currently built on `OpenGL::Framebuffer`. Needs NVRHI render-target + FXAA pass
-  equivalents (or could be dropped initially and re-added later — worth deciding
-  priority vs. just shipping single-sample rendering first).
-- ImGui backend: `imgui_impl_opengl3`/`imgui_impl_glfw`-for-OpenGL in
-  `modules/Debug/src/DebugUI.cpp` → needs `imgui_impl_vulkan.cpp` wired against the
-  raw `VkDevice`/`VkCommandBuffer` NVRHI wraps (fetch native handles via
-  `getNativeObject`), or a small custom NVRHI-based ImGui renderer. No official
-  "ImGui + NVRHI" backend exists upstream, so this is real work, not just relinking.
-- `Render::Texture2D` (OpenGL texture wrapper, used for material textures loaded via
-  `stb_image`) → NVRHI texture + sampler equivalent.
-- `MeshRendererComponent`'s texture ID fields (`albedoTextureId` etc., currently raw GL
-  `unsigned int` handles in `modules/Runtime/include/Assisi/Runtime/Components.hpp`) →
-  NVRHI texture handles or an index into a texture registry.
+- `Render::DefaultResources` / `Render::Texture2D` (material textures) — **done**.
+  `Render::Texture` (`Texture.hpp/cpp`, header owns an `nvrhi::TextureHandle`, loads via
+  `stb_image` — same vendored library the GL version used) replaces
+  `OpenGL::Texture2D` (deleted, along with `OpenGL::DefaultTextures.hpp` — both fully
+  unreferenced now). `DefaultResources::WhiteTexture(device)` replaces the GL
+  singleton-texture-ID version; trimmed to just white for now (normal/black/grey
+  return when normal maps and metallic/roughness are actually wired, not before —
+  no unused fallbacks sitting around). `MeshRendererComponent`'s four raw-GL-uint
+  texture ID fields collapsed to one `const Render::Texture *albedoTexture` (the
+  other three had zero consumers anywhere in the engine — removed rather than
+  left as dead GL-typed fields; they'll come back paired with real PBR/lighting
+  work). `MeshPass` gained a texture+sampler binding (see its header comment: NVRHI's
+  Vulkan backend keeps SRV and sampler as **separate descriptors** — HLSL
+  t-register/s-register style, not GLSL's combined `sampler2D` — offset by
+  `VulkanBindingOffsets` defaults, shaderResource at +0 and sampler at +128; GLSL
+  shaders declare `texture2D`/`sampler` separately and combine them with
+  `sampler2D(tex, samp)` at the point of use) plus a texture→`BindingSet` cache
+  (binding sets reference concrete resources, so unlike the mesh — bound directly via
+  vertex/index buffer bindings, no binding set needed — one binding set is needed per
+  distinct texture). `cube_min.vert/frag` updated to pass UVs through and sample
+  albedo. Proved out with a generated 256x256 checker PNG
+  (`assets/textures/checker.png`) loaded by `SandboxApp` and assigned to every
+  entity in `LoadLevel()` alongside the shared cube mesh.
+  - **Two real Vulkan bugs found and fixed while verifying this, both invisible until
+    there was real textured geometry with a distinguishable orientation to look at**:
+    (1) The `projection[1][1] *= -1.f` Y-flip in `SandboxApp::OnRender()` (inherited
+    from the vk_triangle spike, present since section 1) was **wrong and has been
+    removed** — NVRHI's Vulkan backend already flips the viewport internally
+    (`VKViewportWithDXCoords`, a negative-height viewport, standard Vulkan technique
+    to match D3D's top-left-origin convention) to undo Vulkan's native Y-down clip
+    space. The manual flip on top of that double-compensated, rendering upside down.
+    (2) That same internal viewport flip also flips the winding order the rasterizer
+    perceives, so with `cullMode = Back` and CCW-authored meshes (standard
+    convention, matches `CreateUnitCubeMesh()`), back-face culling was culling the
+    actual front faces — fixed by setting `renderState.rasterState.frontCounterClockwise
+    = true` in `MeshPass::Initialize` (see its inline comment). Both bugs are
+    detailed on `MeshPass`/`SandboxApp::OnRender`'s comments so they don't get
+    silently reintroduced by future pipeline code — **any new NVRHI graphics pipeline
+    in this codebase needs the same `frontCounterClockwise = true`, and must NOT
+    apply a manual projection Y-flip.**
 
 ### 4. Shader compilation pipeline
 
