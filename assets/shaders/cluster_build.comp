@@ -2,7 +2,7 @@
 
 /// cluster_build.comp
 /// Computes a view-space AABB for each cluster in the 3-D grid.
-/// Dispatch: (kNumX, kNumY, kNumZ) workgroups with local_size (1,1,1).
+/// Dispatch: (gridDim.x, gridDim.y, gridDim.z) workgroups with local_size (1,1,1).
 /// Run once on init and again after every viewport / projection change.
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
@@ -13,24 +13,30 @@ struct AABB
     vec4 maxPoint;
 };
 
-layout(std430, binding = 0) writeonly buffer ClusterAABBs
+// NVRHI's Vulkan backend offsets UAV (StructuredBuffer_UAV) bindings by +384
+// (VulkanBindingOffsets::unorderedAccess) relative to the NVRHI binding slot —
+// see Render::ClusterGrid and MeshPass.cpp's matching comment for the SRV/UAV split.
+layout(std430, binding = 384) writeonly buffer ClusterAABBs
 {
     AABB clusterAABBs[];
 };
 
-uniform uvec3 uGridDim;       // e.g. (16, 9, 24)
-uniform vec2  uScreenSize;    // framebuffer size in pixels
-uniform float uNearZ;         // positive near clip distance
-uniform float uFarZ;          // positive far clip distance
-uniform mat4  uInvProjection; // inverse of the projection matrix
+// GLSL has no loose "uniform" variables under Vulkan — everything the CPU
+// varies per-dispatch goes through this push-constant block instead.
+layout(push_constant) uniform PushConstants
+{
+    mat4  invProjection;
+    uvec4 gridDim;            // xyz = cluster grid dimensions, w unused
+    vec4  screenSizeNearFar;  // xy = framebuffer size in pixels, z = nearZ, w = farZ
+} pc;
 
 // Unproject a screen-space pixel position to a view-space point on the near plane.
 // Camera is at the origin in view space; -Z is forward.
 vec3 screenToViewNear(vec2 screenPos)
 {
-    vec2 ndc  = (screenPos / uScreenSize) * 2.0 - 1.0;
+    vec2 ndc  = (screenPos / pc.screenSizeNearFar.xy) * 2.0 - 1.0;
     vec4 clip = vec4(ndc, -1.0, 1.0); // NDC z = -1  →  near plane
-    vec4 view = uInvProjection * clip;
+    vec4 view = pc.invProjection * clip;
     return view.xyz / view.w;
 }
 
@@ -43,12 +49,17 @@ vec3 rayAtZ(vec3 dir, float targetZ)
 
 void main()
 {
-    uvec3 gid = gl_GlobalInvocationID;
-    if (any(greaterThanEqual(gid, uGridDim)))
+    uvec3 gid     = gl_GlobalInvocationID;
+    uvec3 gridDim = pc.gridDim.xyz;
+    if (any(greaterThanEqual(gid, gridDim)))
         return;
 
+    vec2  screenSize = pc.screenSizeNearFar.xy;
+    float nearZ      = pc.screenSizeNearFar.z;
+    float farZ       = pc.screenSizeNearFar.w;
+
     // Tile extent in screen pixels
-    vec2 tileSize = uScreenSize / vec2(uGridDim.xy);
+    vec2 tileSize = screenSize / vec2(gridDim.xy);
     vec2 tileMin  = vec2(gid.xy) * tileSize;
     vec2 tileMax  = tileMin + tileSize;
 
@@ -59,8 +70,8 @@ void main()
     vec3 tr = screenToViewNear(tileMax);
 
     // Z-slice depths in view space (negative — camera looks down -Z)
-    float zNear = -uNearZ * pow(uFarZ / uNearZ, float(gid.z)       / float(uGridDim.z));
-    float zFar  = -uNearZ * pow(uFarZ / uNearZ, float(gid.z + 1u)  / float(uGridDim.z));
+    float zNear = -nearZ * pow(farZ / nearZ, float(gid.z)      / float(gridDim.z));
+    float zFar  = -nearZ * pow(farZ / nearZ, float(gid.z + 1u) / float(gridDim.z));
 
     // 8 view-space corners of this cluster's frustum sub-volume
     vec3 corners[8];
@@ -82,8 +93,8 @@ void main()
     }
 
     uint idx = gid.x
-             + gid.y * uGridDim.x
-             + gid.z * uGridDim.x * uGridDim.y;
+             + gid.y * gridDim.x
+             + gid.z * gridDim.x * gridDim.y;
 
     clusterAABBs[idx].minPoint = vec4(aabbMin, 0.0);
     clusterAABBs[idx].maxPoint = vec4(aabbMax, 0.0);

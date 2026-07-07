@@ -6,26 +6,31 @@
 ///
 /// Divides the view frustum into a 3-D grid (16 × 9 × 24 = 3 456 clusters).
 /// A compute pass builds view-space AABBs once per resize, and a second
-/// compute pass assigns lights to clusters every frame.  The resulting SSBOs
-/// are bound to fixed binding points so the mesh fragment shader can look up
-/// only the lights that touch each fragment's cluster.
+/// compute pass assigns lights to clusters every frame.  The resulting
+/// buffers are read directly by the mesh fragment shader (see MeshPass /
+/// cube_min.frag) so it only evaluates the lights that touch each
+/// fragment's cluster.
 ///
 /// Usage (per frame):
-///   1. grid.CullLights(pointLights, spotLights, dirLights, viewMatrix);
-///   2. DrawScene(...)  — mesh.frag reads SSBOs already bound by step 1.
+///   1. grid.CullLights(commandList, pointLights, spotLights, dirLights, viewMatrix);
+///   2. DrawScene(...)  — cube_min.frag reads the buffers step 1 just wrote.
 
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/ComputeShader.hpp>
 
 #include <cstdint>
 #include <vector>
+
+#include <nvrhi/nvrhi.h>
 
 namespace Assisi::Render
 {
 
 // ---- GPU-side light structs (std430 layout) --------------------------------
 // All vec3 fields are stored in vec4 to satisfy std430 alignment rules.
-// The C++ structs must have identical memory layout.
+// The C++ structs must have identical memory layout to the GLSL structs in
+// cluster_cull.comp / cube_min.frag.
 
 struct PointLightGPU
 {
@@ -53,73 +58,75 @@ static_assert(sizeof(DirLightGPU) == 32);
 
 // ---------------------------------------------------------------------------
 
-/// @brief Manages all SSBOs and compute shaders for clustered forward lighting.
+/// @brief Manages all buffers and compute shaders for clustered forward lighting.
 class ClusterGrid
 {
   public:
     // ----- Grid constants --------------------------------------------------
-    static constexpr unsigned int kNumX        = 16u;
-    static constexpr unsigned int kNumY        = 9u;
-    static constexpr unsigned int kNumZ        = 24u;
-    static constexpr unsigned int kNumClusters = kNumX * kNumY * kNumZ; // 3 456
+    static constexpr uint32_t kNumX        = 16u;
+    static constexpr uint32_t kNumY        = 9u;
+    static constexpr uint32_t kNumZ        = 24u;
+    static constexpr uint32_t kNumClusters = kNumX * kNumY * kNumZ; // 3 456
 
     /// Maximum light indices stored in the global list, per light type.
     /// Point indices occupy [0, kMaxLightIndices) and spot indices occupy
-    /// [kMaxLightIndices, 2 * kMaxLightIndices) in the same buffer.
-    static constexpr unsigned int kMaxLightIndices = 65536u;
+    /// [kMaxLightIndices, 2 * kMaxLightIndices) in the same buffer. Must match
+    /// cluster_cull.comp's MAX_LIGHT_INDICES.
+    static constexpr uint32_t kMaxLightIndices = 65536u;
 
-    // ----- SSBO binding points (shared with all shaders) ------------------
-    static constexpr unsigned int kBindingClusterAABB = 0u;
-    static constexpr unsigned int kBindingPointLights = 1u;
-    static constexpr unsigned int kBindingSpotLights  = 2u;
-    static constexpr unsigned int kBindingDirLights   = 3u;
-    static constexpr unsigned int kBindingLightIndex  = 4u;
-    static constexpr unsigned int kBindingLightGrid   = 5u;
-    static constexpr unsigned int kBindingGlobalCount = 6u;
+    /// Fixed light-data buffer capacities. Lights beyond these caps are
+    /// silently dropped by Buffer::Upload — generous enough for any scene
+    /// this engine currently loads, and avoids reallocating buffers every
+    /// frame the way the old OpenGL SSBOs did.
+    static constexpr uint32_t kMaxPointLights = 1024u;
+    static constexpr uint32_t kMaxSpotLights  = 1024u;
+    static constexpr uint32_t kMaxDirLights   = 16u;
 
     ClusterGrid() = default;
-    ~ClusterGrid();
 
-    ClusterGrid(const ClusterGrid &) = delete;
-    ClusterGrid &operator=(const ClusterGrid &) = delete;
-
-    ClusterGrid(ClusterGrid &&) noexcept;
-    ClusterGrid &operator=(ClusterGrid &&) noexcept;
-
-    /// @brief Load compute shaders and allocate all SSBOs.
+    /// @brief Loads compute shaders and allocates all buffers.
     /// @return false if either compute shader failed to compile.
-    bool Initialize();
+    bool Initialize(nvrhi::IDevice *device);
 
     /// @brief Rebuild cluster AABBs. Call once on init and again on viewport/projection change.
-    void BuildClusters(int width, int height, float nearZ, float farZ, const glm::mat4 &invProjection);
+    void BuildClusters(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,
+                       const glm::mat4 &invProjection);
 
-    /// @brief Upload lights to SSBOs and run the culling compute pass.
-    ///        All SSBOs remain bound for subsequent DrawScene calls.
-    void CullLights(const std::vector<PointLightGPU> &pointLights,
-                    const std::vector<SpotLightGPU>  &spotLights,
-                    const std::vector<DirLightGPU>   &dirLights,
-                    const glm::mat4                  &view);
+    /// @brief Upload lights to buffers and run the culling compute pass.
+    void CullLights(nvrhi::ICommandList *commandList, const std::vector<PointLightGPU> &pointLights,
+                    const std::vector<SpotLightGPU> &spotLights, const std::vector<DirLightGPU> &dirLights,
+                    const glm::mat4 &view);
 
     float NearZ() const { return _nearZ; }
     float FarZ()  const { return _farZ; }
     int   Width() const { return _width; }
     int   Height() const { return _height; }
 
+    /// @brief Buffers the mesh fragment shader binds as SRVs each frame.
+    ///@{
+    const Buffer &PointLightBuffer()  const { return _pointLightBuffer; }
+    const Buffer &SpotLightBuffer()   const { return _spotLightBuffer; }
+    const Buffer &DirLightBuffer()    const { return _dirLightBuffer; }
+    const Buffer &LightIndexBuffer()  const { return _lightIndexBuffer; }
+    const Buffer &LightGridBuffer()   const { return _lightGridBuffer; }
+    ///@}
+
   private:
-    void AllocateBuffers();
-    void BindAll() const;
-    void Destroy() noexcept;
+    nvrhi::IDevice *_device = nullptr;
 
     ComputeShader _buildShader;
     ComputeShader _cullShader;
 
-    unsigned int _clusterAABBBuffer = 0u;
-    unsigned int _pointLightBuffer  = 0u;
-    unsigned int _spotLightBuffer   = 0u;
-    unsigned int _dirLightBuffer    = 0u;
-    unsigned int _lightIndexBuffer  = 0u;
-    unsigned int _lightGridBuffer   = 0u;
-    unsigned int _globalCountBuffer = 0u;
+    nvrhi::BindingSetHandle _buildBindingSet;
+    nvrhi::BindingSetHandle _cullBindingSet;
+
+    Buffer _clusterAABBBuffer;
+    Buffer _pointLightBuffer;
+    Buffer _spotLightBuffer;
+    Buffer _dirLightBuffer;
+    Buffer _lightIndexBuffer;
+    Buffer _lightGridBuffer;
+    Buffer _globalCountBuffer;
 
     float _nearZ  = 0.1f;
     float _farZ   = 200.f;

@@ -22,6 +22,7 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -61,6 +62,7 @@ class SandboxApp : public Assisi::App::Application
     void OnUpdate(float dt);
     void OnRender(Assisi::Render::Vulkan::VulkanFrame &frame) override;
     void OnImGui();
+    void OnResize(int width, int height) override;
 
   private:
     // --- Setup ---
@@ -102,6 +104,10 @@ class SandboxApp : public Assisi::App::Application
     Assisi::Render::MeshBuffer _cubeMesh;
     Assisi::Render::Texture    _albedoTexture;
     Assisi::Render::MeshPass   _meshPass;
+
+    // Clustered forward lighting — queries PointLight/SpotLight/DirectionalLight
+    // components from the scene each frame and feeds them to cube_min.frag.
+    Assisi::Runtime::LightingSystem _lightingSystem;
 
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
@@ -203,20 +209,64 @@ void SandboxApp::SetupScene()
         return;
     }
 
-    if (!_meshPass.Initialize(vulkanContext->GetDevice(), vulkanContext->GetFramebufferInfo(),
-                              "shaders/cube_min.vert.spv", "shaders/cube_min.frag.spv"))
+    nvrhi::IDevice *device = vulkanContext->GetDevice();
+
+    const auto fbSize = GetWindow().GetFramebufferSize();
+    const float aspect = fbSize.Height > 0 ? static_cast<float>(fbSize.Width) / static_cast<float>(fbSize.Height) : 1.f;
+    const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(*cam, aspect);
+
+    // ClusterGrid must be initialized (and its buffers allocated) before
+    // MeshPass::Initialize, which binds those buffers into every binding set
+    // it creates.
+    nvrhi::CommandListHandle setupCommandList = device->createCommandList();
+    setupCommandList->open();
+    const bool lightingOk = _lightingSystem.Initialize(device, setupCommandList, fbSize.Width, fbSize.Height,
+                                                        cam->nearZ, cam->farZ, projection);
+    setupCommandList->close();
+    device->executeCommandList(setupCommandList);
+
+    if (!lightingOk)
+    {
+        Assisi::Core::Log::Error("Failed to initialise the clustered lighting pipeline.");
+        RequestClose();
+        return;
+    }
+
+    if (!_meshPass.Initialize(device, vulkanContext->GetFramebufferInfo(), "shaders/cube_min.vert.spv",
+                              "shaders/cube_min.frag.spv", _lightingSystem.Grid()))
     {
         Assisi::Core::Log::Error("Failed to initialise the scene mesh pass.");
         RequestClose();
         return;
     }
 
-    _cubeMesh.Upload(vulkanContext->GetDevice(), Assisi::Render::CreateUnitCubeMesh());
+    _cubeMesh.Upload(device, Assisi::Render::CreateUnitCubeMesh());
 
-    if (auto loaded = _albedoTexture.LoadFromAssets(vulkanContext->GetDevice(), "textures/checker.png"); !loaded)
+    if (auto loaded = _albedoTexture.LoadFromAssets(device, "textures/checker.png"); !loaded)
     {
         Assisi::Core::Log::Warn("Failed to load textures/checker.png — entities will render flat white.");
     }
+}
+
+void SandboxApp::OnResize(int width, int height)
+{
+    auto *vulkanContext = Assisi::Render::RenderSystem::GetVulkanContext();
+    if (!vulkanContext || !_meshPass.IsValid())
+    {
+        return;
+    }
+
+    const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    const float aspect = height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
+    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(*cam, aspect);
+
+    nvrhi::IDevice *device = vulkanContext->GetDevice();
+    nvrhi::CommandListHandle commandList = device->createCommandList();
+    commandList->open();
+    _lightingSystem.Resize(commandList, width, height, cam->nearZ, cam->farZ, projection);
+    commandList->close();
+    device->executeCommandList(commandList);
 }
 
 void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)
@@ -240,6 +290,10 @@ void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)
     // viewport (VKViewportWithDXCoords) to flip Y back to the standard top-left
     // convention, so glm::perspective's output is correct as-is. Flipping here too
     // double-compensates and renders upside down.
+
+    _lightingSystem.Update(frame.commandList, *_scene, view);
+    _meshPass.UpdateFrameConstants(frame.commandList, view, frame.width, frame.height, cam->nearZ, cam->farZ,
+                                   _lightingSystem.DirLightCount());
 
     Assisi::Runtime::DrawScene(*_scene, view, projection, frame.commandList, frame.framebuffer, frame.width,
                                frame.height, _meshPass);

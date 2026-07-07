@@ -3,7 +3,7 @@
 /// cluster_cull.comp
 /// Tests every light against every cluster AABB (sphere-vs-AABB test) and
 /// writes per-cluster light index lists into a shared flat buffer.
-/// Dispatch: (kNumX, kNumY, kNumZ) workgroups with local_size (1,1,1).
+/// Dispatch: (gridDim.x, gridDim.y, gridDim.z) workgroups with local_size (1,1,1).
 /// Run every frame, after uploading light data to the light SSBOs.
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
@@ -13,7 +13,7 @@ layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 #define MAX_LIGHTS_PER_CLUSTER 64
 
 // Flat buffer offset where spot light indices start.
-// Must match ClusterGrid::kMaxLightIndices.
+// Must match Render::ClusterGrid::kMaxLightIndices.
 #define MAX_LIGHT_INDICES 65536
 
 // ---- Structs (must match ClusterGrid GPU structs) ----
@@ -40,18 +40,24 @@ struct LightGrid
 };
 
 // ---- SSBOs ----
+// NVRHI's Vulkan backend keeps SRV and UAV structured buffers in separate
+// binding spaces (+0 and +384 respectively — VulkanBindingOffsets), so the
+// two groups below don't collide even though their NVRHI slots overlap.
 
 layout(std430, binding = 0) readonly  buffer ClusterAABBs   { AABB       clusterAABBs[];   };
 layout(std430, binding = 1) readonly  buffer PointLights    { PointLight  pointLights[];    };
 layout(std430, binding = 2) readonly  buffer SpotLights     { SpotLight   spotLights[];     };
-layout(std430, binding = 4) writeonly buffer LightIndexList { uint        lightIndexList[];  };
-layout(std430, binding = 5) writeonly buffer LightGrids     { LightGrid   lightGrids[];     };
-layout(std430, binding = 6) coherent  buffer GlobalCount    { uint globalPointCount; uint globalSpotCount; };
 
-uniform uvec3 uGridDim;
-uniform uint  uPointLightCount;
-uniform uint  uSpotLightCount;
-uniform mat4  uView; // transforms world-space light positions to view space
+layout(std430, binding = 384) writeonly buffer LightIndexList { uint        lightIndexList[];  };
+layout(std430, binding = 385) writeonly buffer LightGrids     { LightGrid   lightGrids[];     };
+layout(std430, binding = 386) coherent  buffer GlobalCount    { uint globalPointCount; uint globalSpotCount; };
+
+layout(push_constant) uniform PushConstants
+{
+    mat4  view;         // world-space light positions -> view space
+    uvec4 gridDim;       // xyz used, w unused
+    uvec4 lightCounts;   // x = point light count, y = spot light count, zw unused
+} pc;
 
 // ---- Helpers ----
 
@@ -64,23 +70,27 @@ bool sphereVsAABB(vec3 center, float radius, vec3 aabbMin, vec3 aabbMax)
 
 void main()
 {
-    uvec3 gid = gl_GlobalInvocationID;
-    if (any(greaterThanEqual(gid, uGridDim)))
+    uvec3 gid     = gl_GlobalInvocationID;
+    uvec3 gridDim = pc.gridDim.xyz;
+    if (any(greaterThanEqual(gid, gridDim)))
         return;
 
     uint clusterIdx = gid.x
-                    + gid.y * uGridDim.x
-                    + gid.z * uGridDim.x * uGridDim.y;
+                    + gid.y * gridDim.x
+                    + gid.z * gridDim.x * gridDim.y;
 
     vec3 cMin = clusterAABBs[clusterIdx].minPoint.xyz;
     vec3 cMax = clusterAABBs[clusterIdx].maxPoint.xyz;
 
+    uint pointLightCount = pc.lightCounts.x;
+    uint spotLightCount  = pc.lightCounts.y;
+
     // ---- Point lights ----
     uint localPointIdx[MAX_LIGHTS_PER_CLUSTER];
     uint pointCount = 0u;
-    for (uint i = 0u; i < uPointLightCount && pointCount < MAX_LIGHTS_PER_CLUSTER; i++)
+    for (uint i = 0u; i < pointLightCount && pointCount < MAX_LIGHTS_PER_CLUSTER; i++)
     {
-        vec3  viewPos = vec3(uView * vec4(pointLights[i].positionRadius.xyz, 1.0));
+        vec3  viewPos = vec3(pc.view * vec4(pointLights[i].positionRadius.xyz, 1.0));
         float radius  = pointLights[i].positionRadius.w;
         if (sphereVsAABB(viewPos, radius, cMin, cMax))
             localPointIdx[pointCount++] = i;
@@ -89,9 +99,9 @@ void main()
     // ---- Spot lights (culled by bounding sphere for simplicity) ----
     uint localSpotIdx[MAX_LIGHTS_PER_CLUSTER];
     uint spotCount = 0u;
-    for (uint i = 0u; i < uSpotLightCount && spotCount < MAX_LIGHTS_PER_CLUSTER; i++)
+    for (uint i = 0u; i < spotLightCount && spotCount < MAX_LIGHTS_PER_CLUSTER; i++)
     {
-        vec3  viewPos = vec3(uView * vec4(spotLights[i].positionRadius.xyz, 1.0));
+        vec3  viewPos = vec3(pc.view * vec4(spotLights[i].positionRadius.xyz, 1.0));
         float radius  = spotLights[i].positionRadius.w;
         if (sphereVsAABB(viewPos, radius, cMin, cMax))
             localSpotIdx[spotCount++] = i;

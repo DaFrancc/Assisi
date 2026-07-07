@@ -143,31 +143,78 @@ All bullets below landed as planned:
   doesn't need to wait for the rest of this list.
 - `modules/Render/src/RenderSystemOpenGL.cpp`.
 - `Render::Shader` (`modules/Render/include/Assisi/Render/Shader.hpp` +
-  `src/Shader.cpp`) — currently compiles GLSL at runtime via `glCreateShader`/
-  `glUniform*`. **Its only remaining caller is `Runtime::LightingSystem`**
-  (`SetupMeshShader()`), so it can't be deleted until that gets its own NVRHI port
-  (bullet below) — `LightingSystem` sets cluster-grid uniforms by name
-  (`shader.SetUVec3(...)` etc.), which has no NVRHI equivalent without redesigning how
-  constant data reaches shaders, so this isn't a simple rename.
-  - **The NVRHI-native replacement now exists for the mesh-drawing path**:
+  `src/Shader.cpp`) — **deleted**. It compiled GLSL at runtime via `glCreateShader`/
+  `glUniform*`; its only remaining caller, `Runtime::LightingSystem::SetupMeshShader()`,
+  is gone now that lighting has its own NVRHI port (below), so nothing references it
+  anymore.
+  - **The NVRHI-native replacement for the mesh-drawing path**:
     `Render::ShaderModule.hpp/cpp` (`LoadSpirvShader(device, path, stage) →
     nvrhi::ShaderHandle`, extracted so any future pipeline can reuse it — post-process,
     ImGui, compute) + `Render::MeshPass` (input layout + binding layout/set + graphics
-    pipeline, i.e. the "pipeline + binding-layout wrapper" half). `MeshPass::Initialize`
-    now takes shader SPIR-V paths as parameters instead of hardcoding `cube_min`, so a
-    future material/lighting shader can reuse the same class. Deliberately did **not**
-    generalize the binding layout beyond the current push-constant-only MVP — that
-    needs a second real consumer (textures for materials, a constant buffer for
-    lighting) to shape correctly rather than guessing ahead of time.
-- `Render::ComputeShader` / `Render::ClusterGrid` (`ClusterGrid.cpp`,
-  `cluster_build.comp`, `cluster_cull.comp`) — clustered light-culling compute
-  pipeline, currently GL compute shaders. Needs an NVRHI compute pipeline port.
-- `Render::Buffer` (`Buffer.hpp`/`Buffer.cpp`) — GL uniform/storage buffer wrapper for
-  the clustered-lighting SSBOs, needs an NVRHI buffer wrapper. Distinct from
-  `Render::MeshBuffer` (vertex/index only, done in section 1) — this one is for
-  arbitrary structured/storage data.
-- `Runtime::LightingSystem` — manages clustered-lighting framebuffers/shaders, GL-only
-  today. Needs a full NVRHI port (compute-based light culling + a light data buffer).
+    pipeline, i.e. the "pipeline + binding-layout wrapper" half).
+- **Clustered forward lighting — done, and it's real: `Test.alvl`'s directional +
+  three colored point lights now actually shade the scene** (previously the mesh
+  shader had a single hardcoded directional light and `LightingSystem`/`ClusterGrid`
+  were fully unused dead code — this was the first time any of it was exercised end
+  to end, GL or Vulkan).
+  - `Render::Buffer` (`Buffer.hpp/cpp`) — new generic fixed-capacity NVRHI structured
+    buffer (SRV, optionally UAV), replacing the old GL SSBO wrapper stub. Capacity is
+    fixed at `Create()` time (e.g. 1024 point lights, 1024 spot lights) and never
+    resized — `Upload()` writes only the live prefix each frame, avoiding the
+    per-frame `glNamedBufferData` reallocation the old GL version did. Distinct from
+    `Render::MeshBuffer` (vertex/index only).
+  - `Render::ComputeShader` — rewritten as an NVRHI compute-pipeline wrapper
+    (`nvrhi::IComputePipeline` + a caller-supplied `BindingLayoutDesc`; `Dispatch()`
+    takes the binding set and optional push constants). The old GL version's named
+    uniform setters (`SetUVec3`, `SetMat4`, ...) have no NVRHI equivalent — Vulkan has
+    no loose uniforms, so per-dispatch data now goes through push-constant blocks
+    instead (see `cluster_build.comp`/`cluster_cull.comp`'s `layout(push_constant)`).
+  - `Render::ClusterGrid` — ported to NVRHI: owns two `ComputeShader` instances
+    (build, cull) and seven `Buffer`s (cluster AABBs, point/spot/dir light data, light
+    index list, light grid, atomic global counters), all allocated once in
+    `Initialize()`. `BuildClusters()`/`CullLights()` now take an `nvrhi::ICommandList*`
+    instead of issuing GL calls directly.
+  - **The SRV/UAV binding-offset split applies to structured buffers too, not just
+    textures/samplers**: NVRHI's `VulkanBindingOffsets` puts `StructuredBuffer_SRV`
+    in the same descriptor space as `Texture_SRV` (+0) and `StructuredBuffer_UAV` in
+    its own space (+384) — confirmed by reading
+    `vulkan-resource-bindings.cpp:getRegisterOffsetForResourceType`, not documented
+    anywhere obvious. `cluster_build.comp` writes `clusterAABBs` as a UAV at
+    `binding = 384`; `cluster_cull.comp` reads it back as an SRV at `binding = 0` in a
+    *different* binding layout (build and cull are separate pipelines, so this isn't a
+    collision) while writing its own UAV outputs at `384`/`385`/`386`.
+  - `Runtime::LightingSystem` — ported: queries `PointLightComponent`/
+    `SpotLightComponent`/`DirectionalLightComponent` from the scene exactly as
+    before, but `Initialize()`/`Resize()`/`Update()` now take an
+    `nvrhi::ICommandList*` and route through `ClusterGrid`'s NVRHI calls instead of GL.
+  - **`MeshPass` redesigned, not just extended, to make room for lighting data**: push
+    constants were maxed out at exactly 128 bytes (the portable Vulkan minimum)
+    holding `modelViewProjection` + `model` (each needed — the latter for
+    world-space position/normal in the lighting math); there was no room left for
+    per-frame camera/cluster-grid data, so that moved into a proper constant buffer
+    (`ConstantBuffer(0)`, +256 offset) updated once per frame via the new
+    `MeshPass::UpdateFrameConstants()` rather than once per draw. Five
+    `StructuredBuffer_SRV` bindings (slots 1-5, since slot 0 is the albedo texture)
+    bind `ClusterGrid`'s light buffers directly — `MeshPass::Initialize` now takes a
+    `const ClusterGrid&` it must outlive, and every cached per-texture binding set
+    includes them.
+  - `cube_min.vert/frag` gained real lighting: vertex outputs world position,
+    transformed normal (`mat3(model) * normal`, uniform-scale assumption — no
+    material system needs non-uniform scale yet), and view-space Z (for the
+    logarithmic cluster Z-slice, computed from the constant-buffer view matrix rather
+    than passing it as a second push-constant matrix). Fragment shader reuses the
+    Cook-Torrance BRDF (GGX distribution, Smith geometry, Schlick Fresnel) from this
+    engine's pre-migration `mesh.frag` (see git history, commit `445b077`), adapted
+    for the current no-normal/metallic/roughness-maps reality with fixed
+    `roughness = 0.6`, `metallic = 0.0` constants — a real material system for those
+    maps is still future work, not reintroduced here. Directional lights loop
+    unconditionally (never culled); point/spot lights look up their cluster's
+    `LightGrid` entry and only iterate the lights actually assigned to it.
+  - Verified against `assets/levels/Test.alvl` (pre-existing sun + three colored point
+    lights, left over from the pre-migration GL renderer, never actually lit until
+    now) — user confirmed correct shading including the colored point lights, and
+    confirmed a window resize (which rebuilds the cluster AABBs via
+    `SandboxApp::OnResize` → `LightingSystem::Resize`) stays stable.
 - `Application::RebuildPostProcess`/the MSAA/FXAA post-process pass — **currently
   deleted outright**, not just dormant (see section 2's judgment-call notes). Needs
   NVRHI render-target + FXAA pass equivalents if brought back, or could stay dropped

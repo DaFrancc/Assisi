@@ -1,129 +1,102 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <glad/glad.h>
-
-#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
 
-#include <algorithm>
-#include <cstring>
+#include <Assisi/Core/Logger.hpp>
+
+#include <cstdint>
 
 namespace Assisi::Render
 {
 
-// ---- Lifetime --------------------------------------------------------------
-
-ClusterGrid::~ClusterGrid()
+namespace
 {
-    Destroy();
-}
-
-ClusterGrid::ClusterGrid(ClusterGrid &&o) noexcept
+// Mirrors cluster_build.comp's push_constant block exactly (std430-style
+// layout: mat4/uvec4/vec4 are all naturally 16-byte aligned, so no manual
+// padding is needed between members).
+struct BuildPushConstants
 {
-    *this = std::move(o);
-}
+    glm::mat4 invProjection;
+    glm::uvec4 gridDim;           // xyz used, w unused
+    glm::vec4 screenSizeNearFar;  // xy = screen size, z = nearZ, w = farZ
+};
+static_assert(sizeof(BuildPushConstants) == 96);
 
-ClusterGrid &ClusterGrid::operator=(ClusterGrid &&o) noexcept
+// Mirrors cluster_cull.comp's push_constant block.
+struct CullPushConstants
 {
-    if (this != &o)
+    glm::mat4 view;
+    glm::uvec4 gridDim;      // xyz used, w unused
+    glm::uvec4 lightCounts;  // x = point count, y = spot count, zw unused
+};
+static_assert(sizeof(CullPushConstants) == 96);
+
+// AABB struct size (2 x vec4) and LightGrid struct size (4 x uint32) —
+// must match cluster_build.comp / cluster_cull.comp exactly.
+constexpr uint32_t kAABBStride      = 32u;
+constexpr uint32_t kLightGridStride = 16u;
+constexpr uint32_t kUintStride      = 4u;
+} // namespace
+
+bool ClusterGrid::Initialize(nvrhi::IDevice *device)
+{
+    _device = device;
+
+    nvrhi::BindingLayoutDesc buildLayoutDesc;
+    buildLayoutDesc.visibility = nvrhi::ShaderType::Compute;
+    buildLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(0));
+    buildLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(BuildPushConstants)));
+    if (!_buildShader.Initialize(device, "shaders/cluster_build.comp.spv", buildLayoutDesc))
     {
-        Destroy();
-        _buildShader       = std::move(o._buildShader);
-        _cullShader        = std::move(o._cullShader);
-        _clusterAABBBuffer = o._clusterAABBBuffer; o._clusterAABBBuffer = 0u;
-        _pointLightBuffer  = o._pointLightBuffer;  o._pointLightBuffer  = 0u;
-        _spotLightBuffer   = o._spotLightBuffer;   o._spotLightBuffer   = 0u;
-        _dirLightBuffer    = o._dirLightBuffer;    o._dirLightBuffer    = 0u;
-        _lightIndexBuffer  = o._lightIndexBuffer;  o._lightIndexBuffer  = 0u;
-        _lightGridBuffer   = o._lightGridBuffer;   o._lightGridBuffer   = 0u;
-        _globalCountBuffer = o._globalCountBuffer; o._globalCountBuffer = 0u;
-        _nearZ  = o._nearZ;
-        _farZ   = o._farZ;
-        _width  = o._width;
-        _height = o._height;
-    }
-    return *this;
-}
-
-// ---- Initialize / destroy --------------------------------------------------
-
-bool ClusterGrid::Initialize()
-{
-    _buildShader = ComputeShader("shaders/cluster_build.comp");
-    if (!_buildShader.IsValid())
-    {
-        Assisi::Core::Log::Error("ClusterGrid: failed to compile cluster_build.comp");
+        Assisi::Core::Log::Error("ClusterGrid: failed to build the cluster_build compute pipeline.");
         return false;
     }
 
-    _cullShader = ComputeShader("shaders/cluster_cull.comp");
-    if (!_cullShader.IsValid())
+    nvrhi::BindingLayoutDesc cullLayoutDesc;
+    cullLayoutDesc.visibility = nvrhi::ShaderType::Compute;
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0)); // clusterAABBs
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1)); // pointLights
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2)); // spotLights
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(0)); // lightIndexList
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(1)); // lightGrids
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2)); // globalCount
+    cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(CullPushConstants)));
+    if (!_cullShader.Initialize(device, "shaders/cluster_cull.comp.spv", cullLayoutDesc))
     {
-        Assisi::Core::Log::Error("ClusterGrid: failed to compile cluster_cull.comp");
+        Assisi::Core::Log::Error("ClusterGrid: failed to build the cluster_cull compute pipeline.");
         return false;
     }
 
-    AllocateBuffers();
-    return true;
+    // Fixed-capacity buffers, allocated once — see Buffer.hpp's header comment
+    // for why these never get resized/recreated per frame like the old GL SSBOs did.
+    _clusterAABBBuffer.Create(device, kAABBStride, kNumClusters, /*allowUnorderedAccess=*/true,
+                              "ClusterGrid::ClusterAABBs");
+    _pointLightBuffer.Create(device, sizeof(PointLightGPU), kMaxPointLights, false, "ClusterGrid::PointLights");
+    _spotLightBuffer.Create(device, sizeof(SpotLightGPU), kMaxSpotLights, false, "ClusterGrid::SpotLights");
+    _dirLightBuffer.Create(device, sizeof(DirLightGPU), kMaxDirLights, false, "ClusterGrid::DirLights");
+    _lightIndexBuffer.Create(device, kUintStride, kMaxLightIndices * 2u, true, "ClusterGrid::LightIndexList");
+    _lightGridBuffer.Create(device, kLightGridStride, kNumClusters, true, "ClusterGrid::LightGrids");
+    _globalCountBuffer.Create(device, kUintStride, 2u, true, "ClusterGrid::GlobalCount");
+
+    nvrhi::BindingSetDesc buildSetDesc;
+    buildSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, _clusterAABBBuffer.NativeBuffer()));
+    buildSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(BuildPushConstants)));
+    _buildBindingSet = device->createBindingSet(buildSetDesc, _buildShader.BindingLayout());
+
+    nvrhi::BindingSetDesc cullSetDesc;
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, _clusterAABBBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _pointLightBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(2, _spotLightBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, _lightIndexBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(1, _lightGridBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, _globalCountBuffer.NativeBuffer()));
+    cullSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(CullPushConstants)));
+    _cullBindingSet = device->createBindingSet(cullSetDesc, _cullShader.BindingLayout());
+
+    return _buildBindingSet != nullptr && _cullBindingSet != nullptr;
 }
 
-void ClusterGrid::AllocateBuffers()
-{
-    auto alloc = [](unsigned int &buf, GLsizeiptr bytes)
-    {
-        if (buf)
-            glDeleteBuffers(1, &buf);
-        glCreateBuffers(1, &buf);
-        glNamedBufferData(buf, bytes, nullptr, GL_DYNAMIC_DRAW);
-    };
-
-    // Cluster AABB buffer: 2 × vec4 (32 bytes) per cluster
-    alloc(_clusterAABBBuffer, static_cast<GLsizeiptr>(kNumClusters * 32u));
-
-    // Light index list: 2 × kMaxLightIndices uint32s (point first, then spot)
-    alloc(_lightIndexBuffer, static_cast<GLsizeiptr>(kMaxLightIndices * 2u * sizeof(unsigned int)));
-
-    // Light grid: 4 × uint32 (16 bytes) per cluster
-    alloc(_lightGridBuffer, static_cast<GLsizeiptr>(kNumClusters * 16u));
-
-    // Atomic counters (2 × uint32)
-    alloc(_globalCountBuffer, static_cast<GLsizeiptr>(2u * sizeof(unsigned int)));
-
-    // Light data buffers — sized to 1 byte initially; resized on first upload
-    auto allocTiny = [](unsigned int &buf)
-    {
-        if (buf)
-            glDeleteBuffers(1, &buf);
-        glCreateBuffers(1, &buf);
-        glNamedBufferData(buf, 4, nullptr, GL_DYNAMIC_DRAW);
-    };
-    allocTiny(_pointLightBuffer);
-    allocTiny(_spotLightBuffer);
-    allocTiny(_dirLightBuffer);
-}
-
-void ClusterGrid::Destroy() noexcept
-{
-    auto del = [](unsigned int &buf)
-    {
-        if (buf)
-        {
-            glDeleteBuffers(1, &buf);
-            buf = 0u;
-        }
-    };
-    del(_clusterAABBBuffer);
-    del(_pointLightBuffer);
-    del(_spotLightBuffer);
-    del(_dirLightBuffer);
-    del(_lightIndexBuffer);
-    del(_lightGridBuffer);
-    del(_globalCountBuffer);
-}
-
-// ---- BuildClusters ---------------------------------------------------------
-
-void ClusterGrid::BuildClusters(int width, int height, float nearZ, float farZ,
+void ClusterGrid::BuildClusters(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,
                                 const glm::mat4 &invProjection)
 {
     _nearZ  = nearZ;
@@ -131,62 +104,31 @@ void ClusterGrid::BuildClusters(int width, int height, float nearZ, float farZ,
     _width  = width;
     _height = height;
 
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kBindingClusterAABB, _clusterAABBBuffer);
+    BuildPushConstants pc;
+    pc.invProjection = invProjection;
+    pc.gridDim = glm::uvec4(kNumX, kNumY, kNumZ, 0u);
+    pc.screenSizeNearFar = glm::vec4(static_cast<float>(width), static_cast<float>(height), nearZ, farZ);
 
-    _buildShader.Use();
-    _buildShader.SetUVec3("uGridDim",  kNumX, kNumY, kNumZ);
-    _buildShader.SetVec2("uScreenSize", static_cast<float>(width), static_cast<float>(height));
-    _buildShader.SetFloat("uNearZ", nearZ);
-    _buildShader.SetFloat("uFarZ",  farZ);
-    _buildShader.SetMat4("uInvProjection", invProjection);
-
-    glDispatchCompute(kNumX, kNumY, kNumZ);
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    _buildShader.Dispatch(commandList, _buildBindingSet, kNumX, kNumY, kNumZ, &pc, sizeof(pc));
 }
 
-// ---- CullLights ------------------------------------------------------------
-
-void ClusterGrid::BindAll() const
+void ClusterGrid::CullLights(nvrhi::ICommandList *commandList, const std::vector<PointLightGPU> &pointLights,
+                             const std::vector<SpotLightGPU> &spotLights, const std::vector<DirLightGPU> &dirLights,
+                             const glm::mat4 &view)
 {
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kBindingClusterAABB,  _clusterAABBBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kBindingPointLights,  _pointLightBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kBindingSpotLights,   _spotLightBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kBindingDirLights,    _dirLightBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kBindingLightIndex,   _lightIndexBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kBindingLightGrid,    _lightGridBuffer);
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, kBindingGlobalCount,  _globalCountBuffer);
-}
+    _pointLightBuffer.Upload(commandList, pointLights.data(), static_cast<uint32_t>(pointLights.size()));
+    _spotLightBuffer.Upload(commandList, spotLights.data(), static_cast<uint32_t>(spotLights.size()));
+    _dirLightBuffer.Upload(commandList, dirLights.data(), static_cast<uint32_t>(dirLights.size()));
 
-void ClusterGrid::CullLights(const std::vector<PointLightGPU> &pointLights,
-                             const std::vector<SpotLightGPU>  &spotLights,
-                             const std::vector<DirLightGPU>   &dirLights,
-                             const glm::mat4                  &view)
-{
-    // Upload light data (glNamedBufferData reallocates if size changed)
-    auto upload = [](unsigned int buf, const void *data, size_t bytes)
-    {
-        glNamedBufferData(buf, static_cast<GLsizeiptr>(std::max(bytes, size_t{4})), data, GL_DYNAMIC_DRAW);
-    };
-    upload(_pointLightBuffer, pointLights.data(), pointLights.size() * sizeof(PointLightGPU));
-    upload(_spotLightBuffer,  spotLights.data(),  spotLights.size()  * sizeof(SpotLightGPU));
-    upload(_dirLightBuffer,   dirLights.data(),   dirLights.size()   * sizeof(DirLightGPU));
+    _globalCountBuffer.ClearToZero(commandList);
 
-    // Reset global atomic counters to zero
-    const unsigned int zeros[2] = {0u, 0u};
-    glNamedBufferSubData(_globalCountBuffer, 0, sizeof(zeros), zeros);
+    CullPushConstants pc;
+    pc.view = view;
+    pc.gridDim = glm::uvec4(kNumX, kNumY, kNumZ, 0u);
+    pc.lightCounts = glm::uvec4(static_cast<uint32_t>(pointLights.size()), static_cast<uint32_t>(spotLights.size()),
+                                0u, 0u);
 
-    // Bind all SSBOs (they stay bound for the subsequent DrawScene call)
-    BindAll();
-
-    // Dispatch culling pass
-    _cullShader.Use();
-    _cullShader.SetUVec3("uGridDim", kNumX, kNumY, kNumZ);
-    _cullShader.SetUInt("uPointLightCount", static_cast<unsigned int>(pointLights.size()));
-    _cullShader.SetUInt("uSpotLightCount",  static_cast<unsigned int>(spotLights.size()));
-    _cullShader.SetMat4("uView", view);
-
-    glDispatchCompute(kNumX, kNumY, kNumZ);
-    glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT);
+    _cullShader.Dispatch(commandList, _cullBindingSet, kNumX, kNumY, kNumZ, &pc, sizeof(pc));
 }
 
 } // namespace Assisi::Render

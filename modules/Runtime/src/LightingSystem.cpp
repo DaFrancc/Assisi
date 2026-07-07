@@ -7,23 +7,23 @@
 namespace Assisi::Runtime
 {
 
-bool LightingSystem::Initialize(int width, int height, float nearZ, float farZ,
-                                const glm::mat4 &projection)
+bool LightingSystem::Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *commandList, int width, int height,
+                                float nearZ, float farZ, const glm::mat4 &projection)
 {
-    if (!_grid.Initialize())
+    if (!_grid.Initialize(device))
         return false;
 
-    _grid.BuildClusters(width, height, nearZ, farZ, glm::inverse(projection));
+    _grid.BuildClusters(commandList, width, height, nearZ, farZ, glm::inverse(projection));
     return true;
 }
 
-void LightingSystem::Resize(int width, int height, float nearZ, float farZ,
+void LightingSystem::Resize(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,
                             const glm::mat4 &projection)
 {
-    _grid.BuildClusters(width, height, nearZ, farZ, glm::inverse(projection));
+    _grid.BuildClusters(commandList, width, height, nearZ, farZ, glm::inverse(projection));
 }
 
-void LightingSystem::Update(Assisi::ECS::Scene &scene, const glm::mat4 &view)
+void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
     std::vector<Assisi::Render::PointLightGPU> pointLights;
     std::vector<Assisi::Render::SpotLightGPU>  spotLights;
@@ -58,19 +58,7 @@ void LightingSystem::Update(Assisi::ECS::Scene &scene, const glm::mat4 &view)
     }
 
     _dirLightCount = static_cast<uint32_t>(dirLights.size());
-    _grid.CullLights(pointLights, spotLights, dirLights, view);
-}
-
-void LightingSystem::SetupMeshShader(Assisi::Render::Shader &shader) const
-{
-    shader.Use();
-    shader.SetUVec3("uGridDim",    Assisi::Render::ClusterGrid::kNumX,
-                                   Assisi::Render::ClusterGrid::kNumY,
-                                   Assisi::Render::ClusterGrid::kNumZ);
-    shader.SetVec2("uScreenSize",  static_cast<float>(_grid.Width()),
-                                   static_cast<float>(_grid.Height()));
-    shader.SetFloat("uNearZ",  _grid.NearZ());
-    shader.SetFloat("uFarZ",   _grid.FarZ());
+    _grid.CullLights(commandList, pointLights, spotLights, dirLights, view);
 }
 
 } // namespace Assisi::Runtime
