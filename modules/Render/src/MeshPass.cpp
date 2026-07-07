@@ -2,59 +2,19 @@
 
 #include <Assisi/Render/MeshPass.hpp>
 
-#include <Assisi/Core/Logger.hpp>
+#include <Assisi/Render/ShaderModule.hpp>
 
 #include <cstddef>
-#include <fstream>
 #include <iterator>
-#include <vector>
 
 namespace Assisi::Render
 {
 
-namespace
+bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo,
+                          const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath)
 {
-/// @brief Reads a compiled SPIR-V shader relative to the working directory.
-///
-/// Not routed through AssetSystem: the build places compiled .spv output next
-/// to the executable (see apps/sandbox/CMakeLists.txt), not under assets/. See
-/// docs/nvrhi-migration-todo.md section 4 for the pending decision on unifying
-/// the shader pipeline.
-std::vector<char> ReadSpirvFile(const std::string &path)
-{
-    std::ifstream file(path, std::ios::ate | std::ios::binary);
-    if (!file.is_open())
-    {
-        Assisi::Core::Log::Error("MeshPass: failed to open shader file: {}", path);
-        return {};
-    }
-
-    const size_t size = static_cast<size_t>(file.tellg());
-    std::vector<char> buffer(size);
-    file.seekg(0);
-    file.read(buffer.data(), static_cast<std::streamsize>(size));
-    return buffer;
-}
-
-nvrhi::ShaderHandle LoadShader(nvrhi::IDevice *device, const std::string &path, nvrhi::ShaderType stage)
-{
-    const std::vector<char> spirv = ReadSpirvFile(path);
-    if (spirv.empty())
-    {
-        return nullptr;
-    }
-
-    nvrhi::ShaderDesc desc;
-    desc.shaderType = stage;
-    desc.debugName = path;
-    return device->createShader(desc, spirv.data(), spirv.size());
-}
-} // namespace
-
-bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo)
-{
-    const nvrhi::ShaderHandle vertexShader = LoadShader(device, "shaders/cube_min.vert.spv", nvrhi::ShaderType::Vertex);
-    const nvrhi::ShaderHandle fragmentShader = LoadShader(device, "shaders/cube_min.frag.spv", nvrhi::ShaderType::Pixel);
+    const nvrhi::ShaderHandle vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    const nvrhi::ShaderHandle fragmentShader = LoadSpirvShader(device, pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
     if (!vertexShader || !fragmentShader)
     {
         return false;

@@ -143,8 +143,21 @@ All bullets below landed as planned:
 - `modules/Render/src/RenderSystemOpenGL.cpp`.
 - `Render::Shader` (`modules/Render/include/Assisi/Render/Shader.hpp` +
   `src/Shader.cpp`) — currently compiles GLSL at runtime via `glCreateShader`/
-  `glUniform*`. Needs an NVRHI-native replacement (shader + pipeline + binding-layout
-  wrapper).
+  `glUniform*`. **Its only remaining caller is `Runtime::LightingSystem`**
+  (`SetupMeshShader()`), so it can't be deleted until that gets its own NVRHI port
+  (bullet below) — `LightingSystem` sets cluster-grid uniforms by name
+  (`shader.SetUVec3(...)` etc.), which has no NVRHI equivalent without redesigning how
+  constant data reaches shaders, so this isn't a simple rename.
+  - **The NVRHI-native replacement now exists for the mesh-drawing path**:
+    `Render::ShaderModule.hpp/cpp` (`LoadSpirvShader(device, path, stage) →
+    nvrhi::ShaderHandle`, extracted so any future pipeline can reuse it — post-process,
+    ImGui, compute) + `Render::MeshPass` (input layout + binding layout/set + graphics
+    pipeline, i.e. the "pipeline + binding-layout wrapper" half). `MeshPass::Initialize`
+    now takes shader SPIR-V paths as parameters instead of hardcoding `cube_min`, so a
+    future material/lighting shader can reuse the same class. Deliberately did **not**
+    generalize the binding layout beyond the current push-constant-only MVP — that
+    needs a second real consumer (textures for materials, a constant buffer for
+    lighting) to shape correctly rather than guessing ahead of time.
 - `Render::ComputeShader` / `Render::ClusterGrid` (`ClusterGrid.cpp`,
   `cluster_build.comp`, `cluster_cull.comp`) — clustered light-culling compute
   pipeline, currently GL compute shaders. Needs an NVRHI compute pipeline port.
