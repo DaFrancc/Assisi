@@ -3,7 +3,6 @@
 /// @file RenderSystem.hpp
 /// @brief Entry point for initializing the Vulkan/NVRHI graphics backend.
 
-#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
@@ -13,7 +12,8 @@ namespace Assisi::Render
 {
 /// @brief Static service that initializes and owns the Vulkan/NVRHI device.
 ///
-/// Call Initialize() once after creating a WindowContext.
+/// Call Initialize() once after creating a WindowContext, and Shutdown() once
+/// before process exit.
 class RenderSystem
 {
   public:
@@ -21,19 +21,15 @@ class RenderSystem
 
     /// @brief Initializes the Vulkan/NVRHI backend against the given window.
     ///
+    /// Also starts glslang's global process state — required before any
+    /// `Render::CompileGlslShader` call (see ShaderModule.hpp).
+    ///
     /// @param window  A valid, current WindowContext.
     /// @return true on success, false on any error.
-    static bool Initialize(const Assisi::Window::WindowContext &window)
-    {
-        if (!window.IsValid())
-        {
-            Assisi::Core::Log::Error("RenderSystem: Window is not valid.");
-            return false;
-        }
+    static bool Initialize(const Assisi::Window::WindowContext &window);
 
-        s_vulkanContext = Vulkan::VulkanContext::Create(window);
-        return s_vulkanContext != nullptr;
-    }
+    /// @brief Tears down the Vulkan/NVRHI backend and glslang's global process state.
+    static void Shutdown();
 
     /// @brief Returns the Vulkan context created by Initialize(), or nullptr if
     /// initialization hasn't happened (or failed).

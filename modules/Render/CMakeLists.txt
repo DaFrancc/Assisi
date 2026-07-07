@@ -23,6 +23,7 @@ target_sources(Assisi-Render
     "src/Buffer.cpp"
     "src/DefaultResources.cpp"
     "src/MeshPass.cpp"
+    "src/RenderSystem.cpp"
     "src/Texture.cpp"
     "src/VulkanContext.cpp"
 )
@@ -41,6 +42,12 @@ target_link_libraries(Assisi-Render
     nvrhi
     nvrhi_vk
     Vulkan::Headers
+  PRIVATE
+    # Runtime GLSL -> SPIR-V compilation (ShaderModule.cpp) — glslang's own headers
+    # are only included there, so PRIVATE keeps them out of Assisi::Render's public
+    # interface.
+    glslang
+    glslang-default-resource-limits
 )
 
 add_library(Assisi::Render ALIAS Assisi-Render)

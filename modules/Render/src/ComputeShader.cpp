@@ -7,10 +7,10 @@
 namespace Assisi::Render
 {
 
-bool ComputeShader::Initialize(nvrhi::IDevice *device, const std::string &spvPath,
+bool ComputeShader::Initialize(nvrhi::IDevice *device, const std::string &glslPath,
                                const nvrhi::BindingLayoutDesc &bindingLayoutDesc)
 {
-    const nvrhi::ShaderHandle shader = LoadSpirvShader(device, spvPath, nvrhi::ShaderType::Compute);
+    const nvrhi::ShaderHandle shader = CompileGlslShader(device, glslPath, nvrhi::ShaderType::Compute);
     if (!shader)
     {
         return false;

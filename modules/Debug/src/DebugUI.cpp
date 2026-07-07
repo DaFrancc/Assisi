@@ -121,9 +121,9 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
 
     nvrhi::IDevice *device = vulkanContext.GetDevice();
     const nvrhi::ShaderHandle vertexShader =
-        Render::LoadSpirvShader(device, "shaders/imgui_opener.vert.spv", nvrhi::ShaderType::Vertex);
+        Render::CompileGlslShader(device, "shaders/imgui_opener.vert", nvrhi::ShaderType::Vertex);
     const nvrhi::ShaderHandle pixelShader =
-        Render::LoadSpirvShader(device, "shaders/imgui_opener.frag.spv", nvrhi::ShaderType::Pixel);
+        Render::CompileGlslShader(device, "shaders/imgui_opener.frag", nvrhi::ShaderType::Pixel);
 
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;

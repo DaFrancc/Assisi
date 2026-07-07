@@ -346,19 +346,45 @@ All bullets below landed as planned:
     in this codebase needs the same `frontCounterClockwise = true`, and must NOT
     apply a manual projection Y-flip.**
 
-### 4. Shader compilation pipeline
+### 4. Shader compilation pipeline — DONE (runtime compilation via glslang's library API)
 
-Right now GLSL→SPIR-V compilation is wired ad hoc per-app (`apps/vk_triangle`,
-`apps/sandbox`'s `cube_min.vert/frag`) via a CMake custom command calling
-`glslang-standalone`. Once every shader (`mesh.vert/frag`, `fxaa.frag`, `screen.vert`,
-`cluster_build.comp`, `cluster_cull.comp`) needs this, decide:
-- **Build-time compilation for everything** (current approach, extended to cover all
-  shaders) — simple, but no shader hot-reload without a rebuild.
-- **Runtime compilation via glslang's library API** (not just the standalone tool) —
-  keeps shader edit/reload working without a full rebuild, more integration work.
+Chose **runtime compilation** over extending the build-time approach — the decision
+was forced by hitting the failure mode the doc predicted for build-time compilation
+("no shader hot-reload without a rebuild") in its nastier form: a build-time SPIR-V
+build product silently going stale (see the clustered-lighting stress-test writeup
+above, section 3 — the `POST_BUILD` shader-copy bug that masked two real shader
+fixes for most of a debugging session). Runtime compilation doesn't just add
+hot-reload, it structurally removes that whole bug class — there's no compiled
+artifact to fall out of sync with its source, because there's no compiled artifact
+at all until the app asks for one.
 
-Worth an explicit decision once real content development starts — not urgent while
-still proving the pipeline out with hardcoded/test shaders.
+What shipped:
+- `Render::CompileGlslShader(device, glslVirtualPath, stage)` (`ShaderModule.hpp/cpp`)
+  replaces `LoadSpirvShader`. Reads GLSL source via `Core::AssetSystem::ReadText`
+  (shaders are plain assets now, copied like any texture/level file — no separate
+  shader-specific copy step needed at all) and compiles it with glslang's C++ API
+  (`glslang::TShader`/`TProgram`/`GlslangToSpv`), targeting Vulkan 1.0 / SPIR-V 1.0 to
+  match exactly what the old `glslang-standalone -V` invocation defaulted to (no
+  behavior change from switching, just a different point in time when compilation
+  happens).
+- `glslang::InitializeProcess()`/`FinalizeProcess()` (required once around any
+  glslang usage) now live in `RenderSystem::Initialize()`/`Shutdown()`.
+  `RenderSystem` gained a `.cpp` (was previously fully header-only) specifically so
+  glslang's headers stay a private implementation detail — putting
+  `#include <glslang/...>` directly in `RenderSystem.hpp` would have forced every
+  transitive includer (all of `Assisi::App`, `apps/sandbox`, etc.) to see glslang's
+  include paths, since `Assisi-Render` links glslang `PRIVATE`.
+  `Application::~Application()` now calls `RenderSystem::Shutdown()`.
+- `apps/sandbox/CMakeLists.txt`'s entire shader-compile custom-command block
+  (the `glslang-standalone` invocation, the `.spv` outputs, the stamp-file copy
+  tracking added earlier the same session) is **deleted outright** — nothing left to
+  go stale. `MeshPass::Initialize`/`ComputeShader::Initialize`/`DebugUI::Initialize`
+  and their callers now pass GLSL source paths (`"shaders/cube_min.vert"`) instead of
+  `.spv` paths.
+- `apps/vk_triangle` still uses the old `glslang-standalone` build-time approach —
+  intentionally untouched, it's a standalone spike that doesn't link `Assisi::Render`
+  at all (see section 6, its fate is still an open decision).
+  `ENABLE_GLSLANG_BINARIES` stays `ON` in the root `CMakeLists.txt` for its sake.
 
 ### 5. Vendor/dependency cleanup (final pass, do last)
 

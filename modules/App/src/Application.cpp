@@ -157,6 +157,7 @@ Application::~Application()
 {
     s_instance = nullptr;
     Debug::DebugUI::Shutdown();
+    Render::RenderSystem::Shutdown();
 }
 
 void Application::RequestClose()

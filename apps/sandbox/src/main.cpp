@@ -233,8 +233,8 @@ void SandboxApp::SetupScene()
         return;
     }
 
-    if (!_meshPass.Initialize(device, vulkanContext->GetFramebufferInfo(), "shaders/cube_min.vert.spv",
-                              "shaders/cube_min.frag.spv", _lightingSystem.Grid()))
+    if (!_meshPass.Initialize(device, vulkanContext->GetFramebufferInfo(), "shaders/cube_min.vert",
+                              "shaders/cube_min.frag", _lightingSystem.Grid()))
     {
         Assisi::Core::Log::Error("Failed to initialise the scene mesh pass.");
         RequestClose();
