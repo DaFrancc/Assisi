@@ -25,8 +25,8 @@ namespace Assisi::App
 ///     cleared, called between BeginFrame() and EndFrame()
 ///
 /// Optional overrides (no-ops by default):
-///   - OnImGui()                 — reserved for an ImGui overlay; not wired up
-///     to the Vulkan backend yet, see docs/nvrhi-migration-todo.md
+///   - OnImGui()                 — called after OnRender(), inside the same
+///     ImGui frame DebugUI opens; build ImGui:: windows here
 ///   - OnResize(int, int)        — called when the framebuffer is resized
 ///   - OnShutdown()              — called after the loop exits
 class Application

@@ -83,9 +83,10 @@ scene-rendering path outright rather than keeping it limping. What shipped inste
   that check `ImGui::GetCurrentContext() != nullptr` first. Camera movement and entity
   picking now work under Vulkan even with no ImGui overlay.
 - **Verified by running the built app**: no crash, camera systems tick every frame,
-  clears to the configured colour. No geometry is visible because there's currently no
-  way to load a level under Vulkan (ImGui — and therefore the Levels panel — isn't
-  wired up for Vulkan yet, see section 3), so the scene is empty by construction. That's
+  clears to the configured colour. No geometry is visible because at the time this was
+  written there was no way to load a level under Vulkan (ImGui — and therefore the
+  Levels panel — wasn't wired up for Vulkan yet; it is now, see section 3), so the
+  scene is empty by construction. That's
   expected, not a bug.
 
 ### 2. Remove the OpenGL/Vulkan toggle entirely — DONE
@@ -124,11 +125,11 @@ All bullets below landed as planned:
   `modules/Debug/DebugUI.*` themselves were **left in place, just unwired** — unlike the
   post-process glue, these are standalone modules explicitly slated for an NVRHI port
   (ImGui backend is section 3's own bullet below), not dead ends.
-- This means **ImGui/the F12 options window/AA are now fully non-functional** under the
-  single remaining (Vulkan) backend, not just "OpenGL-only" as before — there is
-  currently no way to see any ImGui UI at all in the running app (confirmed: only the
-  clear-colored viewport renders, verified by actually launching `Assisi-Sandbox.exe`).
-  Restoring any of this requires section 3's ImGui-Vulkan port.
+- At the time this was written, this meant ImGui/the F12 options window/AA were all
+  fully non-functional under Vulkan. **ImGui itself is back — see section 3's ImGui
+  bullet, done.** The F12 options window and AA specifically are still gone (they were
+  deleted along with the rest of `Application`'s post-process code, not just
+  disconnected — see the post-process bullet in section 3).
 - `apps/vk_triangle/src/main.cpp` had one stale `windowConfig.CreateClientApiContext =
   false;` line (from before this section) that needed deleting to keep building — it
   still builds and links standalone, untouched otherwise.
@@ -165,6 +166,58 @@ All bullets below landed as planned:
   the clustered-lighting SSBOs, needs an NVRHI buffer wrapper. Distinct from
   `Render::MeshBuffer` (vertex/index only, done in section 1) — this one is for
   arbitrary structured/storage data.
+- `Runtime::LightingSystem` — manages clustered-lighting framebuffers/shaders, GL-only
+  today. Needs a full NVRHI port (compute-based light culling + a light data buffer).
+- `Application::RebuildPostProcess`/the MSAA/FXAA post-process pass — **currently
+  deleted outright**, not just dormant (see section 2's judgment-call notes). Needs
+  NVRHI render-target + FXAA pass equivalents if brought back, or could stay dropped
+  in favor of just shipping single-sample rendering — still an open decision.
+- ImGui backend — **done**. `DebugUI` now uses `imgui_impl_glfw.cpp` (Vulkan-flavored
+  init) + `imgui_impl_vulkan.cpp` against `VulkanContext`'s raw Vulkan handles (new
+  `GetVkInstance()`/`GetVkPhysicalDevice()`/`GetVkDevice()`/`GetVkGraphicsQueue()`/
+  `GetVkGraphicsQueueFamily()`/`GetSwapchainImageCount()`/`GetSwapchainFormat()`
+  accessors). Multi-viewport (`ImGuiConfigFlags_ViewportsEnable`) deliberately left
+  off — would need per-viewport swapchains, out of scope; docking stays on. No Vulkan
+  SDK here, same as everywhere else in this migration, so `imgui_impl_vulkan.cpp` is
+  built with `IMGUI_IMPL_VULKAN_NO_PROTOTYPES` (set target-wide on `Assisi-Debug`) and
+  its function pointers are loaded via `ImGui_ImplVulkan_LoadFunctions` routed through
+  the same global `VULKAN_HPP_DEFAULT_DISPATCHER` `VulkanContext.cpp` bootstraps.
+  NVRHI's Vulkan backend turned out to use **dynamic rendering**
+  (`vk::CommandBuffer::beginRendering`/`vkCmdBeginRendering` inside
+  `CommandList::beginRenderPass`, not traditional `VkRenderPass`/`VkFramebuffer`
+  objects) — confirmed by reading `vulkan-graphics.cpp`, not documented anywhere —
+  so ImGui is initialized with `UseDynamicRendering = true` +
+  `VkPipelineRenderingCreateInfoKHR` (color format from `GetSwapchainFormat()`, depth
+  hardcoded to `VK_FORMAT_D24_UNORM_S8_UINT` matching `VulkanContext`'s depth texture)
+  rather than a `VkRenderPass`.
+  - **The empty-scene problem**: NVRHI's Vulkan backend only calls
+    `vkCmdBeginRendering` from inside `ICommandList::setGraphicsState` (there's no
+    lighter-weight public "just open the render target" call), and
+    `clearTextureFloat`/`clearDepthStencilTexture` explicitly close any open render
+    target before clearing outside a pass. So if the scene has nothing to draw (no
+    entities → `MeshPass::Draw` never called → `setGraphicsState` never called), no
+    render target is open for ImGui to draw into. Fixed with a tiny "opener" pipeline
+    owned by `DebugUI` (`assets/shaders/imgui_opener.vert/frag` — trivial, no inputs,
+    no bindings, never actually drawn with) that `DebugUI::BeginFrame` binds via
+    `setGraphicsState` every frame before `OnRender()`/ImGui run, guaranteeing the
+    target is always open. This mattered a lot in practice: an empty/fresh scene —
+    exactly when you most need the Levels panel to load something — is the single
+    most common state to hit this in.
+  - **Real correctness bug found and fixed while verifying this, not really an ImGui
+    bug**: dragging/resizing/focusing ImGui panels produced visible rendering
+    corruption. Root cause: `VulkanContext` had no CPU-GPU frame-pacing (only
+    per-image-index semaphores, no fences), so the CPU could start recording a new
+    frame — including ImGui's `imgui_impl_vulkan.cpp`-owned vertex/index buffers,
+    which it round-robins across frames on the assumption the caller throttles
+    submission — while the GPU was still reading those same buffers from an earlier
+    frame. Invisible with the mostly-static scene (section 1/section-3-textures
+    milestones); glaringly visible the moment per-frame content actually varies a lot
+    (dragging an ImGui window changes its vertex data every frame). Fixed with
+    `nvrhi::IDevice::waitForIdle()` at the top of `VulkanContext::BeginFrame()` —
+    correctness-first and simple, at the cost of CPU/GPU overlap; a real
+    multi-frame-in-flight fence would get some of that back if it's ever needed.
+    Also fixed a ~500ms-1s delay between clicking "Load" in the Levels panel and the
+    level actually appearing, which turned out to be the same root cause.
 - `Render::DefaultResources` / `Render::Texture2D` (material textures) — **done**.
   `Render::Texture` (`Texture.hpp/cpp`, header owns an `nvrhi::TextureHandle`, loads via
   `stb_image` — same vendored library the GL version used) replaces

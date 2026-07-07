@@ -17,6 +17,7 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Sinks.hpp>
+#include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -143,6 +144,8 @@ Application::Application()
         std::exit(EXIT_FAILURE);
     }
 
+    Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext());
+
     s_instance = this;
 
     glfwSetWindowRefreshCallback(_window->NativeHandle(), WindowRefreshCallback);
@@ -153,6 +156,7 @@ Application::Application()
 Application::~Application()
 {
     s_instance = nullptr;
+    Debug::DebugUI::Shutdown();
 }
 
 void Application::RequestClose()
@@ -282,7 +286,12 @@ void Application::RenderFrame()
         frame->commandList->clearDepthStencilTexture(frame->depthTexture, nvrhi::AllSubresources, true, 1.0f, false, 0);
     }
 
+    Debug::DebugUI::BeginFrame(*frame);
+
     OnRender(*frame);
+    OnImGui();
+
+    Debug::DebugUI::EndFrame(*frame);
 
     vulkanContext->EndFrame();
 }

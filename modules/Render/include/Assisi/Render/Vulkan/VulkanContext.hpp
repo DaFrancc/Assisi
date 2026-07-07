@@ -72,6 +72,20 @@ class VulkanContext
     /// for constructing pipelines compatible with them ahead of the first frame.
     [[nodiscard]] nvrhi::FramebufferInfo GetFramebufferInfo() const { return _framebuffers.at(0)->getFramebufferInfo(); }
 
+    /// @name Raw Vulkan handles
+    /// For integrating libraries that talk raw Vulkan directly instead of going
+    /// through NVRHI — currently just Dear ImGui's Vulkan backend (see DebugUI.cpp).
+    /// Prefer nvrhi::IDevice / getNativeObject() for anything else.
+    ///@{
+    [[nodiscard]] VkInstance GetVkInstance() const { return _instance; }
+    [[nodiscard]] VkPhysicalDevice GetVkPhysicalDevice() const { return _physicalDevice; }
+    [[nodiscard]] VkDevice GetVkDevice() const { return _device; }
+    [[nodiscard]] VkQueue GetVkGraphicsQueue() const { return _graphicsQueue; }
+    [[nodiscard]] uint32_t GetVkGraphicsQueueFamily() const { return _graphicsQueueFamily; }
+    [[nodiscard]] uint32_t GetSwapchainImageCount() const { return static_cast<uint32_t>(_swapchainImages.size()); }
+    [[nodiscard]] VkFormat GetSwapchainFormat() const { return _swapchainFormat; }
+    ///@}
+
   private:
     VulkanContext() = default;
 

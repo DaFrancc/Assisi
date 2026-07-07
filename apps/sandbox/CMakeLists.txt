@@ -50,7 +50,7 @@ add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
 set(_sandbox_vk_shader_dir "${CMAKE_SOURCE_DIR}/assets/shaders")
 set(_sandbox_vk_spv_outputs "")
 
-foreach(_shader_name cube_min.vert cube_min.frag)
+foreach(_shader_name cube_min.vert cube_min.frag imgui_opener.vert imgui_opener.frag)
     set(_shader_in "${_sandbox_vk_shader_dir}/${_shader_name}")
     set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_name}.spv")
     add_custom_command(

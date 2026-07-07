@@ -393,6 +393,18 @@ std::optional<VulkanFrame> VulkanContext::BeginFrame()
         return std::nullopt; // minimized; Resize() hasn't (re)created anything yet
     }
 
+    // Wait for the previous frame's GPU work to fully finish before reusing
+    // anything. Without this, resources NVRHI doesn't track the lifetime of —
+    // notably Dear ImGui's own raw Vulkan vertex/index buffers, which it
+    // round-robins across frames assuming the caller throttles submission —
+    // can get overwritten by the CPU while the GPU is still reading them from
+    // an earlier frame, producing visible corruption under any per-frame-varying
+    // content (most obvious while dragging/resizing ImGui windows). A real
+    // multi-frame-in-flight fence would let CPU and GPU overlap more; this
+    // trades that overlap for simplicity/correctness while the migration is
+    // still settling — worth revisiting once there's a perf reason to.
+    _nvrhiDevice->waitForIdle();
+
     const VkSemaphore imageAvailable = _imageAvailableSemaphores[_frameIndex % kFramesInFlight];
 
     VkResult acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, imageAvailable,
