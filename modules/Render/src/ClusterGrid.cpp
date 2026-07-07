@@ -46,7 +46,7 @@ bool ClusterGrid::Initialize(nvrhi::IDevice *device)
     buildLayoutDesc.visibility = nvrhi::ShaderType::Compute;
     buildLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(0));
     buildLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(BuildPushConstants)));
-    if (!_buildShader.Initialize(device, "shaders/cluster_build.comp", buildLayoutDesc))
+    if (!_buildShader.Initialize(device, "shaders/cluster_build.comp.spv", buildLayoutDesc))
     {
         Assisi::Core::Log::Error("ClusterGrid: failed to build the cluster_build compute pipeline.");
         return false;
@@ -61,7 +61,7 @@ bool ClusterGrid::Initialize(nvrhi::IDevice *device)
     cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(1)); // lightGrids
     cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_UAV(2)); // globalCount
     cullLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(CullPushConstants)));
-    if (!_cullShader.Initialize(device, "shaders/cluster_cull.comp", cullLayoutDesc))
+    if (!_cullShader.Initialize(device, "shaders/cluster_cull.comp.spv", cullLayoutDesc))
     {
         Assisi::Core::Log::Error("ClusterGrid: failed to build the cluster_cull compute pipeline.");
         return false;

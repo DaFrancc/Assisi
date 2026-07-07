@@ -37,14 +37,14 @@ struct FrameConstants
 } // namespace
 
 bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo,
-                          const std::string &vertexShaderGlslPath, const std::string &pixelShaderGlslPath,
+                          const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath,
                           const ClusterGrid &clusterGrid)
 {
     _device = device;
     _clusterGrid = &clusterGrid;
 
-    const nvrhi::ShaderHandle vertexShader = CompileGlslShader(device, vertexShaderGlslPath, nvrhi::ShaderType::Vertex);
-    const nvrhi::ShaderHandle fragmentShader = CompileGlslShader(device, pixelShaderGlslPath, nvrhi::ShaderType::Pixel);
+    const nvrhi::ShaderHandle vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    const nvrhi::ShaderHandle fragmentShader = LoadSpirvShader(device, pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
     if (!vertexShader || !fragmentShader)
     {
         return false;

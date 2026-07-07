@@ -25,10 +25,10 @@ class ComputeShader
   public:
     ComputeShader() = default;
 
-    /// @brief Compiles `glslPath` (GLSL source, see ShaderModule.hpp) and builds
+    /// @brief Loads `spvPath` (compiled SPIR-V, see ShaderModule.hpp) and builds
     /// a compute pipeline against `bindingLayoutDesc`.
-    /// @return false if the shader failed to compile or the pipeline failed to build.
-    bool Initialize(nvrhi::IDevice *device, const std::string &glslPath,
+    /// @return false if the shader failed to load or the pipeline failed to build.
+    bool Initialize(nvrhi::IDevice *device, const std::string &spvPath,
                     const nvrhi::BindingLayoutDesc &bindingLayoutDesc);
 
     /// @brief Records a dispatch with `bindingSet` bound and, if `pushConstants`

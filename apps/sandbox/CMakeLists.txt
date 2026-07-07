@@ -44,10 +44,49 @@ add_custom_target(Assisi-CopyAssets ALL
 
 add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
 
-# Shaders (.vert/.frag/.comp under assets/shaders/) are plain assets now, copied
-# by Assisi-CopyAssets above like any texture or level file, and compiled to
-# SPIR-V at runtime by Render::CompileGlslShader (see ShaderModule.hpp/.cpp) —
-# no separate build-time glslang-standalone step. This replaced a build-time
-# custom-command pipeline whose shader-copy step was tied to Assisi-Sandbox's
-# own POST_BUILD action and could silently go stale on shader-only edits (see
-# docs/nvrhi-migration-todo.md section 4).
+# --- Vulkan shaders: compile GLSL -> SPIR-V at build time (OpenGL shaders are
+# compiled at runtime instead; these Vulkan-only shaders are the exception
+# during the migration, matching apps/vk_triangle's approach).
+#
+# The copy into place is its own OUTPUT-tracked custom command per shader,
+# depending on that shader's compiled .spv — NOT a POST_BUILD hook on
+# Assisi-Sandbox. A POST_BUILD hook only re-runs when the executable itself
+# relinks, which a shader-only edit never triggers (no C++ source changed),
+# so ninja would silently skip copying the freshly compiled SPIR-V next to
+# the exe and the app would keep running a stale shader. Learned this the
+# hard way debugging what looked like a persistent lighting bug that was
+# actually just an out-of-date .spv.
+set(_sandbox_vk_shader_dir "${CMAKE_SOURCE_DIR}/assets/shaders")
+set(_sandbox_shader_copies "")
+
+foreach(_shader_name cube_min.vert cube_min.frag imgui_opener.vert imgui_opener.frag
+                     cluster_build.comp cluster_cull.comp)
+    set(_shader_in "${_sandbox_vk_shader_dir}/${_shader_name}")
+    set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_name}.spv")
+    add_custom_command(
+        OUTPUT "${_shader_out}"
+        COMMAND $<TARGET_FILE:glslang-standalone> -V "${_shader_in}" -o "${_shader_out}"
+        DEPENDS "${_shader_in}" glslang-standalone
+        COMMENT "Compiling ${_shader_name} to SPIR-V"
+        VERBATIM
+    )
+
+    # OUTPUT must be a literal path (no generator expressions) for ninja's
+    # dependency scanner, so track completion via a stamp file in the binary
+    # dir; the actual copy destination can still use TARGET_FILE_DIR since
+    # that's fine inside COMMAND.
+    set(_shader_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_shader_name}.spv.copied")
+    add_custom_command(
+        OUTPUT "${_shader_stamp}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Assisi-Sandbox>/shaders"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_shader_out}" "$<TARGET_FILE_DIR:Assisi-Sandbox>/shaders/${_shader_name}.spv"
+        COMMAND ${CMAKE_COMMAND} -E touch "${_shader_stamp}"
+        DEPENDS "${_shader_out}"
+        COMMENT "Copying ${_shader_name}.spv next to Assisi-Sandbox"
+        VERBATIM
+    )
+    list(APPEND _sandbox_shader_copies "${_shader_stamp}")
+endforeach()
+
+add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_copies})
+add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)

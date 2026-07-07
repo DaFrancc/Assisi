@@ -28,13 +28,13 @@ class MeshPass
   public:
     MeshPass() = default;
 
-    /// @brief Compiles `vertexShaderGlslPath`/`pixelShaderGlslPath` (GLSL source,
+    /// @brief Loads `vertexShaderSpvPath`/`pixelShaderSpvPath` (compiled SPIR-V,
     /// see ShaderModule.hpp) and builds the pipeline against the given
     /// framebuffer format. `clusterGrid` must outlive this MeshPass — its
     /// light buffers are bound directly into every binding set this pass creates.
-    /// @return false if either shader failed to compile or the pipeline failed to build.
+    /// @return false if either shader failed to load or the pipeline failed to build.
     bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo,
-                    const std::string &vertexShaderGlslPath, const std::string &pixelShaderGlslPath,
+                    const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath,
                     const ClusterGrid &clusterGrid);
 
     /// @brief Updates the per-frame constant buffer (camera view matrix and
