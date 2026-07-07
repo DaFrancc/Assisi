@@ -1,8 +1,5 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <glad/glad.h>
-
-#include <Assisi/Render/DefaultResources.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 
@@ -10,17 +7,10 @@ namespace Assisi::Runtime
 {
 
 void DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm::mat4 &projection,
-               Assisi::Render::Shader &shader)
+               nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer, uint32_t viewportWidth,
+               uint32_t viewportHeight, const Assisi::Render::MeshPass &meshPass)
 {
-    shader.Use();
-    shader.SetMat4("uView", view);
-    shader.SetMat4("uProjection", projection);
-
-    // Bind sampler uniforms to their fixed texture units
-    shader.SetInt("uAlbedo",    0);
-    shader.SetInt("uNormal",    1);
-    shader.SetInt("uMetallic",  2);
-    shader.SetInt("uRoughness", 3);
+    const glm::mat4 viewProjection = projection * view;
 
     for (auto [entity, transform, meshRenderer] : scene.Query<TransformComponent, MeshRendererComponent>())
     {
@@ -29,39 +19,9 @@ void DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm::mat4
             continue;
         }
 
-        shader.SetMat4("uModel", transform.worldMatrix);
-
-        const unsigned int albedoId =
-            meshRenderer.albedoTextureId != 0u
-                ? meshRenderer.albedoTextureId
-                : Assisi::Render::DefaultResources::WhiteTextureId();
-
-        const unsigned int normalId =
-            meshRenderer.normalTextureId != 0u
-                ? meshRenderer.normalTextureId
-                : Assisi::Render::DefaultResources::FlatNormalTextureId();
-
-        const unsigned int metallicId =
-            meshRenderer.metallicTextureId != 0u
-                ? meshRenderer.metallicTextureId
-                : Assisi::Render::DefaultResources::BlackTextureId();
-
-        const unsigned int roughnessId =
-            meshRenderer.roughnessTextureId != 0u
-                ? meshRenderer.roughnessTextureId
-                : Assisi::Render::DefaultResources::GreyTextureId();
-
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, albedoId);
-        glActiveTexture(GL_TEXTURE1);
-        glBindTexture(GL_TEXTURE_2D, normalId);
-        glActiveTexture(GL_TEXTURE2);
-        glBindTexture(GL_TEXTURE_2D, metallicId);
-        glActiveTexture(GL_TEXTURE3);
-        glBindTexture(GL_TEXTURE_2D, roughnessId);
-
-        meshRenderer.mesh->Bind();
-        glDrawElements(GL_TRIANGLES, static_cast<int>(meshRenderer.mesh->IndexCount()), GL_UNSIGNED_INT, nullptr);
+        const glm::mat4 modelViewProjection = viewProjection * transform.worldMatrix;
+        meshPass.Draw(commandList, framebuffer, viewportWidth, viewportHeight, modelViewProjection,
+                      *meshRenderer.mesh);
     }
 }
 

@@ -25,50 +25,68 @@ left anywhere in the engine. Everything below assumes that goal.
 - A dual-backend toggle (`AppConfig::backend`, `GraphicsBackend::OpenGL` vs `Vulkan`)
   exists right now purely because OpenGL and Vulkan needed to coexist *during* the
   migration so the working app didn't break. **This entire toggle should be deleted**
-  once OpenGL is gone — see "Remove the toggle" below.
+  once OpenGL is gone — see "Remove the toggle" below. `assets/game.json` now sets
+  `render.backend: "vulkan"` so the sandbox runs the real path by default; the C++
+  default in `AppConfig.hpp` is still `OpenGL` pending that section.
+- **Real scene rendering is done, NVRHI-native (not an OpenGL translation)** — see
+  "1. Real scene rendering" below for what shipped and why the original bolt-on plan
+  was abandoned mid-flight.
 
 ## Remaining work, roughly in dependency order
 
-### 1. Real scene rendering (the immediate next step, in progress when paused)
+### 1. Real scene rendering — DONE (redesigned NVRHI-native, not the OpenGL bolt-on)
 
-The blocker: `MeshRendererComponent::mesh` (in `modules/Runtime/include/Assisi/Runtime/Components.hpp`)
-is typed `const Render::OpenGL::MeshBuffer*`, and `OpenGL::MeshBuffer` (in
-`modules/Render/include/Assisi/Render/OpenGL/MeshBuffer.hpp`) does **not** retain the
-CPU-side `MeshData` after uploading to the GPU — only the GL handles + index count. So
-there's currently no way to go from an entity's mesh pointer back to the geometry needed
-to build an NVRHI buffer.
+The original plan here (adding `GetSourceData()` to `OpenGL::MeshBuffer` so the Vulkan
+path could read back CPU mesh data through it) turned out to be dead on arrival: under
+the Vulkan backend the window is created with `CreateClientApiContext = false` and
+`RenderSystem::InitializeOpenGL` (which loads glad's GL function pointers) never runs.
+Calling `OpenGL::MeshBuffer::Upload()` — raw `glGenVertexArrays`/`glBufferData` — under
+Vulkan would call null function pointers. Decision made when this was hit: skip the
+interim bolt-on and go NVRHI-native immediately, accepting that this breaks the OpenGL
+scene-rendering path outright rather than keeping it limping. What shipped instead:
 
-Today, every entity in the sandbox scene actually points at the same single
-`_cubeMesh` (`apps/sandbox/src/main.cpp:799`, `mrc.mesh = &_cubeMesh;`) — so "multiple
-different meshes per entity" isn't exercised yet even on the OpenGL side, but the
-`DrawScene`/ECS query design (`modules/Runtime/src/Renderer.cpp`) is already generic
-over however many entities/meshes exist. The Vulkan path needs to match that, not
-hardcode a single mesh/transform.
-
-Plan (was about to start when paused):
-- Add `GetSourceData()` to `OpenGL::MeshBuffer` (retain a copy of the `MeshData` it was
-  built from) — small, low-risk change, unlocks everything else.
-  - **Superseded if OpenGL is deleted first** (see below) — if `MeshBuffer` is rebuilt
-    NVRHI-native from the start, it should just retain/own the source `MeshData`
-    directly rather than needing this bolted on.
-- Build `Render::Vulkan::MeshBuffer` (or just `Render::MeshBuffer` once OpenGL is gone):
-  NVRHI vertex + index buffers from `MeshData`, mirroring the existing class's API
-  shape (`IndexCount()`, etc).
-- Write `Runtime::DrawSceneVulkan` (mirrors `Runtime::DrawScene`): same
-  `Query<TransformComponent, MeshRendererComponent>()`, real camera view/projection,
-  real per-entity `transform.worldMatrix`, one shared pipeline/shader for the whole
-  scene (matching how `DrawScene` takes one `Shader&`, not per-entity shaders).
-  - Needs a mesh-buffer cache (map from CPU mesh identity → lazily-created NVRHI
-    buffers) so meshes aren't re-uploaded every frame.
-  - Materials/textures (albedo/normal/metallic/roughness) are explicitly **deferred** —
-    first pass should get real geometry + real transforms + real camera rendering
-    correctly using the existing unlit/simple-lit `cube_min` shader approach, extended
-    to take a shared pipeline instead of a one-off hardcoded cube.
-- Re-enable `SetupCamera()` for the Vulkan path in `SandboxApp::OnStart()` (currently
-  skipped along with everything else GL-specific) so the real camera entity drives
-  view/projection instead of the hardcoded `lookAt`/`perspective` in `OnRenderVulkan()`.
-- Delete `SetupVulkanCube()`/the hardcoded cube members once `DrawSceneVulkan` replaces
-  it.
+- `Assisi::Render::MeshBuffer` (`modules/Render/include/Assisi/Render/MeshBuffer.hpp`,
+  header-only) — NVRHI vertex + index buffer pair, retains the source `MeshData`.
+  Lives directly under `Assisi::Render`, not `Render::Vulkan`, since NVRHI resource
+  creation is graphics-API-agnostic once you have an `nvrhi::IDevice*`.
+- `Assisi::Render::MeshPass` (`MeshPass.hpp`/`src/MeshPass.cpp`) — owns the one shared
+  graphics pipeline (input layout, push-constant binding layout/set, `cube_min.vert/frag`)
+  and a `Draw(commandList, framebuffer, w, h, mvp, MeshBuffer&)` call. Shader SPIR-V is
+  still read via a raw `ReadSpirvFilePath` (not `AssetSystem::ReadBinary`) because the
+  build places `.spv` output next to the executable, not under `assets/` — see section 4.
+- `MeshRendererComponent::mesh` (`modules/Runtime/include/Assisi/Runtime/Components.hpp`)
+  is now `const Render::MeshBuffer*`. Since the mesh is uploaded once (at scene-setup
+  time, not lazily per-draw), **no separate mesh cache was needed** — simpler than the
+  original plan, which only needed a cache because it was reading CPU data back out of
+  an already-GL-uploaded buffer.
+- `Runtime::DrawScene` (`Renderer.hpp`/`Renderer.cpp`) was rewritten to be NVRHI-only:
+  iterates `Query<TransformComponent, MeshRendererComponent>()`, computes
+  `projection * view * transform.worldMatrix` per entity, calls `MeshPass::Draw`. The
+  old OpenGL version (raw `glDrawElements`, per-draw texture binding) is gone — it
+  couldn't coexist with the new mesh type. Materials/textures are still unwired
+  (`MeshRendererComponent`'s texture ID fields are dead for now) — deferred as planned.
+- `SandboxApp` (`apps/sandbox/src/main.cpp`): `SetupVulkanCube()` → `SetupScene()`
+  (builds `_meshPass` + uploads the shared `_cubeMesh`), `SetupCamera()` now runs
+  unconditionally in `OnStart()`, `OnRenderVulkan()` computes view/projection from the
+  real camera entity every frame (no cached `_projection` member — recomputed via
+  `Runtime::ProjectionMatrix()` each use, including in `PickEntity()`). The OpenGL
+  scene-rendering path (`_shader`, `_lighting`, GL `_cubeMesh`, `SetupLighting()`) was
+  deleted outright rather than left half-working; `OnRender()` (the OpenGL hook) is now
+  an intentional no-op.
+- **Follow-up bug found by actually running it**: registering `EntityPicking`/
+  `CameraController` systems unconditionally (previously skipped under Vulkan via the
+  early return this change removed) exposed that `ImGui::GetIO()` is called from
+  `UpdateCamera()`/`HandleEntityPicking()`/`OnUpdate()` with no ImGui context under
+  Vulkan (`Debug::DebugUI::Initialize()` — which calls `ImGui::CreateContext()` — only
+  runs for the OpenGL backend; see section 3's ImGui bullet). Fixed with two small
+  guarded helpers, `ImGuiWantsMouse()`/`ImGuiWantsKeyboard()` (local to `main.cpp`),
+  that check `ImGui::GetCurrentContext() != nullptr` first. Camera movement and entity
+  picking now work under Vulkan even with no ImGui overlay.
+- **Verified by running the built app**: no crash, camera systems tick every frame,
+  clears to the configured colour. No geometry is visible because there's currently no
+  way to load a level under Vulkan (ImGui — and therefore the Levels panel — isn't
+  wired up for Vulkan yet, see section 3), so the scene is empty by construction. That's
+  expected, not a bug.
 
 ### 2. Remove the OpenGL/Vulkan toggle entirely
 
@@ -92,6 +110,9 @@ Per direction: no more "pick a backend" — this is Vulkan-only from here.
 
 - `modules/Render/include/Assisi/Render/OpenGL/` — entire folder (`Framebuffer.hpp`,
   `MeshBuffer.hpp`, `Texture2D.hpp`, `DefaultTextures.hpp`, `ScreenQuad.hpp`).
+  `OpenGL::MeshBuffer.hpp` specifically is already fully unreferenced by the engine
+  (superseded by `Render::MeshBuffer`, see section 1) — safe to delete any time,
+  doesn't need to wait for the rest of this list.
 - `modules/Render/src/RenderSystemOpenGL.cpp`.
 - `Render::Shader` (`modules/Render/include/Assisi/Render/Shader.hpp` +
   `src/Shader.cpp`) — currently compiles GLSL at runtime via `glCreateShader`/
@@ -100,14 +121,13 @@ Per direction: no more "pick a backend" — this is Vulkan-only from here.
 - `Render::ComputeShader` / `Render::ClusterGrid` (`ClusterGrid.cpp`,
   `cluster_build.comp`, `cluster_cull.comp`) — clustered light-culling compute
   pipeline, currently GL compute shaders. Needs an NVRHI compute pipeline port.
-- `Render::Buffer` (`Buffer.hpp`/`Buffer.cpp`) — GL uniform/storage buffer wrapper,
-  needs an NVRHI buffer wrapper (may partly already be covered by whatever
-  `Render::Vulkan::MeshBuffer`/a general buffer helper ends up looking like).
+- `Render::Buffer` (`Buffer.hpp`/`Buffer.cpp`) — GL uniform/storage buffer wrapper for
+  the clustered-lighting SSBOs, needs an NVRHI buffer wrapper. Distinct from
+  `Render::MeshBuffer` (vertex/index only, done in section 1) — this one is for
+  arbitrary structured/storage data.
 - `Render::DefaultResources` (`DefaultResources.hpp/cpp`) — default white/black/
   flat-normal/grey placeholder textures as raw GL texture IDs → NVRHI textures.
-- `Runtime::Renderer.cpp`'s `DrawScene` — raw GL calls (`glActiveTexture`,
-  `glBindTexture`, `glDrawElements`) → replaced by whatever `DrawSceneVulkan` becomes
-  (see section 1); once OpenGL is gone this just becomes `DrawScene` again.
+- `Runtime::Renderer.cpp`'s `DrawScene` — **done**, see section 1. Already NVRHI-only.
 - `Runtime::LightingSystem` — manages clustered-lighting framebuffers/shaders, GL-only
   today. Needs a full NVRHI port (compute-based light culling + a light data buffer).
 - `Application::RebuildPostProcess`/the MSAA/FXAA post-process pass in `RenderFrame()`

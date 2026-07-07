@@ -9,7 +9,7 @@
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/OpenGL/MeshBuffer.hpp>
+#include <Assisi/Render/MeshBuffer.hpp>
 
 namespace Assisi::Runtime
 {
@@ -32,8 +32,9 @@ struct TransformComponent
 /// @brief Associates a GPU mesh and PBR material textures with an entity.
 ///
 /// `mesh` is a non-owning pointer — the MeshBuffer must outlive the component.
-/// Each texture ID is an OpenGL texture object; 0 falls back to an appropriate
-/// engine default:
+/// The texture ID fields are not yet consumed by the NVRHI render path
+/// (materials are deferred, see docs/nvrhi-migration-todo.md); once wired up,
+/// 0 should fall back to an appropriate engine default:
 ///   - albedoTextureId   → 1×1 white texture
 ///   - normalTextureId   → 1×1 flat normal (0, 0, 1) in tangent space
 ///   - metallicTextureId → 1×1 black (metallic = 0, fully dielectric)
@@ -44,7 +45,7 @@ struct TransformComponent
 ACOMP()
 struct MeshRendererComponent
 {
-    AFIELD(transient) const Assisi::Render::OpenGL::MeshBuffer *mesh = nullptr;
+    AFIELD(transient) const Assisi::Render::MeshBuffer *mesh = nullptr;
     AFIELD(transient) unsigned int albedoTextureId   = 0u;
     AFIELD(transient) unsigned int normalTextureId   = 0u;
     AFIELD(transient) unsigned int metallicTextureId = 0u;

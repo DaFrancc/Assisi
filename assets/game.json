@@ -5,6 +5,7 @@
         "height": 720
     },
     "render": {
+        "backend": "vulkan",
         "clearColor": [0.15, 0.15, 0.18, 1.0]
     },
     "timing": {

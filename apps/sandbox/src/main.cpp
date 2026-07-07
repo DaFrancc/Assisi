@@ -13,15 +13,14 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/DefaultMeshes.hpp>
-#include <Assisi/Render/OpenGL/MeshBuffer.hpp>
-#include <Assisi/Render/Shader.hpp>
+#include <Assisi/Render/MeshBuffer.hpp>
+#include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
-#include <Assisi/Runtime/LightingSystem.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -61,13 +60,12 @@ class SandboxApp : public Assisi::App::Application
     void OnUpdate(float dt);
     void OnRender();
     void OnImGui();
-    void OnResize(int width, int height) override;
     void OnRenderVulkan(Assisi::Render::Vulkan::VulkanFrame &frame) override;
 
   private:
     // --- Setup ---
     void SetupCamera();
-    void SetupLighting();
+    void SetupScene();
 
     // --- Per-frame helpers ---
     void HandleEntityPicking();
@@ -98,23 +96,11 @@ class SandboxApp : public Assisi::App::Application
     Assisi::ECS::Scene                *_scene = nullptr;
     Assisi::Physics::PhysicsWorld      _physics;
 
-    Assisi::Render::OpenGL::MeshBuffer _cubeMesh;
-    Assisi::Render::Shader             _shader;
-    Assisi::Runtime::LightingSystem    _lighting;
-    glm::mat4                          _projection{1.f};
-
-    // --- Vulkan (temporary hardcoded cube milestone; will be replaced once
-    // real mesh/lighting rendering is ported off OpenGL) ---
-    void SetupVulkanCube();
-
-    nvrhi::BufferHandle         _vkCubeVertexBuffer;
-    nvrhi::BufferHandle         _vkCubeIndexBuffer;
-    uint32_t                   _vkCubeIndexCount = 0;
-    nvrhi::InputLayoutHandle    _vkCubeInputLayout;
-    nvrhi::BindingLayoutHandle  _vkCubeBindingLayout;
-    nvrhi::BindingSetHandle     _vkCubeBindingSet;
-    nvrhi::GraphicsPipelineHandle _vkCubePipeline;
-    float                       _vkCubeRotation = 0.f;
+    // --- Rendering (NVRHI/Vulkan) ---
+    // Every entity currently shares this one mesh — the scene has no per-entity
+    // asset loading yet, see docs/nvrhi-migration-todo.md section 1.
+    Assisi::Render::MeshBuffer _cubeMesh;
+    Assisi::Render::MeshPass   _meshPass;
 
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
@@ -158,21 +144,6 @@ void SandboxApp::SetupCamera()
         _cameraEntity, Assisi::Runtime::CameraComponent{60.f, 0.1f, 200.f, true});
 }
 
-void SandboxApp::SetupLighting()
-{
-    const auto *cam  = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
-    const auto  size = GetWindow().GetFramebufferSize();
-    _projection      = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
-
-    if (!_lighting.Initialize(size.Width, size.Height, cam->nearZ, cam->farZ, _projection))
-    {
-        Assisi::Core::Log::Error("Failed to initialise LightingSystem.");
-        RequestClose();
-        return;
-    }
-    _lighting.SetupMeshShader(_shader);
-}
-
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -199,27 +170,8 @@ void SandboxApp::OnStart()
 
     _scene = _scenes.Create("Main").value();
 
-    if (GetBackend() != Assisi::Render::Backend::GraphicsBackend::OpenGL)
-    {
-        // Real scene rendering (mesh/shader/lighting) is OpenGL-only during the
-        // Vulkan migration — draw a hardcoded rotating cube instead, as a
-        // milestone on the way to porting the real renderer.
-        SetupVulkanCube();
-        return;
-    }
-
-    _cubeMesh = Assisi::Render::OpenGL::MeshBuffer(Assisi::Render::CreateUnitCubeMesh());
-
-    _shader = Assisi::Render::Shader("shaders/mesh.vert", "shaders/mesh.frag");
-    if (!_shader.IsValid())
-    {
-        Assisi::Core::Log::Error("Failed to load mesh shader.");
-        RequestClose();
-        return;
-    }
-
     SetupCamera();
-    SetupLighting();
+    SetupScene();
     ScanLevels();
 
     // --- Systems ---
@@ -242,168 +194,45 @@ void SandboxApp::OnStart()
                       });
 }
 
-void SandboxApp::OnResize(int width, int height)
-{
-    if (GetBackend() != Assisi::Render::Backend::GraphicsBackend::OpenGL)
-    {
-        return; // no camera/lighting set up yet under the Vulkan backend
-    }
-
-    const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
-    _projection     = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
-    _lighting.Resize(width, height, cam->nearZ, cam->farZ, _projection);
-    _lighting.SetupMeshShader(_shader);
-}
-
-namespace
-{
-std::vector<char> ReadSpirvFile(const std::string &path)
-{
-    std::ifstream file(path, std::ios::ate | std::ios::binary);
-    if (!file.is_open())
-    {
-        Assisi::Core::Log::Error("Failed to open shader file: {}", path);
-        return {};
-    }
-    const size_t size = static_cast<size_t>(file.tellg());
-    std::vector<char> buffer(size);
-    file.seekg(0);
-    file.read(buffer.data(), static_cast<std::streamsize>(size));
-    return buffer;
-}
-} // namespace
-
-void SandboxApp::SetupVulkanCube()
+void SandboxApp::SetupScene()
 {
     auto *vulkanContext = Assisi::Render::RenderSystem::GetVulkanContext();
     if (!vulkanContext)
     {
         return;
     }
-    nvrhi::IDevice *device = vulkanContext->GetDevice();
 
-    const Assisi::Render::MeshData cube = Assisi::Render::CreateUnitCubeMesh();
-    _vkCubeIndexCount = static_cast<uint32_t>(cube.Indices.size());
-
-    nvrhi::BufferDesc vbDesc;
-    vbDesc.byteSize = cube.Vertices.size() * sizeof(Assisi::Render::Vertex);
-    vbDesc.isVertexBuffer = true;
-    vbDesc.debugName = "CubeVertexBuffer";
-    vbDesc.initialState = nvrhi::ResourceStates::VertexBuffer;
-    vbDesc.keepInitialState = true;
-    _vkCubeVertexBuffer = device->createBuffer(vbDesc);
-
-    nvrhi::BufferDesc ibDesc;
-    ibDesc.byteSize = cube.Indices.size() * sizeof(uint32_t);
-    ibDesc.isIndexBuffer = true;
-    ibDesc.debugName = "CubeIndexBuffer";
-    ibDesc.initialState = nvrhi::ResourceStates::IndexBuffer;
-    ibDesc.keepInitialState = true;
-    _vkCubeIndexBuffer = device->createBuffer(ibDesc);
-
-    nvrhi::CommandListHandle uploadCommandList = device->createCommandList();
-    uploadCommandList->open();
-    uploadCommandList->writeBuffer(_vkCubeVertexBuffer, cube.Vertices.data(), vbDesc.byteSize);
-    uploadCommandList->writeBuffer(_vkCubeIndexBuffer, cube.Indices.data(), ibDesc.byteSize);
-    uploadCommandList->close();
-    device->executeCommandList(uploadCommandList);
-
-    const std::vector<char> vertSpv = ReadSpirvFile("shaders/cube_min.vert.spv");
-    const std::vector<char> fragSpv = ReadSpirvFile("shaders/cube_min.frag.spv");
-    if (vertSpv.empty() || fragSpv.empty())
+    if (!_meshPass.Initialize(vulkanContext->GetDevice(), vulkanContext->GetFramebufferInfo()))
     {
-        Assisi::Core::Log::Error("Failed to load Vulkan cube shaders.");
+        Assisi::Core::Log::Error("Failed to initialise the scene mesh pass.");
         RequestClose();
         return;
     }
 
-    nvrhi::ShaderDesc vertDesc;
-    vertDesc.shaderType = nvrhi::ShaderType::Vertex;
-    vertDesc.debugName = "cube_min.vert";
-    nvrhi::ShaderHandle vertexShader = device->createShader(vertDesc, vertSpv.data(), vertSpv.size());
-
-    nvrhi::ShaderDesc fragDesc;
-    fragDesc.shaderType = nvrhi::ShaderType::Pixel;
-    fragDesc.debugName = "cube_min.frag";
-    nvrhi::ShaderHandle fragmentShader = device->createShader(fragDesc, fragSpv.data(), fragSpv.size());
-
-    const nvrhi::VertexAttributeDesc attributes[] = {
-        nvrhi::VertexAttributeDesc()
-            .setName("POSITION")
-            .setFormat(nvrhi::Format::RGB32_FLOAT)
-            .setOffset(offsetof(Assisi::Render::Vertex, Position))
-            .setElementStride(sizeof(Assisi::Render::Vertex)),
-        nvrhi::VertexAttributeDesc()
-            .setName("NORMAL")
-            .setFormat(nvrhi::Format::RGB32_FLOAT)
-            .setOffset(offsetof(Assisi::Render::Vertex, Normal))
-            .setElementStride(sizeof(Assisi::Render::Vertex)),
-        nvrhi::VertexAttributeDesc()
-            .setName("TEXCOORD")
-            .setFormat(nvrhi::Format::RG32_FLOAT)
-            .setOffset(offsetof(Assisi::Render::Vertex, TextureCoordinates))
-            .setElementStride(sizeof(Assisi::Render::Vertex)),
-        nvrhi::VertexAttributeDesc()
-            .setName("TANGENT")
-            .setFormat(nvrhi::Format::RGBA32_FLOAT)
-            .setOffset(offsetof(Assisi::Render::Vertex, Tangent))
-            .setElementStride(sizeof(Assisi::Render::Vertex)),
-    };
-    _vkCubeInputLayout = device->createInputLayout(attributes, 4, vertexShader);
-
-    nvrhi::BindingLayoutDesc bindingLayoutDesc;
-    bindingLayoutDesc.visibility = nvrhi::ShaderType::Vertex;
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(glm::mat4)));
-    _vkCubeBindingLayout = device->createBindingLayout(bindingLayoutDesc);
-
-    nvrhi::BindingSetDesc bindingSetDesc;
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::mat4)));
-    _vkCubeBindingSet = device->createBindingSet(bindingSetDesc, _vkCubeBindingLayout);
-
-    nvrhi::GraphicsPipelineDesc pipelineDesc;
-    pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
-    pipelineDesc.inputLayout = _vkCubeInputLayout;
-    pipelineDesc.VS = vertexShader;
-    pipelineDesc.PS = fragmentShader;
-    pipelineDesc.addBindingLayout(_vkCubeBindingLayout);
-    pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
-    pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
-    pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
-
-    _vkCubePipeline = device->createGraphicsPipeline(pipelineDesc, vulkanContext->GetFramebufferInfo());
+    _cubeMesh.Upload(vulkanContext->GetDevice(), Assisi::Render::CreateUnitCubeMesh());
 }
 
 void SandboxApp::OnRenderVulkan(Assisi::Render::Vulkan::VulkanFrame &frame)
 {
-    if (!_vkCubePipeline)
+    if (!_meshPass.IsValid() || !_scene)
     {
         return;
     }
 
-    _vkCubeRotation += 0.01f;
-    const glm::mat4 model = glm::rotate(glm::mat4(1.f), _vkCubeRotation, glm::vec3(0.3f, 1.f, 0.2f));
-    const glm::mat4 view =
-        glm::lookAt(glm::vec3(2.5f, 2.5f, 4.f), glm::vec3(0.f), glm::vec3(0.f, 1.f, 0.f));
-    const float aspect = frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height) : 1.f;
-    glm::mat4 projection = glm::perspective(glm::radians(60.f), aspect, 0.1f, 100.f);
+    Assisi::Runtime::PropagateTransforms(_cameraScene);
+    Assisi::Runtime::PropagateTransforms(*_scene);
+
+    const auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
+    const auto *cam          = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    const glm::mat4 view     = Assisi::Runtime::ViewMatrix(*camTransform);
+
+    const float aspect =
+        frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height) : 1.f;
+    glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(*cam, aspect);
     projection[1][1] *= -1.f; // Vulkan clip space has Y pointing down, unlike OpenGL
-    const glm::mat4 mvp = projection * view * model;
 
-    nvrhi::GraphicsState state;
-    state.pipeline = _vkCubePipeline;
-    state.framebuffer = frame.framebuffer;
-    state.addBindingSet(_vkCubeBindingSet);
-    state.viewport.addViewportAndScissorRect(
-        nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
-    state.addVertexBuffer(nvrhi::VertexBufferBinding{_vkCubeVertexBuffer, 0, 0});
-    state.indexBuffer = nvrhi::IndexBufferBinding{_vkCubeIndexBuffer, nvrhi::Format::R32_UINT, 0};
-    frame.commandList->setGraphicsState(state);
-
-    frame.commandList->setPushConstants(&mvp, sizeof(mvp));
-
-    nvrhi::DrawArguments drawArgs;
-    drawArgs.vertexCount = _vkCubeIndexCount;
-    frame.commandList->drawIndexed(drawArgs);
+    Assisi::Runtime::DrawScene(*_scene, view, projection, frame.commandList, frame.framebuffer, frame.width,
+                               frame.height, _meshPass);
 }
 
 void SandboxApp::OnFixedUpdate(float dt)
@@ -416,11 +245,27 @@ void SandboxApp::OnFixedUpdate(float dt)
 // Per-frame helpers
 // ---------------------------------------------------------------------------
 
+namespace
+{
+// ImGui has no context under the Vulkan backend yet (its render backend is
+// OpenGL-only for now, see docs/nvrhi-migration-todo.md section 3) — calling
+// ImGui::GetIO() without a context asserts, so gate on GetCurrentContext().
+bool ImGuiWantsMouse()
+{
+    return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureMouse;
+}
+
+bool ImGuiWantsKeyboard()
+{
+    return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureKeyboard;
+}
+} // namespace
+
 void SandboxApp::HandleEntityPicking()
 {
     auto &input = GetInput();
     if (_actions.IsActionPressed("Select", input) &&
-        !input.IsMouseCaptured() && !ImGui::GetIO().WantCaptureMouse)
+        !input.IsMouseCaptured() && !ImGuiWantsMouse())
     {
         Assisi::Core::EventQueue::Instance().Push(
             EntitySelectionChangedEvent{PickEntity(input.MousePosition())});
@@ -430,7 +275,7 @@ void SandboxApp::HandleEntityPicking()
 void SandboxApp::UpdateCamera(float dt)
 {
     auto      &input          = GetInput();
-    const bool imguiWantsMouse = ImGui::GetIO().WantCaptureMouse;
+    const bool imguiWantsMouse = ImGuiWantsMouse();
 
     if (_actions.IsActionPressed("LookMode", input) && !imguiWantsMouse)
         input.SetMouseCaptured(true);
@@ -476,7 +321,6 @@ void SandboxApp::UpdateCamera(float dt)
         {
             auto *cam       = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
             cam->fovDegrees = glm::clamp(cam->fovDegrees - (scroll * 5.f), 10.f, 120.f);
-            _projection     = MakeProjection(cam->fovDegrees, cam->nearZ, cam->farZ);
         }
     }
 }
@@ -484,7 +328,7 @@ void SandboxApp::UpdateCamera(float dt)
 void SandboxApp::OnUpdate(float dt)
 {
     auto &input = GetInput();
-    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGui::GetIO().WantCaptureKeyboard)
+    if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsKeyboard())
         RequestClose();
 
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions});
@@ -493,20 +337,9 @@ void SandboxApp::OnUpdate(float dt)
 
 void SandboxApp::OnRender()
 {
-    Assisi::Runtime::PropagateTransforms(_cameraScene);
-    Assisi::Runtime::PropagateTransforms(*_scene);
-
-    const auto     *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
-    const glm::mat4 view         = Assisi::Runtime::ViewMatrix(*camTransform);
-
-    _lighting.Update(*_scene, view);
-
-    _shader.Use();
-    _shader.SetVec3("uViewPos", camTransform->position);
-    _shader.SetVec3("uAmbient", {0.03f, 0.03f, 0.03f});
-    _shader.SetInt("uDirLightCount", static_cast<int>(_lighting.DirLightCount()));
-
-    Assisi::Runtime::DrawScene(*_scene, view, _projection, _shader);
+    // Scene rendering runs through OnRenderVulkan() — see
+    // docs/nvrhi-migration-todo.md. The OpenGL backend no longer draws the
+    // scene; this hook is required by Application but intentionally empty.
 }
 
 // ---------------------------------------------------------------------------
@@ -861,14 +694,16 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
         return Assisi::ECS::NullEntity;
 
     const auto     *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
+    const auto     *cam          = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
     const glm::mat4 view         = Assisi::Runtime::ViewMatrix(*camTransform);
     const auto      fbSize       = GetWindow().GetFramebufferSize();
     const float     w            = static_cast<float>(fbSize.Width);
     const float     h            = static_cast<float>(fbSize.Height);
+    const glm::mat4 projection   = Assisi::Runtime::ProjectionMatrix(*cam, w / h);
 
     const float     ndcX    = (2.f * mousePos.x / w) - 1.f;
     const float     ndcY    = 1.f - (2.f * mousePos.y / h);
-    glm::vec4       viewDir = glm::inverse(_projection) * glm::vec4(ndcX, ndcY, -1.f, 1.f);
+    glm::vec4       viewDir = glm::inverse(projection) * glm::vec4(ndcX, ndcY, -1.f, 1.f);
     viewDir.z = -1.f;
     viewDir.w =  0.f;
     const glm::vec3 rayDir    = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
