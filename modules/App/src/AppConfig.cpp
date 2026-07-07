@@ -54,22 +54,6 @@ AppConfig AppConfig::LoadFromJson()
                                       c[2].get<float>(), c[3].get<float>()};
                 }
             }
-            if (r.contains("backend"))
-            {
-                const auto backend = r.at("backend").get<std::string>();
-                if (backend == "vulkan")
-                {
-                    cfg.backend = Render::Backend::GraphicsBackend::Vulkan;
-                }
-                else if (backend == "opengl")
-                {
-                    cfg.backend = Render::Backend::GraphicsBackend::OpenGL;
-                }
-                else
-                {
-                    Core::Log::Warn("Unknown render.backend '{}' in game.json — using OpenGL.", backend);
-                }
-            }
         }
 
         if (json.contains("timing"))

@@ -12,9 +12,8 @@
 ///   PostUpdate:  PropagateTransforms → CleanupDestroyTag
 ///
 /// Override OnGameStart() to register your own systems and do one-time setup.
-/// Override OnGameRender() to submit draw calls (receives no automatic render
-/// context — build a RenderContext from your camera entity and call
-/// _systems.Run(SystemPhase::Render, ctx) yourself).
+/// Override OnGameRender(VulkanFrame&) to submit draw calls — e.g. call
+/// Runtime::DrawScene(...) with the frame's command list and framebuffer.
 ///
 /// @par Minimal example
 /// @code
@@ -23,16 +22,13 @@
 ///     void OnGameStart() override
 ///     {
 ///         _systems.Register(SystemPhase::Update, "Movement", &MovementSystem);
-///         _systems.Register(SystemPhase::Render, "Draw",
-///             [this](RenderContext& ctx) {
-///                 Runtime::DrawScene(ctx.scene, ctx.view, ctx.projection, _shader);
-///             });
 ///     }
 ///
-///     void OnGameRender() override
+///     void OnGameRender(Render::Vulkan::VulkanFrame &frame) override
 ///     {
 ///         const glm::mat4 view = Runtime::ViewMatrix(...);
-///         _systems.Run(SystemPhase::Render, { _scene, 0.f, view, _projection });
+///         Runtime::DrawScene(_scene, view, _projection, frame.commandList,
+///                            frame.framebuffer, frame.width, frame.height, _meshPass);
 ///     }
 /// };
 /// @endcode
@@ -41,6 +37,7 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
 namespace Assisi::App
@@ -60,10 +57,10 @@ class GameApplication : public Application
     ///        systems and perform one-time game setup here.
     virtual void OnGameStart() {}
 
-    /// @brief Called after all system phases (PreUpdate/Update/PostUpdate) have run.
-    ///        Override to submit render commands or call
-    ///        _systems.Run(SystemPhase::Render, ctx).
-    virtual void OnGameRender() {}
+    /// @brief Called after all system phases (PreUpdate/Update/PostUpdate) have run,
+    ///        with the color/depth targets already cleared. Override to submit
+    ///        render commands via the given frame's command list.
+    virtual void OnGameRender(Render::Vulkan::VulkanFrame & /*frame*/) {}
 
     /// @brief Called after the main loop exits, before Application teardown.
     virtual void OnGameShutdown() {}
@@ -77,7 +74,7 @@ class GameApplication : public Application
     void OnStart()           final;
     void OnFixedUpdate(float dt) final;
     void OnUpdate(float dt)      final;
-    void OnRender()              final;
+    void OnRender(Render::Vulkan::VulkanFrame &frame) final;
     void OnShutdown()            final;
 };
 

@@ -58,9 +58,8 @@ class SandboxApp : public Assisi::App::Application
     void OnStart();
     void OnFixedUpdate(float dt);
     void OnUpdate(float dt);
-    void OnRender();
+    void OnRender(Assisi::Render::Vulkan::VulkanFrame &frame) override;
     void OnImGui();
-    void OnRenderVulkan(Assisi::Render::Vulkan::VulkanFrame &frame) override;
 
   private:
     // --- Setup ---
@@ -212,7 +211,7 @@ void SandboxApp::SetupScene()
     _cubeMesh.Upload(vulkanContext->GetDevice(), Assisi::Render::CreateUnitCubeMesh());
 }
 
-void SandboxApp::OnRenderVulkan(Assisi::Render::Vulkan::VulkanFrame &frame)
+void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)
 {
     if (!_meshPass.IsValid() || !_scene)
     {
@@ -333,13 +332,6 @@ void SandboxApp::OnUpdate(float dt)
 
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions});
-}
-
-void SandboxApp::OnRender()
-{
-    // Scene rendering runs through OnRenderVulkan() — see
-    // docs/nvrhi-migration-todo.md. The OpenGL backend no longer draws the
-    // scene; this hook is required by Application but intentionally empty.
 }
 
 // ---------------------------------------------------------------------------

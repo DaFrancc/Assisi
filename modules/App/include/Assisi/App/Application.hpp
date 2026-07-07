@@ -5,17 +5,12 @@
 ///        override the hooks, and call Run() from main().
 
 #include <Assisi/App/AppConfig.hpp>
-#include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/OpenGL/Framebuffer.hpp>
-#include <Assisi/Render/OpenGL/ScreenQuad.hpp>
-#include <Assisi/Render/Shader.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
 #include <memory>
-#include <optional>
 
 namespace Assisi::App
 {
@@ -26,10 +21,13 @@ namespace Assisi::App
 ///   - OnStart()
 ///   - OnFixedUpdate(float dt)   — called at physicsHz
 ///   - OnUpdate(float dt)        — called every render frame
-///   - OnRender()                — framebuffer is already cleared
+///   - OnRender(Render::Vulkan::VulkanFrame&) — color/depth targets are already
+///     cleared, called between BeginFrame() and EndFrame()
 ///
 /// Optional overrides (no-ops by default):
-///   - OnImGui()                 — called inside an ImGui frame
+///   - OnImGui()                 — reserved for an ImGui overlay; not wired up
+///     to the Vulkan backend yet, see docs/nvrhi-migration-todo.md
+///   - OnResize(int, int)        — called when the framebuffer is resized
 ///   - OnShutdown()              — called after the loop exits
 class Application
 {
@@ -46,13 +44,9 @@ class Application
     virtual void OnStart()                  = 0;
     virtual void OnFixedUpdate(float dt)    = 0;
     virtual void OnUpdate(float dt)         = 0;
-    virtual void OnRender()                 = 0;
+    virtual void OnRender(Render::Vulkan::VulkanFrame &frame) = 0;
     virtual void OnImGui()                  {}
     virtual void OnShutdown()               {}
-    /// @brief Vulkan equivalent of OnRender(), called between BeginFrame() and
-    /// EndFrame() once the color/depth targets are cleared. No-op by default —
-    /// override to draw while the Vulkan backend is under active migration.
-    virtual void OnRenderVulkan(Render::Vulkan::VulkanFrame & /*frame*/) {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int /*width*/, int /*height*/) {}
 
@@ -63,31 +57,15 @@ class Application
     glm::mat4 MakeProjection(float fovDegrees = 60.f, float zNear = 0.1f, float zFar = 200.f) const;
     int       GetFps()             const { return _fps; }
 
-    /// @brief Which graphics API this Application was configured to use. The
-    /// Vulkan backend is under active migration — scene rendering, post-process,
-    /// and ImGui are OpenGL-only so far; derived apps should skip GL-specific
-    /// setup when this isn't OpenGL.
-    Render::Backend::GraphicsBackend GetBackend() const { return _config.backend; }
-
   private:
     static void FramebufferSizeCallback(Window::NativeWindowHandle *window, int width, int height);
     static void WindowRefreshCallback(Window::NativeWindowHandle *window);
     void        RenderFrame();
-    void        RenderFrameVulkan();
-    void        RebuildPostProcess();
-    void        DrawOptionsWindow();
 
-    AppConfig     _config;
-    OptionsConfig _options;
+    AppConfig _config;
 
     std::unique_ptr<Window::WindowContext> _window;
     std::unique_ptr<Window::InputContext>  _input;
-
-    Render::OpenGL::Framebuffer                 _mainFB;
-    Render::OpenGL::Framebuffer                 _resolveFB;
-    std::optional<Render::OpenGL::ScreenQuad>   _screenQuad;
-    Render::Shader                              _fxaaShader;
-    bool                                        _showOptionsWindow = false;
 
     int _fps = 0;
 };

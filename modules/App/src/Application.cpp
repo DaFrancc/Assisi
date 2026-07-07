@@ -9,8 +9,6 @@
 #    pragma comment(lib, "winmm.lib")
 #endif
 
-// --- OpenGL (must precede any GLFW include) ---------------------------------
-#include <glad/glad.h>
 #include <GLFW/glfw3.h>
 
 // --- Engine headers ---------------------------------------------------------
@@ -19,12 +17,8 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Sinks.hpp>
-#include <Assisi/Debug/DebugUI.hpp>
-#include <Assisi/Render/Backend/GraphicsBackend.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Window/Key.hpp>
-
-#include <imgui.h>
 
 // --- Standard ---------------------------------------------------------------
 #include <chrono>
@@ -85,31 +79,19 @@ void Application::FramebufferSizeCallback(Window::NativeWindowHandle * /*window*
 {
     // GLFW can fire this during window creation/show (e.g. a DPI-driven WM_SIZE on
     // Windows) — before s_instance is assigned and before RenderSystem::Initialize
-    // has run. Bail out entirely rather than falling through to a GL/Vulkan call
+    // has run. Bail out entirely rather than falling through to a Vulkan call
     // against a backend that isn't set up yet.
     if (width <= 0 || height <= 0 || s_instance == nullptr)
     {
         return;
     }
 
-    const bool isVulkan = s_instance->_config.backend == Render::Backend::GraphicsBackend::Vulkan;
-    if (isVulkan)
+    if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
-        if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
-        {
-            vulkanContext->Resize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
-        }
-    }
-    else
-    {
-        glViewport(0, 0, width, height);
+        vulkanContext->Resize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     }
 
     s_instance->OnResize(width, height);
-    if (!isVulkan)
-    {
-        s_instance->RebuildPostProcess();
-    }
 }
 
 
@@ -143,13 +125,10 @@ Application::Application()
 
     _config = AppConfig::LoadFromJson();
 
-    const bool isOpenGL = _config.backend == Render::Backend::GraphicsBackend::OpenGL;
-
     Window::WindowConfiguration winCfg;
     winCfg.Width  = _config.width;
     winCfg.Height = _config.height;
     winCfg.Title  = _config.title.c_str();
-    winCfg.CreateClientApiContext = isOpenGL;
 
     _window = std::make_unique<Window::WindowContext>(winCfg, FramebufferSizeCallback);
     if (!_window->IsValid())
@@ -158,7 +137,7 @@ Application::Application()
         std::exit(EXIT_FAILURE);
     }
 
-    if (!Render::RenderSystem::Initialize(_config.backend, *_window))
+    if (!Render::RenderSystem::Initialize(*_window))
     {
         Core::Log::Fatal("Failed to initialize render system.");
         std::exit(EXIT_FAILURE);
@@ -169,27 +148,11 @@ Application::Application()
     glfwSetWindowRefreshCallback(_window->NativeHandle(), WindowRefreshCallback);
 
     _input = std::make_unique<Window::InputContext>(*_window);
-    _options = OptionsConfig::LoadFromJson();
-
-    // The Vulkan backend is under active migration: depth testing, post-process
-    // (MSAA/FXAA), and the ImGui/options overlay are OpenGL-only for now.
-    if (isOpenGL)
-    {
-        glEnable(GL_DEPTH_TEST);
-        Debug::DebugUI::Initialize(*_window);
-        _screenQuad.emplace();
-        _fxaaShader = Render::Shader("shaders/screen.vert", "shaders/fxaa.frag");
-        RebuildPostProcess();
-    }
 }
 
 Application::~Application()
 {
     s_instance = nullptr;
-    if (_config.backend == Render::Backend::GraphicsBackend::OpenGL)
-    {
-        Debug::DebugUI::Shutdown();
-    }
 }
 
 void Application::RequestClose()
@@ -268,11 +231,6 @@ void Application::Run()
         Window::WindowContext::PollEvents();
         _input->Poll();
 
-        if (_input->IsKeyPressed(Window::Key::F12))
-        {
-            _showOptionsWindow = !_showOptionsWindow;
-        }
-
         accumulator += dt;
         while (accumulator >= physicsStep)
         {
@@ -304,81 +262,6 @@ void Application::Run()
 
 void Application::RenderFrame()
 {
-    if (_config.backend == Render::Backend::GraphicsBackend::Vulkan)
-    {
-        RenderFrameVulkan();
-        return;
-    }
-
-    const AaMode              mode = _options.aaMode;
-    const Window::WindowSize  fb   = _window->GetFramebufferSize();
-
-    // --- Scene render pass (to FBO or default) ----------------------------
-    if (mode == AaMode::None)
-    {
-        Render::OpenGL::Framebuffer::BindDefault();
-        glClearColor(_config.clearColor.r, _config.clearColor.g,
-                     _config.clearColor.b, _config.clearColor.a);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        OnRender();
-    }
-    else
-    {
-        _mainFB.Bind();
-        glClearColor(_config.clearColor.r, _config.clearColor.g,
-                     _config.clearColor.b, _config.clearColor.a);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        OnRender();
-    }
-
-    // --- Post-process / resolve pass --------------------------------------
-    if (mode == AaMode::MSAA)
-    {
-        _mainFB.BlitToScreen(fb.Width, fb.Height);
-    }
-    else if (mode == AaMode::FXAA)
-    {
-        Render::OpenGL::Framebuffer::BindDefault();
-        glDisable(GL_DEPTH_TEST);
-        _fxaaShader.Use();
-        _mainFB.BindColorTexture(0);
-        _fxaaShader.SetInt("uScreenTexture", 0);
-        _fxaaShader.SetVec2("uTexelSize",
-                            1.f / static_cast<float>(fb.Width),
-                            1.f / static_cast<float>(fb.Height));
-        _screenQuad->Draw();
-        glEnable(GL_DEPTH_TEST);
-    }
-    else if (mode == AaMode::MSAA_FXAA)
-    {
-        _mainFB.BlitTo(_resolveFB);
-        Render::OpenGL::Framebuffer::BindDefault();
-        glDisable(GL_DEPTH_TEST);
-        _fxaaShader.Use();
-        _resolveFB.BindColorTexture(0);
-        _fxaaShader.SetInt("uScreenTexture", 0);
-        _fxaaShader.SetVec2("uTexelSize",
-                            1.f / static_cast<float>(fb.Width),
-                            1.f / static_cast<float>(fb.Height));
-        _screenQuad->Draw();
-        glEnable(GL_DEPTH_TEST);
-    }
-
-    // --- ImGui (always to default framebuffer) ----------------------------
-    Render::OpenGL::Framebuffer::BindDefault();
-    Debug::DebugUI::BeginFrame();
-    OnImGui();
-    DrawOptionsWindow();
-    Debug::DebugUI::EndFrame();
-
-    _window->SwapBuffers();
-}
-
-void Application::RenderFrameVulkan()
-{
-    // Vulkan backend is under active migration: scene rendering, post-process, and
-    // ImGui are OpenGL-only so far. This clears to the configured colour and
-    // presents — nothing else — until those are ported.
     auto *vulkanContext = Render::RenderSystem::GetVulkanContext();
     if (!vulkanContext)
     {
@@ -399,96 +282,9 @@ void Application::RenderFrameVulkan()
         frame->commandList->clearDepthStencilTexture(frame->depthTexture, nvrhi::AllSubresources, true, 1.0f, false, 0);
     }
 
-    OnRenderVulkan(*frame);
+    OnRender(*frame);
 
     vulkanContext->EndFrame();
-}
-
-void Application::RebuildPostProcess()
-{
-    const Window::WindowSize fb = _window->GetFramebufferSize();
-    if (fb.Width <= 0 || fb.Height <= 0)
-    {
-        return;
-    }
-
-    const int w       = fb.Width;
-    const int h       = fb.Height;
-    const int samples = _options.msaaSamples;
-
-    _mainFB    = Render::OpenGL::Framebuffer{};
-    _resolveFB = Render::OpenGL::Framebuffer{};
-
-    switch (_options.aaMode)
-    {
-    case AaMode::None:
-        break;
-    case AaMode::MSAA:
-        _mainFB = Render::OpenGL::Framebuffer(w, h, samples);
-        break;
-    case AaMode::FXAA:
-        _mainFB = Render::OpenGL::Framebuffer(w, h, 1);
-        break;
-    case AaMode::MSAA_FXAA:
-        _mainFB    = Render::OpenGL::Framebuffer(w, h, samples);
-        _resolveFB = Render::OpenGL::Framebuffer(w, h, 1);
-        break;
-    }
-}
-
-void Application::DrawOptionsWindow()
-{
-    if (!_showOptionsWindow)
-    {
-        return;
-    }
-
-    ImGui::SetNextWindowSize(ImVec2(300, 110), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Options", &_showOptionsWindow))
-    {
-        static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
-        int                modeIndex    = static_cast<int>(_options.aaMode);
-        if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))
-        {
-            _options.aaMode = static_cast<AaMode>(modeIndex);
-            RebuildPostProcess();
-            _options.SaveToJson();
-        }
-
-        const bool msaaActive = (_options.aaMode == AaMode::MSAA || _options.aaMode == AaMode::MSAA_FXAA);
-        if (!msaaActive)
-        {
-            ImGui::BeginDisabled();
-        }
-
-        static const char *kSampleNames[]  = {"2x", "4x", "8x"};
-        static const int   kSampleValues[] = {2, 4, 8};
-        int                sampleIndex     = 1;
-        for (int i = 0; i < 3; ++i)
-        {
-            if (kSampleValues[i] == _options.msaaSamples)
-            {
-                sampleIndex = i;
-                break;
-            }
-        }
-
-        if (ImGui::Combo("MSAA Samples", &sampleIndex, kSampleNames, 3))
-        {
-            _options.msaaSamples = kSampleValues[sampleIndex];
-            if (msaaActive)
-            {
-                RebuildPostProcess();
-            }
-            _options.SaveToJson();
-        }
-
-        if (!msaaActive)
-        {
-            ImGui::EndDisabled();
-        }
-    }
-    ImGui::End();
 }
 
 void Application::WindowRefreshCallback(Window::NativeWindowHandle * /*window*/)

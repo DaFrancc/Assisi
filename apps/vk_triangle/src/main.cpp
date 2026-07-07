@@ -292,7 +292,6 @@ int main()
     windowConfig.Width = 1280;
     windowConfig.Height = 720;
     windowConfig.Title = "Assisi VkTriangle";
-    windowConfig.CreateClientApiContext = false; // Vulkan owns presentation, not GLFW
 
     Window::WindowContext window(windowConfig, nullptr);
     if (!window.IsValid())

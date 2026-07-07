@@ -69,9 +69,9 @@ void GameApplication::OnUpdate(float dt)
     _systems.Run(SystemPhase::PostUpdate, {_scene, dt, GetInput(), _actions});
 }
 
-void GameApplication::OnRender()
+void GameApplication::OnRender(Render::Vulkan::VulkanFrame &frame)
 {
-    OnGameRender();
+    OnGameRender(frame);
 }
 
 void GameApplication::OnShutdown()

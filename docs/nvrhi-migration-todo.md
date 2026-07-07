@@ -88,23 +88,50 @@ scene-rendering path outright rather than keeping it limping. What shipped inste
   wired up for Vulkan yet, see section 3), so the scene is empty by construction. That's
   expected, not a bug.
 
-### 2. Remove the OpenGL/Vulkan toggle entirely
+### 2. Remove the OpenGL/Vulkan toggle entirely — DONE
 
-Per direction: no more "pick a backend" — this is Vulkan-only from here.
+All bullets below landed as planned:
 
-- Delete `AppConfig::backend` field and the `render.backend` parsing in `AppConfig.cpp`.
-- Delete `Render::Backend::GraphicsBackend` enum, or collapse it away entirely —
-  `RenderSystem::Initialize` shouldn't take a backend parameter anymore, it should just
-  always set up Vulkan.
-- Delete `RenderSystem::InitializeOpenGL` and `modules/Render/src/RenderSystemOpenGL.cpp`.
-- Delete all the `if (isOpenGL)` / `GetBackend() == OpenGL` / `GetBackend() != Vulkan`
-  guards added in `Application.cpp` and `apps/sandbox/src/main.cpp` during the
-  transition — once there's only one path, these become dead branches.
-- Collapse `Application::RenderFrame()` + `RenderFrameVulkan()` back into one function;
-  same for `OnRender()` vs `OnRenderVulkan()` — one hook, not two.
-- `Window::WindowConfiguration::CreateClientApiContext` becomes always-false — probably
-  delete the flag and hardcode `GLFW_NO_API` in `WindowContext`.
-- Remove `Application`'s `GetBackend()` accessor once nothing branches on it.
+- Deleted `AppConfig::backend` and the `render.backend` parsing in `AppConfig.cpp`.
+  `game.json`'s `render.backend` key is gone too (Vulkan is simply the only option now).
+- Deleted `Render::Backend::GraphicsBackend` entirely (the enum header, not just the
+  field) — `RenderSystem::Initialize(window)` now always sets up Vulkan, no parameter.
+- Deleted `RenderSystem::InitializeOpenGL` and `modules/Render/src/RenderSystemOpenGL.cpp`.
+- Deleted every `if (isOpenGL)` / `GetBackend() == OpenGL` guard in `Application.cpp`
+  and `apps/sandbox/src/main.cpp`; deleted `Application::GetBackend()` itself.
+- Collapsed `Application::RenderFrame()` + `RenderFrameVulkan()` into one `RenderFrame()`
+  (body is what `RenderFrameVulkan()` used to be). Collapsed the two render hooks into
+  one: `Application::OnRender(Render::Vulkan::VulkanFrame&)` is now pure virtual
+  (replaces both the old no-arg `OnRender()` and `OnRenderVulkan()`); `SandboxApp` and
+  `GameApplication` updated to match (`GameApplication::OnGameRender` now also takes the
+  frame, so a future game can actually record draws from it — see its updated docstring
+  example).
+- `Window::WindowConfiguration::CreateClientApiContext` is gone; `WindowContext` always
+  hints `GLFW_CLIENT_API, GLFW_NO_API`. `WindowContext::SwapBuffers()` was deleted
+  outright (Vulkan presents via `VulkanContext::EndFrame()`, not `glfwSwapBuffers`).
+  `SetVSyncEnabled()`/`IsVSyncEnabled()` were kept (still called from `Application::Run()`)
+  but now just store the preference — vsync isn't wired to the Vulkan swapchain's present
+  mode yet, that's still open.
+
+**Judgment calls made along the way, not explicitly spelled out above:**
+- `Application`'s MSAA/FXAA post-process (`_mainFB`/`_resolveFB`/`_screenQuad`/
+  `_fxaaShader`, `RebuildPostProcess()`, the F12 `DrawOptionsWindow()` overlay, and the
+  `Debug::DebugUI::Initialize/Shutdown/BeginFrame/EndFrame` calls that drove it) were
+  **deleted from `Application`**, not just left dead — they only existed to serve the
+  now-gone OpenGL `RenderFrame()` branch, and kept as OpenGL-typed members they'd be
+  "a hint of OpenGL left" in the core base class, which earlier direction ruled out.
+  `OptionsConfig`/`AaMode` (`modules/App/include|src/OptionsConfig.*`) and
+  `modules/Debug/DebugUI.*` themselves were **left in place, just unwired** — unlike the
+  post-process glue, these are standalone modules explicitly slated for an NVRHI port
+  (ImGui backend is section 3's own bullet below), not dead ends.
+- This means **ImGui/the F12 options window/AA are now fully non-functional** under the
+  single remaining (Vulkan) backend, not just "OpenGL-only" as before — there is
+  currently no way to see any ImGui UI at all in the running app (confirmed: only the
+  clear-colored viewport renders, verified by actually launching `Assisi-Sandbox.exe`).
+  Restoring any of this requires section 3's ImGui-Vulkan port.
+- `apps/vk_triangle/src/main.cpp` had one stale `windowConfig.CreateClientApiContext =
+  false;` line (from before this section) that needed deleting to keep building — it
+  still builds and links standalone, untouched otherwise.
 
 ### 3. Delete OpenGL rendering code
 

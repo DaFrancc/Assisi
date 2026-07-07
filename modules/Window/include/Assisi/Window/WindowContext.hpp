@@ -1,12 +1,12 @@
 #pragma once
 
 /// @file WindowContext.hpp
-/// @brief Owns a single GLFW window and its associated OpenGL context.
+/// @brief Owns a single GLFW window, created with no client API (GLFW_NO_API) —
+/// Vulkan owns the swapchain/presentation via VulkanContext, not GLFW.
 ///
-/// `WindowContext` wraps window creation, context management, swap-chain
-/// control, and event polling into one RAII object.  It holds a shared
-/// reference to `GlfwLibrary` so GLFW cannot be terminated while any
-/// window is still alive.
+/// `WindowContext` wraps window creation, event polling, and swap-interval
+/// preference into one RAII object.  It holds a shared reference to
+/// `GlfwLibrary` so GLFW cannot be terminated while any window is still alive.
 
 #include <memory>
 #include <string>
@@ -34,9 +34,6 @@ struct WindowConfiguration
     int Height = 720;             ///< Initial window height in pixels.
     const char *Title = "Assisi"; ///< Window title bar text.
     bool EnableVSync = true;      ///< Whether to enable vertical synchronisation.
-
-    /// @brief When false, GLFW skips client API context creation (e.g. for Vulkan).
-    bool CreateClientApiContext = true;
 };
 
 /// @brief RAII owner of a GLFW window and its rendering context.
@@ -83,9 +80,6 @@ class WindowContext
     /// @brief Flags the window for closure; ShouldClose() will return true afterward.
     void RequestClose() const;
 
-    /// @brief Presents the back buffer (swap buffers).
-    void SwapBuffers() const;
-
     /// @brief Updates the window title bar text.
     void SetTitle(const std::string &title) const;
 
@@ -121,12 +115,9 @@ class WindowContext
     /// @brief True after successful window creation.
     bool _isValid = false;
 
-    /// @brief Mirrors the current swap-interval setting for IsVSyncEnabled().
+    /// @brief Mirrors the current vsync preference for IsVSyncEnabled(). Not yet
+    /// wired to the Vulkan swapchain's present mode — see
+    /// docs/nvrhi-migration-todo.md.
     bool _isVSyncEnabled = false;
-
-    /// @brief Mirrors configuration.CreateClientApiContext. GLFW errors if
-    /// context-only calls (SwapBuffers, SetVSyncEnabled) are made on a window
-    /// created with GLFW_NO_API, so those calls are skipped when this is false.
-    bool _hasClientApiContext = true;
 };
 } /* namespace Assisi::Window */

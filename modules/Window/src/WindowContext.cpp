@@ -7,25 +7,15 @@
 namespace Assisi::Window
 {
 WindowContext::WindowContext(const WindowConfiguration &configuration, GLFWframebuffersizefun framebufferSizeCallback)
-    : _glfwLibrary(GlfwLibrary::Acquire()), _isVSyncEnabled(configuration.EnableVSync),
-      _hasClientApiContext(configuration.CreateClientApiContext)
+    : _glfwLibrary(GlfwLibrary::Acquire()), _isVSyncEnabled(configuration.EnableVSync)
 {
     if (!_glfwLibrary || !_glfwLibrary->IsValid())
     {
         return;
     }
 
-    /* Optionally disable client API context creation. */
-    if (!configuration.CreateClientApiContext)
-    {
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    }
-    else
-    {
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 6);
-        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-    }
+    /* Vulkan owns presentation — GLFW must not create a client API context. */
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
     /* Create the GLFW window. */
     _nativeWindowHandle =
@@ -35,13 +25,6 @@ WindowContext::WindowContext(const WindowConfiguration &configuration, GLFWframe
     {
         Assisi::Core::Log::Error("Failed to create GLFW window.");
         return;
-    }
-
-    if (_hasClientApiContext)
-    {
-        /* Make context current and apply vertical sync preference. */
-        glfwMakeContextCurrent(_nativeWindowHandle);
-        glfwSwapInterval(_isVSyncEnabled ? 1 : 0);
     }
 
     /* Install framebuffer resize callback. */
@@ -63,13 +46,11 @@ WindowContext::~WindowContext()
 
 WindowContext::WindowContext(WindowContext &&other) noexcept
     : _glfwLibrary(std::move(other._glfwLibrary)), _nativeWindowHandle(other._nativeWindowHandle),
-      _isValid(other._isValid), _isVSyncEnabled(other._isVSyncEnabled),
-      _hasClientApiContext(other._hasClientApiContext)
+      _isValid(other._isValid), _isVSyncEnabled(other._isVSyncEnabled)
 {
     other._nativeWindowHandle = nullptr;
     other._isValid = false;
     other._isVSyncEnabled = false;
-    other._hasClientApiContext = true;
 }
 
 WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
@@ -86,12 +67,10 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
         _nativeWindowHandle = other._nativeWindowHandle;
         _isValid = other._isValid;
         _isVSyncEnabled = other._isVSyncEnabled;
-        _hasClientApiContext = other._hasClientApiContext;
 
         other._nativeWindowHandle = nullptr;
         other._isValid = false;
         other._isVSyncEnabled = false;
-        other._hasClientApiContext = true;
     }
 
     return *this;
@@ -122,14 +101,6 @@ void WindowContext::RequestClose() const
     glfwSetWindowShouldClose(_nativeWindowHandle, GLFW_TRUE);
 }
 
-void WindowContext::SwapBuffers() const
-{
-    if (_hasClientApiContext)
-    {
-        glfwSwapBuffers(_nativeWindowHandle);
-    }
-}
-
 void WindowContext::SetTitle(const std::string &title) const
 {
     glfwSetWindowTitle(_nativeWindowHandle, title.c_str());
@@ -142,14 +113,9 @@ bool WindowContext::IsVSyncEnabled() const
 
 void WindowContext::SetVSyncEnabled(bool enabled)
 {
+    // Not yet wired to the Vulkan swapchain's present mode — see
+    // docs/nvrhi-migration-todo.md.
     _isVSyncEnabled = enabled;
-
-    if (_hasClientApiContext)
-    {
-        /* Swap interval is per-context; ensure the correct window is current. */
-        glfwMakeContextCurrent(_nativeWindowHandle);
-        glfwSwapInterval(_isVSyncEnabled ? 1 : 0);
-    }
 }
 
 WindowSize WindowContext::GetWindowSize() const
