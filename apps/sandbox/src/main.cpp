@@ -63,6 +63,7 @@ class SandboxApp : public Assisi::App::Application
     void OnRender(Assisi::Render::Vulkan::VulkanFrame &frame) override;
     void OnImGui();
     void OnResize(int width, int height) override;
+    void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
 
   private:
     // --- Setup ---
@@ -233,7 +234,10 @@ void SandboxApp::SetupScene()
         return;
     }
 
-    if (!_meshPass.Initialize(device, vulkanContext->GetFramebufferInfo(), "shaders/cube_min.vert.spv",
+    // Built against GetSceneFramebufferInfo() rather than the swapchain's own
+    // FramebufferInfo directly, so this is already correct even if options.json
+    // has an MSAA mode saved from a previous run.
+    if (!_meshPass.Initialize(device, GetSceneFramebufferInfo(), "shaders/cube_min.vert.spv",
                               "shaders/cube_min.frag.spv", _lightingSystem.Grid()))
     {
         Assisi::Core::Log::Error("Failed to initialise the scene mesh pass.");
@@ -267,6 +271,14 @@ void SandboxApp::OnResize(int width, int height)
     _lightingSystem.Resize(commandList, width, height, cam->nearZ, cam->farZ, projection);
     commandList->close();
     device->executeCommandList(commandList);
+}
+
+void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
+{
+    if (_meshPass.IsValid())
+    {
+        _meshPass.RebuildPipeline(framebufferInfo);
+    }
 }
 
 void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)

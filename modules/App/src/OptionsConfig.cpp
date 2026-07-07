@@ -12,22 +12,22 @@
 namespace Assisi::App
 {
 
-static AaMode AaModeFromString(const std::string &str)
+static Render::AaMode AaModeFromString(const std::string &str)
 {
-    if (str == "msaa")       return AaMode::MSAA;
-    if (str == "fxaa")       return AaMode::FXAA;
-    if (str == "msaa+fxaa")  return AaMode::MSAA_FXAA;
-    return AaMode::None;
+    if (str == "msaa")       return Render::AaMode::MSAA;
+    if (str == "fxaa")       return Render::AaMode::FXAA;
+    if (str == "msaa+fxaa")  return Render::AaMode::MSAA_FXAA;
+    return Render::AaMode::None;
 }
 
-static const char *AaModeToString(AaMode mode)
+static const char *AaModeToString(Render::AaMode mode)
 {
     switch (mode)
     {
-    case AaMode::MSAA:      return "msaa";
-    case AaMode::FXAA:      return "fxaa";
-    case AaMode::MSAA_FXAA: return "msaa+fxaa";
-    default:                return "none";
+    case Render::AaMode::MSAA:      return "msaa";
+    case Render::AaMode::FXAA:      return "fxaa";
+    case Render::AaMode::MSAA_FXAA: return "msaa+fxaa";
+    default:                        return "none";
     }
 }
 

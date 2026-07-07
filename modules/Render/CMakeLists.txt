@@ -10,6 +10,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/MeshBuffer.hpp"
     "include/Assisi/Render/MeshData.hpp"
     "include/Assisi/Render/MeshPass.hpp"
+    "include/Assisi/Render/PostProcess.hpp"
     "include/Assisi/Render/RenderSystem.hpp"
     "include/Assisi/Render/ShaderModule.hpp"
     "include/Assisi/Render/Texture.hpp"
@@ -23,6 +24,7 @@ target_sources(Assisi-Render
     "src/Buffer.cpp"
     "src/DefaultResources.cpp"
     "src/MeshPass.cpp"
+    "src/PostProcess.cpp"
     "src/Texture.cpp"
     "src/VulkanContext.cpp"
 )

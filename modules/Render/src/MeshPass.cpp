@@ -43,9 +43,9 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
     _device = device;
     _clusterGrid = &clusterGrid;
 
-    const nvrhi::ShaderHandle vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
-    const nvrhi::ShaderHandle fragmentShader = LoadSpirvShader(device, pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!vertexShader || !fragmentShader)
+    _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    _pixelShader = LoadSpirvShader(device, pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
+    if (!_vertexShader || !_pixelShader)
     {
         return false;
     }
@@ -72,7 +72,7 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
             .setOffset(offsetof(Vertex, Tangent))
             .setElementStride(sizeof(Vertex)),
     };
-    _inputLayout = device->createInputLayout(attributes, static_cast<uint32_t>(std::size(attributes)), vertexShader);
+    _inputLayout = device->createInputLayout(attributes, static_cast<uint32_t>(std::size(attributes)), _vertexShader);
 
     // Texture_SRV/Sampler are separate descriptors in NVRHI's Vulkan backend (HLSL
     // t-register/s-register split, not GLSL's combined sampler2D); StructuredBuffer_SRV
@@ -105,11 +105,16 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
     frameConstantsDesc.keepInitialState = true;
     _frameConstantsBuffer = device->createBuffer(frameConstantsDesc);
 
+    return RebuildPipeline(framebufferInfo) && _frameConstantsBuffer != nullptr;
+}
+
+bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
+{
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
     pipelineDesc.inputLayout = _inputLayout;
-    pipelineDesc.VS = vertexShader;
-    pipelineDesc.PS = fragmentShader;
+    pipelineDesc.VS = _vertexShader;
+    pipelineDesc.PS = _pixelShader;
     pipelineDesc.addBindingLayout(_bindingLayout);
     pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
     // Meshes are authored CCW-front (standard convention). NVRHI's Vulkan backend
@@ -120,8 +125,8 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
     pipelineDesc.renderState.depthStencilState.depthTestEnable = true;
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
 
-    _pipeline = device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
-    return _pipeline != nullptr && _frameConstantsBuffer != nullptr;
+    _pipeline = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
+    return _pipeline != nullptr;
 }
 
 void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &view, uint32_t screenWidth,

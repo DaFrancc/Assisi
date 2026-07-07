@@ -21,6 +21,8 @@
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Window/Key.hpp>
 
+#include <imgui.h>
+
 // --- Standard ---------------------------------------------------------------
 #include <chrono>
 #include <csignal>
@@ -93,6 +95,7 @@ void Application::FramebufferSizeCallback(Window::NativeWindowHandle * /*window*
     }
 
     s_instance->OnResize(width, height);
+    s_instance->ConfigurePostProcess();
 }
 
 
@@ -151,6 +154,14 @@ Application::Application()
     glfwSetWindowRefreshCallback(_window->NativeHandle(), WindowRefreshCallback);
 
     _input = std::make_unique<Window::InputContext>(*_window);
+    _options = OptionsConfig::LoadFromJson();
+
+    if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
+    {
+        _postProcess.Initialize(vulkanContext->GetDevice(), vulkanContext->GetFramebufferInfo(),
+                                "shaders/fullscreen.vert.spv", "shaders/fxaa.frag.spv");
+        ConfigurePostProcess();
+    }
 }
 
 Application::~Application()
@@ -235,6 +246,11 @@ void Application::Run()
         Window::WindowContext::PollEvents();
         _input->Poll();
 
+        if (_input->IsKeyPressed(Window::Key::F12))
+        {
+            _showOptionsWindow = !_showOptionsWindow;
+        }
+
         accumulator += dt;
         while (accumulator >= physicsStep)
         {
@@ -278,22 +294,119 @@ void Application::RenderFrame()
         return; // minimized, or swapchain is stale and about to be resized
     }
 
-    frame->commandList->clearTextureFloat(
-        frame->colorTexture, nvrhi::AllSubresources,
-        nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
-    if (frame->depthTexture)
+    // When an AA mode is active, the scene renders into PostProcess's offscreen
+    // target instead of the swapchain directly — everything else about `frame`
+    // (commandList, width, height) stays the same either way.
+    Render::Vulkan::VulkanFrame sceneFrame = *frame;
+    if (nvrhi::IFramebuffer *offscreenFramebuffer = _postProcess.SceneFramebuffer())
     {
-        frame->commandList->clearDepthStencilTexture(frame->depthTexture, nvrhi::AllSubresources, true, 1.0f, false, 0);
+        sceneFrame.framebuffer = offscreenFramebuffer;
+        sceneFrame.colorTexture = _postProcess.SceneColorTexture();
+        sceneFrame.depthTexture = _postProcess.SceneDepthTexture();
     }
+
+    sceneFrame.commandList->clearTextureFloat(
+        sceneFrame.colorTexture, nvrhi::AllSubresources,
+        nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
+    if (sceneFrame.depthTexture)
+    {
+        sceneFrame.commandList->clearDepthStencilTexture(sceneFrame.depthTexture, nvrhi::AllSubresources, true, 1.0f,
+                                                          false, 0);
+    }
+
+    OnRender(sceneFrame);
+
+    // No-op if AA is off (the scene already rendered directly into `frame`
+    // above); otherwise resolves/FXAA's the offscreen render into it.
+    _postProcess.Resolve(frame->commandList, *frame);
 
     Debug::DebugUI::BeginFrame(*frame);
 
-    OnRender(*frame);
     OnImGui();
+    DrawOptionsWindow();
 
     Debug::DebugUI::EndFrame(*frame);
 
     vulkanContext->EndFrame();
+}
+
+void Application::ConfigurePostProcess()
+{
+    const Window::WindowSize fb = _window->GetFramebufferSize();
+    if (fb.Width <= 0 || fb.Height <= 0)
+    {
+        return;
+    }
+
+    const nvrhi::FramebufferInfo before = _postProcess.SceneFramebufferInfo();
+    _postProcess.Configure(static_cast<uint32_t>(fb.Width), static_cast<uint32_t>(fb.Height), _options.aaMode,
+                           static_cast<uint32_t>(_options.msaaSamples));
+    const nvrhi::FramebufferInfo after = _postProcess.SceneFramebufferInfo();
+
+    // Only fires for an actual sample-count change (F12 toggling into/out of
+    // MSAA) — resizing alone never changes FramebufferInfo. During this
+    // Application's own constructor (before the derived class exists), the
+    // virtual call below harmlessly resolves to the no-op base implementation.
+    if (!(before == after))
+    {
+        OnRenderTargetsChanged(after);
+    }
+}
+
+void Application::DrawOptionsWindow()
+{
+    if (!_showOptionsWindow)
+    {
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(300, 110), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Options", &_showOptionsWindow))
+    {
+        static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
+        int                modeIndex    = static_cast<int>(_options.aaMode);
+        if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))
+        {
+            _options.aaMode = static_cast<Render::AaMode>(modeIndex);
+            ConfigurePostProcess();
+            _options.SaveToJson();
+        }
+
+        const bool msaaActive =
+            (_options.aaMode == Render::AaMode::MSAA || _options.aaMode == Render::AaMode::MSAA_FXAA);
+        if (!msaaActive)
+        {
+            ImGui::BeginDisabled();
+        }
+
+        static const char *kSampleNames[]  = {"2x", "4x", "8x"};
+        static const int   kSampleValues[] = {2, 4, 8};
+        int                sampleIndex     = 1;
+        for (int i = 0; i < 3; ++i)
+        {
+            if (kSampleValues[i] == _options.msaaSamples)
+            {
+                sampleIndex = i;
+                break;
+            }
+        }
+
+        if (ImGui::Combo("MSAA Samples", &sampleIndex, kSampleNames, 3))
+        {
+            _options.msaaSamples = kSampleValues[sampleIndex];
+            if (msaaActive)
+            {
+                ConfigurePostProcess();
+            }
+            _options.SaveToJson();
+        }
+
+        if (!msaaActive)
+        {
+            ImGui::EndDisabled();
+        }
+    }
+    ImGui::End();
 }
 
 void Application::WindowRefreshCallback(Window::NativeWindowHandle * /*window*/)

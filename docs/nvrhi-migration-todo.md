@@ -1,8 +1,8 @@
 # OpenGL → NVRHI Migration TODO
 
-Status as of 2026-07-07. This branch (`dev`, working toward a dedicated NVRHI backend)
-is a **one-way conversion, not a dual-backend toggle** — the end state has zero OpenGL
-left anywhere in the engine. Everything below assumes that goal.
+Status as of 2026-07-07. This branch (`nvrhi`) is a **one-way conversion, not a
+dual-backend toggle** — the end state has zero OpenGL left anywhere in the engine.
+Everything below assumes that goal.
 
 ## Done so far
 
@@ -126,15 +126,13 @@ All bullets below landed as planned:
   post-process glue, these are standalone modules explicitly slated for an NVRHI port
   (ImGui backend is section 3's own bullet below), not dead ends.
 - At the time this was written, this meant ImGui/the F12 options window/AA were all
-  fully non-functional under Vulkan. **ImGui itself is back — see section 3's ImGui
-  bullet, done.** The F12 options window and AA specifically are still gone (they were
-  deleted along with the rest of `Application`'s post-process code, not just
-  disconnected — see the post-process bullet in section 3).
+  fully non-functional under Vulkan. **Both are back now — see section 3's ImGui and
+  post-process bullets, both done.**
 - `apps/vk_triangle/src/main.cpp` had one stale `windowConfig.CreateClientApiContext =
   false;` line (from before this section) that needed deleting to keep building — it
   still builds and links standalone, untouched otherwise.
 
-### 3. Delete OpenGL rendering code
+### 3. Delete OpenGL rendering code — DONE
 
 - `modules/Render/include/Assisi/Render/OpenGL/` — entire folder (`Framebuffer.hpp`,
   `MeshBuffer.hpp`, `Texture2D.hpp`, `DefaultTextures.hpp`, `ScreenQuad.hpp`).
@@ -255,10 +253,54 @@ All bullets below landed as planned:
     holds ~90 FPS on the dev laptop's integrated/lower-end GPU with zero profiling or
     optimization work — a reasonable baseline; real profiling is future work, not
     done here.
-- `Application::RebuildPostProcess`/the MSAA/FXAA post-process pass — **currently
-  deleted outright**, not just dormant (see section 2's judgment-call notes). Needs
-  NVRHI render-target + FXAA pass equivalents if brought back, or could stay dropped
-  in favor of just shipping single-sample rendering — still an open decision.
+- MSAA/FXAA post-process — **done**, ported to NVRHI as `Render::PostProcess`
+  (`PostProcess.hpp/cpp`), restoring all four pre-migration modes (None/MSAA/FXAA/
+  MSAA+FXAA) behind the same F12 options window and `options.json` persistence as
+  before (`OptionsConfig` now reuses `Render::AaMode` directly instead of its own
+  duplicate enum).
+  - **The scene never draws directly into the swapchain when a mode is active.**
+    `Application::RenderFrame` builds a local copy of the real `VulkanFrame` and,
+    if `PostProcess::SceneFramebuffer()` is non-null, swaps in the offscreen
+    framebuffer/color/depth textures before calling `OnRender()` — derived apps
+    (`SandboxApp`) stay completely unaware of post-process; they just draw into
+    whatever `VulkanFrame` they're handed. `PostProcess::Resolve()` then runs
+    against the *real* frame afterward: MSAA resolves via `resolveTexture`
+    straight into the swapchain (or into a single-sample intermediate first for
+    MSAA+FXAA), FXAA is a fullscreen-triangle pass over that. ImGui always
+    targets the real swapchain frame, never the offscreen one.
+  - **FXAA's fullscreen triangle needs no vertex buffer** — `fullscreen.vert`
+    generates it from `gl_VertexIndex` alone (the standard 3-vertex covering-
+    triangle trick). Its texcoord derivation needs the same Y-flip fix already
+    established for `cluster_build.comp`: NVRHI's negative-height viewport makes
+    screen-space top = NDC y=+1, so texcoord.y has to be `1.0 - pos.y`, not
+    `pos.y` — get this backwards and the resolved/FXAA'd image comes out upside
+    down relative to what it's sampling.
+  - **GLSL won't let you store a combined `sampler2D(tex, samp)` in a local
+    variable** — `fxaa.frag` (ported from `docs/reference-shaders/fxaa.frag`,
+    the pre-migration GL version) needs the combine inlined at every call site.
+    A wrapper function works for plain `texture()` calls but *not* for
+    `textureOffset()`, whose offset argument must be a compile-time-constant
+    literal at the actual call site — wrapping it in a function (even with only
+    literal callers) breaks that and glslang rejects it. Those eight calls stay
+    inlined instead.
+  - **MSAA needs its own pipeline, and that's the one real wrinkle**: a
+    `nvrhi::GraphicsPipeline` is compiled against a specific `FramebufferInfo`
+    (format + sample count), so `MeshPass`'s pipeline — built once at startup
+    against `sampleCount=1` — isn't compatible with an MSAA offscreen target.
+    Rather than rebuild it on every resize, `PostProcess::SceneFramebufferInfo()`
+    only actually changes (from the swapchain's own info) when the mode moves
+    into or out of `{MSAA, MSAA_FXAA}`, since `None`/`FXAA` both render at
+    `sampleCount=1` with a target deliberately built to exactly match the
+    swapchain's `FramebufferInfo`. `MeshPass::RebuildPipeline()` (new — recreates
+    just the pipeline object, reusing the already-loaded shaders/input
+    layout/binding layout) is called from a new `Application::OnRenderTargetsChanged()`
+    hook, which only fires on an actual `FramebufferInfo` change. `SandboxApp`
+    also builds its *initial* pipeline against `Application::GetSceneFramebufferInfo()`
+    rather than the swapchain's info directly, so a saved `options.json` with
+    MSAA already selected is correct from the very first frame (the
+    `OnRenderTargetsChanged` virtual hook can't reach a not-yet-constructed
+    derived class from the `Application` base constructor, so the getter is
+    what makes startup correct, not the hook).
 - ImGui backend — **done**. `DebugUI` now uses `imgui_impl_glfw.cpp` (Vulkan-flavored
   init) + `imgui_impl_vulkan.cpp` against `VulkanContext`'s raw Vulkan handles (new
   `GetVkInstance()`/`GetVkPhysicalDevice()`/`GetVkDevice()`/`GetVkGraphicsQueue()`/
@@ -402,8 +444,8 @@ Final state, in `apps/sandbox/CMakeLists.txt`:
   as a minimal reference/smoke-test app).
 - Update module-level docs/comments that still describe the OpenGL renderer once the
   port is done.
-- Confirm branch strategy — user referred to "the nvrhi branch"; currently this work is
-  on `dev` (no separate `nvrhi` branch exists yet as of this writing).
+- Branch strategy — done. Work happens directly on the `nvrhi` branch (no separate
+  `dev` branch in play).
 
 ## Key gotchas to remember (carried over from earlier in this migration)
 
