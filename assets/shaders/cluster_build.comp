@@ -32,10 +32,27 @@ layout(push_constant) uniform PushConstants
 
 // Unproject a screen-space pixel position to a view-space point on the near plane.
 // Camera is at the origin in view space; -Z is forward.
+//
+// NVRHI's Vulkan backend applies a negative-height viewport internally
+// (VKViewportWithDXCoords) to flip Y back to a D3D-style top-left convention —
+// the same flip that means no manual projection Y-flip is needed elsewhere
+// (see MeshPass.cpp's comment). One consequence here: screen Y=0 (top of the
+// window) maps to NDC Y=+1, not the "standard" unflipped -1, so the Y NDC term
+// below is inverted relative to X's. Getting this wrong mirrors the cluster
+// grid's rows relative to what cube_min.frag's ClusterIndex() actually reads.
 vec3 screenToViewNear(vec2 screenPos)
 {
-    vec2 ndc  = (screenPos / pc.screenSizeNearFar.xy) * 2.0 - 1.0;
-    vec4 clip = vec4(ndc, -1.0, 1.0); // NDC z = -1  →  near plane
+    vec2 uv   = screenPos / pc.screenSizeNearFar.xy;
+    vec2 ndc  = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    // GLM_FORCE_DEPTH_ZERO_TO_ONE (Assisi/Math/GLMConfig.hpp) makes every
+    // projection matrix in this engine Vulkan/D3D-style: NDC Z in [0, 1] with
+    // the near plane at Z=0, not OpenGL's [-1, 1] range (near at Z=-1). Using
+    // -1.0 here unprojected a bogus point instead of the actual near plane —
+    // increasingly wrong the further the ray is from dead-center, and
+    // therefore also worse for clusters seen at a distance/off-axis, which is
+    // exactly the "lights only work near screen center, or up close" symptom
+    // this was causing.
+    vec4 clip = vec4(ndc, 0.0, 1.0); // NDC z = 0  →  near plane (zero-to-one depth)
     vec4 view = pc.invProjection * clip;
     return view.xyz / view.w;
 }

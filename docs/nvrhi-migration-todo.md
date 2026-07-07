@@ -215,6 +215,46 @@ All bullets below landed as planned:
     now) — user confirmed correct shading including the colored point lights, and
     confirmed a window resize (which rebuilds the cluster AABBs via
     `SandboxApp::OnResize` → `LightingSystem::Resize`) stays stable.
+  - **Two real bugs found and fixed while stress-testing with a much bigger, denser
+    scene (`assets/levels/Lights.alvl`, new — 270 point + 29 spot + 1 directional
+    light, 300 total, over a 60×60 ground):**
+    1. `cluster_build.comp`'s `screenToViewNear` assumed the **standard, unflipped**
+       Vulkan NDC-to-screen mapping for Y. NVRHI's negative-height viewport
+       (`VKViewportWithDXCoords`, the same flip covered in the material-textures
+       section above) means screen Y=0 (top) is actually NDC Y=+1, not the "obvious"
+       -1 — fixed by flipping the Y NDC term.
+    2. `screenToViewNear` unprojected the near plane at `clip.z = -1.0` — the OpenGL
+       clip-space convention. This engine's `GLM_FORCE_DEPTH_ZERO_TO_ONE`
+       (`Assisi/Math/GLMConfig.hpp`) makes every projection matrix Vulkan/D3D-style
+       (NDC Z in `[0, 1]`, near plane at Z=**0**), so `-1.0` unprojected a bogus point
+       instead of the actual near plane — increasingly wrong the further off-axis/off-
+       center the ray, which is exactly why the symptom looked distance- and
+       screen-position-dependent ("lights only work near screen center" / "look away
+       while still in view and they turn off").
+    - **A third, much bigger issue turned out to be masking whether either fix had
+      even landed**: `apps/sandbox/CMakeLists.txt`'s shader-SPIR-V-to-exe copy step
+      was a `POST_BUILD` hook on the `Assisi-Sandbox` executable target. `POST_BUILD`
+      only re-runs when the *executable itself* relinks (i.e. a `.cpp` changed) — a
+      shader-only edit never touches C++, so ninja correctly saw the exe as
+      "up to date" and silently skipped the copy, even though the separate
+      `Assisi-Sandbox-VkShaders` custom target *did* recompile the `.spv`. Every
+      "fix, rebuild, relaunch, still broken" cycle above was against a stale shader
+      binary from before the session even started debugging this. **Fixed by giving
+      each shader's copy its own `add_custom_command(OUTPUT ...)` with a real
+      dependency edge on that shader's compiled `.spv`** (tracked via a stamp file,
+      since ninja needs a literal path for `OUTPUT` — `$<TARGET_FILE_DIR:...>` only
+      works inside `COMMAND`), so the copy now reruns whenever the shader changes,
+      independent of whether the executable relinks. **This class of bug (editing an
+      asset that's copied via a target-level `POST_BUILD`/`PRE_BUILD` hook, expecting
+      it to always re-run) is worth remembering for any future asset pipeline step in
+      this repo** — `PRE_BUILD`/`POST_BUILD` custom commands are keyed to the
+      *target's own build actions*, not to their `DEPENDS`.
+  - `assets/levels/Lights.alvl` is a permanent addition — a stress-test level (big
+    ground, 14 scattered dynamic cubes, 300 lights) for exercising the clustered
+    culling path under real load, not just a couple of lights. Confirmed 300 lights
+    holds ~90 FPS on the dev laptop's integrated/lower-end GPU with zero profiling or
+    optimization work — a reasonable baseline; real profiling is future work, not
+    done here.
 - `Application::RebuildPostProcess`/the MSAA/FXAA post-process pass — **currently
   deleted outright**, not just dormant (see section 2's judgment-call notes). Needs
   NVRHI render-target + FXAA pass equivalents if brought back, or could stay dropped
