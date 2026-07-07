@@ -78,8 +78,7 @@ class Application
     Render::Shader                              _fxaaShader;
     bool                                        _showOptionsWindow = false;
 
-    int    _fps               = 0;
-    double _sleepResolutionMs = 0.0;
+    int _fps = 0;
 };
 
 } // namespace Assisi::App

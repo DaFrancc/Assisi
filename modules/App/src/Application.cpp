@@ -183,6 +183,33 @@ glm::mat4 Application::MakeProjection(float fovDegrees, float zNear, float zFar)
     return glm::perspective(glm::radians(fovDegrees), aspect, zNear, zFar);
 }
 
+namespace
+{
+using Clock = std::chrono::steady_clock;
+
+/// Waits until `target`. Sleeps for most of the remaining time, leaving
+/// `margin` to spin — sleep_for() is coarse/jittery, but a short busy-wait
+/// for the last couple of ms reliably lands on the target instead of
+/// overshooting it.
+void SleepUntil(Clock::time_point target, Clock::duration margin = std::chrono::milliseconds(2))
+{
+    const Clock::duration remaining = target - Clock::now();
+    if (remaining <= Clock::duration::zero())
+    {
+        return; // already at/past the target — don't wait at all
+    }
+
+    if (remaining > margin)
+    {
+        std::this_thread::sleep_for(remaining - margin);
+    }
+
+    while (Clock::now() < target)
+    {
+    } // spin for the remainder (all of it, if remaining <= margin)
+}
+} // namespace
+
 void Application::Run()
 {
 #ifdef _WIN32
@@ -197,35 +224,21 @@ void Application::Run()
 
     _window->SetVSyncEnabled(false);
 
-    // Measure actual sleep resolution after timeBeginPeriod(1) is in effect.
-    _sleepResolutionMs = [&]() -> double
-    {
-        constexpr int kSamples = 20;
-        double total = 0.0;
-        for (int i = 0; i < kSamples; ++i)
-        {
-            const auto before = Clock::now();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-            total += Seconds(Clock::now() - before).count();
-        }
-        return (total / kSamples) * 1000.0;
-    }();
-
     OnStart();
 
-    auto   prevTime       = Clock::now();
-    auto   nextRenderTime = Clock::now();
-    double accumulator    = 0.0;
+    Clock::time_point prevTime       = Clock::now();
+    Clock::time_point nextRenderTime = Clock::now();
+    double            accumulator    = 0.0;
 
-    auto   renderPrevTime = Clock::now();
     double fpsAccum       = 0.0;
     int    fpsFrameCount  = 0;
 
     while (!_window->ShouldClose())
     {
-        const auto   now = Clock::now();
-        const double dt  = std::min(Seconds(now - prevTime).count(), 0.25);
-        prevTime         = now;
+        const Clock::time_point now   = Clock::now();
+        const double            rawDt = Seconds(now - prevTime).count();
+        const double            dt    = std::min(rawDt, 0.25);
+        prevTime                      = now;
 
         Window::WindowContext::PollEvents();
         _input->Poll();
@@ -244,31 +257,17 @@ void Application::Run()
 
         OnUpdate(static_cast<float>(dt));
 
-        // Hybrid sleep: yield to the OS in 1 ms chunks, spin the last millisecond.
-        {
-            constexpr auto kSpinThreshold = std::chrono::milliseconds(1);
-            while (Clock::now() < nextRenderTime - kSpinThreshold)
-            {
-                std::this_thread::sleep_for(kSpinThreshold);
-            }
-            while (Clock::now() < nextRenderTime)
-            {
-            }
-        }
-        nextRenderTime += std::chrono::duration_cast<Clock::duration>(Seconds(renderStep));
+        SleepUntil(nextRenderTime);
+        nextRenderTime = Clock::now() + std::chrono::duration_cast<Clock::duration>(Seconds(renderStep));
 
         // FPS tracking.
+        fpsAccum += rawDt;
+        ++fpsFrameCount;
+        if (fpsAccum >= 0.5)
         {
-            const auto renderNow = Clock::now();
-            fpsAccum += Seconds(renderNow - renderPrevTime).count();
-            renderPrevTime = renderNow;
-            ++fpsFrameCount;
-            if (fpsAccum >= 0.5)
-            {
-                _fps          = static_cast<int>(static_cast<double>(fpsFrameCount) / fpsAccum);
-                fpsAccum      = 0.0;
-                fpsFrameCount = 0;
-            }
+            _fps          = static_cast<int>(static_cast<double>(fpsFrameCount) / fpsAccum);
+            fpsAccum      = 0.0;
+            fpsFrameCount = 0;
         }
 
         RenderFrame();

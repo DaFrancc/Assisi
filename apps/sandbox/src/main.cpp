@@ -335,7 +335,6 @@ void SandboxApp::DrawDiagnosticsWindow()
 {
     ImGui::Begin("Diagnostics");
     ImGui::Text("FPS: %d", GetFps());
-    ImGui::Text("Sleep resolution: %.2f ms", GetSleepResolutionMs());
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Scroll: FOV  |  LMB: select  |  Esc: quit");
