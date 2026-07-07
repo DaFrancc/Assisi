@@ -56,12 +56,22 @@ add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
 # the exe and the app would keep running a stale shader. Learned this the
 # hard way debugging what looked like a persistent lighting bug that was
 # actually just an out-of-date .spv.
-set(_sandbox_vk_shader_dir "${CMAKE_SOURCE_DIR}/assets/shaders")
+# Auto-discovered, like the assets glob above — a new .vert/.frag/.comp under
+# assets/shaders/ just needs the file created, no CMakeLists.txt edit. (The old
+# hardcoded file list was easy to forget to update: add a shader, wire it up in
+# C++, and get a runtime "file not found" instead of a build error.)
+file(GLOB_RECURSE _sandbox_vk_shader_sources
+    CONFIGURE_DEPENDS
+    LIST_DIRECTORIES false
+    "${CMAKE_SOURCE_DIR}/assets/shaders/*.vert"
+    "${CMAKE_SOURCE_DIR}/assets/shaders/*.frag"
+    "${CMAKE_SOURCE_DIR}/assets/shaders/*.comp"
+)
+
 set(_sandbox_shader_copies "")
 
-foreach(_shader_name cube_min.vert cube_min.frag imgui_opener.vert imgui_opener.frag
-                     cluster_build.comp cluster_cull.comp)
-    set(_shader_in "${_sandbox_vk_shader_dir}/${_shader_name}")
+foreach(_shader_in ${_sandbox_vk_shader_sources})
+    get_filename_component(_shader_name "${_shader_in}" NAME)
     set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_name}.spv")
     add_custom_command(
         OUTPUT "${_shader_out}"

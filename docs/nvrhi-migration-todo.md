@@ -346,19 +346,47 @@ All bullets below landed as planned:
     in this codebase needs the same `frontCounterClockwise = true`, and must NOT
     apply a manual projection Y-flip.**
 
-### 4. Shader compilation pipeline
+### 4. Shader compilation pipeline — DONE (build-time, kept — not switched to runtime)
 
-Right now GLSL→SPIR-V compilation is wired ad hoc per-app (`apps/vk_triangle`,
-`apps/sandbox`'s `cube_min.vert/frag`) via a CMake custom command calling
-`glslang-standalone`. Once every shader (`mesh.vert/frag`, `fxaa.frag`, `screen.vert`,
-`cluster_build.comp`, `cluster_cull.comp`) needs this, decide:
-- **Build-time compilation for everything** (current approach, extended to cover all
-  shaders) — simple, but no shader hot-reload without a rebuild.
-- **Runtime compilation via glslang's library API** (not just the standalone tool) —
-  keeps shader edit/reload working without a full rebuild, more integration work.
+Briefly switched to runtime compilation via glslang's C++ API (motivated by the
+`POST_BUILD` shader-copy bug in section 3's stress-test writeup above), then
+**reverted**. The actual root cause of that bug was the `POST_BUILD` hook, not
+build-time compilation itself — once that's fixed with proper `OUTPUT`/`DEPENDS`
+tracking, build-time compilation has no staleness risk *and* still catches broken
+shaders at `cmake --build` time, which runtime compilation gives up (a broken shader
+would only surface when the app actually hits that code path). Runtime compilation's
+only real advantage, hot-reload, was never implemented — not worth trading away a
+build-time safety net for a feature that doesn't exist yet. If shader iteration speed
+becomes a real pain point once content development starts, add hot-reload
+deliberately then, not as an incidental side effect of a bug fix.
 
-Worth an explicit decision once real content development starts — not urgent while
-still proving the pipeline out with hardcoded/test shaders.
+Final state, in `apps/sandbox/CMakeLists.txt`:
+- Shaders are **auto-discovered** via `file(GLOB_RECURSE ... assets/shaders/*.vert
+  *.frag *.comp)` (`CONFIGURE_DEPENDS`, matching the assets glob right above it) —
+  not a hardcoded file list. A new shader under `assets/shaders/` just needs the file
+  created; no `CMakeLists.txt` edit. This caught something real the first time it
+  ran: `assets/shaders/mesh.vert/frag`, `fxaa.frag`, and `screen.vert` were
+  pre-migration OpenGL shaders (GL-runtime-compiled via the now-deleted
+  `Render::Shader`) still sitting in `assets/shaders/` — the old hardcoded file list
+  had silently never included them, so they'd been dead weight the entire migration
+  without anyone noticing. The glob tried to compile them as Vulkan SPIR-V and
+  correctly failed the build (loose non-block uniforms, missing `layout(location)` —
+  not valid for Vulkan GLSL) — exactly the fail-fast build-time compilation is for.
+  Moved (not deleted) to `docs/reference-shaders/` since they're genuinely useful
+  reference material for later: `mesh.vert/frag` has the full PBR
+  normal/metallic/roughness-map pipeline `cube_min.frag` doesn't have yet (see
+  section 3's clustered-lighting bullet — fixed constants stand in for those maps
+  currently), and `fxaa.frag`/`screen.vert` is the pre-migration post-process pass
+  for whenever that's revisited (see the still-open post-process bullet in section 3).
+- Each shader's `.spv` compile and its copy next to the exe are each their own
+  `add_custom_command(OUTPUT ...)` with a real `DEPENDS` edge (a stamp file for the
+  copy, since ninja needs a literal `OUTPUT` path — `$<TARGET_FILE_DIR:...>` only
+  works inside `COMMAND`) — **not** a `POST_BUILD` hook on `Assisi-Sandbox`, which is
+  what caused the original staleness bug (`POST_BUILD` only re-runs when the
+  *executable itself* relinks, not on asset-only changes).
+- `apps/vk_triangle` (standalone spike, doesn't link `Assisi::Render`) is untouched,
+  still uses `glslang-standalone` directly with its own hardcoded file list — low
+  stakes either way given section 6's still-open question about deleting it.
 
 ### 5. Vendor/dependency cleanup (final pass, do last)
 
