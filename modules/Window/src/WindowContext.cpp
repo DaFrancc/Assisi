@@ -7,7 +7,8 @@
 namespace Assisi::Window
 {
 WindowContext::WindowContext(const WindowConfiguration &configuration, GLFWframebuffersizefun framebufferSizeCallback)
-    : _glfwLibrary(GlfwLibrary::Acquire()), _isVSyncEnabled(configuration.EnableVSync)
+    : _glfwLibrary(GlfwLibrary::Acquire()), _isVSyncEnabled(configuration.EnableVSync),
+      _hasClientApiContext(configuration.CreateClientApiContext)
 {
     if (!_glfwLibrary || !_glfwLibrary->IsValid())
     {
@@ -36,11 +37,12 @@ WindowContext::WindowContext(const WindowConfiguration &configuration, GLFWframe
         return;
     }
 
-    /* Make context current (only meaningful for some backends). */
-    glfwMakeContextCurrent(_nativeWindowHandle);
-
-    /* Apply vertical sync preference. */
-    glfwSwapInterval(_isVSyncEnabled ? 1 : 0);
+    if (_hasClientApiContext)
+    {
+        /* Make context current and apply vertical sync preference. */
+        glfwMakeContextCurrent(_nativeWindowHandle);
+        glfwSwapInterval(_isVSyncEnabled ? 1 : 0);
+    }
 
     /* Install framebuffer resize callback. */
     if (framebufferSizeCallback != nullptr)
@@ -61,11 +63,13 @@ WindowContext::~WindowContext()
 
 WindowContext::WindowContext(WindowContext &&other) noexcept
     : _glfwLibrary(std::move(other._glfwLibrary)), _nativeWindowHandle(other._nativeWindowHandle),
-      _isValid(other._isValid), _isVSyncEnabled(other._isVSyncEnabled)
+      _isValid(other._isValid), _isVSyncEnabled(other._isVSyncEnabled),
+      _hasClientApiContext(other._hasClientApiContext)
 {
     other._nativeWindowHandle = nullptr;
     other._isValid = false;
     other._isVSyncEnabled = false;
+    other._hasClientApiContext = true;
 }
 
 WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
@@ -82,10 +86,12 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
         _nativeWindowHandle = other._nativeWindowHandle;
         _isValid = other._isValid;
         _isVSyncEnabled = other._isVSyncEnabled;
+        _hasClientApiContext = other._hasClientApiContext;
 
         other._nativeWindowHandle = nullptr;
         other._isValid = false;
         other._isVSyncEnabled = false;
+        other._hasClientApiContext = true;
     }
 
     return *this;
@@ -118,7 +124,10 @@ void WindowContext::RequestClose() const
 
 void WindowContext::SwapBuffers() const
 {
-    glfwSwapBuffers(_nativeWindowHandle);
+    if (_hasClientApiContext)
+    {
+        glfwSwapBuffers(_nativeWindowHandle);
+    }
 }
 
 void WindowContext::SetTitle(const std::string &title) const
@@ -135,9 +144,12 @@ void WindowContext::SetVSyncEnabled(bool enabled)
 {
     _isVSyncEnabled = enabled;
 
-    /* Swap interval is per-context; ensure the correct window is current. */
-    glfwMakeContextCurrent(_nativeWindowHandle);
-    glfwSwapInterval(_isVSyncEnabled ? 1 : 0);
+    if (_hasClientApiContext)
+    {
+        /* Swap interval is per-context; ensure the correct window is current. */
+        glfwMakeContextCurrent(_nativeWindowHandle);
+        glfwSwapInterval(_isVSyncEnabled ? 1 : 0);
+    }
 }
 
 WindowSize WindowContext::GetWindowSize() const

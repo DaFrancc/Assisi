@@ -123,5 +123,10 @@ class WindowContext
 
     /// @brief Mirrors the current swap-interval setting for IsVSyncEnabled().
     bool _isVSyncEnabled = false;
+
+    /// @brief Mirrors configuration.CreateClientApiContext. GLFW errors if
+    /// context-only calls (SwapBuffers, SetVSyncEnabled) are made on a window
+    /// created with GLFW_NO_API, so those calls are skipped when this is false.
+    bool _hasClientApiContext = true;
 };
 } /* namespace Assisi::Window */
