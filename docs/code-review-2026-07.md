@@ -95,12 +95,11 @@ checkboxes so this can be burned down like the migration doc was.
   documented** on the field (both hazards + the fix). Invalidation still TODO
   when real assets land. (Also: `Draw() const` + `mutable` cache is
   const-correctness theater.)
-- [ ] **Vestigial frames-in-flight machinery** in `VulkanContext`:
+- [x] **Vestigial frames-in-flight machinery** in `VulkanContext`:
   `kFramesInFlight` semaphore arrays + `_frameIndex` while `waitForIdle()` in
   `BeginFrame` guarantees zero overlap; `_renderFinishedSemaphores` is indexed
-  per-frame rather than per-swapchain-image (masked only by that wait). Either
-  commit to the simple design (one semaphore pair) or pipeline properly with
-  fences.
+  per-frame rather than per-swapchain-image (masked only by that wait).
+  *Fixed:* commit b7ac58c collapsed it to a single semaphore pair.
 - [x] **Error-handling is four dialects**: `std::expected` (Core), `bool`+log
   (Render), log-and-continue with results ignored (VulkanContext), `std::exit`
   (Application). Pick a convention per layer and enforce it. Convention now:

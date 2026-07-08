@@ -254,16 +254,16 @@ Checkboxes so this can be burned down like the round-1 doc was.
 
 ## Style / consistency / rot
 
-- [ ] **`SceneRegistry` allocates a `std::string` per `Get`/`Has`/`Destroy`/
-  `SetActive` lookup** (`SceneRegistry.cpp` — `_scenes.find(std::string(name))`,
-  `contains(std::string(name))`). This is the exact defect round 1 fixed in
-  `ActionMap` with `TransparentStringHash`. The convention was established
-  and then not swept across the codebase. Apply the same transparent
-  hash/equality to `SceneRegistry::_scenes`.
-- [ ] **`_scenes.Create("Main").value()`** (`main.cpp:195`) — `.value()` on
-  a failed `expected` throws `bad_expected_access`, in a codebase whose
-  signature round-1 achievement was the no-exceptions bring-up convention.
-  Branch and bail like every other bring-up failure.
+- [x] **`SceneRegistry` allocates a `std::string` per `Get`/`Has`/`Destroy`/
+  `SetActive` lookup**. *Fixed:* `_scenes` now uses transparent hash + equality
+  so lookups take `std::string_view` without allocating. The hash itself was
+  de-duplicated in the process — `TransparentStringHash` moved to a shared
+  `Assisi/Core/StringHash.hpp`, and `ActionMap`'s copy (the round-1 original)
+  now uses it too, so there is one definition instead of a spreading clone.
+- [x] **`_scenes.Create("Main").value()`** (`main.cpp:195`) — `.value()` on
+  a failed `expected` throws `bad_expected_access`. *Fixed:* branch on the
+  result, log an error, and bail from `OnStart` like every other bring-up
+  failure (a null `_scene` is already handled downstream).
 - [x] **`QueryView` exposes public members with private naming** —
   `_pools`, `_primary` on a public aggregate (`Query.hpp:27-28`), and the
   nested `Iterator`'s `_entities`/`_pos`/`_pools` likewise. *Fixed:* members and
@@ -275,26 +275,25 @@ Checkboxes so this can be burned down like the round-1 doc was.
   `_pools` was the only way to reach a mutable pool pointer and call
   `Add`/`Remove` around `Scene::Add`'s `IsAlive` gate. Iteration still yields
   mutable `Ts&`, so in-place component writes are unaffected.
-- [ ] **Dead initializers:** `_yaw = -116.6f; _pitch = -24.1f`
-  (`main.cpp:129-130`) — magic values unconditionally overwritten by
-  `SetupCamera` (`main.cpp:152-153`). Initialize to 0 or drop the
-  initializers; the current values send a reader hunting for meaning that
-  isn't there.
-- [ ] **Stale comment:** `VulkanContext.cpp:6` cites
-  `apps/vk_triangle/src/main.cpp` as "the original proof of this pattern" —
-  that app was deleted (round 1 removed `apps/editor`; `vk_triangle` is gone
-  too). Point at the Donut reference alone, or at this file's own history.
-- [ ] **Stale bookkeeping in round-1 doc:** the frames-in-flight item
-  (`code-review-2026-07.md:98-103`) is still unchecked but was fixed by
-  commit b7ac58c ("collapse vestigial frames-in-flight machinery to one
-  semaphore pair"). Check it off — the burn-down doc only works if it's
-  trustworthy.
-- [ ] **reflectgen `mat4` is half-implemented TODO codegen**
-  (`reflectgen.py:113-116`): serialize emits `nullptr /* TODO */` (a `mat4`
-  field silently round-trips as JSON null), deserialize emits a comment.
-  Per the no-stubs principle: make an `AFIELD()` on a `glm::mat4` a hard
-  generation *error* until it's actually supported. Silent-null is the worst
-  of the three options.
+- [x] **Dead initializers:** `_yaw = -116.6f; _pitch = -24.1f`. *Fixed:*
+  initialized to `0.f` with a note that `SetupCamera()` sets the real values
+  before first use.
+- [x] **Stale comment:** `VulkanContext.cpp:6` cited the deleted
+  `apps/vk_triangle/src/main.cpp`. *Fixed:* the dead reference is gone; the
+  comment now points at the Donut framework (`DeviceManager_VK.cpp`) alone.
+- [x] **Stale bookkeeping in round-1 doc:** the frames-in-flight item
+  (`code-review-2026-07.md:98-103`) was fixed by commit b7ac58c but left
+  unchecked. *Fixed:* checked off in the round-1 doc with a pointer to b7ac58c.
+- [x] **reflectgen `mat4` is half-implemented TODO codegen**. *Fixed:* `mat4`
+  is now actually implemented — serialized as a flat 16-float array in
+  column-major order, deserialized through glm::mat4's matching 16-scalar
+  constructor (round-trip verified exact against glm, no transpose). Separately,
+  the no-stubs gap it exposed is closed: an `UNSUPPORTED_TYPES` guard makes a
+  non-transient `AFIELD()` of any deliberately-unimplemented type a hard
+  generation error (with a clear message) instead of a silent null round-trip —
+  currently empty since every recognised type is supported, but ready for the
+  next one. Verified: real headers and a `mat4` fixture generate; a fixture of a
+  guarded type exits non-zero.
 - [ ] **Inspector can't edit `EntityRef` fields** — `FieldType::EntityRef`
   falls into the `default:` "[unsupported type]" branch of
   `EditComponentFields` (`main.cpp:585-587`). Minor today; note it so the
