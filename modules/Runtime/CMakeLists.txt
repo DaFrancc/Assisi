@@ -10,12 +10,14 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/LightingSystem.hpp"
     "include/Assisi/Runtime/Lifecycle.hpp"
     "include/Assisi/Runtime/Renderer.hpp"
+    "include/Assisi/Runtime/SceneRenderer.hpp"
     "include/Assisi/Runtime/SceneSerializer.hpp"
   PRIVATE
     "src/Camera.cpp"
     "src/Hierarchy.cpp"
     "src/LightingSystem.cpp"
     "src/Renderer.cpp"
+    "src/SceneRenderer.cpp"
     "src/SceneSerializer.cpp"
 )
 

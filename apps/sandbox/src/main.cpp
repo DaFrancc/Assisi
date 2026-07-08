@@ -15,7 +15,6 @@
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/DefaultMeshes.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
-#include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/Texture.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
@@ -23,8 +22,7 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
-#include <Assisi/Runtime/LightingSystem.hpp>
-#include <Assisi/Runtime/Renderer.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -76,16 +74,6 @@ class SandboxApp : public Assisi::App::Application
     void HandleEntityPicking();
     void UpdateCamera(float dt);
 
-    /// @brief Rebuilds the cluster froxel grid for the given projection (on a
-    /// dedicated command list, matching the setup/resize path).
-    ///
-    /// Call whenever the projection changes — window resize or a runtime
-    /// FOV/near/far edit. If the froxel grid drifts from the render projection,
-    /// peripheral froxels stop matching it and the lighting shows rectangular
-    /// artifacts. This is the one place the rebuild rationale lives; the member
-    /// and call site point here.
-    void RebuildClusterGrid(int width, int height, const glm::mat4 &projection);
-
     // --- ImGui panels ---
     void DrawDiagnosticsWindow();
     void DrawLevelsWindow();
@@ -114,20 +102,15 @@ class SandboxApp : public Assisi::App::Application
     Assisi::ECS::Scene                *_scene = nullptr;
     Assisi::Physics::PhysicsWorld      _physics;
 
-    // --- Rendering (NVRHI/Vulkan) ---
+    // --- Rendering ---
+    // The engine's default scene-render path owns lighting + the mesh pipeline;
+    // OnRender is a single Render() call.
+    Assisi::Runtime::SceneRenderer _sceneRenderer;
+
     // Every entity currently shares this one mesh/texture — the scene has no
     // per-entity asset loading yet, see docs/nvrhi-migration-todo.md section 1.
     Assisi::Render::MeshBuffer _cubeMesh;
     Assisi::Render::Texture    _albedoTexture;
-    Assisi::Render::MeshPass   _meshPass;
-
-    // Clustered forward lighting — queries PointLight/SpotLight/DirectionalLight
-    // components from the scene each frame and feeds them to cube_min.frag.
-    Assisi::Runtime::LightingSystem _lightingSystem;
-
-    // The projection the cluster froxel grid was last built against; a mismatch
-    // triggers a rebuild (see RebuildClusterGrid). Identity forces one on frame 1.
-    glm::mat4 _clusterProjection{1.f};
 
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
@@ -249,38 +232,13 @@ void SandboxApp::SetupScene()
     nvrhi::IDevice *device = vulkanContext->GetDevice();
 
     const auto fbSize = GetWindow().GetFramebufferSize();
-    const float aspect = fbSize.Height > 0 ? static_cast<float>(fbSize.Width) / static_cast<float>(fbSize.Height) : 1.f;
     const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
-    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(*cam, aspect);
 
-    // ClusterGrid must be initialized (and its buffers allocated) before
-    // MeshPass::Initialize, which binds those buffers into every binding set
-    // it creates.
-    nvrhi::CommandListHandle setupCommandList = device->createCommandList();
-    setupCommandList->open();
-    const bool lightingOk = _lightingSystem.Initialize(device, setupCommandList, fbSize.Width, fbSize.Height,
-                                                        cam->nearZ, cam->farZ, projection);
-    setupCommandList->close();
-    device->executeCommandList(setupCommandList);
-
-    if (!lightingOk)
-    {
-        Assisi::Core::Log::Error("Failed to initialise the clustered lighting pipeline.");
-        RequestClose();
-        return;
-    }
-
-    // Record the projection the froxels were just built against so OnRender only
-    // rebuilds them when it actually changes.
-    _clusterProjection = projection;
-
+    // The engine's default scene-render path owns lighting + the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
-    // FramebufferInfo directly, so this is already correct even if options.json
-    // has an MSAA mode saved from a previous run.
-    if (!_meshPass.Initialize(device, GetSceneFramebufferInfo(), "shaders/cube_min.vert.spv",
-                              "shaders/cube_min.frag.spv", _lightingSystem.Grid()))
+    // FramebufferInfo so it's already correct if options.json saved an MSAA mode.
+    if (!_sceneRenderer.Initialize(device, GetSceneFramebufferInfo(), fbSize.Width, fbSize.Height, *cam))
     {
-        Assisi::Core::Log::Error("Failed to initialise the scene mesh pass.");
         RequestClose();
         return;
     }
@@ -293,26 +251,6 @@ void SandboxApp::SetupScene()
     }
 }
 
-void SandboxApp::RebuildClusterGrid(int width, int height, const glm::mat4 &projection)
-{
-    auto *vulkanContext = Assisi::Render::RenderSystem::GetVulkanContext();
-    if (!vulkanContext || !_meshPass.IsValid())
-    {
-        return;
-    }
-
-    const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
-
-    nvrhi::IDevice *device = vulkanContext->GetDevice();
-    nvrhi::CommandListHandle commandList = device->createCommandList();
-    commandList->open();
-    _lightingSystem.Resize(commandList, width, height, cam->nearZ, cam->farZ, projection);
-    commandList->close();
-    device->executeCommandList(commandList);
-
-    _clusterProjection = projection;
-}
-
 void SandboxApp::OnResize(int width, int height)
 {
     const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
@@ -320,13 +258,12 @@ void SandboxApp::OnResize(int width, int height)
     {
         return;
     }
-    const float aspect = height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
-    RebuildClusterGrid(width, height, Assisi::Runtime::ProjectionMatrix(*cam, aspect));
+    _sceneRenderer.Resize(width, height, *cam);
 }
 
 void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (_meshPass.IsValid() && !_meshPass.RebuildPipeline(framebufferInfo))
+    if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
     {
         Assisi::Core::Log::Error("Failed to rebuild the mesh pass pipeline after a render-target change.");
     }
@@ -334,38 +271,18 @@ void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebuffe
 
 void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
 {
-    if (!_meshPass.IsValid() || !_scene)
+    if (!_sceneRenderer.IsValid() || !_scene)
     {
         return;
     }
 
+    // The camera lives in its own scene, so propagate it here; SceneRenderer
+    // propagates the game scene it draws.
     Assisi::Runtime::PropagateTransforms(_cameraScene);
-    Assisi::Runtime::PropagateTransforms(*_scene);
-
     const auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
     const auto *cam          = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
-    const glm::mat4 view     = Assisi::Runtime::ViewMatrix(*camTransform);
 
-    const float aspect =
-        frame.height > 0 ? static_cast<float>(frame.width) / static_cast<float>(frame.height) : 1.f;
-    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(*cam, aspect);
-    // No manual Y-flip here: NVRHI's Vulkan backend already sets a negative-height
-    // viewport (VKViewportWithDXCoords) to flip Y back to the standard top-left
-    // convention, so glm::perspective's output is correct as-is. Flipping here too
-    // double-compensates and renders upside down.
-
-    // Keep the froxel grid in sync with the render projection (see RebuildClusterGrid).
-    if (projection != _clusterProjection)
-    {
-        RebuildClusterGrid(frame.width, frame.height, projection);
-    }
-
-    _lightingSystem.Update(frame.commandList, *_scene, view);
-    _meshPass.UpdateFrameConstants(frame.commandList, view, frame.width, frame.height, cam->nearZ, cam->farZ,
-                                   _lightingSystem.DirLightCount());
-
-    Assisi::Runtime::DrawScene(*_scene, view, projection, frame.commandList, frame.framebuffer, frame.width,
-                               frame.height, _meshPass);
+    _sceneRenderer.Render(frame, *_scene, *camTransform, *cam);
 }
 
 void SandboxApp::OnFixedUpdate(float dt)
