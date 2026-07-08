@@ -110,10 +110,13 @@ TYPES: dict[str, TypeCodegen] = {
         'Quat',
         '{{ {a}.w, {a}.x, {a}.y, {a}.z }}',
         '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = glm::quat{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
+    # glm::mat4 — 16 floats in column-major order (m[col][row]). Serialized as a
+    # flat JSON array of 16; glm::mat4's 16-scalar constructor consumes the same
+    # column-major order, so the round-trip is exact.
     'glm::mat4': TypeCodegen(
         'Mat4',
-        'nullptr /* TODO: mat4 serialize */',
-        '/* TODO: mat4 deserialize for field {f} */'),
+        '{{ {a}[0][0], {a}[0][1], {a}[0][2], {a}[0][3], {a}[1][0], {a}[1][1], {a}[1][2], {a}[1][3], {a}[2][0], {a}[2][1], {a}[2][2], {a}[2][3], {a}[3][0], {a}[3][1], {a}[3][2], {a}[3][3] }}',
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = glm::mat4{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>(), _v[4].get<float>(), _v[5].get<float>(), _v[6].get<float>(), _v[7].get<float>(), _v[8].get<float>(), _v[9].get<float>(), _v[10].get<float>(), _v[11].get<float>(), _v[12].get<float>(), _v[13].get<float>(), _v[14].get<float>(), _v[15].get<float>() }}; }} }}'),
     # ECS::Entity — serialized as a stable serial index via SceneSerializer.
     # Accepts both qualified and unqualified names.
     'ECS::Entity': TypeCodegen(
@@ -125,6 +128,14 @@ TYPES: dict[str, TypeCodegen] = {
         '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0u)) : nlohmann::json(nullptr))',
         '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint32_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
 }
+
+# Types reflectgen recognises but deliberately does not (de)serialize. An
+# AFIELD() of one of these is a hard generation error rather than a silent skip
+# or a null-round-trip — emitting a stub that quietly loses data is worse than
+# failing loudly. Mark the field transient or implement its codegen in TYPES.
+# (Currently empty — every recognised type is supported — but the guard stays
+# so the next deliberately-unsupported type fails loudly instead of silently.)
+UNSUPPORTED_TYPES: dict[str, str] = {}
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -473,6 +484,20 @@ def _detect_include_path(header: Path) -> str:
         return header.name
 
 
+def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:
+    """Fail generation if any non-transient AFIELD has a known-unsupported type."""
+    for comp in components:
+        for f in comp.fields:
+            if f.args.has('transient'):
+                continue
+            reason = UNSUPPORTED_TYPES.get(f.cpp_type)
+            if reason:
+                raise ValueError(
+                    f"{header_name}: field '{comp.name}::{f.name}' has type "
+                    f"'{f.cpp_type}', which reflectgen cannot serialize ({reason}). "
+                    f"Implement its codegen or mark the field AFIELD(transient).")
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Entry point
 # ──────────────────────────────────────────────────────────────────────────────
@@ -498,6 +523,7 @@ def main():
         print(f'reflectgen: {header.name} -> {include_path}')
         try:
             components = parse_header(header)
+            _check_unsupported(components, header.name)
         except Exception as e:
             print(f'  error: {e}', file=sys.stderr)
             ok = False
