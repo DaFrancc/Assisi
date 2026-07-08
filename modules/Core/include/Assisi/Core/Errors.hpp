@@ -15,6 +15,7 @@ enum class AssetError
     InvalidVirtualPath, ///< The virtual path is empty, absolute, or contains `..` traversal.
     RootEscape,         ///< The resolved path would escape the asset root directory.
     FileOpenFailed,     ///< The file exists but could not be opened.
-    FileReadFailed      ///< The file was opened but reading its contents failed.
+    FileReadFailed,     ///< The file was opened but reading its contents failed.
+    FileWriteFailed     ///< The file could not be created or written (writable user root).
 };
 } // namespace Assisi::Core

@@ -30,6 +30,12 @@
 
 #ifdef _WIN32
 
+// Absolute crash-dump path, resolved under the writable user root at startup so
+// the write target is fixed before a crash (doing filesystem resolution inside
+// the handler, on a possibly-corrupt heap, is best avoided). Empty until the
+// Application constructor sets it; the handler falls back to a bare name.
+static std::string gCrashDumpPath;
+
 static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
 {
     const DWORD code = info->ExceptionRecord->ExceptionCode;
@@ -48,7 +54,8 @@ static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
 
     Assisi::Core::Log::Fatal("Crash: unhandled exception 0x{:08X} ({})", static_cast<unsigned int>(code), name);
 
-    HANDLE hFile = CreateFileA("crash.dmp", GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    const char *dumpPath = gCrashDumpPath.empty() ? "crash.dmp" : gCrashDumpPath.c_str();
+    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (hFile != INVALID_HANDLE_VALUE)
     {
         MINIDUMP_EXCEPTION_INFORMATION mei{};
@@ -57,7 +64,7 @@ static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
         mei.ClientPointers    = FALSE;
         MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &mei, nullptr, nullptr);
         CloseHandle(hFile);
-        Assisi::Core::Log::Fatal("Crash: minidump written to crash.dmp");
+        Assisi::Core::Log::Fatal("Crash: minidump written to {}", dumpPath);
     }
 
     return EXCEPTION_EXECUTE_HANDLER;
@@ -112,10 +119,20 @@ Application::Application()
     // (which run after this base ctor) are captured. All fallible engine
     // bring-up lives in Initialize() so failures can unwind normally instead
     // of std::exit()-ing past every destructor.
+    // Log and crash dump are writable runtime outputs — resolve them under the
+    // user root (defaults to the exe dir) so they don't depend on the CWD the
+    // process was launched from. The user root initializes lazily here, before
+    // AssetSystem::Initialize() discovers the read-only asset root.
     Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
-    Core::GetLogger().AddSink(std::make_shared<Core::FileSink>("assisi.log"));
+    const std::filesystem::path logPath = Core::AssetSystem::ResolveUser("assisi.log").value_or("assisi.log");
+    Core::GetLogger().AddSink(std::make_shared<Core::FileSink>(logPath));
 
 #ifdef _WIN32
+    const std::expected<std::filesystem::path, Core::AssetError> dumpPath = Core::AssetSystem::ResolveUser("crash.dmp");
+    if (dumpPath)
+    {
+        gCrashDumpPath = dumpPath->string();
+    }
     SetUnhandledExceptionFilter(CrashHandler);
     std::signal(SIGABRT, AbortHandler);
 #endif

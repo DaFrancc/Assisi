@@ -68,3 +68,72 @@ TEST_CASE("AssetSystem::Resolve rejects escaping and malformed paths")
     expectInvalid("../secret");   // surviving parent traversal escapes the root
     expectInvalid("../../secret");
 }
+
+// --- Writable user root -----------------------------------------------------
+
+namespace
+{
+// A fresh, empty directory to anchor the writable user root for a test.
+std::filesystem::path MakeUserRoot(const char *name)
+{
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "assisi-user-tests" / name;
+    std::filesystem::remove_all(dir);
+    std::filesystem::create_directories(dir);
+    return dir;
+}
+} // namespace
+
+TEST_CASE("AssetSystem::WriteText round-trips through ReadUserText")
+{
+    REQUIRE(AssetSystem::SetUserRoot(MakeUserRoot("text")).has_value());
+
+    REQUIRE(AssetSystem::WriteText("options.json", "{\"a\":1}").has_value());
+    CHECK(AssetSystem::UserExists("options.json"));
+
+    const std::expected<std::string, AssetError> read = AssetSystem::ReadUserText("options.json");
+    REQUIRE(read.has_value());
+    CHECK(*read == "{\"a\":1}");
+}
+
+TEST_CASE("AssetSystem::WriteBinary round-trips through ReadUserBinary")
+{
+    REQUIRE(AssetSystem::SetUserRoot(MakeUserRoot("binary")).has_value());
+
+    const std::vector<std::byte> bytes = {std::byte{0x00}, std::byte{0xFF}, std::byte{0x10}, std::byte{0x7F}};
+    REQUIRE(AssetSystem::WriteBinary("saves/slot1.sav", bytes).has_value());
+
+    const std::expected<std::vector<std::byte>, AssetError> read = AssetSystem::ReadUserBinary("saves/slot1.sav");
+    REQUIRE(read.has_value());
+    CHECK(*read == bytes);
+}
+
+TEST_CASE("AssetSystem::WriteText creates missing parent directories")
+{
+    const std::filesystem::path root = MakeUserRoot("nested");
+    REQUIRE(AssetSystem::SetUserRoot(root).has_value());
+
+    REQUIRE(AssetSystem::WriteText("a/b/c/note.txt", "hi").has_value());
+    CHECK(std::filesystem::exists(root / "a" / "b" / "c" / "note.txt"));
+}
+
+TEST_CASE("AssetSystem::ResolveUser rejects paths escaping the user root")
+{
+    REQUIRE(AssetSystem::SetUserRoot(MakeUserRoot("escape")).has_value());
+
+    const std::expected<std::filesystem::path, AssetError> escaped = AssetSystem::ResolveUser("../outside.txt");
+    REQUIRE_FALSE(escaped.has_value());
+    CHECK(escaped.error() == AssetError::InvalidVirtualPath);
+
+    // A write that would escape must fail without touching the filesystem.
+    CHECK_FALSE(AssetSystem::WriteText("../outside.txt", "nope").has_value());
+}
+
+TEST_CASE("AssetSystem::ReadUserText reports a clean error for a missing file")
+{
+    REQUIRE(AssetSystem::SetUserRoot(MakeUserRoot("missing")).has_value());
+
+    const std::expected<std::string, AssetError> read = AssetSystem::ReadUserText("does-not-exist.json");
+    REQUIRE_FALSE(read.has_value());
+    CHECK(read.error() == AssetError::FileOpenFailed);
+    CHECK_FALSE(AssetSystem::UserExists("does-not-exist.json"));
+}

@@ -2,11 +2,11 @@
 
 #include <Assisi/App/OptionsConfig.hpp>
 
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <nlohmann/json.hpp>
 
-#include <fstream>
 #include <string>
 
 namespace Assisi::App
@@ -35,15 +35,17 @@ OptionsConfig OptionsConfig::LoadFromJson()
 {
     OptionsConfig cfg;
 
-    std::ifstream file("options.json");
-    if (!file.is_open())
+    // options.json is per-user writable state, so it lives under the user root
+    // (see SaveToJson), not the read-only asset root.
+    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadUserText("options.json");
+    if (!text)
     {
         return cfg;
     }
 
     try
     {
-        const auto json = nlohmann::json::parse(file);
+        const nlohmann::json json = nlohmann::json::parse(*text);
 
         if (json.contains("antiAliasing"))
         {
@@ -76,14 +78,11 @@ void OptionsConfig::SaveToJson() const
     json["antiAliasing"]["mode"]        = AaModeToString(aaMode);
     json["antiAliasing"]["msaaSamples"] = msaaSamples;
 
-    std::ofstream file("options.json");
-    if (!file.is_open())
+    const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", json.dump(4));
+    if (!result)
     {
-        Core::Log::Warn("Could not write options.json.");
-        return;
+        Core::Log::Warn("Could not write options.json (asset error {}).", static_cast<int>(result.error()));
     }
-
-    file << json.dump(4);
 }
 
 } // namespace Assisi::App

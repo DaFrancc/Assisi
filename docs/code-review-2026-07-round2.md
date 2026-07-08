@@ -123,20 +123,26 @@ Checkboxes so this can be burned down like the round-1 doc was.
   unused. Per the provisional-code principle: either the sandbox becomes
   `GameApplication`'s first consumer (which finally exercises it), or it gets
   deleted until a second app exists. Keeping both is the worst option.
-- [ ] **Asset resolution is two systems; shaders bypass `AssetSystem`
-  entirely.** Textures and levels resolve through `AssetSystem::Resolve`
-  (root discovery, escape protection); shaders are raw CWD-relative
-  `std::ifstream` (`ShaderModule.cpp:16-30`, paths like
-  `"shaders/cube_min.vert.spv"`), depending on the POST_BUILD copy next to
-  the exe (`apps/sandbox/CMakeLists.txt:88-89`) *and* on the process being
-  launched from that directory. Run the exe from any other CWD: textures
-  load (AssetSystem walks up from the exe dir), shaders fail. Related CWD
-  scatter: `options.json` read/written to CWD (`OptionsConfig.cpp`),
-  `assisi.log` to CWD (`Application.cpp:116`), `crash.dmp` to CWD
-  (`Application.cpp:51`). Fix: one filesystem story — either shaders resolve
-  through AssetSystem (compiled `.spv` under the asset root or a parallel
-  runtime-data root), or there is an explicit, documented "runtime dir =
-  exe dir" rule applied consistently, including the writable outputs.
+- [x] **Asset resolution is two systems; shaders bypass `AssetSystem`
+  entirely.** *Fixed:* one filesystem story, `AssetSystem`, now with two
+  escape-protected mounts sharing the same virtual-path scheme. (1) A
+  **read-only asset root** (unchanged) for shipped content. (2) A **read-write
+  user root** for per-user data — `ResolveUser`/`ReadUser*`/`WriteText`/
+  `WriteBinary`/`UserExists`, defaulting to the exe dir (CWD-independent),
+  overridable via `ASSISI_USER_ROOT` or `SetUserRoot()`. The split is
+  deliberate: a shipped game's install dir is often not writable, so runtime
+  writes must not target the asset tree — this is the "read-write asset system"
+  a real game needs, not a writable asset root. Shaders: `ReadSpirvFile`'s raw
+  `std::ifstream` is gone — `LoadSpirvShader` calls `AssetSystem::ReadBinary`,
+  and the build now compiles `.spv` into the asset root's `shaders/` (was a
+  sibling `<exe>/shaders/`), so shaders resolve like every other asset. CWD
+  scatter closed onto the user root: `options.json` (`OptionsConfig` via
+  `ReadUserText`/`WriteText`), `assisi.log` (`FileSink` path via `ResolveUser`),
+  `crash.dmp` (resolved under the user root at startup, cached for the handler).
+  New user-root tests in `TestAssetSystem.cpp`: write/read round-trips (text +
+  binary), parent-dir creation, escape rejection on read and write, and a clean
+  error on a missing file. The read-only `Resolve` and new `ResolveUser` share a
+  single `ResolveUnder` spine, so the escape check is defined once.
 - [ ] **Inspector component lookup is O(all components of every type) per
   frame.** `DrawInspector` (`main.cpp:667-680`) finds one entity's component
   by calling `meta.iterateEntities` — a full scan of every entity in every

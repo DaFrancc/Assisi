@@ -12,10 +12,11 @@ namespace Assisi::Render
 {
 /// @brief Reads a compiled `.spv` file and creates an NVRHI shader from it.
 ///
-/// Not routed through `Core::AssetSystem`: the build places compiled `.spv`
-/// output next to the executable (see e.g. `apps/sandbox/CMakeLists.txt`), not
-/// under `assets/`. See docs/nvrhi-migration-todo.md section 4 for the pending
-/// decision on unifying the shader-compilation pipeline.
+/// @param path Virtual asset path to the compiled SPIR-V, resolved through
+/// `Core::AssetSystem` (e.g. "shaders/cube_min.vert.spv"). The build compiles
+/// GLSL and places the `.spv` under the asset root's `shaders/` directory (see
+/// `apps/sandbox/CMakeLists.txt`), so shaders resolve exactly like every other
+/// asset — no CWD dependency.
 ///
 /// @return nullptr if the file couldn't be read or shader creation failed
 /// (logged either way).
