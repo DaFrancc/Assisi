@@ -39,6 +39,28 @@ struct Registry
     /// @brief Returns true if the entity handle is still valid.
     [[nodiscard]] bool IsAlive(Entity entity) const;
 
+    /// @brief Returns the live entity currently occupying a slot index.
+    ///
+    /// Resolves a bare slot index (as an inspector or tool would hold it) to a
+    /// full handle carrying the slot's current generation.  Returns NullEntity
+    /// if the index is out of range or the slot is free (no live occupant).
+    [[nodiscard]] Entity EntityAt(uint32_t index) const;
+
+    /// @brief Invokes fn(Entity) for every live entity, in ascending slot order.
+    ///
+    /// Skips free slots.  Intended for tooling (entity pickers, inspectors); the
+    /// per-slot free-list check makes it O(n·free) — fine at editor scale, not a
+    /// hot-loop primitive (use Query for the frame loop).
+    template <typename Fn> void ForEachLive(Fn &&fn) const
+    {
+        for (uint32_t i = 0; i < static_cast<uint32_t>(_generations.size()); ++i)
+        {
+            const Entity e = EntityAt(i);
+            if (e != NullEntity)
+                fn(e);
+        }
+    }
+
     /// @brief Returns the number of currently live entities.
     [[nodiscard]] std::size_t AliveCount() const;
 

@@ -38,6 +38,12 @@ struct Scene
     /// @brief Returns the number of currently live entities.
     std::size_t AliveCount() const { return _registry.AliveCount(); }
 
+    /// @brief Resolves a slot index to its live entity, or NullEntity if empty.
+    Entity EntityAt(uint32_t index) const { return _registry.EntityAt(index); }
+
+    /// @brief Invokes fn(Entity) for every live entity in the scene (tooling helper).
+    template <typename Fn> void ForEachEntity(Fn &&fn) const { _registry.ForEachLive(std::forward<Fn>(fn)); }
+
     /// @brief Removes all entities and components, resetting index counters to zero.
     ///
     /// After this call the scene is equivalent to a freshly constructed one:

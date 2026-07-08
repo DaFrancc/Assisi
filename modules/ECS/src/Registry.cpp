@@ -66,6 +66,23 @@ bool Registry::IsAlive(Entity entity) const
     return entity.index < _generations.size() && _generations[entity.index] == entity.generation;
 }
 
+Entity Registry::EntityAt(uint32_t index) const
+{
+    if (index >= _generations.size())
+    {
+        return NullEntity;
+    }
+
+    /* A slot present in the generations table is live unless it is currently
+       parked in the free list awaiting reuse. */
+    if (std::ranges::find(_freeSlots, index) != _freeSlots.end())
+    {
+        return NullEntity;
+    }
+
+    return {.index = index, .generation = _generations[index]};
+}
+
 std::size_t Registry::AliveCount() const
 {
     return _aliveCount;

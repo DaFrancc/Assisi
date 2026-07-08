@@ -2,6 +2,9 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
+#include <vector>
+
 #include <Assisi/ECS/Registry.hpp>
 #include <Assisi/ECS/SparseSet.hpp>
 
@@ -98,6 +101,62 @@ TEST_CASE("Registry: an unregistered pool is no longer touched by destroy")
     // Destroy no longer drives this pool, so the component lingers (the pool is
     // now the caller's responsibility).
     CHECK(pool.Has(e));
+}
+
+TEST_CASE("Registry: EntityAt resolves a slot index to its live handle")
+{
+    Registry reg;
+    const Entity a = reg.Create();
+    const Entity b = reg.Create();
+
+    // A live slot resolves to the full handle (index + current generation).
+    CHECK(reg.EntityAt(a.index) == a);
+    CHECK(reg.EntityAt(b.index) == b);
+
+    // Out-of-range indices have no occupant.
+    CHECK(reg.EntityAt(999) == NullEntity);
+}
+
+TEST_CASE("Registry: EntityAt reports a freed slot as empty, then follows reuse")
+{
+    Registry reg;
+    const Entity a = reg.Create();
+    reg.Destroy(a);
+
+    // Freed but not yet reused: the slot has no live occupant.
+    CHECK(reg.EntityAt(a.index) == NullEntity);
+
+    // Reuse bumps the generation; EntityAt resolves to the new occupant, not the
+    // stale handle.
+    const Entity b = reg.Create();
+    REQUIRE(b.index == a.index);
+    CHECK(reg.EntityAt(a.index) == b);
+    CHECK(reg.EntityAt(a.index) != a);
+}
+
+TEST_CASE("Registry: ForEachLive visits every live entity and skips freed slots")
+{
+    Registry reg;
+    const Entity a = reg.Create();
+    const Entity b = reg.Create();
+    const Entity c = reg.Create();
+    reg.Destroy(b); // leaves a hole in the middle
+
+    std::vector<Entity> visited;
+    reg.ForEachLive([&](Entity e) { visited.push_back(e); });
+
+    REQUIRE(visited.size() == 2);
+    CHECK(visited[0] == a);
+    CHECK(visited[1] == c);
+
+    // A slot reused after the hole shows up with its new generation, not the old.
+    const Entity d = reg.Create();
+    REQUIRE(d.index == b.index);
+    visited.clear();
+    reg.ForEachLive([&](Entity e) { visited.push_back(e); });
+    CHECK(visited.size() == 3);
+    CHECK(std::ranges::find(visited, d) != visited.end());
+    CHECK(std::ranges::find(visited, b) == visited.end());
 }
 
 TEST_CASE("Registry: reset returns to a pristine state")
