@@ -4,8 +4,9 @@
 /// @file Runtime/Lifecycle.hpp
 /// @brief Entity lifecycle utilities.
 ///
-/// Add DestroyTag to an entity to have it destroyed at the end of PostUpdate
-/// by the default CleanupDestroyTag system registered in GameApplication.
+/// Add DestroyTag to an entity to have it destroyed by a deferred-cleanup pass
+/// (conventionally a CleanupDestroyTag system run at the end of PostUpdate that
+/// calls DestroyMarked).
 ///
 /// @code
 /// scene.Add<DestroyTag>(entity);  // entity is gone next PostUpdate
@@ -28,8 +29,8 @@ struct DestroyTag
 
 /// @brief Destroy all entities that carry DestroyTag.
 ///
-/// Called automatically by GameApplication's CleanupDestroyTag system.
-/// Can also be called manually in custom loops or unit tests.
+/// Run this once per frame (conventionally a CleanupDestroyTag system at the end
+/// of PostUpdate); it can also be called manually in custom loops or unit tests.
 inline void DestroyMarked(ECS::Scene &scene)
 {
     std::vector<ECS::Entity> dying;

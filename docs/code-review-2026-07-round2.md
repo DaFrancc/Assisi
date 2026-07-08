@@ -113,16 +113,17 @@ Checkboxes so this can be burned down like the round-1 doc was.
 
 ## Architecture
 
-- [ ] **`GameApplication` is a dead layer already diverging — delete it or
-  port the sandbox onto it.** Zero users: `apps/` contains only `sandbox`,
-  and `SandboxApp` derives from `Application` directly, reimplementing what
-  `GameApplication` provides. The duplication is already manifest: the
-  game.json input-binding block is a verbatim copy
-  (`GameApplication.cpp:20-38` vs `main.cpp:174-193`, down to a slightly
-  different warning string). Two parallel bring-up paths, one untested and
-  unused. Per the provisional-code principle: either the sandbox becomes
-  `GameApplication`'s first consumer (which finally exercises it), or it gets
-  deleted until a second app exists. Keeping both is the worst option.
+- [x] **`GameApplication` is a dead layer already diverging — delete it or
+  port the sandbox onto it.** *Deleted* (`GameApplication.hpp`/`.cpp`, its
+  CMake entries, and the doc references in `Lifecycle.hpp`/`README.md`). The
+  deletion is functionally free — the sandbox never derived from it, so nothing
+  regressed — and it removes the duplicated `game.json` input-binding block.
+  Beyond the provisional-code argument, this is now a product decision: Assisi
+  is going the Unreal route (each game is its own project, adopting a pre-wired
+  default template *as-is* rather than subclassing a base class), so a
+  `GameApplication` middle layer you inherit from is the wrong shape. The
+  sandbox will be converted into the default/blank template project (blank scene
+  + a few cubes, basics pre-wired) — tracked separately.
 - [x] **Asset resolution is two systems; shaders bypass `AssetSystem`
   entirely.** *Fixed:* one filesystem story, `AssetSystem`, now with two
   escape-protected mounts sharing the same virtual-path scheme. (1) A

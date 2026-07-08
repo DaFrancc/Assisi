@@ -130,9 +130,9 @@ The App module provides the application framework on top of the lower-level modu
 `Application` is the base class with a fixed-timestep physics loop and a rate-limited render loop (default 60 Hz physics, 144 Hz render).
 Override `OnStart`, `OnFixedUpdate(dt)`, `OnUpdate(dt)`, `OnRender()`, and optionally `OnImGui()` / `OnShutdown()`.
 
-`GameApplication` extends `Application` with pre-wired default systems and a `SystemRegistry` for dependency-ordered,
-phase-based game system registration (`PreUpdate`, `FixedUpdate`, `Update`, `PostUpdate`, `Render`).
-It also owns an `ActionMap` loaded from `assets/game.json`.
+`SystemRegistry` provides dependency-ordered, phase-based game system registration (`PreUpdate`, `FixedUpdate`,
+`Update`, `PostUpdate`, `Render`) that an application wires up directly, alongside an `ActionMap` loaded from
+`assets/game.json`.
 
 `AppConfig` is loaded from `assets/game.json` and provides engine configuration (target frame rates, window settings, input bindings, etc.).
 
