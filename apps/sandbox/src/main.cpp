@@ -33,6 +33,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -94,6 +95,9 @@ class SandboxApp : public Assisi::App::Application
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
     void HandlePhysicsEditing(bool anyFieldEdited);
 
+    /// @brief Writes an eyedropper-picked entity into the armed EntityRef field.
+    void ApplyEyedropperPick(Assisi::ECS::Entity picked);
+
     // --- Level management ---
     void ScanLevels();
     void LoadLevel(const std::string &name);
@@ -137,6 +141,15 @@ class SandboxApp : public Assisi::App::Application
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
     bool                _wasDragging    = false;
+
+    // Eyedropper: while armed, the next scene entity-pick is written into the
+    // captured EntityRef field instead of changing the selection. The target is
+    // pinned by (entity, component meta, field offset) rather than a raw pointer,
+    // so a pool reallocation between arming and picking can't dangle it.
+    bool                                        _eyedropperArmed       = false;
+    Assisi::ECS::Entity                         _eyedropperEntity      = Assisi::ECS::NullEntity;
+    const Assisi::Core::Reflect::ComponentMeta *_eyedropperMeta        = nullptr;
+    std::size_t                                 _eyedropperFieldOffset = 0;
 
     std::vector<std::string> _levelFiles;
     int                      _selectedLevel = 0;
@@ -387,8 +400,40 @@ void SandboxApp::HandleEntityPicking()
     if (_actions.IsActionPressed("Select", input) &&
         !input.IsMouseCaptured() && !ImGuiWantsMouse())
     {
-        GetEvents().Push(EntitySelectionChangedEvent{PickEntity(input.MousePosition())});
+        const Assisi::ECS::Entity picked = PickEntity(input.MousePosition());
+
+        // An armed eyedropper consumes the click to fill its EntityRef field
+        // rather than moving the selection.
+        if (_eyedropperArmed)
+        {
+            ApplyEyedropperPick(picked);
+            _eyedropperArmed = false;
+            _eyedropperMeta  = nullptr;
+        }
+        else
+        {
+            GetEvents().Push(EntitySelectionChangedEvent{picked});
+        }
     }
+}
+
+void SandboxApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
+{
+    if (!_eyedropperMeta || !_scene || !_scene->IsAlive(_eyedropperEntity))
+        return;
+
+    // The component pointer is only valid for the duration of this scan, so
+    // re-resolve it now (the pool may have moved since the field was armed) and
+    // write straight into the reflected offset.
+    _eyedropperMeta->iterateEntities(_scene,
+        [&](uint32_t idx, uint32_t gen, const void *ptr)
+        {
+            if (idx != _eyedropperEntity.index || gen != _eyedropperEntity.generation)
+                return;
+            auto *field = reinterpret_cast<Assisi::ECS::Entity *>(
+                const_cast<char *>(static_cast<const char *>(ptr)) + _eyedropperFieldOffset);
+            *field = picked;
+        });
 }
 
 void SandboxApp::UpdateCamera(float dt)
@@ -586,6 +631,70 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             {
                 *quat  = glm::normalize(glm::quat(glm::radians(euler)));
                 edited = true;
+            }
+            break;
+        }
+        case FieldType::EntityRef:
+        {
+            auto      *ref   = static_cast<Assisi::ECS::Entity *>(fp);
+            const bool empty = (*ref == Assisi::ECS::NullEntity);
+
+            char preview[32];
+            if (empty)
+                std::snprintf(preview, sizeof(preview), "(none)");
+            else if (!_scene->IsAlive(*ref))
+                std::snprintf(preview, sizeof(preview), "[%u:%u] (dangling)", ref->index, ref->generation);
+            else
+                std::snprintf(preview, sizeof(preview), "Entity [%u:%u]", ref->index, ref->generation);
+
+            const bool  armedForThis = _eyedropperArmed && _eyedropperMeta == &meta &&
+                                      _eyedropperFieldOffset == field.offset;
+            const char *pickLabel    = armedForThis ? "Cancel" : "Pick";
+
+            /* Eyedropper button first so it can't be pushed off the window's right
+               edge by the combo's trailing label; the combo takes the rest. */
+            if (ImGui::Button(pickLabel))
+            {
+                if (armedForThis)
+                {
+                    _eyedropperArmed = false;
+                    _eyedropperMeta  = nullptr;
+                }
+                else
+                {
+                    _eyedropperArmed       = true;
+                    _eyedropperEntity      = _selectedEntity;
+                    _eyedropperMeta        = &meta;
+                    _eyedropperFieldOffset = field.offset;
+                }
+            }
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip(armedForThis ? "Picking… left-click an entity in the scene (or click to cancel)"
+                                               : "Eyedropper: then left-click an entity in the scene");
+
+            ImGui::SameLine();
+            if (ImGui::BeginCombo(field.name.c_str(), preview))
+            {
+                if (ImGui::Selectable("(none)", empty))
+                {
+                    *ref   = Assisi::ECS::NullEntity;
+                    edited = true;
+                }
+                _scene->ForEachEntity(
+                    [&](Assisi::ECS::Entity e)
+                    {
+                        char label[32];
+                        std::snprintf(label, sizeof(label), "Entity [%u:%u]", e.index, e.generation);
+                        const bool selected = (e == *ref);
+                        if (ImGui::Selectable(label, selected))
+                        {
+                            *ref   = e;
+                            edited = true;
+                        }
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    });
+                ImGui::EndCombo();
             }
             break;
         }
