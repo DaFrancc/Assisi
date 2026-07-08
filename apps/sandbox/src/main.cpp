@@ -75,6 +75,12 @@ class SandboxApp : public Assisi::App::Application
     void HandleEntityPicking();
     void UpdateCamera(float dt);
 
+    /// @brief Rebuilds the cluster froxel grid for the given projection (on a
+    /// dedicated command list, matching the setup/resize path). Call whenever the
+    /// projection changes — window resize or a runtime FOV/near/far edit — so the
+    /// view-space froxels keep matching the render projection.
+    void RebuildClusterGrid(int width, int height, const glm::mat4 &projection);
+
     // --- ImGui panels ---
     void DrawDiagnosticsWindow();
     void DrawLevelsWindow();
@@ -110,6 +116,12 @@ class SandboxApp : public Assisi::App::Application
     // Clustered forward lighting — queries PointLight/SpotLight/DirectionalLight
     // components from the scene each frame and feeds them to cube_min.frag.
     Assisi::Runtime::LightingSystem _lightingSystem;
+
+    // The projection the cluster froxel grid was last built against. Rebuilt when
+    // this drifts (window resize or a runtime FOV edit) — otherwise peripheral
+    // froxels stop matching the render projection and the lighting shows
+    // rectangular artifacts. Identity forces a rebuild on the first frame.
+    glm::mat4 _clusterProjection{1.f};
 
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
@@ -238,6 +250,10 @@ void SandboxApp::SetupScene()
         return;
     }
 
+    // Record the projection the froxels were just built against so OnRender only
+    // rebuilds them when it actually changes.
+    _clusterProjection = projection;
+
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo directly, so this is already correct even if options.json
     // has an MSAA mode saved from a previous run.
@@ -257,7 +273,7 @@ void SandboxApp::SetupScene()
     }
 }
 
-void SandboxApp::OnResize(int width, int height)
+void SandboxApp::RebuildClusterGrid(int width, int height, const glm::mat4 &projection)
 {
     auto *vulkanContext = Assisi::Render::RenderSystem::GetVulkanContext();
     if (!vulkanContext || !_meshPass.IsValid())
@@ -266,8 +282,6 @@ void SandboxApp::OnResize(int width, int height)
     }
 
     const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
-    const float aspect = height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
-    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(*cam, aspect);
 
     nvrhi::IDevice *device = vulkanContext->GetDevice();
     nvrhi::CommandListHandle commandList = device->createCommandList();
@@ -275,6 +289,19 @@ void SandboxApp::OnResize(int width, int height)
     _lightingSystem.Resize(commandList, width, height, cam->nearZ, cam->farZ, projection);
     commandList->close();
     device->executeCommandList(commandList);
+
+    _clusterProjection = projection;
+}
+
+void SandboxApp::OnResize(int width, int height)
+{
+    const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    if (cam == nullptr)
+    {
+        return;
+    }
+    const float aspect = height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
+    RebuildClusterGrid(width, height, Assisi::Runtime::ProjectionMatrix(*cam, aspect));
 }
 
 void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
@@ -306,6 +333,14 @@ void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)
     // viewport (VKViewportWithDXCoords) to flip Y back to the standard top-left
     // convention, so glm::perspective's output is correct as-is. Flipping here too
     // double-compensates and renders upside down.
+
+    // Keep the froxel grid in sync with the render projection: a runtime FOV
+    // change alters `projection` here without any resize, so rebuild the clusters
+    // when it drifts from what they were last built against.
+    if (projection != _clusterProjection)
+    {
+        RebuildClusterGrid(frame.width, frame.height, projection);
+    }
 
     _lightingSystem.Update(frame.commandList, *_scene, view);
     _meshPass.UpdateFrameConstants(frame.commandList, view, frame.width, frame.height, cam->nearZ, cam->farZ,
