@@ -34,8 +34,19 @@ Checkboxes so this can be burned down like the round-1 doc was.
 
 ## Correctness bugs (real, not taste)
 
-- [ ] **`SparseSet::Add` with a stale handle corrupts the live occupant's
-  mapping.** `SparseSet.hpp:44-59`. The round-1 generation fix protected
+- [x] **`SparseSet::Add` with a stale handle corrupts the live occupant's
+  mapping.** `SparseSet.hpp:44-59`. *Fixed:* `Add` now rejects any occupied
+  index slot (returns nullptr) instead of overwriting the live occupant's
+  sparse entry. Per feedback the `std::expected<T*, SparseSetError>` return
+  collapsed to a bare `T*` — a duplicate and a stale handle both just mean "not
+  added" and the caller can't act on the distinction; the `SparseSetError` enum
+  is gone. Two layers: `SparseSet::Add` rejects an occupied-by-other-generation
+  slot (defense-in-depth for direct pool users), and `Scene::Add` now gates on
+  `IsAlive` — the pool check alone can't catch a stale add when the live entity
+  hasn't populated that pool yet (the "`Scene::Add` does not check `IsAlive`"
+  gap this item called out). Regression tests: "adding a stale handle over a
+  live slot is rejected" (`TestSparseSet.cpp`) and "a stale handle cannot add to
+  a reused slot" (`TestScene.cpp`) — both confirmed red before their fix. The round-1 generation fix protected
   `Has`/`Get` but left `Add` as a corruption vector. Failure sequence:
   entity `{index=5, gen=0}` is destroyed; the slot is reused by `{5, gen=1}`,
   which adds a component landing at dense pos 3 (`_entities[3] == {5,1}`,
@@ -53,8 +64,13 @@ Checkboxes so this can be burned down like the round-1 doc was.
   do NOT silently treat it as fresh, that hides use-after-destroy bugs in
   caller code. **A unit test must land with the fix, same as round 1's
   generation fix.**
-- [ ] **`SceneSerializer::Load` breaks forward entity references — silent
-  hierarchy loss on round-trip.** `SceneSerializer.cpp:142-159`. Load creates
+- [x] **`SceneSerializer::Load` breaks forward entity references — silent
+  hierarchy loss on round-trip.** `SceneSerializer.cpp:142-159`. *Fixed:*
+  two-pass load — pass 1 creates every entity and fills `indexToEntity`
+  completely, pass 2 deserializes components so any forward `EntityRef`
+  resolves. New `Assisi-Runtime-Tests` suite covers it: a natural-order
+  round-trip whose child sorts before its parent, plus a hand-authored
+  child-before-parent fixture (both confirmed red on the single-pass loader). Load creates
   entities one at a time and deserializes their components immediately, but
   `IndexToEntity` (`SceneSerializer.cpp:59-65`) can only resolve entities
   created *so far* — `s_context->indexToEntity` grows as the loop runs, and
@@ -69,8 +85,14 @@ Checkboxes so this can be burned down like the round-1 doc was.
   exactly this. Fix: two-pass load — pass 1 creates all entities and fills
   `indexToEntity` completely; pass 2 adds components. **Land with a
   round-trip test whose fixture has a child serialized before its parent.**
-- [ ] **`PropagateTransforms` has no cycle guard — parent cycle = stack
-  overflow.** `Hierarchy.cpp:27-42`. The `worldMatrix` lambda recurses through
+- [x] **`PropagateTransforms` has no cycle guard — parent cycle = stack
+  overflow.** `Hierarchy.cpp:27-42`. *Fixed:* an `onChain` set tracks entities
+  on the current recursion stack; when an entity's parent is already on the
+  chain the cycle is broken (logged with the entity index/gen, node treated as
+  a root) instead of recursing to death. Covered by "a parent cycle does not
+  overflow the stack" in `TestHierarchy.cpp`, alongside root and parent-compose
+  cases. Secondary note (per-call map/closure allocation, runs twice per frame)
+  left open — it's a perf item, not correctness. The `worldMatrix` lambda recurses through
   `std::function` with memoisation but no in-progress detection. A parent
   cycle (A→B→A) in a hand-edited `.alvl` file recurses until the stack dies.
   Level files are exactly the data that will eventually contain one; the
@@ -202,12 +224,11 @@ Checkboxes so this can be burned down like the round-1 doc was.
 
 ## Tests / process
 
-- [ ] **`SceneSerializer` has zero tests** — and it's the subsystem carrying
-  a real data-loss bug (forward refs, above). Needed: round-trip tests
-  (save → load → compare), adversarial input (child-before-parent fixture,
-  unknown component names, truncated/malformed JSON, wrong version),
-  hierarchy preservation. All pure-logic, no GPU required — it fits the
-  existing doctest/CTest infra exactly.
+- [x] **`SceneSerializer` had zero tests** — now has a suite
+  (`modules/Runtime/tests/TestSceneSerializer.cpp`): value round-trip, the two
+  forward-reference regressions, empty-scene, transient-only component, multi-
+  component, unsupported-version no-op, file round-trip, malformed/missing file,
+  and unknown-component skip.
 - [ ] **`reflectgen` has zero tests** — a 521-line regex-based C++ parser
   (`tools/reflectgen/reflectgen.py`) that generates engine-critical code,
   completely undefended. Golden-file tests: a fixture header with every
@@ -215,8 +236,9 @@ Checkboxes so this can be burned down like the round-1 doc was.
   `ACOMP`, namespaced types, transient fields) → assert the generated .cpp
   matches a checked-in golden output. Cheap to write, catches every future
   regex regression.
-- [ ] **`PropagateTransforms`/`Hierarchy` have zero tests.** Parent chains,
-  deep nesting, the cycle guard once it exists, memoisation correctness.
+- [~] **`PropagateTransforms`/`Hierarchy` had zero tests** — now covered by
+  `modules/Runtime/tests/TestHierarchy.cpp` (root, parent-compose, cycle guard).
+  *Still open:* deep-nesting chains and explicit memoisation-correctness cases.
 - [ ] **No CI.** `.clang-format`, `.clang-tidy`, sanitizer CMake plumbing
   (`ASSISI_ENABLE_SANITIZERS`), and 27 good doctest cases all exist — and
   nothing runs any of them on push. This is the highest-leverage open item
@@ -242,11 +264,17 @@ Checkboxes so this can be burned down like the round-1 doc was.
   a failed `expected` throws `bad_expected_access`, in a codebase whose
   signature round-1 achievement was the no-exceptions bring-up convention.
   Branch and bail like every other bring-up failure.
-- [ ] **`QueryView` exposes public members with private naming** —
+- [x] **`QueryView` exposes public members with private naming** —
   `_pools`, `_primary` on a public aggregate (`Query.hpp:27-28`), and the
-  nested `Iterator`'s `_entities`/`_pos`/`_pools` likewise. Either make them
-  private with a constructor, or drop the underscore prefix. As-is the
-  naming lies about the access level.
+  nested `Iterator`'s `_entities`/`_pos`/`_pools` likewise. *Fixed:* members and
+  constructor are now private, with `Scene` as the sole friend — the view exists
+  only to be returned by `Scene::Query`, so `friend` documents coupling that is
+  already inherent rather than adding any. (`Iterator` befriends its enclosing
+  `QueryView`; a nested-type friend, benign.) This closes the one real
+  encapsulation seam behind the `SparseSet::Add` liveness story — the public
+  `_pools` was the only way to reach a mutable pool pointer and call
+  `Add`/`Remove` around `Scene::Add`'s `IsAlive` gate. Iteration still yields
+  mutable `Ts&`, so in-place component writes are unaffected.
 - [ ] **Dead initializers:** `_yaw = -116.6f; _pitch = -24.1f`
   (`main.cpp:129-130`) — magic values unconditionally overwritten by
   `SetupCamera` (`main.cpp:152-153`). Initialize to 0 or drop the
