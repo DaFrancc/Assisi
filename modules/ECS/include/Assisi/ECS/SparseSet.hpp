@@ -16,7 +16,6 @@
 /// the dense array gap-free at all times.
 
 #include <cstdint>
-#include <expected>
 #include <type_traits>
 #include <utility>
 #include <vector>
@@ -26,11 +25,6 @@
 namespace Assisi::ECS
 {
 
-enum class SparseSetError
-{
-    AlreadyExists, ///< Returned by Add() if the entity already has a component.
-};
-
 template <typename T> struct SparseSet
 {
 
@@ -39,21 +33,30 @@ template <typename T> struct SparseSet
 
     /// @brief Adds a component for the given entity.
     ///
-    /// @return Pointer to the new component on success, or
-    ///         SparseSetError::AlreadyExists if the entity already has one.
-    [[nodiscard]] std::expected<T *, SparseSetError> Add(Entity entity, T component = {})
+    /// @return Pointer to the new component, or nullptr if the add was rejected:
+    ///         the entity's index slot is already occupied, either by this same
+    ///         entity (duplicate) or by a different generation (a stale handle
+    ///         whose slot was reused). Both mean the component was not added and
+    ///         the caller can do nothing different about the distinction.
+    [[nodiscard]] T *Add(Entity entity, T component = {})
     {
-        if (Has(entity))
-            return std::unexpected(SparseSetError::AlreadyExists);
-
-        /* Grow the sparse array to accommodate the entity index if needed. */
-        if (entity.index >= _sparse.size())
+        /* Any occupied slot is a rejection.  Has() alone won't catch the stale
+           case — it matches the full handle, so a stale handle whose slot was
+           reused by a newer generation would slip past and overwrite the live
+           occupant's sparse entry, orphaning its dense slot and desyncing the
+           set.  Inspect the slot directly instead. */
+        if (entity.index < _sparse.size())
+        {
+            if (_sparse[entity.index] != Invalid)
+                return nullptr;
+        }
+        else
+        {
+            /* Grow the sparse array to accommodate the entity index. */
             _sparse.resize(entity.index + 1, Invalid);
+        }
 
-        /* Record where in the dense array this entity's component will live. */
         _sparse[entity.index] = static_cast<uint32_t>(_dense.size());
-
-        /* Append the entity index and the component value. */
         _entities.push_back(entity);
         return &_dense.emplace_back(std::move(component));
     }

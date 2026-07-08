@@ -8,7 +8,6 @@
 /// it with the internal Registry so Destroy(entity) automatically removes the
 /// entity from every pool it belongs to.
 
-#include <expected>
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
@@ -54,10 +53,15 @@ struct Scene
     /// @brief Adds a component of type T to the entity.
     ///
     /// Creates the component pool on first use.
-    /// @return Pointer to the new component on success, or
-    ///         SparseSetError::AlreadyExists if the entity already has one.
-    template <typename T> [[nodiscard]] std::expected<T *, SparseSetError> Add(Entity entity, T component = {})
+    /// @return Pointer to the new component, or nullptr if the add was rejected:
+    ///         the entity is not alive (a stale handle — the pool-level check
+    ///         only catches this once the live occupant has populated the same
+    ///         pool, so guard here where liveness is authoritative), or the
+    ///         entity already has this component.
+    template <typename T> [[nodiscard]] T *Add(Entity entity, T component = {})
     {
+        if (!IsAlive(entity))
+            return nullptr;
         return GetOrCreatePool<T>().Add(entity, std::move(component));
     }
 

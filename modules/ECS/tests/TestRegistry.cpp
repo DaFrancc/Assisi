@@ -59,11 +59,45 @@ TEST_CASE("Registry: destroy removes the entity from registered pools")
     reg.RegisterPool(&pool);
 
     const Entity a = reg.Create();
-    REQUIRE(pool.Add(a, 7).has_value());
+    REQUIRE(pool.Add(a, 7) != nullptr);
     CHECK(pool.Has(a));
 
     reg.Destroy(a);
     CHECK_FALSE(pool.Has(a)); // Destroy() drove pool.Remove()
+}
+
+TEST_CASE("Registry: destroy removes the entity from every registered pool")
+{
+    Registry reg;
+    SparseSet<int> a;
+    SparseSet<float> b;
+    reg.RegisterPool(&a);
+    reg.RegisterPool(&b);
+
+    const Entity e = reg.Create();
+    REQUIRE(a.Add(e, 1) != nullptr);
+    REQUIRE(b.Add(e, 2.0f) != nullptr);
+
+    reg.Destroy(e);
+    CHECK_FALSE(a.Has(e));
+    CHECK_FALSE(b.Has(e));
+}
+
+TEST_CASE("Registry: an unregistered pool is no longer touched by destroy")
+{
+    Registry reg;
+    SparseSet<int> pool;
+    reg.RegisterPool(&pool);
+
+    const Entity e = reg.Create();
+    REQUIRE(pool.Add(e, 7) != nullptr);
+
+    reg.UnregisterPool(&pool);
+    reg.Destroy(e);
+
+    // Destroy no longer drives this pool, so the component lingers (the pool is
+    // now the caller's responsibility).
+    CHECK(pool.Has(e));
 }
 
 TEST_CASE("Registry: reset returns to a pristine state")

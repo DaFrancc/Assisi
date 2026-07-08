@@ -3,6 +3,7 @@ add_executable(Assisi-ECS-Tests
   TestSparseSet.cpp
   TestRegistry.cpp
   TestQuery.cpp
+  TestScene.cpp
 )
 
 Assisi_apply_defaults(Assisi-ECS-Tests)
