@@ -152,7 +152,7 @@ void DebugUI::Shutdown()
     }
 }
 
-void DebugUI::BeginFrame(Render::Vulkan::VulkanFrame &frame)
+void DebugUI::BeginFrame(Render::RenderFrame &frame)
 {
     if (s_openerPipeline)
     {
@@ -169,7 +169,7 @@ void DebugUI::BeginFrame(Render::Vulkan::VulkanFrame &frame)
     ImGui::NewFrame();
 }
 
-void DebugUI::EndFrame(Render::Vulkan::VulkanFrame &frame)
+void DebugUI::EndFrame(Render::RenderFrame &frame)
 {
     ImGui::Render();
 

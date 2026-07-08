@@ -42,11 +42,11 @@ class DebugUI
     /// there's always something for ImGui to draw into even if the scene draws
     /// nothing this frame. Call before any ImGui:: calls, after clearing
     /// `frame`'s color/depth targets.
-    static void BeginFrame(Render::Vulkan::VulkanFrame &frame);
+    static void BeginFrame(Render::RenderFrame &frame);
 
     /// @brief Renders the accumulated draw data into `frame`. Call after all
     /// ImGui:: calls for this frame (including the app's OnRender/OnImGui).
-    static void EndFrame(Render::Vulkan::VulkanFrame &frame);
+    static void EndFrame(Render::RenderFrame &frame);
 };
 
 } // namespace Assisi::Debug

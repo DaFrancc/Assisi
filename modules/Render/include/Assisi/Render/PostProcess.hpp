@@ -8,7 +8,7 @@
 /// `None` is active — it draws into an offscreen target owned by this class
 /// (SceneFramebuffer()), which Resolve() then MSAA-resolves and/or FXAA's
 /// into the real swapchain framebuffer. `Application::RenderFrame` wires
-/// this up by swapping the `VulkanFrame` it hands to `OnRender()`; derived
+/// this up by swapping the `RenderFrame` it hands to `OnRender()`; derived
 /// apps never see the offscreen target directly.
 
 #include <cstdint>
@@ -16,13 +16,9 @@
 
 #include <nvrhi/nvrhi.h>
 
-namespace Assisi::Render::Vulkan
-{
-struct VulkanFrame;
-}
-
 namespace Assisi::Render
 {
+struct RenderFrame;
 
 /// @brief Anti-aliasing technique selection.
 enum class AaMode
@@ -64,13 +60,13 @@ class PostProcess
     /// @brief Resolves and/or FXAA's the offscreen scene render into `frame`'s
     /// swapchain framebuffer. No-op if mode is None. Call after the scene draws,
     /// before ImGui.
-    void Resolve(nvrhi::ICommandList *commandList, const Vulkan::VulkanFrame &frame) const;
+    void Resolve(nvrhi::ICommandList *commandList, const RenderFrame &frame) const;
 
     [[nodiscard]] AaMode Mode() const { return _mode; }
 
   private:
     void Rebuild();
-    void RunFxaa(nvrhi::ICommandList *commandList, const Vulkan::VulkanFrame &frame) const;
+    void RunFxaa(nvrhi::ICommandList *commandList, const RenderFrame &frame) const;
 
     nvrhi::IDevice        *_device = nullptr;
     nvrhi::FramebufferInfo _swapchainInfo;

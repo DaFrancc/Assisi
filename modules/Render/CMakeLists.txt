@@ -10,6 +10,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/MeshData.hpp"
     "include/Assisi/Render/MeshPass.hpp"
     "include/Assisi/Render/PostProcess.hpp"
+    "include/Assisi/Render/RenderFrame.hpp"
     "include/Assisi/Render/RenderSystem.hpp"
     "include/Assisi/Render/ShaderModule.hpp"
     "include/Assisi/Render/Texture.hpp"

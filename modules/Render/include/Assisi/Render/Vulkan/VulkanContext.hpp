@@ -19,6 +19,8 @@
 #include <optional>
 #include <vector>
 
+#include <Assisi/Render/RenderFrame.hpp>
+
 namespace Assisi::Window
 {
 class WindowContext;
@@ -26,17 +28,6 @@ class WindowContext;
 
 namespace Assisi::Render::Vulkan
 {
-
-/// @brief Resources for the swapchain image acquired for the current frame.
-struct VulkanFrame
-{
-    nvrhi::ICommandList *commandList = nullptr;
-    nvrhi::ITexture     *colorTexture = nullptr;
-    nvrhi::ITexture     *depthTexture = nullptr;
-    nvrhi::IFramebuffer *framebuffer = nullptr;
-    uint32_t             width = 0;
-    uint32_t             height = 0;
-};
 
 /// @brief Owns the Vulkan instance/device/swapchain and the NVRHI device wrapping them.
 ///
@@ -58,7 +49,7 @@ class VulkanContext
 
     /// @brief Acquires the next swapchain image and opens a command list for the frame.
     /// @return std::nullopt if acquisition failed (e.g. window minimized to zero size).
-    std::optional<VulkanFrame> BeginFrame();
+    std::optional<RenderFrame> BeginFrame();
 
     /// @brief Closes and submits the command list opened by BeginFrame(), then presents.
     void EndFrame();

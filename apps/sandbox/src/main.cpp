@@ -62,7 +62,7 @@ class SandboxApp : public Assisi::App::Application
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
     void OnUpdate(float dt) override;
-    void OnRender(Assisi::Render::Vulkan::VulkanFrame &frame) override;
+    void OnRender(Assisi::Render::RenderFrame &frame) override;
     void OnImGui() override;
     void OnResize(int width, int height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
@@ -332,7 +332,7 @@ void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebuffe
     }
 }
 
-void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)
+void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
 {
     if (!_meshPass.IsValid() || !_scene)
     {

@@ -25,7 +25,7 @@ namespace Assisi::App
 ///   - OnStart()
 ///   - OnFixedUpdate(float dt)   — called at physicsHz
 ///   - OnUpdate(float dt)        — called every render frame
-///   - OnRender(Render::Vulkan::VulkanFrame&) — color/depth targets are already
+///   - OnRender(Render::RenderFrame&) — color/depth targets are already
 ///     cleared, called between BeginFrame() and EndFrame(). When an
 ///     anti-aliasing mode is active (see F12 options), `frame` points at an
 ///     offscreen target instead of the swapchain — PostProcess resolves it
@@ -69,7 +69,7 @@ class Application
     virtual void OnStart()                  = 0;
     virtual void OnFixedUpdate(float dt)    = 0;
     virtual void OnUpdate(float dt)         = 0;
-    virtual void OnRender(Render::Vulkan::VulkanFrame &frame) = 0;
+    virtual void OnRender(Render::RenderFrame &frame) = 0;
     virtual void OnImGui()                  {}
     virtual void OnShutdown()               {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.

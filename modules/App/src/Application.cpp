@@ -330,7 +330,7 @@ void Application::RenderFrame()
     // When an AA mode is active, the scene renders into PostProcess's offscreen
     // target instead of the swapchain directly — everything else about `frame`
     // (commandList, width, height) stays the same either way.
-    Render::Vulkan::VulkanFrame sceneFrame = *frame;
+    Render::RenderFrame sceneFrame = *frame;
     if (nvrhi::IFramebuffer *offscreenFramebuffer = _postProcess.SceneFramebuffer())
     {
         sceneFrame.framebuffer = offscreenFramebuffer;

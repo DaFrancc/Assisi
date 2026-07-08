@@ -203,7 +203,7 @@ nvrhi::FramebufferInfo PostProcess::SceneFramebufferInfo() const
     return _swapchainInfo;
 }
 
-void PostProcess::Resolve(nvrhi::ICommandList *commandList, const Vulkan::VulkanFrame &frame) const
+void PostProcess::Resolve(nvrhi::ICommandList *commandList, const RenderFrame &frame) const
 {
     switch (_mode)
     {
@@ -222,7 +222,7 @@ void PostProcess::Resolve(nvrhi::ICommandList *commandList, const Vulkan::Vulkan
     }
 }
 
-void PostProcess::RunFxaa(nvrhi::ICommandList *commandList, const Vulkan::VulkanFrame &frame) const
+void PostProcess::RunFxaa(nvrhi::ICommandList *commandList, const RenderFrame &frame) const
 {
     if (!_fxaaPipeline || !_fxaaBindingSet)
     {

@@ -407,7 +407,7 @@ void VulkanContext::Resize(uint32_t width, uint32_t height)
     (void)CreateSwapchainResources(width, height);
 }
 
-std::optional<VulkanFrame> VulkanContext::BeginFrame()
+std::optional<RenderFrame> VulkanContext::BeginFrame()
 {
     if (_swapchain == VK_NULL_HANDLE)
     {
@@ -445,7 +445,7 @@ std::optional<VulkanFrame> VulkanContext::BeginFrame()
     _commandList->setTextureState(_swapchainTextures[_currentImageIndex], nvrhi::AllSubresources,
                                    nvrhi::ResourceStates::RenderTarget);
 
-    VulkanFrame frame;
+    RenderFrame frame;
     frame.commandList = _commandList;
     frame.colorTexture = _swapchainTextures[_currentImageIndex];
     frame.depthTexture = _depthTexture;
