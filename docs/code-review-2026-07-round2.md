@@ -283,19 +283,36 @@ Checkboxes so this can be burned down like the round-1 doc was.
   currently empty since every recognised type is supported, but ready for the
   next one. Verified: real headers and a `mat4` fixture generate; a fixture of a
   guarded type exits non-zero.
-- [ ] **Inspector can't edit `EntityRef` fields** — `FieldType::EntityRef`
-  falls into the `default:` "[unsupported type]" branch of
-  `EditComponentFields` (`main.cpp:585-587`). Minor today; note it so the
-  gap is chosen rather than discovered.
-- [ ] **Triplicated rationale:** the cluster-rebuild-on-projection-drift
-  story is told three times — member doc (`main.cpp:120-124`), method doc
-  (`main.cpp:78-82`), call site (`main.cpp:335-337`). Tell it once where the
-  decision lives (the method), point at it from the other two. Same review
-  note as round 1's "why-comments are the model" — with the addendum that
-  even good comments shouldn't be cloned.
-- [ ] **Residual narration comments** in `SparseSet.hpp` ("Append the entity
-  index and the component value" above `push_back`) and a few in
-  `AssetSystem.cpp` — round 1's strip pass got most; sweep the rest.
+- [x] **Inspector can't edit `EntityRef` fields** — `FieldType::EntityRef`
+  fell into the `default:` "[unsupported type]" branch of `EditComponentFields`.
+  *Fixed:* it now has a real editor with two ways to set the target:
+  (1) a **dropdown** listing every live entity in the scene (plus `(none)`),
+  with the current value previewed and marked `(dangling)` if the stored handle
+  is stale; and (2) an **eyedropper** — a "Pick" button that arms a mode where
+  the next left-click in the 3D scene writes the picked entity into the field
+  instead of moving the selection (re-using the existing `PickEntity` raycast).
+  The armed target is pinned by (entity, component meta, field offset) rather
+  than a raw component pointer, so a pool reallocation between arming and picking
+  can't dangle it; the write re-resolves the pointer through `iterateEntities` at
+  pick time. Backed by two new ECS tooling primitives — `Scene::EntityAt(index)`
+  (slot → current-generation handle, or `NullEntity`) and
+  `Scene::ForEachEntity(fn)` / `Registry::ForEachLive(fn)` (visit every live
+  entity, skipping freed slots) — each covered by regression tests in
+  `TestRegistry.cpp` (live-slot resolution, freed-slot-follows-reuse proving no
+  stale handle escapes, and ForEachLive skipping a mid-array hole then following
+  slot reuse).
+- [x] **Triplicated rationale:** the cluster-rebuild-on-projection-drift
+  story is now told once, on the method (`RebuildClusterGrid`'s doc); the
+  member (`_clusterProjection`) and the call site both point at it instead of
+  re-telling it. *(Already de-duplicated when the cluster-rebuild fix landed;
+  verified and checked off here.)*
+- [x] **Residual narration comments** — swept: `SparseSet.hpp` lost the
+  narrate-the-obvious lines in `Add`/`Remove` (the "grow the sparse array",
+  "move the last element", "clear the sparse entry" trio), keeping only the
+  why-comments (the stale-slot rejection rationale and the moved-entity sparse
+  re-point); `AssetSystem.cpp` lost the `gInitialized` restatement and the
+  "allocate exact size" narration, keeping the why-comments (seek-to-end sizing,
+  `tellg` failure, text-vs-binary EOF handling, `_dupenv_s` free).
 - [ ] **`main.cpp` at 848 lines is at the ceiling.** Well-sectioned, but the
   inspector (`EditComponentFields`/`DrawInspector`/`HandlePhysicsEditing`)
   and level management (`ScanLevels`/`LoadLevel`/`SaveLevel`) are each a
