@@ -5,11 +5,13 @@
 /// @brief Manages a named collection of Scenes with active-scene tracking.
 
 #include <expected>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 
+#include <Assisi/Core/StringHash.hpp>
 #include <Assisi/ECS/Scene.hpp>
 
 namespace Assisi::ECS
@@ -45,7 +47,10 @@ struct SceneRegistry
     const Scene *Active() const;
 
   private:
-    std::unordered_map<std::string, std::unique_ptr<Scene>> _scenes;
+    // Transparent hash + equality so lookups by std::string_view don't allocate
+    // a temporary std::string per call.
+    std::unordered_map<std::string, std::unique_ptr<Scene>, Core::TransparentStringHash, std::equal_to<>>
+        _scenes;
     Scene *_active = nullptr;
 };
 

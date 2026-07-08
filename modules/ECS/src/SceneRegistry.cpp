@@ -17,7 +17,7 @@ std::expected<Scene *, SceneError> SceneRegistry::Create(std::string_view name)
 
 void SceneRegistry::Destroy(std::string_view name)
 {
-    auto iter = _scenes.find(std::string(name));
+    auto iter = _scenes.find(name);
     if (iter == _scenes.end())
     {
         return;
@@ -31,24 +31,24 @@ void SceneRegistry::Destroy(std::string_view name)
 
 Scene *SceneRegistry::Get(std::string_view name)
 {
-    auto iter = _scenes.find(std::string(name));
+    auto iter = _scenes.find(name);
     return iter != _scenes.end() ? iter->second.get() : nullptr;
 }
 
 const Scene *SceneRegistry::Get(std::string_view name) const
 {
-    auto iter = _scenes.find(std::string(name));
+    auto iter = _scenes.find(name);
     return iter != _scenes.end() ? iter->second.get() : nullptr;
 }
 
 bool SceneRegistry::Has(std::string_view name) const
 {
-    return _scenes.contains(std::string(name));
+    return _scenes.contains(name);
 }
 
 std::expected<void, SceneError> SceneRegistry::SetActive(std::string_view name)
 {
-    auto iter = _scenes.find(std::string(name));
+    auto iter = _scenes.find(name);
     if (iter == _scenes.end())
     {
         return std::unexpected(SceneError::NotFound);

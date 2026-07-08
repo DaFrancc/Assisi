@@ -13,6 +13,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/EventQueue.hpp"
     "include/Assisi/Core/Logger.hpp"
     "include/Assisi/Core/Sinks.hpp"
+    "include/Assisi/Core/StringHash.hpp"
     "include/Assisi/Core/Reflect/Annotations.hpp"
     "include/Assisi/Core/Reflect/FieldMeta.hpp"
     "include/Assisi/Core/Reflect/ComponentMeta.hpp"
