@@ -93,8 +93,6 @@ class VulkanContext
     void DestroySwapchainResources();
     [[nodiscard]] bool CreateSwapchainResources(uint32_t width, uint32_t height);
 
-    static constexpr uint32_t kFramesInFlight = 2;
-
     VkInstance       _instance = VK_NULL_HANDLE;
     VkSurfaceKHR     _surface = VK_NULL_HANDLE;
     VkPhysicalDevice _physicalDevice = VK_NULL_HANDLE;
@@ -113,11 +111,14 @@ class VulkanContext
     nvrhi::TextureHandle                   _depthTexture;
     std::vector<nvrhi::FramebufferHandle>  _framebuffers;
 
-    std::vector<VkSemaphore> _imageAvailableSemaphores;
-    std::vector<VkSemaphore> _renderFinishedSemaphores;
+    // A single semaphore pair: BeginFrame() calls waitForIdle(), so only one
+    // frame is ever in flight. Multi-frame pipelining would need per-frame
+    // fences and a render-finished semaphore per swapchain image — deferred
+    // until there's a perf reason (see the note in BeginFrame()).
+    VkSemaphore              _imageAvailableSemaphore = VK_NULL_HANDLE;
+    VkSemaphore              _renderFinishedSemaphore = VK_NULL_HANDLE;
     nvrhi::CommandListHandle _commandList;
 
-    uint32_t _frameIndex = 0;
     uint32_t _currentImageIndex = 0;
 };
 

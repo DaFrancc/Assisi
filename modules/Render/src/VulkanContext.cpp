@@ -236,16 +236,11 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
         return nullptr;
     }
 
-    context->_imageAvailableSemaphores.resize(kFramesInFlight);
-    context->_renderFinishedSemaphores.resize(kFramesInFlight);
-    for (uint32_t i = 0; i < kFramesInFlight; ++i)
     {
         VkSemaphoreCreateInfo semInfo{};
         semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        if (VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr,
-                                  &context->_imageAvailableSemaphores[i]) != VK_SUCCESS ||
-            VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr,
-                                  &context->_renderFinishedSemaphores[i]) != VK_SUCCESS)
+        if (VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr, &context->_imageAvailableSemaphore) != VK_SUCCESS ||
+            VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr, &context->_renderFinishedSemaphore) != VK_SUCCESS)
         {
             Core::Log::Error("VulkanContext: vkCreateSemaphore failed.");
             return nullptr;
@@ -432,9 +427,7 @@ std::optional<VulkanFrame> VulkanContext::BeginFrame()
     // still settling — worth revisiting once there's a perf reason to.
     _nvrhiDevice->waitForIdle();
 
-    const VkSemaphore imageAvailable = _imageAvailableSemaphores[_frameIndex % kFramesInFlight];
-
-    VkResult acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, imageAvailable,
+    VkResult acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphore,
                                                         VK_NULL_HANDLE, &_currentImageIndex);
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -465,19 +458,16 @@ std::optional<VulkanFrame> VulkanContext::BeginFrame()
 
 void VulkanContext::EndFrame()
 {
-    const VkSemaphore imageAvailable = _imageAvailableSemaphores[_frameIndex % kFramesInFlight];
-    const VkSemaphore renderFinished = _renderFinishedSemaphores[_frameIndex % kFramesInFlight];
-
     _commandList->close();
 
-    _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, imageAvailable, 0);
-    _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, renderFinished, 0);
+    _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphore, 0);
+    _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphore, 0);
     _nvrhiDevice->executeCommandList(_commandList);
 
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &renderFinished;
+    presentInfo.pWaitSemaphores = &_renderFinishedSemaphore;
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &_swapchain;
     presentInfo.pImageIndices = &_currentImageIndex;
@@ -492,7 +482,6 @@ void VulkanContext::EndFrame()
     }
 
     _nvrhiDevice->runGarbageCollection();
-    ++_frameIndex;
 }
 
 VulkanContext::~VulkanContext()
@@ -509,8 +498,8 @@ VulkanContext::~VulkanContext()
     _nvrhiDevice = nullptr;
     _nvrhiDeviceHandle = nullptr;
 
-    for (VkSemaphore sem : _imageAvailableSemaphores) VKD.vkDestroySemaphore(_device, sem, nullptr);
-    for (VkSemaphore sem : _renderFinishedSemaphores) VKD.vkDestroySemaphore(_device, sem, nullptr);
+    if (_imageAvailableSemaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, _imageAvailableSemaphore, nullptr);
+    if (_renderFinishedSemaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, _renderFinishedSemaphore, nullptr);
 
     if (_swapchain != VK_NULL_HANDLE) VKD.vkDestroySwapchainKHR(_device, _swapchain, nullptr);
     VKD.vkDestroyDevice(_device, nullptr);
