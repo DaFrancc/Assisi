@@ -620,7 +620,13 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
         }
     }
 
-    const bool nowDragging = ImGui::IsAnyItemActive();
+    // IsAnyItemActive() is global — it fires for a drag/edit in *any* window, so
+    // touching the AA combo or the Save-As field would otherwise freeze the
+    // selected body to Static. Scope it to the Inspector: this runs inside the
+    // Inspector's Begin/End, so IsWindowFocused (current window) is true only
+    // while an Inspector widget is the one being manipulated.
+    const bool nowDragging =
+        ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
     if (nowDragging != _wasDragging)
     {
         const auto *rbc =
