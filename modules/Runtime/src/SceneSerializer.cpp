@@ -139,14 +139,26 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
 
     s_context = SerializationContext{};
 
-    for (const auto &entityJson : j.at("entities"))
-    {
-        const ECS::Entity e = scene.Create();
-        s_context->indexToEntity.push_back(e);
+    const auto &entities = j.at("entities");
 
+    // Pass 1: create every entity up front so indexToEntity is complete before
+    // any component deserializes. Component EntityRef fields resolve through
+    // IndexToEntity, and a reference may point *forward* to an entity that has
+    // not been created yet (e.g. a child serialized before its parent after
+    // slot reuse). A single pass would resolve those to NullEntity and silently
+    // flatten the hierarchy, so all handles must exist before pass 2 runs.
+    s_context->indexToEntity.reserve(entities.size());
+    for (size_t i = 0; i < entities.size(); ++i)
+        s_context->indexToEntity.push_back(scene.Create());
+
+    // Pass 2: deserialize components now that every EntityRef can resolve.
+    for (size_t i = 0; i < entities.size(); ++i)
+    {
+        const auto &entityJson = entities[i];
         if (!entityJson.contains("components"))
             continue;
 
+        const ECS::Entity e = s_context->indexToEntity[i];
         for (const auto &[compName, compData] : entityJson.at("components").items())
         {
             const auto *meta = registry.Find(compName);

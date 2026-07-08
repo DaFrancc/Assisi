@@ -41,3 +41,7 @@ assisi_reflect(
 )
 
 add_library(Assisi::Runtime ALIAS Assisi-Runtime)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
