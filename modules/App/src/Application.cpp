@@ -290,7 +290,7 @@ void Application::Run()
         }
 
         RenderFrame();
-        Core::EventQueue::Instance().Flush();
+        _events.Flush();
     }
 
     OnShutdown();

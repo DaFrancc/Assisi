@@ -60,14 +60,14 @@ void GameApplication::OnStart()
 
 void GameApplication::OnFixedUpdate(float dt)
 {
-    _systems.Run(SystemPhase::FixedUpdate, {_scene, dt, GetInput(), _actions});
+    _systems.Run(SystemPhase::FixedUpdate, {_scene, dt, GetInput(), _actions, GetEvents()});
 }
 
 void GameApplication::OnUpdate(float dt)
 {
-    _systems.Run(SystemPhase::PreUpdate,  {_scene, dt, GetInput(), _actions});
-    _systems.Run(SystemPhase::Update,     {_scene, dt, GetInput(), _actions});
-    _systems.Run(SystemPhase::PostUpdate, {_scene, dt, GetInput(), _actions});
+    _systems.Run(SystemPhase::PreUpdate,  {_scene, dt, GetInput(), _actions, GetEvents()});
+    _systems.Run(SystemPhase::Update,     {_scene, dt, GetInput(), _actions, GetEvents()});
+    _systems.Run(SystemPhase::PostUpdate, {_scene, dt, GetInput(), _actions, GetEvents()});
 }
 
 void GameApplication::OnRender(Render::Vulkan::VulkanFrame &frame)

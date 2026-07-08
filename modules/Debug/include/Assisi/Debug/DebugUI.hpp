@@ -16,6 +16,11 @@
 /// Multi-viewport (floating ImGui windows outside the main window) is
 /// deliberately not enabled — it would need per-viewport swapchains managed
 /// by the Vulkan backend, out of scope for now. Docking is enabled.
+///
+/// @note Intentional static service: Dear ImGui is itself a process-global
+/// (one implicit ImGui context, one set of backend statics), so wrapping this
+/// in an instance would be false encapsulation over shared global state. There
+/// is exactly one debug UI per process by construction.
 
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>

@@ -28,6 +28,7 @@
 /// Systems run in dependency order within each phase.
 /// Systems with no ordering relationship run in registration order.
 
+#include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -50,6 +51,7 @@ struct SystemContext
     float                  dt;
     Window::InputContext  &input;
     Window::ActionMap     &actions;
+    Core::EventQueue      &events;
 };
 
 /// @brief Passed to render systems (Render phase only).

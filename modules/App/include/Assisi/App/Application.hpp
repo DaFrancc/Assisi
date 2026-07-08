@@ -7,6 +7,7 @@
 
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -82,6 +83,11 @@ class Application
     Window::WindowContext &GetWindow() const { return *_window; }
     Window::InputContext  &GetInput()  const { return *_input; }
 
+    /// @brief The per-frame event queue, owned by Application and flushed once
+    /// per frame in Run(). Systems normally reach it through SystemContext
+    /// (ctx.events); this accessor is for app code outside a system.
+    Core::EventQueue &GetEvents() { return _events; }
+
     void      RequestClose();
     int       GetFps()             const { return _fps; }
 
@@ -104,6 +110,7 @@ class Application
     std::unique_ptr<Window::InputContext>  _input;
 
     Render::PostProcess _postProcess;
+    Core::EventQueue    _events;
     bool                _showOptionsWindow = false;
     bool                _initialized = false;
 

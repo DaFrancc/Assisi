@@ -75,11 +75,19 @@ checkboxes so this can be burned down like the migration doc was.
   API), **App** `SystemRegistry::TopoSort` (ordering/missing-dep/cycle via render
   phase), **Window** `ActionMap` JSON round-trip. 27 cases / 115 assertions, all
   four `ctest` suites green.
-- [ ] **Singleton sprawl**: `EventQueue::Instance()`, `ComponentRegistry::
+- [x] **Singleton sprawl**: `EventQueue::Instance()`, `ComponentRegistry::
   Instance()`, `AssetSystem` file statics, `RenderSystem::GetVulkanContext()`,
-  `DebugUI` statics, `s_instance`. Individually defensible; collectively the
-  reason nothing is testable and why ordering contracts are hidden. Services
-  the frame loop touches should be reachable as members, not ambient globals.
+  `DebugUI` statics, `s_instance`. Services the frame loop touches should be
+  reachable as members, not ambient globals. (Done: **`EventQueue` de-
+  singletonized** — owned by `Application`, threaded through `SystemContext`
+  (`ctx.events`) with a `GetEvents()` accessor for app code; `Instance()`
+  removed, the class is now header-only and unit-tested directly. `s_instance`
+  was already removed with the GLFW-callback work. The remaining four are
+  **documented as intentional service-locators** with rationale on each:
+  `ComponentRegistry` (populated in static initializers before main(),
+  immutable at runtime), `DebugUI` (ImGui is itself a process global),
+  `RenderSystem` (one GPU device per process), `AssetSystem` (single asset
+  root, kept test-controllable via `SetRoot`).)
 - [~] **`MeshPass::_bindingSetCache` trap** (`MeshPass.cpp:144-170`): keyed on
   raw `ITexture*`, never evicted — every texture ever drawn is kept alive
   forever, and pointer reuse returns a stale binding set. Harmless with one

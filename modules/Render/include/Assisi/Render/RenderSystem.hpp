@@ -15,6 +15,13 @@ namespace Assisi::Render
 /// @brief Static service that initializes and owns the Vulkan/NVRHI device.
 ///
 /// Call Initialize() once after creating a WindowContext.
+///
+/// @note Intentional service-locator: there is exactly one GPU device per
+/// process, created once and torn down at exit, and it underpins nearly every
+/// render call site. Threading it through as a member everywhere buys little
+/// over an owned-by-service singleton. If it ever needs to be swappable (e.g.
+/// for a headless test device), promote GetVulkanContext() to an injected
+/// reference then; today it is deliberately a global.
 class RenderSystem
 {
   public:

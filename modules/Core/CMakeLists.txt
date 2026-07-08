@@ -5,7 +5,6 @@ target_sources(Assisi-Core
   PRIVATE
     "src/AssetSystem.cpp"
     "src/ComponentRegistry.cpp"
-    "src/EventQueue.cpp"
     "src/Logger.cpp"
     "src/Sinks.cpp"
   PUBLIC

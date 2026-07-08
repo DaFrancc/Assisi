@@ -34,17 +34,23 @@
 /// Rule of thumb: an event pushed in phase X is readable in any phase that
 /// runs AFTER X within the same frame, before Flush().
 ///
+/// @par Access
+/// The queue is owned by Application and reached through SystemContext, not a
+/// global — systems receive it as @c ctx.events, and Application exposes it to
+/// derived apps via GetEvents(). This keeps the frame-loop ordering explicit
+/// and lets tests construct a throwaway queue instead of sharing process state.
+///
 /// @par Example
 /// @code
 /// // Define an event (annotate with AEVENT() to mark intent)
 /// AEVENT()
 /// struct CollisionEvent { Entity a; Entity b; };
 ///
-/// // Produce (e.g. from the physics system)
-/// EventQueue::Instance().Push(CollisionEvent{entityA, entityB});
+/// // Produce (e.g. from a system)
+/// ctx.events.Push(CollisionEvent{entityA, entityB});
 ///
 /// // Consume (e.g. in a PostUpdate system)
-/// for (const auto& e : EventQueue::Instance().Read<CollisionEvent>())
+/// for (const auto& e : ctx.events.Read<CollisionEvent>())
 ///     HandleCollision(e);
 /// @endcode
 ///
@@ -60,15 +66,13 @@
 namespace Assisi::Core
 {
 
-/// @brief Global per-frame event queue.
+/// @brief Per-frame event queue.
 ///
 /// Push events from any system; consume them with Read<E>() before the frame
 /// ends.  All queues are cleared by Flush() once per frame.
 class EventQueue
 {
   public:
-    static EventQueue &Instance();
-
     /// @brief Append an event of type E to its queue.
     template <typename E>
     void Push(E event)

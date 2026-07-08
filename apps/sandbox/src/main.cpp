@@ -207,11 +207,9 @@ void SandboxApp::OnStart()
         .After("EntityPicking");
 
     _systems.Register(Assisi::App::SystemPhase::PostUpdate, "ProcessEntitySelection",
-                      [this](Assisi::App::SystemContext &)
+                      [this](Assisi::App::SystemContext &ctx)
                       {
-                          for (const auto &e :
-                               Assisi::Core::EventQueue::Instance()
-                                   .Read<EntitySelectionChangedEvent>())
+                          for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
                           {
                               _selectedEntity = e.entity;
                           }
@@ -382,8 +380,7 @@ void SandboxApp::HandleEntityPicking()
     if (_actions.IsActionPressed("Select", input) &&
         !input.IsMouseCaptured() && !ImGuiWantsMouse())
     {
-        Assisi::Core::EventQueue::Instance().Push(
-            EntitySelectionChangedEvent{PickEntity(input.MousePosition())});
+        GetEvents().Push(EntitySelectionChangedEvent{PickEntity(input.MousePosition())});
     }
 }
 
@@ -446,8 +443,8 @@ void SandboxApp::OnUpdate(float dt)
     if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsKeyboard())
         RequestClose();
 
-    _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions});
-    _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions});
+    _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
+    _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
 }
 
 // ---------------------------------------------------------------------------

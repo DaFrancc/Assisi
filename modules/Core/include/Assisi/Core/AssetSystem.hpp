@@ -7,6 +7,12 @@
 /// All public functions are static; `AssetSystem` acts as a process-wide
 /// singleton service.  Call Initialize() (or SetRoot()) once before using
 /// Resolve(), ReadText(), or ReadBinary().
+///
+/// @note Intentional service-locator: the asset root is a single process-wide
+/// resource, and SetRoot() keeps it test-controllable (see the Core tests,
+/// which point it at a temp dir) — so the shared state does not block testing.
+/// The static API is a deliberate convenience over threading a handle through
+/// every asset load.
 
 #include <cstddef>
 #include <expected>

@@ -6,6 +6,12 @@
 ///
 /// Generated .generated.cpp files register their component types here via
 /// static initializers at program startup.
+///
+/// @note Intentional service-locator: registration happens in static
+/// initializers, before main() and any owner object could exist, so this
+/// genuinely cannot be an instance threaded through the app. The reflection
+/// table is also immutable after startup and read-only at runtime, so shared
+/// process-wide state carries no ordering or test-isolation hazard.
 
 #include <span>
 #include <string_view>
