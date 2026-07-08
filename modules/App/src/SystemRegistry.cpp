@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file SystemRegistry.cpp
 
 #include <Assisi/App/SystemRegistry.hpp>
@@ -98,9 +99,15 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
 
     if (sorted.size() != n)
     {
-        Core::Log::Fatal(
-            "SystemRegistry({}): cycle detected. Check After()/Before() declarations.", phaseName);
+        // A cycle is a programmer error, but silently running zero systems for
+        // the phase is worse than running them in a defined-but-arbitrary order.
+        // Fall back to registration order so nothing is dropped, and log loudly.
+        Core::Log::Error("SystemRegistry({}): dependency cycle detected in After()/Before() "
+                         "declarations — falling back to registration order.",
+                         phaseName);
         sorted.clear();
+        for (std::size_t i = 0; i < n; ++i)
+            sorted.push_back(i);
     }
 
     return sorted;
@@ -167,6 +174,14 @@ SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase               
                                                        std::string_view                     name,
                                                        std::function<void(RenderContext &)> fn)
 {
+    // Render systems form a single ordered list; the phase argument exists only
+    // to keep the Register/Run call shape uniform and must be Render. Catch
+    // misuse here rather than silently ignoring it.
+    if (phase != SystemPhase::Render)
+        Core::Log::Error("SystemRegistry: render system '{}' registered with a non-Render phase; "
+                         "it will run in the Render phase regardless.",
+                         name);
+
     const std::size_t ei = _renderEntries.size();
     _renderEntries.push_back({std::string(name), std::move(fn), {}, {}});
     _renderDirty = true;

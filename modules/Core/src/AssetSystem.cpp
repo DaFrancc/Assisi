@@ -21,20 +21,17 @@ static bool gInitialized = false;
 
 std::expected<void, AssetError> AssetSystem::Initialize() noexcept
 {
-    /* Allow repeated initialization calls. */
     if (gInitialized)
     {
         return {};
     }
 
-    /* Attempt automatic root discovery. */
     auto root = DiscoverRoot();
     if (!root)
     {
         return std::unexpected(root.error());
     }
 
-    /* Canonicalize and store the root. */
     gAssetRoot = std::filesystem::weakly_canonical(*root);
     gInitialized = true;
 
@@ -43,13 +40,11 @@ std::expected<void, AssetError> AssetSystem::Initialize() noexcept
 
 std::expected<void, AssetError> AssetSystem::SetRoot(const std::filesystem::path &root) noexcept
 {
-    /* Validate that the root exists and is a directory. */
     if (!std::filesystem::is_directory(root))
     {
         return std::unexpected(AssetError::InvalidRoot);
     }
 
-    /* Canonicalize and store the root. */
     gAssetRoot = std::filesystem::weakly_canonical(root);
     gInitialized = true;
 
@@ -66,24 +61,25 @@ std::expected<std::filesystem::path, AssetError> AssetSystem::Resolve(std::strin
 {
     try
     {
-        /* Ensure the system has been initialized. */
         if (!IsInitialized())
         {
             return std::unexpected(AssetError::NotInitialized);
         }
 
-        /* Normalize and validate the virtual path. */
         auto relative = NormalizeVirtualPath(vpath);
         if (!relative)
         {
             return std::unexpected(relative.error());
         }
 
-        /* Resolve and canonicalize the absolute path. */
         auto absolute = std::filesystem::weakly_canonical(gAssetRoot / *relative);
 
-        /* Prevent escaping the asset root. */
-        if (!absolute.generic_string().starts_with(gAssetRoot.generic_string()))
+        // Prevent escaping the asset root. Compare path components rather than
+        // string prefixes: a raw starts_with would accept a sibling like
+        // "<root>-evil/". lexically_relative yields a path starting with ".."
+        // (or empty) when 'absolute' is not contained within the root.
+        const auto rel = absolute.lexically_relative(gAssetRoot);
+        if (rel.empty() || *rel.begin() == "..")
         {
             return std::unexpected(AssetError::RootEscape);
         }
@@ -100,7 +96,6 @@ bool AssetSystem::Exists(std::string_view vpath) noexcept
 {
     try
     {
-        /* Resolve the path and check existence. */
         auto resolved = Resolve(vpath);
         if (!resolved)
         {
@@ -119,7 +114,6 @@ std::expected<std::string, AssetError> AssetSystem::ReadText(std::string_view vp
 {
     try
     {
-        /* Resolve the asset path. */
         auto path = Resolve(vpath);
         if (!path)
         {
@@ -164,21 +158,19 @@ std::expected<std::vector<std::byte>, AssetError> AssetSystem::ReadBinary(std::s
 {
     try
     {
-        /* Resolve the asset path. */
         auto path = Resolve(vpath);
         if (!path)
         {
             return std::unexpected(path.error());
         }
 
-        /* Open the file and seek to the end to determine size. */
+        /* Open at end so we can size the buffer in one pass. */
         std::ifstream file(*path, std::ios::binary | std::ios::ate);
         if (!file)
         {
             return std::unexpected(AssetError::FileOpenFailed);
         }
 
-        /* Allocate the buffer and read the file. */
         const auto size = static_cast<size_t>(file.tellg());
         file.seekg(0);
 

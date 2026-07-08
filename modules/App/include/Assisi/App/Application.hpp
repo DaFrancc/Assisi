@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file Application.hpp
@@ -34,9 +35,9 @@ namespace Assisi::App
 ///     ImGui frame DebugUI opens; build ImGui:: windows here
 ///   - OnResize(int, int)        — called when the framebuffer is resized
 ///   - OnRenderTargetsChanged(const nvrhi::FramebufferInfo&) — called whenever
-///     the FramebufferInfo OnRender()'s `frame` will be compatible with next
-///     changes (i.e. its sample count) — rebuild any graphics pipelines built
-///     against the old one (see Render::MeshPass::RebuildPipeline)
+///     the FramebufferInfo that OnRender()'s `frame` is compatible with changes
+///     (e.g. its sample count) — rebuild any graphics pipelines built against
+///     the old one (see Render::MeshPass::RebuildPipeline)
 ///   - OnShutdown()              — called after the loop exits
 class Application
 {
@@ -68,7 +69,6 @@ class Application
     Window::InputContext  &GetInput()  const { return *_input; }
 
     void      RequestClose();
-    glm::mat4 MakeProjection(float fovDegrees = 60.f, float zNear = 0.1f, float zFar = 200.f) const;
     int       GetFps()             const { return _fps; }
 
     /// @brief The FramebufferInfo OnRender()'s `frame` is (or will be, at the

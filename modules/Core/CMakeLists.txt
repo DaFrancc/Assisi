@@ -33,3 +33,7 @@ target_link_libraries(Assisi-Core
 )
 
 add_library(Assisi::Core ALIAS Assisi-Core)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

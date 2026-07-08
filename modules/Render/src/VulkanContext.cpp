@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file VulkanContext.cpp
 ///
 /// There is no Vulkan SDK assumed to be installed (driver runtime only), so this
@@ -241,8 +242,14 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     {
         VkSemaphoreCreateInfo semInfo{};
         semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr, &context->_imageAvailableSemaphores[i]);
-        VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr, &context->_renderFinishedSemaphores[i]);
+        if (VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr,
+                                  &context->_imageAvailableSemaphores[i]) != VK_SUCCESS ||
+            VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr,
+                                  &context->_renderFinishedSemaphores[i]) != VK_SUCCESS)
+        {
+            Core::Log::Error("VulkanContext: vkCreateSemaphore failed.");
+            return nullptr;
+        }
     }
 
     context->_commandList = context->_nvrhiDevice->createCommandList();
@@ -258,10 +265,19 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     }
 
     VkSurfaceCapabilitiesKHR capabilities{};
-    VKD.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(_physicalDevice, _surface, &capabilities);
+    if (VKD.vkGetPhysicalDeviceSurfaceCapabilitiesKHR(_physicalDevice, _surface, &capabilities) != VK_SUCCESS)
+    {
+        Core::Log::Error("VulkanContext: vkGetPhysicalDeviceSurfaceCapabilitiesKHR failed.");
+        return false;
+    }
 
     uint32_t formatCount = 0;
     VKD.vkGetPhysicalDeviceSurfaceFormatsKHR(_physicalDevice, _surface, &formatCount, nullptr);
+    if (formatCount == 0)
+    {
+        Core::Log::Error("VulkanContext: surface reports no available formats.");
+        return false;
+    }
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
     VKD.vkGetPhysicalDeviceSurfaceFormatsKHR(_physicalDevice, _surface, &formatCount, formats.data());
 
@@ -330,6 +346,12 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     VKD.vkGetSwapchainImagesKHR(_device, _swapchain, &actualImageCount, _swapchainImages.data());
 
     const nvrhi::Format colorFormat = ToNvrhiFormat(_swapchainFormat);
+    if (colorFormat == nvrhi::Format::UNKNOWN)
+    {
+        Core::Log::Error("VulkanContext: swapchain format {} has no NVRHI mapping.",
+                         static_cast<int>(_swapchainFormat));
+        return false;
+    }
 
     for (VkImage image : _swapchainImages)
     {
@@ -454,7 +476,15 @@ void VulkanContext::EndFrame()
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &_swapchain;
     presentInfo.pImageIndices = &_currentImageIndex;
-    VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+    const VkResult presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+    // OUT_OF_DATE/SUBOPTIMAL are expected on resize; the window resize callback
+    // recreates the swapchain, so they're not errors here. Anything else is.
+    if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR &&
+        presentResult != VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        Core::Log::Error("VulkanContext: vkQueuePresentKHR failed with VkResult {}",
+                         static_cast<int>(presentResult));
+    }
 
     _nvrhiDevice->runGarbageCollection();
     ++_frameIndex;

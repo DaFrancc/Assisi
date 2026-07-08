@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file ActionMap.hpp
@@ -35,6 +36,8 @@
 
 #include <nlohmann/json_fwd.hpp>
 
+#include <cstddef>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -44,6 +47,26 @@
 
 namespace Assisi::Window
 {
+
+/// @brief Transparent hash enabling heterogeneous lookup on string-keyed maps,
+/// so action queries can find() by std::string_view without allocating a
+/// temporary std::string every call.
+struct TransparentStringHash
+{
+    using is_transparent = void;
+    [[nodiscard]] std::size_t operator()(std::string_view sv) const noexcept
+    {
+        return std::hash<std::string_view>{}(sv);
+    }
+    [[nodiscard]] std::size_t operator()(const std::string &s) const noexcept
+    {
+        return std::hash<std::string_view>{}(s);
+    }
+    [[nodiscard]] std::size_t operator()(const char *s) const noexcept
+    {
+        return std::hash<std::string_view>{}(s);
+    }
+};
 
 /// @brief A single hardware input source that can trigger an action.
 ///
@@ -64,6 +87,10 @@ struct ActionBinding
     /// @brief True on the first frame the bound input transitions from down to up.
     [[nodiscard]] bool IsReleased(const InputContext &ctx) const noexcept;
 };
+
+/// @brief Action-name → bindings map with heterogeneous (allocation-free) lookup.
+using ActionTable =
+    std::unordered_map<std::string, std::vector<ActionBinding>, TransparentStringHash, std::equal_to<>>;
 
 /// @brief Maps named actions to one or more @ref ActionBinding values.
 ///
@@ -130,11 +157,7 @@ class ActionMap
     [[nodiscard]] const std::vector<ActionBinding> &GetBindings(std::string_view action) const;
 
     /// @brief Returns the full action → bindings map.
-    [[nodiscard]] const std::unordered_map<std::string, std::vector<ActionBinding>> &
-    GetAllActions() const
-    {
-        return _actions;
-    }
+    [[nodiscard]] const ActionTable &GetAllActions() const { return _actions; }
 
     // -------------------------------------------------------------------------
     // Name ↔ enum helpers (used by LoadFromJson / ToJson)
@@ -153,7 +176,7 @@ class ActionMap
     [[nodiscard]] static std::optional<MouseButton> MouseButtonFromName(std::string_view name) noexcept;
 
   private:
-    std::unordered_map<std::string, std::vector<ActionBinding>> _actions;
+    ActionTable _actions;
 
     static const std::vector<ActionBinding> _emptyBindings;
 };

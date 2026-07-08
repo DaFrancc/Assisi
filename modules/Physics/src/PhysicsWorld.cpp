@@ -129,13 +129,39 @@ struct PhysicsWorld::Impl
 // PhysicsWorld
 // ---------------------------------------------------------------------------
 
+namespace
+{
+/* Jolt's allocator, factory, and type registration are process-global, not
+   per-PhysicsSystem. Refcount them so multiple PhysicsWorld instances share a
+   single init/teardown instead of leaking the factory or tearing it out from
+   under a sibling instance. */
+int g_joltRefCount = 0;
+
+void AcquireJoltGlobals()
+{
+    if (g_joltRefCount++ == 0)
+    {
+        /* Must be called before any Jolt allocations (including Impl member ctors). */
+        JPH::RegisterDefaultAllocator();
+        JPH::Factory::sInstance = new JPH::Factory();
+        JPH::RegisterTypes();
+    }
+}
+
+void ReleaseJoltGlobals()
+{
+    if (--g_joltRefCount == 0)
+    {
+        JPH::UnregisterTypes();
+        delete JPH::Factory::sInstance;
+        JPH::Factory::sInstance = nullptr;
+    }
+}
+} // namespace
+
 PhysicsWorld::PhysicsWorld()
 {
-    /* Must be called before any Jolt allocations (including Impl member ctors). */
-    JPH::RegisterDefaultAllocator();
-
-    JPH::Factory::sInstance = new JPH::Factory();
-    JPH::RegisterTypes();
+    AcquireJoltGlobals();
 
     /* Only now safe to construct TempAllocatorImpl and JobSystemThreadPool. */
     _impl = std::make_unique<Impl>();
@@ -151,9 +177,10 @@ PhysicsWorld::PhysicsWorld()
 
 PhysicsWorld::~PhysicsWorld()
 {
-    JPH::UnregisterTypes();
-    delete JPH::Factory::sInstance;
-    JPH::Factory::sInstance = nullptr;
+    /* Tear down this instance's PhysicsSystem before releasing the shared Jolt
+       globals it depends on (factory/type registration). */
+    _impl.reset();
+    ReleaseJoltGlobals();
 }
 
 RigidBodyComponent PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, glm::vec3 halfExtents,

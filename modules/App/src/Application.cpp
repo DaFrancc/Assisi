@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file Application.cpp
 
 // --- Platform timer (must come before other Windows headers) ----------------
@@ -173,17 +174,6 @@ Application::~Application()
 void Application::RequestClose()
 {
     _window->RequestClose();
-}
-
-glm::mat4 Application::MakeProjection(float fovDegrees, float zNear, float zFar) const
-{
-    const Window::WindowSize fb = _window->GetFramebufferSize();
-    if (fb.Width <= 0 || fb.Height <= 0)
-    {
-        return glm::mat4(1.f);
-    }
-    const float aspect = static_cast<float>(fb.Width) / static_cast<float>(fb.Height);
-    return glm::perspective(glm::radians(fovDegrees), aspect, zNear, zFar);
 }
 
 namespace

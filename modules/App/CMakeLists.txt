@@ -36,3 +36,7 @@ target_link_libraries(Assisi-App
 )
 
 add_library(Assisi::App ALIAS Assisi-App)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

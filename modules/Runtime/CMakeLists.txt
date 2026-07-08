@@ -11,7 +11,6 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/Lifecycle.hpp"
     "include/Assisi/Runtime/Renderer.hpp"
     "include/Assisi/Runtime/SceneSerializer.hpp"
-    "include/Assisi/Runtime/Transform.hpp"
   PRIVATE
     "src/Camera.cpp"
     "src/Hierarchy.cpp"

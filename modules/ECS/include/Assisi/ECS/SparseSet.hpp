@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file SparseSet.hpp
@@ -17,6 +18,7 @@
 #include <cstdint>
 #include <expected>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <Assisi/ECS/Entity.hpp>
@@ -53,7 +55,7 @@ template <typename T> struct SparseSet
 
         /* Append the entity index and the component value. */
         _entities.push_back(entity);
-        return &_dense.emplace_back(component);
+        return &_dense.emplace_back(std::move(component));
     }
 
     /// @brief Removes the component for the given entity.
@@ -85,7 +87,18 @@ template <typename T> struct SparseSet
     }
 
     /// @brief Returns true if the entity has a component in this set.
-    bool Has(Entity entity) const { return entity.index < _sparse.size() && _sparse[entity.index] != Invalid; }
+    ///
+    /// Compares the full handle (index *and* generation): a stale handle whose
+    /// slot was reused by a newer entity will not match the generation stored
+    /// in the dense array, so it correctly reports false instead of aliasing
+    /// the new occupant's component.
+    bool Has(Entity entity) const
+    {
+        if (entity.index >= _sparse.size())
+            return false;
+        const uint32_t pos = _sparse[entity.index];
+        return pos != Invalid && _entities[pos].generation == entity.generation;
+    }
 
     /// @brief Returns a pointer to the entity's component, or nullptr if not present.
     T *Get(Entity entity)

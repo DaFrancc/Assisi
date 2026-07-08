@@ -3,7 +3,6 @@ Assisi_apply_defaults(Assisi-ECS)
 
 target_sources(Assisi-ECS
   PUBLIC
-    "include/Assisi/ECS/ECS.hpp"
     "include/Assisi/ECS/Entity.hpp"
     "include/Assisi/ECS/Query.hpp"
     "include/Assisi/ECS/Registry.hpp"
@@ -11,7 +10,6 @@ target_sources(Assisi-ECS
     "include/Assisi/ECS/SceneRegistry.hpp"
     "include/Assisi/ECS/SparseSet.hpp"
   PRIVATE
-    "src/ECS.cpp"
     "src/Registry.cpp"
     "src/SceneRegistry.cpp"
 )
@@ -29,3 +27,7 @@ target_link_libraries(Assisi-ECS
 )
 
 add_library(Assisi::ECS ALIAS Assisi-ECS)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

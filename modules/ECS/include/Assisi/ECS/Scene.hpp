@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file Scene.hpp
@@ -10,6 +11,7 @@
 #include <expected>
 #include <typeindex>
 #include <unordered_map>
+#include <utility>
 
 #include <Assisi/ECS/Query.hpp>
 #include <Assisi/ECS/Registry.hpp>
@@ -56,7 +58,7 @@ struct Scene
     ///         SparseSetError::AlreadyExists if the entity already has one.
     template <typename T> [[nodiscard]] std::expected<T *, SparseSetError> Add(Entity entity, T component = {})
     {
-        return GetOrCreatePool<T>().Add(entity, component);
+        return GetOrCreatePool<T>().Add(entity, std::move(component));
     }
 
     /// @brief Returns a pointer to the entity's component of type T, or nullptr if not present.
@@ -96,6 +98,14 @@ struct Scene
     ///
     /// Iterates the smallest matching pool and skips entities absent from the others.
     /// Supports structured bindings: `for (auto [e, pos, vel] : scene.Query<Position, Velocity>())`
+    ///
+    /// @warning The view holds a pointer into the driving pool's internal entity
+    /// array. Any structural change to a queried component pool during iteration
+    /// — Add<T>, Remove<T>, or Destroy on one of the Ts — may reallocate or
+    /// swap-remove that array and invalidate the iterator (silent UB). Do not
+    /// mutate the queried pools mid-loop. To delete entities discovered while
+    /// iterating, defer the work: collect them into a local vector, or push the
+    /// destruction onto the EventQueue and drain it after the loop.
     template <typename... Ts> QueryView<Ts...> Query()
     {
         std::tuple<SparseSet<Ts> *...> pools = {GetPool<Ts>()...};

@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file MeshPass.hpp
@@ -81,6 +82,18 @@ class MeshPass
     nvrhi::GraphicsPipelineHandle _pipeline;
     nvrhi::BufferHandle           _frameConstantsBuffer;
 
+    /// @brief Cache of binding sets keyed by the raw albedo texture pointer.
+    ///
+    /// @warning Contract, valid only while textures are effectively immortal
+    /// (today: a handful of level/checker textures that live for the whole run).
+    /// Two latent hazards when asset streaming lands:
+    ///   1. Entries are never evicted — every texture ever drawn is kept alive
+    ///      forever by the cached BindingSetHandle (a leak once textures churn).
+    ///   2. The key is a raw `ITexture*`; if a texture is freed and the
+    ///      allocator hands the same address to a new texture, the stale cached
+    ///      binding set is returned for the wrong resource.
+    /// When real (streamed/reloadable) textures arrive, add invalidation:
+    /// evict on texture destruction, or key on a stable texture id/generation.
     mutable std::unordered_map<nvrhi::ITexture *, nvrhi::BindingSetHandle> _bindingSetCache;
 };
 } /* namespace Assisi::Render */

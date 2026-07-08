@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file GameApplication.cpp
 
 #include <Assisi/App/GameApplication.hpp>

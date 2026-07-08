@@ -7,13 +7,11 @@ target_sources(Assisi-Window
     "include/Assisi/Window/GlfwLibrary.hpp"
     "include/Assisi/Window/InputContext.hpp"
     "include/Assisi/Window/Key.hpp"
-    "include/Assisi/Window/Window.hpp"
     "include/Assisi/Window/WindowContext.hpp"
   PRIVATE
     "src/ActionMap.cpp"
     "src/GlfwLibrary.cpp"
     "src/InputContext.cpp"
-    "src/Window.cpp"
     "src/WindowContext.cpp"
 )
 
@@ -31,3 +29,7 @@ target_link_libraries(Assisi-Window
 )
 
 add_library(Assisi::Window ALIAS Assisi-Window)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

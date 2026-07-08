@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file main.cpp
 /// @brief Assisi Sandbox — level viewer built on the Application layer.
 
@@ -57,11 +58,11 @@ struct EntitySelectionChangedEvent
 class SandboxApp : public Assisi::App::Application
 {
   public:
-    void OnStart();
-    void OnFixedUpdate(float dt);
-    void OnUpdate(float dt);
+    void OnStart() override;
+    void OnFixedUpdate(float dt) override;
+    void OnUpdate(float dt) override;
     void OnRender(Assisi::Render::Vulkan::VulkanFrame &frame) override;
-    void OnImGui();
+    void OnImGui() override;
     void OnResize(int width, int height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
 
@@ -171,7 +172,10 @@ void SandboxApp::OnStart()
                     if (json.contains("input") && json.at("input").contains("actions"))
                         _actions.LoadFromJson(json.at("input").at("actions"));
                 }
-                catch (const nlohmann::json::exception &) {}
+                catch (const nlohmann::json::exception &e)
+                {
+                    Assisi::Core::Log::Warn("Failed to parse input bindings from game.json: {}", e.what());
+                }
             }
         }
     }
@@ -323,9 +327,9 @@ void SandboxApp::OnFixedUpdate(float dt)
 
 namespace
 {
-// ImGui has no context under the Vulkan backend yet (its render backend is
-// OpenGL-only for now, see docs/nvrhi-migration-todo.md section 3) — calling
-// ImGui::GetIO() without a context asserts, so gate on GetCurrentContext().
+// The ImGui context may not exist yet (before DebugUI initializes, or when the
+// debug UI is disabled) — calling ImGui::GetIO() without a context asserts, so
+// gate every query on GetCurrentContext() first.
 bool ImGuiWantsMouse()
 {
     return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureMouse;
@@ -435,7 +439,7 @@ void SandboxApp::DrawLevelsWindow()
 
     if (_levelFiles.empty())
     {
-        ImGui::TextDisabled("No .json files found in assets/levels/");
+        ImGui::TextDisabled("No .alvl files found in assets/levels/");
     }
     else
     {
@@ -771,6 +775,8 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
     const auto      fbSize       = GetWindow().GetFramebufferSize();
     const float     w            = static_cast<float>(fbSize.Width);
     const float     h            = static_cast<float>(fbSize.Height);
+    if (w <= 0.f || h <= 0.f) // minimized/zero-size framebuffer — no valid ray
+        return Assisi::ECS::NullEntity;
     const glm::mat4 projection   = Assisi::Runtime::ProjectionMatrix(*cam, w / h);
 
     const float     ndcX    = (2.f * mousePos.x / w) - 1.f;

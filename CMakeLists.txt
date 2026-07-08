@@ -30,6 +30,9 @@ set(ASSISI_SANITIZER_SET "address;undefined" CACHE STRING
 # Release performance knobs
 option(ASSISI_ENABLE_FAST_MATH "Enable fast-math in Release" ON)
 
+# Unit tests (pure-logic modules: ECS, asset-path, action-map, topo-sort).
+option(ASSISI_BUILD_TESTS "Build unit tests" ON)
+
 # ------------------------------------------------------------
 # Central interface targets
 # ------------------------------------------------------------
@@ -244,6 +247,22 @@ FetchContent_Declare(nlohmann_json
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
+# --- doctest (unit-test framework; header-only, included as SYSTEM headers)
+if (ASSISI_BUILD_TESTS)
+    # Point SOURCE_SUBDIR at a nonexistent path so MakeAvailable populates the
+    # headers but never add_subdirectory()s doctest's own CMakeLists — that file
+    # sets cmake_minimum_required below 3.5, which modern CMake rejects. We only
+    # need ${doctest_SOURCE_DIR} for the include path, not its build targets.
+    FetchContent_Declare(doctest
+        GIT_REPOSITORY https://github.com/doctest/doctest.git
+        GIT_TAG        v2.4.11
+        GIT_SHALLOW    TRUE
+        SOURCE_SUBDIR  _headers_only_no_build
+    )
+    FetchContent_MakeAvailable(doctest)
+    enable_testing()
+endif()
+
 # --- Dear ImGui (docking branch)
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
@@ -327,6 +346,9 @@ add_subdirectory(modules/App)
 file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/apps/sandbox")
 file(WRITE "${CMAKE_BINARY_DIR}/apps/sandbox/CMakePresets.json" "{\"version\":10}")
 add_subdirectory(apps/sandbox)
+
+# Per-module unit tests live in modules/<Name>/tests and are pulled in by each
+# module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).
 
 # Notes for module CMakeLists:
 # - Each module target should link:

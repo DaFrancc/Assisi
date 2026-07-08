@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file ActionMap.cpp
 
 #include <Assisi/Window/ActionMap.hpp>
@@ -196,7 +197,7 @@ void ActionMap::Clear()
 
 bool ActionMap::IsActionDown(std::string_view action, const InputContext &input) const
 {
-    const auto it = _actions.find(std::string(action));
+    const auto it = _actions.find(action);
     if (it == _actions.end())
         return false;
     return std::ranges::any_of(it->second, [&](const ActionBinding &b) { return b.IsDown(input); });
@@ -204,7 +205,7 @@ bool ActionMap::IsActionDown(std::string_view action, const InputContext &input)
 
 bool ActionMap::IsActionPressed(std::string_view action, const InputContext &input) const
 {
-    const auto it = _actions.find(std::string(action));
+    const auto it = _actions.find(action);
     if (it == _actions.end())
         return false;
     return std::ranges::any_of(it->second,
@@ -213,7 +214,7 @@ bool ActionMap::IsActionPressed(std::string_view action, const InputContext &inp
 
 bool ActionMap::IsActionReleased(std::string_view action, const InputContext &input) const
 {
-    const auto it = _actions.find(std::string(action));
+    const auto it = _actions.find(action);
     if (it == _actions.end())
         return false;
     return std::ranges::any_of(it->second,
@@ -296,7 +297,7 @@ nlohmann::json ActionMap::ToJson() const
 
 const std::vector<ActionBinding> &ActionMap::GetBindings(std::string_view action) const
 {
-    const auto it = _actions.find(std::string(action));
+    const auto it = _actions.find(action);
     return (it != _actions.end()) ? it->second : _emptyBindings;
 }
 

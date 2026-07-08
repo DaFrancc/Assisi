@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
 namespace Assisi::Core::Reflect

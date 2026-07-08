@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
