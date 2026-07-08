@@ -31,14 +31,19 @@ checkboxes so this can be burned down like the migration doc was.
   swap-removes or reallocates under the iterator. At minimum, document the
   contract on `Scene::Query`; the `EventQueue` exists precisely to defer
   destruction — point at it.
-- [ ] **GLFW callback ownership is a three-way collision.** `Application.cpp:77`
+- [x] **GLFW callback ownership is a three-way collision.** `Application.cpp:77`
   avoids `glfwSetWindowUserPointer` because ImGui's backend uses it — yet
   `InputContext`'s ctor (`InputContext.cpp:19-20`) sets both the user pointer
   *and* the scroll callback, **after** `DebugUI::Initialize` installed ImGui's
   chained callbacks. InputContext's callback replaces ImGui's, so ImGui
-  plausibly never receives scroll events; correctness currently depends on
-  undocumented constructor ordering. Centralize GLFW callback ownership in
-  `WindowContext` and have everyone subscribe through it.
+  plausibly never receives scroll events. (Fixed: `WindowContext` is now the
+  sole owner of the GLFW user pointer + callbacks and exposes `On*()`
+  subscriptions; `InputContext`/`Application` subscribe instead of calling
+  `glfwSet*`. Since the window installs its callbacks before ImGui inits with
+  `install_callbacks=true`, ImGui chains to them and both get input. Also
+  corrected the `Application.cpp` comment — this ImGui version deliberately does
+  *not* use the user pointer, so the old premise was wrong; the real bug was the
+  scroll-callback clobber.)
 - [x] **`PhysicsWorld` does process-global Jolt init with instance semantics**
   (Refcounted acquire/release of the Jolt globals; also fixed the dtor tearing
   down the factory before the PhysicsSystem that depends on it.)

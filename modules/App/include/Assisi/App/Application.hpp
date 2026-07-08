@@ -92,11 +92,10 @@ class Application
     nvrhi::FramebufferInfo GetSceneFramebufferInfo() const { return _postProcess.SceneFramebufferInfo(); }
 
   private:
-    static void FramebufferSizeCallback(Window::NativeWindowHandle *window, int width, int height);
-    static void WindowRefreshCallback(Window::NativeWindowHandle *window);
-    void        RenderFrame();
-    void        ConfigurePostProcess();
-    void        DrawOptionsWindow();
+    void HandleFramebufferResize(int width, int height);
+    void RenderFrame();
+    void ConfigurePostProcess();
+    void DrawOptionsWindow();
 
     AppConfig     _config;
     OptionsConfig _options;

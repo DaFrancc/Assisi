@@ -7,7 +7,7 @@
 
 namespace Assisi::Window
 {
-WindowContext::WindowContext(const WindowConfiguration &configuration, GLFWframebuffersizefun framebufferSizeCallback)
+WindowContext::WindowContext(const WindowConfiguration &configuration)
     : _glfwLibrary(GlfwLibrary::Acquire()), _isVSyncEnabled(configuration.EnableVSync)
 {
     if (!_glfwLibrary || !_glfwLibrary->IsValid())
@@ -28,13 +28,63 @@ WindowContext::WindowContext(const WindowConfiguration &configuration, GLFWframe
         return;
     }
 
-    /* Install framebuffer resize callback. */
-    if (framebufferSizeCallback != nullptr)
-    {
-        glfwSetFramebufferSizeCallback(_nativeWindowHandle, framebufferSizeCallback);
-    }
+    InstallCallbacks();
 
     _isValid = true;
+}
+
+void WindowContext::InstallCallbacks()
+{
+    // WindowContext owns the user pointer; the ImGui GLFW backend deliberately
+    // does not use it (it keys off the ImGui context), so this is safe. ImGui,
+    // initialised later with install_callbacks=true, chains to the callbacks
+    // installed here rather than replacing them.
+    glfwSetWindowUserPointer(_nativeWindowHandle, this);
+    glfwSetFramebufferSizeCallback(_nativeWindowHandle, FramebufferSizeTrampoline);
+    glfwSetScrollCallback(_nativeWindowHandle, ScrollTrampoline);
+    glfwSetWindowRefreshCallback(_nativeWindowHandle, WindowRefreshTrampoline);
+}
+
+void WindowContext::FramebufferSizeTrampoline(GLFWwindow *window, int width, int height)
+{
+    if (auto *self = static_cast<WindowContext *>(glfwGetWindowUserPointer(window)))
+    {
+        for (const auto &callback : self->_framebufferSizeCallbacks)
+            callback(width, height);
+    }
+}
+
+void WindowContext::ScrollTrampoline(GLFWwindow *window, double xOffset, double yOffset)
+{
+    if (auto *self = static_cast<WindowContext *>(glfwGetWindowUserPointer(window)))
+    {
+        for (const auto &callback : self->_scrollCallbacks)
+            callback(xOffset, yOffset);
+    }
+}
+
+void WindowContext::WindowRefreshTrampoline(GLFWwindow *window)
+{
+    if (auto *self = static_cast<WindowContext *>(glfwGetWindowUserPointer(window)))
+    {
+        for (const auto &callback : self->_windowRefreshCallbacks)
+            callback();
+    }
+}
+
+void WindowContext::OnFramebufferSize(std::function<void(int, int)> callback)
+{
+    _framebufferSizeCallbacks.push_back(std::move(callback));
+}
+
+void WindowContext::OnScroll(std::function<void(double, double)> callback)
+{
+    _scrollCallbacks.push_back(std::move(callback));
+}
+
+void WindowContext::OnWindowRefresh(std::function<void()> callback)
+{
+    _windowRefreshCallbacks.push_back(std::move(callback));
 }
 
 WindowContext::~WindowContext()
@@ -47,11 +97,21 @@ WindowContext::~WindowContext()
 
 WindowContext::WindowContext(WindowContext &&other) noexcept
     : _glfwLibrary(std::move(other._glfwLibrary)), _nativeWindowHandle(other._nativeWindowHandle),
-      _isValid(other._isValid), _isVSyncEnabled(other._isVSyncEnabled)
+      _isValid(other._isValid), _isVSyncEnabled(other._isVSyncEnabled),
+      _framebufferSizeCallbacks(std::move(other._framebufferSizeCallbacks)),
+      _scrollCallbacks(std::move(other._scrollCallbacks)),
+      _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks))
 {
     other._nativeWindowHandle = nullptr;
     other._isValid = false;
     other._isVSyncEnabled = false;
+
+    // The GLFW user pointer still points at 'other'; re-seat it on this object
+    // so the callback trampolines dispatch to the moved-to subscriber lists.
+    if (_nativeWindowHandle != nullptr)
+    {
+        glfwSetWindowUserPointer(_nativeWindowHandle, this);
+    }
 }
 
 WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
@@ -68,10 +128,18 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
         _nativeWindowHandle = other._nativeWindowHandle;
         _isValid = other._isValid;
         _isVSyncEnabled = other._isVSyncEnabled;
+        _framebufferSizeCallbacks = std::move(other._framebufferSizeCallbacks);
+        _scrollCallbacks = std::move(other._scrollCallbacks);
+        _windowRefreshCallbacks = std::move(other._windowRefreshCallbacks);
 
         other._nativeWindowHandle = nullptr;
         other._isValid = false;
         other._isVSyncEnabled = false;
+
+        if (_nativeWindowHandle != nullptr)
+        {
+            glfwSetWindowUserPointer(_nativeWindowHandle, this);
+        }
     }
 
     return *this;

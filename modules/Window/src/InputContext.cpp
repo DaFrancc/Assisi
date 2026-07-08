@@ -7,7 +7,7 @@
 namespace Assisi::Window
 {
 
-InputContext::InputContext(const WindowContext &window) : _window(window.NativeHandle())
+InputContext::InputContext(WindowContext &window) : _window(window.NativeHandle())
 {
     /* Snapshot initial mouse position so the first MouseDelta() is (0,0). */
     double xPos = 0.0;
@@ -16,8 +16,10 @@ InputContext::InputContext(const WindowContext &window) : _window(window.NativeH
     _currMousePos = {static_cast<float>(xPos), static_cast<float>(yPos)};
     _prevMousePos = _currMousePos;
 
-    glfwSetWindowUserPointer(_window, this);
-    glfwSetScrollCallback(_window, ScrollCallback);
+    // Subscribe through the window rather than calling glfwSetScrollCallback
+    // directly: the window owns the GLFW callbacks and fans out to ImGui (which
+    // chains) and us both, instead of one clobbering the other.
+    window.OnScroll([this](double /*xOffset*/, double yOffset) { _scrollAccum += static_cast<float>(yOffset); });
 }
 
 void InputContext::Poll()
@@ -105,15 +107,6 @@ bool InputContext::IsMouseCaptured() const
 float InputContext::ScrollDelta() const
 {
     return _scrollDelta;
-}
-
-void InputContext::ScrollCallback(GLFWwindow *window, double /*xoffset*/, double yoffset)
-{
-    auto *ctx = static_cast<InputContext *>(glfwGetWindowUserPointer(window));
-    if (ctx != nullptr)
-    {
-        ctx->_scrollAccum += static_cast<float>(yoffset);
-    }
 }
 
 } // namespace Assisi::Window

@@ -10,8 +10,6 @@
 #    pragma comment(lib, "winmm.lib")
 #endif
 
-#include <GLFW/glfw3.h>
-
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -75,17 +73,12 @@ static void AbortHandler(int)
 namespace Assisi::App
 {
 
-// ImGui's GLFW backend also uses glfwSetWindowUserPointer, which would overwrite
-// an Application* stored there. Use a plain static instead.
-static Application *s_instance = nullptr;
-
-void Application::FramebufferSizeCallback(Window::NativeWindowHandle * /*window*/, int width, int height)
+void Application::HandleFramebufferResize(int width, int height)
 {
-    // GLFW can fire this during window creation/show (e.g. a DPI-driven WM_SIZE on
-    // Windows) — before s_instance is assigned and before RenderSystem::Initialize
-    // has run. Bail out entirely rather than falling through to a Vulkan call
-    // against a backend that isn't set up yet.
-    if (width <= 0 || height <= 0 || s_instance == nullptr)
+    // GLFW can fire this during window creation/show (e.g. a DPI-driven WM_SIZE
+    // on Windows). Bail on a zero-size (minimized) framebuffer, and no-op safely
+    // if the render backend isn't up yet (GetVulkanContext() returns null).
+    if (width <= 0 || height <= 0)
     {
         return;
     }
@@ -95,8 +88,8 @@ void Application::FramebufferSizeCallback(Window::NativeWindowHandle * /*window*
         vulkanContext->Resize(static_cast<uint32_t>(width), static_cast<uint32_t>(height));
     }
 
-    s_instance->OnResize(width, height);
-    s_instance->ConfigurePostProcess();
+    OnResize(width, height);
+    ConfigurePostProcess();
 }
 
 
@@ -148,12 +141,19 @@ bool Application::Initialize()
     winCfg.Height = _config.height;
     winCfg.Title  = _config.title.c_str();
 
-    _window = std::make_unique<Window::WindowContext>(winCfg, FramebufferSizeCallback);
+    _window = std::make_unique<Window::WindowContext>(winCfg);
     if (!_window->IsValid())
     {
         Core::Log::Fatal("Failed to create window.");
         return false;
     }
+
+    // Subscribe through WindowContext (the sole owner of GLFW callbacks) rather
+    // than registering GLFW callbacks directly. WindowContext installed its
+    // callbacks in its constructor, so ImGui (initialized below with
+    // install_callbacks=true) chains to them instead of clobbering them.
+    _window->OnFramebufferSize([this](int width, int height) { HandleFramebufferResize(width, height); });
+    _window->OnWindowRefresh([this]() { RenderFrame(); });
 
     if (!Render::RenderSystem::Initialize(*_window))
     {
@@ -162,10 +162,6 @@ bool Application::Initialize()
     }
 
     Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext());
-
-    s_instance = this;
-
-    glfwSetWindowRefreshCallback(_window->NativeHandle(), WindowRefreshCallback);
 
     _input = std::make_unique<Window::InputContext>(*_window);
     _options = OptionsConfig::LoadFromJson();
@@ -188,8 +184,7 @@ bool Application::Initialize()
 Application::~Application()
 {
     // DebugUI/render teardown only ran meaningful bring-up if Initialize()
-    // succeeded; s_instance is cleared unconditionally (it's harmless if unset).
-    s_instance = nullptr;
+    // succeeded.
     if (_initialized)
     {
         Debug::DebugUI::Shutdown();
@@ -429,14 +424,6 @@ void Application::DrawOptionsWindow()
         }
     }
     ImGui::End();
-}
-
-void Application::WindowRefreshCallback(Window::NativeWindowHandle * /*window*/)
-{
-    if (s_instance)
-    {
-        s_instance->RenderFrame();
-    }
 }
 
 } // namespace Assisi::App

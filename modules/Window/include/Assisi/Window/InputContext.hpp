@@ -35,10 +35,10 @@ namespace Assisi::Window
 class InputContext
 {
   public:
-    /// @brief Binds this InputContext to a window.
-    ///
-    /// The WindowContext must outlive the InputContext.
-    explicit InputContext(const WindowContext &window);
+    /// @brief Binds this InputContext to a window and subscribes to its scroll
+    /// events. The WindowContext must outlive the InputContext (see
+    /// WindowContext's subscriber-lifetime warning).
+    explicit InputContext(WindowContext &window);
 
     /// @brief Snapshots the current input state.
     ///
@@ -121,8 +121,6 @@ class InputContext
 
     float _scrollDelta = 0.f;
     float _scrollAccum = 0.f;
-
-    static void ScrollCallback(GLFWwindow *window, double xoffset, double yoffset);
 };
 
 } // namespace Assisi::Window
