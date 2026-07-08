@@ -76,9 +76,13 @@ class SandboxApp : public Assisi::App::Application
     void UpdateCamera(float dt);
 
     /// @brief Rebuilds the cluster froxel grid for the given projection (on a
-    /// dedicated command list, matching the setup/resize path). Call whenever the
-    /// projection changes — window resize or a runtime FOV/near/far edit — so the
-    /// view-space froxels keep matching the render projection.
+    /// dedicated command list, matching the setup/resize path).
+    ///
+    /// Call whenever the projection changes — window resize or a runtime
+    /// FOV/near/far edit. If the froxel grid drifts from the render projection,
+    /// peripheral froxels stop matching it and the lighting shows rectangular
+    /// artifacts. This is the one place the rebuild rationale lives; the member
+    /// and call site point here.
     void RebuildClusterGrid(int width, int height, const glm::mat4 &projection);
 
     // --- ImGui panels ---
@@ -117,17 +121,16 @@ class SandboxApp : public Assisi::App::Application
     // components from the scene each frame and feeds them to cube_min.frag.
     Assisi::Runtime::LightingSystem _lightingSystem;
 
-    // The projection the cluster froxel grid was last built against. Rebuilt when
-    // this drifts (window resize or a runtime FOV edit) — otherwise peripheral
-    // froxels stop matching the render projection and the lighting shows
-    // rectangular artifacts. Identity forces a rebuild on the first frame.
+    // The projection the cluster froxel grid was last built against; a mismatch
+    // triggers a rebuild (see RebuildClusterGrid). Identity forces one on frame 1.
     glm::mat4 _clusterProjection{1.f};
 
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
 
-    float _yaw   = -116.6f;
-    float _pitch =  -24.1f;
+    // Set by SetupCamera() before first use; these are just safe defaults.
+    float _yaw   = 0.f;
+    float _pitch = 0.f;
 
     static constexpr float kMoveSpeed        = 8.f;
     static constexpr float kMouseSensitivity = 0.1f;
@@ -192,7 +195,13 @@ void SandboxApp::OnStart()
         }
     }
 
-    _scene = _scenes.Create("Main").value();
+    auto mainScene = _scenes.Create("Main");
+    if (!mainScene)
+    {
+        Assisi::Core::Log::Error("Failed to create the main scene; aborting startup");
+        return;
+    }
+    _scene = *mainScene;
 
     SetupCamera();
     SetupScene();
@@ -332,9 +341,7 @@ void SandboxApp::OnRender(Assisi::Render::Vulkan::VulkanFrame &frame)
     // convention, so glm::perspective's output is correct as-is. Flipping here too
     // double-compensates and renders upside down.
 
-    // Keep the froxel grid in sync with the render projection: a runtime FOV
-    // change alters `projection` here without any resize, so rebuild the clusters
-    // when it drifts from what they were last built against.
+    // Keep the froxel grid in sync with the render projection (see RebuildClusterGrid).
     if (projection != _clusterProjection)
     {
         RebuildClusterGrid(frame.width, frame.height, projection);
