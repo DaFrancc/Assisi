@@ -91,36 +91,25 @@ Checkboxes so this can be burned down like the round-1 doc was.
   chain the cycle is broken (logged with the entity index/gen, node treated as
   a root) instead of recursing to death. Covered by "a parent cycle does not
   overflow the stack" in `TestHierarchy.cpp`, alongside root and parent-compose
-  cases. Secondary note (per-call map/closure allocation, runs twice per frame)
-  left open — it's a perf item, not correctness. The `worldMatrix` lambda recurses through
-  `std::function` with memoisation but no in-progress detection. A parent
-  cycle (A→B→A) in a hand-edited `.alvl` file recurses until the stack dies.
-  Level files are exactly the data that will eventually contain one; the
-  serializer will happily round-trip a cycle today. Fix: track an
-  "in-flight" set (or a visiting flag in the cache with a sentinel value);
-  on re-entry, log an error naming the entity and treat it as a root.
-  Secondary: the function allocates a fresh `unordered_map` + closures every
-  call, and it runs twice per frame (`main.cpp:320-321`, camera scene +
-  main scene). Keep a scratch map as a member/static or pass one in.
-- [ ] **`~VulkanContext` leaks the instance and surface on partial init.**
-  `VulkanContext.cpp:487-491`. The destructor early-returns when
-  `_device == VK_NULL_HANDLE`, but `Create()` can fail *after* the instance
-  and surface exist (`ChoosePhysicalDevice` or `CreateLogicalDevice` failure,
-  `VulkanContext.cpp:190-208`) — those paths return nullptr, the partially
-  built context is destroyed, and `vkDestroySurfaceKHR`/`vkDestroyInstance`
-  never run. Cosmetically small (process is exiting), but it half-applies the
-  "failures unwind normally" convention that commit 587b8e2 established.
-  Fix: guard each teardown on its own handle instead of gating everything on
-  `_device`.
-- [ ] **`HandlePhysicsEditing` keys off `ImGui::IsAnyItemActive()` globally —
+  cases. Secondary note left open (perf, not correctness): the function
+  allocates a fresh `unordered_map` + closures every call and runs twice per
+  frame — keep a scratch map as a member/static or pass one in.
+- [x] **`~VulkanContext` leaks the instance and surface on partial init.**
+  The destructor early-returned when `_device == VK_NULL_HANDLE`, so a
+  `Create()` failure after the instance/surface existed leaked both. *Fixed:*
+  the device-scoped teardown is guarded on `_device`, and the surface and
+  instance are destroyed on their own handles afterward (instance-level dispatch
+  is loaded as soon as `_instance` exists, so this is safe on every partial
+  path).
+- [x] **`HandlePhysicsEditing` keys off `ImGui::IsAnyItemActive()` globally —
   any widget interaction anywhere freezes the selected entity's physics.**
-  `main.cpp:616`. `IsAnyItemActive()` is true while dragging the AA combo,
-  typing in the Save-As field, or using any other window's widgets — and the
-  handler responds by setting the selected entity's body to `Static`
-  (`main.cpp:626-629`) until the widget is released. Fix: scope the check to
-  the inspector's own widgets — capture `ImGui::IsAnyItemActive()` *inside*
-  the Inspector window's Begin/End (or track activity only on the component
-  field widgets `EditComponentFields` actually drew).
+  *Fixed:* the drag check is scoped to the Inspector by conjoining
+  `IsAnyItemActive()` with `IsWindowFocused(RootAndChildWindows)`. The handler
+  runs inside the Inspector's Begin/End, so `IsWindowFocused` (current window)
+  is true only while an Inspector widget is the one being manipulated —
+  touching another window's widgets no longer forces the body to `Static`.
+  (Runtime ImGui behaviour; verify by interacting with the AA combo while an
+  entity with a rigid body is selected.)
 
 ## Architecture
 
