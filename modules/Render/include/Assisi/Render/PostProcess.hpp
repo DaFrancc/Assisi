@@ -41,8 +41,8 @@ class PostProcess
     /// @brief Builds the FXAA fullscreen pipeline against `swapchainFramebufferInfo`
     /// (the format/sample-count FXAA always draws into, since its output always
     /// targets the real swapchain). Call once, before the first Configure().
-    bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &swapchainFramebufferInfo,
-                    const std::string &vertexShaderSpvPath, const std::string &fragmentShaderSpvPath);
+    [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &swapchainFramebufferInfo,
+                                  const std::string &vertexShaderSpvPath, const std::string &fragmentShaderSpvPath);
 
     /// @brief (Re)allocates offscreen render targets for the given size, mode, and
     /// MSAA sample count. Cheap to call every time any of these might have changed

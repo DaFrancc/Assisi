@@ -24,7 +24,7 @@ class RenderSystem
     ///
     /// @param window  A valid, current WindowContext.
     /// @return true on success, false on any error.
-    static bool Initialize(const Assisi::Window::WindowContext &window)
+    [[nodiscard]] static bool Initialize(const Assisi::Window::WindowContext &window)
     {
         if (!window.IsValid())
         {

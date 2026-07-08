@@ -91,7 +91,7 @@ class VulkanContext
     VulkanContext() = default;
 
     void DestroySwapchainResources();
-    bool CreateSwapchainResources(uint32_t width, uint32_t height);
+    [[nodiscard]] bool CreateSwapchainResources(uint32_t width, uint32_t height);
 
     static constexpr uint32_t kFramesInFlight = 2;
 

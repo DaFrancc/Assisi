@@ -33,8 +33,8 @@ class LightingSystem
     /// @param nearZ,farZ    Near/far clip distances matching the projection matrix.
     /// @param projection    The camera projection matrix.
     /// @return false if compute shaders failed to compile.
-    bool Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *commandList, int width, int height, float nearZ,
-                    float farZ, const glm::mat4 &projection);
+    [[nodiscard]] bool Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *commandList, int width, int height,
+                                  float nearZ, float farZ, const glm::mat4 &projection);
 
     /// @brief Rebuild cluster AABBs after a viewport or projection change.
     void Resize(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,

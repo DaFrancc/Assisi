@@ -48,10 +48,12 @@ checkboxes so this can be burned down like the migration doc was.
 - [x] **Swallowed error in input-binding load**: `SandboxApp::OnStart`
   (`main.cpp:174`) `catch (json::exception) {}` — malformed `game.json`
   silently loses all input bindings. Log it, at minimum.
-- [ ] **`Application` ctor is the whole engine bring-up and `std::exit()`s on
+- [x] **`Application` ctor is the whole engine bring-up and `std::exit()`s on
   failure** (`Application.cpp:114-165`) — skips every destructor (no
-  `vkDeviceWaitIdle`, no cleanup), untestable. Wants `Initialize() -> bool` or
-  exceptions.
+  `vkDeviceWaitIdle`, no cleanup), untestable. (Fallible bring-up moved to
+  `Initialize() -> bool`; ctor keeps only infallible logger/crash-handler setup;
+  `Run()` guards on init; `main()` bails on `!Initialize()`. Failures now unwind
+  normally instead of `std::exit`.)
 - [x] **`VulkanContext` robustness gaps**: `formats[0]` indexed without
   checking count; `vkCreateSemaphore`/`vkQueuePresentKHR`/surface-capability
   results ignored; `ToNvrhiFormat` silently returns `UNKNOWN` for anything but
@@ -86,9 +88,18 @@ checkboxes so this can be burned down like the migration doc was.
   per-frame rather than per-swapchain-image (masked only by that wait). Either
   commit to the simple design (one semaphore pair) or pipeline properly with
   fences.
-- [ ] **Error-handling is four dialects**: `std::expected` (Core), `bool`+log
+- [x] **Error-handling is four dialects**: `std::expected` (Core), `bool`+log
   (Render), log-and-continue with results ignored (VulkanContext), `std::exit`
-  (Application). Pick a convention per layer and enforce it.
+  (Application). Pick a convention per layer and enforce it. Convention now:
+  **Core = `std::expected` (value-returning / caller branches on error kind);
+  Render/Window/App bring-up = `bool` + log-at-failure-site (void / terminal /
+  single response)**; the one runtime path where the failure kind matters
+  (swapchain acquire) already uses `std::optional` + `VkResult`. Enforced with
+  `[[nodiscard]]` on every fallible bring-up function
+  (`{RenderSystem,MeshPass,PostProcess,ClusterGrid,ComputeShader,LightingSystem}::Initialize`,
+  `MeshPass::RebuildPipeline`, `VulkanContext::CreateSwapchainResources`); fixed
+  two previously-ignored returns (`PostProcess::Initialize` in App bring-up,
+  `MeshPass::RebuildPipeline` on AA change). `std::exit` removed.
 
 ## Dead code / rot
 

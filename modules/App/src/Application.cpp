@@ -114,6 +114,11 @@ struct TimerResolutionScope
 
 Application::Application()
 {
+    // Only infallible setup belongs in the constructor. Logging is wired up
+    // first so that any log lines emitted by derived-class member constructors
+    // (which run after this base ctor) are captured. All fallible engine
+    // bring-up lives in Initialize() so failures can unwind normally instead
+    // of std::exit()-ing past every destructor.
     Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
     Core::GetLogger().AddSink(std::make_shared<Core::FileSink>("assisi.log"));
 
@@ -121,11 +126,19 @@ Application::Application()
     SetUnhandledExceptionFilter(CrashHandler);
     std::signal(SIGABRT, AbortHandler);
 #endif
+}
+
+bool Application::Initialize()
+{
+    if (_initialized)
+    {
+        return true;
+    }
 
     if (auto result = Core::AssetSystem::Initialize(); !result)
     {
         Core::Log::Fatal("Failed to initialize asset system.");
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
     _config = AppConfig::LoadFromJson();
@@ -139,13 +152,13 @@ Application::Application()
     if (!_window->IsValid())
     {
         Core::Log::Fatal("Failed to create window.");
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
     if (!Render::RenderSystem::Initialize(*_window))
     {
         Core::Log::Fatal("Failed to initialize render system.");
-        std::exit(EXIT_FAILURE);
+        return false;
     }
 
     Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext());
@@ -159,16 +172,28 @@ Application::Application()
 
     if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
-        _postProcess.Initialize(vulkanContext->GetDevice(), vulkanContext->GetFramebufferInfo(),
-                                "shaders/fullscreen.vert.spv", "shaders/fxaa.frag.spv");
+        if (!_postProcess.Initialize(vulkanContext->GetDevice(), vulkanContext->GetFramebufferInfo(),
+                                     "shaders/fullscreen.vert.spv", "shaders/fxaa.frag.spv"))
+        {
+            Core::Log::Fatal("Failed to initialize post-process pipeline.");
+            return false;
+        }
         ConfigurePostProcess();
     }
+
+    _initialized = true;
+    return true;
 }
 
 Application::~Application()
 {
+    // DebugUI/render teardown only ran meaningful bring-up if Initialize()
+    // succeeded; s_instance is cleared unconditionally (it's harmless if unset).
     s_instance = nullptr;
-    Debug::DebugUI::Shutdown();
+    if (_initialized)
+    {
+        Debug::DebugUI::Shutdown();
+    }
 }
 
 void Application::RequestClose()
@@ -205,6 +230,12 @@ void SleepUntil(Clock::time_point target, Clock::duration margin = std::chrono::
 
 void Application::Run()
 {
+    if (!_initialized)
+    {
+        Core::Log::Error("Application::Run() called without a successful Initialize(); aborting.");
+        return;
+    }
+
 #ifdef _WIN32
     TimerResolutionScope timerResolution;
 #endif
@@ -334,9 +365,10 @@ void Application::ConfigurePostProcess()
     const nvrhi::FramebufferInfo after = _postProcess.SceneFramebufferInfo();
 
     // Only fires for an actual sample-count change (F12 toggling into/out of
-    // MSAA) — resizing alone never changes FramebufferInfo. During this
-    // Application's own constructor (before the derived class exists), the
-    // virtual call below harmlessly resolves to the no-op base implementation.
+    // MSAA) — resizing alone never changes FramebufferInfo. When called during
+    // Initialize() (before OnStart()), the derived OnRenderTargetsChanged runs
+    // but no-ops because the derived render resources aren't built yet (e.g.
+    // SandboxApp guards on MeshPass::IsValid()).
     if (!(before == after))
     {
         OnRenderTargetsChanged(after);

@@ -29,8 +29,8 @@ class ComputeShader
     /// @brief Loads `spvPath` (compiled SPIR-V, see ShaderModule.hpp) and builds
     /// a compute pipeline against `bindingLayoutDesc`.
     /// @return false if the shader failed to load or the pipeline failed to build.
-    bool Initialize(nvrhi::IDevice *device, const std::string &spvPath,
-                    const nvrhi::BindingLayoutDesc &bindingLayoutDesc);
+    [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const std::string &spvPath,
+                                  const nvrhi::BindingLayoutDesc &bindingLayoutDesc);
 
     /// @brief Records a dispatch with `bindingSet` bound and, if `pushConstants`
     /// is non-null, `pushConstantSize` bytes pushed before dispatching.

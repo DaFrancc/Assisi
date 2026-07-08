@@ -34,9 +34,9 @@ class MeshPass
     /// framebuffer format. `clusterGrid` must outlive this MeshPass — its
     /// light buffers are bound directly into every binding set this pass creates.
     /// @return false if either shader failed to load or the pipeline failed to build.
-    bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo,
-                    const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath,
-                    const ClusterGrid &clusterGrid);
+    [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo,
+                                  const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath,
+                                  const ClusterGrid &clusterGrid);
 
     /// @brief Recreates just the graphics pipeline against a new FramebufferInfo,
     /// reusing the shaders/input layout/binding layout already loaded by
@@ -45,7 +45,7 @@ class MeshPass
     /// isn't compatible with an MSAA framebuffer. Existing binding sets (which
     /// don't depend on FramebufferInfo) stay valid and cached.
     /// @pre IsValid() — call Initialize() first.
-    bool RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
+    [[nodiscard]] bool RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo);
 
     /// @brief Updates the per-frame constant buffer (camera view matrix and
     /// cluster-grid parameters). Call once per frame, before any Draw() calls.

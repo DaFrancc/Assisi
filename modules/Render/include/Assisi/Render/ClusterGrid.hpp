@@ -86,7 +86,7 @@ class ClusterGrid
 
     /// @brief Loads compute shaders and allocates all buffers.
     /// @return false if either compute shader failed to compile.
-    bool Initialize(nvrhi::IDevice *device);
+    [[nodiscard]] bool Initialize(nvrhi::IDevice *device);
 
     /// @brief Rebuild cluster AABBs. Call once on init and again on viewport/projection change.
     void BuildClusters(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,

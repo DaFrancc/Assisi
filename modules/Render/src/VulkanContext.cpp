@@ -405,7 +405,12 @@ void VulkanContext::Resize(uint32_t width, uint32_t height)
     }
 
     VKD.vkDeviceWaitIdle(_device);
-    CreateSwapchainResources(width, height);
+
+    // A failure here is benign and intentionally not propagated: a zero-size
+    // (minimized) window returns false, and if recreation fails the previous
+    // swapchain is left intact, so BeginFrame() keeps working / recovers on a
+    // later resize. Explicitly discarded to satisfy [[nodiscard]].
+    (void)CreateSwapchainResources(width, height);
 }
 
 std::optional<VulkanFrame> VulkanContext::BeginFrame()

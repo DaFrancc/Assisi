@@ -48,6 +48,20 @@ class Application
     Application(const Application &) = delete;
     Application &operator=(const Application &) = delete;
 
+    /// @brief Brings up the engine (asset system, window, renderer, ImGui,
+    /// input, post-process). Must be called once, after construction and before
+    /// Run().
+    ///
+    /// @return true on success; false if any bring-up step failed (the failing
+    /// step logs the reason). On failure the object is safe to destroy — no
+    /// std::exit — so callers should simply return from main().
+    ///
+    /// @note Error convention: the App/Render/Window layers report fallible
+    /// operations as `bool` + a log at the failure site; Core uses
+    /// std::expected. Bring-up failures are already logged in detail here, so a
+    /// bare bool is enough for main() to decide to bail.
+    [[nodiscard]] bool Initialize();
+
     void Run();
 
   protected:
@@ -92,6 +106,7 @@ class Application
 
     Render::PostProcess _postProcess;
     bool                _showOptionsWindow = false;
+    bool                _initialized = false;
 
     int _fps = 0;
 };

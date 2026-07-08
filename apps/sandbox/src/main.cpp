@@ -279,9 +279,9 @@ void SandboxApp::OnResize(int width, int height)
 
 void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
-    if (_meshPass.IsValid())
+    if (_meshPass.IsValid() && !_meshPass.RebuildPipeline(framebufferInfo))
     {
-        _meshPass.RebuildPipeline(framebufferInfo);
+        Assisi::Core::Log::Error("Failed to rebuild the mesh pass pipeline after a render-target change.");
     }
 }
 
@@ -808,6 +808,10 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
 int main()
 {
     SandboxApp app;
+    if (!app.Initialize())
+    {
+        return EXIT_FAILURE;
+    }
     app.Run();
     return EXIT_SUCCESS;
 }
