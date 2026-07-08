@@ -16,7 +16,6 @@ namespace Assisi::Core
 /* Global asset root cached after initialization. */
 static std::filesystem::path gAssetRoot;
 
-/* Tracks whether the system has been initialized. */
 static bool gInitialized = false;
 
 std::expected<void, AssetError> AssetSystem::Initialize() noexcept
@@ -134,7 +133,6 @@ std::expected<std::string, AssetError> AssetSystem::ReadText(std::string_view vp
             return std::unexpected(AssetError::FileReadFailed);
         }
 
-        /* Allocate exact size, then seek back and read. */
         std::string data(static_cast<size_t>(end), '\0');
 
         file.seekg(0);

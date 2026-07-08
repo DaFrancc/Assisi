@@ -52,7 +52,6 @@ template <typename T> struct SparseSet
         }
         else
         {
-            /* Grow the sparse array to accommodate the entity index. */
             _sparse.resize(entity.index + 1, Invalid);
         }
 
@@ -75,15 +74,13 @@ template <typename T> struct SparseSet
 
         if (removedPos != lastPos)
         {
-            /* Move the last element into the removed slot. */
             _dense[removedPos]    = std::move(_dense[lastPos]);
             _entities[removedPos] = _entities[lastPos];
 
-            /* Update the sparse entry for the entity that was moved. */
+            /* Re-point the sparse entry of the entity that was moved into the gap. */
             _sparse[_entities[removedPos].index] = removedPos;
         }
 
-        /* Clear the sparse entry and shrink the dense arrays. */
         _sparse[entity.index] = Invalid;
         _dense.pop_back();
         _entities.pop_back();
