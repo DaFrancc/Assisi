@@ -3,8 +3,7 @@
 ///
 /// There is no Vulkan SDK assumed to be installed (driver runtime only), so this
 /// uses vulkan.hpp's dynamic dispatcher instead of linking a static loader import
-/// lib — see apps/vk_triangle/src/main.cpp for the original proof of this pattern,
-/// which mirrors NVIDIA's own Donut framework (DeviceManager_VK.cpp).
+/// lib — mirroring NVIDIA's own Donut framework (DeviceManager_VK.cpp).
 
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #include <vulkan/vulkan.hpp>
