@@ -485,25 +485,28 @@ void VulkanContext::EndFrame()
 
 VulkanContext::~VulkanContext()
 {
-    if (_device == VK_NULL_HANDLE)
+    // Guard each teardown on its own handle rather than gating everything on
+    // _device: Create() can fail after the instance and surface exist but
+    // before the device does, and those still need to be destroyed. VKD's
+    // instance-level functions are loaded as soon as _instance is created.
+    if (_device != VK_NULL_HANDLE)
     {
-        return;
+        VKD.vkDeviceWaitIdle(_device);
+
+        _commandList = nullptr;
+        DestroySwapchainResources();
+        _nvrhiDevice = nullptr;
+        _nvrhiDeviceHandle = nullptr;
+
+        if (_imageAvailableSemaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, _imageAvailableSemaphore, nullptr);
+        if (_renderFinishedSemaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, _renderFinishedSemaphore, nullptr);
+
+        if (_swapchain != VK_NULL_HANDLE) VKD.vkDestroySwapchainKHR(_device, _swapchain, nullptr);
+        VKD.vkDestroyDevice(_device, nullptr);
     }
 
-    VKD.vkDeviceWaitIdle(_device);
-
-    _commandList = nullptr;
-    DestroySwapchainResources();
-    _nvrhiDevice = nullptr;
-    _nvrhiDeviceHandle = nullptr;
-
-    if (_imageAvailableSemaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, _imageAvailableSemaphore, nullptr);
-    if (_renderFinishedSemaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, _renderFinishedSemaphore, nullptr);
-
-    if (_swapchain != VK_NULL_HANDLE) VKD.vkDestroySwapchainKHR(_device, _swapchain, nullptr);
-    VKD.vkDestroyDevice(_device, nullptr);
     if (_surface != VK_NULL_HANDLE) VKD.vkDestroySurfaceKHR(_instance, _surface, nullptr);
-    VKD.vkDestroyInstance(_instance, nullptr);
+    if (_instance != VK_NULL_HANDLE) VKD.vkDestroyInstance(_instance, nullptr);
 }
 
 } // namespace Assisi::Render::Vulkan
