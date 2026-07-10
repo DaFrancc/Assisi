@@ -93,7 +93,12 @@ bool ClusterGrid::Initialize(nvrhi::IDevice *device)
     cullSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(CullPushConstants)));
     _cullBindingSet = device->createBindingSet(cullSetDesc, _cullShader.BindingLayout());
 
-    return _buildBindingSet != nullptr && _cullBindingSet != nullptr;
+    if (_buildBindingSet == nullptr || _cullBindingSet == nullptr)
+    {
+        Assisi::Core::Log::Error("ClusterGrid: failed to create the cluster binding sets.");
+        return false;
+    }
+    return true;
 }
 
 void ClusterGrid::BuildClusters(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,

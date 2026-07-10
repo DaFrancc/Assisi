@@ -2,6 +2,7 @@
 
 #include <Assisi/Render/PostProcess.hpp>
 
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -68,7 +69,12 @@ bool PostProcess::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
     // against the swapchain's FramebufferInfo, not whatever offscreen target
     // produced its input.
     _fxaaPipeline = device->createGraphicsPipeline(pipelineDesc, _swapchainInfo);
-    return _fxaaPipeline != nullptr;
+    if (_fxaaPipeline == nullptr)
+    {
+        Core::Log::Error("PostProcess: failed to create the FXAA graphics pipeline.");
+        return false;
+    }
+    return true;
 }
 
 void PostProcess::Configure(uint32_t width, uint32_t height, AaMode mode, uint32_t msaaSamples)

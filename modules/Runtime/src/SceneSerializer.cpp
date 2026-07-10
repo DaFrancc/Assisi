@@ -187,7 +187,12 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
         return false;
     }
     f << Save(scene).dump(2);
-    return f.good();
+    if (!f.good())
+    {
+        Core::Log::Error("SceneSerializer: write failed for '{}'", path.string());
+        return false;
+    }
+    return true;
 }
 
 bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath)

@@ -2,6 +2,7 @@
 
 #include <Assisi/Render/MeshPass.hpp>
 
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/DefaultResources.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
@@ -104,8 +105,13 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
     frameConstantsDesc.initialState = nvrhi::ResourceStates::ConstantBuffer;
     frameConstantsDesc.keepInitialState = true;
     _frameConstantsBuffer = device->createBuffer(frameConstantsDesc);
+    if (_frameConstantsBuffer == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the frame-constants buffer.");
+        return false;
+    }
 
-    return RebuildPipeline(framebufferInfo) && _frameConstantsBuffer != nullptr;
+    return RebuildPipeline(framebufferInfo);
 }
 
 bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
@@ -126,7 +132,12 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     pipelineDesc.renderState.depthStencilState.depthWriteEnable = true;
 
     _pipeline = _device->createGraphicsPipeline(pipelineDesc, framebufferInfo);
-    return _pipeline != nullptr;
+    if (_pipeline == nullptr)
+    {
+        Core::Log::Error("MeshPass: failed to create the graphics pipeline.");
+        return false;
+    }
+    return true;
 }
 
 void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &view, uint32_t screenWidth,

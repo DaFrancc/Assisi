@@ -83,10 +83,18 @@ void SandboxApp::ScanLevels()
     if (!resolved)
         return;
 
-    for (const auto &entry : std::filesystem::directory_iterator(*resolved))
+    try
     {
-        if (entry.is_regular_file() && entry.path().extension() == ".alvl")
-            _levelFiles.push_back(entry.path().stem().string());
+        for (const auto &entry : std::filesystem::directory_iterator(*resolved))
+        {
+            if (entry.is_regular_file() && entry.path().extension() == ".alvl")
+                _levelFiles.push_back(entry.path().stem().string());
+        }
+    }
+    catch (const std::filesystem::filesystem_error &e)
+    {
+        Assisi::Core::Log::Warn("ScanLevels: cannot list levels directory '{}': {}", resolved->string(),
+                                e.what());
     }
     std::sort(_levelFiles.begin(), _levelFiles.end());
     _selectedLevel = 0;

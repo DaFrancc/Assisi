@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "Assisi/Core/AssetSystem.hpp"
 
+#include "Assisi/Core/Logger.hpp"
+
 #include <array>
 #include <cstdlib>
 #include <fstream>
@@ -124,8 +126,9 @@ BytesResult ReadFileBytes(const fs::path &path) noexcept
 
         return data;
     }
-    catch (const std::exception &)
+    catch (const std::exception &e)
     {
+        Log::Warn("AssetSystem: exception reading '{}': {}", path.string(), e.what());
         return std::unexpected(AssetError::FileReadFailed);
     }
 }
@@ -154,8 +157,9 @@ VoidResult WriteFileBytes(const fs::path &path, std::span<const std::byte> data)
 
         return {};
     }
-    catch (const std::exception &)
+    catch (const std::exception &e)
     {
+        Log::Warn("AssetSystem: exception writing '{}': {}", path.string(), e.what());
         return std::unexpected(AssetError::FileWriteFailed);
     }
 }

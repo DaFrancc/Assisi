@@ -202,6 +202,13 @@ RigidBodyComponent PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, 
 
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::BodyID bodyId = bodies.CreateAndAddBody(settings, JPH::EActivation::Activate);
+    if (bodyId.IsInvalid())
+    {
+        Assisi::Core::Log::Error(
+            "PhysicsWorld: failed to create body (body limit of {} reached?); entity will not simulate.",
+            Impl::kMaxBodies);
+        return RigidBodyComponent{bodyId};
+    }
 
     _impl->allBodyIds.push_back(bodyId);
     if (motion == BodyMotion::Dynamic)

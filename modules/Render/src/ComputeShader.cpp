@@ -2,6 +2,7 @@
 
 #include <Assisi/Render/ComputeShader.hpp>
 
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 namespace Assisi::Render
@@ -22,8 +23,13 @@ bool ComputeShader::Initialize(nvrhi::IDevice *device, const std::string &spvPat
     pipelineDesc.CS = shader;
     pipelineDesc.addBindingLayout(_bindingLayout);
     _pipeline = device->createComputePipeline(pipelineDesc);
+    if (_pipeline == nullptr)
+    {
+        Core::Log::Error("ComputeShader: failed to create the compute pipeline for '{}'.", spvPath);
+        return false;
+    }
 
-    return _pipeline != nullptr;
+    return true;
 }
 
 void ComputeShader::Dispatch(nvrhi::ICommandList *commandList, nvrhi::IBindingSet *bindingSet, uint32_t groupsX,
