@@ -215,7 +215,7 @@ Checkboxes so this can be burned down like the round-1 doc was.
   Fix: a `RegisterRender(name, fn)` without the phase argument (removes the
   runtime check and the apology), and collapse the duplicated storage with a
   small template over the context type.
-- [ ] **`Logger` is not thread-safe while multi-threaded code lives
+- [x] **`Logger` is not thread-safe while multi-threaded code lives
   in-process.** `Logger.cpp` — no synchronization on `_sinks` or in the
   sinks; `ConsoleSink::Write` interleaves on `std::cout`. Jolt's
   `JobSystemThreadPool` threads exist right now; the first `Log::Warn` from
@@ -223,6 +223,12 @@ Checkboxes so this can be burned down like the round-1 doc was.
   `Logger::Log` (cheap, fine at current volume) or an explicit,
   asserted single-thread policy (`std::this_thread::get_id()` check in debug)
   — pick one, document it on the class.
+  DONE (2026-07-10): chose the mutex — logging from Jolt job threads is a
+  legitimate path, so a single-thread assert would forbid a valid use rather
+  than catch a bug. A single `std::mutex` in `Logger` guards `Log()` (both
+  overloads), `AddSink`, and `SetMinLevel`; held across the whole sink
+  fan-out, so lines from different threads can't interleave on `std::cout` or
+  the log file. Policy documented on the `Logger` class.
 - [ ] **`MeshPass::_bindingSetCache` — carried over from round 1, still
   open.** (`MeshPass.cpp:144-170`.) Keyed on raw `ITexture*`, never evicted:
   unbounded growth, keeps every texture ever drawn alive, and pointer reuse

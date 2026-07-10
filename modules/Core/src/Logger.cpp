@@ -28,23 +28,26 @@ static std::string_view LevelPrefix(LogLevel level)
 
 void Logger::AddSink(std::shared_ptr<Sink> sink)
 {
+    std::lock_guard<std::mutex> guard(_mutex);
     _sinks.push_back(std::move(sink));
 }
 
 void Logger::SetMinLevel(LogLevel level)
 {
+    std::lock_guard<std::mutex> guard(_mutex);
     _minLevel = level;
 }
 
 void Logger::Log(LogLevel level, std::string_view message)
 {
+    std::lock_guard<std::mutex> guard(_mutex);
     if (level < _minLevel)
     {
         return;
     }
 
-    auto line = std::format("{} {}", LevelPrefix(level), message);
-    for (auto &sink : _sinks)
+    std::string line = std::format("{} {}", LevelPrefix(level), message);
+    for (std::shared_ptr<Sink> &sink : _sinks)
     {
         sink->Write(level, line);
     }
@@ -52,13 +55,14 @@ void Logger::Log(LogLevel level, std::string_view message)
 
 void Logger::Log(LogLevel level, std::source_location loc, std::string_view message)
 {
+    std::lock_guard<std::mutex> guard(_mutex);
     if (level < _minLevel)
     {
         return;
     }
 
-    auto line = std::format("{} {}({}): {}", LevelPrefix(level), loc.file_name(), loc.line(), message);
-    for (auto &sink : _sinks)
+    std::string line = std::format("{} {}({}): {}", LevelPrefix(level), loc.file_name(), loc.line(), message);
+    for (std::shared_ptr<Sink> &sink : _sinks)
     {
         sink->Write(level, line);
     }

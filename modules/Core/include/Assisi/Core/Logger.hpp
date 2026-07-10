@@ -13,6 +13,7 @@
 
 #include <format>
 #include <memory>
+#include <mutex>
 #include <source_location>
 #include <string_view>
 #include <type_traits>
@@ -53,6 +54,15 @@ struct Sink
 // Logger
 // -------------------------------------------------------------------------
 
+/// @brief The global logging service.
+///
+/// @note Thread-safe. A single mutex serializes the entire Log() fan-out, so
+/// concurrent Log() calls from any thread (e.g. Jolt's JobSystemThreadPool
+/// workers firing a physics callback) neither race on the sink list nor
+/// interleave partial lines on a shared sink (`std::cout`, the log file).
+/// AddSink()/SetMinLevel() take the same lock, so reconfiguring at runtime is
+/// also safe. The lock is held across formatting and writing — fine at the
+/// engine's current log volume; revisit only if logging shows up in a profile.
 struct Logger
 {
     /// @brief Adds an output sink. Multiple sinks can be active simultaneously.
@@ -68,6 +78,7 @@ struct Logger
     void Log(LogLevel level, std::source_location loc, std::string_view message);
 
   private:
+    std::mutex _mutex;
     std::vector<std::shared_ptr<Sink>> _sinks;
     LogLevel _minLevel = LogLevel::Trace;
 };
