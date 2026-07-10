@@ -22,7 +22,12 @@ The following compilers have been tested:
 - Windows — MSVC (Visual Studio 2022+)
 - Linux — GCC, Clang
 
-All library dependencies (GLFW, GLM, Assimp, stb, Glad, Jolt Physics, Dear ImGui, nlohmann_json) are fetched automatically by CMake on first configure — no separate package manager required.
+All dependencies are fetched automatically by CMake on first configure — no separate package manager
+required: GLFW (windowing/input), GLM (math), [NVRHI](https://github.com/NVIDIA-RTX/NVRHI) (Vulkan
+render hardware interface), glslang (build-time GLSL→SPIR-V shader compiler), Dear ImGui + ImPlot
+(debug UI), Jolt Physics, stb (image loading), nlohmann/json, Assimp (fetched for planned mesh import),
+and doctest (unit tests). Rendering is **Vulkan**: a Vulkan-capable GPU and driver are required at
+runtime, but no Vulkan SDK is needed to build (the engine loads Vulkan dynamically).
 
 ### 3. Configure
 #### Windows (from a Visual Studio Developer Command Prompt):
@@ -75,17 +80,30 @@ cmake --build --preset msvc-debug
 ```
 
 ```bash
-# Run the sandbox
+# Run the sandbox — the reference app: a level viewer/editor with a fly camera,
+# reflected-component inspector, asset browser, and .alvl level save/load.
 ./out/build/msvc-debug/apps/sandbox/Assisi-Sandbox.exe
+```
+
+### 5. Run the Tests (optional)
+The unit tests (doctest) and the `reflectgen` golden-file tests run through CTest presets that
+mirror the build presets:
+
+```bash
+ctest --preset msvc-debug   # build first, then run all suites
+ctest --preset msvc-debug -R ECS   # a single suite
 ```
 
 ## Understanding Assisi's Module Layout
 Assisi is organized into several modules, each responsible for a specific aspect of the engine. All modules compile as static libraries under the `Assisi::` CMake namespace. Below is an overview of each module and its responsibilities:
 
 ### Core
-The Core module contains the fundamental utilities and infrastructure shared across all other modules.
-It includes the `Logger` (console and file sinks), `AssetSystem` (asset discovery and loading via `std::expected`),
-error types, `Prelude.hpp` (common includes), and the `EventQueue` (a per-frame typed event bus for decoupled inter-system communication).
+The Core module contains the fundamental utilities and infrastructure shared across all other modules:
+the `Logger` (console and file sinks), `AssetSystem` (a virtual filesystem with a read-only asset root
+and a writable per-user root, returning `std::expected`), error types, `Prelude.hpp` (common includes),
+and the `EventQueue` (a per-frame typed event bus for decoupled inter-system communication). It also
+houses the **reflection** system — `ACOMP()`/`AFIELD()` annotations and a `ComponentRegistry` that the
+`reflectgen` build tool (`tools/reflectgen`) turns into (de)serialization and inspector code.
 
 ### Math
 The Math module provides a collection of mathematical functions and data structures commonly used in game development, such as vectors, matrices, and quaternions.
@@ -97,21 +115,30 @@ It manages the GLFW lifecycle via a `GlfwLibrary` shared pointer, exposes a `Win
 It also provides `ActionMap` — a named input action system that maps string action names to key/mouse button bindings and can be loaded from `game.json`.
 
 ### Render
-The Render module is responsible for rendering graphics to the screen. It provides an abstraction layer over the underlying graphics API (currently OpenGL,
-but in the future it may support other APIs like Vulkan or DirectX). It includes `RenderSystem`, `Shader`, `MeshBuffer`, and `DefaultResources` (built-in primitive meshes).
-Hopefully in the future it will be as customizable as Unity's rendering pipeline,
-allowing you to create custom render passes, shaders, and materials to achieve the exact look you want for your game.
+The Render module renders the scene through **Vulkan**, via NVIDIA's
+[NVRHI](https://github.com/NVIDIA-RTX/NVRHI) hardware-abstraction layer (Windows and Linux; no Vulkan SDK
+required to build — only a Vulkan-capable driver at runtime). It provides `RenderSystem` / `VulkanContext`
+(device, swapchain, frames-in-flight), `ShaderModule` (loads SPIR-V that glslang compiles from GLSL at
+build time), `MeshBuffer` / `Buffer` / `Texture`, and `DefaultResources` (built-in primitive meshes and a
+white fallback texture). The default renderer is a **clustered forward** pipeline: `ClusterGrid` bins
+point/spot/directional lights into a froxel grid with compute shaders, `MeshPass` shades with a
+Cook–Torrance PBR model reading only the lights that touch each cluster, and `PostProcess` supplies
+optional MSAA and/or FXAA. `AssetCache` resolves asset paths to GPU meshes/textures, deduplicated by path.
 
 ### ECS
 The ECS (Entity-Component-System) module provides a framework for working with entity IDs, component storage, sparse sets, queries, and scene management.
-It is designed to be flexible and efficient, allowing you to create complex game objects and systems without worrying about the underlying data structures or performance implications.
-Key types: `Scene`, `SceneRegistry`, `Query`, `SparseSet`.
+Entity handles carry a generation counter so stale handles are detected after a slot is reused. It is
+designed to be flexible and efficient, allowing you to create complex game objects and systems without worrying about the underlying data structures or performance implications.
+Key types: `Scene`, `SceneRegistry`, `Query` (with `Without<>` exclusion filters), `Registry`, `SparseSet`.
 
 ### Runtime
-The Runtime module provides ready-to-use components and systems that are common across most games.
-It includes `TransformComponent`, `MeshRendererComponent`, `Camera`, `DrawScene` (renders all mesh entities),
-`SceneSerializer` (save/load `.alvl` level files), and `DestroyTag` (mark entities for end-of-frame destruction).
-These building blocks can be composed into your own game logic without modification.
+The Runtime module provides ready-to-use components and systems common to most games:
+`TransformComponent` (with hierarchy via `ParentComponent` and `PropagateTransforms`),
+`MeshRendererComponent`, `CameraComponent`, and point/spot/directional light components.
+It ships the default render path — `SceneRenderer`, which ties the camera, the clustered `LightingSystem`,
+and mesh drawing together — plus `SceneSerializer` (save/load `.alvl` level files, driven by reflection)
+and `DestroyTag` / `DestroyMarked` (deferred end-of-frame entity destruction).
+These building blocks compose into your own game logic without modification.
 
 ### Physics
 The Physics module wraps [Jolt Physics](https://github.com/jrouwe/JoltPhysics) to provide rigid body simulation.
@@ -121,35 +148,34 @@ and `RigidBodyDescriptor` (a serializable description of a body's shape and stat
 Call `PhysicsWorld::Clear()` before loading a new level to destroy all tracked bodies.
 
 ### Debug
-The Debug module wraps [Dear ImGui](https://github.com/ocornut/imgui) with a GLFW + OpenGL3 backend.
-`DebugUI::Initialize(window)` must be called after the OpenGL context is current.
+The Debug module wraps [Dear ImGui](https://github.com/ocornut/imgui) and
+[ImPlot](https://github.com/epezent/implot) with a GLFW + **Vulkan** backend.
+`DebugUI::Initialize(window, vulkanContext)` must be called after the Vulkan context exists.
 Override `OnImGui()` in your application class to draw debug panels and overlays.
 
 ### App
 The App module provides the application framework on top of the lower-level modules.
-`Application` is the base class with a fixed-timestep physics loop and a rate-limited render loop (default 60 Hz physics, 144 Hz render).
-Override `OnStart`, `OnFixedUpdate(dt)`, `OnUpdate(dt)`, `OnRender()`, and optionally `OnImGui()` / `OnShutdown()`.
+`Application` is the base class: it runs a fixed-timestep physics loop (default 60 Hz, `AppConfig::physicsHz`)
+and paces rendering either to the display refresh (VSync) or to an optional FPS cap, selectable at runtime.
+Override `OnStart`, `OnFixedUpdate(dt)`, `OnUpdate(dt)`, and `OnRender(RenderFrame&)`, plus optionally
+`OnImGui()`, `OnShutdown()`, `OnResize()`, and `OnRenderTargetsChanged()`.
 
-`SystemRegistry` provides dependency-ordered, phase-based game system registration (`PreUpdate`, `FixedUpdate`,
-`Update`, `PostUpdate`, `Render`) that an application wires up directly, alongside an `ActionMap` loaded from
-`assets/game.json`.
+`SystemRegistry` provides dependency-ordered, phase-based system registration (`PreUpdate`, `FixedUpdate`,
+`Update`, `PostUpdate`) via `After()` / `Before()` constraints; render systems register separately through
+`RegisterRender`. Named input actions come from an `ActionMap` loaded from `assets/game.json`.
 
-`AppConfig` is loaded from `assets/game.json` and provides engine configuration (target frame rates, window settings, input bindings, etc.).
+Configuration is split in two: `AppConfig` (loaded from `assets/game.json`) holds window, clear-color, and
+physics-rate settings a game ships with; `OptionsConfig` (persisted to `options.json`) holds user-facing
+runtime options — anti-aliasing mode, MSAA sample count, and VSync/FPS-limit — editable in-app through the
+**F12** options window.
 
 ## Documentation
-<!-- docs-block: start -->
-- [Getting Started](<add-docs-link>)
-- [Build & Tooling](<add-docs-link>)
-- [Architecture Overview](<add-docs-link>)
-- [API Reference](<add-docs-link>)
-<!-- docs-block: end -->
+Per-module overviews are in the section above, and the public API is documented with Doxygen-style
+comments in the headers. Design notes, the NVRHI migration log, and the rolling code-review docket live in
+[`docs/`](docs/).
 
 ## Useful Links
-<!-- links-block: start -->
-- [Roadmap](<add-link>)
-- [Issue Tracker](<add-link>)
-- [Community/Support](<add-link>)
-<!-- links-block: end -->
+- [Issue Tracker](https://github.com/DaFrancc/Assisi/issues)
 
 ## AI Notice
 This project uses AI to help develop this project for the main purpose of education alongside some code generation, documentation,
