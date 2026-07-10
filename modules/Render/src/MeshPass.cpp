@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/DefaultResources.hpp>
+#include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 #include <cstddef>
@@ -94,8 +95,16 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
-    samplerDesc.setAllFilters(true);
+    samplerDesc.setAllFilters(true); // trilinear: linear min/mag + linear mip blending
     samplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Repeat);
+    // Anisotropic filtering keeps textures sharp at grazing angles, where plain
+    // trilinear picks an over-coarse mip and washes the surface out. The context
+    // reports 1.0 (isotropic) when the device didn't enable the feature, so this
+    // is a no-op there rather than an invalid request.
+    if (const Vulkan::VulkanContext *context = RenderSystem::GetVulkanContext())
+    {
+        samplerDesc.maxAnisotropy = context->GetMaxAnisotropy();
+    }
     _sampler = device->createSampler(samplerDesc);
 
     nvrhi::BufferDesc frameConstantsDesc;

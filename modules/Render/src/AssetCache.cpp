@@ -15,9 +15,10 @@ namespace
 const Core::AssetPath kCubePrimitive{std::string_view{"prim://cube"}};
 } // namespace
 
-void AssetCache::Initialize(nvrhi::IDevice *device)
+void AssetCache::Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace)
 {
     _device = device;
+    _textureColorSpace = textureColorSpace;
     _primitiveFactories.emplace(kCubePrimitive, &CreateUnitCubeMesh);
 }
 
@@ -59,7 +60,9 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path)
         return it->second.IsValid() ? &it->second : nullptr;
 
     Texture &texture = _textures[path];
-    if (std::expected<void, Core::AssetError> loaded = texture.LoadFromAssets(_device, path.View()); !loaded)
+    if (std::expected<void, Core::AssetError> loaded =
+            texture.LoadFromAssets(_device, path.View(), _textureColorSpace);
+        !loaded)
     {
         Core::Log::Warn("AssetCache: failed to load texture '{}' — entity renders flat white.", path.View());
         // Keep the invalid entry so the failed load isn't retried every frame;

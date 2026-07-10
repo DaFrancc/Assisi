@@ -12,6 +12,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 #include <GLFW/glfw3.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <vector>
@@ -198,7 +199,7 @@ std::optional<PhysicalDeviceChoice> ChoosePhysicalDevice(VkInstance instance, Vk
     return best;
 }
 
-VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQueueFamily)
+VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQueueFamily, bool enableAnisotropy)
 {
     const float queuePriority = 1.0f;
 
@@ -227,6 +228,12 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     features12.timelineSemaphore = VK_TRUE;
     features12.pNext = &features13;
 
+    // Core 1.0 features. Anisotropic filtering is optional in the spec, so it is
+    // only requested when the caller confirmed the device advertises it (see
+    // Create()); requesting an unsupported feature fails vkCreateDevice outright.
+    VkPhysicalDeviceFeatures coreFeatures{};
+    coreFeatures.samplerAnisotropy = enableAnisotropy ? VK_TRUE : VK_FALSE;
+
     VkDeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     deviceCreateInfo.pNext = &features12;
@@ -234,6 +241,7 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
     deviceCreateInfo.enabledExtensionCount = 1;
     deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions;
+    deviceCreateInfo.pEnabledFeatures = &coreFeatures;
 
     VkDevice device = VK_NULL_HANDLE;
     if (VKD.vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device) != VK_SUCCESS)
@@ -328,7 +336,19 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     VKD.vkGetPhysicalDeviceProperties(context->_physicalDevice, &chosenProps);
     Core::Log::Info("VulkanContext: selected device {}", chosenProps.deviceName);
 
-    context->_device = CreateLogicalDevice(context->_physicalDevice, context->_graphicsQueueFamily);
+    // Anisotropic filtering: enable it only if the device supports it, and clamp
+    // the sampler request to the device's limit. 8x is a good quality/cost
+    // default for texture minification at grazing angles (plain trilinear
+    // over-blurs there); samplers read this back via GetMaxAnisotropy().
+    constexpr float          kDesiredMaxAnisotropy = 8.0f;
+    VkPhysicalDeviceFeatures supportedFeatures{};
+    VKD.vkGetPhysicalDeviceFeatures(context->_physicalDevice, &supportedFeatures);
+    const bool anisotropySupported = supportedFeatures.samplerAnisotropy == VK_TRUE;
+    context->_maxAnisotropy =
+        anisotropySupported ? std::min(kDesiredMaxAnisotropy, chosenProps.limits.maxSamplerAnisotropy) : 1.0f;
+
+    context->_device =
+        CreateLogicalDevice(context->_physicalDevice, context->_graphicsQueueFamily, anisotropySupported);
     if (context->_device == VK_NULL_HANDLE)
     {
         Core::Log::Error("VulkanContext: vkCreateDevice failed.");

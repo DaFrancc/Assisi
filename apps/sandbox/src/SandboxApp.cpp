@@ -130,9 +130,13 @@ void SandboxApp::SetupScene()
     }
 
     _assetCache.Initialize(device);
-    _thumbnailCache.Initialize(device);
+    // Thumbnails are drawn straight through ImGui, so they must not be sampled as
+    // sRGB (which would gamma-decode them and show them too dark) — load linear.
+    _thumbnailCache.Initialize(device, Assisi::Render::ColorSpace::Linear);
     if (std::expected<void, Assisi::Core::AssetError> loaded =
-            _helloTexture.LoadFromAssets(device, "textures/hello.png");
+            // Displayed through ImGui, not the mesh shader — load linear so the
+            // sampler doesn't gamma-decode it (same reason as the thumbnails).
+            _helloTexture.LoadFromAssets(device, "textures/hello.png", Assisi::Render::ColorSpace::Linear);
         !loaded)
     {
         Assisi::Core::Log::Warn("Failed to load textures/hello.png for the ImGui image test.");

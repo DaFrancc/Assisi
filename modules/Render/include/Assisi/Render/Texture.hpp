@@ -14,7 +14,19 @@
 
 namespace Assisi::Render
 {
-/// @brief Owner of an NVRHI 2D texture, single mip level, RGBA8.
+/// @brief How a texture's stored 8-bit values map to the linear values shaders
+/// work in. Colour/albedo maps are authored in sRGB (Srgb) so the GPU decodes
+/// them to linear at sample time — which also makes hardware filtering and mip
+/// generation correct, since both must happen in linear space. Data maps
+/// (normals, metallic/roughness, masks) hold linear values already and must use
+/// Linear so they aren't gamma-mangled.
+enum class ColorSpace : std::uint8_t
+{
+    Srgb,
+    Linear,
+};
+
+/// @brief Owner of an NVRHI 2D texture, RGBA8, with a full mip chain.
 class Texture
 {
   public:
@@ -24,15 +36,20 @@ class Texture
     ///
     /// Always decoded to 4 channels (RGBA8). Loaded top-down, matching Vulkan/NVRHI's
     /// UV convention (V=0 at the top) — unlike the OpenGL texture loader this replaces,
-    /// no vertical flip is applied.
+    /// no vertical flip is applied. A full mip chain is generated on the CPU (with
+    /// stb's colour-space-aware resizer) so distant surfaces don't alias; @p colorSpace
+    /// selects the on-GPU format (SRGBA8 for albedo, RGBA8 for data maps) and the
+    /// filtering space used to build the mips.
     ///
     /// @return Success, or an AssetError if the file cannot be resolved/read/decoded.
-    std::expected<void, Assisi::Core::AssetError> LoadFromAssets(nvrhi::IDevice *device,
-                                                                  std::string_view vpath) noexcept;
+    std::expected<void, Assisi::Core::AssetError> LoadFromAssets(nvrhi::IDevice *device, std::string_view vpath,
+                                                                  ColorSpace colorSpace = ColorSpace::Srgb) noexcept;
 
     /// @brief Uploads a solid 1x1 color — used for default/placeholder textures.
+    /// Single mip level (nothing to downsample).
     void UploadSolidColor(nvrhi::IDevice *device, unsigned char r, unsigned char g, unsigned char b,
-                          unsigned char a, const char *debugName = nullptr);
+                          unsigned char a, ColorSpace colorSpace = ColorSpace::Srgb,
+                          const char *debugName = nullptr);
 
     nvrhi::ITexture *NativeTexture() const { return _texture; }
     bool IsValid() const { return _texture != nullptr; }

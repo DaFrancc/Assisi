@@ -83,6 +83,13 @@ class VulkanContext
 
     [[nodiscard]] nvrhi::IDevice *GetDevice() const { return _nvrhiDevice; }
 
+    /// @brief Max anisotropy to request when creating samplers: >1 when the
+    /// device supports anisotropic filtering (clamped to the device limit), or
+    /// 1.0 (isotropic — feature off) when it doesn't. Samplers should read this
+    /// rather than hardcode a value, since requesting anisotropy the device
+    /// didn't enable is a validation error.
+    [[nodiscard]] float GetMaxAnisotropy() const { return _maxAnisotropy; }
+
     /// @brief Color/depth formats and sample count of the swapchain framebuffers,
     /// for constructing pipelines compatible with them ahead of the first frame.
     [[nodiscard]] nvrhi::FramebufferInfo GetFramebufferInfo() const { return _framebuffers.at(0)->getFramebufferInfo(); }
@@ -140,6 +147,7 @@ class VulkanContext
     VkFormat              _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkFormat              _depthFormat = VK_FORMAT_UNDEFINED;
     bool                  _vsyncEnabled = true; // FIFO by default; see ChoosePresentMode()
+    float                 _maxAnisotropy = 1.0f; // >1 once anisotropic filtering is enabled; see GetMaxAnisotropy()
 
     VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;
     VkExtent2D            _swapchainExtent{};

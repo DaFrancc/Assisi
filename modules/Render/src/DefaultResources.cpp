@@ -12,7 +12,9 @@ nvrhi::ITexture *DefaultResources::WhiteTexture(nvrhi::IDevice *device)
     static Texture texture;
     if (!texture.IsValid())
     {
-        texture.UploadSolidColor(device, 255, 255, 255, 255, "DefaultResources::White");
+        // sRGB to match the scene albedo textures it stands in for; white is the
+        // same value either way, but it keeps the default consistent with real maps.
+        texture.UploadSolidColor(device, 255, 255, 255, 255, ColorSpace::Srgb, "DefaultResources::White");
     }
     return texture.NativeTexture();
 }

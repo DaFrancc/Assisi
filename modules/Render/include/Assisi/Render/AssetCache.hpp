@@ -32,8 +32,12 @@ class AssetCache
     AssetCache() = default;
 
     /// @brief Bind to a device and register the built-in `prim://` primitives.
-    /// Must be called before any Resolve* call.
-    void Initialize(nvrhi::IDevice *device);
+    /// Must be called before any Resolve* call. @p textureColorSpace selects how
+    /// this cache's textures are loaded: Srgb for scene albedo (the default —
+    /// the mesh shader wants linear-filtered colour), Linear for textures shown
+    /// straight through ImGui (e.g. asset-browser thumbnails), which must not be
+    /// gamma-decoded by the sampler.
+    void Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace = ColorSpace::Srgb);
 
     /// @brief Resolves a mesh path to a cached MeshBuffer, uploading on first use.
     /// Recognises the built-in primitives (e.g. `prim://cube`). An empty or
@@ -60,6 +64,9 @@ class AssetCache
     const MeshBuffer *ResolvePrimitive(const Core::AssetPath &path);
 
     nvrhi::IDevice *_device = nullptr;
+
+    // Colour space every texture in this cache is loaded with (see Initialize()).
+    ColorSpace _textureColorSpace = ColorSpace::Srgb;
 
     // Registered at Initialize(); maps a `prim://` path to its mesh factory.
     std::unordered_map<Core::AssetPath, std::function<MeshData()>> _primitiveFactories;

@@ -200,7 +200,7 @@ Checkboxes so this can be burned down like the previous two docs.
   design — that's the debug-UI module's job, not a leak.) `Debug` itself is
   untouched; the sandbox reaches ImPlot transitively through the App→Debug link.
 
-- [ ] **Textures: no sRGB formats, no mipmaps.** Albedo loads as
+- [x] **Textures: no sRGB formats, no mipmaps.** Albedo loads as
   `RGBA8_UNORM` and the shader decodes with `pow(2.2)` (`cube_min.frag`) —
   so the *sampler filters in gamma space* (wrong, visibly so on
   high-contrast textures) when `RGBA8_SRGB` would give correct filtering for
@@ -209,6 +209,30 @@ Checkboxes so this can be burned down like the previous two docs.
   (`Texture.cpp:28-32`) — fine for 5 textures, a stall festival the day a
   real level loads. First thing an outside eye will see on screen; belongs
   on the path to 9.
+  *Done (2026-07-10), sRGB + mipmaps; upload batching deferred:*
+  - **sRGB:** `Texture` gained a `ColorSpace` (Srgb/Linear); albedo now loads as
+    `SRGBA8_UNORM`, so the hardware sampler decodes to linear at sample time and
+    the `pow(2.2)` came out of `cube_min.frag`. Filtering and mip-blending now
+    happen in linear space (the whole point). `AssetCache` carries a per-cache
+    colour space so the scene cache is sRGB while ImGui-facing textures
+    (asset-browser thumbnails, the hello-image smoke test) stay `Linear` — sampling
+    those as sRGB would gamma-decode and darken them.
+  - **Mipmaps:** every loaded texture gets a full mip chain, generated CPU-side
+    with stb's colour-space-aware resizer (`stbir_resize_uint8_srgb`, so sRGB
+    sources are downsampled in linear space) and uploaded in the texture's command
+    list. The existing trilinear sampler (`setAllFilters(true)`) now has real mips
+    to blend. NVRHI has no built-in mip generation, so CPU generation was the
+    proportionate route (no compute/blit pass).
+  - **Anisotropic filtering:** plain trilinear over-blurs textures at grazing
+    angles (they looked washed-out at a distance when the surface faced away from
+    the camera). `VulkanContext` now enables the `samplerAnisotropy` device
+    feature when supported and exposes `GetMaxAnisotropy()` (8x clamped to the
+    device limit, or 1.0 when unsupported so no invalid sampler is requested); the
+    mesh-pass sampler reads it. Verified validation-clean with the layers on.
+  - **Deferred — upload batching:** each texture still uses its own command list.
+    Cross-texture batching needs a two-phase change to the lazy per-entity
+    level-load flow, is perf-only, and the review itself scoped it as "fine for 5
+    textures." Split out as a focused follow-up rather than bolted on here.
 
 - [x] **`PropagateTransforms` allocates a fresh `unordered_map`,
   `unordered_set`, and `std::function` recursion every call**

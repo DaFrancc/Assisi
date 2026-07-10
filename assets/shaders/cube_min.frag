@@ -145,7 +145,10 @@ uint ClusterIndex()
 
 void main()
 {
-    vec3 albedo = pow(texture(sampler2D(uAlbedoTexture, uAlbedoSampler), vTexCoord).rgb, vec3(2.2)); // sRGB -> linear
+    // The albedo texture is an sRGB format (SRGBA8_UNORM), so the sampler already
+    // returns linear values — filtered and mip-blended in linear space, which is
+    // why the sRGB->linear step no longer lives here in the shader.
+    vec3 albedo = texture(sampler2D(uAlbedoTexture, uAlbedoSampler), vTexCoord).rgb;
 
     vec3 N = normalize(vNormal);
 
