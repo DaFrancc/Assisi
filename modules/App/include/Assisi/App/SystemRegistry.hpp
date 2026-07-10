@@ -70,7 +70,7 @@ enum class SystemPhase
     FixedUpdate = 1, ///< Fixed timestep; may run multiple times per render frame.
     Update      = 2, ///< Once per render frame; main game logic.
     PostUpdate  = 3, ///< After game logic; transform propagation and cleanup.
-    _Count
+    Count
 };
 
 // The Render phase is not a SystemPhase value: render systems take a different
@@ -148,7 +148,7 @@ class SystemRegistry
     };
 
     /// Number of game-logic phases (everything except Render).
-    static constexpr std::size_t kGamePhaseCount = static_cast<std::size_t>(SystemPhase::_Count);
+    static constexpr std::size_t kGamePhaseCount = static_cast<std::size_t>(SystemPhase::Count);
 
     static std::size_t      Index(SystemPhase phase) { return static_cast<std::size_t>(phase); }
     static std::string_view PhaseName(std::size_t gamePhaseIndex);
