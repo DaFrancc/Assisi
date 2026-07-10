@@ -186,11 +186,15 @@ FetchContent_Declare(glm
 FetchContent_MakeAvailable(glm)
 
 # --- stb (header-only; no CMake build)
+# Pinned to a bare commit, so NO GIT_SHALLOW: a depth-1 fetch can only grab a
+# ref tip, and once upstream moves past this commit a shallow clone can no longer
+# check it out ("reference is not a tree"). A full clone can reach any commit.
+# No DOWNLOAD_ONLY: it is not a FetchContent_Declare keyword — it leaks into the
+# underlying ExternalProject_Add git-clone args and corrupts them. stb ships no
+# root CMakeLists, so MakeAvailable just populates it (no add_subdirectory) anyway.
 FetchContent_Declare(stb
     GIT_REPOSITORY https://github.com/nothings/stb.git
     GIT_TAG        31c1ad37456438565541f4919958214b6e762fb4 # stb has no tagged releases; pinned to a specific commit
-    GIT_SHALLOW    TRUE
-    DOWNLOAD_ONLY  YES
 )
 FetchContent_MakeAvailable(stb)
 add_library(stb-headers INTERFACE)
@@ -264,11 +268,15 @@ if (ASSISI_BUILD_TESTS)
 endif()
 
 # --- Dear ImGui (docking branch)
+# Pinned to a bare docking-branch commit, so NO GIT_SHALLOW: once the docking
+# branch advances past this commit a depth-1 fetch stops containing it and the
+# checkout fails ("reference is not a tree"). A full clone can reach any commit.
+# No DOWNLOAD_ONLY: it is not a FetchContent_Declare keyword — it leaks into the
+# underlying ExternalProject_Add git-clone args and corrupts them. ImGui ships no
+# root CMakeLists, so MakeAvailable just populates it (no add_subdirectory) anyway.
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
     GIT_TAG        4be08b1ecf7709f15e4274fb2ddac37e121d7d9a # docking-branch commit (no tagged docking release); pinned for reproducibility
-    GIT_SHALLOW    TRUE
-    DOWNLOAD_ONLY  YES
 )
 FetchContent_MakeAvailable(imgui)
 
