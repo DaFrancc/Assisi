@@ -22,6 +22,8 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
+#include <unordered_map>
 
 #define VKD VULKAN_HPP_DEFAULT_DISPATCHER
 
@@ -32,6 +34,11 @@ namespace
 {
 VkDevice s_vkDevice = VK_NULL_HANDLE;
 VkDescriptorPool s_descriptorPool = VK_NULL_HANDLE;
+
+// ImGui descriptor sets registered for user textures (see GetOrCreateTextureId),
+// keyed by the NVRHI texture they wrap. Freed wholesale when s_descriptorPool is
+// destroyed in Shutdown().
+std::unordered_map<nvrhi::ITexture *, VkDescriptorSet> s_textureIds;
 
 // The "opener" pipeline: never actually drawn with (see imgui_opener.vert's
 // comment). Its only job is to make DebugUI::BeginFrame's setGraphicsState
@@ -152,6 +159,9 @@ void DebugUI::Shutdown()
 
     s_openerPipeline = nullptr;
 
+    // Destroying the pool frees every set ImGui_ImplVulkan_AddTexture handed out;
+    // drop our bookkeeping to match.
+    s_textureIds.clear();
     if (s_descriptorPool != VK_NULL_HANDLE)
     {
         VKD.vkDestroyDescriptorPool(s_vkDevice, s_descriptorPool, nullptr);
@@ -174,6 +184,32 @@ void DebugUI::BeginFrame(Render::RenderFrame &frame)
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
+}
+
+ImTextureID DebugUI::GetOrCreateTextureId(nvrhi::ITexture *texture)
+{
+    if (texture == nullptr)
+        return ImTextureID_Invalid;
+
+    if (std::unordered_map<nvrhi::ITexture *, VkDescriptorSet>::iterator it = s_textureIds.find(texture);
+        it != s_textureIds.end())
+        return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(it->second));
+
+    // NVRHI doesn't surface image views through getNativeObject (that's only the
+    // VkImage) — views are created per-format/subresource on demand via
+    // getNativeView. Ask for the whole-resource SRV; the defaults resolve to the
+    // texture's own format and dimension.
+    VkImageView imageView = texture->getNativeView(nvrhi::ObjectTypes::VK_ImageView);
+    if (imageView == VK_NULL_HANDLE)
+    {
+        Assisi::Core::Log::Error("DebugUI: texture exposes no VkImageView; cannot display it in ImGui.");
+        return ImTextureID_Invalid;
+    }
+
+    const VkDescriptorSet set =
+        ImGui_ImplVulkan_AddTexture(imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+    s_textureIds.emplace(texture, set);
+    return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(set));
 }
 
 void DebugUI::EndFrame(Render::RenderFrame &frame)

@@ -6,6 +6,8 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
+#include <Assisi/Debug/DebugUI.hpp>
+
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
@@ -80,6 +82,7 @@ class SandboxApp : public Assisi::App::Application
     void DrawDiagnosticsWindow();
     void DrawLevelsWindow();
     void DrawInspector();
+    void DrawHelloImageWindow(); // ImGui-texture-display smoke test
 
     // --- Inspector helpers ---
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
@@ -112,6 +115,9 @@ class SandboxApp : public Assisi::App::Application
     // Resolves each entity's meshPath/albedoPath to shared GPU resources; owns
     // every mesh and texture the scene draws (deduped by path).
     Assisi::Render::AssetCache _assetCache;
+
+    // Smoke test for ImGui texture display — resolved once in SetupScene.
+    const Assisi::Render::Texture *_helloTexture = nullptr;
 
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
@@ -245,6 +251,7 @@ void SandboxApp::SetupScene()
     }
 
     _assetCache.Initialize(device);
+    _helloTexture = _assetCache.ResolveTexture(Assisi::Core::AssetPath{std::string_view{"textures/hello.png"}});
 }
 
 void SandboxApp::OnResize(int width, int height)
@@ -485,6 +492,24 @@ void SandboxApp::OnImGui()
     DrawDiagnosticsWindow();
     DrawLevelsWindow();
     DrawInspector();
+    DrawHelloImageWindow();
+}
+
+void SandboxApp::DrawHelloImageWindow()
+{
+    if (ImGui::Begin("hello.png"))
+    {
+        if (_helloTexture != nullptr && _helloTexture->IsValid())
+        {
+            const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(_helloTexture->NativeTexture());
+            ImGui::Image(id, ImVec2(256.f, 256.f));
+        }
+        else
+        {
+            ImGui::TextDisabled("textures/hello.png failed to load.");
+        }
+    }
+    ImGui::End();
 }
 
 // ---------------------------------------------------------------------------

@@ -25,6 +25,9 @@
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
+#include <imgui.h>
+#include <nvrhi/nvrhi.h>
+
 namespace Assisi::Debug
 {
 
@@ -47,6 +50,22 @@ class DebugUI
     /// @brief Renders the accumulated draw data into `frame`. Call after all
     /// ImGui:: calls for this frame (including the app's OnRender/OnImGui).
     static void EndFrame(Render::RenderFrame &frame);
+
+    /// @brief Registers an NVRHI texture with the ImGui Vulkan backend and returns
+    /// a cached ImTextureID for use with ImGui::Image(). Pass the result straight
+    /// to ImGui::Image(id, size).
+    ///
+    /// The texture must sit in the ShaderResource state
+    /// (VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) whenever ImGui samples it —
+    /// textures produced by Render::Texture already are. The registration
+    /// (a descriptor set) is cached per texture pointer and released in Shutdown().
+    ///
+    /// @warning Keyed on the raw `ITexture*`, so an id is valid only while its
+    /// texture is alive. Don't register a texture, free it, then register another
+    /// (a reused address would return the stale id). Fine for long-lived UI images.
+    /// @return A valid id, or ImTextureID_Invalid if @p texture is null or exposes
+    ///         no VkImageView.
+    static ImTextureID GetOrCreateTextureId(nvrhi::ITexture *texture);
 };
 
 } // namespace Assisi::Debug
