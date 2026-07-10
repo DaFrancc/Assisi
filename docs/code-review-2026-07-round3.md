@@ -232,7 +232,11 @@ Checkboxes so this can be burned down like the previous two docs.
   - **Deferred — upload batching:** each texture still uses its own command list.
     Cross-texture batching needs a two-phase change to the lazy per-entity
     level-load flow, is perf-only, and the review itself scoped it as "fine for 5
-    textures." Split out as a focused follow-up rather than bolted on here.
+    textures." Not a standalone follow-up: it is subsumed by a proper async/
+    streaming asset system (the streaming loader batches its uploads per tick for
+    free), so doing it now would be throwaway work. Roadmap captured in
+    docs/asset-streaming-design-notes.md; revisit when the mesh-file loader and a
+    job system exist.
 
 - [x] **`PropagateTransforms` allocates a fresh `unordered_map`,
   `unordered_set`, and `std::function` recursion every call**
@@ -263,10 +267,22 @@ Checkboxes so this can be burned down like the previous two docs.
   count, so a too-small light/SSBO capacity surfaces instead of truncating in
   silence. `mutable bool _overflowWarned` guards the const `Upload`.
 
-- [ ] **Camera-in-its-own-Scene is a smell.** `_cameraScene` instantiates an
+- [x] **Camera-in-its-own-Scene is a smell.** `_cameraScene` instantiates an
   entire ECS world to hold one entity, purely so level loads don't clear the
   camera. A serialization-exclusion mechanism (or not storing the editor
   camera in the ECS at all) is the honest design.
+  *Done (2026-07-10):* took the "not in the ECS at all" option, which the review
+  named as the honest one. The editor fly-camera is now plain `SandboxApp` state
+  — a `Runtime::Transform _cameraTransform` and a `Runtime::Camera _camera` — with
+  the whole `_cameraScene`/`_cameraEntity` deleted (no ECS world, no
+  `PropagateTransforms(_cameraScene)` call, no `Scene::Get` per access). A small
+  `RefreshCameraMatrix()` recomputes `worldMatrix` from the TRS (the camera is
+  parentless, so world == local) at the two read sites — render and ray-pick — so
+  it's order-independent of the update systems. Bonus: because the camera is no
+  longer level data, its pose now survives a level load for free (previously the
+  separate scene existed only to dodge LoadLevel's clear). Sandbox-only change;
+  engine untouched. Verify interactively: fly camera (WASD + mouse-look), scroll
+  to zoom FOV, click-to-pick, and confirm a level Load keeps the camera put.
 
 - [x] **Non-uniform scale silently breaks lighting.** `cube_min.vert`
   documents "assumes uniform scale" for the normal transform — but the

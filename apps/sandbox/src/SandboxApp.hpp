@@ -68,6 +68,9 @@ class SandboxApp : public Assisi::App::Application
     // --- Per-frame helpers ---
     void HandleEntityPicking();
     void UpdateCamera(float dt);
+    /// @brief Recomputes _cameraTransform.worldMatrix from its TRS. The camera is
+    /// parentless, so world == local; call before reading the view matrix.
+    void RefreshCameraMatrix();
 
     // --- ImGui panels ---
     void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F12); see SandboxOptions.cpp
@@ -126,8 +129,13 @@ class SandboxApp : public Assisi::App::Application
     // texture (not routed through _assetCache, which LoadLevel Clears).
     Assisi::Render::Texture _helloTexture;
 
-    Assisi::ECS::Scene  _cameraScene;
-    Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
+    // The editor fly-camera is not level data, so it is plain state here rather
+    // than an entity in a whole ECS scene of its own (which existed only so
+    // LoadLevel's clear-and-load wouldn't wipe it). As plain members the camera
+    // pose also survives level loads for free. RefreshCameraMatrix() recomputes
+    // worldMatrix from the TRS (parentless, so world == local) before it is read.
+    Assisi::Runtime::Transform _cameraTransform;
+    Assisi::Runtime::Camera    _camera{60.f, 0.1f, 200.f, true};
 
     // Set by SetupCamera() before first use; these are just safe defaults.
     float _yaw   = 0.f;

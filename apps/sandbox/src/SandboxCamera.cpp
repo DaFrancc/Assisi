@@ -85,9 +85,6 @@ void SandboxApp::UpdateCamera(float dt)
         const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
         const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
 
-        auto *camTransform =
-            _cameraScene.Get<Assisi::Runtime::Transform>(_cameraEntity);
-
         glm::vec3 move{0.f};
         if (_actions.IsActionDown("MoveForward",  input)) { move += forward; }
         if (_actions.IsActionDown("MoveBackward", input)) { move -= forward; }
@@ -97,20 +94,25 @@ void SandboxApp::UpdateCamera(float dt)
         if (_actions.IsActionDown("MoveDown",     input)) { move.y -= 1.f; }
 
         if (glm::length(move) > 0.f)
-            camTransform->position += glm::normalize(move) * (kMoveSpeed * dt);
+            _cameraTransform.position += glm::normalize(move) * (kMoveSpeed * dt);
 
-        camTransform->rotation = glm::quat_cast(glm::mat3(right, up, -forward));
+        _cameraTransform.rotation = glm::quat_cast(glm::mat3(right, up, -forward));
     }
 
     if (!imguiWantsMouse)
     {
         const float scroll = input.ScrollDelta();
         if (scroll != 0.f)
-        {
-            auto *cam       = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
-            cam->fovDegrees = glm::clamp(cam->fovDegrees - (scroll * 5.f), 10.f, 120.f);
-        }
+            _camera.fovDegrees = glm::clamp(_camera.fovDegrees - (scroll * 5.f), 10.f, 120.f);
     }
+}
+
+void SandboxApp::RefreshCameraMatrix()
+{
+    // The editor camera has no parent, so its world matrix is just its local TRS.
+    _cameraTransform.worldMatrix = glm::translate(glm::mat4(1.f), _cameraTransform.position) *
+                                   glm::mat4_cast(_cameraTransform.rotation) *
+                                   glm::scale(glm::mat4(1.f), _cameraTransform.scale);
 }
 
 // ---------------------------------------------------------------------------
@@ -163,15 +165,14 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
     if (!_scene)
         return Assisi::ECS::NullEntity;
 
-    const auto     *camTransform = _cameraScene.Get<Assisi::Runtime::Transform>(_cameraEntity);
-    const auto     *cam          = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
-    const glm::mat4 view         = Assisi::Runtime::ViewMatrix(*camTransform);
+    RefreshCameraMatrix();
+    const glm::mat4 view         = Assisi::Runtime::ViewMatrix(_cameraTransform);
     const auto      fbSize       = GetWindow().GetFramebufferSize();
     const float     w            = static_cast<float>(fbSize.Width);
     const float     h            = static_cast<float>(fbSize.Height);
     if (w <= 0.f || h <= 0.f) // minimized/zero-size framebuffer — no valid ray
         return Assisi::ECS::NullEntity;
-    const glm::mat4 projection   = Assisi::Runtime::ProjectionMatrix(*cam, w / h);
+    const glm::mat4 projection   = Assisi::Runtime::ProjectionMatrix(_camera, w / h);
 
     const float     ndcX    = (2.f * mousePos.x / w) - 1.f;
     const float     ndcY    = 1.f - (2.f * mousePos.y / h);
@@ -179,7 +180,7 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
     viewDir.z = -1.f;
     viewDir.w =  0.f;
     const glm::vec3 rayDir    = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
-    const glm::vec3 rayOrigin = camTransform->position;
+    const glm::vec3 rayOrigin = _cameraTransform.position;
 
     float               closestT = std::numeric_limits<float>::max();
     Assisi::ECS::Entity result   = Assisi::ECS::NullEntity;

@@ -35,14 +35,10 @@ void SandboxApp::SetupCamera()
     const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
     const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
 
-    Assisi::Runtime::Transform camTransform;
-    camTransform.position = camPos;
-    camTransform.rotation = glm::quat_cast(glm::mat3(right, up, -forward));
-
-    _cameraEntity = _cameraScene.Create();
-    (void)_cameraScene.Add<Assisi::Runtime::Transform>(_cameraEntity, camTransform);
-    (void)_cameraScene.Add<Assisi::Runtime::Camera>(
-        _cameraEntity, Assisi::Runtime::Camera{60.f, 0.1f, 200.f, true});
+    _cameraTransform.position = camPos;
+    _cameraTransform.rotation = glm::quat_cast(glm::mat3(right, up, -forward));
+    // _camera keeps its header default (60 deg FOV, 0.1..200 clip, active).
+    RefreshCameraMatrix();
 }
 
 // ---------------------------------------------------------------------------
@@ -118,12 +114,11 @@ void SandboxApp::SetupScene()
     nvrhi::IDevice *device = vulkanContext->GetDevice();
 
     const auto fbSize = GetWindow().GetFramebufferSize();
-    const auto *cam = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
 
     // The engine's default scene-render path owns lighting + the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo so it's already correct if options.json saved an MSAA mode.
-    if (!_sceneRenderer.Initialize(device, GetSceneFramebufferInfo(), fbSize.Width, fbSize.Height, *cam))
+    if (!_sceneRenderer.Initialize(device, GetSceneFramebufferInfo(), fbSize.Width, fbSize.Height, _camera))
     {
         RequestClose();
         return;
@@ -145,12 +140,7 @@ void SandboxApp::SetupScene()
 
 void SandboxApp::OnResize(int width, int height)
 {
-    const auto *cam = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
-    if (cam == nullptr)
-    {
-        return;
-    }
-    _sceneRenderer.Resize(width, height, *cam);
+    _sceneRenderer.Resize(width, height, _camera);
 }
 
 void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
@@ -168,13 +158,10 @@ void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
         return;
     }
 
-    // The camera lives in its own scene, so propagate it here; SceneRenderer
-    // propagates the game scene it draws.
-    Assisi::Runtime::PropagateTransforms(_cameraScene);
-    const auto *camTransform = _cameraScene.Get<Assisi::Runtime::Transform>(_cameraEntity);
-    const auto *cam          = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
-
-    _sceneRenderer.Render(frame, *_scene, *camTransform, *cam);
+    // Refresh the editor camera's world matrix from its TRS before the view
+    // matrix is derived from it; SceneRenderer propagates the game scene it draws.
+    RefreshCameraMatrix();
+    _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera);
 }
 
 void SandboxApp::OnFixedUpdate(float dt)
