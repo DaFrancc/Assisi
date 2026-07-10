@@ -3,12 +3,21 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <type_traits>
 #include <vector>
 
 #include <Assisi/ECS/Registry.hpp>
 #include <Assisi/ECS/SparseSet.hpp>
 
 using namespace Assisi::ECS;
+
+// Registry holds non-owning back-pointers to Scene-owned pools; copying or
+// moving one would share or dangle them. Guard the deleted special members at
+// compile time (a Registry only ever lives pinned as a Scene member).
+static_assert(!std::is_copy_constructible_v<Registry>, "Registry must not be copy-constructible");
+static_assert(!std::is_copy_assignable_v<Registry>, "Registry must not be copy-assignable");
+static_assert(!std::is_move_constructible_v<Registry>, "Registry must not be move-constructible");
+static_assert(!std::is_move_assignable_v<Registry>, "Registry must not be move-assignable");
 
 TEST_CASE("Registry: create hands out distinct live entities")
 {

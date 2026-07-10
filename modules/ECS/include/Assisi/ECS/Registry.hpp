@@ -26,6 +26,18 @@ struct PoolEntry
 
 struct Registry
 {
+    Registry() = default;
+
+    // Non-copyable and non-movable: _pools holds non-owning pointers back to
+    // pools that a Scene owns and registers. A shallow copy would share those
+    // raw pointers between two registries, and a move would not re-seat them,
+    // so either leaves a registry pointing at pools it does not coherently own.
+    // A Registry only ever lives as a Scene member, which is itself pinned.
+    Registry(const Registry &)            = delete;
+    Registry &operator=(const Registry &) = delete;
+    Registry(Registry &&)                 = delete;
+    Registry &operator=(Registry &&)      = delete;
+
     /// @brief Allocates a new entity, reusing a free slot if one is available.
     Entity Create();
 

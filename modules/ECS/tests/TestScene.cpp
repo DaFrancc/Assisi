@@ -2,9 +2,20 @@
 
 #include <doctest/doctest.h>
 
+#include <type_traits>
+
 #include <Assisi/ECS/Scene.hpp>
 
 using namespace Assisi::ECS;
+
+// Scene owns its component pools as raw pointers and frees them in ~Scene, so
+// copying or moving one would double-free (or dangle) those pools. These guard
+// the deleted special members — a regression here is a compile error, not a
+// runtime crash to chase down later.
+static_assert(!std::is_copy_constructible_v<Scene>, "Scene must not be copy-constructible");
+static_assert(!std::is_copy_assignable_v<Scene>, "Scene must not be copy-assignable");
+static_assert(!std::is_move_constructible_v<Scene>, "Scene must not be move-constructible");
+static_assert(!std::is_move_assignable_v<Scene>, "Scene must not be move-assignable");
 
 namespace
 {

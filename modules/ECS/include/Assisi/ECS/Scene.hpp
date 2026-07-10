@@ -20,11 +20,23 @@ namespace Assisi::ECS
 
 struct Scene
 {
+    Scene() = default;
+
     ~Scene()
     {
         for (auto &[type, storage] : _pools)
             storage.destroy(storage.pool);
     }
+
+    // Non-copyable and non-movable: Scene owns its component pools as raw
+    // pointers (_pools) and frees them in ~Scene. A shallow copy would let two
+    // Scenes delete the same pools (double free); a move would leave the
+    // moved-from Registry's pool back-registrations dangling. No caller copies
+    // or moves a Scene — SceneRegistry owns them through std::unique_ptr.
+    Scene(const Scene &)            = delete;
+    Scene &operator=(const Scene &) = delete;
+    Scene(Scene &&)                 = delete;
+    Scene &operator=(Scene &&)      = delete;
 
     /// @brief Allocates a new entity.
     Entity Create() { return _registry.Create(); }
