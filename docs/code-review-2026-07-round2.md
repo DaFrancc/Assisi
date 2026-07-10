@@ -173,7 +173,7 @@ Checkboxes so this can be burned down like the round-1 doc was.
   `VulkanContext::GetDepthFormat()`. DebugUI reads it (and drops the stencil
   aspect for depth-only D32); PostProcess already followed via NVRHI's
   `FramebufferInfo.depthFormat`. Unverified on AMD hardware — logic only.
-- [ ] **No validation layers or debug messenger anywhere.**
+- [x] **No validation layers or debug messenger anywhere.**
   `CreateInstance` (`VulkanContext.cpp:27-52`) enables no layers and no
   `VK_EXT_debug_utils`. For a from-scratch Vulkan engine this is developing
   blind — every synchronization or usage error is invisible until it becomes
@@ -181,6 +181,15 @@ Checkboxes so this can be burned down like the round-1 doc was.
   flag), enable `VK_LAYER_KHRONOS_validation` when present and install a
   debug-utils messenger that routes to `Core::Log`. A day of work,
   disproportionate payoff.
+  DONE (2026-07-09): under `#ifndef NDEBUG`, `CreateInstance` enables
+  `VK_LAYER_KHRONOS_validation` + `VK_EXT_debug_utils` when the layer is
+  present (warns and continues if not), and chains the messenger create-info
+  onto `pNext` to cover instance create/destroy. `CreateDebugMessenger`
+  installs the persistent messenger; `DebugCallback` routes warn/error to
+  `Core::Log`. Torn down before `vkDestroyInstance`. NOTE: validation layers
+  ship with the Vulkan SDK — the driver-runtime-only setup this file targets
+  won't have them until the SDK (or the layer package) is installed, at which
+  point it activates automatically.
 - [ ] **The frame-timing stack is three layers fighting.** (Acknowledged
   provisional; listed because provisional caps the score.)
   (a) `BeginFrame` does a full `waitForIdle()` (`VulkanContext.cpp:428`,

@@ -90,6 +90,10 @@ class VulkanContext
     void DestroySwapchainResources();
     [[nodiscard]] bool CreateSwapchainResources(uint32_t width, uint32_t height);
 
+    /// Installs the validation debug messenger in debug builds; no-op in
+    /// release and when the debug-utils extension wasn't enabled.
+    void CreateDebugMessenger();
+
     VkInstance       _instance = VK_NULL_HANDLE;
     VkSurfaceKHR     _surface = VK_NULL_HANDLE;
     VkPhysicalDevice _physicalDevice = VK_NULL_HANDLE;
@@ -100,6 +104,8 @@ class VulkanContext
     VkSwapchainKHR        _swapchain = VK_NULL_HANDLE;
     VkFormat              _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkFormat              _depthFormat = VK_FORMAT_UNDEFINED;
+
+    VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;
     VkExtent2D            _swapchainExtent{};
     std::vector<VkImage>  _swapchainImages;
 

@@ -13,6 +13,10 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <GLFW/glfw3.h>
 
 #include <array>
+#include <vector>
+#ifndef NDEBUG
+#include <cstring> // std::strcmp, validation-layer lookup (debug only)
+#endif
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -24,6 +28,53 @@ namespace Assisi::Render::Vulkan
 {
 namespace
 {
+
+#ifndef NDEBUG
+constexpr const char *kValidationLayer = "VK_LAYER_KHRONOS_validation";
+
+// Routes every validation message into Core::Log. Returns VK_FALSE so the
+// offending Vulkan call is NOT aborted — we want to observe, not intercept.
+VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT       severity,
+    VkDebugUtilsMessageTypeFlagsEXT              /*types*/,
+    const VkDebugUtilsMessengerCallbackDataEXT  *data,
+    void                                        * /*userData*/)
+{
+    if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+        Core::Log::Error("[Vulkan] {}", data->pMessage);
+    else if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+        Core::Log::Warn("[Vulkan] {}", data->pMessage);
+    else
+        Core::Log::Info("[Vulkan] {}", data->pMessage);
+    return VK_FALSE;
+}
+
+VkDebugUtilsMessengerCreateInfoEXT MakeDebugMessengerCreateInfo()
+{
+    VkDebugUtilsMessengerCreateInfoEXT info{};
+    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    // Warnings + errors only; the info/verbose streams are noise at this stage.
+    info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT |
+                           VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+    info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+                       VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+                       VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    info.pfnUserCallback = DebugCallback;
+    return info;
+}
+
+bool IsValidationLayerAvailable()
+{
+    uint32_t count = 0;
+    VKD.vkEnumerateInstanceLayerProperties(&count, nullptr);
+    std::vector<VkLayerProperties> layers(count);
+    VKD.vkEnumerateInstanceLayerProperties(&count, layers.data());
+    for (const VkLayerProperties &layer : layers)
+        if (std::strcmp(layer.layerName, kValidationLayer) == 0)
+            return true;
+    return false;
+}
+#endif // !NDEBUG
 
 VkInstance CreateInstance()
 {
@@ -38,11 +89,37 @@ VkInstance CreateInstance()
     uint32_t glfwExtensionCount = 0;
     const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
 
+    std::vector<const char *> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+    std::vector<const char *> layers;
+
     VkInstanceCreateInfo createInfo{};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
-    createInfo.enabledExtensionCount = glfwExtensionCount;
-    createInfo.ppEnabledExtensionNames = glfwExtensions;
+
+#ifndef NDEBUG
+    // Enable the Khronos validation layer + debug-utils in debug builds so
+    // spec violations become log messages instead of silent UB. Chaining the
+    // messenger create-info onto pNext also captures issues raised during
+    // vkCreateInstance / vkDestroyInstance themselves.
+    VkDebugUtilsMessengerCreateInfoEXT debugInfo = MakeDebugMessengerCreateInfo();
+    if (IsValidationLayerAvailable())
+    {
+        layers.push_back(kValidationLayer);
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+        createInfo.pNext = &debugInfo;
+    }
+    else
+    {
+        Core::Log::Warn("VulkanContext: validation layer '{}' not available; "
+                        "install the Vulkan SDK to enable GPU debug output.",
+                        kValidationLayer);
+    }
+#endif
+
+    createInfo.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+    createInfo.ppEnabledExtensionNames = extensions.data();
+    createInfo.enabledLayerCount = static_cast<uint32_t>(layers.size());
+    createInfo.ppEnabledLayerNames = layers.data();
 
     VkInstance instance = VK_NULL_HANDLE;
     if (VKD.vkCreateInstance(&createInfo, nullptr, &instance) != VK_SUCCESS)
@@ -211,6 +288,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
         return nullptr;
     }
     VKD.init(vk::Instance(context->_instance));
+    context->CreateDebugMessenger();
 
     if (glfwCreateWindowSurface(context->_instance, window.NativeHandle(), nullptr, &context->_surface) != VK_SUCCESS)
     {
@@ -523,6 +601,21 @@ void VulkanContext::EndFrame()
     _nvrhiDevice->runGarbageCollection();
 }
 
+void VulkanContext::CreateDebugMessenger()
+{
+#ifndef NDEBUG
+    // Null when the debug-utils extension wasn't enabled (validation layer
+    // absent) — the dispatcher only loads the entry point if the instance
+    // advertised the extension.
+    if (!VKD.vkCreateDebugUtilsMessengerEXT)
+        return;
+
+    VkDebugUtilsMessengerCreateInfoEXT info = MakeDebugMessengerCreateInfo();
+    if (VKD.vkCreateDebugUtilsMessengerEXT(_instance, &info, nullptr, &_debugMessenger) != VK_SUCCESS)
+        Core::Log::Warn("VulkanContext: vkCreateDebugUtilsMessengerEXT failed.");
+#endif
+}
+
 VulkanContext::~VulkanContext()
 {
     // Guard each teardown on its own handle rather than gating everything on
@@ -546,6 +639,10 @@ VulkanContext::~VulkanContext()
     }
 
     if (_surface != VK_NULL_HANDLE) VKD.vkDestroySurfaceKHR(_instance, _surface, nullptr);
+
+    if (_debugMessenger != VK_NULL_HANDLE)
+        VKD.vkDestroyDebugUtilsMessengerEXT(_instance, _debugMessenger, nullptr);
+
     if (_instance != VK_NULL_HANDLE) VKD.vkDestroyInstance(_instance, nullptr);
 }
 
