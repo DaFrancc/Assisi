@@ -416,11 +416,15 @@ Checkboxes so this can be burned down like the round-1 doc was.
   re-point); `AssetSystem.cpp` lost the `gInitialized` restatement and the
   "allocate exact size" narration, keeping the why-comments (seek-to-end sizing,
   `tellg` failure, text-vs-binary EOF handling, `_dupenv_s` free).
-- [ ] **`main.cpp` at 848 lines is at the ceiling.** Well-sectioned, but the
+- [x] **`main.cpp` at 848 lines is at the ceiling.** Well-sectioned, but the
   inspector (`EditComponentFields`/`DrawInspector`/`HandlePhysicsEditing`)
   and level management (`ScanLevels`/`LoadLevel`/`SaveLevel`) are each a
   file's worth of code that will grow. Split when next touched; don't let it
-  hit 1200.
+  hit 1200. *Done (2026-07-10):* it did hit 1218 (asset browser pushed it over),
+  then split into per-concern translation units behind `SandboxApp.hpp` —
+  `main.cpp` (entry point), `SandboxApp.cpp` (lifecycle), `SandboxCamera.cpp`,
+  `SandboxInspector.cpp`, `SandboxAssetBrowser.cpp`, `SandboxLevels.cpp`, plus a
+  shared `SandboxImGui.hpp`. Methods moved verbatim; largest file is now 272 lines.
 
 ## What's good (don't regress it)
 
