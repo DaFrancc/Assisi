@@ -76,6 +76,12 @@ class VulkanContext
     [[nodiscard]] uint32_t GetVkGraphicsQueueFamily() const { return _graphicsQueueFamily; }
     [[nodiscard]] uint32_t GetSwapchainImageCount() const { return static_cast<uint32_t>(_swapchainImages.size()); }
     [[nodiscard]] VkFormat GetSwapchainFormat() const { return _swapchainFormat; }
+
+    /// Depth-stencil format chosen for the swapchain depth buffer. Queried
+    /// against the device at swapchain creation (D24S8 -> D32S8 -> D32), so
+    /// consumers must read it rather than assume D24S8. May be a depth-only
+    /// format (D32_SFLOAT) with no stencil aspect.
+    [[nodiscard]] VkFormat GetDepthFormat() const { return _depthFormat; }
     ///@}
 
   private:
@@ -93,6 +99,7 @@ class VulkanContext
 
     VkSwapchainKHR        _swapchain = VK_NULL_HANDLE;
     VkFormat              _swapchainFormat = VK_FORMAT_UNDEFINED;
+    VkFormat              _depthFormat = VK_FORMAT_UNDEFINED;
     VkExtent2D            _swapchainExtent{};
     std::vector<VkImage>  _swapchainImages;
 

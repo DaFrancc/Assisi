@@ -157,7 +157,7 @@ Checkboxes so this can be burned down like the round-1 doc was.
   regenerated. Both scan sites — `DrawInspector` and `ApplyEyedropperPick` —
   now call it directly. `iterateEntities` stays for `SceneSerializer`'s
   legitimate whole-pool walk.
-- [ ] **Hardcoded `D24S8` depth format with no device-support check.**
+- [x] **Hardcoded `D24S8` depth format with no device-support check.**
   `VulkanContext.cpp:369` (`nvrhi::Format::D24S8`), mirrored in
   `DebugUI.cpp:100` (`VK_FORMAT_D24_UNORM_S8_UINT`, with a comment that
   explicitly ties itself to the first hardcode). D24S8 is famously
@@ -166,6 +166,13 @@ Checkboxes so this can be burned down like the round-1 doc was.
   equivalent) at swapchain creation, fall back D24S8 → D32S8 → D32, and
   surface the chosen format so DebugUI/PostProcess consume it instead of
   re-hardcoding.
+  DONE (2026-07-09): `ChooseDepthFormat` queries
+  `vkGetPhysicalDeviceFormatProperties` for
+  `DEPTH_STENCIL_ATTACHMENT_BIT`, falling back D24S8 → D32S8 → D32; hard
+  fail if none. Chosen VkFormat stored and exposed via
+  `VulkanContext::GetDepthFormat()`. DebugUI reads it (and drops the stencil
+  aspect for depth-only D32); PostProcess already followed via NVRHI's
+  `FramebufferInfo.depthFormat`. Unverified on AMD hardware — logic only.
 - [ ] **No validation layers or debug messenger anywhere.**
   `CreateInstance` (`VulkanContext.cpp:27-52`) enables no layers and no
   `VK_EXT_debug_utils`. For a from-scratch Vulkan engine this is developing

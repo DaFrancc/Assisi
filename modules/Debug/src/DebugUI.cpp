@@ -94,10 +94,13 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     ImGui_ImplVulkan_LoadFunctions(VK_API_VERSION_1_2, LoadVulkanFunction,
                                    reinterpret_cast<void *>(vulkanContext.GetVkInstance()));
 
-    // D24S8 matches VulkanContext's hardcoded depth format (VulkanContext.cpp,
-    // CreateSwapchainResources) — has a stencil component, hence both fields.
+    // Match the depth format VulkanContext actually chose for the swapchain
+    // (D24S8 -> D32S8 -> D32, device-dependent). Only advertise a stencil
+    // aspect when the chosen format carries one — D32_SFLOAT does not.
     s_colorFormat = vulkanContext.GetSwapchainFormat();
-    constexpr VkFormat kDepthFormat = VK_FORMAT_D24_UNORM_S8_UINT;
+    const VkFormat kDepthFormat   = vulkanContext.GetDepthFormat();
+    const bool     kDepthHasStencil = (kDepthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+                                       kDepthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT);
 
     ImGui_ImplVulkan_InitInfo initInfo{};
     initInfo.ApiVersion = VK_API_VERSION_1_2;
@@ -114,7 +117,8 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.pColorAttachmentFormats = &s_colorFormat;
     initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.depthAttachmentFormat = kDepthFormat;
-    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.stencilAttachmentFormat = kDepthFormat;
+    initInfo.PipelineInfoMain.PipelineRenderingCreateInfo.stencilAttachmentFormat =
+        kDepthHasStencil ? kDepthFormat : VK_FORMAT_UNDEFINED;
     initInfo.CheckVkResultFn = CheckVkResult;
 
     ImGui_ImplVulkan_Init(&initInfo);

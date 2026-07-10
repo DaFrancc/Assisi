@@ -12,6 +12,8 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 #include <GLFW/glfw3.h>
 
+#include <array>
+
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
@@ -153,6 +155,36 @@ nvrhi::Format ToNvrhiFormat(VkFormat format)
     case VK_FORMAT_B8G8R8A8_SRGB:  return nvrhi::Format::SBGRA8_UNORM;
     default:                       return nvrhi::Format::UNKNOWN;
     }
+}
+
+struct DepthFormatChoice
+{
+    VkFormat      vk        = VK_FORMAT_UNDEFINED;
+    nvrhi::Format nvrhiFmt  = nvrhi::Format::UNKNOWN;
+};
+
+// The Vulkan spec only guarantees that ONE of D24_UNORM_S8_UINT /
+// D32_SFLOAT_S8_UINT is usable as a depth-stencil attachment; D24S8 in
+// particular is absent on much AMD hardware. Query the device and fall back
+// D24S8 -> D32S8 -> D32 (depth-only). Returns {UNDEFINED, UNKNOWN} if the
+// device somehow supports none, which the caller treats as a hard failure.
+DepthFormatChoice ChooseDepthFormat(VkPhysicalDevice physicalDevice)
+{
+    const std::array<DepthFormatChoice, 3> candidates{{
+        { VK_FORMAT_D24_UNORM_S8_UINT,  nvrhi::Format::D24S8 },
+        { VK_FORMAT_D32_SFLOAT_S8_UINT, nvrhi::Format::D32S8 },
+        { VK_FORMAT_D32_SFLOAT,         nvrhi::Format::D32   },
+    }};
+
+    for (const DepthFormatChoice &candidate : candidates)
+    {
+        VkFormatProperties props{};
+        VKD.vkGetPhysicalDeviceFormatProperties(physicalDevice, candidate.vk, &props);
+        if (props.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT)
+            return candidate;
+    }
+
+    return {};
 }
 
 } // namespace
@@ -362,10 +394,18 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
         _swapchainTextures.push_back(texture);
     }
 
+    const DepthFormatChoice depthFormat = ChooseDepthFormat(_physicalDevice);
+    if (depthFormat.nvrhiFmt == nvrhi::Format::UNKNOWN)
+    {
+        Core::Log::Error("VulkanContext: no supported depth-stencil format found.");
+        return false;
+    }
+    _depthFormat = depthFormat.vk;
+
     nvrhi::TextureDesc depthDesc;
     depthDesc.width = _swapchainExtent.width;
     depthDesc.height = _swapchainExtent.height;
-    depthDesc.format = nvrhi::Format::D24S8;
+    depthDesc.format = depthFormat.nvrhiFmt;
     depthDesc.isRenderTarget = true;
     depthDesc.debugName = "DepthBuffer";
     depthDesc.initialState = nvrhi::ResourceStates::DepthWrite;
