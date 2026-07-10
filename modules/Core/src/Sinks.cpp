@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <chrono>
-#include <ctime>
+#include <exception>
 #include <format>
 #include <iostream>
 
@@ -73,27 +73,42 @@ void ConsoleSink::Write(LogLevel level, std::string_view message)
 
 namespace
 {
-// Local wall-clock time of day, millisecond precision (e.g. "14:23:45.123").
-// No date: the file is truncated per run, so a single run is unlikely to span
-// midnight, and the run's start is on the file's own mtime anyway. Uses the
-// thread-safe localtime_s/localtime_r rather than chrono's zoned API, whose
-// only failure signal is an exception — the logger runs on any thread and
-// should never throw from a log call. The millisecond fraction comes from the
-// epoch directly (timezone offsets are whole minutes, so it's zone-independent).
+// The local time zone, resolved once and cached. current_zone() (and the tz
+// database it reads) signals "no zone data" only by throwing — a genuinely
+// exceptional, one-time environment condition — so we pay that probe exactly
+// once. On failure the cache stays null and Timestamp() formats UTC forever
+// after, so no individual log call is ever on a throwing path. That matters:
+// the logger runs on any thread and inside the crash handler. The function-
+// local static's initialization is itself thread-safe.
+const std::chrono::time_zone *LocalZone()
+{
+    static const std::chrono::time_zone *zone = []() -> const std::chrono::time_zone *
+    {
+        try
+        {
+            return std::chrono::current_zone();
+        }
+        catch (const std::exception &)
+        {
+            return nullptr;
+        }
+    }();
+    return zone;
+}
+
+// Local wall-clock time of day, millisecond precision (e.g. "14:23:45.123"),
+// via the cached zone (UTC if no zone data was available). No date: the file is
+// truncated per run, so a single run is unlikely to span midnight, and the
+// run's start is on the file's own mtime anyway.
 std::string Timestamp()
 {
     using namespace std::chrono;
-    const system_clock::time_point now = system_clock::now();
-    const std::time_t seconds = system_clock::to_time_t(now);
-    const long long millis = duration_cast<milliseconds>(now.time_since_epoch()).count() % 1000;
-
-    std::tm local{};
-#ifdef _WIN32
-    localtime_s(&local, &seconds); // MSVC arg order: (tm*, time_t*)
-#else
-    localtime_r(&seconds, &local); // POSIX arg order: (time_t*, tm*)
-#endif
-    return std::format("{:02}:{:02}:{:02}.{:03}", local.tm_hour, local.tm_min, local.tm_sec, millis);
+    const sys_time<milliseconds> nowUtc = floor<milliseconds>(system_clock::now());
+    if (const time_zone *zone = LocalZone())
+    {
+        return std::format("{:%H:%M:%S}", zone->to_local(nowUtc));
+    }
+    return std::format("{:%H:%M:%S}", nowUtc);
 }
 } // namespace
 
