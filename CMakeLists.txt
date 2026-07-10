@@ -188,7 +188,7 @@ FetchContent_MakeAvailable(glm)
 # --- stb (header-only; no CMake build)
 FetchContent_Declare(stb
     GIT_REPOSITORY https://github.com/nothings/stb.git
-    GIT_TAG        master
+    GIT_TAG        31c1ad37456438565541f4919958214b6e762fb4 # stb has no tagged releases; pinned to a specific commit
     GIT_SHALLOW    TRUE
     DOWNLOAD_ONLY  YES
 )
@@ -266,7 +266,7 @@ endif()
 # --- Dear ImGui (docking branch)
 FetchContent_Declare(imgui
     GIT_REPOSITORY https://github.com/ocornut/imgui.git
-    GIT_TAG        docking
+    GIT_TAG        4be08b1ecf7709f15e4274fb2ddac37e121d7d9a # docking-branch commit (no tagged docking release); pinned for reproducibility
     GIT_SHALLOW    TRUE
     DOWNLOAD_ONLY  YES
 )
@@ -288,10 +288,11 @@ set(ASSISI_IMGUI_ROOT "${imgui_SOURCE_DIR}")
 # --- ImPlot (plotting widgets built on Dear ImGui)
 # Ships no CMake of its own (a source drop like ImGui), so compile it into our
 # own static lib against imgui::imgui. Tracks master rather than the v0.16 tag
-# because that release predates — and won't build against — ImGui 1.92.
+# because that release predates — and won't build against — ImGui 1.92. No
+# post-1.92 release is tagged yet, so pin to a specific master commit.
 FetchContent_Declare(implot
     GIT_REPOSITORY https://github.com/epezent/implot.git
-    GIT_TAG        master
+    GIT_TAG        d65a2bef53d32502407de3a4be80f191e2f412d7
     GIT_SHALLOW    TRUE
     DOWNLOAD_ONLY  YES
 )
