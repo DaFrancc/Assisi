@@ -20,7 +20,7 @@ Checkboxes so this can be burned down like the previous two docs.
 
 ## Correctness bugs (real, not taste)
 
-- [ ] **`Scene` is copyable and copying it double-frees every component
+- [x] **`Scene` is copyable and copying it double-frees every component
   pool.** `Scene.hpp` manually `new`s pools (`GetOrCreatePool`,
   `Scene.hpp:196`) and `delete`s them in `~Scene`, but declares no copy/move
   operations. One accidental `Scene copy = scene;` and both destructors
@@ -30,6 +30,15 @@ Checkboxes so this can be burned down like the previous two docs.
   move on both `Scene` and `Registry` (or implement move properly with
   re-registration). This is a rule-of-five violation on the engine's most
   central type.
+  *Done (2026-07-10):* copy and move are deleted on both `Scene` and
+  `Registry`, with a defaulted default constructor re-added to each (declaring
+  the deleted special members otherwise suppresses it). Nothing in the tree
+  copied or moved either type — `SceneRegistry` owns scenes through
+  `std::unique_ptr<Scene>` — so the deletion is free. The dangerous case was
+  specifically `Scene`'s *implicit* copy constructor (its user-declared
+  destructor leaves copy generated but move not, so `Scene b = std::move(a)`
+  silently selected the shallow copy). Guarded at compile time by
+  `static_assert`s on the four traits in `TestScene.cpp` / `TestRegistry.cpp`.
 
 - [ ] **`DebugUI` has the exact disease round 2 cured in `MeshPass`, plus a
   hard capacity wall.** `s_textureIds` (`DebugUI.cpp:41`) is keyed on raw
@@ -43,7 +52,7 @@ Checkboxes so this can be burned down like the previous two docs.
   grow it, and add an invalidation path mirroring the MeshPass one (called
   wherever a registered texture can be destroyed).
 
-- [ ] **`SandboxApp::OnStart` "aborts startup" without aborting anything.**
+- [x] **`SandboxApp::OnStart` "aborts startup" without aborting anything.**
   If `_scenes.Create("Main")` fails it logs and returns
   (`SandboxApp.cpp:78`), leaving `_scene == nullptr` — then `OnFixedUpdate`
   runs `_physics.SyncTransforms(*_scene)` and `OnUpdate` runs
@@ -51,6 +60,12 @@ Checkboxes so this can be burned down like the previous two docs.
   on the first frame of the failure path. Fix: `RequestClose()` on failure
   and guard the per-frame hooks on `_scene`, or make scene-creation failure
   fatal in `Initialize()`.
+  *Done (2026-07-10):* the failure path now calls `RequestClose()` (Run()'s
+  first `ShouldClose()` check then fails and the loop body never runs), and
+  `OnFixedUpdate`/`OnUpdate` early-return on a null `_scene` as
+  defense-in-depth — matching the guard `OnRender` already had. Both layers,
+  since the hooks are public overrides that a future Run() ordering change
+  could otherwise re-expose.
 
 - [ ] **`VulkanContext::CreateSwapchainResources` failure paths lie about
   their state.** Once `vkCreateSwapchainKHR` succeeds, the old swapchain and
