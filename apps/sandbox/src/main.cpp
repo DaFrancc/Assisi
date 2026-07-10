@@ -339,18 +339,17 @@ void SandboxApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
     if (!_eyedropperMeta || !_scene || !_scene->IsAlive(_eyedropperEntity))
         return;
 
-    // The component pointer is only valid for the duration of this scan, so
-    // re-resolve it now (the pool may have moved since the field was armed) and
-    // write straight into the reflected offset.
-    _eyedropperMeta->iterateEntities(_scene,
-        [&](uint32_t idx, uint32_t gen, const void *ptr)
-        {
-            if (idx != _eyedropperEntity.index || gen != _eyedropperEntity.generation)
-                return;
-            auto *field = reinterpret_cast<Assisi::ECS::Entity *>(
-                const_cast<char *>(static_cast<const char *>(ptr)) + _eyedropperFieldOffset);
-            *field = picked;
-        });
+    // The component pointer may have moved since the field was armed (the pool
+    // can reallocate), so re-resolve it now and write straight into the
+    // reflected offset.
+    const void *ptr =
+        _eyedropperMeta->getByEntity(_scene, _eyedropperEntity.index, _eyedropperEntity.generation);
+    if (!ptr)
+        return;
+
+    auto *field = reinterpret_cast<Assisi::ECS::Entity *>(
+        const_cast<char *>(static_cast<const char *>(ptr)) + _eyedropperFieldOffset);
+    *field = picked;
 }
 
 void SandboxApp::UpdateCamera(float dt)
@@ -705,20 +704,10 @@ void SandboxApp::DrawInspector()
 
     for (const auto &meta : ComponentRegistry::Instance().All())
     {
-        bool        found   = false;
-        const void *compPtr = nullptr;
+        const void *compPtr =
+            meta.getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation);
 
-        meta.iterateEntities(_scene,
-            [&](uint32_t idx, uint32_t gen, const void *ptr)
-            {
-                if (idx == _selectedEntity.index && gen == _selectedEntity.generation)
-                {
-                    found   = true;
-                    compPtr = ptr;
-                }
-            });
-
-        if (!found || !compPtr)
+        if (!compPtr)
             continue;
 
         if (!ImGui::CollapsingHeader(meta.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))

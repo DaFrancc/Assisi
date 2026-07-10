@@ -144,7 +144,7 @@ Checkboxes so this can be burned down like the round-1 doc was.
   binary), parent-dir creation, escape rejection on read and write, and a clean
   error on a missing file. The read-only `Resolve` and new `ResolveUser` share a
   single `ResolveUnder` spine, so the escape check is defined once.
-- [ ] **Inspector component lookup is O(all components of every type) per
+- [x] **Inspector component lookup is O(all components of every type) per
   frame.** `DrawInspector` (`main.cpp:667-680`) finds one entity's component
   by calling `meta.iterateEntities` — a full scan of every entity in every
   registered pool — per component type, per frame, to locate a single
@@ -152,6 +152,11 @@ Checkboxes so this can be burned down like the round-1 doc was.
   `getByEntity(scene, index, gen) -> const void*` accessor (trivial to emit
   in reflectgen: `scene.Get<T>(Entity{idx, gen})`). The linear scan will get
   copy-pasted into the next tool if it survives.
+  DONE (2026-07-09): added `ComponentMeta::getByEntity`, emitted by reflectgen
+  as `scene.Get<T>(Entity{idx, gen})` (O(1), nullptr when absent), golden
+  regenerated. Both scan sites — `DrawInspector` and `ApplyEyedropperPick` —
+  now call it directly. `iterateEntities` stays for `SceneSerializer`'s
+  legitimate whole-pool walk.
 - [ ] **Hardcoded `D24S8` depth format with no device-support check.**
   `VulkanContext.cpp:369` (`nvrhi::Format::D24S8`), mirrored in
   `DebugUI.cpp:100` (`VK_FORMAT_D24_UNORM_S8_UINT`, with a comment that
@@ -243,18 +248,29 @@ Checkboxes so this can be burned down like the round-1 doc was.
   intermediate level (not just the leaf), and a shared-ancestor branch fixture
   that pins memoisation correctness — the cached ancestor transform must be
   reused identically across both branches and the ancestor's own query visit.
-- [ ] **No CI.** `.clang-format`, `.clang-tidy`, sanitizer CMake plumbing
-  (`ASSISI_ENABLE_SANITIZERS`), and 27 good doctest cases all exist — and
-  nothing runs any of them on push. This is the highest-leverage open item
-  in the whole review: every consistency defect below is the kind of thing
-  a bot catches for free and a human catches never. Minimum viable:
-  GitHub Actions with (a) Windows + Linux build (the Linux paths in
-  AssetSystem/CMake are currently dead code nobody runs),
-  (b) `ASSISI_WARNINGS_AS_ERRORS=ON`, (c) ctest, (d) format check,
-  (e) an ASan/UBSan job on the pure-logic test suites (the plumbing is
-  already in the root CMakeLists — it's wired to nothing). Stretch: a
-  headless render smoke test via lavapipe/SwiftShader so pipeline-desc
-  breakage is caught without a GPU.
+- [x] **No CI.** *(Checked off as a deliberate deferral, not an implementation
+  — see note.)* `.clang-format`, `.clang-tidy`, sanitizer CMake plumbing
+  (`ASSISI_ENABLE_SANITIZERS`), and the doctest + reflectgen suites all exist —
+  and nothing runs any of them on push. **Deferred by decision (2026-07-09):**
+  it's a solo repo that builds and passes its tests locally, so automated CI is
+  low-value right now. We'll wire it up when it becomes important (a second
+  contributor, or breakage that local runs keep missing). Captured so the
+  thinking isn't lost:
+  - **Cost is a non-issue** — the repo is public, so GitHub-hosted runners are
+    free and unlimited.
+  - **The real constraint is build time**, because every dep is FetchContent
+    (assimp/Jolt/glslang/nvrhi build from source). Preferred long-term shape is
+    a **self-hosted runner** on a persistent machine: `_deps` stays cloned, the
+    heavy libraries stay compiled, and a run is just "build the diff + test."
+    (Security caveat on a public repo: trigger on `push` only, never auto-run
+    forked PRs.) Lighter alternative without owning hardware: GitHub-hosted +
+    a cached `_deps` dir.
+  - **Minimum viable when we do it:** format check + a Windows job building only
+    the logic-test targets (skips the renderer compile) running
+    `ctest -R "Core|ECS|Runtime|reflectgen"`; then a Linux/clang job (expect it
+    to flush out the dead Linux paths in AssetSystem/CMake) plus an ASan/UBSan
+    run of the pure-logic suites. Stretch: a headless render smoke test via
+    lavapipe/SwiftShader so pipeline-desc breakage is caught without a GPU.
 
 ## Style / consistency / rot
 

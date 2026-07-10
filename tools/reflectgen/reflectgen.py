@@ -455,6 +455,11 @@ static const bool {var_name} = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             for (auto [e, comp] : scene.Query<T>())
                 cb(e.index, e.generation, &comp);
+        }},
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
+        {{
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.Get<T>(Assisi::ECS::Entity{{entity_index, entity_gen}});
         }}
     }});
     return true;

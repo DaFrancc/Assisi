@@ -49,6 +49,17 @@ struct ComponentMeta
     ///   cb        — called once per entity: (entity_index, entity_gen, component_ptr).
     std::function<void(void *scene_ptr, std::function<void(uint32_t, uint32_t, const void *)>)>
         iterateEntities;
+
+    /// @brief Direct O(1) lookup of one entity's component, or nullptr if absent.
+    ///
+    /// Type-erased for the same reason as addToScene. Prefer this over
+    /// iterateEntities when resolving a single known entity — iterateEntities
+    /// scans the whole pool.
+    ///   scene_ptr    — pointer to an ECS::Scene, cast to void*.
+    ///   entity_index — Entity::index of the target entity.
+    ///   entity_gen   — Entity::generation of the target entity.
+    std::function<const void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)>
+        getByEntity;
 };
 
 } // namespace Assisi::Core::Reflect
