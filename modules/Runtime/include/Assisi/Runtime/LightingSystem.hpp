@@ -17,6 +17,7 @@
 #include <Assisi/Render/ClusterGrid.hpp>
 
 #include <cstdint>
+#include <vector>
 
 #include <nvrhi/nvrhi.h>
 
@@ -51,6 +52,13 @@ class LightingSystem
   private:
     Assisi::Render::ClusterGrid _grid;
     uint32_t                    _dirLightCount = 0u;
+
+    // Per-frame light staging buffers, kept as members so Update() reuses their
+    // capacity instead of allocating three vectors every frame (clear() retains
+    // storage). Repopulated from scratch each Update(); not valid between calls.
+    std::vector<Assisi::Render::PointLightGPU> _pointLights;
+    std::vector<Assisi::Render::SpotLightGPU>  _spotLights;
+    std::vector<Assisi::Render::DirLightGPU>   _dirLights;
 };
 
 } // namespace Assisi::Runtime

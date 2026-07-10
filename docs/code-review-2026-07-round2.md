@@ -286,7 +286,7 @@ Checkboxes so this can be burned down like the round-1 doc was.
   Residual (intentionally kept): `Draw() const` still mutates the `mutable`
   cache — that's the lazy-populate-on-first-draw pattern, not a bug; a per-texture
   eviction keyed on a stable id/generation is the streaming-era follow-up.
-- [ ] **Per-frame allocation sweep (minor, bundled):**
+- [x] **Per-frame allocation sweep (minor, bundled):**
   `LightingSystem::Update` allocates three `std::vector`s every frame
   (`LightingSystem.cpp:28-30`) — make them members and `clear()`;
   `QueryView`'s iteration does redundant lookups — `HasAll` runs N sparse
@@ -294,6 +294,21 @@ Checkboxes so this can be burned down like the round-1 doc was.
   (`Query.hpp:40-52`) — fine today, but it's the innermost loop of the
   engine; worth one pass when it shows up in a profile. (Do not optimize
   ahead of instrumentation — see "path to 10".)
+  *Done (2026-07-10): both halves.* The three light-staging vectors are now
+  members, `clear()`ed at the top of `Update` — capacity is reused across
+  frames with no allocation after warm-up, and it's a pure win (no speed/safety
+  trade). The `QueryView` half turned out to have a safe fix after all: the
+  earlier deferral assumed removing the double lookup meant unchecked
+  `_dense[_sparse[e.index]]` indexing, but fusing match and fetch avoids that —
+  `HasAll` now calls `Get` (which is `Has` plus the dense lookup) and caches
+  the returned pointers in the iterator, so `operator*` is a pure dereference
+  with no repeated sparse lookups and the null-check guard intact. The cached
+  pointers rely only on the already-documented `Scene::Query` contract that
+  queried pools are not structurally mutated mid-iteration (which
+  `DestroyMarked` et al. already follow). Architecture reviewed and kept:
+  sparse-set views driven from the smallest pool are the standard baseline
+  (EnTT's default view); archetypes/owning groups trade mutation cost and
+  complexity for iteration speed and stay evidence-gated per "path to 10".
 
 ## Tests / process
 

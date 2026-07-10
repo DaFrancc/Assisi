@@ -25,13 +25,14 @@ void LightingSystem::Resize(nvrhi::ICommandList *commandList, int width, int hei
 
 void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
-    std::vector<Assisi::Render::PointLightGPU> pointLights;
-    std::vector<Assisi::Render::SpotLightGPU>  spotLights;
-    std::vector<Assisi::Render::DirLightGPU>   dirLights;
+    // Reuse the staging buffers' capacity across frames; clear() keeps storage.
+    _pointLights.clear();
+    _spotLights.clear();
+    _dirLights.clear();
 
     for (auto [entity, transform, light] : scene.Query<TransformComponent, PointLightComponent>())
     {
-        pointLights.push_back({
+        _pointLights.push_back({
             .positionRadius = {transform.position, light.radius},
             .colorIntensity = {light.color, light.intensity},
         });
@@ -41,7 +42,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     {
         const float innerCos = glm::cos(glm::radians(light.innerAngle));
         const float outerCos = glm::cos(glm::radians(light.outerAngle));
-        spotLights.push_back({
+        _spotLights.push_back({
             .positionRadius = {transform.position, light.radius},
             .directionInner = {glm::normalize(light.direction), innerCos},
             .colorIntensity = {light.color, light.intensity},
@@ -51,14 +52,14 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
 
     for (auto [entity, light] : scene.Query<DirectionalLightComponent>())
     {
-        dirLights.push_back({
+        _dirLights.push_back({
             .directionIntensity = {glm::normalize(light.direction), light.intensity},
             .colorPad           = {light.color, 0.f},
         });
     }
 
-    _dirLightCount = static_cast<uint32_t>(dirLights.size());
-    _grid.CullLights(commandList, pointLights, spotLights, dirLights, view);
+    _dirLightCount = static_cast<uint32_t>(_dirLights.size());
+    _grid.CullLights(commandList, _pointLights, _spotLights, _dirLights, view);
 }
 
 } // namespace Assisi::Runtime

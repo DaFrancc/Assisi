@@ -59,8 +59,7 @@ template <typename... Ts, typename... Es> struct QueryView<std::tuple<Ts...>, st
     {
         std::tuple<Entity, Ts &...> operator*() const
         {
-            Entity e = (*_entities)[_pos];
-            return std::tuple<Entity, Ts &...>{e, *std::get<SparseSet<Ts> *>(_required)->Get(e)...};
+            return std::tuple<Entity, Ts &...>{(*_entities)[_pos], *std::get<Ts *>(_components)...};
         }
 
         Iterator &operator++()
@@ -83,7 +82,16 @@ template <typename... Ts, typename... Es> struct QueryView<std::tuple<Ts...>, st
             SkipInvalid();
         }
 
-        bool HasAll(Entity e) const { return (... && std::get<SparseSet<Ts> *>(_required)->Has(e)); }
+        /// Membership test and component fetch fused into one pass: Get() is
+        /// Has() plus the dense lookup, so asking Has() here and Get() again in
+        /// operator* would run every sparse lookup twice. The fetched pointers
+        /// are cached for operator* to dereference; they stay valid because the
+        /// queried pools must not be structurally mutated during iteration
+        /// (the documented Scene::Query contract).
+        bool HasAll(Entity e)
+        {
+            return (... && ((std::get<Ts *>(_components) = std::get<SparseSet<Ts> *>(_required)->Get(e)) != nullptr));
+        }
 
         /// A null excluded pool has no holders, so it rejects nobody.
         bool HasExcluded(Entity e) const
@@ -91,7 +99,10 @@ template <typename... Ts, typename... Es> struct QueryView<std::tuple<Ts...>, st
             return std::apply([&](auto *...ps) { return (false || ... || (ps && ps->Has(e))); }, _excluded);
         }
 
-        bool Matches(Entity e) const { return HasAll(e) && !HasExcluded(e); }
+        /// HasAll must run first: operator* trusts the pointer cache only when
+        /// the entity matched, and short-circuiting skips the exclusion probe
+        /// for entities that already failed the positive match.
+        bool Matches(Entity e) { return HasAll(e) && !HasExcluded(e); }
 
         void SkipInvalid()
         {
@@ -103,6 +114,7 @@ template <typename... Ts, typename... Es> struct QueryView<std::tuple<Ts...>, st
         std::size_t _pos;
         std::tuple<SparseSet<Ts> *...> _required;
         std::tuple<const SparseSet<Es> *...> _excluded;
+        std::tuple<Ts *...> _components{}; ///< Cached by HasAll; valid only while the iterator is dereferenceable.
     };
 
     Iterator begin()
