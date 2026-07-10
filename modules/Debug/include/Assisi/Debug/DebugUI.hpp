@@ -57,12 +57,20 @@ class DebugUI
     ///
     /// The texture must sit in the ShaderResource state
     /// (VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL) whenever ImGui samples it —
-    /// textures produced by Render::Texture already are. The registration
-    /// (a descriptor set) is cached per texture pointer and released in Shutdown().
+    /// textures produced by Render::Texture already are.
     ///
-    /// @warning Keyed on the raw `ITexture*`, so an id is valid only while its
-    /// texture is alive. Don't register a texture, free it, then register another
-    /// (a reused address would return the stale id). Fine for long-lived UI images.
+    /// Registrations are cached per texture pointer and reclaimed automatically:
+    /// each call marks the texture as used this frame, and BeginFrame frees the
+    /// descriptor sets of any texture that hasn't been requested for a few frames.
+    /// So the live registration count tracks what's actually on screen (call it
+    /// every frame you draw the image) rather than growing for the whole session —
+    /// re-requesting a reclaimed texture simply re-registers it.
+    ///
+    /// @warning Keyed on the raw `ITexture*`. Because reclamation is deferred a few
+    /// frames (to stay clear of in-flight GPU work), freeing a texture and
+    /// registering a different one at the same address within that window could
+    /// still return the stale id. Stop requesting a texture before you free it and
+    /// this cannot happen.
     /// @return A valid id, or ImTextureID_Invalid if @p texture is null or exposes
     ///         no VkImageView.
     static ImTextureID GetOrCreateTextureId(nvrhi::ITexture *texture);

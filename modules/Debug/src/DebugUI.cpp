@@ -35,10 +35,34 @@ namespace
 VkDevice s_vkDevice = VK_NULL_HANDLE;
 VkDescriptorPool s_descriptorPool = VK_NULL_HANDLE;
 
-// ImGui descriptor sets registered for user textures (see GetOrCreateTextureId),
-// keyed by the NVRHI texture they wrap. Freed wholesale when s_descriptorPool is
-// destroyed in Shutdown().
-std::unordered_map<nvrhi::ITexture *, VkDescriptorSet> s_textureIds;
+// Descriptor-set budget for user textures (asset-browser thumbnails, etc.). The
+// per-frame mark-and-sweep below keeps the live set bounded to what is actually
+// requested each frame — roughly one directory of thumbnails — so this is a
+// generous ceiling, not a per-session accumulator like the old maxSets=16.
+constexpr std::uint32_t kMaxDebugTextures = 256;
+
+// A texture's descriptor set can be referenced by in-flight command buffers for up
+// to the renderer's frames-in-flight depth (VulkanContext::kFramesInFlight == 2).
+// Retire a badge only after it has gone unused for at least that many frames, so
+// ImGui_ImplVulkan_RemoveTexture's vkFreeDescriptorSets never frees a set the GPU
+// is still reading. One extra frame of slack for safety.
+constexpr std::uint64_t kTextureRetireDelayFrames = 3;
+
+// ImGui descriptor sets ("badges") registered for user textures (see
+// GetOrCreateTextureId), keyed by the NVRHI texture they wrap, each tagged with the
+// frame it was last requested. Badges unused for kTextureRetireDelayFrames frames
+// are recycled in BeginFrame; any survivors are freed wholesale when
+// s_descriptorPool is destroyed in Shutdown().
+struct RegisteredTexture
+{
+    VkDescriptorSet set           = VK_NULL_HANDLE;
+    std::uint64_t   lastUsedFrame = 0;
+};
+using TextureIdMap = std::unordered_map<nvrhi::ITexture *, RegisteredTexture>;
+TextureIdMap s_textureIds;
+
+// Monotonic frame counter advanced by BeginFrame; drives badge retirement.
+std::uint64_t s_frameIndex = 0;
 
 // The "opener" pipeline: never actually drawn with (see imgui_opener.vert's
 // comment). Its only job is to make DebugUI::BeginFrame's setGraphicsState
@@ -65,6 +89,26 @@ void CheckVkResult(VkResult err)
         Assisi::Core::Log::Error("DebugUI: Vulkan call failed with VkResult {}", static_cast<int>(err));
     }
 }
+
+// Free the descriptor sets of textures not requested within the last
+// kTextureRetireDelayFrames frames. Called from BeginFrame, where the deferral
+// guarantees every command buffer that referenced the set has finished, so
+// vkFreeDescriptorSets (via ImGui_ImplVulkan_RemoveTexture) is safe.
+void SweepRetiredTextures()
+{
+    for (TextureIdMap::iterator it = s_textureIds.begin(); it != s_textureIds.end();)
+    {
+        if (s_frameIndex - it->second.lastUsedFrame >= kTextureRetireDelayFrames)
+        {
+            ImGui_ImplVulkan_RemoveTexture(it->second.set);
+            it = s_textureIds.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
 } // namespace
 
 void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::VulkanContext &vulkanContext)
@@ -89,13 +133,15 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     ImGui_ImplGlfw_InitForVulkan(nativeWindow, true);
 
     const std::array<VkDescriptorPoolSize, 2> poolSizes{{
-        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 16},
-        {VK_DESCRIPTOR_TYPE_SAMPLER, 16},
+        {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, kMaxDebugTextures},
+        {VK_DESCRIPTOR_TYPE_SAMPLER, kMaxDebugTextures},
     }};
     VkDescriptorPoolCreateInfo poolInfo{};
     poolInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    // FREE_DESCRIPTOR_SET_BIT lets SweepRetiredTextures/RemoveTexture recycle
+    // individual sets (vkFreeDescriptorSets) rather than only pool-wide resets.
     poolInfo.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
-    poolInfo.maxSets = 16;
+    poolInfo.maxSets = kMaxDebugTextures;
     poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
     poolInfo.pPoolSizes = poolSizes.data();
     VKD.vkCreateDescriptorPool(s_vkDevice, &poolInfo, nullptr, &s_descriptorPool);
@@ -171,6 +217,12 @@ void DebugUI::Shutdown()
 
 void DebugUI::BeginFrame(Render::RenderFrame &frame)
 {
+    // Advance the frame clock and reclaim badges no window has drawn recently. Runs
+    // every frame regardless of what's open, so closing the asset browser (or
+    // leaving a directory) frees that directory's thumbnails a few frames later.
+    ++s_frameIndex;
+    SweepRetiredTextures();
+
     if (s_openerPipeline)
     {
         nvrhi::GraphicsState state;
@@ -191,9 +243,11 @@ ImTextureID DebugUI::GetOrCreateTextureId(nvrhi::ITexture *texture)
     if (texture == nullptr)
         return ImTextureID_Invalid;
 
-    if (std::unordered_map<nvrhi::ITexture *, VkDescriptorSet>::iterator it = s_textureIds.find(texture);
-        it != s_textureIds.end())
-        return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(it->second));
+    if (TextureIdMap::iterator it = s_textureIds.find(texture); it != s_textureIds.end())
+    {
+        it->second.lastUsedFrame = s_frameIndex; // mark: still in use this frame
+        return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(it->second.set));
+    }
 
     // NVRHI doesn't surface image views through getNativeObject (that's only the
     // VkImage) — views are created per-format/subresource on demand via
@@ -208,7 +262,7 @@ ImTextureID DebugUI::GetOrCreateTextureId(nvrhi::ITexture *texture)
 
     const VkDescriptorSet set =
         ImGui_ImplVulkan_AddTexture(imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    s_textureIds.emplace(texture, set);
+    s_textureIds.emplace(texture, RegisteredTexture{set, s_frameIndex});
     return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(set));
 }
 
