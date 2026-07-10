@@ -11,7 +11,8 @@
 namespace Assisi::Core
 {
 
-/// @brief Maximum number of characters an AssetPath can hold (128-byte value).
+/// @brief Maximum number of characters an AssetPath can hold (127; the inline
+///        storage is 130 bytes with the uint16 length prefix and padding).
 inline constexpr std::size_t kAssetPathMax = kDefaultTrivialStringCapacity;
 
 /// @brief A virtual asset path (e.g. "textures/crate.png", "prim://cube").
