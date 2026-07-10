@@ -275,13 +275,17 @@ Checkboxes so this can be burned down like the round-1 doc was.
   overloads), `AddSink`, and `SetMinLevel`; held across the whole sink
   fan-out, so lines from different threads can't interleave on `std::cout` or
   the log file. Policy documented on the `Logger` class.
-- [ ] **`MeshPass::_bindingSetCache` — carried over from round 1, still
-  open.** (`MeshPass.cpp:144-170`.) Keyed on raw `ITexture*`, never evicted:
-  unbounded growth, keeps every texture ever drawn alive, and pointer reuse
-  returns a stale binding set. Round 1 documented the contract; the real fix
-  (invalidation/eviction) is forced the moment per-entity assets exist — see
-  "path to 9" below. Also still const-correctness theater: `Draw() const`
-  mutating a `mutable` cache.
+- [x] **`MeshPass::_bindingSetCache` — carried over from round 1.** Keyed on
+  raw `ITexture*`, never evicted: unbounded growth, keeps every texture ever
+  drawn alive, and pointer reuse returns a stale binding set. Round 1 documented
+  the contract; the real fix was forced once per-entity assets landed.
+  *Fixed (2026-07-10):* added `MeshPass::InvalidateBindingSets()`, forwarded via
+  `SceneRenderer::InvalidateAssetBindings()`, and called from the sandbox's
+  `LoadLevel` right before the `AssetCache` is cleared — so the cache is emptied
+  at every asset-set boundary, closing the growth/lifetime/stale-pointer hazards.
+  Residual (intentionally kept): `Draw() const` still mutates the `mutable`
+  cache — that's the lazy-populate-on-first-draw pattern, not a bug; a per-texture
+  eviction keyed on a stable id/generation is the streaming-era follow-up.
 - [ ] **Per-frame allocation sweep (minor, bundled):**
   `LightingSystem::Update` allocates three `std::vector`s every frame
   (`LightingSystem.cpp:28-30`) — make them members and `clear()`;
@@ -456,14 +460,18 @@ defended.** A small engine can be a 9; a stubbed one can't:
 **To a true 9–10 — evidence, not polish.** Abstraction quality is empirical,
 and three core abstractions have one consumer each. The remaining gap closes
 only through load-bearing use:
-- **Per-entity asset references in the scene format.** `.alvl` currently
-  stores no asset paths — `LoadLevel` hardwires every `MeshRendererComponent`
-  to the one cube and one checker texture (`main.cpp:736-740`). Real asset
-  references force the deferred designs to actually exist: an asset cache
-  with a lifetime policy (which finally forces the `MeshPass` binding-set
-  eviction), per-entity load-failure handling, a serializer carrying real
-  content. Most "wrong the day asset streaming exists" caveats in the
-  codebase resolve through this one feature.
+- **Per-entity asset references in the scene format.** *(Done, 2026-07-10.)*
+  `.alvl` now stores `meshPath`/`albedoPath` per `MeshRendererComponent`
+  (`prim://cube` + `textures/checker.png`); `LoadLevel` resolves them through
+  a new `Render::AssetCache` (path-keyed, deduped, `prim://` primitive registry
+  + texture resolver, fallback-on-failure) instead of hardwiring one cube and
+  one texture. This forced the deferred designs into existence: the asset cache
+  with a `Clear()` lifetime boundary (which drove the `MeshPass` binding-set
+  eviction above), per-entity load-failure handling (empty/failed → white
+  fallback), and a serializer carrying real content (the `AssetPath` field type
+  + reflectgen codegen, round-tripped in `TestSceneSerializer`). Remaining
+  streaming-era follow-ups: a mesh-*file* loader (only `prim://` primitives
+  resolve today) and per-texture eviction rather than wholesale clear.
 - **A designed frame architecture:** real frames-in-flight with fences,
   present-mode selection, the physics/render/vsync timing story reconciled
   into one coherent design instead of three layers fighting.

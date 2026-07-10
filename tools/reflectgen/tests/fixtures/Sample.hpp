@@ -12,6 +12,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+#include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/ECS/Entity.hpp>
 
 // A commented-out annotation the parser MUST ignore. If comment stripping
@@ -37,6 +38,7 @@ struct SampleAllTypes
     AFIELD() glm::vec4 v4 = {1.0f, 2.0f, 3.0f, 4.0f};
     AFIELD() glm::quat q = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
     AFIELD() glm::mat4 m = glm::mat4{1.0f};
+    AFIELD() Assisi::Core::AssetPath assetPath; // fixed-capacity path, serialized as a string
     AFIELD(transient) float runtimeCache = 0.0f; // must not appear in (de)serialize
 };
 

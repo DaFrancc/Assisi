@@ -127,6 +127,17 @@ TYPES: dict[str, TypeCodegen] = {
         'EntityRef',
         '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0u)) : nlohmann::json(nullptr))',
         '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint32_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+    # Core::AssetPath — a fixed-capacity virtual asset path. Serialized as a JSON
+    # string of its view; Assign() re-imposes the length limit on load. Accepts
+    # both qualified and unqualified names.
+    'AssetPath': TypeCodegen(
+        'AssetPath',
+        'std::string({a}.View())',
+        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+    'Assisi::Core::AssetPath': TypeCodegen(
+        'AssetPath',
+        'std::string({a}.View())',
+        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
 }
 
 # Types reflectgen recognises but deliberately does not (de)serialize. An

@@ -64,6 +64,13 @@ class MeshPass
 
     bool IsValid() const { return _pipeline != nullptr; }
 
+    /// @brief Drops every cached albedo binding set. Call when the textures they
+    /// reference may be freed or replaced (e.g. an AssetCache is cleared or a
+    /// level is unloaded) so a later Draw() rebuilds against live resources
+    /// instead of returning a binding set that pins a destroyed texture — or,
+    /// worse, aliases a freed address the allocator has since reused.
+    void InvalidateBindingSets() { _bindingSetCache.clear(); }
+
   private:
     /// @brief Returns the binding set for `albedoTexture`, creating and caching it
     /// on first use. NVRHI binding sets reference concrete resources, so one is
@@ -84,16 +91,14 @@ class MeshPass
 
     /// @brief Cache of binding sets keyed by the raw albedo texture pointer.
     ///
-    /// @warning Contract, valid only while textures are effectively immortal
-    /// (today: a handful of level/checker textures that live for the whole run).
-    /// Two latent hazards when asset streaming lands:
-    ///   1. Entries are never evicted — every texture ever drawn is kept alive
-    ///      forever by the cached BindingSetHandle (a leak once textures churn).
-    ///   2. The key is a raw `ITexture*`; if a texture is freed and the
-    ///      allocator hands the same address to a new texture, the stale cached
-    ///      binding set is returned for the wrong resource.
-    /// When real (streamed/reloadable) textures arrive, add invalidation:
-    /// evict on texture destruction, or key on a stable texture id/generation.
+    /// @warning The key is a raw `ITexture*`, so entries are only valid while the
+    /// textures they reference stay alive. When the asset set backing the scene
+    /// changes (a level unload or an AssetCache clear frees textures), the owner
+    /// must call InvalidateBindingSets() — otherwise a freed address reused by a
+    /// new texture would return the stale binding set for the wrong resource, and
+    /// dead entries would pin their textures alive forever. A future streaming
+    /// path should evict per-texture (or key on a stable id/generation) rather
+    /// than clearing wholesale.
     mutable std::unordered_map<nvrhi::ITexture *, nvrhi::BindingSetHandle> _bindingSetCache;
 };
 } /* namespace Assisi::Render */

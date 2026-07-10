@@ -24,6 +24,7 @@ enum class FieldType
     Quat,
     Mat4,
     EntityRef, ///< ECS::Entity serialized as a stable serial index via SceneSerializer.
+    AssetPath, ///< Core::AssetPath — a fixed-capacity virtual asset path, serialized as a string.
     Unknown,
 };
 

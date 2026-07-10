@@ -1,7 +1,9 @@
 add_executable(Assisi-Core-Tests
   main.cpp
+  TestAssetPath.cpp
   TestAssetSystem.cpp
   TestEventQueue.cpp
+  TestTrivialString.cpp
 )
 
 Assisi_apply_defaults(Assisi-Core-Tests)

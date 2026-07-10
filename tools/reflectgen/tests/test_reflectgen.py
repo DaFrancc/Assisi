@@ -90,6 +90,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(fields["v3"], "glm::vec3")
         self.assertEqual(fields["q"], "glm::quat")
         self.assertEqual(fields["m"], "glm::mat4")
+        self.assertEqual(fields["assetPath"], "Assisi::Core::AssetPath")
         self.assertEqual(self.by_name["SampleRef"].fields[0].cpp_type, "ECS::Entity")
 
     def test_transient_flag_is_captured(self):

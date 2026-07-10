@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-Render)
 
 target_sources(Assisi-Render
   PUBLIC
+    "include/Assisi/Render/AssetCache.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/DefaultMeshes.hpp"
     "include/Assisi/Render/DefaultResources.hpp"
@@ -18,6 +19,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/ClusterGrid.hpp"
     "include/Assisi/Render/Vulkan/VulkanContext.hpp"
   PRIVATE
+    "src/AssetCache.cpp"
     "src/ShaderModule.cpp"
     "src/ClusterGrid.cpp"
     "src/ComputeShader.cpp"

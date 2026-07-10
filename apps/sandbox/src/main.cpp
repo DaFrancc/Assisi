@@ -6,6 +6,7 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
+#include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -13,6 +14,7 @@
 #include <Assisi/ECS/SceneRegistry.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/DefaultMeshes.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/Texture.hpp>
@@ -107,10 +109,9 @@ class SandboxApp : public Assisi::App::Application
     // OnRender is a single Render() call.
     Assisi::Runtime::SceneRenderer _sceneRenderer;
 
-    // Every entity currently shares this one mesh/texture — the scene has no
-    // per-entity asset loading yet, see docs/nvrhi-migration-todo.md section 1.
-    Assisi::Render::MeshBuffer _cubeMesh;
-    Assisi::Render::Texture    _albedoTexture;
+    // Resolves each entity's meshPath/albedoPath to shared GPU resources; owns
+    // every mesh and texture the scene draws (deduped by path).
+    Assisi::Render::AssetCache _assetCache;
 
     Assisi::ECS::Scene  _cameraScene;
     Assisi::ECS::Entity _cameraEntity = Assisi::ECS::NullEntity;
@@ -243,12 +244,7 @@ void SandboxApp::SetupScene()
         return;
     }
 
-    _cubeMesh.Upload(device, Assisi::Render::CreateUnitCubeMesh());
-
-    if (auto loaded = _albedoTexture.LoadFromAssets(device, "textures/checker.png"); !loaded)
-    {
-        Assisi::Core::Log::Warn("Failed to load textures/checker.png — entities will render flat white.");
-    }
+    _assetCache.Initialize(device);
 }
 
 void SandboxApp::OnResize(int width, int height)
@@ -550,6 +546,18 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             }
             break;
         }
+        case FieldType::AssetPath:
+        {
+            auto *ap = static_cast<Assisi::Core::AssetPath *>(fp);
+            char  buf[Assisi::Core::kAssetPathMax + 1];
+            ap->ToCStr(buf, sizeof(buf));
+            if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
+            {
+                ap->Assign(buf);
+                edited = true;
+            }
+            break;
+        }
         case FieldType::EntityRef:
         {
             auto      *ref   = static_cast<Assisi::ECS::Entity *>(fp);
@@ -761,10 +769,15 @@ void SandboxApp::LoadLevel(const std::string &name)
     _selectedEntity = Assisi::ECS::NullEntity;
     _physics.Clear();
 
+    // New asset set: drop the old cache and evict the mesh pass's binding sets
+    // (they key on raw texture pointers we're about to free) before re-resolving.
+    _assetCache.Clear();
+    _sceneRenderer.InvalidateAssetBindings();
+
     for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRendererComponent>())
     {
-        mrc.mesh = &_cubeMesh;
-        mrc.albedoTexture = _albedoTexture.IsValid() ? &_albedoTexture : nullptr;
+        mrc.mesh          = _assetCache.ResolveMesh(mrc.meshPath);
+        mrc.albedoTexture = _assetCache.ResolveTexture(mrc.albedoPath);
     }
 
     for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::TransformComponent,

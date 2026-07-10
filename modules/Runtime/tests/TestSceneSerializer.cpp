@@ -2,8 +2,13 @@
 
 #include <doctest/doctest.h>
 
+// doctest forward-declares std::ostream; stringifying a std::string_view in a
+// CHECK (an AssetPath View() comparison) needs the complete type.
+#include <ostream>
+
 #include <filesystem>
 #include <fstream>
+#include <string_view>
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -99,18 +104,27 @@ TEST_CASE("SceneSerializer: an empty scene round-trips to an empty scene")
     CHECK(loaded.AliveCount() == 0);
 }
 
-TEST_CASE("SceneSerializer: an all-transient component keeps its presence but no data")
+TEST_CASE("SceneSerializer: MeshRendererComponent asset paths round-trip; GPU handles don't")
 {
-    ECS::Scene scene;
+    ECS::Scene        scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, MeshRendererComponent{}) != nullptr);
+    REQUIRE(scene.Add(e, MeshRendererComponent{
+                             .meshPath   = Core::AssetPath{std::string_view{"prim://cube"}},
+                             .albedoPath = Core::AssetPath{std::string_view{"textures/checker.png"}},
+                         }) != nullptr);
 
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
 
-    // MeshRendererComponent is entirely transient — it serializes as {} but its
-    // presence on the entity must survive.
-    CHECK(loaded.Get<MeshRendererComponent>(ECS::Entity{.index = 0, .generation = 0}) != nullptr);
+    const MeshRendererComponent *mrc =
+        loaded.Get<MeshRendererComponent>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(mrc != nullptr); // presence survives
+    CHECK(mrc->meshPath.View() == "prim://cube");
+    CHECK(mrc->albedoPath.View() == "textures/checker.png");
+    // The mesh/texture handles are transient: never serialized, so they come
+    // back null and get re-resolved from the paths at load time.
+    CHECK(mrc->mesh == nullptr);
+    CHECK(mrc->albedoTexture == nullptr);
 }
 
 TEST_CASE("SceneSerializer: multiple components on one entity all round-trip")

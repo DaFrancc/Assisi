@@ -70,6 +70,11 @@ class SceneRenderer
     /// beyond the default Render() path.
     [[nodiscard]] Render::MeshPass &MeshPass() { return _meshPass; }
 
+    /// @brief Evict the mesh pass's cached albedo binding sets. Call after the
+    /// asset set backing the scene's textures changes (level unload / asset-cache
+    /// clear) so freed texture pointers aren't reused. No-op before Initialize().
+    void InvalidateAssetBindings() { _meshPass.InvalidateBindingSets(); }
+
   private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int width, int height, const CameraComponent &camera, const glm::mat4 &projection);
