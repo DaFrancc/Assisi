@@ -21,6 +21,7 @@
 #include <Assisi/Window/Key.hpp>
 
 #include <imgui.h>
+#include <implot.h>
 
 // --- Standard ---------------------------------------------------------------
 #include <algorithm>
@@ -28,6 +29,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 
@@ -273,6 +275,8 @@ void Application::Run()
 
     double fpsAccum       = 0.0;
     int    fpsFrameCount  = 0;
+    double cpuMsAccum     = 0.0;
+    double gpuMsAccum     = 0.0;
 
     while (!_window->ShouldClose())
     {
@@ -300,22 +304,16 @@ void Application::Run()
 
         // Frame pacing is exclusive with vsync: only cap here in FpsLimit mode with
         // a finite limit. In VSync mode FIFO present paces us; with an unlimited cap
-        // (fpsLimit < 0) we run as fast as the GPU allows.
+        // (fpsLimit < 0) we run as fast as the GPU allows. The sleep is timed so it
+        // can be excluded from the CPU frame-time figure below.
+        double sleepMs = 0.0;
         if (_options.frameSync == FrameSyncMode::FpsLimit && _options.fpsLimit > 0)
         {
+            const Clock::time_point sleepStart = Clock::now();
             SleepUntil(nextRenderTime);
+            sleepMs = Seconds(Clock::now() - sleepStart).count() * 1000.0;
             nextRenderTime =
                 Clock::now() + std::chrono::duration_cast<Clock::duration>(Seconds(1.0 / _options.fpsLimit));
-        }
-
-        // FPS tracking.
-        fpsAccum += rawDt;
-        ++fpsFrameCount;
-        if (fpsAccum >= 0.5)
-        {
-            _fps          = static_cast<int>(static_cast<double>(fpsFrameCount) / fpsAccum);
-            fpsAccum      = 0.0;
-            fpsFrameCount = 0;
         }
 
         // Reconcile the swapchain's present mode with the frame-sync option HERE,
@@ -324,13 +322,52 @@ void Application::Run()
         // SetVSync() no-ops when already in the requested state, so this is a cheap
         // compare every frame and only recreates when the user actually changed it.
         // Applies the persisted option on the first iteration too.
-        if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
+        Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
+        if (vulkanContext)
         {
             vulkanContext->SetVSync(_options.frameSync == FrameSyncMode::VSync);
         }
 
         RenderFrame();
         _events.Flush();
+
+        // Frame-time accounting. CPU frame time is this loop iteration's wall-clock
+        // minus the two intervals the CPU is deliberately idle: the FPS-limit sleep
+        // above, and the frames-in-flight throttle where BeginFrame() blocks on the
+        // GPU (reported by the context). What's left is the real CPU cost, so
+        // comparing it against the GPU timer-query time shows which side is bound.
+        const double gpuWaitMs = vulkanContext ? vulkanContext->GetLastGpuWaitMs() : 0.0;
+        const double cpuMs =
+            std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - sleepMs - gpuWaitMs);
+        const double gpuMs = vulkanContext ? vulkanContext->GetLastGpuFrameTimeMs() : 0.0;
+
+        // Record raw (un-averaged) per-frame samples for the plots so spikes stay
+        // visible; the numeric readout uses the smoothed averages below. The full
+        // frame delta (rawDt, including any vsync/pacing wait) drives the 1%-low
+        // and min/max stats — that's the pacing the player actually feels.
+        _cpuHistory[_frameHistoryOffset]       = static_cast<float>(cpuMs);
+        _gpuHistory[_frameHistoryOffset]       = static_cast<float>(gpuMs);
+        _frameTimeHistory[_frameHistoryOffset] = static_cast<float>(rawDt * 1000.0);
+        _frameHistoryOffset = (_frameHistoryOffset + 1) % kFrameHistory;
+        if (_frameSampleCount < kFrameHistory)
+        {
+            ++_frameSampleCount;
+        }
+
+        fpsAccum += rawDt;
+        cpuMsAccum += cpuMs;
+        gpuMsAccum += gpuMs;
+        ++fpsFrameCount;
+        if (fpsAccum >= 0.5)
+        {
+            _fps          = static_cast<int>(static_cast<double>(fpsFrameCount) / fpsAccum);
+            _cpuFrameMs   = cpuMsAccum / fpsFrameCount;
+            _gpuFrameMs   = gpuMsAccum / fpsFrameCount;
+            fpsAccum      = 0.0;
+            cpuMsAccum    = 0.0;
+            gpuMsAccum    = 0.0;
+            fpsFrameCount = 0;
+        }
     }
 
     // Drain the GPU before any teardown begins. Render resources are owned all
@@ -426,9 +463,94 @@ void Application::DrawOptionsWindow()
         return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(320, 420), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Options", &_showOptionsWindow))
     {
+        // CPU vs GPU frame time: if CPU >> GPU we're CPU-bound, and vice versa.
+        // The numbers are averaged over the same ~0.5s window as the FPS counter;
+        // the plots below show raw per-frame samples so spikes stay visible.
+        ImGui::Text("CPU: %5.2f ms    GPU: %5.2f ms", _cpuFrameMs, _gpuFrameMs);
+        ImGui::Text("Frame: %5.2f ms (%d FPS)", _fps > 0 ? 1000.0 / _fps : 0.0, _fps);
+
+        // Combined CPU/GPU plot on one shared y-axis so their heights are directly
+        // comparable. Floor the top at 4 ms so an idle scene doesn't magnify sub-ms
+        // jitter; the Y axis ticks give the top/bottom limits, and the legend
+        // toggles each series. Both series read the ring buffers directly via
+        // ImPlot's offset argument, which marks the chronological start.
+        float plotMax = 4.0f;
+        for (int i = 0; i < kFrameHistory; ++i)
+        {
+            plotMax = std::max({plotMax, _cpuHistory[i], _gpuHistory[i]});
+        }
+        plotMax *= 1.1f; // headroom so the peak isn't pinned to the top edge
+
+        // One ImPlotSpec per series carries its color, fill alpha, and the ring
+        // buffer's Offset (chronological start); reused for both the shaded fill
+        // and the outline so the two stay the same color.
+        ImPlotSpec cpuSpec;
+        cpuSpec.LineColor  = ImVec4(0.95f, 0.55f, 0.25f, 1.0f); // orange
+        cpuSpec.FillColor  = cpuSpec.LineColor;
+        cpuSpec.FillAlpha  = 0.25f;
+        cpuSpec.LineWeight = 1.5f;
+        cpuSpec.Offset     = _frameHistoryOffset;
+
+        ImPlotSpec gpuSpec;
+        gpuSpec.LineColor  = ImVec4(0.30f, 0.75f, 0.40f, 1.0f); // green
+        gpuSpec.FillColor  = gpuSpec.LineColor;
+        gpuSpec.FillAlpha  = 0.25f;
+        gpuSpec.LineWeight = 1.5f;
+        gpuSpec.Offset     = _frameHistoryOffset;
+
+        if (ImPlot::BeginPlot("##frameGraph", ImVec2(-1.0f, 130.0f), ImPlotFlags_NoMenus))
+        {
+            ImPlot::SetupAxes(nullptr, "ms", ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
+                              ImPlotAxisFlags_NoHighlight);
+            ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, kFrameHistory - 1, ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, plotMax, ImPlotCond_Always);
+            ImPlot::SetupLegend(ImPlotLocation_NorthWest, ImPlotLegendFlags_Horizontal);
+
+            ImPlot::PlotShaded("CPU", _cpuHistory.data(), kFrameHistory, 0.0, 1.0, 0.0, cpuSpec);
+            ImPlot::PlotLine("CPU", _cpuHistory.data(), kFrameHistory, 1.0, 0.0, cpuSpec);
+            ImPlot::PlotShaded("GPU", _gpuHistory.data(), kFrameHistory, 0.0, 1.0, 0.0, gpuSpec);
+            ImPlot::PlotLine("GPU", _gpuHistory.data(), kFrameHistory, 1.0, 0.0, gpuSpec);
+
+            ImPlot::EndPlot();
+        }
+
+        // Percentile stats over the frame-delta history. "1% low" is the average
+        // of the slowest 1% of frames (GamersNexus-style) — the stutter the
+        // averages hide. Sorting a copy each frame is cheap at this sample count.
+        if (_frameSampleCount > 0)
+        {
+            std::vector<float> sorted(_frameTimeHistory.begin(), _frameTimeHistory.begin() + _frameSampleCount);
+            std::sort(sorted.begin(), sorted.end());
+
+            double sum = 0.0;
+            for (float ms : sorted)
+            {
+                sum += ms;
+            }
+            const double avgMs = sum / sorted.size();
+
+            // Average the slowest 1% (at least one frame) from the tail.
+            const int    worstCount = std::max<int>(1, static_cast<int>(sorted.size()) / 100);
+            double       worstSum   = 0.0;
+            for (int i = static_cast<int>(sorted.size()) - worstCount; i < static_cast<int>(sorted.size()); ++i)
+            {
+                worstSum += sorted[i];
+            }
+            const double onePctLowMs = worstSum / worstCount;
+
+            const float minMs = sorted.front();
+            const float maxMs = sorted.back();
+
+            const auto toFps = [](double ms) { return ms > 0.0 ? static_cast<int>(1000.0 / ms) : 0; };
+            ImGui::Text("Avg:     %6.2f ms  (%d FPS)", avgMs, toFps(avgMs));
+            ImGui::Text("1%% low:  %6.2f ms  (%d FPS)", onePctLowMs, toFps(onePctLowMs));
+            ImGui::Text("Min/Max: %6.2f / %6.2f ms", minMs, maxMs);
+        }
+        ImGui::Separator();
+
         static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
         int                modeIndex    = static_cast<int>(_options.aaMode);
         if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))

@@ -14,6 +14,7 @@
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
+#include <implot.h>
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
@@ -65,6 +66,7 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
 
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
+    ImPlot::CreateContext();
 
     ImGuiIO &io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
@@ -145,6 +147,7 @@ void DebugUI::Shutdown()
 {
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();
+    ImPlot::DestroyContext();
     ImGui::DestroyContext();
 
     s_openerPipeline = nullptr;

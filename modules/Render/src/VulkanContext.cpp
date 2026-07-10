@@ -13,6 +13,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <GLFW/glfw3.h>
 
 #include <array>
+#include <chrono>
 #include <vector>
 #ifndef NDEBUG
 #include <cstring> // std::strcmp, validation-layer lookup (debug only)
@@ -378,6 +379,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
                 return nullptr;
             }
             context->_frameQueries[i] = context->_nvrhiDevice->createEventQuery();
+            context->_timerQueries[i] = context->_nvrhiDevice->createTimerQuery();
         }
     }
 
@@ -632,10 +634,20 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     // gates reuse of the slot's image-available semaphore and the ImGui buffers
     // that frame round-robined. Guarded by a per-slot flag so an early-out below
     // (stale swapchain) doesn't leave a query waited-but-never-reset.
+    _lastGpuWaitMs = 0.0;
     if (_frameQueryPending[slot])
     {
+        const std::chrono::steady_clock::time_point waitStart = std::chrono::steady_clock::now();
         _nvrhiDevice->waitEventQuery(_frameQueries[slot]);
+        _lastGpuWaitMs =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waitStart).count();
         _nvrhiDevice->resetEventQuery(_frameQueries[slot]);
+
+        // The event query just proved this slot's previous frame is done on the
+        // GPU, so its timer query is already resolved — this read won't block.
+        // getTimerQueryTime() clears the query's "started" flag, so the
+        // beginTimerQuery() below can reuse it.
+        _lastGpuFrameMs = _nvrhiDevice->getTimerQueryTime(_timerQueries[slot]) * 1000.0f;
         _frameQueryPending[slot] = false;
     }
 
@@ -655,6 +667,7 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     }
 
     _commandList->open();
+    _commandList->beginTimerQuery(_timerQueries[slot]); // spans the whole frame; ended in EndFrame()
     _commandList->setTextureState(_swapchainTextures[_currentImageIndex], nvrhi::AllSubresources,
                                    nvrhi::ResourceStates::RenderTarget);
 
@@ -674,6 +687,7 @@ void VulkanContext::EndFrame()
     // this function, and EndFrame() only runs when BeginFrame() returned a frame.
     const uint32_t slot = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
 
+    _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
     _commandList->close();
 
     _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
@@ -733,6 +747,8 @@ VulkanContext::~VulkanContext()
 
         _commandList = nullptr;
         for (nvrhi::EventQueryHandle &query : _frameQueries)
+            query = nullptr;
+        for (nvrhi::TimerQueryHandle &query : _timerQueries)
             query = nullptr;
         DestroySwapchainResources(); // also frees the per-image render-finished semaphores
         _nvrhiDevice = nullptr;

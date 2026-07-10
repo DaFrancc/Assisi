@@ -69,6 +69,18 @@ class VulkanContext
     /// @brief Whether the swapchain is currently presenting with vsync (FIFO).
     [[nodiscard]] bool IsVSyncEnabled() const { return _vsyncEnabled; }
 
+    /// @brief GPU execution time of the most recently completed frame, in
+    /// milliseconds, from a timer query spanning the whole command list. 0 until
+    /// the first frame has finished on the GPU.
+    [[nodiscard]] float GetLastGpuFrameTimeMs() const { return _lastGpuFrameMs; }
+
+    /// @brief Wall-clock time the last BeginFrame() spent blocked on the
+    /// frames-in-flight throttle (waiting for the GPU to finish an earlier
+    /// frame), in milliseconds. Lets callers subtract GPU-stall time from a CPU
+    /// frame-time figure; 0 when the CPU didn't have to wait (GPU-idle, i.e.
+    /// CPU-bound).
+    [[nodiscard]] double GetLastGpuWaitMs() const { return _lastGpuWaitMs; }
+
     [[nodiscard]] nvrhi::IDevice *GetDevice() const { return _nvrhiDevice; }
 
     /// @brief Color/depth formats and sample count of the swapchain framebuffers,
@@ -152,6 +164,14 @@ class VulkanContext
     std::array<bool, kFramesInFlight>                   _frameQueryPending{};
     std::vector<VkSemaphore>                            _renderFinishedSemaphores;
     uint64_t                                            _frameCounter = 0;
+
+    // Per-slot GPU timer queries bracketing the whole command list, for the
+    // debug frame-time readout. Read in BeginFrame() once the slot's event
+    // query proves the frame finished (so the read never blocks). _lastGpuWaitMs
+    // records how long that event-query wait actually stalled the CPU.
+    std::array<nvrhi::TimerQueryHandle, kFramesInFlight> _timerQueries;
+    float                                               _lastGpuFrameMs = 0.0f;
+    double                                              _lastGpuWaitMs = 0.0;
 
     nvrhi::CommandListHandle _commandList;
 

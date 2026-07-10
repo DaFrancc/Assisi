@@ -22,6 +22,7 @@ target_include_directories(Assisi-Debug
 target_link_libraries(Assisi-Debug
   PUBLIC
     imgui::imgui
+    implot::implot
     Assisi::Window
     Assisi::Render
   PRIVATE

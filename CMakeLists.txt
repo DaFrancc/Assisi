@@ -285,6 +285,27 @@ add_library(imgui::imgui ALIAS Assisi-ImGui)
 
 set(ASSISI_IMGUI_ROOT "${imgui_SOURCE_DIR}")
 
+# --- ImPlot (plotting widgets built on Dear ImGui)
+# Ships no CMake of its own (a source drop like ImGui), so compile it into our
+# own static lib against imgui::imgui. Tracks master rather than the v0.16 tag
+# because that release predates — and won't build against — ImGui 1.92.
+FetchContent_Declare(implot
+    GIT_REPOSITORY https://github.com/epezent/implot.git
+    GIT_TAG        master
+    GIT_SHALLOW    TRUE
+    DOWNLOAD_ONLY  YES
+)
+FetchContent_MakeAvailable(implot)
+
+add_library(Assisi-ImPlot STATIC
+    "${implot_SOURCE_DIR}/implot.cpp"
+    "${implot_SOURCE_DIR}/implot_items.cpp"
+)
+target_include_directories(Assisi-ImPlot PUBLIC "${implot_SOURCE_DIR}")
+target_link_libraries(Assisi-ImPlot PUBLIC imgui::imgui)
+# Like ImGui, ImPlot isn't written against our strict warning flags — leave defaults off.
+add_library(implot::implot ALIAS Assisi-ImPlot)
+
 # --- NVRHI (Vulkan backend only; DX11/DX12 disabled — Windows+Linux via Vulkan)
 set(NVRHI_WITH_VULKAN     ON  CACHE BOOL "" FORCE)
 set(NVRHI_WITH_DX11       OFF CACHE BOOL "" FORCE)

@@ -14,6 +14,7 @@
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
+#include <array>
 #include <memory>
 
 namespace Assisi::App
@@ -91,6 +92,15 @@ class Application
     void      RequestClose();
     int       GetFps()             const { return _fps; }
 
+    /// @brief Averaged CPU main-thread work per frame, in milliseconds —
+    /// excluding the FPS-limit pacing sleep and time spent blocked on the GPU.
+    /// Compare against GetGpuFrameMs() to see which side is the bottleneck.
+    double    GetCpuFrameMs()      const { return _cpuFrameMs; }
+
+    /// @brief Averaged GPU execution time per frame, in milliseconds, from a
+    /// timer query spanning the whole command list.
+    double    GetGpuFrameMs()      const { return _gpuFrameMs; }
+
     /// @brief The FramebufferInfo OnRender()'s `frame` is (or will be, at the
     /// next OnRender()) compatible with. Build scene pipelines against this,
     /// not the swapchain's own FramebufferInfo directly, so they're already
@@ -114,7 +124,21 @@ class Application
     bool                _showOptionsWindow = false;
     bool                _initialized = false;
 
-    int _fps = 0;
+    int    _fps = 0;
+    double _cpuFrameMs = 0.0;
+    double _gpuFrameMs = 0.0;
+
+    // Rolling per-frame samples (milliseconds) for the ImGui plots and the
+    // percentile stats, kept as ring buffers: _frameHistoryOffset is the next
+    // slot to overwrite, which is also the oldest sample — the values_offset
+    // ImGui::PlotLines() wants. _frameSampleCount saturates at kFrameHistory so
+    // the stats ignore the zero-filled slots before the buffer first fills.
+    static constexpr int              kFrameHistory = 360;
+    std::array<float, kFrameHistory>  _cpuHistory{};
+    std::array<float, kFrameHistory>  _gpuHistory{};
+    std::array<float, kFrameHistory>  _frameTimeHistory{}; // full frame delta, for 1%-low etc.
+    int                               _frameHistoryOffset = 0;
+    int                               _frameSampleCount = 0;
 };
 
 } // namespace Assisi::App
