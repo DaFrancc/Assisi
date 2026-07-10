@@ -320,11 +320,21 @@ Checkboxes so this can be burned down like the previous two docs.
   `isfinite`, or strip fast-math from that one TU via
   `set_source_files_properties`), not a global option.
 
-- [ ] **`ShortNames.hpp` relies on a comment for safety.** It injects
+- [x] **`ShortNames.hpp` relies on a comment for safety.** It injects
   `namespace Core = A::Core;` etc. at global scope with "CPP ONLY!!!" as its
   only enforcement. One careless include in a header and downstream
   conflicts get baffling. Consider a `#ifdef` guard trick (e.g. error if
   included before a known .cpp-only marker) or accept and document the risk.
+  *Done (2026-07-10):* replaced the comment-only rule with a real preprocessor
+  guard — `#if defined(__INCLUDE_LEVEL__) && (__INCLUDE_LEVEL__ > 1) #error ...`.
+  `__INCLUDE_LEVEL__` (a GCC/Clang builtin) is 1 when a file is included directly
+  by a .cpp and >= 2 when reached through another header, so a stray header
+  include hard-errors with a message explaining why. Verified on clang: including
+  it via a header fails with the #error; including it directly from a .cpp
+  compiles clean. MSVC doesn't define the builtin, so the guard is a documented
+  no-op there — but the clang/gcc presets and CI catch a misuse for the whole
+  team, which is strictly better than a comment. (The file currently has zero
+  includers, so this is a pure hardening of a latent utility — no build effect.)
 
 - [x] **Doc nit:** `AssetPath.hpp:14` says "128-byte value" —
   `TrivialString<127>` is 127 data + 2 length = 130 bytes with padding.
