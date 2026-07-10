@@ -84,7 +84,7 @@ VkInstance CreateInstance()
     appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.pEngineName = "Assisi";
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
+    appInfo.apiVersion = VK_API_VERSION_1_3;
 
     uint32_t glfwExtensionCount = 0;
     const char **glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
@@ -209,8 +209,26 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
 
     const char *deviceExtensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
+    // NVRHI's Vulkan backend uses these features unconditionally and assumes the
+    // caller enabled them at device creation: timeline semaphores (queue
+    // tracking), synchronization2 (vkCmdPipelineBarrier2), and dynamic rendering
+    // (it emits no render-pass objects). All are Vulkan 1.3 core — enable them
+    // through the promoted feature structs chained onto pNext. Without this the
+    // driver silently tolerates the violations on some vendors (NVIDIA) while
+    // the barrier2 entry point isn't even loaded, which asserts in debug.
+    VkPhysicalDeviceVulkan13Features features13{};
+    features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+    features13.synchronization2 = VK_TRUE;
+    features13.dynamicRendering = VK_TRUE;
+
+    VkPhysicalDeviceVulkan12Features features12{};
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    features12.timelineSemaphore = VK_TRUE;
+    features12.pNext = &features13;
+
     VkDeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    deviceCreateInfo.pNext = &features12;
     deviceCreateInfo.queueCreateInfoCount = 1;
     deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
     deviceCreateInfo.enabledExtensionCount = 1;
