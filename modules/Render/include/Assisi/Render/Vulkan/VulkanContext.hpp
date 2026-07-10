@@ -113,6 +113,13 @@ class VulkanContext
     void DestroySwapchainResources();
     [[nodiscard]] bool CreateSwapchainResources(uint32_t width, uint32_t height);
 
+    /// @brief Resets to a consistent no-swapchain state (`_swapchain ==
+    /// VK_NULL_HANDLE`, all swapchain resources released) after a partial
+    /// CreateSwapchainResources() failure that occurred once the old swapchain had
+    /// already been torn down. BeginFrame()'s null-swapchain guard then catches it
+    /// and a later Resize() can retry cleanly.
+    void ResetToNoSwapchain();
+
     /// @brief The present mode CreateSwapchainResources() should use for the current
     /// vsync state: FIFO when vsync is on (always supported), otherwise IMMEDIATE if
     /// the device offers it, falling back to FIFO.

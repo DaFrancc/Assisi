@@ -81,7 +81,7 @@ Checkboxes so this can be burned down like the previous two docs.
   since the hooks are public overrides that a future Run() ordering change
   could otherwise re-expose.
 
-- [ ] **`VulkanContext::CreateSwapchainResources` failure paths lie about
+- [x] **`VulkanContext::CreateSwapchainResources` failure paths lie about
   their state.** Once `vkCreateSwapchainKHR` succeeds, the old swapchain and
   its resources are destroyed (`VulkanContext.cpp:464-468`) — but the
   function can still fail *after* that (render-finished semaphore creation,
@@ -94,6 +94,14 @@ Checkboxes so this can be burned down like the previous two docs.
   in a consistent "no swapchain" state (`_swapchain = VK_NULL_HANDLE`) on
   any partial failure so `BeginFrame`'s existing guard catches it. Correct
   the `Resize()` comment either way.
+  *Done (2026-07-10):* took the second option. New private
+  `VulkanContext::ResetToNoSwapchain()` tears down swapchain resources and sets
+  `_swapchain = VK_NULL_HANDLE`; the three late-failure paths (render-finished
+  semaphore, unknown color format, no depth format) call it before returning
+  false, so `BeginFrame`'s null-swapchain guard short-circuits and a later
+  `Resize()` retries cleanly. Corrected the `Resize()` and `SetVSync()` comments
+  to distinguish the early (old swapchain intact) vs late (consistent
+  no-swapchain) failure cases.
 
 - [x] **`SparseSet::Add(NullEntity)` is UB.** `entity.index + 1` with
   `index == UINT32_MAX` wraps to 0, so `_sparse.resize(0, Invalid)`

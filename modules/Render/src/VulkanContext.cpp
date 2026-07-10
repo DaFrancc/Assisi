@@ -471,6 +471,11 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     _swapchainFormat = chosenFormat.format;
     _swapchainExtent = extent;
 
+    // Past this point the old swapchain and its resources are gone, so we can no
+    // longer "leave the previous swapchain intact" on failure. Any late step that
+    // fails calls ResetToNoSwapchain() before returning, so BeginFrame's
+    // `_swapchain == VK_NULL_HANDLE` guard short-circuits and a later Resize() can
+    // retry cleanly, rather than BeginFrame indexing into empty vectors.
     uint32_t actualImageCount = 0;
     VKD.vkGetSwapchainImagesKHR(_device, _swapchain, &actualImageCount, nullptr);
     _swapchainImages.resize(actualImageCount);
@@ -488,6 +493,7 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
             if (VKD.vkCreateSemaphore(_device, &semInfo, nullptr, &semaphore) != VK_SUCCESS)
             {
                 Core::Log::Error("VulkanContext: vkCreateSemaphore (render-finished) failed.");
+                ResetToNoSwapchain();
                 return false;
             }
         }
@@ -498,6 +504,7 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     {
         Core::Log::Error("VulkanContext: swapchain format {} has no NVRHI mapping.",
                          static_cast<int>(_swapchainFormat));
+        ResetToNoSwapchain();
         return false;
     }
 
@@ -520,6 +527,7 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     if (depthFormat.nvrhiFmt == nvrhi::Format::UNKNOWN)
     {
         Core::Log::Error("VulkanContext: no supported depth-stencil format found.");
+        ResetToNoSwapchain();
         return false;
     }
     _depthFormat = depthFormat.vk;
@@ -562,6 +570,16 @@ void VulkanContext::DestroySwapchainResources()
     _renderFinishedSemaphores.clear();
 }
 
+void VulkanContext::ResetToNoSwapchain()
+{
+    DestroySwapchainResources();
+    if (_swapchain != VK_NULL_HANDLE)
+    {
+        VKD.vkDestroySwapchainKHR(_device, _swapchain, nullptr);
+        _swapchain = VK_NULL_HANDLE;
+    }
+}
+
 void VulkanContext::Resize(uint32_t width, uint32_t height)
 {
     if (_device == VK_NULL_HANDLE)
@@ -571,10 +589,12 @@ void VulkanContext::Resize(uint32_t width, uint32_t height)
 
     VKD.vkDeviceWaitIdle(_device);
 
-    // A failure here is benign and intentionally not propagated: a zero-size
-    // (minimized) window returns false, and if recreation fails the previous
-    // swapchain is left intact, so BeginFrame() keeps working / recovers on a
-    // later resize. Explicitly discarded to satisfy [[nodiscard]].
+    // A failure here is benign and intentionally not propagated. A zero-size
+    // (minimized) window, or a failure before the old swapchain is torn down,
+    // leaves the previous swapchain intact. A late failure (after teardown)
+    // instead leaves us in a consistent no-swapchain state (_swapchain ==
+    // VK_NULL_HANDLE). Either way BeginFrame() short-circuits and a later resize
+    // recovers. Explicitly discarded to satisfy [[nodiscard]].
     (void)CreateSwapchainResources(width, height);
 }
 
@@ -615,7 +635,8 @@ void VulkanContext::SetVSync(bool enabled)
     VKD.vkDeviceWaitIdle(_device);
 
     // Recreate at the current extent with the new present mode. Benign on failure,
-    // same as Resize() — the old swapchain is left intact.
+    // same as Resize(): either the old swapchain survives (early failure) or we end
+    // up in a consistent no-swapchain state (late failure) that a resize recovers.
     (void)CreateSwapchainResources(_swapchainExtent.width, _swapchainExtent.height);
 }
 
