@@ -190,8 +190,14 @@ Checkboxes so this can be burned down like the round-1 doc was.
   ship with the Vulkan SDK — the driver-runtime-only setup this file targets
   won't have them until the SDK (or the layer package) is installed, at which
   point it activates automatically.
-- [~] **The frame-timing stack is three layers fighting.** (Acknowledged
+- [x] **The frame-timing stack is three layers fighting.** (Acknowledged
   provisional; listed because provisional caps the score.)
+  DONE (2026-07-10): all three layers resolved into one design — see the three
+  notes below. Present-mode/vsync selection is real and wired to options; the
+  `SleepUntil` FPS cap is the deliberate pair for the non-vsync mode; and the
+  per-frame `waitForIdle` is gone, replaced by real frames-in-flight. Verified
+  validation-clean at steady state (needs a manual pass for resize + ImGui-drag
+  + vsync-toggle, which validation can't exercise headless).
   PARTIAL (2026-07-10): deleted the `SetVSyncEnabled` stub — the whole dead
   vsync surface is gone (`SetVSyncEnabled`/`IsVSyncEnabled`, the
   `_isVSyncEnabled` mirror, the `WindowConfiguration::EnableVSync` field, and
@@ -208,9 +214,16 @@ Checkboxes so this can be burned down like the round-1 doc was.
   -1 = unlimited); the F12 options panel exposes the mode + cap. So `SleepUntil`
   is KEPT — it's the FPS limiter that pairs with the non-vsync present mode, not
   a layer to delete. This retires `AppConfig::renderHz` (now unused).
-  STILL OPEN: `BeginFrame`'s full per-frame `waitForIdle` → real
-  frames-in-flight with fences. That's the last "layer" and is a pure
-  pipelining change, independent of the vsync/cap work above.
+  ALSO (2026-07-10): the per-frame `waitForIdle` in `BeginFrame` is replaced by
+  real frames-in-flight (`kFramesInFlight = 2`). Each in-flight slot has its own
+  image-available semaphore and an NVRHI event query; `BeginFrame` waits only on
+  the query of the frame that last used the slot, so CPU recording of frame N+1
+  overlaps GPU execution of frame N. Render-finished semaphores are per swapchain
+  image (a present may still hold an image when its slot recurs) and live with
+  the swapchain. NVRHI owns submission, so the event query — not a raw VkFence —
+  is the sync primitive. ImGui's own round-robin (ImageCount≈3 buffer sets)
+  stays safe under 2 frames in flight. A single NVRHI command list is retained;
+  `open()` pulls a fresh underlying command buffer while the prior is executing.
   (a) `BeginFrame` does a full `waitForIdle()` (`VulkanContext.cpp:428`,
   documented trade); (b) present mode is hardcoded FIFO — vsync always on at
   the Vulkan level (`VulkanContext.cpp:316`); (c) `Application::Run` calls

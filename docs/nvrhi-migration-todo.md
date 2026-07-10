@@ -342,10 +342,14 @@ All bullets below landed as planned:
     submission — while the GPU was still reading those same buffers from an earlier
     frame. Invisible with the mostly-static scene (section 1/section-3-textures
     milestones); glaringly visible the moment per-frame content actually varies a lot
-    (dragging an ImGui window changes its vertex data every frame). Fixed with
+    (dragging an ImGui window changes its vertex data every frame). First fixed with
     `nvrhi::IDevice::waitForIdle()` at the top of `VulkanContext::BeginFrame()` —
-    correctness-first and simple, at the cost of CPU/GPU overlap; a real
-    multi-frame-in-flight fence would get some of that back if it's ever needed.
+    correctness-first and simple, at the cost of CPU/GPU overlap. SINCE REPLACED
+    (2026-07-10) with real frames-in-flight (`kFramesInFlight = 2`, per-slot
+    image-available semaphore + NVRHI event query, per-image render-finished
+    semaphore); BeginFrame now waits only on the slot's own query, so frame N+1
+    records while frame N executes. ImGui's round-robin (ImageCount≈3) stays safe
+    under 2 frames in flight.
     Also fixed a ~500ms-1s delay between clicking "Load" in the Levels panel and the
     level actually appearing, which turned out to be the same root cause.
 - `Render::DefaultResources` / `Render::Texture2D` (material textures) — **done**.

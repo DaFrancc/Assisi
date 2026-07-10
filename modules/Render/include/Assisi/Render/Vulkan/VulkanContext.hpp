@@ -14,6 +14,7 @@
 #include <nvrhi/nvrhi.h>
 #include <nvrhi/vulkan.h>
 
+#include <array>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -131,12 +132,27 @@ class VulkanContext
     nvrhi::TextureHandle                   _depthTexture;
     std::vector<nvrhi::FramebufferHandle>  _framebuffers;
 
-    // A single semaphore pair: BeginFrame() calls waitForIdle(), so only one
-    // frame is ever in flight. Multi-frame pipelining would need per-frame
-    // fences and a render-finished semaphore per swapchain image — deferred
-    // until there's a perf reason (see the note in BeginFrame()).
-    VkSemaphore              _imageAvailableSemaphore = VK_NULL_HANDLE;
-    VkSemaphore              _renderFinishedSemaphore = VK_NULL_HANDLE;
+    // Frames-in-flight synchronization. BeginFrame() throttles to kFramesInFlight
+    // by waiting only on the event query of the frame that last used this slot,
+    // not the whole device — so the CPU records frame N+1 while the GPU still
+    // executes frame N. The event query gates reuse of everything the prior frame
+    // touched outside NVRHI's own tracking: the per-slot image-available
+    // semaphore and the raw ImGui vertex/index buffers it round-robins.
+    //
+    // Image-available semaphores are per in-flight slot (acquire runs before the
+    // image index is known). Render-finished semaphores are per swapchain image —
+    // a present may still be reading an image when the same slot comes around, so
+    // reusing one signal semaphore across images would race the presentation
+    // engine. They therefore live and die with the swapchain (see
+    // Create/DestroySwapchainResources).
+    static constexpr uint32_t kFramesInFlight = 2;
+
+    std::array<VkSemaphore, kFramesInFlight>            _imageAvailableSemaphores{};
+    std::array<nvrhi::EventQueryHandle, kFramesInFlight> _frameQueries;
+    std::array<bool, kFramesInFlight>                   _frameQueryPending{};
+    std::vector<VkSemaphore>                            _renderFinishedSemaphores;
+    uint64_t                                            _frameCounter = 0;
+
     nvrhi::CommandListHandle _commandList;
 
     uint32_t _currentImageIndex = 0;

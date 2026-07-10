@@ -363,14 +363,21 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
         return nullptr;
     }
 
+    // One image-available semaphore and one event query per in-flight slot. The
+    // render-finished semaphores are per swapchain image and were created inside
+    // CreateSwapchainResources() above.
     {
         VkSemaphoreCreateInfo semInfo{};
         semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
-        if (VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr, &context->_imageAvailableSemaphore) != VK_SUCCESS ||
-            VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr, &context->_renderFinishedSemaphore) != VK_SUCCESS)
+        for (uint32_t i = 0; i < kFramesInFlight; ++i)
         {
-            Core::Log::Error("VulkanContext: vkCreateSemaphore failed.");
-            return nullptr;
+            if (VKD.vkCreateSemaphore(context->_device, &semInfo, nullptr, &context->_imageAvailableSemaphores[i]) !=
+                VK_SUCCESS)
+            {
+                Core::Log::Error("VulkanContext: vkCreateSemaphore failed.");
+                return nullptr;
+            }
+            context->_frameQueries[i] = context->_nvrhiDevice->createEventQuery();
         }
     }
 
@@ -467,6 +474,23 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     _swapchainImages.resize(actualImageCount);
     VKD.vkGetSwapchainImagesKHR(_device, _swapchain, &actualImageCount, _swapchainImages.data());
 
+    // One render-finished semaphore per swapchain image (see the header note on
+    // why these are per-image rather than per in-flight slot). Tied to the
+    // swapchain's lifetime — DestroySwapchainResources() frees them.
+    _renderFinishedSemaphores.resize(_swapchainImages.size());
+    {
+        VkSemaphoreCreateInfo semInfo{};
+        semInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        for (VkSemaphore &semaphore : _renderFinishedSemaphores)
+        {
+            if (VKD.vkCreateSemaphore(_device, &semInfo, nullptr, &semaphore) != VK_SUCCESS)
+            {
+                Core::Log::Error("VulkanContext: vkCreateSemaphore (render-finished) failed.");
+                return false;
+            }
+        }
+    }
+
     const nvrhi::Format colorFormat = ToNvrhiFormat(_swapchainFormat);
     if (colorFormat == nvrhi::Format::UNKNOWN)
     {
@@ -525,6 +549,15 @@ void VulkanContext::DestroySwapchainResources()
     _depthTexture = nullptr;
     _swapchainTextures.clear();
     _swapchainImages.clear();
+
+    // Callers wait for the device to go idle before recreating the swapchain, so
+    // no present is still referencing these.
+    for (VkSemaphore &semaphore : _renderFinishedSemaphores)
+    {
+        if (semaphore != VK_NULL_HANDLE)
+            VKD.vkDestroySemaphore(_device, semaphore, nullptr);
+    }
+    _renderFinishedSemaphores.clear();
 }
 
 void VulkanContext::Resize(uint32_t width, uint32_t height)
@@ -591,19 +624,22 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
         return std::nullopt; // minimized; Resize() hasn't (re)created anything yet
     }
 
-    // Wait for the previous frame's GPU work to fully finish before reusing
-    // anything. Without this, resources NVRHI doesn't track the lifetime of —
-    // notably Dear ImGui's own raw Vulkan vertex/index buffers, which it
-    // round-robins across frames assuming the caller throttles submission —
-    // can get overwritten by the CPU while the GPU is still reading them from
-    // an earlier frame, producing visible corruption under any per-frame-varying
-    // content (most obvious while dragging/resizing ImGui windows). A real
-    // multi-frame-in-flight fence would let CPU and GPU overlap more; this
-    // trades that overlap for simplicity/correctness while the migration is
-    // still settling — worth revisiting once there's a perf reason to.
-    _nvrhiDevice->waitForIdle();
+    const uint32_t slot = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
 
-    VkResult acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphore,
+    // Throttle to kFramesInFlight: block until the frame that last used THIS slot
+    // has finished on the GPU — and only that frame, so the other in-flight frame
+    // keeps executing (the whole point, vs. the old full waitForIdle()). This
+    // gates reuse of the slot's image-available semaphore and the ImGui buffers
+    // that frame round-robined. Guarded by a per-slot flag so an early-out below
+    // (stale swapchain) doesn't leave a query waited-but-never-reset.
+    if (_frameQueryPending[slot])
+    {
+        _nvrhiDevice->waitEventQuery(_frameQueries[slot]);
+        _nvrhiDevice->resetEventQuery(_frameQueries[slot]);
+        _frameQueryPending[slot] = false;
+    }
+
+    VkResult acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphores[slot],
                                                         VK_NULL_HANDLE, &_currentImageIndex);
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
@@ -634,16 +670,25 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
 
 void VulkanContext::EndFrame()
 {
+    // Same slot BeginFrame() used — _frameCounter isn't advanced until the end of
+    // this function, and EndFrame() only runs when BeginFrame() returned a frame.
+    const uint32_t slot = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
+
     _commandList->close();
 
-    _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphore, 0);
-    _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphore, 0);
+    _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
+    _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphores[_currentImageIndex], 0);
     _nvrhiDevice->executeCommandList(_commandList);
+
+    // Snapshot this submission's completion into the slot's query; the frame that
+    // reuses this slot kFramesInFlight later waits on it in BeginFrame().
+    _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
+    _frameQueryPending[slot] = true;
 
     VkPresentInfoKHR presentInfo{};
     presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &_renderFinishedSemaphore;
+    presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &_swapchain;
     presentInfo.pImageIndices = &_currentImageIndex;
@@ -658,6 +703,7 @@ void VulkanContext::EndFrame()
     }
 
     _nvrhiDevice->runGarbageCollection();
+    ++_frameCounter;
 }
 
 void VulkanContext::CreateDebugMessenger()
@@ -686,12 +732,16 @@ VulkanContext::~VulkanContext()
         VKD.vkDeviceWaitIdle(_device);
 
         _commandList = nullptr;
-        DestroySwapchainResources();
+        for (nvrhi::EventQueryHandle &query : _frameQueries)
+            query = nullptr;
+        DestroySwapchainResources(); // also frees the per-image render-finished semaphores
         _nvrhiDevice = nullptr;
         _nvrhiDeviceHandle = nullptr;
 
-        if (_imageAvailableSemaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, _imageAvailableSemaphore, nullptr);
-        if (_renderFinishedSemaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, _renderFinishedSemaphore, nullptr);
+        for (VkSemaphore &semaphore : _imageAvailableSemaphores)
+        {
+            if (semaphore != VK_NULL_HANDLE) VKD.vkDestroySemaphore(_device, semaphore, nullptr);
+        }
 
         if (_swapchain != VK_NULL_HANDLE) VKD.vkDestroySwapchainKHR(_device, _swapchain, nullptr);
         VKD.vkDestroyDevice(_device, nullptr);
