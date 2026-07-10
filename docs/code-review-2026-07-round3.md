@@ -40,7 +40,7 @@ Checkboxes so this can be burned down like the previous two docs.
   silently selected the shallow copy). Guarded at compile time by
   `static_assert`s on the four traits in `TestScene.cpp` / `TestRegistry.cpp`.
 
-- [ ] **`DebugUI` has the exact disease round 2 cured in `MeshPass`, plus a
+- [x] **`DebugUI` has the exact disease round 2 cured in `MeshPass`, plus a
   hard capacity wall.** `s_textureIds` (`DebugUI.cpp:41`) is keyed on raw
   `ITexture*` and never evicted — pointer-reuse aliasing and unbounded
   lifetime, the same two hazards `MeshPass::InvalidateBindingSets()` was
@@ -51,6 +51,20 @@ Checkboxes so this can be burned down like the previous two docs.
   no eviction API and no growth path. Fix: size the pool realistically or
   grow it, and add an invalidation path mirroring the MeshPass one (called
   wherever a registered texture can be destroyed).
+  *Done (2026-07-10):* the registration map now tags each badge with the frame
+  it was last requested, and `BeginFrame` sweeps any badge unused for
+  `kTextureRetireDelayFrames` (3, > the renderer's `kFramesInFlight` so
+  `vkFreeDescriptorSets` never touches an in-flight set) via
+  `ImGui_ImplVulkan_RemoveTexture`. So the live set self-bounds to what's drawn
+  each frame (mark-and-sweep over ImGui's immediate mode) instead of accumulating
+  for the whole session — leaving a directory or closing the browser reclaims its
+  thumbnails a few frames later. The imgui backend has no pool-growth path (its
+  `DescriptorPoolSize` convenience is still a single fixed pool), so the pool was
+  also raised from 16 to a named `kMaxDebugTextures = 256` ceiling — now a
+  generous headroom over the bounded working set, not a per-session accumulator.
+  Residual aliasing is confined to the few-frame retire window and documented on
+  the header (stop requesting a texture before freeing it). GUI thumbnail
+  rendering/recycling still wants an eyes-on pass in the asset browser.
 
 - [x] **`SandboxApp::OnStart` "aborts startup" without aborting anything.**
   If `_scenes.Create("Main")` fails it logs and returns
