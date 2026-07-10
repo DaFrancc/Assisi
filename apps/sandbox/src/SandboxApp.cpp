@@ -211,6 +211,7 @@ void SandboxApp::DrawDiagnosticsWindow()
 
 void SandboxApp::OnImGui()
 {
+    DrawOptionsWindow();
     DrawDiagnosticsWindow();
     DrawLevelsWindow();
     DrawInspector();

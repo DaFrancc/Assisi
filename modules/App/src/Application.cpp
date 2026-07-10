@@ -18,10 +18,6 @@
 #include <Assisi/Core/Sinks.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
-#include <Assisi/Window/Key.hpp>
-
-#include <imgui.h>
-#include <implot.h>
 
 // --- Standard ---------------------------------------------------------------
 #include <algorithm>
@@ -29,7 +25,6 @@
 #include <csignal>
 #include <cstdlib>
 #include <thread>
-#include <vector>
 
 #ifdef _WIN32
 
@@ -288,11 +283,6 @@ void Application::Run()
         Window::WindowContext::PollEvents();
         _input->Poll();
 
-        if (_input->IsKeyPressed(Window::Key::F12))
-        {
-            _showOptionsWindow = !_showOptionsWindow;
-        }
-
         accumulator += dt;
         while (accumulator >= physicsStep)
         {
@@ -425,7 +415,6 @@ void Application::RenderFrame()
     Debug::DebugUI::BeginFrame(*frame);
 
     OnImGui();
-    DrawOptionsWindow();
 
     Debug::DebugUI::EndFrame(*frame);
 
@@ -454,209 +443,6 @@ void Application::ConfigurePostProcess()
     {
         OnRenderTargetsChanged(after);
     }
-}
-
-void Application::DrawOptionsWindow()
-{
-    if (!_showOptionsWindow)
-    {
-        return;
-    }
-
-    ImGui::SetNextWindowSize(ImVec2(320, 420), ImGuiCond_FirstUseEver);
-    if (ImGui::Begin("Options", &_showOptionsWindow))
-    {
-        // CPU vs GPU frame time: if CPU >> GPU we're CPU-bound, and vice versa.
-        // The numbers are averaged over the same ~0.5s window as the FPS counter;
-        // the plots below show raw per-frame samples so spikes stay visible.
-        ImGui::Text("CPU: %5.2f ms    GPU: %5.2f ms", _cpuFrameMs, _gpuFrameMs);
-        ImGui::Text("Frame: %5.2f ms (%d FPS)", _fps > 0 ? 1000.0 / _fps : 0.0, _fps);
-
-        // Combined CPU/GPU plot on one shared y-axis so their heights are directly
-        // comparable. Floor the top at 4 ms so an idle scene doesn't magnify sub-ms
-        // jitter; the Y axis ticks give the top/bottom limits, and the legend
-        // toggles each series. Both series read the ring buffers directly via
-        // ImPlot's offset argument, which marks the chronological start.
-        float plotMax = 4.0f;
-        for (int i = 0; i < kFrameHistory; ++i)
-        {
-            plotMax = std::max({plotMax, _cpuHistory[i], _gpuHistory[i]});
-        }
-        plotMax *= 1.1f; // headroom so the peak isn't pinned to the top edge
-
-        // One ImPlotSpec per series carries its color, fill alpha, and the ring
-        // buffer's Offset (chronological start); reused for both the shaded fill
-        // and the outline so the two stay the same color.
-        ImPlotSpec cpuSpec;
-        cpuSpec.LineColor  = ImVec4(0.95f, 0.55f, 0.25f, 1.0f); // orange
-        cpuSpec.FillColor  = cpuSpec.LineColor;
-        cpuSpec.FillAlpha  = 0.25f;
-        cpuSpec.LineWeight = 1.5f;
-        cpuSpec.Offset     = _frameHistoryOffset;
-
-        ImPlotSpec gpuSpec;
-        gpuSpec.LineColor  = ImVec4(0.30f, 0.75f, 0.40f, 1.0f); // green
-        gpuSpec.FillColor  = gpuSpec.LineColor;
-        gpuSpec.FillAlpha  = 0.25f;
-        gpuSpec.LineWeight = 1.5f;
-        gpuSpec.Offset     = _frameHistoryOffset;
-
-        if (ImPlot::BeginPlot("##frameGraph", ImVec2(-1.0f, 130.0f), ImPlotFlags_NoMenus))
-        {
-            ImPlot::SetupAxes(nullptr, "ms", ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
-                              ImPlotAxisFlags_NoHighlight);
-            ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, kFrameHistory - 1, ImPlotCond_Always);
-            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, plotMax, ImPlotCond_Always);
-            ImPlot::SetupLegend(ImPlotLocation_NorthWest, ImPlotLegendFlags_Horizontal);
-
-            ImPlot::PlotShaded("CPU", _cpuHistory.data(), kFrameHistory, 0.0, 1.0, 0.0, cpuSpec);
-            ImPlot::PlotLine("CPU", _cpuHistory.data(), kFrameHistory, 1.0, 0.0, cpuSpec);
-            ImPlot::PlotShaded("GPU", _gpuHistory.data(), kFrameHistory, 0.0, 1.0, 0.0, gpuSpec);
-            ImPlot::PlotLine("GPU", _gpuHistory.data(), kFrameHistory, 1.0, 0.0, gpuSpec);
-
-            ImPlot::EndPlot();
-        }
-
-        // Percentile stats over the frame-delta history. "1% low" is the average
-        // of the slowest 1% of frames (GamersNexus-style) — the stutter the
-        // averages hide. Sorting a copy each frame is cheap at this sample count.
-        if (_frameSampleCount > 0)
-        {
-            std::vector<float> sorted(_frameTimeHistory.begin(), _frameTimeHistory.begin() + _frameSampleCount);
-            std::sort(sorted.begin(), sorted.end());
-
-            double sum = 0.0;
-            for (float ms : sorted)
-            {
-                sum += ms;
-            }
-            const double avgMs = sum / sorted.size();
-
-            // Average the slowest 1% (at least one frame) from the tail.
-            const int    worstCount = std::max<int>(1, static_cast<int>(sorted.size()) / 100);
-            double       worstSum   = 0.0;
-            for (int i = static_cast<int>(sorted.size()) - worstCount; i < static_cast<int>(sorted.size()); ++i)
-            {
-                worstSum += sorted[i];
-            }
-            const double onePctLowMs = worstSum / worstCount;
-
-            const float minMs = sorted.front();
-            const float maxMs = sorted.back();
-
-            const auto toFps = [](double ms) { return ms > 0.0 ? static_cast<int>(1000.0 / ms) : 0; };
-            ImGui::Text("Avg:     %6.2f ms  (%d FPS)", avgMs, toFps(avgMs));
-            ImGui::Text("1%% low:  %6.2f ms  (%d FPS)", onePctLowMs, toFps(onePctLowMs));
-            ImGui::Text("Min/Max: %6.2f / %6.2f ms", minMs, maxMs);
-        }
-        ImGui::Separator();
-
-        static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
-        int                modeIndex    = static_cast<int>(_options.aaMode);
-        if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))
-        {
-            _options.aaMode = static_cast<Render::AaMode>(modeIndex);
-            ConfigurePostProcess();
-            _options.SaveToJson();
-        }
-
-        const bool msaaActive =
-            (_options.aaMode == Render::AaMode::MSAA || _options.aaMode == Render::AaMode::MSAA_FXAA);
-        if (!msaaActive)
-        {
-            ImGui::BeginDisabled();
-        }
-
-        static const char *kSampleNames[]  = {"2x", "4x", "8x"};
-        static const int   kSampleValues[] = {2, 4, 8};
-        int                sampleIndex     = 1;
-        for (int i = 0; i < 3; ++i)
-        {
-            if (kSampleValues[i] == _options.msaaSamples)
-            {
-                sampleIndex = i;
-                break;
-            }
-        }
-
-        if (ImGui::Combo("MSAA Samples", &sampleIndex, kSampleNames, 3))
-        {
-            _options.msaaSamples = kSampleValues[sampleIndex];
-            if (msaaActive)
-            {
-                ConfigurePostProcess();
-            }
-            _options.SaveToJson();
-        }
-
-        if (!msaaActive)
-        {
-            ImGui::EndDisabled();
-        }
-
-        ImGui::Separator();
-        ImGui::TextUnformatted("Frame Sync");
-
-        // VSync and an FPS cap are mutually exclusive modes — radio buttons make
-        // that visible. The swapchain present-mode switch happens between frames
-        // in Run(); here we only edit the option.
-        int  frameSyncIndex = static_cast<int>(_options.frameSync);
-        bool frameSyncChanged =
-            ImGui::RadioButton("VSync", &frameSyncIndex, static_cast<int>(FrameSyncMode::VSync));
-        ImGui::SameLine();
-        frameSyncChanged |=
-            ImGui::RadioButton("FPS Limit", &frameSyncIndex, static_cast<int>(FrameSyncMode::FpsLimit));
-        if (frameSyncChanged)
-        {
-            _options.frameSync = static_cast<FrameSyncMode>(frameSyncIndex);
-            _options.SaveToJson();
-        }
-
-        // FPS-cap sub-controls: only live in FpsLimit mode (greyed under VSync).
-        // "Unlimited" toggles the -1 sentinel (no cap) and greys out Max FPS.
-        const bool fpsMode = (_options.frameSync == FrameSyncMode::FpsLimit);
-
-        if (!fpsMode)
-        {
-            ImGui::BeginDisabled();
-        }
-        bool unlimited = (_options.fpsLimit < 0);
-        if (ImGui::Checkbox("Unlimited", &unlimited))
-        {
-            // Leaving "unlimited" seeds a sane cap the user can then edit.
-            _options.fpsLimit = unlimited ? static_cast<std::int16_t>(-1) : static_cast<std::int16_t>(60);
-            _options.SaveToJson();
-        }
-        if (!fpsMode)
-        {
-            ImGui::EndDisabled();
-        }
-
-        // Max FPS is live only in FpsLimit mode with a finite cap; greyed otherwise.
-        const bool capFieldEnabled = fpsMode && !unlimited;
-        if (!capFieldEnabled)
-        {
-            ImGui::BeginDisabled();
-        }
-        // While the field is being typed in, InputInt reports every intermediate
-        // value ("120" passes through 1 and 12). Commit only once the user finishes
-        // editing — Enter or clicking/tabbing away — so the live pacer never sees a
-        // half-typed cap. `fps` still tracks the in-progress edit for display.
-        int fps = (_options.fpsLimit > 0) ? _options.fpsLimit : 60;
-        ImGui::InputInt("Max FPS", &fps);
-        if (ImGui::IsItemDeactivatedAfterEdit())
-        {
-            // Clamp to a valid positive int16 — 0 and negatives are invalid caps.
-            fps               = std::clamp(fps, 1, static_cast<int>(INT16_MAX));
-            _options.fpsLimit = static_cast<std::int16_t>(fps);
-            _options.SaveToJson();
-        }
-        if (!capFieldEnabled)
-        {
-            ImGui::EndDisabled();
-        }
-    }
-    ImGui::End();
 }
 
 } // namespace Assisi::App

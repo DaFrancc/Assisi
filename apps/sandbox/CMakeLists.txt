@@ -5,6 +5,7 @@ target_sources(Assisi-Sandbox
   PRIVATE
     "src/main.cpp"
     "src/SandboxApp.cpp"
+    "src/SandboxOptions.cpp"
     "src/SandboxCamera.cpp"
     "src/SandboxInspector.cpp"
     "src/SandboxAssetBrowser.cpp"

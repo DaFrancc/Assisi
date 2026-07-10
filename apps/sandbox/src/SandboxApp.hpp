@@ -70,6 +70,7 @@ class SandboxApp : public Assisi::App::Application
     void UpdateCamera(float dt);
 
     // --- ImGui panels ---
+    void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F12); see SandboxOptions.cpp
     void DrawDiagnosticsWindow();
     void DrawLevelsWindow();
     void DrawInspector();
@@ -137,6 +138,10 @@ class SandboxApp : public Assisi::App::Application
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
     bool                _wasDragging    = false;
+
+    // Options overlay (frame graph + display/pacing settings), toggled with F12.
+    // Owned by the app, not the engine — see DrawOptionsWindow in SandboxOptions.cpp.
+    bool _showOptions = false;
 
     // Eyedropper: while armed, the next scene entity-pick is written into the
     // captured EntityRef field instead of changing the selection. The target is

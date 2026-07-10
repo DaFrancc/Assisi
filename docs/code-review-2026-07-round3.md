@@ -176,7 +176,7 @@ Checkboxes so this can be burned down like the previous two docs.
   supply the path transitively — now links `glm::glm` PUBLIC so any renderer-free
   Math consumer builds. `Parent` stays in Runtime (Physics doesn't need it).
 
-- [ ] **`Application` is a framework and a debug tool at once.**
+- [x] **`Application` is a framework and a debug tool at once.**
   `DrawOptionsWindow` is ~200 lines of ImGui/ImPlot UI *in the engine base
   class* (`Application.cpp:459-660`), which also forces the App module to
   link ImPlot. AA modes, FPS caps, percentile plots — that's a debug overlay
@@ -185,6 +185,20 @@ Checkboxes so this can be burned down like the previous two docs.
   editing the engine. Fix: extract into a `Debug`-side overlay the app opts
   into (fits the template-product model — the template wires it up, the
   engine doesn't hardcode it).
+  *Done (2026-07-10):* the whole overlay moved out of `Application` into the
+  sandbox template (`apps/sandbox/src/SandboxOptions.cpp`), drawn from the
+  existing `OnImGui()` dispatch — the template wires it up, the engine no longer
+  hardcodes it. The timing data it visualizes is genuinely engine-owned (measured
+  in `Run()`), so `Application` keeps it and exposes a small protected API:
+  `GetOptions()` (mutable `OptionsConfig`), `ApplyDisplayOptions()` (rebuild
+  render targets after an AA edit), and `GetFrameStats()` (a read-only span view
+  of the CPU/GPU/frame-delta ring buffers). F12 — a debug-overlay toggle — moved
+  to the sandbox too, so the engine stops reserving the key. `Application.cpp`
+  drops ~200 lines plus its `<imgui.h>`/`<implot.h>`/`<vector>`/`Window/Key.hpp`
+  includes; its own source no longer depends on ImPlot. (App still *transitively*
+  links ImPlot through `Assisi::Debug`, which owns the ImGui/ImPlot backends by
+  design — that's the debug-UI module's job, not a leak.) `Debug` itself is
+  untouched; the sandbox reaches ImPlot transitively through the App→Debug link.
 
 - [ ] **Textures: no sRGB formats, no mipmaps.** Albedo loads as
   `RGBA8_UNORM` and the shader decodes with `pow(2.2)` (`cube_min.frag`) —

@@ -16,6 +16,7 @@
 
 #include <array>
 #include <memory>
+#include <span>
 
 namespace Assisi::App
 {
@@ -107,11 +108,41 @@ class Application
     /// correct if an anti-aliasing mode is active from a saved options.json.
     nvrhi::FramebufferInfo GetSceneFramebufferInfo() const { return _postProcess.SceneFramebufferInfo(); }
 
+    /// @brief The persisted user options (AA mode, MSAA samples, frame-sync
+    /// mode, FPS cap) the engine consumes each frame in Run(). Exposed mutable
+    /// so an app-side options overlay can edit them; after changing aaMode or
+    /// msaaSamples, call ApplyDisplayOptions() to rebuild the render targets,
+    /// and OptionsConfig::SaveToJson() to persist. Frame-sync/FPS changes are
+    /// picked up by Run() on the next iteration with no extra call.
+    OptionsConfig &GetOptions() { return _options; }
+
+    /// @brief Rebuilds the post-process render targets from the current
+    /// _options.aaMode / msaaSamples (and fires OnRenderTargetsChanged if the
+    /// FramebufferInfo actually changed). Call after editing those options.
+    void ApplyDisplayOptions() { ConfigurePostProcess(); }
+
+    /// @brief A read-only view of the rolling per-frame timing history, for an
+    /// app-side debug overlay. Each array is a ring buffer of FrameHistory()
+    /// samples; `offset` is the oldest sample / next slot to overwrite, and
+    /// `sampleCount` saturates at the capacity once the buffer has filled.
+    struct FrameStatsView
+    {
+        std::span<const float> cpuMs;
+        std::span<const float> gpuMs;
+        std::span<const float> frameDeltaMs;
+        int                    offset;
+        int                    sampleCount;
+    };
+    FrameStatsView GetFrameStats() const
+    {
+        return {_cpuHistory, _gpuHistory, _frameTimeHistory, _frameHistoryOffset, _frameSampleCount};
+    }
+    static constexpr int FrameHistory() { return kFrameHistory; }
+
   private:
     void HandleFramebufferResize(int width, int height);
     void RenderFrame();
     void ConfigurePostProcess();
-    void DrawOptionsWindow();
 
     AppConfig     _config;
     OptionsConfig _options;
@@ -121,7 +152,6 @@ class Application
 
     Render::PostProcess _postProcess;
     Core::EventQueue    _events;
-    bool                _showOptionsWindow = false;
     bool                _initialized = false;
 
     int    _fps = 0;
