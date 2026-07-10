@@ -140,6 +140,24 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
                                                  std::string_view          name,
                                                  std::function<void(Ctx &)> fn)
 {
+    // Duplicate names make After()/Before() ambiguous: TopoSort's nameToIndex
+    // keeps only the first entry per name, so every edge targeting this name binds
+    // to that first registration and the later system becomes unreachable by
+    // dependency. Log loudly rather than corrupt the graph silently. The system
+    // still runs (in registration order) — nothing is dropped, matching the
+    // cycle-fallback philosophy above.
+    for (const typename Phase<Ctx>::Entry &existing : phase.entries)
+    {
+        if (existing.name == name)
+        {
+            Core::Log::Error("SystemRegistry: a system named \"{}\" is already registered in this "
+                             "phase; After()/Before() referring to \"{}\" will bind only to the "
+                             "first one. Give the systems distinct names.",
+                             name, name);
+            break;
+        }
+    }
+
     const std::size_t entryIndex = phase.entries.size();
     phase.entries.push_back({std::string(name), std::move(fn), {}, {}});
     phase.dirty = true;
