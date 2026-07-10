@@ -17,24 +17,24 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
-using Assisi::Runtime::CameraComponent;
-using Assisi::Runtime::MeshRendererComponent;
-using Assisi::Runtime::ParentComponent;
+using Assisi::Runtime::Camera;
+using Assisi::Runtime::MeshRenderer;
+using Assisi::Runtime::Parent;
 using Assisi::Runtime::SceneSerializer;
-using Assisi::Runtime::TransformComponent;
+using Assisi::Runtime::Transform;
 
 TEST_CASE("SceneSerializer: transform values survive a round-trip")
 {
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, TransformComponent{.position = {1.f, 2.f, 3.f},
+    REQUIRE(scene.Add(e, Transform{.position = {1.f, 2.f, 3.f},
                                             .rotation = glm::quat{1.f, 0.f, 0.f, 0.f},
                                             .scale    = {4.f, 5.f, 6.f}}) != nullptr);
 
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
 
-    const auto *t = loaded.Get<TransformComponent>(ECS::Entity{.index = 0, .generation = 0});
+    const auto *t = loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(t != nullptr);
     CHECK(t->position.x == doctest::Approx(1.f));
     CHECK(t->position.y == doctest::Approx(2.f));
@@ -45,7 +45,7 @@ TEST_CASE("SceneSerializer: transform values survive a round-trip")
 
 // Regression for the forward-reference bug: a child whose serial index precedes
 // its parent's must still resolve the parent on load. Creating the child before
-// the parent makes the child sort first (lower key), so its ParentComponent
+// the parent makes the child sort first (lower key), so its Parent
 // references an entity that a single-pass loader has not created yet.
 TEST_CASE("SceneSerializer: forward parent reference survives a round-trip")
 {
@@ -53,9 +53,9 @@ TEST_CASE("SceneSerializer: forward parent reference survives a round-trip")
     const ECS::Entity child  = scene.Create(); // {0,0} — sorts first
     const ECS::Entity parent = scene.Create(); // {1,0}
 
-    REQUIRE(scene.Add(parent, TransformComponent{}) != nullptr);
-    REQUIRE(scene.Add(child, TransformComponent{}) != nullptr);
-    REQUIRE(scene.Add(child, ParentComponent{.parent = parent}) != nullptr);
+    REQUIRE(scene.Add(parent, Transform{}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
 
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
@@ -65,7 +65,7 @@ TEST_CASE("SceneSerializer: forward parent reference survives a round-trip")
     const ECS::Entity loadedChild{.index = 0, .generation = 0};
     const ECS::Entity loadedParent{.index = 1, .generation = 0};
 
-    const auto *pc = loaded.Get<ParentComponent>(loadedChild);
+    const auto *pc = loaded.Get<Parent>(loadedChild);
     REQUIRE(pc != nullptr);
     CHECK(pc->parent != ECS::NullEntity); // the bug flattened this to null
     CHECK(pc->parent == loadedParent);
@@ -80,8 +80,8 @@ TEST_CASE("SceneSerializer: child-before-parent fixture loads the hierarchy")
         {"version", 1},
         {"entities",
          nlohmann::json::array(
-             {{{"components", {{"ParentComponent", {{"parent", 1}}}}}}, // [0] child -> parent 1
-              {{"components", {{"TransformComponent",
+             {{{"components", {{"Parent", {{"parent", 1}}}}}}, // [0] child -> parent 1
+              {{"components", {{"Transform",
                                {{"position", {0.f, 0.f, 0.f}},
                                 {"rotation", {1.f, 0.f, 0.f, 0.f}},
                                 {"scale", {1.f, 1.f, 1.f}}}}}}}})}}; // [1] parent
@@ -89,7 +89,7 @@ TEST_CASE("SceneSerializer: child-before-parent fixture loads the hierarchy")
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, fixture);
 
-    const auto *pc = loaded.Get<ParentComponent>(ECS::Entity{.index = 0, .generation = 0});
+    const auto *pc = loaded.Get<Parent>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(pc != nullptr);
     CHECK(pc->parent == ECS::Entity{.index = 1, .generation = 0});
 }
@@ -104,11 +104,11 @@ TEST_CASE("SceneSerializer: an empty scene round-trips to an empty scene")
     CHECK(loaded.AliveCount() == 0);
 }
 
-TEST_CASE("SceneSerializer: MeshRendererComponent asset paths round-trip; GPU handles don't")
+TEST_CASE("SceneSerializer: MeshRenderer asset paths round-trip; GPU handles don't")
 {
     ECS::Scene        scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, MeshRendererComponent{
+    REQUIRE(scene.Add(e, MeshRenderer{
                              .meshPath   = Core::AssetPath{std::string_view{"prim://cube"}},
                              .albedoPath = Core::AssetPath{std::string_view{"textures/checker.png"}},
                          }) != nullptr);
@@ -116,8 +116,8 @@ TEST_CASE("SceneSerializer: MeshRendererComponent asset paths round-trip; GPU ha
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
 
-    const MeshRendererComponent *mrc =
-        loaded.Get<MeshRendererComponent>(ECS::Entity{.index = 0, .generation = 0});
+    const MeshRenderer *mrc =
+        loaded.Get<MeshRenderer>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(mrc != nullptr); // presence survives
     CHECK(mrc->meshPath.View() == "prim://cube");
     CHECK(mrc->albedoPath.View() == "textures/checker.png");
@@ -131,15 +131,15 @@ TEST_CASE("SceneSerializer: multiple components on one entity all round-trip")
 {
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, TransformComponent{.position = {1.f, 2.f, 3.f}}) != nullptr);
-    REQUIRE(scene.Add(e, CameraComponent{.fovDegrees = 42.f, .isActive = true}) != nullptr);
+    REQUIRE(scene.Add(e, Transform{.position = {1.f, 2.f, 3.f}}) != nullptr);
+    REQUIRE(scene.Add(e, Camera{.fovDegrees = 42.f, .isActive = true}) != nullptr);
 
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
 
     const ECS::Entity le{.index = 0, .generation = 0};
-    const auto *t = loaded.Get<TransformComponent>(le);
-    const auto *c = loaded.Get<CameraComponent>(le);
+    const auto *t = loaded.Get<Transform>(le);
+    const auto *c = loaded.Get<Camera>(le);
     REQUIRE(t != nullptr);
     REQUIRE(c != nullptr);
     CHECK(t->position.x == doctest::Approx(1.f));
@@ -151,13 +151,13 @@ TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")
 {
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, TransformComponent{}) != nullptr);
+    REQUIRE(scene.Add(e, Transform{}) != nullptr);
 
     const nlohmann::json future = {{"version", 999}, {"entities", nlohmann::json::array()}};
     SceneSerializer::Load(scene, future); // rejected before the scene is cleared
 
     CHECK(scene.AliveCount() == 1);
-    CHECK(scene.Get<TransformComponent>(e) != nullptr);
+    CHECK(scene.Get<Transform>(e) != nullptr);
 }
 
 TEST_CASE("SceneSerializer: save/load through a file round-trips")
@@ -169,13 +169,13 @@ TEST_CASE("SceneSerializer: save/load through a file round-trips")
 
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, TransformComponent{.position = {8.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(e, Transform{.position = {8.f, 0.f, 0.f}}) != nullptr);
 
     REQUIRE(SceneSerializer::SaveToFile(scene, root / "rt.alvl"));
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::LoadFromFile(loaded, "rt.alvl"));
-    const auto *t = loaded.Get<TransformComponent>(ECS::Entity{.index = 0, .generation = 0});
+    const auto *t = loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(t != nullptr);
     CHECK(t->position.x == doctest::Approx(8.f));
 }
@@ -203,7 +203,7 @@ TEST_CASE("SceneSerializer: unknown component names are skipped, not fatal")
         {"version", 1},
         {"entities", nlohmann::json::array({{{"components",
                                               {{"NopeComponent", {{"x", 1}}},
-                                               {"TransformComponent",
+                                               {"Transform",
                                                 {{"position", {7.f, 0.f, 0.f}},
                                                  {"rotation", {1.f, 0.f, 0.f, 0.f}},
                                                  {"scale", {1.f, 1.f, 1.f}}}}}}}})}};
@@ -211,7 +211,7 @@ TEST_CASE("SceneSerializer: unknown component names are skipped, not fatal")
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, fixture);
 
-    const auto *t = loaded.Get<TransformComponent>(ECS::Entity{.index = 0, .generation = 0});
+    const auto *t = loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(t != nullptr);
     CHECK(t->position.x == doctest::Approx(7.f));
 }

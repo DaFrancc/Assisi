@@ -7,10 +7,10 @@
 /// All three types are trivially copyable (plain data, no pointers).
 ///
 /// Placement:
-///   - DirectionalLightComponent  — direction is stored directly on the component;
-///     no TransformComponent is needed (it has no world position).
-///   - PointLightComponent        — requires a TransformComponent for world position.
-///   - SpotLightComponent         — requires a TransformComponent for world position;
+///   - DirectionalLight  — direction is stored directly on the component;
+///     no Transform is needed (it has no world position).
+///   - PointLight        — requires a Transform for world position.
+///   - SpotLight         — requires a Transform for world position;
 ///     direction is stored on the component.
 
 #include <Assisi/Prelude.hpp>
@@ -23,7 +23,7 @@ namespace Assisi::Runtime
 ///
 /// No position, no falloff.  Multiple directional lights are supported.
 ACOMP()
-struct DirectionalLightComponent
+struct DirectionalLight
 {
     AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< World-space direction toward the light (unit vector).
     AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.
@@ -32,10 +32,10 @@ struct DirectionalLightComponent
 
 /// @brief Omnidirectional point light with distance falloff.
 ///
-/// Requires TransformComponent for world position.
+/// Requires Transform for world position.
 /// Uses windowed inverse-square attenuation: zero contribution beyond `radius`.
 ACOMP()
-struct PointLightComponent
+struct PointLight
 {
     AFIELD() glm::vec3 color{1.f, 1.f, 1.f}; ///< Linear-RGB colour.
     AFIELD() float     intensity = 1.f;
@@ -44,11 +44,11 @@ struct PointLightComponent
 
 /// @brief Cone-restricted point light (flashlight / stage spotlight).
 ///
-/// Requires TransformComponent for world position.
+/// Requires Transform for world position.
 /// Intensity falls off with distance (same attenuation as PointLight) and
 /// is smoothly masked outside the cone between innerAngle and outerAngle.
 ACOMP()
-struct SpotLightComponent
+struct SpotLight
 {
     AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< World-space direction (unit vector).
     AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.

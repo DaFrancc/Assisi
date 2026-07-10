@@ -35,14 +35,14 @@ void SandboxApp::SetupCamera()
     const glm::vec3 right = glm::normalize(glm::cross(forward, glm::vec3{0.f, 1.f, 0.f}));
     const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
 
-    Assisi::Runtime::TransformComponent camTransform;
+    Assisi::Runtime::Transform camTransform;
     camTransform.position = camPos;
     camTransform.rotation = glm::quat_cast(glm::mat3(right, up, -forward));
 
     _cameraEntity = _cameraScene.Create();
-    (void)_cameraScene.Add<Assisi::Runtime::TransformComponent>(_cameraEntity, camTransform);
-    (void)_cameraScene.Add<Assisi::Runtime::CameraComponent>(
-        _cameraEntity, Assisi::Runtime::CameraComponent{60.f, 0.1f, 200.f, true});
+    (void)_cameraScene.Add<Assisi::Runtime::Transform>(_cameraEntity, camTransform);
+    (void)_cameraScene.Add<Assisi::Runtime::Camera>(
+        _cameraEntity, Assisi::Runtime::Camera{60.f, 0.1f, 200.f, true});
 }
 
 // ---------------------------------------------------------------------------
@@ -118,7 +118,7 @@ void SandboxApp::SetupScene()
     nvrhi::IDevice *device = vulkanContext->GetDevice();
 
     const auto fbSize = GetWindow().GetFramebufferSize();
-    const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    const auto *cam = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
 
     // The engine's default scene-render path owns lighting + the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
@@ -141,7 +141,7 @@ void SandboxApp::SetupScene()
 
 void SandboxApp::OnResize(int width, int height)
 {
-    const auto *cam = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    const auto *cam = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
     if (cam == nullptr)
     {
         return;
@@ -167,8 +167,8 @@ void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
     // The camera lives in its own scene, so propagate it here; SceneRenderer
     // propagates the game scene it draws.
     Assisi::Runtime::PropagateTransforms(_cameraScene);
-    const auto *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
-    const auto *cam          = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    const auto *camTransform = _cameraScene.Get<Assisi::Runtime::Transform>(_cameraEntity);
+    const auto *cam          = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
 
     _sceneRenderer.Render(frame, *_scene, *camTransform, *cam);
 }

@@ -86,7 +86,7 @@ void SandboxApp::UpdateCamera(float dt)
         const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
 
         auto *camTransform =
-            _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
+            _cameraScene.Get<Assisi::Runtime::Transform>(_cameraEntity);
 
         glm::vec3 move{0.f};
         if (_actions.IsActionDown("MoveForward",  input)) { move += forward; }
@@ -107,7 +107,7 @@ void SandboxApp::UpdateCamera(float dt)
         const float scroll = input.ScrollDelta();
         if (scroll != 0.f)
         {
-            auto *cam       = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+            auto *cam       = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
             cam->fovDegrees = glm::clamp(cam->fovDegrees - (scroll * 5.f), 10.f, 120.f);
         }
     }
@@ -163,8 +163,8 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
     if (!_scene)
         return Assisi::ECS::NullEntity;
 
-    const auto     *camTransform = _cameraScene.Get<Assisi::Runtime::TransformComponent>(_cameraEntity);
-    const auto     *cam          = _cameraScene.Get<Assisi::Runtime::CameraComponent>(_cameraEntity);
+    const auto     *camTransform = _cameraScene.Get<Assisi::Runtime::Transform>(_cameraEntity);
+    const auto     *cam          = _cameraScene.Get<Assisi::Runtime::Camera>(_cameraEntity);
     const glm::mat4 view         = Assisi::Runtime::ViewMatrix(*camTransform);
     const auto      fbSize       = GetWindow().GetFramebufferSize();
     const float     w            = static_cast<float>(fbSize.Width);
@@ -184,7 +184,7 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
     float               closestT = std::numeric_limits<float>::max();
     Assisi::ECS::Entity result   = Assisi::ECS::NullEntity;
 
-    for (auto [e, tc] : _scene->Query<Assisi::Runtime::TransformComponent>())
+    for (auto [e, tc] : _scene->Query<Assisi::Runtime::Transform>())
     {
         float t = 0.f;
         if (RayOBBIntersect(rayOrigin, rayDir, tc.worldMatrix, t) && t < closestT)

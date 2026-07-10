@@ -4,7 +4,7 @@
 /// @file AssetCache.hpp
 /// @brief Path-keyed cache resolving AssetPaths to shared GPU meshes and textures.
 ///
-/// The game holds asset *paths* on its components (see MeshRendererComponent);
+/// The game holds asset *paths* on its components (see MeshRenderer);
 /// the AssetCache turns those paths into concrete GPU resources, deduplicating
 /// so entities that name the same asset share one upload. It owns every mesh and
 /// texture it hands out, so the pointers it returns stay valid until Clear().

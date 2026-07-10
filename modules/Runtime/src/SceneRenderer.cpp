@@ -23,7 +23,7 @@ float AspectRatio(int width, int height)
 } // namespace
 
 bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int width,
-                               int height, const CameraComponent &camera)
+                               int height, const Camera &camera)
 {
     _device = device;
 
@@ -54,7 +54,7 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
     return true;
 }
 
-void SceneRenderer::RebuildClusterGrid(int width, int height, const CameraComponent &camera,
+void SceneRenderer::RebuildClusterGrid(int width, int height, const Camera &camera,
                                        const glm::mat4 &projection)
 {
     if (_device == nullptr || !_meshPass.IsValid())
@@ -71,7 +71,7 @@ void SceneRenderer::RebuildClusterGrid(int width, int height, const CameraCompon
     _clusterProjection = projection;
 }
 
-void SceneRenderer::Resize(int width, int height, const CameraComponent &camera)
+void SceneRenderer::Resize(int width, int height, const Camera &camera)
 {
     RebuildClusterGrid(width, height, camera, ProjectionMatrix(camera, AspectRatio(width, height)));
 }
@@ -86,7 +86,7 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
 }
 
 void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
-                           const TransformComponent &cameraTransform, const CameraComponent &camera)
+                           const Transform &cameraTransform, const Camera &camera)
 {
     if (!_meshPass.IsValid())
     {

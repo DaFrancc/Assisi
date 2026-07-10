@@ -30,7 +30,7 @@ void PropagateTransforms(ECS::Scene &scene)
         return (static_cast<uint64_t>(e.generation) << 32) | e.index;
     };
 
-    auto localMatrix = [](const TransformComponent &t) -> glm::mat4
+    auto localMatrix = [](const Transform &t) -> glm::mat4
     {
         return glm::translate(glm::mat4(1.f), t.position) * glm::mat4_cast(t.rotation) *
                glm::scale(glm::mat4(1.f), t.scale);
@@ -44,11 +44,11 @@ void PropagateTransforms(ECS::Scene &scene)
         if (TransformCache::const_iterator it = cache.find(key); it != cache.end())
             return it->second;
 
-        const TransformComponent *t = scene.Get<TransformComponent>(e);
+        const Transform *t = scene.Get<Transform>(e);
         const glm::mat4 local = t ? localMatrix(*t) : glm::mat4(1.f);
 
         glm::mat4 world = local;
-        if (const ParentComponent *p = scene.Get<ParentComponent>(e); p && p->parent != ECS::NullEntity)
+        if (const Parent *p = scene.Get<Parent>(e); p && p->parent != ECS::NullEntity)
         {
             /* Cycle guard: a hand-edited .alvl can contain a parent loop
                (A->B->A). If this entity's parent is already on the chain we are
@@ -70,7 +70,7 @@ void PropagateTransforms(ECS::Scene &scene)
         return world;
     };
 
-    for (auto [entity, transform] : scene.Query<TransformComponent>())
+    for (auto [entity, transform] : scene.Query<Transform>())
         transform.worldMatrix = worldMatrix(entity);
 }
 

@@ -15,8 +15,8 @@
 ///   "entities": [
 ///     {
 ///       "components": {
-///         "TransformComponent": { "position": [0,0,0], "rotation": [1,0,0,0], "scale": [1,1,1] },
-///         "PointLightComponent": { "color": [1,1,1], "intensity": 100.0, "radius": 20.0 }
+///         "Transform": { "position": [0,0,0], "rotation": [1,0,0,0], "scale": [1,1,1] },
+///         "PointLight": { "color": [1,1,1], "intensity": 100.0, "radius": 20.0 }
 ///       }
 ///     }
 ///   ]
@@ -29,7 +29,7 @@
 /// ## Transient fields
 /// Fields marked AFIELD(transient) (e.g. GPU handles, raw pointers) are
 /// excluded from serialization.  Components where every field is transient
-/// (e.g. MeshRendererComponent) are saved as an empty object `{}` — their
+/// (e.g. MeshRenderer) are saved as an empty object `{}` — their
 /// presence on the entity is preserved but no data is restored.
 
 #include <cstdint>

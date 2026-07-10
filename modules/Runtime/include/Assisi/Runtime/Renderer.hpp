@@ -2,7 +2,7 @@
 #pragma once
 
 /// @file Renderer.hpp
-/// @brief ECS-driven draw pass: iterates TransformComponent + MeshRendererComponent.
+/// @brief ECS-driven draw pass: iterates Transform + MeshRenderer.
 
 #include <cstdint>
 
@@ -15,10 +15,10 @@
 namespace Assisi::Runtime
 {
 
-/// @brief Draws all entities in `scene` that have both a TransformComponent and a
-///        MeshRendererComponent, using the shared `meshPass` pipeline.
+/// @brief Draws all entities in `scene` that have both a Transform and a
+///        MeshRenderer, using the shared `meshPass` pipeline.
 ///
-/// Entities whose MeshRendererComponent::mesh is null are skipped silently.
+/// Entities whose MeshRenderer::mesh is null are skipped silently.
 ///
 /// @param scene       ECS scene to query.
 /// @param view        View matrix (e.g. from Runtime::ViewMatrix).

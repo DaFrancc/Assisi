@@ -9,7 +9,7 @@
 /// is not required. These particular components stay trivially copyable because
 /// they are plain data (an AssetPath is a fixed inline buffer, not a heap
 /// string), which keeps them cheap, but that is a property, not a constraint.
-/// Use TransformComponent for position/rotation/scale and MeshRendererComponent
+/// Use Transform for position/rotation/scale and MeshRenderer
 /// to associate a mesh and texture with an entity.
 
 #include <Assisi/Prelude.hpp>
@@ -27,7 +27,7 @@ namespace Assisi::Runtime
 /// rendering or any system that needs actual world-space coordinates.
 /// worldMatrix is not serialized — it is recomputed every frame.
 ACOMP()
-struct TransformComponent
+struct Transform
 {
     AFIELD() glm::vec3 position{0.f, 0.f, 0.f};
     AFIELD() glm::quat rotation{1.f, 0.f, 0.f, 0.f};
@@ -51,7 +51,7 @@ struct TransformComponent
 /// Normal/metallic/roughness maps aren't wired up yet — see
 /// docs/nvrhi-migration-todo.md.
 ACOMP()
-struct MeshRendererComponent
+struct MeshRenderer
 {
     AFIELD() Assisi::Core::AssetPath meshPath;
     AFIELD() Assisi::Core::AssetPath albedoPath;
@@ -62,14 +62,14 @@ struct MeshRendererComponent
 
 /// @brief Projection and activation parameters for a camera entity.
 ///
-/// Pair with TransformComponent to form a complete camera: the TransformComponent
+/// Pair with Transform to form a complete camera: the Transform
 /// provides world-space position and orientation; this component stores projection
 /// settings and identifies which camera is active.
 ///
 /// Call Runtime::ViewMatrix(transform) and Runtime::ProjectionMatrix(camera, aspect)
 /// to obtain the matrices needed for rendering.
 ACOMP()
-struct CameraComponent
+struct Camera
 {
     AFIELD() float fovDegrees = 60.f;  ///< Vertical field of view in degrees.
     AFIELD() float nearZ      = 0.1f;  ///< Near clip plane distance.

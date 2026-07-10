@@ -176,8 +176,8 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
 {
     if (anyFieldEdited)
     {
-        const auto *tc   = _scene->Get<Assisi::Runtime::TransformComponent>(_selectedEntity);
-        const auto *rbc  = _scene->Get<Assisi::Physics::RigidBodyComponent>(_selectedEntity);
+        const auto *tc   = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
+        const auto *rbc  = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity);
         const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
         if (tc && rbc)
             _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
@@ -199,7 +199,7 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
     {
         const auto *rbc =
             (_selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity))
-                ? _scene->Get<Assisi::Physics::RigidBodyComponent>(_selectedEntity)
+                ? _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity)
                 : nullptr;
 
         if (rbc)
@@ -216,7 +216,7 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
                                                           : Assisi::Physics::BodyMotion::Dynamic);
                 if (!isStatic)
                 {
-                    const auto *tc = _scene->Get<Assisi::Runtime::TransformComponent>(_selectedEntity);
+                    const auto *tc = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
                     if (tc)
                         _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
                 }

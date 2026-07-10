@@ -99,7 +99,7 @@ void SandboxApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))
         return;
-    Assisi::Runtime::MeshRendererComponent *mrc = _scene->Get<Assisi::Runtime::MeshRendererComponent>(entity);
+    Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     if (mrc == nullptr)
         return;
     mrc->mesh          = _assetCache.ResolveMesh(mrc->meshPath);

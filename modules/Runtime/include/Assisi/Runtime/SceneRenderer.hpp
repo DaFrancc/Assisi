@@ -46,11 +46,11 @@ class SceneRenderer
     /// @param camera           Projection params (near/far/FOV) of the active camera.
     /// @return false if the lighting compute shaders or the mesh pipeline failed to build.
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int width,
-                                  int height, const CameraComponent &camera);
+                                  int height, const Camera &camera);
 
     /// @brief Rebuild the cluster froxel grid for a new viewport/projection.
     /// Call from the application's resize hook. No-op until Initialize() succeeds.
-    void Resize(int width, int height, const CameraComponent &camera);
+    void Resize(int width, int height, const Camera &camera);
 
     /// @brief Rebuild just the graphics pipeline after the render-target format
     /// changes (e.g. an MSAA toggle); binding sets and shaders are reused.
@@ -61,8 +61,8 @@ class SceneRenderer
     /// scene's transforms, refreshes lighting, rebuilds the froxel grid if the
     /// projection changed since last frame, and draws every mesh entity. No-op
     /// until Initialize() succeeds.
-    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const TransformComponent &cameraTransform,
-                const CameraComponent &camera);
+    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
+                const Camera &camera);
 
     [[nodiscard]] bool IsValid() const { return _meshPass.IsValid(); }
 
@@ -77,7 +77,7 @@ class SceneRenderer
 
   private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
-    void RebuildClusterGrid(int width, int height, const CameraComponent &camera, const glm::mat4 &projection);
+    void RebuildClusterGrid(int width, int height, const Camera &camera, const glm::mat4 &projection);
 
     nvrhi::IDevice    *_device = nullptr;
     LightingSystem     _lighting;

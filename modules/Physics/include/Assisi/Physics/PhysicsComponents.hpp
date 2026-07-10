@@ -16,7 +16,7 @@ namespace Assisi::Physics
 ///
 /// Trivially copyable — safe to store in SparseSet<T>.
 /// The actual body is owned by the PhysicsWorld; this is just a handle.
-struct RigidBodyComponent
+struct RigidBody
 {
     JPH::BodyID bodyId;
 };
@@ -24,7 +24,7 @@ struct RigidBodyComponent
 /// @brief Serializable descriptor for a box-shaped rigid body.
 ///
 /// Stored in the level file; consumed at load time to create a
-/// RigidBodyComponent and the underlying Jolt body.  Not used at runtime.
+/// RigidBody and the underlying Jolt body.  Not used at runtime.
 ACOMP()
 struct RigidBodyDescriptor
 {

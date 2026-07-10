@@ -183,7 +183,7 @@ PhysicsWorld::~PhysicsWorld()
     ReleaseJoltGlobals();
 }
 
-RigidBodyComponent PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, glm::vec3 halfExtents,
+RigidBody PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, glm::vec3 halfExtents,
                                         BodyMotion motion)
 {
     const JPH::EMotionType joltMotion =
@@ -207,14 +207,14 @@ RigidBodyComponent PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, 
         Assisi::Core::Log::Error(
             "PhysicsWorld: failed to create body (body limit of {} reached?); entity will not simulate.",
             Impl::kMaxBodies);
-        return RigidBodyComponent{bodyId};
+        return RigidBody{bodyId};
     }
 
     _impl->allBodyIds.push_back(bodyId);
     if (motion == BodyMotion::Dynamic)
         _impl->dynamicBodyIds.push_back(bodyId);
 
-    return RigidBodyComponent{bodyId};
+    return RigidBody{bodyId};
 }
 
 void PhysicsWorld::Clear()
@@ -241,7 +241,7 @@ void PhysicsWorld::SyncTransforms(Assisi::ECS::Scene &scene)
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
     for (auto [entity, transform, rb] :
-         scene.Query<Assisi::Runtime::TransformComponent, RigidBodyComponent>())
+         scene.Query<Assisi::Runtime::Transform, RigidBody>())
     {
         if (!bodies.IsAdded(rb.bodyId) || bodies.GetMotionType(rb.bodyId) == JPH::EMotionType::Static)
         {
@@ -256,7 +256,7 @@ void PhysicsWorld::SyncTransforms(Assisi::ECS::Scene &scene)
     }
 }
 
-std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBodyComponent &body) const
+std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBody &body) const
 {
     const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     const JPH::RVec3 pos = bodies.GetPosition(body.bodyId);
@@ -265,7 +265,7 @@ std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBodyCo
             glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ())};
 }
 
-void PhysicsWorld::SetBodyTransform(const RigidBodyComponent &body, glm::vec3 position, glm::quat rotation)
+void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
@@ -283,7 +283,7 @@ void PhysicsWorld::SetBodyTransform(const RigidBodyComponent &body, glm::vec3 po
     }
 }
 
-void PhysicsWorld::ReshapeBox(const RigidBodyComponent &body, glm::vec3 halfExtents)
+void PhysicsWorld::ReshapeBox(const RigidBody &body, glm::vec3 halfExtents)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     if (!bodies.IsAdded(body.bodyId))
@@ -293,7 +293,7 @@ void PhysicsWorld::ReshapeBox(const RigidBodyComponent &body, glm::vec3 halfExte
     bodies.SetShape(body.bodyId, newShape, /*inUpdateMassProperties=*/true, JPH::EActivation::DontActivate);
 }
 
-void PhysicsWorld::SetBodyCCD(const RigidBodyComponent &body, bool enable)
+void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     if (!bodies.IsAdded(body.bodyId))
@@ -308,7 +308,7 @@ void PhysicsWorld::SetBodyCCD(const RigidBodyComponent &body, bool enable)
     bodies.SetMotionQuality(body.bodyId, quality);
 }
 
-void PhysicsWorld::SetBodyMotionType(const RigidBodyComponent &body, BodyMotion motion)
+void PhysicsWorld::SetBodyMotionType(const RigidBody &body, BodyMotion motion)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 

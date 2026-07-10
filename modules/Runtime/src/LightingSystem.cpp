@@ -30,7 +30,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     _spotLights.clear();
     _dirLights.clear();
 
-    for (auto [entity, transform, light] : scene.Query<TransformComponent, PointLightComponent>())
+    for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
     {
         _pointLights.push_back({
             .positionRadius = {transform.position, light.radius},
@@ -38,7 +38,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
         });
     }
 
-    for (auto [entity, transform, light] : scene.Query<TransformComponent, SpotLightComponent>())
+    for (auto [entity, transform, light] : scene.Query<Transform, SpotLight>())
     {
         const float innerCos = glm::cos(glm::radians(light.innerAngle));
         const float outerCos = glm::cos(glm::radians(light.outerAngle));
@@ -50,7 +50,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
         });
     }
 
-    for (auto [entity, light] : scene.Query<DirectionalLightComponent>())
+    for (auto [entity, light] : scene.Query<DirectionalLight>())
     {
         _dirLights.push_back({
             .directionIntensity = {glm::normalize(light.direction), light.intensity},

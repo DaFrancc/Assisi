@@ -10,19 +10,19 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 
 using namespace Assisi;
-using Assisi::Runtime::ParentComponent;
+using Assisi::Runtime::Parent;
 using Assisi::Runtime::PropagateTransforms;
-using Assisi::Runtime::TransformComponent;
+using Assisi::Runtime::Transform;
 
 TEST_CASE("PropagateTransforms: a root's world matrix equals its local translation")
 {
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, TransformComponent{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(e, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
 
     PropagateTransforms(scene);
 
-    const auto *t = scene.Get<TransformComponent>(e);
+    const auto *t = scene.Get<Transform>(e);
     REQUIRE(t != nullptr);
     CHECK(t->worldMatrix[3][0] == doctest::Approx(10.f)); // translation lives in column 3
     CHECK(t->worldMatrix[3][1] == doctest::Approx(0.f));
@@ -33,13 +33,13 @@ TEST_CASE("PropagateTransforms: a child composes its parent's world transform")
     ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
     const ECS::Entity child  = scene.Create();
-    REQUIRE(scene.Add(parent, TransformComponent{.position = {10.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(child, TransformComponent{.position = {1.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(child, ParentComponent{.parent = parent}) != nullptr);
+    REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
 
     PropagateTransforms(scene);
 
-    const auto *ct = scene.Get<TransformComponent>(child);
+    const auto *ct = scene.Get<Transform>(child);
     REQUIRE(ct != nullptr);
     CHECK(ct->worldMatrix[3][0] == doctest::Approx(11.f)); // 10 (parent) + 1 (child)
     CHECK(ct->worldMatrix[3][1] == doctest::Approx(0.f));
@@ -51,15 +51,15 @@ TEST_CASE("PropagateTransforms: a three-deep chain composes transitively")
     const ECS::Entity gp    = scene.Create();
     const ECS::Entity par   = scene.Create();
     const ECS::Entity child = scene.Create();
-    REQUIRE(scene.Add(gp, TransformComponent{.position = {100.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(par, TransformComponent{.position = {10.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(child, TransformComponent{.position = {1.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(par, ParentComponent{.parent = gp}) != nullptr);
-    REQUIRE(scene.Add(child, ParentComponent{.parent = par}) != nullptr);
+    REQUIRE(scene.Add(gp, Transform{.position = {100.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(par, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(par, Parent{.parent = gp}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = par}) != nullptr);
 
     PropagateTransforms(scene);
 
-    CHECK(scene.Get<TransformComponent>(child)->worldMatrix[3][0] == doctest::Approx(111.f));
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(111.f));
 }
 
 TEST_CASE("PropagateTransforms: siblings sharing a parent each compose correctly")
@@ -68,42 +68,42 @@ TEST_CASE("PropagateTransforms: siblings sharing a parent each compose correctly
     const ECS::Entity parent = scene.Create();
     const ECS::Entity c1     = scene.Create();
     const ECS::Entity c2     = scene.Create();
-    REQUIRE(scene.Add(parent, TransformComponent{.position = {10.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(c1, TransformComponent{.position = {1.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(c2, TransformComponent{.position = {2.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(c1, ParentComponent{.parent = parent}) != nullptr);
-    REQUIRE(scene.Add(c2, ParentComponent{.parent = parent}) != nullptr);
+    REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(c1, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(c2, Transform{.position = {2.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(c1, Parent{.parent = parent}) != nullptr);
+    REQUIRE(scene.Add(c2, Parent{.parent = parent}) != nullptr);
 
     PropagateTransforms(scene);
 
-    CHECK(scene.Get<TransformComponent>(c1)->worldMatrix[3][0] == doctest::Approx(11.f));
-    CHECK(scene.Get<TransformComponent>(c2)->worldMatrix[3][0] == doctest::Approx(12.f));
+    CHECK(scene.Get<Transform>(c1)->worldMatrix[3][0] == doctest::Approx(11.f));
+    CHECK(scene.Get<Transform>(c2)->worldMatrix[3][0] == doctest::Approx(12.f));
 }
 
-TEST_CASE("PropagateTransforms: a parent without a TransformComponent acts as identity")
+TEST_CASE("PropagateTransforms: a parent without a Transform acts as identity")
 {
     ECS::Scene scene;
-    const ECS::Entity parent = scene.Create(); // no TransformComponent
+    const ECS::Entity parent = scene.Create(); // no Transform
     const ECS::Entity child  = scene.Create();
-    REQUIRE(scene.Add(child, TransformComponent{.position = {3.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(child, ParentComponent{.parent = parent}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {3.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
 
     PropagateTransforms(scene);
 
     // Parent contributes an identity transform, so the child keeps its local.
-    CHECK(scene.Get<TransformComponent>(child)->worldMatrix[3][0] == doctest::Approx(3.f));
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(3.f));
 }
 
 TEST_CASE("PropagateTransforms: an explicit NullEntity parent is treated as a root")
 {
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, TransformComponent{.position = {4.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(e, ParentComponent{.parent = ECS::NullEntity}) != nullptr);
+    REQUIRE(scene.Add(e, Transform{.position = {4.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(e, Parent{.parent = ECS::NullEntity}) != nullptr);
 
     PropagateTransforms(scene);
 
-    CHECK(scene.Get<TransformComponent>(e)->worldMatrix[3][0] == doctest::Approx(4.f));
+    CHECK(scene.Get<Transform>(e)->worldMatrix[3][0] == doctest::Approx(4.f));
 }
 
 // Deep nesting: a long parent chain must compose transitively without losing a
@@ -119,9 +119,9 @@ TEST_CASE("PropagateTransforms: a deep chain composes correctly at every level")
     for (int i = 0; i < kDepth; ++i)
     {
         const ECS::Entity e = scene.Create();
-        REQUIRE(scene.Add(e, TransformComponent{.position = {1.f, 0.f, 0.f}}) != nullptr);
+        REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
         if (i > 0)
-            REQUIRE(scene.Add(e, ParentComponent{.parent = chain[i - 1]}) != nullptr);
+            REQUIRE(scene.Add(e, Parent{.parent = chain[i - 1]}) != nullptr);
         chain.push_back(e);
     }
 
@@ -129,7 +129,7 @@ TEST_CASE("PropagateTransforms: a deep chain composes correctly at every level")
 
     // Each link adds 1 on x, so node i sits at cumulative world x = i + 1.
     for (int i = 0; i < kDepth; ++i)
-        CHECK(scene.Get<TransformComponent>(chain[i])->worldMatrix[3][0] ==
+        CHECK(scene.Get<Transform>(chain[i])->worldMatrix[3][0] ==
               doctest::Approx(static_cast<float>(i + 1)));
 }
 
@@ -145,23 +145,23 @@ TEST_CASE("PropagateTransforms: a shared ancestor is memoised correctly across b
     const ECS::Entity b  = scene.Create(); // branch B root
     const ECS::Entity la = scene.Create(); // leaf under A
     const ECS::Entity lb = scene.Create(); // leaf under B
-    REQUIRE(scene.Add(gp, TransformComponent{.position = {100.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(a, TransformComponent{.position = {10.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(b, TransformComponent{.position = {20.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(la, TransformComponent{.position = {1.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(lb, TransformComponent{.position = {2.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(a, ParentComponent{.parent = gp}) != nullptr);
-    REQUIRE(scene.Add(b, ParentComponent{.parent = gp}) != nullptr);
-    REQUIRE(scene.Add(la, ParentComponent{.parent = a}) != nullptr);
-    REQUIRE(scene.Add(lb, ParentComponent{.parent = b}) != nullptr);
+    REQUIRE(scene.Add(gp, Transform{.position = {100.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(a, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(b, Transform{.position = {20.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(la, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(lb, Transform{.position = {2.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(a, Parent{.parent = gp}) != nullptr);
+    REQUIRE(scene.Add(b, Parent{.parent = gp}) != nullptr);
+    REQUIRE(scene.Add(la, Parent{.parent = a}) != nullptr);
+    REQUIRE(scene.Add(lb, Parent{.parent = b}) != nullptr);
 
     PropagateTransforms(scene);
 
-    CHECK(scene.Get<TransformComponent>(la)->worldMatrix[3][0] == doctest::Approx(111.f)); // 100+10+1
-    CHECK(scene.Get<TransformComponent>(lb)->worldMatrix[3][0] == doctest::Approx(122.f)); // 100+20+2
+    CHECK(scene.Get<Transform>(la)->worldMatrix[3][0] == doctest::Approx(111.f)); // 100+10+1
+    CHECK(scene.Get<Transform>(lb)->worldMatrix[3][0] == doctest::Approx(122.f)); // 100+20+2
     // The grandparent's own visit reads back the same value its descendants
     // composed against, rather than recomputing a divergent one.
-    CHECK(scene.Get<TransformComponent>(gp)->worldMatrix[3][0] == doctest::Approx(100.f));
+    CHECK(scene.Get<Transform>(gp)->worldMatrix[3][0] == doctest::Approx(100.f));
 }
 
 // Regression for the missing cycle guard: a parent loop must not recurse until
@@ -171,15 +171,15 @@ TEST_CASE("PropagateTransforms: a parent cycle does not overflow the stack")
     ECS::Scene scene;
     const ECS::Entity a = scene.Create();
     const ECS::Entity b = scene.Create();
-    REQUIRE(scene.Add(a, TransformComponent{.position = {1.f, 0.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(b, TransformComponent{.position = {0.f, 1.f, 0.f}}) != nullptr);
-    REQUIRE(scene.Add(a, ParentComponent{.parent = b}) != nullptr); // A -> B
-    REQUIRE(scene.Add(b, ParentComponent{.parent = a}) != nullptr); // B -> A (cycle)
+    REQUIRE(scene.Add(a, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(b, Transform{.position = {0.f, 1.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(a, Parent{.parent = b}) != nullptr); // A -> B
+    REQUIRE(scene.Add(b, Parent{.parent = a}) != nullptr); // B -> A (cycle)
 
     PropagateTransforms(scene); // must return rather than recurse to death
 
-    const auto *at = scene.Get<TransformComponent>(a);
-    const auto *bt = scene.Get<TransformComponent>(b);
+    const auto *at = scene.Get<Transform>(a);
+    const auto *bt = scene.Get<Transform>(b);
     REQUIRE(at != nullptr);
     REQUIRE(bt != nullptr);
     CHECK(std::isfinite(at->worldMatrix[3][0]));

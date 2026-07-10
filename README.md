@@ -133,8 +133,8 @@ Key types: `Scene`, `SceneRegistry`, `Query` (with `Without<>` exclusion filters
 
 ### Runtime
 The Runtime module provides ready-to-use components and systems common to most games:
-`TransformComponent` (with hierarchy via `ParentComponent` and `PropagateTransforms`),
-`MeshRendererComponent`, `CameraComponent`, and point/spot/directional light components.
+`Transform` (with hierarchy via `Parent` and `PropagateTransforms`),
+`MeshRenderer`, `Camera`, and point/spot/directional light components.
 It ships the default render path — `SceneRenderer`, which ties the camera, the clustered `LightingSystem`,
 and mesh drawing together — plus `SceneSerializer` (save/load `.alvl` level files, driven by reflection)
 and `DestroyTag` / `DestroyMarked` (deferred end-of-frame entity destruction).
@@ -143,7 +143,7 @@ These building blocks compose into your own game logic without modification.
 ### Physics
 The Physics module wraps [Jolt Physics](https://github.com/jrouwe/JoltPhysics) to provide rigid body simulation.
 It exposes `PhysicsWorld` (manages the simulation, body creation, stepping, and gravity),
-`RigidBodyComponent` (holds a live Jolt `BodyID`, not serialized),
+`RigidBody` (holds a live Jolt `BodyID`, not serialized),
 and `RigidBodyDescriptor` (a serializable description of a body's shape and static/dynamic flags).
 Call `PhysicsWorld::Clear()` before loading a new level to destroy all tracked bodies.
 

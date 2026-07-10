@@ -124,13 +124,13 @@ void SandboxApp::LoadLevel(const std::string &name)
     _assetCache.Clear();
     _sceneRenderer.InvalidateAssetBindings();
 
-    for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRendererComponent>())
+    for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
     {
         mrc.mesh          = _assetCache.ResolveMesh(mrc.meshPath);
         mrc.albedoTexture = _assetCache.ResolveTexture(mrc.albedoPath);
     }
 
-    for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::TransformComponent,
+    for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::Transform,
                                              Assisi::Physics::RigidBodyDescriptor>())
     {
         const auto motion = desc.isStatic ? Assisi::Physics::BodyMotion::Static
@@ -138,6 +138,6 @@ void SandboxApp::LoadLevel(const std::string &name)
         const auto rbc    = _physics.AddBox(tc.position, tc.rotation, desc.halfExtents, motion);
         if (desc.enableCCD)
             _physics.SetBodyCCD(rbc, true);
-        (void)_scene->Add<Assisi::Physics::RigidBodyComponent>(e, rbc);
+        (void)_scene->Add<Assisi::Physics::RigidBody>(e, rbc);
     }
 }

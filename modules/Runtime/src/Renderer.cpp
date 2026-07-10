@@ -12,7 +12,7 @@ void DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm::mat4
 {
     const glm::mat4 viewProjection = projection * view;
 
-    for (auto [entity, transform, meshRenderer] : scene.Query<TransformComponent, MeshRendererComponent>())
+    for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
     {
         if (meshRenderer.mesh == nullptr)
         {

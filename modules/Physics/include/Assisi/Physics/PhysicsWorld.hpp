@@ -45,41 +45,41 @@ class PhysicsWorld
     /// @param rotation     Initial orientation as a quaternion.
     /// @param halfExtents  Half-widths along each axis (box goes ±halfExtents).
     /// @param motion       Static bodies never move; dynamic bodies fall under gravity.
-    RigidBodyComponent AddBox(glm::vec3 position, glm::quat rotation, glm::vec3 halfExtents, BodyMotion motion);
+    RigidBody AddBox(glm::vec3 position, glm::quat rotation, glm::vec3 halfExtents, BodyMotion motion);
 
     /// @brief Advances the simulation by `deltaTime` seconds.
     void Update(float deltaTime);
 
     /// @brief Writes Jolt body positions/rotations back into TransformComponents.
     ///
-    /// Only entities that have both a TransformComponent and a RigidBodyComponent
+    /// Only entities that have both a Transform and a RigidBody
     /// are updated; dynamic bodies only (static bodies never move).
     void SyncTransforms(Assisi::ECS::Scene &scene);
 
     /// @brief Returns the current world-space position and rotation of a body.
-    std::pair<glm::vec3, glm::quat> GetBodyTransform(const RigidBodyComponent &body) const;
+    std::pair<glm::vec3, glm::quat> GetBodyTransform(const RigidBody &body) const;
 
     /// @brief Teleports a body to the given position and rotation, and reactivates it.
-    void SetBodyTransform(const RigidBodyComponent &body, glm::vec3 position, glm::quat rotation);
+    void SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation);
 
     /// @brief Replaces the collision shape of an existing box body with new half-extents.
     ///
     /// Use this to apply inspector edits to `halfExtents` at runtime without
     /// recreating the body.
-    void ReshapeBox(const RigidBodyComponent &body, glm::vec3 halfExtents);
+    void ReshapeBox(const RigidBody &body, glm::vec3 halfExtents);
 
     /// @brief Enables or disables continuous collision detection (CCD) on a body.
     ///
     /// Only meaningful for dynamic bodies; no-op on static bodies.
     /// Uses Jolt's LinearCast motion quality for CCD, Discrete otherwise.
-    void SetBodyCCD(const RigidBodyComponent &body, bool enable);
+    void SetBodyCCD(const RigidBody &body, bool enable);
 
     /// @brief Changes the motion type of an existing body at runtime.
     ///
     /// Useful for temporarily freezing a dynamic body (e.g. while editing in an
     /// inspector) and restoring it afterwards.  Switching to Dynamic also activates
     /// the body so gravity takes effect immediately.
-    void SetBodyMotionType(const RigidBodyComponent &body, BodyMotion motion);
+    void SetBodyMotionType(const RigidBody &body, BodyMotion motion);
 
     /// @brief Removes and destroys all bodies, resetting the world to an empty state.
     void Clear();
