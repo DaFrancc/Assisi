@@ -96,11 +96,17 @@ Checkboxes so this can be burned down like the previous two docs.
   so the guard reads `entity.index == InvalidEntityIndex`. Regression test
   "adding the null/sentinel index is rejected, not UB" in `TestSparseSet.cpp`.
 
-- [ ] **Duplicate system names silently corrupt the dependency graph.**
+- [x] **Duplicate system names silently corrupt the dependency graph.**
   `TopoSort` builds `nameToIndex` with `emplace`
   (`SystemRegistry.cpp:33`), so a second system registered under the same
   name is unreachable by `After`/`Before` — all edges bind to the first. No
   error, no log. Fix: reject duplicate names loudly at `Register` time.
+  *Done (2026-07-10):* `Add` now scans the phase's existing entries for a
+  matching name and logs a loud `Error` naming the collision when it finds one.
+  The system is still registered and runs (in registration order) rather than
+  being dropped — matching this file's own cycle-fallback philosophy that
+  silently running the wrong set is worse than a defined-but-arbitrary order.
+  The log tells the author to rename.
 
 - [x] **`EventQueue::Read` spans have an undocumented invalidation
   contract.** The span points into the `TypedQueue`'s vector
@@ -182,17 +188,26 @@ Checkboxes so this can be burned down like the previous two docs.
 
 ## Build / hygiene (this is where the rot is)
 
-- [ ] **Unpinned dependencies.** `stb` at `master`, `implot` at `master`,
+- [x] **Unpinned dependencies.** `stb` at `master`, `implot` at `master`,
   ImGui at the moving `docking` branch (`CMakeLists.txt:190-296`). NVRHI is
   carefully pinned to a commit hash with an explanatory comment — the
   standard exists and three deps ignore it. A fresh clone next month builds
   different code. Fix: pin all three to commit hashes.
+  *Done (2026-07-10):* pinned all three to the exact commits the current build
+  already resolved (so nothing rebuilds), each with a why-comment mirroring
+  NVRHI's — stb/implot have no usable tagged release, ImGui's docking line is
+  untagged. Same `GIT_TAG <sha>` + `GIT_SHALLOW TRUE` pattern NVRHI proved
+  works against GitHub.
 
 - [ ] **Assimp is fetched, compiled (the single slowest dep), and linked —
   and zero code uses it.** There is no mesh-file loader ("no mesh-file
   loader exists yet" — `AssetCache.cpp:45`). Every configure of every preset
   pays minutes for a library with no call sites. Delete it until the loader
   exists — re-adding it later is one FetchContent block.
+  *Deferred (2026-07-10, by decision):* kept in place — the mesh-file loader is
+  near-term planned work and the maintainer would rather eat the configure cost
+  now than churn the dep in and back out. Left as a knowing trade, not an
+  oversight.
 
 - [x] **README is lying.** The Render section says "currently OpenGL, in the
   future it may support Vulkan or DirectX" and the Debug section says "GLFW
@@ -222,9 +237,12 @@ Checkboxes so this can be burned down like the previous two docs.
   conflicts get baffling. Consider a `#ifdef` guard trick (e.g. error if
   included before a known .cpp-only marker) or accept and document the risk.
 
-- [ ] **Doc nit:** `AssetPath.hpp:14` says "128-byte value" —
+- [x] **Doc nit:** `AssetPath.hpp:14` says "128-byte value" —
   `TrivialString<127>` is 127 data + 2 length = 130 bytes with padding.
   Tiny, but this codebase trades on the accuracy of its comments.
+  *Done (2026-07-10):* comment now reads "127 characters; the inline storage is
+  130 bytes with the uint16 length prefix and padding" — separating the
+  character capacity from the byte footprint.
 
 ## What's good (don't regress it)
 
