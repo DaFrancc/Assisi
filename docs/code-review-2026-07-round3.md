@@ -81,7 +81,7 @@ Checkboxes so this can be burned down like the previous two docs.
   any partial failure so `BeginFrame`'s existing guard catches it. Correct
   the `Resize()` comment either way.
 
-- [ ] **`SparseSet::Add(NullEntity)` is UB.** `entity.index + 1` with
+- [x] **`SparseSet::Add(NullEntity)` is UB.** `entity.index + 1` with
   `index == UINT32_MAX` wraps to 0, so `_sparse.resize(0, Invalid)`
   *shrinks* the array and the subsequent `_sparse[entity.index]` write is
   wildly out of bounds (`SparseSet.hpp:55-58`). `Scene::Add` is protected by
@@ -90,6 +90,11 @@ Checkboxes so this can be burned down like the previous two docs.
   defense has a hole exactly at the sentinel value. Fix: reject (or assert
   on) `index == UINT32_MAX` in `Add`. Land with a unit test, same as the
   previous ECS fixes.
+  *Done (2026-07-10):* `Add` returns nullptr for the sentinel index up front.
+  The magic `UINT32_MAX` was extracted into a named `InvalidEntityIndex`
+  constant in `Entity.hpp` (also now used by `NullEntity` and `operator bool`),
+  so the guard reads `entity.index == InvalidEntityIndex`. Regression test
+  "adding the null/sentinel index is rejected, not UB" in `TestSparseSet.cpp`.
 
 - [ ] **Duplicate system names silently corrupt the dependency graph.**
   `TopoSort` builds `nameToIndex` with `emplace`
@@ -97,19 +102,27 @@ Checkboxes so this can be burned down like the previous two docs.
   name is unreachable by `After`/`Before` — all edges bind to the first. No
   error, no log. Fix: reject duplicate names loudly at `Register` time.
 
-- [ ] **`EventQueue::Read` spans have an undocumented invalidation
+- [x] **`EventQueue::Read` spans have an undocumented invalidation
   contract.** The span points into the `TypedQueue`'s vector
   (`EventQueue.hpp:88-94`); a consumer that pushes an event of the *same
   type* while iterating reallocates it — silent UB. `Scene::Query` got a
   warning box for exactly this class of bug; `EventQueue` didn't. Fix:
   document the contract on `Read` (and consider a debug assert via a
   "reading" flag).
+  *Done (2026-07-10):* added a `@warning` on `Read` describing the
+  reallocation-on-same-type-push hazard and how to avoid it (copy the span or
+  defer the pushes), mirroring the `Scene::Query` note. Doc-only; the debug
+  "reading"-flag assert is left as an optional follow-up.
 
-- [ ] **`SystemPhase::_Count` is a reserved identifier.** Underscore +
+- [x] **`SystemPhase::_Count` is a reserved identifier.** Underscore +
   uppercase is reserved in *all* scopes (`SystemRegistry.hpp:73`). Works on
   MSVC/GCC/Clang today; still squatting on reserved names. Rename (`Count`,
   `kCount`). `SpotLightGPU::_pad` is legal (lowercase, member scope) but
   worth renaming for consistency while there.
+  *Done (2026-07-10):* renamed to `SystemPhase::Count` (the only other
+  reference was `kGamePhaseCount`'s `static_cast`). `SpotLightGPU::_pad` left
+  as-is — it's legal and renaming it would touch the GPU-struct layout comments
+  for no correctness gain.
 
 ## Architecture
 
