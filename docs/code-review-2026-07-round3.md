@@ -183,13 +183,21 @@ Checkboxes so this can be burned down like the previous two docs.
   real level loads. First thing an outside eye will see on screen; belongs
   on the path to 9.
 
-- [ ] **`PropagateTransforms` allocates a fresh `unordered_map`,
+- [x] **`PropagateTransforms` allocates a fresh `unordered_map`,
   `unordered_set`, and `std::function` recursion every call**
   (`Hierarchy.cpp:16-30`) — and it runs at least twice per frame (game scene
   + camera scene). Round 2 flagged the map as a perf note; the fix hasn't
   landed and the function has since grown a *second* allocation (the
   cycle-guard set). Hottest CPU path after the query loop itself. Fix:
   member/static scratch buffers, or an iterative pass.
+  *Done (2026-07-10):* all three allocations gone. `cache` and `onChain` are now
+  `thread_local` scratch buffers cleared (not reallocated) each call — `clear()`
+  keeps the buckets, so after warmup the steady state is allocation-free;
+  `thread_local` keeps it safe if propagation ever runs off-thread. The
+  `std::function` recursion is replaced by a C++23 deducing-this recursive lambda
+  (`[&](this const auto &self, ...)`), removing the heap-allocated closure.
+  Behavior identical — TestHierarchy (roots, deep chains, shared-ancestor
+  memoisation, cycle guard) still passes.
 
 - [x] **Silent capacity ceilings.** `kMaxBodies = 1024` with
   `CreateAndAddBody`'s return never checked (`PhysicsWorld.cpp:204`) — body

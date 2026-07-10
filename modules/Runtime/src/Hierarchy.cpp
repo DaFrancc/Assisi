@@ -4,7 +4,6 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
-#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -13,8 +12,18 @@ namespace Assisi::Runtime
 
 void PropagateTransforms(ECS::Scene &scene)
 {
-    std::unordered_map<uint64_t, glm::mat4> cache;
-    std::unordered_set<uint64_t> onChain; // entities on the current recursion stack
+    using TransformCache = std::unordered_map<uint64_t, glm::mat4>;
+
+    // Reused across calls rather than reallocated. PropagateTransforms runs at
+    // least twice per frame (game + camera scenes) and is a hot CPU path; clear()
+    // retains the allocated buckets, so after warmup no per-call heap allocation
+    // happens. thread_local keeps it correct if propagation is ever driven from
+    // more than one thread without adding a lock — the calls are otherwise
+    // sequential on the main thread and never re-entrant across each other.
+    thread_local TransformCache               cache;
+    thread_local std::unordered_set<uint64_t> onChain; // entities on the current recursion stack
+    cache.clear();
+    onChain.clear();
 
     auto entityKey = [](ECS::Entity e) -> uint64_t
     {
@@ -27,17 +36,19 @@ void PropagateTransforms(ECS::Scene &scene)
                glm::scale(glm::mat4(1.f), t.scale);
     };
 
-    std::function<glm::mat4(ECS::Entity)> worldMatrix = [&](ECS::Entity e) -> glm::mat4
+    // Recursive via C++23 deducing this (self) — resolves parents without a
+    // heap-allocated std::function closure.
+    auto worldMatrix = [&](this const auto &self, ECS::Entity e) -> glm::mat4
     {
         const uint64_t key = entityKey(e);
-        if (const auto it = cache.find(key); it != cache.end())
+        if (TransformCache::const_iterator it = cache.find(key); it != cache.end())
             return it->second;
 
-        const auto *t         = scene.Get<TransformComponent>(e);
+        const TransformComponent *t = scene.Get<TransformComponent>(e);
         const glm::mat4 local = t ? localMatrix(*t) : glm::mat4(1.f);
 
         glm::mat4 world = local;
-        if (const auto *p = scene.Get<ParentComponent>(e); p && p->parent != ECS::NullEntity)
+        if (const ParentComponent *p = scene.Get<ParentComponent>(e); p && p->parent != ECS::NullEntity)
         {
             /* Cycle guard: a hand-edited .alvl can contain a parent loop
                (A->B->A). If this entity's parent is already on the chain we are
@@ -50,7 +61,7 @@ void PropagateTransforms(ECS::Scene &scene)
             else
             {
                 onChain.insert(key);
-                world = worldMatrix(p->parent) * local;
+                world = self(p->parent) * local;
                 onChain.erase(key);
             }
         }
