@@ -116,19 +116,30 @@ struct Scene
     /// mutate the queried pools mid-loop. To delete entities discovered while
     /// iterating, defer the work: collect them into a local vector, or push the
     /// destruction onto the EventQueue and drain it after the loop.
-    template <typename... Ts> QueryView<Ts...> Query()
+    template <typename... Ts> QueryView<std::tuple<Ts...>, std::tuple<>> Query() { return Query<Ts...>(Without<>{}); }
+
+    /// @brief Returns a lazy view over entities that have every Ts but none of the Es.
+    ///
+    /// `scene.Query<A>(Without<B>{})` yields entities with A and not B. Exclusion
+    /// is a single-pass filter folded into the same iteration as the positive
+    /// match — it never runs a second loop. The same mid-loop mutation warning as
+    /// the plain overload applies, to the required *and* the excluded pools.
+    template <typename... Ts, typename... Es> QueryView<std::tuple<Ts...>, std::tuple<Es...>> Query(Without<Es...>)
     {
         std::tuple<SparseSet<Ts> *...> pools = {GetPool<Ts>()...};
+        std::tuple<const SparseSet<Es> *...> excluded = {GetPool<Es>()...};
 
-        /* If any pool is missing, there are no matching entities. */
+        /* If any required pool is missing, there are no matching entities. A
+           missing excluded pool is fine — it simply excludes nobody. */
         bool anyNull = false;
         std::apply([&](auto *...ps) { anyNull = (... || (ps == nullptr)); }, pools);
         if (anyNull)
         {
-            return QueryView<Ts...>{pools, nullptr};
+            return QueryView<std::tuple<Ts...>, std::tuple<Es...>>{pools, nullptr, excluded};
         }
 
-        /* Drive iteration from the smallest pool to minimise skipped entities. */
+        /* Drive iteration from the smallest required pool to minimise skipped
+           entities; excluded pools never drive iteration. */
         const std::vector<Entity> *primary = nullptr;
         std::size_t minSize = SIZE_MAX;
         std::apply(
@@ -146,7 +157,7 @@ struct Scene
             },
             pools);
 
-        return QueryView<Ts...>{pools, primary};
+        return QueryView<std::tuple<Ts...>, std::tuple<Es...>>{pools, primary, excluded};
     }
 
   private:

@@ -18,6 +18,9 @@ struct Velocity
 {
     float x = 0.0f;
 };
+struct Tag
+{
+};
 } // namespace
 
 TEST_CASE("Query: yields only entities that have every requested component")
@@ -103,6 +106,66 @@ TEST_CASE("Query: empty when a requested pool has never been created")
         ++count;
     }
     CHECK(count == 0);
+}
+
+TEST_CASE("Query: Without excludes entities that hold the unwanted component")
+{
+    Scene scene;
+    const Entity posOnly = scene.Create();
+    const Entity both = scene.Create();
+    REQUIRE(scene.Add<Position>(posOnly, {1.0f}) != nullptr);
+    REQUIRE(scene.Add<Position>(both, {2.0f}) != nullptr);
+    REQUIRE(scene.Add<Velocity>(both, {9.0f}) != nullptr);
+
+    std::vector<Entity> seen;
+    for (auto [e, pos] : scene.Query<Position>(Without<Velocity>{}))
+    {
+        (void)pos;
+        seen.push_back(e);
+    }
+    REQUIRE(seen.size() == 1);
+    CHECK(seen[0] == posOnly); // 'both' is rejected by its Velocity
+}
+
+TEST_CASE("Query: Without a never-created pool excludes nobody")
+{
+    Scene scene;
+    const Entity a = scene.Create();
+    const Entity b = scene.Create();
+    REQUIRE(scene.Add<Position>(a, {1.0f}) != nullptr);
+    REQUIRE(scene.Add<Position>(b, {2.0f}) != nullptr);
+    // The Velocity pool was never created; excluding it must reject no one.
+
+    int count = 0;
+    for (auto [e, pos] : scene.Query<Position>(Without<Velocity>{}))
+    {
+        (void)e;
+        (void)pos;
+        ++count;
+    }
+    CHECK(count == 2);
+}
+
+TEST_CASE("Query: multiple exclusions reject an entity holding any of them")
+{
+    Scene scene;
+    const Entity clean = scene.Create();  // Position only
+    const Entity hasVel = scene.Create(); // Position + Velocity
+    const Entity hasTag = scene.Create(); // Position + Tag
+    REQUIRE(scene.Add<Position>(clean, {1.0f}) != nullptr);
+    REQUIRE(scene.Add<Position>(hasVel, {2.0f}) != nullptr);
+    REQUIRE(scene.Add<Velocity>(hasVel, {2.0f}) != nullptr);
+    REQUIRE(scene.Add<Position>(hasTag, {3.0f}) != nullptr);
+    REQUIRE(scene.Add<Tag>(hasTag, {}) != nullptr);
+
+    std::vector<Entity> seen;
+    for (auto [e, pos] : scene.Query<Position>(Without<Velocity, Tag>{}))
+    {
+        (void)pos;
+        seen.push_back(e);
+    }
+    REQUIRE(seen.size() == 1);
+    CHECK(seen[0] == clean); // only the entity with neither excluded component survives
 }
 
 TEST_CASE("Query: a destroyed entity is skipped even if the slot is reused")
