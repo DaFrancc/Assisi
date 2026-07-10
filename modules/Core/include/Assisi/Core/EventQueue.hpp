@@ -84,6 +84,13 @@ class EventQueue
     ///
     /// The span is valid until the next Flush() call.
     /// Returns an empty span if no events of this type were pushed.
+    ///
+    /// @warning The span points into the queue's internal vector. Pushing
+    /// another event of the *same* type E while iterating this span may
+    /// reallocate that vector and invalidate the span (silent UB) — same
+    /// hazard as mutating a container mid-range-for. If a consumer needs to
+    /// emit more E's while reading E's, copy the span first or defer the
+    /// pushes until after the loop.
     template <typename E>
     std::span<const E> Read() const
     {
