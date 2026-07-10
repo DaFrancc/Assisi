@@ -191,11 +191,18 @@ Checkboxes so this can be burned down like the previous two docs.
   cycle-guard set). Hottest CPU path after the query loop itself. Fix:
   member/static scratch buffers, or an iterative pass.
 
-- [ ] **Silent capacity ceilings.** `kMaxBodies = 1024` with
+- [x] **Silent capacity ceilings.** `kMaxBodies = 1024` with
   `CreateAndAddBody`'s return never checked (`PhysicsWorld.cpp:204`) — body
   1025 fails invisibly. `Buffer::Upload` silently drops overflow lights
   (documented, but a warn-once costs nothing). The "works until demo day"
   class. Fix: check the body ID and log; warn-once on light overflow.
+  *Done (2026-07-10):* both halves. Physics — `AddBox` now checks
+  `bodyId.IsInvalid()` and logs an error (naming the body limit) before
+  returning an invalid `RigidBodyComponent` (landed with the engine-wide
+  silent-failure logging pass). Buffer — `Upload` warns **once per buffer** when
+  `elementCount > capacity`, naming the buffer (`_debugName`) and the dropped
+  count, so a too-small light/SSBO capacity surfaces instead of truncating in
+  silence. `mutable bool _overflowWarned` guards the const `Upload`.
 
 - [ ] **Camera-in-its-own-Scene is a smell.** `_cameraScene` instantiates an
   entire ECS world to hold one entity, purely so level loads don't clear the

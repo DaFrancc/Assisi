@@ -13,6 +13,7 @@
 /// only the live prefix, rather than reallocating every frame.
 
 #include <cstdint>
+#include <string>
 
 #include <nvrhi/nvrhi.h>
 
@@ -34,7 +35,10 @@ class Buffer
                bool allowUnorderedAccess, const char *debugName);
 
     /// @brief Writes `elementCount` elements of `data` starting at element 0.
-    /// Elements beyond `CapacityElements()` are silently dropped.
+    /// Elements beyond `CapacityElements()` are dropped; the first time that
+    /// happens for this buffer a warning is logged (once per buffer) naming it
+    /// and the counts, so a too-small capacity surfaces instead of silently
+    /// truncating (e.g. lights past the clustered-lighting worst case).
     void Upload(nvrhi::ICommandList *commandList, const void *data, uint32_t elementCount) const;
 
     /// @brief Fills the entire buffer with zero bytes (e.g. resetting atomic counters).
@@ -46,8 +50,12 @@ class Buffer
 
   private:
     nvrhi::BufferHandle _buffer;
-    uint32_t _elementStride = 0;
-    uint32_t _capacityElements = 0;
+    uint32_t            _elementStride = 0;
+    uint32_t            _capacityElements = 0;
+    std::string         _debugName;
+    // Upload() is const (it only records GPU commands), but the one-shot overflow
+    // warning is per-buffer bookkeeping, hence mutable.
+    mutable bool _overflowWarned = false;
 };
 
 } // namespace Assisi::Render

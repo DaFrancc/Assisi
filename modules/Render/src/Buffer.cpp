@@ -2,6 +2,8 @@
 
 #include <Assisi/Render/Buffer.hpp>
 
+#include <Assisi/Core/Logger.hpp>
+
 #include <algorithm>
 
 namespace Assisi::Render
@@ -12,6 +14,8 @@ void Buffer::Create(nvrhi::IDevice *device, uint32_t elementStride, uint32_t cap
 {
     _elementStride = elementStride;
     _capacityElements = capacityElements;
+    _debugName = debugName != nullptr ? debugName : "Render::Buffer";
+    _overflowWarned = false;
 
     nvrhi::BufferDesc desc;
     desc.byteSize = static_cast<uint64_t>(elementStride) * capacityElements;
@@ -27,6 +31,13 @@ void Buffer::Create(nvrhi::IDevice *device, uint32_t elementStride, uint32_t cap
 void Buffer::Upload(nvrhi::ICommandList *commandList, const void *data, uint32_t elementCount) const
 {
     const uint32_t count = std::min(elementCount, _capacityElements);
+    if (elementCount > _capacityElements && !_overflowWarned)
+    {
+        Core::Log::Warn("Render::Buffer \"{}\": upload of {} elements exceeds capacity {}; "
+                        "{} dropped. Increase the buffer's capacity. (Warned once.)",
+                        _debugName, elementCount, _capacityElements, elementCount - _capacityElements);
+        _overflowWarned = true;
+    }
     if (count == 0)
     {
         return;
