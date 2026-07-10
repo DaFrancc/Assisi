@@ -23,6 +23,7 @@
 #include <imgui.h>
 
 // --- Standard ---------------------------------------------------------------
+#include <algorithm>
 #include <chrono>
 #include <csignal>
 #include <cstdlib>
@@ -263,9 +264,6 @@ void Application::Run()
     using Seconds = std::chrono::duration<double>;
 
     const double physicsStep = 1.0 / _config.physicsHz;
-    const double renderStep  = 1.0 / _config.renderHz;
-
-    _window->SetVSyncEnabled(false);
 
     OnStart();
 
@@ -300,8 +298,15 @@ void Application::Run()
 
         OnUpdate(static_cast<float>(dt));
 
-        SleepUntil(nextRenderTime);
-        nextRenderTime = Clock::now() + std::chrono::duration_cast<Clock::duration>(Seconds(renderStep));
+        // Frame pacing is exclusive with vsync: only cap here in FpsLimit mode with
+        // a finite limit. In VSync mode FIFO present paces us; with an unlimited cap
+        // (fpsLimit < 0) we run as fast as the GPU allows.
+        if (_options.frameSync == FrameSyncMode::FpsLimit && _options.fpsLimit > 0)
+        {
+            SleepUntil(nextRenderTime);
+            nextRenderTime =
+                Clock::now() + std::chrono::duration_cast<Clock::duration>(Seconds(1.0 / _options.fpsLimit));
+        }
 
         // FPS tracking.
         fpsAccum += rawDt;
@@ -311,6 +316,17 @@ void Application::Run()
             _fps          = static_cast<int>(static_cast<double>(fpsFrameCount) / fpsAccum);
             fpsAccum      = 0.0;
             fpsFrameCount = 0;
+        }
+
+        // Reconcile the swapchain's present mode with the frame-sync option HERE,
+        // between frames — never inside RenderFrame(), which recreates the
+        // swapchain mid command-list and destroys resources the frame still uses.
+        // SetVSync() no-ops when already in the requested state, so this is a cheap
+        // compare every frame and only recreates when the user actually changed it.
+        // Applies the persisted option on the first iteration too.
+        if (Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext())
+        {
+            vulkanContext->SetVSync(_options.frameSync == FrameSyncMode::VSync);
         }
 
         RenderFrame();
@@ -410,7 +426,7 @@ void Application::DrawOptionsWindow()
         return;
     }
 
-    ImGui::SetNextWindowSize(ImVec2(300, 110), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowSize(ImVec2(300, 200), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Options", &_showOptionsWindow))
     {
         static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
@@ -452,6 +468,68 @@ void Application::DrawOptionsWindow()
         }
 
         if (!msaaActive)
+        {
+            ImGui::EndDisabled();
+        }
+
+        ImGui::Separator();
+        ImGui::TextUnformatted("Frame Sync");
+
+        // VSync and an FPS cap are mutually exclusive modes — radio buttons make
+        // that visible. The swapchain present-mode switch happens between frames
+        // in Run(); here we only edit the option.
+        int  frameSyncIndex = static_cast<int>(_options.frameSync);
+        bool frameSyncChanged =
+            ImGui::RadioButton("VSync", &frameSyncIndex, static_cast<int>(FrameSyncMode::VSync));
+        ImGui::SameLine();
+        frameSyncChanged |=
+            ImGui::RadioButton("FPS Limit", &frameSyncIndex, static_cast<int>(FrameSyncMode::FpsLimit));
+        if (frameSyncChanged)
+        {
+            _options.frameSync = static_cast<FrameSyncMode>(frameSyncIndex);
+            _options.SaveToJson();
+        }
+
+        // FPS-cap sub-controls: only live in FpsLimit mode (greyed under VSync).
+        // "Unlimited" toggles the -1 sentinel (no cap) and greys out Max FPS.
+        const bool fpsMode = (_options.frameSync == FrameSyncMode::FpsLimit);
+
+        if (!fpsMode)
+        {
+            ImGui::BeginDisabled();
+        }
+        bool unlimited = (_options.fpsLimit < 0);
+        if (ImGui::Checkbox("Unlimited", &unlimited))
+        {
+            // Leaving "unlimited" seeds a sane cap the user can then edit.
+            _options.fpsLimit = unlimited ? static_cast<std::int16_t>(-1) : static_cast<std::int16_t>(60);
+            _options.SaveToJson();
+        }
+        if (!fpsMode)
+        {
+            ImGui::EndDisabled();
+        }
+
+        // Max FPS is live only in FpsLimit mode with a finite cap; greyed otherwise.
+        const bool capFieldEnabled = fpsMode && !unlimited;
+        if (!capFieldEnabled)
+        {
+            ImGui::BeginDisabled();
+        }
+        // While the field is being typed in, InputInt reports every intermediate
+        // value ("120" passes through 1 and 12). Commit only once the user finishes
+        // editing — Enter or clicking/tabbing away — so the live pacer never sees a
+        // half-typed cap. `fps` still tracks the in-progress edit for display.
+        int fps = (_options.fpsLimit > 0) ? _options.fpsLimit : 60;
+        ImGui::InputInt("Max FPS", &fps);
+        if (ImGui::IsItemDeactivatedAfterEdit())
+        {
+            // Clamp to a valid positive int16 — 0 and negatives are invalid caps.
+            fps               = std::clamp(fps, 1, static_cast<int>(INT16_MAX));
+            _options.fpsLimit = static_cast<std::int16_t>(fps);
+            _options.SaveToJson();
+        }
+        if (!capFieldEnabled)
         {
             ImGui::EndDisabled();
         }

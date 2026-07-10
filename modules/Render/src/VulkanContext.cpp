@@ -440,7 +440,7 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     createInfo.preTransform = capabilities.currentTransform;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-    createInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+    createInfo.presentMode = ChoosePresentMode();
     createInfo.clipped = VK_TRUE;
     createInfo.oldSwapchain = oldSwapchain;
 
@@ -541,6 +541,47 @@ void VulkanContext::Resize(uint32_t width, uint32_t height)
     // swapchain is left intact, so BeginFrame() keeps working / recovers on a
     // later resize. Explicitly discarded to satisfy [[nodiscard]].
     (void)CreateSwapchainResources(width, height);
+}
+
+VkPresentModeKHR VulkanContext::ChoosePresentMode() const
+{
+    // FIFO (vsync) is the only present mode the spec guarantees is available, so
+    // it needs no capability query.
+    if (_vsyncEnabled)
+    {
+        return VK_PRESENT_MODE_FIFO_KHR;
+    }
+
+    uint32_t count = 0;
+    VKD.vkGetPhysicalDeviceSurfacePresentModesKHR(_physicalDevice, _surface, &count, nullptr);
+    std::vector<VkPresentModeKHR> modes(count);
+    VKD.vkGetPhysicalDeviceSurfacePresentModesKHR(_physicalDevice, _surface, &count, modes.data());
+
+    for (VkPresentModeKHR mode : modes)
+    {
+        if (mode == VK_PRESENT_MODE_IMMEDIATE_KHR)
+        {
+            return mode;
+        }
+    }
+
+    Core::Log::Warn("VulkanContext: IMMEDIATE present mode unsupported; vsync-off falls back to FIFO.");
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+void VulkanContext::SetVSync(bool enabled)
+{
+    if (_vsyncEnabled == enabled || _device == VK_NULL_HANDLE)
+    {
+        return;
+    }
+
+    _vsyncEnabled = enabled;
+    VKD.vkDeviceWaitIdle(_device);
+
+    // Recreate at the current extent with the new present mode. Benign on failure,
+    // same as Resize() — the old swapchain is left intact.
+    (void)CreateSwapchainResources(_swapchainExtent.width, _swapchainExtent.height);
 }
 
 std::optional<RenderFrame> VulkanContext::BeginFrame()

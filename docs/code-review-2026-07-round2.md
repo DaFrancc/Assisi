@@ -190,8 +190,27 @@ Checkboxes so this can be burned down like the round-1 doc was.
   ship with the Vulkan SDK — the driver-runtime-only setup this file targets
   won't have them until the SDK (or the layer package) is installed, at which
   point it activates automatically.
-- [ ] **The frame-timing stack is three layers fighting.** (Acknowledged
+- [~] **The frame-timing stack is three layers fighting.** (Acknowledged
   provisional; listed because provisional caps the score.)
+  PARTIAL (2026-07-10): deleted the `SetVSyncEnabled` stub — the whole dead
+  vsync surface is gone (`SetVSyncEnabled`/`IsVSyncEnabled`, the
+  `_isVSyncEnabled` mirror, the `WindowConfiguration::EnableVSync` field, and
+  the `_window->SetVSyncEnabled(false)` call in `Application::Run`). Nothing
+  read the getter and present mode is hardcoded FIFO, so it stored a lie.
+  Fixed the `WindowContext.hpp` header doc rot (removed the "swap-interval
+  preference" claims).
+  ALSO (2026-07-10): present-mode selection is now real and wired to options.
+  `OptionsConfig::frameSync` is a `FrameSyncMode` enum {VSync, FpsLimit} —
+  mutually exclusive by construction. `VulkanContext::SetVSync` recreates the
+  swapchain with FIFO (VSync) or IMMEDIATE (FpsLimit, falling back to FIFO if
+  unsupported). `Application::Run` applies it at startup and paces with
+  `SleepUntil` only in FpsLimit mode with a finite cap (`fpsLimit` is an int16,
+  -1 = unlimited); the F12 options panel exposes the mode + cap. So `SleepUntil`
+  is KEPT — it's the FPS limiter that pairs with the non-vsync present mode, not
+  a layer to delete. This retires `AppConfig::renderHz` (now unused).
+  STILL OPEN: `BeginFrame`'s full per-frame `waitForIdle` → real
+  frames-in-flight with fences. That's the last "layer" and is a pure
+  pipelining change, independent of the vsync/cap work above.
   (a) `BeginFrame` does a full `waitForIdle()` (`VulkanContext.cpp:428`,
   documented trade); (b) present mode is hardcoded FIFO — vsync always on at
   the Vulkan level (`VulkanContext.cpp:316`); (c) `Application::Run` calls

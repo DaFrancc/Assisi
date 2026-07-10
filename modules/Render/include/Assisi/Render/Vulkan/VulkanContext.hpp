@@ -58,6 +58,16 @@ class VulkanContext
     /// at the new framebuffer size. Waits for the device to go idle first.
     void Resize(uint32_t width, uint32_t height);
 
+    /// @brief Selects vsync (FIFO) or no-vsync (IMMEDIATE) presentation, recreating
+    /// the swapchain at its current extent. No-op if already in the requested state.
+    /// If the device doesn't support IMMEDIATE, no-vsync falls back to FIFO (a warning
+    /// is logged) — so IsVSyncEnabled() may report true even after SetVSync(false).
+    /// Waits for the device to go idle first.
+    void SetVSync(bool enabled);
+
+    /// @brief Whether the swapchain is currently presenting with vsync (FIFO).
+    [[nodiscard]] bool IsVSyncEnabled() const { return _vsyncEnabled; }
+
     [[nodiscard]] nvrhi::IDevice *GetDevice() const { return _nvrhiDevice; }
 
     /// @brief Color/depth formats and sample count of the swapchain framebuffers,
@@ -90,6 +100,11 @@ class VulkanContext
     void DestroySwapchainResources();
     [[nodiscard]] bool CreateSwapchainResources(uint32_t width, uint32_t height);
 
+    /// @brief The present mode CreateSwapchainResources() should use for the current
+    /// vsync state: FIFO when vsync is on (always supported), otherwise IMMEDIATE if
+    /// the device offers it, falling back to FIFO.
+    [[nodiscard]] VkPresentModeKHR ChoosePresentMode() const;
+
     /// Installs the validation debug messenger in debug builds; no-op in
     /// release and when the debug-utils extension wasn't enabled.
     void CreateDebugMessenger();
@@ -104,6 +119,7 @@ class VulkanContext
     VkSwapchainKHR        _swapchain = VK_NULL_HANDLE;
     VkFormat              _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkFormat              _depthFormat = VK_FORMAT_UNDEFINED;
+    bool                  _vsyncEnabled = true; // FIFO by default; see ChoosePresentMode()
 
     VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;
     VkExtent2D            _swapchainExtent{};

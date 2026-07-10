@@ -63,6 +63,26 @@ OptionsConfig OptionsConfig::LoadFromJson()
                 }
             }
         }
+
+        if (json.contains("frameSync"))
+        {
+            const auto &fs = json.at("frameSync");
+            if (fs.contains("mode"))
+            {
+                cfg.frameSync =
+                    (fs.at("mode").get<std::string>() == "fpsLimit") ? FrameSyncMode::FpsLimit : FrameSyncMode::VSync;
+            }
+            if (fs.contains("fpsLimit"))
+            {
+                // Accept only the -1 (unlimited) sentinel or a positive cap that
+                // fits an int16 — reject 0 and out-of-range junk, keeping the default.
+                const int limit = fs.at("fpsLimit").get<int>();
+                if (limit == -1 || (limit > 0 && limit <= INT16_MAX))
+                {
+                    cfg.fpsLimit = static_cast<std::int16_t>(limit);
+                }
+            }
+        }
     }
     catch (const nlohmann::json::exception &e)
     {
@@ -77,6 +97,8 @@ void OptionsConfig::SaveToJson() const
     nlohmann::json json;
     json["antiAliasing"]["mode"]        = AaModeToString(aaMode);
     json["antiAliasing"]["msaaSamples"] = msaaSamples;
+    json["frameSync"]["mode"]           = (frameSync == FrameSyncMode::FpsLimit) ? "fpsLimit" : "vsync";
+    json["frameSync"]["fpsLimit"]       = fpsLimit;
 
     const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", json.dump(4));
     if (!result)

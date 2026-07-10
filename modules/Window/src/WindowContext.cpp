@@ -7,8 +7,7 @@
 
 namespace Assisi::Window
 {
-WindowContext::WindowContext(const WindowConfiguration &configuration)
-    : _glfwLibrary(GlfwLibrary::Acquire()), _isVSyncEnabled(configuration.EnableVSync)
+WindowContext::WindowContext(const WindowConfiguration &configuration) : _glfwLibrary(GlfwLibrary::Acquire())
 {
     if (!_glfwLibrary || !_glfwLibrary->IsValid())
     {
@@ -97,14 +96,13 @@ WindowContext::~WindowContext()
 
 WindowContext::WindowContext(WindowContext &&other) noexcept
     : _glfwLibrary(std::move(other._glfwLibrary)), _nativeWindowHandle(other._nativeWindowHandle),
-      _isValid(other._isValid), _isVSyncEnabled(other._isVSyncEnabled),
+      _isValid(other._isValid),
       _framebufferSizeCallbacks(std::move(other._framebufferSizeCallbacks)),
       _scrollCallbacks(std::move(other._scrollCallbacks)),
       _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks))
 {
     other._nativeWindowHandle = nullptr;
     other._isValid = false;
-    other._isVSyncEnabled = false;
 
     // The GLFW user pointer still points at 'other'; re-seat it on this object
     // so the callback trampolines dispatch to the moved-to subscriber lists.
@@ -127,14 +125,12 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
         _glfwLibrary = std::move(other._glfwLibrary);
         _nativeWindowHandle = other._nativeWindowHandle;
         _isValid = other._isValid;
-        _isVSyncEnabled = other._isVSyncEnabled;
         _framebufferSizeCallbacks = std::move(other._framebufferSizeCallbacks);
         _scrollCallbacks = std::move(other._scrollCallbacks);
         _windowRefreshCallbacks = std::move(other._windowRefreshCallbacks);
 
         other._nativeWindowHandle = nullptr;
         other._isValid = false;
-        other._isVSyncEnabled = false;
 
         if (_nativeWindowHandle != nullptr)
         {
@@ -173,18 +169,6 @@ void WindowContext::RequestClose() const
 void WindowContext::SetTitle(const std::string &title) const
 {
     glfwSetWindowTitle(_nativeWindowHandle, title.c_str());
-}
-
-bool WindowContext::IsVSyncEnabled() const
-{
-    return _isVSyncEnabled;
-}
-
-void WindowContext::SetVSyncEnabled(bool enabled)
-{
-    // Not yet wired to the Vulkan swapchain's present mode — see
-    // docs/nvrhi-migration-todo.md.
-    _isVSyncEnabled = enabled;
 }
 
 WindowSize WindowContext::GetWindowSize() const

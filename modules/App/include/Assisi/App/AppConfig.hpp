@@ -18,7 +18,6 @@ struct AppConfig
     int         height     = 720;
     glm::vec4   clearColor = {0.15f, 0.15f, 0.18f, 1.f};
     double      physicsHz  = 60.0;
-    double      renderHz   = 144.0;
 
     /// @brief Reads assets/game.json via the asset system.
     /// Falls back to defaults if the file is missing or malformed.

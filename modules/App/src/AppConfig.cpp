@@ -60,7 +60,6 @@ AppConfig AppConfig::LoadFromJson()
         {
             const auto &t = json.at("timing");
             if (t.contains("physicsHz")) cfg.physicsHz = t.at("physicsHz").get<double>();
-            if (t.contains("renderHz"))  cfg.renderHz  = t.at("renderHz").get<double>();
         }
     }
     catch (const nlohmann::json::exception &e)

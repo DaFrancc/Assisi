@@ -8,8 +8,7 @@
         "clearColor": [0.15, 0.15, 0.18, 1.0]
     },
     "timing": {
-        "physicsHz": 60,
-        "renderHz": 144
+        "physicsHz": 60
     },
     "input": {
         "actions": {

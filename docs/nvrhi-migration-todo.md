@@ -109,9 +109,11 @@ All bullets below landed as planned:
 - `Window::WindowConfiguration::CreateClientApiContext` is gone; `WindowContext` always
   hints `GLFW_CLIENT_API, GLFW_NO_API`. `WindowContext::SwapBuffers()` was deleted
   outright (Vulkan presents via `VulkanContext::EndFrame()`, not `glfwSwapBuffers`).
-  `SetVSyncEnabled()`/`IsVSyncEnabled()` were kept (still called from `Application::Run()`)
-  but now just store the preference — vsync isn't wired to the Vulkan swapchain's present
-  mode yet, that's still open.
+  `SetVSyncEnabled()`/`IsVSyncEnabled()` (and the `WindowConfiguration::EnableVSync`
+  field) have since been deleted outright — they only stored a preference that never
+  reached the Vulkan swapchain (present mode is hardcoded FIFO), a false affordance.
+  Wiring present-mode selection to options is still open; see the frame-timing item in
+  docs/code-review-2026-07-round2.md.
 
 **Judgment calls made along the way, not explicitly spelled out above:**
 - `Application`'s MSAA/FXAA post-process (`_mainFB`/`_resolveFB`/`_screenQuad`/

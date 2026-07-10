@@ -5,9 +5,9 @@
 /// @brief Owns a single GLFW window, created with no client API (GLFW_NO_API) —
 /// Vulkan owns the swapchain/presentation via VulkanContext, not GLFW.
 ///
-/// `WindowContext` wraps window creation, event polling, and swap-interval
-/// preference into one RAII object.  It holds a shared reference to
-/// `GlfwLibrary` so GLFW cannot be terminated while any window is still alive.
+/// `WindowContext` wraps window creation and event polling into one RAII
+/// object.  It holds a shared reference to `GlfwLibrary` so GLFW cannot be
+/// terminated while any window is still alive.
 
 #include <functional>
 #include <memory>
@@ -35,7 +35,6 @@ struct WindowConfiguration
     int Width = 1280;             ///< Initial window width in pixels.
     int Height = 720;             ///< Initial window height in pixels.
     const char *Title = "Assisi"; ///< Window title bar text.
-    bool EnableVSync = true;      ///< Whether to enable vertical synchronisation.
 };
 
 /// @brief RAII owner of a GLFW window and the single source of truth for its
@@ -98,17 +97,6 @@ class WindowContext
     /// @brief Updates the window title bar text.
     void SetTitle(const std::string &title) const;
 
-    /// @brief Returns true if vertical synchronisation is currently enabled.
-    [[nodiscard]] bool IsVSyncEnabled() const;
-
-    /// @brief Enables or disables vertical synchronisation.
-    ///
-    /// Makes the window context current before changing the swap interval so
-    /// the setting is applied to the correct context in multi-window setups.
-    ///
-    /// @param enabled  True to enable VSync (swap interval 1), false to disable (0).
-    void SetVSyncEnabled(bool enabled);
-
     /// @brief Returns the current window size in screen coordinates.
     ///
     /// On high-DPI displays this may differ from GetFramebufferSize().
@@ -155,11 +143,6 @@ class WindowContext
 
     /// @brief True after successful window creation.
     bool _isValid = false;
-
-    /// @brief Mirrors the current vsync preference for IsVSyncEnabled(). Not yet
-    /// wired to the Vulkan swapchain's present mode — see
-    /// docs/nvrhi-migration-todo.md.
-    bool _isVSyncEnabled = false;
 
     std::vector<std::function<void(int, int)>>     _framebufferSizeCallbacks;
     std::vector<std::function<void(double, double)>> _scrollCallbacks;

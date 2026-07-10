@@ -6,14 +6,31 @@
 
 #include <Assisi/Render/PostProcess.hpp>
 
+#include <cstdint>
+
 namespace Assisi::App
 {
+
+/// @brief How the frame rate is governed. The two modes are mutually exclusive —
+/// exactly one paces the loop at a time.
+enum class FrameSyncMode : std::uint8_t
+{
+    VSync,    ///< FIFO present mode — frame rate locked to the display refresh; fpsLimit is ignored.
+    FpsLimit, ///< IMMEDIATE present mode — frame rate governed by OptionsConfig::fpsLimit.
+};
 
 /// @brief User preferences loaded from and saved to options.json in the working directory.
 struct OptionsConfig
 {
     Render::AaMode aaMode      = Render::AaMode::None;
     int            msaaSamples = 4; ///< MSAA sample count; valid values: 2, 4, 8.
+
+    FrameSyncMode frameSync = FrameSyncMode::VSync;
+
+    /// @brief Target frame rate, applied only when frameSync == FpsLimit. Sentinel
+    /// values: -1 means unlimited (no CPU-side cap); 0 is invalid and never stored.
+    /// Any positive value is the FPS cap the frame pacer targets.
+    std::int16_t fpsLimit = -1;
 
     /// @brief Reads options.json from the working directory.
     /// Returns defaults if the file is missing or malformed.
