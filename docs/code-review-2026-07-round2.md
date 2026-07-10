@@ -225,13 +225,17 @@ Checkboxes so this can be burned down like the round-1 doc was.
   forward-reference regressions, empty-scene, transient-only component, multi-
   component, unsupported-version no-op, file round-trip, malformed/missing file,
   and unknown-component skip.
-- [ ] **`reflectgen` has zero tests** — a 521-line regex-based C++ parser
-  (`tools/reflectgen/reflectgen.py`) that generates engine-critical code,
-  completely undefended. Golden-file tests: a fixture header with every
-  supported field type + edge cases (nested braces, comments containing
-  `ACOMP`, namespaced types, transient fields) → assert the generated .cpp
-  matches a checked-in golden output. Cheap to write, catches every future
-  regex regression.
+- [x] **`reflectgen` has zero tests** — now covered by a Python suite
+  (`tools/reflectgen/tests/test_reflectgen.py`, registered as the `reflectgen`
+  ctest). A checked-in golden (`golden/Sample.generated.cpp`) is diffed against
+  the output of a fixture header (`fixtures/Sample.hpp`) that exercises every
+  supported field type, a transient field, an empty component, nested-brace
+  initializers, a namespaced scope, and a commented-out `ACOMP` the parser must
+  ignore. Behavioural cases beyond the golden: namespace capture, transient
+  exclusion from (de)serialize, the `UNSUPPORTED_TYPES` hard-fail (and its
+  transient exemption), EntityRef pulling in the `SceneSerializer` include (and
+  its absence otherwise), and `_detect_include_path`. `REFLECTGEN_UPDATE_GOLDEN=1`
+  regenerates the golden for a deliberate codegen change.
 - [x] **`PropagateTransforms`/`Hierarchy` had zero tests** — now covered by
   `modules/Runtime/tests/TestHierarchy.cpp` (root, parent-compose, three-deep
   chain, siblings, transform-less parent, explicit-null parent, cycle guard).

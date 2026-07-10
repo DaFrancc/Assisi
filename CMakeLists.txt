@@ -350,6 +350,11 @@ add_subdirectory(apps/sandbox)
 # Per-module unit tests live in modules/<Name>/tests and are pulled in by each
 # module's CMakeLists when ASSISI_BUILD_TESTS is ON (see enable_testing() above).
 
+# reflectgen (the reflection codegen script) has its own Python golden-file tests.
+if (ASSISI_BUILD_TESTS)
+    add_subdirectory(tools/reflectgen)
+endif()
+
 # Notes for module CMakeLists:
 # - Each module target should link:
 #     Assisi::Options, Assisi::Warnings, Assisi::Perf, Assisi::Deps
