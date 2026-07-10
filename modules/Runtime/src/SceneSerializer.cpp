@@ -37,6 +37,16 @@ inline uint64_t EntityKey(uint32_t idx, uint32_t gen)
     return (static_cast<uint64_t>(gen) << 32) | idx;
 }
 
+// Tears down the thread-local context on every exit path, including a
+// component serialize/deserialize throwing mid-pass (malformed field data
+// reaches j.at(...)/_v[i].get<T>() in generated code). Without it the context
+// would stay engaged after a throw and a later EntityToIndex / IndexToEntity
+// call would resolve against a stale, half-populated context.
+struct ScopedContextReset
+{
+    ~ScopedContextReset() { s_context.reset(); }
+};
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -94,6 +104,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
         ctx.entityToIndex.emplace(entry.first, serialIdx++);
 
     s_context = std::move(ctx);
+    const ScopedContextReset contextReset;
 
     // Pass 2: serialize components (context is live so EntityToIndex works).
     for (const auto &meta : registry.All())
@@ -107,8 +118,6 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
             entityMap[key]["components"][meta.name] = meta.serialize(compPtr);
         });
     }
-
-    s_context.reset();
 
     nlohmann::json result;
     result["version"]  = 1;
@@ -138,6 +147,7 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
     scene.Clear();
 
     s_context = SerializationContext{};
+    const ScopedContextReset contextReset;
 
     const auto &entities = j.at("entities");
 
@@ -170,8 +180,6 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
             meta->addToScene(&scene, e.index, e.generation, compData);
         }
     }
-
-    s_context.reset();
 }
 
 // ---------------------------------------------------------------------------
@@ -211,7 +219,12 @@ bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath
     }
     catch (const nlohmann::json::exception &ex)
     {
+        // A parse error leaves the scene untouched; a throw partway through
+        // Load (a malformed component field) leaves it half-populated. Clear
+        // it either way so a failed load yields an empty scene, never a
+        // corrupt one. (ScopedContextReset in Load already freed s_context.)
         Core::Log::Error("SceneSerializer: JSON error in '{}': {}", assetPath, ex.what());
+        scene.Clear();
         return false;
     }
 }
