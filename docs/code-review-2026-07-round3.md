@@ -194,11 +194,20 @@ Checkboxes so this can be burned down like the previous two docs.
   pays minutes for a library with no call sites. Delete it until the loader
   exists — re-adding it later is one FetchContent block.
 
-- [ ] **README is lying.** The Render section says "currently OpenGL, in the
+- [x] **README is lying.** The Render section says "currently OpenGL, in the
   future it may support Vulkan or DirectX" and the Debug section says "GLFW
   + OpenGL3 backend" — the engine is Vulkan/NVRHI and OpenGL is gone. The
   Documentation/Links sections are `<add-docs-link>` placeholders. First
   thing a visitor reads; it describes an engine that no longer exists.
+  *Done (2026-07-10):* rewrote the technical sections against the current code
+  — Vulkan/NVRHI + clustered-forward PBR + MSAA/FXAA, corrected dependency list
+  (dropped Glad; added NVRHI/glslang/ImPlot/doctest; noted no-Vulkan-SDK-build
+  and Assimp-unused), Vulkan ImGui backend, VSync/FPS-limit pacing, the
+  AppConfig/OptionsConfig split + F12 window, the reflection system, and
+  Runtime's hierarchy/lighting/SceneRenderer. Added a ctest-preset test section
+  and replaced the dead docs/links placeholders. Intro, build steps, and AI
+  Notice unchanged. (Sibling hygiene items — pin unpinned deps, remove unused
+  Assimp — remain open.)
 
 - [ ] **`-ffast-math` in Release while embedding Jolt is a risky default.**
   Jolt's docs warn against fast-math (it relies on IEEE semantics and NaN
