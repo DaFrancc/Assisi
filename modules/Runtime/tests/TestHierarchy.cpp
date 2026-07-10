@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <vector>
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -103,6 +104,64 @@ TEST_CASE("PropagateTransforms: an explicit NullEntity parent is treated as a ro
     PropagateTransforms(scene);
 
     CHECK(scene.Get<TransformComponent>(e)->worldMatrix[3][0] == doctest::Approx(4.f));
+}
+
+// Deep nesting: a long parent chain must compose transitively without losing a
+// level, and — because the recursion memoises each ancestor as a side effect —
+// every intermediate node's world matrix must be individually correct, not just
+// the leaf's. This exercises far more recursion depth than the three-deep case.
+TEST_CASE("PropagateTransforms: a deep chain composes correctly at every level")
+{
+    ECS::Scene scene;
+    constexpr int kDepth = 64;
+    std::vector<ECS::Entity> chain;
+    chain.reserve(kDepth);
+    for (int i = 0; i < kDepth; ++i)
+    {
+        const ECS::Entity e = scene.Create();
+        REQUIRE(scene.Add(e, TransformComponent{.position = {1.f, 0.f, 0.f}}) != nullptr);
+        if (i > 0)
+            REQUIRE(scene.Add(e, ParentComponent{.parent = chain[i - 1]}) != nullptr);
+        chain.push_back(e);
+    }
+
+    PropagateTransforms(scene);
+
+    // Each link adds 1 on x, so node i sits at cumulative world x = i + 1.
+    for (int i = 0; i < kDepth; ++i)
+        CHECK(scene.Get<TransformComponent>(chain[i])->worldMatrix[3][0] ==
+              doctest::Approx(static_cast<float>(i + 1)));
+}
+
+// Memoisation correctness: a shared ancestor is computed once — cached the first
+// time any descendant forces its resolution — and reused for every other branch
+// and for the ancestor's own query visit. Two subtrees off one grandparent must
+// both compose against the same cached transform and land in the right place.
+TEST_CASE("PropagateTransforms: a shared ancestor is memoised correctly across branches")
+{
+    ECS::Scene scene;
+    const ECS::Entity gp = scene.Create();
+    const ECS::Entity a  = scene.Create(); // branch A root
+    const ECS::Entity b  = scene.Create(); // branch B root
+    const ECS::Entity la = scene.Create(); // leaf under A
+    const ECS::Entity lb = scene.Create(); // leaf under B
+    REQUIRE(scene.Add(gp, TransformComponent{.position = {100.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(a, TransformComponent{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(b, TransformComponent{.position = {20.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(la, TransformComponent{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(lb, TransformComponent{.position = {2.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(a, ParentComponent{.parent = gp}) != nullptr);
+    REQUIRE(scene.Add(b, ParentComponent{.parent = gp}) != nullptr);
+    REQUIRE(scene.Add(la, ParentComponent{.parent = a}) != nullptr);
+    REQUIRE(scene.Add(lb, ParentComponent{.parent = b}) != nullptr);
+
+    PropagateTransforms(scene);
+
+    CHECK(scene.Get<TransformComponent>(la)->worldMatrix[3][0] == doctest::Approx(111.f)); // 100+10+1
+    CHECK(scene.Get<TransformComponent>(lb)->worldMatrix[3][0] == doctest::Approx(122.f)); // 100+20+2
+    // The grandparent's own visit reads back the same value its descendants
+    // composed against, rather than recomputing a divergent one.
+    CHECK(scene.Get<TransformComponent>(gp)->worldMatrix[3][0] == doctest::Approx(100.f));
 }
 
 // Regression for the missing cycle guard: a parent loop must not recurse until

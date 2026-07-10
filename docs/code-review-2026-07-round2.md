@@ -232,9 +232,13 @@ Checkboxes so this can be burned down like the round-1 doc was.
   `ACOMP`, namespaced types, transient fields) → assert the generated .cpp
   matches a checked-in golden output. Cheap to write, catches every future
   regex regression.
-- [~] **`PropagateTransforms`/`Hierarchy` had zero tests** — now covered by
-  `modules/Runtime/tests/TestHierarchy.cpp` (root, parent-compose, cycle guard).
-  *Still open:* deep-nesting chains and explicit memoisation-correctness cases.
+- [x] **`PropagateTransforms`/`Hierarchy` had zero tests** — now covered by
+  `modules/Runtime/tests/TestHierarchy.cpp` (root, parent-compose, three-deep
+  chain, siblings, transform-less parent, explicit-null parent, cycle guard).
+  The two previously-open gaps are closed: a 64-deep chain that asserts every
+  intermediate level (not just the leaf), and a shared-ancestor branch fixture
+  that pins memoisation correctness — the cached ancestor transform must be
+  reused identically across both branches and the ancestor's own query visit.
 - [ ] **No CI.** `.clang-format`, `.clang-tidy`, sanitizer CMake plumbing
   (`ASSISI_ENABLE_SANITIZERS`), and 27 good doctest cases all exist — and
   nothing runs any of them on push. This is the highest-leverage open item
