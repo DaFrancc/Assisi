@@ -1,5 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <chrono>
+#include <ctime>
 #include <format>
 #include <iostream>
 
@@ -72,13 +73,27 @@ void ConsoleSink::Write(LogLevel level, std::string_view message)
 
 namespace
 {
-// Wall-clock time of day, millisecond precision (e.g. "14:23:45.123"). No date:
-// the file is truncated per run, so a single run is unlikely to span midnight,
-// and the run's start is on the file's own mtime anyway.
+// Local wall-clock time of day, millisecond precision (e.g. "14:23:45.123").
+// No date: the file is truncated per run, so a single run is unlikely to span
+// midnight, and the run's start is on the file's own mtime anyway. Uses the
+// thread-safe localtime_s/localtime_r rather than chrono's zoned API, whose
+// only failure signal is an exception — the logger runs on any thread and
+// should never throw from a log call. The millisecond fraction comes from the
+// epoch directly (timezone offsets are whole minutes, so it's zone-independent).
 std::string Timestamp()
 {
-    const auto now = std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now());
-    return std::format("{:%H:%M:%S}", now);
+    using namespace std::chrono;
+    const system_clock::time_point now = system_clock::now();
+    const std::time_t seconds = system_clock::to_time_t(now);
+    const long long millis = duration_cast<milliseconds>(now.time_since_epoch()).count() % 1000;
+
+    std::tm local{};
+#ifdef _WIN32
+    localtime_s(&local, &seconds); // MSVC arg order: (tm*, time_t*)
+#else
+    localtime_r(&seconds, &local); // POSIX arg order: (time_t*, tm*)
+#endif
+    return std::format("{:02}:{:02}:{:02}.{:03}", local.tm_hour, local.tm_min, local.tm_sec, millis);
 }
 } // namespace
 
