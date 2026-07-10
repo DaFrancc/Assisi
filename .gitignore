@@ -24,6 +24,10 @@ __pycache__/
 *.ilk
 *.exp
 
+# clangd LSP config — per-machine (points at the local build's compile DB).
+# Copy .clangd.example to .clangd and repoint CompilationDatabase for your OS.
+.clangd
+
 # VS / Rider / CLion
 .vs/
 .idea/
