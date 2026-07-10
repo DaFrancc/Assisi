@@ -1,4 +1,5 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#include <chrono>
 #include <format>
 #include <iostream>
 
@@ -69,16 +70,34 @@ void ConsoleSink::Write(LogLevel level, std::string_view message)
 // FileSink
 // -------------------------------------------------------------------------
 
-FileSink::FileSink(const std::filesystem::path &path) : _file(path, std::ios::app)
+namespace
+{
+// Wall-clock time of day, millisecond precision (e.g. "14:23:45.123"). No date:
+// the file is truncated per run, so a single run is unlikely to span midnight,
+// and the run's start is on the file's own mtime anyway.
+std::string Timestamp()
+{
+    const auto now = std::chrono::floor<std::chrono::milliseconds>(std::chrono::system_clock::now());
+    return std::format("{:%H:%M:%S}", now);
+}
+} // namespace
+
+// Truncate, not append: an append-mode log accumulates every run forever (that
+// was the multi-MB assisi.log). One run per file keeps it bounded.
+FileSink::FileSink(const std::filesystem::path &path) : _file(path, std::ios::trunc)
 {
 }
 
 void FileSink::Write(LogLevel /*level*/, std::string_view message)
 {
-    if (_file.is_open())
+    if (!_file.is_open())
     {
-        _file << message << '\n';
+        return;
     }
+    _file << Timestamp() << ' ' << message << '\n';
+    // Flush every line: only a handful per run, and the point of a file log is
+    // to survive the crash that a buffered tail would otherwise be lost to.
+    _file.flush();
 }
 
 } // namespace Assisi::Core

@@ -6,7 +6,7 @@
 ///
 /// Available sinks:
 ///   - ConsoleSink  — writes colored output to stdout/stderr
-///   - FileSink     — appends to a file
+///   - FileSink     — writes to a file, truncated at startup, timestamped
 ///
 /// Future sinks (not yet implemented):
 ///   - ScreenSink   — in-game console overlay
@@ -31,10 +31,15 @@ struct ConsoleSink : Sink
     void Write(LogLevel level, std::string_view message) override;
 };
 
-/// @brief Appends log messages to a file.
+/// @brief Writes timestamped log messages to a file.
+///
+/// The file is truncated when the sink opens (one run per file), so it can't
+/// grow unbounded across runs. Each line is prefixed with a wall-clock
+/// timestamp and flushed immediately — the log's job is post-mortem, and an
+/// unflushed tail is exactly what a hard crash would otherwise lose.
 struct FileSink : Sink
 {
-    /// @brief Opens (or creates) the file at the given path in append mode.
+    /// @brief Opens the file at the given path, truncating any previous contents.
     explicit FileSink(const std::filesystem::path &path);
 
     void Write(LogLevel level, std::string_view message) override;
