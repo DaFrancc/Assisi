@@ -1,0 +1,272 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+#include "SandboxApp.hpp"
+
+#include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Runtime/Components.hpp>
+
+#include <imgui.h>
+
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <string>
+#include <string_view>
+
+void SandboxApp::DrawHelloImageWindow()
+{
+    if (ImGui::Begin("hello.png"))
+    {
+        if (_helloTexture.IsValid())
+        {
+            const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(_helloTexture.NativeTexture());
+            ImGui::Image(id, ImVec2(256.f, 256.f));
+        }
+        else
+        {
+            ImGui::TextDisabled("textures/hello.png failed to load.");
+        }
+    }
+    ImGui::End();
+}
+
+namespace
+{
+/// @brief True for image extensions stb_image (Texture::LoadFromAssets) decodes.
+bool IsThumbnailableImage(const std::filesystem::path &path)
+{
+    std::string ext = path.extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga";
+}
+
+/// @brief Paints a classic folder glyph (a tabbed body) filling a @p size square
+/// at screen-space @p origin, so a folder tile reads at a glance without needing
+/// an emoji font or an image asset.
+void DrawFolderIcon(const ImVec2 &origin, float size)
+{
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+
+    const ImU32  body     = IM_COL32(236, 202, 122, 255);
+    const ImU32  tab      = IM_COL32(212, 178, 96, 255);
+    const float  left     = origin.x + size * 0.16f;
+    const float  right    = origin.x + size * 0.84f;
+    const float  tabTop   = origin.y + size * 0.30f;
+    const float  bodyTop  = origin.y + size * 0.42f;
+    const float  bottom   = origin.y + size * 0.84f;
+    const float  tabRight = left + (right - left) * 0.45f;
+    const float  rounding = size * 0.03f;
+
+    drawList->AddRectFilled(ImVec2(left, tabTop), ImVec2(tabRight, bodyTop + rounding), tab, rounding);
+    drawList->AddRectFilled(ImVec2(left, bodyTop), ImVec2(right, bottom), body, rounding);
+}
+} // namespace
+
+void SandboxApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
+{
+    _assetBrowserOpen        = true;
+    _assetBrowserEntity      = _selectedEntity;
+    _assetBrowserMeta        = &meta;
+    _assetBrowserFieldOffset = fieldOffset;
+    _assetBrowserDir.clear(); // always start at the asset root
+    _assetBrowserDirty = true; // re-read on open
+}
+
+void SandboxApp::SelectAsset(std::string_view vpath)
+{
+    // Re-resolve the target from (entity, meta, offset) at write time — the
+    // component pool may have moved since the browser was opened (see eyedropper).
+    if (_assetBrowserMeta != nullptr && _scene != nullptr && _scene->IsAlive(_assetBrowserEntity))
+    {
+        const void *ptr =
+            _assetBrowserMeta->getByEntity(_scene, _assetBrowserEntity.index, _assetBrowserEntity.generation);
+        if (ptr != nullptr)
+        {
+            auto *field = reinterpret_cast<Assisi::Core::AssetPath *>(
+                const_cast<char *>(static_cast<const char *>(ptr)) + _assetBrowserFieldOffset);
+            field->Assign(vpath);
+            ReresolveEntityAssets(_assetBrowserEntity);
+        }
+    }
+    _assetBrowserOpen = false;
+    _assetBrowserMeta = nullptr;
+}
+
+void SandboxApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
+{
+    if (_scene == nullptr || !_scene->IsAlive(entity))
+        return;
+    Assisi::Runtime::MeshRendererComponent *mrc = _scene->Get<Assisi::Runtime::MeshRendererComponent>(entity);
+    if (mrc == nullptr)
+        return;
+    mrc->mesh          = _assetCache.ResolveMesh(mrc->meshPath);
+    mrc->albedoTexture = _assetCache.ResolveTexture(mrc->albedoPath);
+}
+
+void SandboxApp::RescanAssetBrowser()
+{
+    _assetBrowserDirs.clear();
+    _assetBrowserImages.clear();
+    _assetBrowserReadError = false;
+
+    const std::filesystem::path root   = Assisi::Core::AssetSystem::GetRoot();
+    const std::filesystem::path curDir = _assetBrowserDir.empty() ? root : root / _assetBrowserDir;
+
+    std::error_code                     ec;
+    std::filesystem::directory_iterator dirIt(curDir, ec);
+    if (ec)
+    {
+        _assetBrowserReadError = true;
+        return;
+    }
+    for (const std::filesystem::directory_entry &entry : dirIt)
+    {
+        std::error_code   entryEc;
+        const std::string name = entry.path().filename().string();
+        if (entry.is_directory(entryEc))
+            _assetBrowserDirs.push_back(name);
+        else if (IsThumbnailableImage(entry.path()))
+            _assetBrowserImages.push_back(name);
+    }
+    std::sort(_assetBrowserDirs.begin(), _assetBrowserDirs.end());
+    std::sort(_assetBrowserImages.begin(), _assetBrowserImages.end());
+}
+
+void SandboxApp::DrawAssetBrowser()
+{
+    if (!_assetBrowserOpen)
+        return;
+
+    // Thumbnail tile size, clamped and stepped by the zoom buttons below.
+    static constexpr float kMinThumb  = 64.f;
+    static constexpr float kMaxThumb  = 512.f;
+    static constexpr float kThumbStep = 32.f;
+
+    ImGui::SetNextWindowSize(ImVec2(720.f, 520.f), ImGuiCond_FirstUseEver);
+    if (!ImGui::Begin("Asset Browser", &_assetBrowserOpen))
+    {
+        ImGui::End();
+        return;
+    }
+
+    const std::string header = "assets/" + _assetBrowserDir;
+    ImGui::TextUnformatted(header.c_str());
+    ImGui::SameLine();
+    ImGui::BeginDisabled(_assetBrowserDir.empty());
+    if (ImGui::Button("Up"))
+    {
+        const std::string::size_type slash = _assetBrowserDir.find_last_of('/');
+        if (slash == std::string::npos)
+            _assetBrowserDir.clear();
+        else
+            _assetBrowserDir.erase(slash);
+        _assetBrowserDirty = true;
+    }
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh"))
+        _assetBrowserDirty = true;
+
+    // Zoom controls for the icon size.
+    ImGui::SameLine();
+    ImGui::TextUnformatted("Size");
+    ImGui::SameLine();
+    ImGui::BeginDisabled(_assetBrowserThumbSize <= kMinThumb);
+    if (ImGui::Button("-"))
+        _assetBrowserThumbSize = std::max(kMinThumb, _assetBrowserThumbSize - kThumbStep);
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(_assetBrowserThumbSize >= kMaxThumb);
+    if (ImGui::Button("+"))
+        _assetBrowserThumbSize = std::min(kMaxThumb, _assetBrowserThumbSize + kThumbStep);
+    ImGui::EndDisabled();
+    ImGui::Separator();
+
+    // Re-read the directory only when it changed (navigation / open / Refresh),
+    // never per frame.
+    if (_assetBrowserDirty)
+    {
+        RescanAssetBrowser();
+        _assetBrowserDirty = false;
+    }
+
+    if (_assetBrowserReadError)
+    {
+        ImGui::TextDisabled("Cannot read this directory.");
+        ImGui::End();
+        return;
+    }
+
+    const float thumb = _assetBrowserThumbSize;
+
+    ImGui::BeginChild("browser_entries");
+
+    const float cell = thumb + ImGui::GetStyle().ItemSpacing.x;
+    const int   cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cell));
+    int         col  = 0;
+
+    // Folders first, as icon tiles in the same grid as the assets. Clicking one
+    // navigates into it (marks the listing dirty so it re-reads next frame).
+    for (const std::string &dir : _assetBrowserDirs)
+    {
+        ImGui::PushID(dir.c_str());
+        ImGui::BeginGroup();
+        const ImVec2 tile    = ImGui::GetCursorScreenPos();
+        const bool   clicked = ImGui::Button("##folder", ImVec2(thumb, thumb));
+        DrawFolderIcon(tile, thumb);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
+        ImGui::TextWrapped("%s", dir.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        ImGui::PopID();
+
+        if (clicked)
+        {
+            if (!_assetBrowserDir.empty())
+                _assetBrowserDir += '/';
+            _assetBrowserDir += dir;
+            _assetBrowserDirty = true;
+        }
+
+        if (++col % cols != 0)
+            ImGui::SameLine();
+    }
+
+    // Then the thumbnailable assets, continuing the same grid flow.
+    for (const std::string &img : _assetBrowserImages)
+    {
+        const std::string vpath = _assetBrowserDir.empty() ? img : _assetBrowserDir + "/" + img;
+        const Assisi::Render::Texture *tex =
+            _thumbnailCache.ResolveTexture(Assisi::Core::AssetPath{std::string_view{vpath}});
+
+        ImGui::PushID(img.c_str());
+        ImGui::BeginGroup();
+        bool clicked = false;
+        if (tex != nullptr && tex->IsValid())
+        {
+            const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(tex->NativeTexture());
+            clicked = ImGui::ImageButton("thumb", id, ImVec2(thumb, thumb));
+        }
+        else
+        {
+            clicked = ImGui::Button(img.c_str(), ImVec2(thumb, thumb));
+        }
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
+        ImGui::TextWrapped("%s", img.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        ImGui::PopID();
+
+        if (clicked)
+            SelectAsset(vpath);
+
+        if (++col % cols != 0)
+            ImGui::SameLine();
+    }
+
+    ImGui::EndChild();
+    ImGui::End();
+}

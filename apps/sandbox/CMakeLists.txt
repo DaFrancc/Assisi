@@ -4,6 +4,11 @@ Assisi_apply_defaults(Assisi-Sandbox)
 target_sources(Assisi-Sandbox
   PRIVATE
     "src/main.cpp"
+    "src/SandboxApp.cpp"
+    "src/SandboxCamera.cpp"
+    "src/SandboxInspector.cpp"
+    "src/SandboxAssetBrowser.cpp"
+    "src/SandboxLevels.cpp"
 )
 
 target_link_libraries(Assisi-Sandbox
