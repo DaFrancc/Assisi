@@ -64,6 +64,11 @@ class PostProcess
 
     [[nodiscard]] AaMode Mode() const { return _mode; }
 
+    /// @brief Releases all GPU resources this owns. Call during app shutdown,
+    /// before the NVRHI device is destroyed — the member's own destructor would
+    /// otherwise run too late (after the device teardown in ~Application).
+    void Shutdown();
+
   private:
     void Rebuild();
     void RunFxaa(nvrhi::ICommandList *commandList, const RenderFrame &frame) const;

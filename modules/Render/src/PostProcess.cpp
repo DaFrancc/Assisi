@@ -9,6 +9,23 @@
 namespace Assisi::Render
 {
 
+void PostProcess::Shutdown()
+{
+    // Drop every NVRHI handle so the underlying GPU objects are freed now, while
+    // the device is still alive. Order-independent — they're ref-counted.
+    _fxaaBindingSet = nullptr;
+    _fxaaPipeline = nullptr;
+    _fxaaSampler = nullptr;
+    _fxaaBindingLayout = nullptr;
+    _sceneFramebuffer = nullptr;
+    _sceneDepth = nullptr;
+    _sceneColor = nullptr;
+    _msaaFramebuffer = nullptr;
+    _msaaDepth = nullptr;
+    _msaaColor = nullptr;
+    _device = nullptr;
+}
+
 bool PostProcess::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &swapchainFramebufferInfo,
                              const std::string &vertexShaderSpvPath, const std::string &fragmentShaderSpvPath)
 {

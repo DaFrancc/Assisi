@@ -201,10 +201,17 @@ bool Application::Initialize()
 Application::~Application()
 {
     // DebugUI/render teardown only ran meaningful bring-up if Initialize()
-    // succeeded.
+    // succeeded. Tear the GPU stack down in order and — crucially — here,
+    // before main() returns: the device lives in RenderSystem's static, so
+    // leaving it to static destruction races the dynamic loader that owns
+    // vulkan-1.dll (freeing the device through an unloaded DLL is a crash).
+    // The GPU was already drained at the end of Run(); this only orders the
+    // releases: our own resources first, then the device last.
     if (_initialized)
     {
         Debug::DebugUI::Shutdown();
+        _postProcess.Shutdown();
+        Render::RenderSystem::Shutdown();
     }
 }
 
@@ -309,6 +316,15 @@ void Application::Run()
         RenderFrame();
         _events.Flush();
     }
+
+    // Drain the GPU before any teardown begins. Render resources are owned all
+    // over (OnShutdown below, then _postProcess/DebugUI in ~Application), but
+    // the device itself lives in RenderSystem's static and isn't destroyed
+    // until after main() returns — so without this, resources are freed while
+    // the last frame's command buffer is still in flight (validation:
+    // "destroy ... currently in use by VkCommandBuffer", then a crash).
+    if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
+        vulkanContext->GetDevice()->waitForIdle();
 
     OnShutdown();
 }

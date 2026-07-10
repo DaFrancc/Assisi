@@ -47,6 +47,12 @@ class RenderSystem
     /// initialization hasn't happened (or failed).
     static Vulkan::VulkanContext *GetVulkanContext() { return s_vulkanContext.get(); }
 
+    /// @brief Destroys the Vulkan/NVRHI device. Must be called explicitly before
+    /// main() returns, once all render resources are released — never left to
+    /// static teardown, which races the dynamic loader that owns vulkan-1.dll
+    /// (tearing the device down through an unloaded DLL is an access violation).
+    static void Shutdown() { s_vulkanContext.reset(); }
+
   private:
     static inline std::unique_ptr<Vulkan::VulkanContext> s_vulkanContext;
 };
