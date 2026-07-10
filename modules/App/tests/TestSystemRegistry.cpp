@@ -38,11 +38,11 @@ TEST_CASE("SystemRegistry: After/Before constraints determine execution order")
     };
 
     // Registration order is deliberately "wrong"; constraints must fix it.
-    systems.Register(SystemPhase::Render, "Draw", record("Draw")).After("Cull");
-    systems.Register(SystemPhase::Render, "Cull", record("Cull")).After("Culling.Prepare");
-    systems.Register(SystemPhase::Render, "Culling.Prepare", record("Culling.Prepare"));
+    systems.RegisterRender("Draw", record("Draw")).After("Cull");
+    systems.RegisterRender("Cull", record("Cull")).After("Culling.Prepare");
+    systems.RegisterRender("Culling.Prepare", record("Culling.Prepare"));
 
-    systems.Run(SystemPhase::Render, MakeCtx(scene));
+    systems.RunRender(MakeCtx(scene));
 
     REQUIRE(order.size() == 3);
     CHECK(IndexOf(order, "Culling.Prepare") < IndexOf(order, "Cull"));
@@ -59,10 +59,10 @@ TEST_CASE("SystemRegistry: Before is honored symmetrically with After")
         return [&order, name](RenderContext &) { order.emplace_back(name); };
     };
 
-    systems.Register(SystemPhase::Render, "Late", record("Late"));
-    systems.Register(SystemPhase::Render, "Early", record("Early")).Before("Late");
+    systems.RegisterRender("Late", record("Late"));
+    systems.RegisterRender("Early", record("Early")).Before("Late");
 
-    systems.Run(SystemPhase::Render, MakeCtx(scene));
+    systems.RunRender(MakeCtx(scene));
 
     REQUIRE(order.size() == 2);
     CHECK(order[0] == "Early");
@@ -75,11 +75,11 @@ TEST_CASE("SystemRegistry: a dependency on an unregistered system still runs eve
     Assisi::ECS::Scene scene;
     std::vector<std::string> order;
 
-    systems.Register(SystemPhase::Render, "Solo",
-                     [&order](RenderContext &) { order.emplace_back("Solo"); })
+    systems.RegisterRender("Solo",
+                           [&order](RenderContext &) { order.emplace_back("Solo"); })
         .After("GhostThatWasNeverRegistered");
 
-    systems.Run(SystemPhase::Render, MakeCtx(scene));
+    systems.RunRender(MakeCtx(scene));
 
     CHECK(order.size() == 1); // logged an error, but did not drop the system
 }
@@ -95,10 +95,10 @@ TEST_CASE("SystemRegistry: a dependency cycle falls back to running all systems"
     };
 
     // A <-> B mutual dependency: unschedulable, must not silently drop systems.
-    systems.Register(SystemPhase::Render, "A", record("A")).After("B");
-    systems.Register(SystemPhase::Render, "B", record("B")).After("A");
+    systems.RegisterRender("A", record("A")).After("B");
+    systems.RegisterRender("B", record("B")).After("A");
 
-    systems.Run(SystemPhase::Render, MakeCtx(scene));
+    systems.RunRender(MakeCtx(scene));
 
     CHECK(order.size() == 2); // fallback to registration order — nothing dropped
 }

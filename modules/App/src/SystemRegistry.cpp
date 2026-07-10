@@ -51,9 +51,10 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
 
     for (std::size_t i = 0; i < n; ++i)
     {
-        for (const auto &dep : entries[i].after)
+        for (const std::string &dep : entries[i].after)
         {
-            auto it = nameToIndex.find(dep);
+            const std::unordered_map<std::string, std::size_t>::const_iterator it =
+                nameToIndex.find(dep);
             if (it == nameToIndex.end())
             {
                 Core::Log::Error(
@@ -64,9 +65,10 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
             addEdge(it->second, i);
         }
 
-        for (const auto &dep : entries[i].before)
+        for (const std::string &dep : entries[i].before)
         {
-            auto it = nameToIndex.find(dep);
+            const std::unordered_map<std::string, std::size_t>::const_iterator it =
+                nameToIndex.find(dep);
             if (it == nameToIndex.end())
             {
                 Core::Log::Error(
@@ -113,120 +115,96 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
     return sorted;
 }
 
-// Explicit instantiations — keeps the template definition out of the header.
-template std::vector<std::size_t>
-SystemRegistry::TopoSort<SystemRegistry::GameEntry>(const std::vector<GameEntry> &,
-                                                     std::string_view);
-template std::vector<std::size_t>
-SystemRegistry::TopoSort<SystemRegistry::RenderEntry>(const std::vector<RenderEntry> &,
-                                                       std::string_view);
-
 // ---------------------------------------------------------------------------
-// SystemHandle
+// SystemHandle — one definition, type-erased over the context
 // ---------------------------------------------------------------------------
 
 SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::After(std::string_view name)
 {
-    if (_isRender)
-    {
-        _registry->_renderEntries[_entryIndex].after.emplace_back(name);
-        _registry->_renderDirty = true;
-    }
-    else
-    {
-        _registry->_entries[_phaseIndex][_entryIndex].after.emplace_back(name);
-        _registry->_dirty[_phaseIndex] = true;
-    }
+    _addDependency(/*before=*/false, name);
     return *this;
 }
 
 SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Before(std::string_view name)
 {
-    if (_isRender)
-    {
-        _registry->_renderEntries[_entryIndex].before.emplace_back(name);
-        _registry->_renderDirty = true;
-    }
-    else
-    {
-        _registry->_entries[_phaseIndex][_entryIndex].before.emplace_back(name);
-        _registry->_dirty[_phaseIndex] = true;
-    }
+    _addDependency(/*before=*/true, name);
     return *this;
 }
 
 // ---------------------------------------------------------------------------
-// Register
+// Add — append to a phase and hand back a slot-bound handle
 // ---------------------------------------------------------------------------
 
-SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase                          phase,
-                                                       std::string_view                     name,
-                                                       std::function<void(SystemContext &)> fn)
+template <typename Ctx>
+SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase,
+                                                 std::string_view          name,
+                                                 std::function<void(Ctx &)> fn)
 {
-    const std::size_t pi = Index(phase);
-    const std::size_t ei = _entries[pi].size();
-    _entries[pi].push_back({std::string(name), std::move(fn), {}, {}});
-    _dirty[pi] = true;
-    return SystemHandle(this, /*isRender=*/false, pi, ei);
-}
+    const std::size_t entryIndex = phase.entries.size();
+    phase.entries.push_back({std::string(name), std::move(fn), {}, {}});
+    phase.dirty = true;
 
-SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase                          phase,
-                                                       std::string_view                     name,
-                                                       std::function<void(RenderContext &)> fn)
-{
-    // Render systems form a single ordered list; the phase argument exists only
-    // to keep the Register/Run call shape uniform and must be Render. Catch
-    // misuse here rather than silently ignoring it.
-    if (phase != SystemPhase::Render)
-        Core::Log::Error("SystemRegistry: render system '{}' registered with a non-Render phase; "
-                         "it will run in the Render phase regardless.",
-                         name);
-
-    const std::size_t ei = _renderEntries.size();
-    _renderEntries.push_back({std::string(name), std::move(fn), {}, {}});
-    _renderDirty = true;
-    return SystemHandle(this, /*isRender=*/true, /*phaseIndex=*/0, ei);
+    // Capture the phase and slot index (not a pointer to the Entry): the entries
+    // vector may reallocate before the handle is used, but indexing stays valid.
+    Phase<Ctx> *phasePtr = &phase;
+    return SystemHandle(
+        [phasePtr, entryIndex](bool before, std::string_view depName)
+        {
+            typename Phase<Ctx>::Entry &entry = phasePtr->entries[entryIndex];
+            (before ? entry.before : entry.after).emplace_back(depName);
+            phasePtr->dirty = true;
+        });
 }
 
 // ---------------------------------------------------------------------------
-// Run
+// RunPhase — sort-on-demand then dispatch
 // ---------------------------------------------------------------------------
 
-void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
+template <typename Ctx>
+void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx)
 {
-    const std::size_t pi = Index(phase);
-    if (_dirty[pi])
-        SortPhase(pi);
+    if (phase.dirty)
+    {
+        phase.sorted = TopoSort(phase.entries, phaseName);
+        phase.dirty  = false;
+    }
 
-    for (std::size_t i : _sorted[pi])
-        _entries[pi][i].fn(ctx);
-}
-
-void SystemRegistry::Run(SystemPhase, RenderContext ctx)
-{
-    if (_renderDirty)
-        SortRender();
-
-    for (std::size_t i : _renderSorted)
-        _renderEntries[i].fn(ctx);
+    for (std::size_t i : phase.sorted)
+        phase.entries[i].fn(ctx);
 }
 
 // ---------------------------------------------------------------------------
-// Sort
+// Public API
 // ---------------------------------------------------------------------------
 
-void SystemRegistry::SortPhase(std::size_t pi)
+std::string_view SystemRegistry::PhaseName(std::size_t gamePhaseIndex)
 {
     static constexpr std::string_view kNames[] = {"PreUpdate", "FixedUpdate", "Update",
                                                    "PostUpdate"};
-    _sorted[pi]  = TopoSort(_entries[pi], kNames[pi]);
-    _dirty[pi]   = false;
+    return kNames[gamePhaseIndex];
 }
 
-void SystemRegistry::SortRender()
+SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase                          phase,
+                                                      std::string_view                     name,
+                                                      std::function<void(SystemContext &)> fn)
 {
-    _renderSorted = TopoSort(_renderEntries, "Render");
-    _renderDirty  = false;
+    return Add(_gamePhases[Index(phase)], name, std::move(fn));
+}
+
+SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view name,
+                                                            std::function<void(RenderContext &)> fn)
+{
+    return Add(_renderPhase, name, std::move(fn));
+}
+
+void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
+{
+    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), ctx);
+}
+
+void SystemRegistry::RunRender(RenderContext ctx)
+{
+    RunPhase(_renderPhase, "Render", ctx);
 }
 
 } // namespace Assisi::App

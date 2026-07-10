@@ -238,7 +238,7 @@ Checkboxes so this can be burned down like the round-1 doc was.
   `WindowContext.hpp:104-110` still documents the stub as applying a swap
   interval ("Makes the window context current before changing the swap
   interval") — contradicted by the implementation 80 lines below.
-- [ ] **`SystemRegistry` duplicates its entire plumbing between game and
+- [x] **`SystemRegistry` duplicates its entire plumbing between game and
   render paths.** `GameEntry`/`RenderEntry`, `_entries`/`_renderEntries`,
   paired dirty flags, and forked `After`/`Before`/`Register`/`Run`
   (`SystemRegistry.cpp:128-212`). The render `Register` overload takes a
@@ -247,6 +247,20 @@ Checkboxes so this can be burned down like the round-1 doc was.
   Fix: a `RegisterRender(name, fn)` without the phase argument (removes the
   runtime check and the apology), and collapse the duplicated storage with a
   small template over the context type.
+  DONE (2026-07-10): storage collapsed onto one `Phase<Ctx>` template (entries +
+  cached sorted order + dirty flag); the registry now holds
+  `std::array<Phase<SystemContext>, kGamePhaseCount>` + one
+  `Phase<RenderContext>`. `GameEntry`/`RenderEntry` and the paired
+  `_entries`/`_sorted`/`_dirty` vs `_renderEntries`/`_renderSorted`/`_renderDirty`
+  members are gone, as are `SortPhase`/`SortRender` (one templated `RunPhase`).
+  Render systems register via `RegisterRender(name, fn)` and run via
+  `RunRender(ctx)` — the `SystemPhase::Render` enumerator and the wrong-phase
+  apology check are deleted; a wrong phase is now unrepresentable. `SystemHandle`
+  is type-erased over the context (one `After`/`Before` pair, a captured
+  `AddDependency` closure keyed on phase+slot-index so it survives entries-vector
+  reallocation). `Add`/`RunPhase`/`TopoSort` are private templates instantiated
+  in-TU, so the explicit-instantiation block is gone too. Tests updated to the
+  new render API; `Assisi-App-Tests` green.
 - [x] **`Logger` is not thread-safe while multi-threaded code lives
   in-process.** `Logger.cpp` — no synchronization on `_sinks` or in the
   sinks; `ConsoleSink::Write` interleaves on `std::cout`. Jolt's

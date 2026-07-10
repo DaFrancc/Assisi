@@ -15,14 +15,14 @@
 ///         .After("Physics");
 ///
 /// // Render system — needs view/projection
-/// _systems.Register(SystemPhase::Render, "DrawScene",
+/// _systems.RegisterRender("DrawScene",
 ///     [this](RenderContext& ctx) {
 ///         Runtime::DrawScene(ctx.scene, ctx.view, ctx.projection, _shader);
 ///     });
 ///
 /// // Dispatch
-/// _systems.Run(SystemPhase::Update,  { *_scene, dt,  GetInput() });
-/// _systems.Run(SystemPhase::Render,  { *_scene, 0.f, view, proj });
+/// _systems.Run(SystemPhase::Update, { *_scene, dt, GetInput() });
+/// _systems.RunRender({ *_scene, 0.f, view, proj });
 /// @endcode
 ///
 /// Systems run in dependency order within each phase.
@@ -70,9 +70,12 @@ enum class SystemPhase
     FixedUpdate = 1, ///< Fixed timestep; may run multiple times per render frame.
     Update      = 2, ///< Once per render frame; main game logic.
     PostUpdate  = 3, ///< After game logic; transform propagation and cleanup.
-    Render      = 4, ///< Camera, culling, draw calls.  Uses RenderContext.
     _Count
 };
+
+// The Render phase is not a SystemPhase value: render systems take a different
+// context (RenderContext) and are registered/run through RegisterRender/RunRender.
+// A phase argument that could only ever be Render would be an apology, not an API.
 
 /// @brief Stores and dispatches system functions grouped by phase.
 ///
@@ -82,7 +85,11 @@ enum class SystemPhase
 class SystemRegistry
 {
   public:
-    /// @brief Fluent handle for chaining ordering constraints after Register().
+    /// @brief Fluent handle for chaining ordering constraints after registration.
+    ///
+    /// Type-erased over the context type: it captures where to append the
+    /// dependency at registration time, so After()/Before() are defined once
+    /// regardless of whether the system is a game or render system.
     class SystemHandle
     {
       public:
@@ -95,19 +102,15 @@ class SystemRegistry
       private:
         friend class SystemRegistry;
 
-        SystemHandle(SystemRegistry *registry, bool isRender, std::size_t phaseIndex,
-                     std::size_t entryIndex)
-            : _registry(registry)
-            , _isRender(isRender)
-            , _phaseIndex(phaseIndex)
-            , _entryIndex(entryIndex)
+        /// Records a dependency: @p before selects the before-list over the after-list.
+        using AddDependency = std::function<void(bool before, std::string_view name)>;
+
+        explicit SystemHandle(AddDependency addDependency)
+            : _addDependency(std::move(addDependency))
         {
         }
 
-        SystemRegistry *_registry;
-        bool            _isRender;
-        std::size_t     _phaseIndex; ///< Unused when _isRender == true.
-        std::size_t     _entryIndex; ///< Index into the entry vector — stable across push_backs.
+        AddDependency _addDependency;
     };
 
     /// @brief Register a game logic system for a non-Render phase.
@@ -115,54 +118,56 @@ class SystemRegistry
                           std::string_view                     name,
                           std::function<void(SystemContext &)> fn);
 
-    /// @brief Register a render system.  @p phase must be SystemPhase::Render.
-    SystemHandle Register(SystemPhase                          phase,
-                          std::string_view                     name,
-                          std::function<void(RenderContext &)> fn);
+    /// @brief Register a render system (runs in the Render phase, receives a RenderContext).
+    SystemHandle RegisterRender(std::string_view name, std::function<void(RenderContext &)> fn);
 
     /// @brief Run all game logic systems for the given phase in dependency order.
     void Run(SystemPhase phase, SystemContext ctx);
 
-    /// @brief Run all render systems in dependency order.  @p phase must be SystemPhase::Render.
-    void Run(SystemPhase phase, RenderContext ctx);
+    /// @brief Run all render systems in dependency order.
+    void RunRender(RenderContext ctx);
 
   private:
-    struct GameEntry
+    /// @brief One phase's worth of systems taking context type @p Ctx, plus its
+    /// cached execution order.  Game and render phases are the same machinery
+    /// differing only in Ctx — this template is what collapses the duplication.
+    template <typename Ctx>
+    struct Phase
     {
-        std::string                        name;
-        std::function<void(SystemContext &)> fn;
-        std::vector<std::string>           after;
-        std::vector<std::string>           before;
-    };
+        struct Entry
+        {
+            std::string               name;
+            std::function<void(Ctx &)> fn;
+            std::vector<std::string>  after;
+            std::vector<std::string>  before;
+        };
 
-    struct RenderEntry
-    {
-        std::string                        name;
-        std::function<void(RenderContext &)> fn;
-        std::vector<std::string>           after;
-        std::vector<std::string>           before;
+        std::vector<Entry>       entries;
+        std::vector<std::size_t> sorted; ///< Indices into @ref entries, in execution order.
+        bool                     dirty = false;
     };
 
     /// Number of game-logic phases (everything except Render).
-    static constexpr std::size_t kGamePhaseCount = static_cast<std::size_t>(SystemPhase::Render);
+    static constexpr std::size_t kGamePhaseCount = static_cast<std::size_t>(SystemPhase::_Count);
 
-    static std::size_t Index(SystemPhase phase) { return static_cast<std::size_t>(phase); }
+    static std::size_t      Index(SystemPhase phase) { return static_cast<std::size_t>(phase); }
+    static std::string_view PhaseName(std::size_t gamePhaseIndex);
+
+    /// @brief Append a system to @p phase and return a handle bound to its slot.
+    template <typename Ctx>
+    SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn);
 
     /// @brief Topological sort (Kahn's algorithm) over any entry type with name/after/before.
     template <typename Entry>
     static std::vector<std::size_t> TopoSort(const std::vector<Entry> &entries,
                                              std::string_view          phaseName);
 
-    void SortPhase(std::size_t phaseIndex);
-    void SortRender();
+    /// @brief Re-sort @p phase if dirty, then run its systems in dependency order.
+    template <typename Ctx>
+    void RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx);
 
-    std::array<std::vector<GameEntry>, kGamePhaseCount>  _entries;
-    std::array<std::vector<std::size_t>, kGamePhaseCount> _sorted;
-    std::array<bool, kGamePhaseCount>                     _dirty{};
-
-    std::vector<RenderEntry>  _renderEntries;
-    std::vector<std::size_t>  _renderSorted;
-    bool                      _renderDirty = false;
+    std::array<Phase<SystemContext>, kGamePhaseCount> _gamePhases;
+    Phase<RenderContext>                              _renderPhase;
 };
 
 } // namespace Assisi::App
