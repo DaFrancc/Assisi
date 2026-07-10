@@ -154,7 +154,7 @@ Checkboxes so this can be burned down like the previous two docs.
 
 ## Architecture
 
-- [ ] **Physics is compiled against the renderer.** `PhysicsWorld.cpp`
+- [x] **Physics is compiled against the renderer.** `PhysicsWorld.cpp`
   includes `Runtime/Components.hpp` for `TransformComponent`, and that
   header drags in `Render/MeshBuffer.hpp`, `Render/Texture.hpp`, and thus
   nvrhi — into the physics module. `TransformComponent` is the most
@@ -162,6 +162,19 @@ Checkboxes so this can be burned down like the previous two docs.
   GPU types. Fix: split `Transform` into its own header (or a lower module);
   the layering violation evaporates and Physics stops rebuilding when a
   render header changes.
+  *Done (2026-07-10):* `Transform` moved down to its own header in the ECS
+  layer (`Assisi/ECS/Transform.hpp`, namespace `Assisi::ECS`) — the honest home
+  for the engine's most foundational component, and one both Physics and Runtime
+  already sit above. Its reflection registration generates in the ECS module now.
+  `Runtime/Components.hpp` re-exports it (`using ECS::Transform;`) so all the
+  render-facing code that says `Runtime::Transform` is untouched; only Physics
+  changed, to name `ECS::Transform` directly. Physics dropped its `Assisi::Runtime`
+  link entirely — its compile line no longer carries any `Render`/nvrhi include
+  path. Two latent issues surfaced and were fixed in passing: ECS carried a stale
+  `Assisi::Render` link dep (zero references) — removed; and `Assisi::Math`
+  publicly includes `<glm/glm.hpp>` but never linked glm, leaning on Render to
+  supply the path transitively — now links `glm::glm` PUBLIC so any renderer-free
+  Math consumer builds. `Parent` stays in Runtime (Physics doesn't need it).
 
 - [ ] **`Application` is a framework and a debug tool at once.**
   `DrawOptionsWindow` is ~200 lines of ImGui/ImPlot UI *in the engine base

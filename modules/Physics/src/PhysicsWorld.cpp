@@ -3,7 +3,7 @@
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Runtime/Components.hpp>
+#include <Assisi/ECS/Transform.hpp>
 
 #include <Jolt/Jolt.h>
 
@@ -241,7 +241,7 @@ void PhysicsWorld::SyncTransforms(Assisi::ECS::Scene &scene)
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
     for (auto [entity, transform, rb] :
-         scene.Query<Assisi::Runtime::Transform, RigidBody>())
+         scene.Query<Assisi::ECS::Transform, RigidBody>())
     {
         if (!bodies.IsAdded(rb.bodyId) || bodies.GetMotionType(rb.bodyId) == JPH::EMotionType::Static)
         {

@@ -11,4 +11,13 @@ target_include_directories(Assisi-Math
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
+# GLM.hpp is a public header that includes <glm/glm.hpp>, so Math owns the glm
+# dependency and propagates its include path to every consumer. (Previously glm
+# only reached Math's consumers transitively through Render, which broke the
+# moment a renderer-free module — Physics — depended on Math alone.)
+target_link_libraries(Assisi-Math
+  PUBLIC
+    glm::glm
+)
+
 add_library(Assisi::Math ALIAS Assisi-Math)

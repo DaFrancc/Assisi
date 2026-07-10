@@ -18,7 +18,6 @@ target_link_libraries(Assisi-Physics
   PUBLIC
     Assisi::Core
     Assisi::ECS
-    Assisi::Runtime
     Jolt::Jolt
 )
 
