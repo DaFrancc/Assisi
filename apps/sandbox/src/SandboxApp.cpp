@@ -75,7 +75,12 @@ void SandboxApp::OnStart()
     auto mainScene = _scenes.Create("Main");
     if (!mainScene)
     {
+        // Abort for real: without a scene the per-frame hooks have nothing to
+        // run on. RequestClose() here means Run()'s first ShouldClose() check
+        // fails and the loop body never executes; the _scene guards in
+        // OnFixedUpdate/OnUpdate are defense-in-depth for that same null.
         Assisi::Core::Log::Error("Failed to create the main scene; aborting startup");
+        RequestClose();
         return;
     }
     _scene = *mainScene;
@@ -170,6 +175,8 @@ void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
 
 void SandboxApp::OnFixedUpdate(float dt)
 {
+    if (!_scene)
+        return;
     _physics.Update(dt);
     _physics.SyncTransforms(*_scene);
 }
@@ -179,6 +186,9 @@ void SandboxApp::OnUpdate(float dt)
     auto &input = GetInput();
     if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsKeyboard())
         RequestClose();
+
+    if (!_scene)
+        return;
 
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
