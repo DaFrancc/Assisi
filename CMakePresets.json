@@ -164,5 +164,25 @@
     { "name": "clang-debug", "configurePreset": "clang-debug" },
     { "name": "clang-dev",   "configurePreset": "clang-dev"   },
     { "name": "clang-ship",  "configurePreset": "clang-ship"  }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false }
+    },
+
+    { "name": "msvc-debug",  "inherits": "test-base", "configurePreset": "msvc-debug"  },
+    { "name": "msvc-dev",    "inherits": "test-base", "configurePreset": "msvc-dev"    },
+    { "name": "msvc-ship",   "inherits": "test-base", "configurePreset": "msvc-ship"   },
+
+    { "name": "gcc-debug",   "inherits": "test-base", "configurePreset": "gcc-debug"   },
+    { "name": "gcc-dev",     "inherits": "test-base", "configurePreset": "gcc-dev"     },
+    { "name": "gcc-ship",    "inherits": "test-base", "configurePreset": "gcc-ship"    },
+
+    { "name": "clang-debug", "inherits": "test-base", "configurePreset": "clang-debug" },
+    { "name": "clang-dev",   "inherits": "test-base", "configurePreset": "clang-dev"   },
+    { "name": "clang-ship",  "inherits": "test-base", "configurePreset": "clang-ship"  }
   ]
 }
