@@ -190,3 +190,13 @@ TEST_CASE("SparseSet: clear empties the set")
     CHECK(set.Size() == 0);
     CHECK_FALSE(set.Has(Entity{.index = 0, .generation = 0}));
 }
+
+TEST_CASE("SparseSet: adding the null/sentinel index is rejected, not UB")
+{
+    SparseSet<int> set;
+    // NullEntity's index is UINT32_MAX; index + 1 would overflow to 0 and
+    // resize the sparse array to empty, corrupting it. Add must reject instead.
+    CHECK(set.Add(NullEntity, 7) == nullptr);
+    CHECK(set.Size() == 0);
+    CHECK_FALSE(set.Has(NullEntity));
+}

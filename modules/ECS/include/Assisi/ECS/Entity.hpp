@@ -14,6 +14,11 @@
 namespace Assisi::ECS
 {
 
+/// @brief Reserved all-ones value used as the sentinel in an Entity's index and
+/// generation fields. NullEntity is built from it, and component pools reject an
+/// index equal to it — SparseSet::Add would overflow computing `index + 1`.
+inline constexpr uint32_t InvalidEntityIndex = UINT32_MAX;
+
 struct Entity
 {
     uint32_t index = 0;
@@ -23,10 +28,13 @@ struct Entity
     bool operator!=(const Entity &) const = default;
 
     /// @brief Returns true if this entity is not null.
-    explicit operator bool() const { return index != UINT32_MAX || generation != UINT32_MAX; }
+    explicit operator bool() const
+    {
+        return index != InvalidEntityIndex || generation != InvalidEntityIndex;
+    }
 };
 
 /// @brief Sentinel value representing the absence of an entity.
-inline constexpr Entity NullEntity = {UINT32_MAX, UINT32_MAX};
+inline constexpr Entity NullEntity = {InvalidEntityIndex, InvalidEntityIndex};
 
 } // namespace Assisi::ECS

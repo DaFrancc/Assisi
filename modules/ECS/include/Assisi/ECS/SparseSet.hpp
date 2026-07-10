@@ -40,6 +40,13 @@ template <typename T> struct SparseSet
     ///         the caller can do nothing different about the distinction.
     [[nodiscard]] T *Add(Entity entity, T component = {})
     {
+        /* Reject the null/sentinel index: entity.index + 1 below would overflow
+           to 0, resize the sparse array to empty, and then the write past it is
+           out of bounds.  Scene::Add's IsAlive gate already rejects NullEntity,
+           but a direct SparseSet user has no such guard. */
+        if (entity.index == InvalidEntityIndex)
+            return nullptr;
+
         /* Any occupied slot is a rejection.  Has() alone won't catch the stale
            case — it matches the full handle, so a stale handle whose slot was
            reused by a newer generation would slip past and overwrite the live
