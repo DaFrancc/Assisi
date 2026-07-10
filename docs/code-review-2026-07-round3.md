@@ -217,11 +217,19 @@ Checkboxes so this can be burned down like the previous two docs.
   camera. A serialization-exclusion mechanism (or not storing the editor
   camera in the ECS at all) is the honest design.
 
-- [ ] **Non-uniform scale silently breaks lighting.** `cube_min.vert`
+- [x] **Non-uniform scale silently breaks lighting.** `cube_min.vert`
   documents "assumes uniform scale" for the normal transform — but the
   inspector lets you drag `scale` to non-uniform values freely, producing
   wrong lighting with no warning. Either use the inverse-transpose (cheap:
   computed CPU-side per draw) or surface the constraint.
+  *Done (2026-07-10):* the vertex shader now builds
+  `transpose(inverse(mat3(pc.model)))` and transforms the normal by it, so
+  non-uniform scale is handled correctly (and it collapses to `mat3(model)` for
+  the uniform/rotation-only case). Computed per-vertex rather than passed in as
+  a third push-constant matrix because the `PushConstants` block is already at
+  the 128-byte portable Vulkan ceiling (two `mat4`), leaving no room — and a
+  3x3 `inverse()` per vertex is negligible at our vertex counts. No CPU-side or
+  push-constant-layout change needed.
 
 ## Build / hygiene (this is where the rot is)
 

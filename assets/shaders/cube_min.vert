@@ -35,8 +35,13 @@ void main()
 {
     vec4 worldPos = pc.model * vec4(inPosition, 1.0);
     vWorldPos = worldPos.xyz;
-    // Assumes uniform scale — no material system needs non-uniform scale yet.
-    vNormal   = normalize(mat3(pc.model) * inNormal);
+    // Normals transform by the inverse-transpose of the model's upper-left 3x3,
+    // so non-uniform scale doesn't skew them (for uniform scale/rotation this
+    // reduces to mat3(model)). Computed per-vertex rather than passed in: the
+    // push_constant block above is already at the 128-byte portable ceiling, so
+    // there's no room for a third matrix, and inverse() of a 3x3 is cheap.
+    mat3 normalMatrix = transpose(inverse(mat3(pc.model)));
+    vNormal   = normalize(normalMatrix * inNormal);
     vTexCoord = inTexCoord;
     vViewZ    = (uFrame.view * worldPos).z;
 
