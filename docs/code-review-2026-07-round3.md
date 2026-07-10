@@ -224,12 +224,29 @@ Checkboxes so this can be burned down like the previous two docs.
   Notice unchanged. (Sibling hygiene items — pin unpinned deps, remove unused
   Assimp — remain open.)
 
-- [ ] **`-ffast-math` in Release while embedding Jolt is a risky default.**
+- [x] **`-ffast-math` in Release while embedding Jolt is a risky default.**
   Jolt's docs warn against fast-math (it relies on IEEE semantics and NaN
   checks). The flag only applies to Assisi TUs, not Jolt's own — but
   engine-side NaN guards (e.g. against degenerate transforms) silently
   become no-ops under it. Make it opt-in per-module rather than a global
   Release default, or document the accepted risk explicitly.
+  *Assessed (2026-07-10), risk accepted:* two parts. (1) *Jolt* is never
+  affected — it builds from its own target and never links `Assisi::Perf`, so
+  the flag reaches only Assisi TUs by construction (verified via the link
+  graph). (2) The "engine-side NaN guards become no-ops" concern is real but
+  currently amounts to a *single* runtime guard in the whole tree:
+  `DefaultMeshes.hpp:51` (`if (!std::isfinite(det) || det == 0.0f) continue;`
+  before `1.0f / det` in tangent generation) — every other `isfinite`/NaN use
+  is in tests. That guard runs over hand-authored primitive-mesh data where
+  `det` is never NaN/Inf, and the `det == 0.0f` half (the realistic degenerate
+  case) survives fast-math anyway; only the `isfinite` half is stripped. A
+  prototype module-level scope option (`all` vs `math-render`) was written and
+  reverted: `DefaultMeshes.hpp` lives in Render, so *both* scopes would still
+  fast-math it — the coarse knob missed its own target. It becomes non-theoretical
+  the day the mesh-file loader (the deferred Assimp item above) feeds *untrusted*
+  UVs through that path; the correct fix then is targeted (a bound-check instead of
+  `isfinite`, or strip fast-math from that one TU via
+  `set_source_files_properties`), not a global option.
 
 - [ ] **`ShortNames.hpp` relies on a comment for safety.** It injects
   `namespace Core = A::Core;` etc. at global scope with "CPP ONLY!!!" as its
