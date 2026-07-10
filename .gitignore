@@ -8,6 +8,10 @@ cmake_install.cmake
 # Conan
 .conan/
 
+# Python (reflectgen tooling)
+__pycache__/
+*.pyc
+
 # Compiled output
 *.exe
 *.dll
