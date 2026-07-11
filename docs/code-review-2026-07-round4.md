@@ -22,7 +22,7 @@ Checkboxes so this can be burned down like the previous three docs.
 
 ## Correctness bugs (real, not taste)
 
-- [ ] **Fixed timestep renders un-interpolated state.** `Application::Run()`
+- [x] **Fixed timestep renders un-interpolated state.** `Application::Run()`
   (`Application.cpp:287-293`) implements the accumulator loop but `OnRender`
   draws the raw latest physics state. At 60 Hz physics on a 144+ Hz display
   (or with the FPS cap off), physics-driven motion visibly stutters — the
@@ -32,6 +32,15 @@ Checkboxes so this can be burned down like the previous three docs.
   transforms for physics-owned entities — or make an explicit, documented
   decision that Assisi games render at the physics rate's granularity and
   accept the judder. Either resolves the promissory note; silence doesn't.
+  *Done (2026-07-11):* took the interpolation route. `Application::Run()`
+  now computes `accumulator / physicsStep` as an alpha after the fixed-update
+  loop, exposed via `GetInterpolationAlpha()`. `PhysicsWorld` splits the old
+  `SyncTransforms` into `CaptureState()` (snapshots each dynamic body's pose
+  per fixed step) and `InterpolateTransforms(scene, alpha)` (blends the last
+  two snapshots — `mix` for position, `slerp` for rotation — into the ECS
+  Transform per render frame); snapshots reset on teleport so an inspector
+  edit snaps instead of sliding. Verified interactively: physics motion is
+  smooth with the FPS cap off.
 
 - [x] **`SceneSerializer::Load` leaks its thread-local context and leaves the
   scene half-loaded on a throwing component.** Pass 2 calls each component's

@@ -85,6 +85,14 @@ class Application
     Window::WindowContext &GetWindow() const { return *_window; }
     Window::InputContext  &GetInput()  const { return *_input; }
 
+    /// @brief Fraction of a fixed physics step left unconsumed by the current
+    /// frame — in [0, 1). Use it in OnRender() to blend physics-driven state
+    /// between its previous and current fixed-step poses (see
+    /// Physics::PhysicsWorld::InterpolateTransforms), so motion stays smooth
+    /// when the display refreshes faster than physics steps. Recomputed every
+    /// frame after the fixed-update loop and stable through OnUpdate/OnRender.
+    float GetInterpolationAlpha() const { return _interpolationAlpha; }
+
     /// @brief The per-frame event queue, owned by Application and flushed once
     /// per frame in Run(). Systems normally reach it through SystemContext
     /// (ctx.events); this accessor is for app code outside a system.
@@ -157,6 +165,11 @@ class Application
     int    _fps = 0;
     double _cpuFrameMs = 0.0;
     double _gpuFrameMs = 0.0;
+
+    // Leftover accumulator as a fraction of a physics step, in [0, 1). Set once
+    // per frame after the fixed-update loop; read by OnRender via
+    // GetInterpolationAlpha() to blend physics state between fixed steps.
+    float _interpolationAlpha = 0.0f;
 
     // Rolling per-frame samples (milliseconds) for the ImGui plots and the
     // percentile stats, kept as ring buffers: _frameHistoryOffset is the next

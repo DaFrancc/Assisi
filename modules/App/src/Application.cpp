@@ -290,6 +290,12 @@ void Application::Run()
             accumulator -= physicsStep;
         }
 
+        // What's left in the accumulator is how far we are into the *next*
+        // physics step — the blend factor OnRender uses to interpolate
+        // physics-driven state between the last two fixed steps. The while loop
+        // above guarantees accumulator < physicsStep, so this stays in [0, 1).
+        _interpolationAlpha = static_cast<float>(accumulator / physicsStep);
+
         OnUpdate(static_cast<float>(dt));
 
         // Frame pacing is exclusive with vsync: only cap here in FpsLimit mode with

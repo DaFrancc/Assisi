@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -112,6 +113,13 @@ struct PhysicsWorld::Impl
     static constexpr unsigned int kMaxBodyPairs = 65536;
     static constexpr unsigned int kMaxContactConstraints = 10240;
 
+    // Collision substeps per Update(); runtime-adjustable via SetCollisionSteps.
+    // Defaults to 1 (a single solve, like Unity/Unreal at their fixed rate);
+    // raise it to trade CPU for shallower impact penetration.
+    static constexpr int kDefaultCollisionSteps = 1;
+    static constexpr int kMaxCollisionSteps     = 16;
+    int collisionSteps = kDefaultCollisionSteps;
+
     BPLayerInterface bpLayerInterface;
     ObjVsBPFilter objVsBPFilter;
     ObjLayerFilter objLayerFilter;
@@ -123,6 +131,21 @@ struct PhysicsWorld::Impl
 
     std::vector<JPH::BodyID> allBodyIds;     ///< Every body ever added; used by Clear().
     std::vector<JPH::BodyID> dynamicBodyIds; ///< Subset of allBodyIds; used to wake on gravity change.
+
+    /// The last two stepped poses of a dynamic body, blended at render time so
+    /// motion stays smooth when the display refreshes faster than physics steps.
+    struct MotionSnapshot
+    {
+        glm::vec3 prevPosition{};
+        glm::quat prevRotation{1.f, 0.f, 0.f, 0.f};
+        glm::vec3 curPosition{};
+        glm::quat curRotation{1.f, 0.f, 0.f, 0.f};
+    };
+
+    /// Keyed by BodyID's packed index+sequence so a lookup survives a body
+    /// flipping motion type (which keeps its ID). Populated in AddBox, torn down
+    /// in Clear.
+    std::unordered_map<JPH::uint32, MotionSnapshot> snapshots;
 };
 
 // ---------------------------------------------------------------------------
@@ -159,6 +182,23 @@ void ReleaseJoltGlobals()
 }
 } // namespace
 
+// Contact-solver tuning (see the constructor). Rather than brute-forcing high
+// step rates, we lean on the same cheap mechanism Unity/Unreal use: speculative
+// contacts (a predictive margin that stops a body at a surface within one solve)
+// plus a small allowed overlap that resolves gently. Fast free-fallers that
+// still slip past the fixed margin are handled per-body via CCD (enableCCD).
+// Jolt defaults: 0.02 m slop, 0.2 Baumgarte, 0.02 m speculative distance, 0.75
+// linear-cast threshold.
+constexpr float kPenetrationSlop          = 0.01f; ///< Allowed resting overlap (meters) — Unity-like contact offset.
+constexpr float kSpeculativeContactDist   = 0.05f; ///< Predictive contact margin (meters); catches moderate impacts in one solve.
+// CCD (LinearCast) engages once a body moves more than this * its shape's inner
+// radius in a step. Below Jolt's 0.75 default so CCD-enabled bodies stop sinking
+// at lower speeds (no "floaty" landings), but not so low that they sweep on
+// nearly every step: 0.3 keeps sweeps to genuinely fast motion. Only costs CPU
+// for bodies with CCD on (enableCCD), so the perf downside is bounded. For a 1 m
+// box (inner radius 0.5) this triggers at ~9 m/s / a ~4 m drop.
+constexpr float kLinearCastThreshold      = 0.3f;
+
 PhysicsWorld::PhysicsWorld()
 {
     AcquireJoltGlobals();
@@ -168,6 +208,17 @@ PhysicsWorld::PhysicsWorld()
 
     _impl->physicsSystem.Init(Impl::kMaxBodies, 0u, Impl::kMaxBodyPairs, Impl::kMaxContactConstraints,
                               _impl->bpLayerInterface, _impl->objVsBPFilter, _impl->objLayerFilter);
+
+    // Prevent impact penetration the cheap way (see the constant block above):
+    // a wider speculative-contact margin lets the solver stop a body at a surface
+    // within a single step, and a small allowed overlap keeps resting contacts
+    // from jittering. Baumgarte and solver iteration counts stay at Jolt's
+    // defaults — a gentle correction is less visible than an aggressive one.
+    JPH::PhysicsSettings settings   = _impl->physicsSystem.GetPhysicsSettings();
+    settings.mPenetrationSlop            = kPenetrationSlop;
+    settings.mSpeculativeContactDistance = kSpeculativeContactDist;
+    settings.mLinearCastThreshold        = kLinearCastThreshold;
+    _impl->physicsSystem.SetPhysicsSettings(settings);
 
     /* Gravity: 9.81 m/s² downward (−Y). */
     _impl->physicsSystem.SetGravity(JPH::Vec3(0.f, -9.81f, 0.f));
@@ -214,6 +265,11 @@ RigidBody PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, glm::vec3
     if (motion == BodyMotion::Dynamic)
         _impl->dynamicBodyIds.push_back(bodyId);
 
+    // Seed both snapshots with the spawn pose so the first interpolated frame
+    // (before any step has run) resolves to exactly where the body was placed.
+    _impl->snapshots[bodyId.GetIndexAndSequenceNumber()] =
+        Impl::MotionSnapshot{position, rotation, position, rotation};
+
     return RigidBody{bodyId};
 }
 
@@ -228,15 +284,53 @@ void PhysicsWorld::Clear()
     }
     _impl->allBodyIds.clear();
     _impl->dynamicBodyIds.clear();
+    _impl->snapshots.clear();
 }
 
 void PhysicsWorld::Update(float deltaTime)
 {
-    constexpr int kCollisionSteps = 1;
-    _impl->physicsSystem.Update(deltaTime, kCollisionSteps, &_impl->tempAlloc, &_impl->jobSystem);
+    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jobSystem);
 }
 
-void PhysicsWorld::SyncTransforms(Assisi::ECS::Scene &scene)
+void PhysicsWorld::SetCollisionSteps(int steps)
+{
+    _impl->collisionSteps = std::clamp(steps, 1, Impl::kMaxCollisionSteps);
+}
+
+int PhysicsWorld::GetCollisionSteps() const
+{
+    return _impl->collisionSteps;
+}
+
+void PhysicsWorld::CaptureState()
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+
+    for (const JPH::BodyID &id : _impl->dynamicBodyIds)
+    {
+        if (!bodies.IsAdded(id) || bodies.GetMotionType(id) == JPH::EMotionType::Static)
+        {
+            continue;
+        }
+
+        const auto it = _impl->snapshots.find(id.GetIndexAndSequenceNumber());
+        if (it == _impl->snapshots.end())
+        {
+            continue;
+        }
+
+        const JPH::RVec3 pos = bodies.GetPosition(id);
+        const JPH::Quat  rot = bodies.GetRotation(id);
+
+        // Retire the previous current, then record this step's pose as current.
+        it->second.prevPosition = it->second.curPosition;
+        it->second.prevRotation = it->second.curRotation;
+        it->second.curPosition  = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
+        it->second.curRotation  = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
+    }
+}
+
+void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
@@ -248,11 +342,17 @@ void PhysicsWorld::SyncTransforms(Assisi::ECS::Scene &scene)
             continue;
         }
 
-        const JPH::RVec3 pos = bodies.GetPosition(rb.bodyId);
-        const JPH::Quat rot = bodies.GetRotation(rb.bodyId);
+        const auto it = _impl->snapshots.find(rb.bodyId.GetIndexAndSequenceNumber());
+        if (it == _impl->snapshots.end())
+        {
+            continue;
+        }
 
-        transform.position = glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ());
-        transform.rotation = glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ());
+        const Impl::MotionSnapshot &s = it->second;
+        transform.position = glm::mix(s.prevPosition, s.curPosition, alpha);
+        // slerp keeps angular speed constant across the blend; renormalize since
+        // the result feeds straight into the render matrix.
+        transform.rotation = glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
     }
 }
 
@@ -263,6 +363,34 @@ std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBody &
     const JPH::Quat rot = bodies.GetRotation(body.bodyId);
     return {glm::vec3(pos.GetX(), pos.GetY(), pos.GetZ()),
             glm::quat(rot.GetW(), rot.GetX(), rot.GetY(), rot.GetZ())};
+}
+
+std::pair<glm::vec3, glm::vec3> PhysicsWorld::GetBodyVelocity(const RigidBody &body) const
+{
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+
+    // Static bodies have no motion state; querying velocity on them is meaningless
+    // (and GetLinearVelocity would just return zero anyway). Report zero for those
+    // and for handles whose body isn't in the simulation.
+    if (!bodies.IsAdded(body.bodyId) || bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static)
+    {
+        return {glm::vec3(0.f), glm::vec3(0.f)};
+    }
+
+    const JPH::Vec3 lin = bodies.GetLinearVelocity(body.bodyId);
+    const JPH::Vec3 ang = bodies.GetAngularVelocity(body.bodyId);
+    return {glm::vec3(lin.GetX(), lin.GetY(), lin.GetZ()),
+            glm::vec3(ang.GetX(), ang.GetY(), ang.GetZ())};
+}
+
+bool PhysicsWorld::IsBodyCCDEnabled(const RigidBody &body) const
+{
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+    {
+        return false;
+    }
+    return bodies.GetMotionQuality(body.bodyId) == JPH::EMotionQuality::LinearCast;
 }
 
 void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation)
@@ -280,6 +408,15 @@ void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, g
     {
         bodies.SetLinearVelocity(body.bodyId, JPH::Vec3::sZero());
         bodies.SetAngularVelocity(body.bodyId, JPH::Vec3::sZero());
+    }
+
+    // Collapse both snapshots onto the teleport target. Without this the next
+    // InterpolateTransforms() would blend from the pre-teleport pose and slide
+    // the body across the gap over one frame instead of snapping to it.
+    const auto it = _impl->snapshots.find(body.bodyId.GetIndexAndSequenceNumber());
+    if (it != _impl->snapshots.end())
+    {
+        it->second = Impl::MotionSnapshot{position, rotation, position, rotation};
     }
 }
 
@@ -299,10 +436,13 @@ void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
     if (!bodies.IsAdded(body.bodyId))
         return;
 
-    // CCD is only supported on dynamic bodies; static bodies are always discrete.
-    if (bodies.GetMotionType(body.bodyId) != JPH::EMotionType::Dynamic)
-        return;
-
+    // Set motion quality even when the body is currently Static. Motion quality
+    // is a stored property (our bodies always have motion properties, since
+    // AddBox sets mAllowDynamicOrKinematic), so it sticks and takes effect once
+    // the body is Dynamic again. Guarding on Dynamic here used to make this a
+    // silent no-op: the inspector freezes the selected body to Static while a
+    // widget is active, so the CCD checkbox toggled on a frozen body and never
+    // applied. Jolt no-ops safely if a body genuinely has no motion properties.
     const JPH::EMotionQuality quality =
         enable ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
     bodies.SetMotionQuality(body.bodyId, quality);

@@ -158,6 +158,11 @@ void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
         return;
     }
 
+    // Blend physics-driven Transforms between their last two fixed-step poses
+    // before the scene's world matrices are propagated in Render(), so bodies
+    // move smoothly at the display's refresh rate rather than the physics rate.
+    _physics.InterpolateTransforms(*_scene, GetInterpolationAlpha());
+
     // Refresh the editor camera's world matrix from its TRS before the view
     // matrix is derived from it; SceneRenderer propagates the game scene it draws.
     RefreshCameraMatrix();
@@ -169,7 +174,8 @@ void SandboxApp::OnFixedUpdate(float dt)
     if (!_scene)
         return;
     _physics.Update(dt);
-    _physics.SyncTransforms(*_scene);
+    // Snapshot the new poses for render interpolation; OnRender blends them.
+    _physics.CaptureState();
 }
 
 void SandboxApp::OnUpdate(float dt)
@@ -193,6 +199,16 @@ void SandboxApp::DrawDiagnosticsWindow()
 {
     ImGui::Begin("Diagnostics");
     ImGui::Text("FPS: %d", GetFps());
+    ImGui::Text("CPU: %.2f ms   GPU: %.2f ms", GetCpuFrameMs(), GetGpuFrameMs());
+    ImGui::Separator();
+
+    // Physics collision substeps per fixed step. 1 is a single solve (relies on
+    // speculative contacts + per-body CCD, like Unity/Unreal); raising it trades
+    // CPU for shallower impact penetration. Watch the CPU ms above as you change it.
+    int collisionSteps = _physics.GetCollisionSteps();
+    if (ImGui::InputInt("Physics collision steps", &collisionSteps))
+        _physics.SetCollisionSteps(collisionSteps);
+
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Scroll: FOV  |  LMB: select  |  Esc: quit");
