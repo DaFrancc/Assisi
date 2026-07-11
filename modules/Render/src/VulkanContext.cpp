@@ -15,12 +15,11 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <cstring> // std::strcmp — device-extension and validation-layer name comparisons
 #include <vector>
-#ifndef NDEBUG
-#include <cstring> // std::strcmp, validation-layer lookup (debug only)
-#endif
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Platform.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
 
@@ -137,6 +136,66 @@ struct PhysicalDeviceChoice
     uint32_t graphicsQueueFamily = 0;
 };
 
+// The requirements CreateLogicalDevice enables unconditionally: a Vulkan 1.3
+// device (the feature structs it chains are 1.3-promoted), the swapchain
+// extension, and the timeline-semaphore / synchronization2 / dynamic-rendering
+// features NVRHI assumes. Verified here so selection and creation agree on
+// requirements — a device that can't satisfy them is skipped in favour of one
+// that can, instead of being chosen and then failing vkCreateDevice with a
+// generic error (e.g. a compute-only or pre-1.3 adapter enumerated first).
+bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProperties &props)
+{
+    if (props.apiVersion < VK_API_VERSION_1_3)
+    {
+        Core::Log::Info("  rejected: reports Vulkan {}.{}, need 1.3",
+                        VK_API_VERSION_MAJOR(props.apiVersion), VK_API_VERSION_MINOR(props.apiVersion));
+        return false;
+    }
+
+    uint32_t extensionCount = 0;
+    VKD.vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+    std::vector<VkExtensionProperties> extensions(extensionCount);
+    VKD.vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, extensions.data());
+
+    const bool hasSwapchain = std::any_of(extensions.begin(), extensions.end(),
+                                          [](const VkExtensionProperties &ext) {
+                                              return std::strcmp(ext.extensionName,
+                                                                 VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
+                                          });
+    if (!hasSwapchain)
+    {
+        Core::Log::Info("  rejected: missing {}", VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+        return false;
+    }
+
+    // Query the promoted feature structs (core since Vulkan 1.1, and the instance
+    // requests 1.3) to confirm the three NVRHI relies on are actually supported.
+    VkPhysicalDeviceVulkan13Features features13{};
+    features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
+
+    VkPhysicalDeviceVulkan12Features features12{};
+    features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
+    features12.pNext = &features13;
+
+    VkPhysicalDeviceFeatures2 features2{};
+    features2.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2;
+    features2.pNext = &features12;
+
+    VKD.vkGetPhysicalDeviceFeatures2(device, &features2);
+
+    if (features12.timelineSemaphore != VK_TRUE || features13.synchronization2 != VK_TRUE ||
+        features13.dynamicRendering != VK_TRUE)
+    {
+        Core::Log::Info("  rejected: missing a required feature (timelineSemaphore={}, "
+                        "synchronization2={}, dynamicRendering={})",
+                        features12.timelineSemaphore == VK_TRUE, features13.synchronization2 == VK_TRUE,
+                        features13.dynamicRendering == VK_TRUE);
+        return false;
+    }
+
+    return true;
+}
+
 std::optional<PhysicalDeviceChoice> ChoosePhysicalDevice(VkInstance instance, VkSurfaceKHR surface)
 {
     uint32_t deviceCount = 0;
@@ -185,6 +244,14 @@ std::optional<PhysicalDeviceChoice> ChoosePhysicalDevice(VkInstance instance, Vk
 
         Core::Log::Info("Vulkan candidate: {} ({})", props.deviceName,
                          isDiscrete ? "discrete" : "integrated/other");
+
+        // Selection must agree with CreateLogicalDevice's hard requirements, or a
+        // capable-looking-but-unsupported device gets chosen and then fails at
+        // vkCreateDevice. Skip any that can't satisfy them and keep looking.
+        if (!DeviceMeetsRequirements(device, props))
+        {
+            continue;
+        }
 
         if (!best.has_value() || isDiscrete)
         {
@@ -312,6 +379,11 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     if (context->_instance == VK_NULL_HANDLE)
     {
         Core::Log::Error("VulkanContext: vkCreateInstance failed.");
+        Core::ShowErrorDialog("Assisi — Vulkan unavailable",
+                              "Could not initialize Vulkan.\n\n"
+                              "Assisi renders with Vulkan 1.3 and could not create a Vulkan instance. "
+                              "This usually means the graphics drivers are missing or out of date.\n\n"
+                              "Please install or update your graphics drivers. See assisi.log for details.");
         return nullptr;
     }
     VKD.init(vk::Instance(context->_instance));
@@ -327,6 +399,12 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     if (!physicalDeviceChoice.has_value())
     {
         Core::Log::Error("VulkanContext: no suitable Vulkan physical device found.");
+        Core::ShowErrorDialog("Assisi — Unsupported graphics device",
+                              "No compatible GPU was found.\n\n"
+                              "Assisi requires a graphics device with Vulkan 1.3 support "
+                              "(dynamic rendering, synchronization2, and timeline semaphores).\n\n"
+                              "Please update your graphics drivers. If they are already up to date, "
+                              "your GPU is likely too old to run Assisi. See assisi.log for details.");
         return nullptr;
     }
     context->_physicalDevice = physicalDeviceChoice->physicalDevice;

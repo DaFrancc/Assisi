@@ -6,6 +6,7 @@ target_sources(Assisi-Core
     "src/AssetSystem.cpp"
     "src/ComponentRegistry.cpp"
     "src/Logger.cpp"
+    "src/Platform.cpp"
     "src/Sinks.cpp"
   PUBLIC
     "include/Assisi/Core/AssetPath.hpp"

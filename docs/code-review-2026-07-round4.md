@@ -58,7 +58,7 @@ Checkboxes so this can be burned down like the previous three docs.
   corrupt half-populated one. Behaviour on the success path is unchanged.
   **Unbuilt — build + `ctest -R Runtime` before committing.**
 
-- [ ] **`ChoosePhysicalDevice` selects a device it never validated.**
+- [x] **`ChoosePhysicalDevice` selects a device it never validated.**
   (`VulkanContext.cpp:140-200`) checks only graphics+present queue support.
   It never confirms the device exposes `VK_KHR_SWAPCHAIN_EXTENSION_NAME`,
   nor the Vulkan 1.2/1.3 features `CreateLogicalDevice` hard-requires
@@ -68,6 +68,15 @@ Checkboxes so this can be burned down like the previous three docs.
   creation fails with a generic error instead of falling through to a
   capable device. Fix: fold the extension/feature/apiVersion checks into the
   candidate filter so selection and creation agree on requirements.
+  *Done (2026-07-11):* added `DeviceMeetsRequirements()` (apiVersion >= 1.3,
+  `VK_KHR_swapchain`, and the three NVRHI features queried via
+  `vkGetPhysicalDeviceFeatures2`), folded into the candidate loop so an
+  unsuitable adapter is logged with its reason and skipped in favour of a
+  capable one. Also added `Core::ShowErrorDialog` (native modal on Windows,
+  log fallback elsewhere): when no device qualifies — or `vkCreateInstance`
+  itself fails — the user now gets a clear "update your drivers / GPU too old"
+  dialog instead of a silent exit. Both dialog paths smoke-tested by forcing
+  the failures; happy-path device selection verified unchanged.
 
 ## Hygiene
 
