@@ -59,6 +59,7 @@ class SandboxApp : public Assisi::App::Application
     void OnImGui() override;
     void OnResize(int width, int height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
+    void FlushDeferred() override;
 
   private:
     // --- Setup ---

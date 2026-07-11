@@ -4,6 +4,8 @@
 
 #include <Assisi/Core/EventQueue.hpp>
 
+#include <vector>
+
 using namespace Assisi::Core;
 
 namespace
@@ -37,6 +39,23 @@ TEST_CASE("EventQueue: reading an un-pushed type yields an empty span")
     EventQueue queue;
     queue.Push(Damage{1});
     CHECK(queue.Read<Healed>().empty());
+}
+
+TEST_CASE("EventQueue: the read view is range-iterable in push order")
+{
+    EventQueue queue;
+    queue.Push(Damage{5});
+    queue.Push(Damage{3});
+    queue.Push(Damage{8});
+
+    std::vector<int> seen;
+    for (const Damage &d : queue.Read<Damage>())
+        seen.push_back(d.amount);
+
+    REQUIRE(seen.size() == 3);
+    CHECK(seen[0] == 5);
+    CHECK(seen[1] == 3);
+    CHECK(seen[2] == 8);
 }
 
 TEST_CASE("EventQueue: event types are independent")

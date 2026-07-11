@@ -64,7 +64,9 @@ template <typename T> struct SparseSet
 
         _sparse[entity.index] = static_cast<uint32_t>(_dense.size());
         _entities.push_back(entity);
-        return &_dense.emplace_back(std::move(component));
+        T *added = &_dense.emplace_back(std::move(component));
+        BumpVersion();
+        return added;
     }
 
     /// @brief Removes the component for the given entity.
@@ -91,6 +93,7 @@ template <typename T> struct SparseSet
         _sparse[entity.index] = Invalid;
         _dense.pop_back();
         _entities.pop_back();
+        BumpVersion();
     }
 
     /// @brief Returns true if the entity has a component in this set.
@@ -141,15 +144,37 @@ template <typename T> struct SparseSet
         _sparse.clear();
         _dense.clear();
         _entities.clear();
+        BumpVersion();
     }
 
     /// @brief Direct access to the packed entity array (parallel to dense).
     const std::vector<Entity> &Entities() const { return _entities; }
 
+#ifndef NDEBUG
+    /// @brief Debug-only counter bumped on every structural change (Add / Remove
+    /// / Clear). A Query iterator snapshots this at construction and re-checks it
+    /// as it advances, turning "mutated the pool mid-iteration" — which silently
+    /// reallocates the dense/entity arrays out from under the iterator — into a
+    /// loud assert instead of memory corruption. Compiled out entirely in release.
+    [[nodiscard]] uint32_t StructureVersion() const { return _structureVersion; }
+#endif
+
   private:
+    /// Bumps the structural-change counter. A no-op (and no member) in release
+    /// builds, so the three call sites cost nothing once NDEBUG is defined.
+    void BumpVersion()
+    {
+#ifndef NDEBUG
+        ++_structureVersion;
+#endif
+    }
+
     std::vector<uint32_t> _sparse; ///< Indexed by entity index → dense position.
     std::vector<T> _dense;         ///< Packed component values.
     std::vector<Entity> _entities; ///< Entity that owns each dense slot.
+#ifndef NDEBUG
+    uint32_t _structureVersion = 0; ///< See StructureVersion(); debug-only tripwire state.
+#endif
 };
 
 } // namespace Assisi::ECS

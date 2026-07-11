@@ -98,6 +98,12 @@ Checkboxes so this can be burned down like the previous three docs.
   decoration. One GitHub Actions workflow (windows-msvc + ubuntu-gcc/clang,
   configure + build + ctest) is an afternoon and is the single highest-
   leverage item in this document.
+  *Deferred by decision (2026-07-11):* with a single contributor building and
+  testing locally on Windows every commit, CI's core value — gating others'
+  PRs and catching cross-toolchain breakage before merge — doesn't yet pay for
+  the per-preset runner setup. Revisit the moment a second contributor lands or
+  the repo starts accepting external PRs; until then this stays an explicit
+  "not yet," not a gap to burn down.
 
 - [ ] **Assimp: fetched, compiled, linked, unused.** Carried from round 3,
   where it was deferred by decision (mesh loader is near-term). Kept on the
@@ -141,12 +147,32 @@ more expensive every time a new system builds on the current one.
   lands (see `asset-streaming-design-notes.md`); the DebugUI mark-and-sweep
   from round 3 is the pattern to mirror.
 
-- [ ] **Contracts still enforced by doc comments where debug asserts could
+- [x] **Contracts still enforced by doc comments where debug asserts could
   live.** Carried from round 3's "to 9": `Scene::Query`'s structural-change-
   during-iteration UB and `EventQueue::Read`'s push-while-reading hazard are
   documented, not asserted. A debug-build structural-change counter on the
   pools (bumped in Add/Remove/Clear, checked by the iterator) turns "hope
   the caller read the header" into a loud assert.
+  *Done (2026-07-11):* both hazards are now enforced in debug, compiled out in
+  release.
+  - **`Scene::Query`:** `SparseSet` carries a debug-only `StructureVersion()`
+    bumped on every Add/Remove/Clear; the `Query::Iterator` snapshots the summed
+    version of its required+excluded pools at construction and asserts it
+    unchanged on every deref/advance. Versions only ever rise, so any
+    mid-iteration structural mutation of a queried pool trips the assert instead
+    of silently reallocating the dense array.
+  - **`Scene::Destroy` made deferred (in the same pass):** it queues the entity
+    (still fully alive — IsAlive true, Query yields it) and the removal is
+    applied by the new `Scene::FlushDestroyed()`, called once per frame from
+    `Application::Run` via the `Application::FlushDeferred()` hook. So
+    destroy-during-iteration is now correct-by-construction; only same-type
+    `Add`/`Remove`-during-iteration relies on the assert.
+  - **`EventQueue::Read`:** now returns a checked `EventSpan<E>` (a span-like
+    view — range-iterable, indexable, convertible to `std::span<const E>`)
+    instead of a raw `std::span`. Each `TypedQueue` carries a debug-only version
+    bumped on Push/Clear; the view snapshots it and asserts on every element
+    access, so a same-type Push while iterating trips a loud assert rather than
+    reading a reallocated buffer.
 
 - [ ] **Single hardcoded pass sequence in `Application::RenderFrame`.**
   (`Application.cpp:375-422`) clear → OnRender → PostProcess → ImGui is

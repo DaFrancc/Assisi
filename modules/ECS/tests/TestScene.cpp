@@ -57,7 +57,7 @@ TEST_CASE("Scene: querying or removing a never-created pool is safe")
     scene.Remove<Position>(e); // must not crash
 }
 
-TEST_CASE("Scene: destroy removes the entity from every pool it belongs to")
+TEST_CASE("Scene: destroy is deferred until FlushDestroyed")
 {
     Scene scene;
     const Entity e = scene.Create();
@@ -65,6 +65,14 @@ TEST_CASE("Scene: destroy removes the entity from every pool it belongs to")
     REQUIRE(scene.Add<Velocity>(e, {2.0f}) != nullptr);
 
     scene.Destroy(e);
+    // Deferred: the entity stays fully alive and present in every pool until the
+    // flush, so a Query still yields it this frame.
+    CHECK(scene.IsAlive(e));
+    CHECK(scene.Has<Position>(e));
+    CHECK(scene.Has<Velocity>(e));
+
+    scene.FlushDestroyed();
+    // Now it is gone from the registry and every pool it belonged to.
     CHECK_FALSE(scene.IsAlive(e));
     CHECK_FALSE(scene.Has<Position>(e));
     CHECK_FALSE(scene.Has<Velocity>(e));
@@ -99,6 +107,7 @@ TEST_CASE("Scene: a stale handle cannot add to a reused slot")
     REQUIRE(scene.Add<Position>(a, {1.0f}) != nullptr);
 
     scene.Destroy(a);
+    scene.FlushDestroyed(); // apply the deferred destroy so the slot is freed for reuse
     const Entity b = scene.Create(); // reuses a's slot, newer generation
     REQUIRE(b.index == a.index);
     REQUIRE(b.generation != a.generation);

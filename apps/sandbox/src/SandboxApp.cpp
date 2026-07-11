@@ -191,6 +191,15 @@ void SandboxApp::OnUpdate(float dt)
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
 }
 
+void SandboxApp::FlushDeferred()
+{
+    // End-of-frame: apply entities queued by Scene::Destroy() this frame. Runs
+    // after RenderFrame, so a destroyed entity lives out its final frame before
+    // its pools are touched — keeping structural changes out of any mid-frame Query.
+    if (_scene)
+        _scene->FlushDestroyed();
+}
+
 // ---------------------------------------------------------------------------
 // ImGui panels
 // ---------------------------------------------------------------------------

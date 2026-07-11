@@ -176,6 +176,7 @@ TEST_CASE("Query: a destroyed entity is skipped even if the slot is reused")
     REQUIRE(scene.Add<Velocity>(a, {1.0f}) != nullptr);
 
     scene.Destroy(a);
+    scene.FlushDestroyed(); // apply the deferred destroy so the slot is freed for reuse
 
     // Reuse the slot with a fresh entity that only has Position.
     const Entity b = scene.Create();
@@ -191,4 +192,42 @@ TEST_CASE("Query: a destroyed entity is skipped even if the slot is reused")
         ++count;
     }
     CHECK(count == 0); // stale 'a' must not match; 'b' lacks Velocity
+}
+
+// The point of deferring Destroy: calling it mid-Query touches no pool, so the
+// iterator stays valid and every entity is still visited this pass. The removals
+// land only at FlushDestroyed(). Enough entities to force the dense array to have
+// reallocated had the destroy been immediate.
+TEST_CASE("Query: Destroy during iteration is deferred and does not invalidate")
+{
+    Scene scene;
+    constexpr int kCount = 128;
+    for (int i = 0; i < kCount; ++i)
+    {
+        const Entity e = scene.Create();
+        REQUIRE(scene.Add<Position>(e, {static_cast<float>(i)}) != nullptr);
+    }
+
+    int visited = 0;
+    for (auto [e, pos] : scene.Query<Position>())
+    {
+        (void)pos;
+        ++visited;
+        scene.Destroy(e); // deferred — must not disturb this iteration
+    }
+
+    CHECK(visited == kCount);            // every entity was still visited
+    CHECK(scene.AliveCount() == kCount); // nothing removed yet
+
+    scene.FlushDestroyed();
+    CHECK(scene.AliveCount() == 0); // now all applied
+
+    int survivors = 0;
+    for (auto [e, pos] : scene.Query<Position>())
+    {
+        (void)e;
+        (void)pos;
+        ++survivors;
+    }
+    CHECK(survivors == 0);
 }

@@ -326,6 +326,7 @@ void Application::Run()
 
         RenderFrame();
         _events.Flush();
+        FlushDeferred();
 
         // Frame-time accounting. CPU frame time is this loop iteration's wall-clock
         // minus the two intervals the CPU is deliberately idle: the FPS-limit sleep

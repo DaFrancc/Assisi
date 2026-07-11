@@ -11,6 +11,7 @@
 #include <typeindex>
 #include <unordered_map>
 #include <utility>
+#include <vector>
 
 #include <Assisi/ECS/Query.hpp>
 #include <Assisi/ECS/Registry.hpp>
@@ -41,8 +42,33 @@ struct Scene
     /// @brief Allocates a new entity.
     Entity Create() { return _registry.Create(); }
 
-    /// @brief Releases an entity, removing it from all registered pools.
-    void Destroy(Entity entity) { _registry.Destroy(entity); }
+    /// @brief Queues an entity for destruction at the next FlushDestroyed().
+    ///
+    /// Deferred, not immediate: the entity stays fully alive — IsAlive() is
+    /// true, Query still yields it, Get<T> still works — until FlushDestroyed()
+    /// runs (once per frame from Application::Run, or explicitly in tests and
+    /// custom loops). That is what makes it safe to Destroy() while iterating a
+    /// Query: no component pool is touched until the flush, so no iterator is
+    /// invalidated. A handle already dead — or destroyed twice this frame — is
+    /// ignored; the slot is not reused until the flush actually applies it.
+    void Destroy(Entity entity)
+    {
+        if (_registry.IsAlive(entity))
+            _pendingDestroy.push_back(entity);
+    }
+
+    /// @brief Applies every Destroy() queued since the last flush.
+    ///
+    /// Removes each queued entity from the registry and all component pools and
+    /// frees its slot for reuse, then clears the queue. Application::Run calls
+    /// this once per frame after systems run; tests and custom loops call it
+    /// directly. A no-op when nothing is queued.
+    void FlushDestroyed()
+    {
+        for (Entity entity : _pendingDestroy)
+            _registry.Destroy(entity);
+        _pendingDestroy.clear();
+    }
 
     /// @brief Returns true if the entity handle is still valid.
     bool IsAlive(Entity entity) const { return _registry.IsAlive(entity); }
@@ -66,6 +92,7 @@ struct Scene
         for (auto &[type, storage] : _pools)
             storage.clear(storage.pool);
         _registry.Reset();
+        _pendingDestroy.clear();
     }
 
     /// @brief Adds a component of type T to the entity.
@@ -122,12 +149,14 @@ struct Scene
     /// Supports structured bindings: `for (auto [e, pos, vel] : scene.Query<Position, Velocity>())`
     ///
     /// @warning The view holds a pointer into the driving pool's internal entity
-    /// array. Any structural change to a queried component pool during iteration
-    /// — Add<T>, Remove<T>, or Destroy on one of the Ts — may reallocate or
-    /// swap-remove that array and invalidate the iterator (silent UB). Do not
-    /// mutate the queried pools mid-loop. To delete entities discovered while
-    /// iterating, defer the work: collect them into a local vector, or push the
-    /// destruction onto the EventQueue and drain it after the loop.
+    /// array. A structural change to a *queried* component pool during iteration
+    /// — Add<T> or Remove<T> on one of the Ts — may reallocate or swap-remove
+    /// that array and invalidate the iterator. Debug builds turn this into a loud
+    /// assert via a per-pool version counter (see SparseSet::StructureVersion);
+    /// release builds do not, so it is silent UB — don't do it. Destroy() is safe
+    /// here: it is deferred to FlushDestroyed() and touches no pool mid-loop. To
+    /// Add/Remove a queried component for entities found while iterating, collect
+    /// them into a local vector and apply the change after the loop.
     template <typename... Ts> QueryView<std::tuple<Ts...>, std::tuple<>> Query() { return Query<Ts...>(Without<>{}); }
 
     /// @brief Returns a lazy view over entities that have every Ts but none of the Es.
@@ -213,6 +242,7 @@ struct Scene
 
     Registry _registry;
     std::unordered_map<std::type_index, PoolStorage> _pools;
+    std::vector<Entity> _pendingDestroy; ///< Entities queued by Destroy(), drained by FlushDestroyed().
 };
 
 } // namespace Assisi::ECS

@@ -82,6 +82,13 @@ class Application
     /// the window alone never triggers this.
     virtual void OnRenderTargetsChanged(const nvrhi::FramebufferInfo & /*framebufferInfo*/) {}
 
+    /// @brief Called once per frame at end of frame (after RenderFrame and the
+    /// event-queue flush) to apply deferred per-frame work. Override to drain the
+    /// app's active scene(s) — notably ECS::Scene::FlushDestroyed(), where queued
+    /// entity destruction is applied so it never mutates pools mid-Query. Default
+    /// is a no-op: Application owns no scene, so the app must opt in.
+    virtual void FlushDeferred() {}
+
     Window::WindowContext &GetWindow() const { return *_window; }
     Window::InputContext  &GetInput()  const { return *_input; }
 
