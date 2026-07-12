@@ -16,9 +16,13 @@ CheckOptions:
     value: true
   - key: readability-identifier-naming.ClassCase
     value: CamelCase
-  - key: readability-identifier-naming.MemberPrefix
-    value: _
+  # Only private/protected members carry the leading underscore; public data
+  # members (plain aggregates like Transform, Vertex, BoundingSphere) use bare
+  # names. Note the absence of a generic MemberPrefix rule: setting one would
+  # force the underscore onto public members too.
   - key: readability-identifier-naming.PrivateMemberPrefix
+    value: _
+  - key: readability-identifier-naming.ProtectedMemberPrefix
     value: _
   - key: readability-identifier-naming.FunctionCase
     value: CamelCase
