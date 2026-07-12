@@ -22,7 +22,8 @@ struct GpuTelemetrySample
     unsigned           memClockMhz     = 0;     ///< Memory clock (as reported by the driver, e.g. 7001 for GDDR6).
     unsigned           gpuUtilPct      = 0;     ///< % of the last window the GPU was busy.
     unsigned           memUtilPct      = 0;     ///< % of the last window memory was being read/written.
-    double             powerWatts      = 0.0;   ///< Board power draw.
+    bool               powerSupported  = false; ///< False when this GPU reports no power draw (common on laptops); show N/A, not 0.
+    double             powerWatts      = 0.0;   ///< Board power draw (only meaningful when powerSupported).
     double             powerLimitWatts = 0.0;   ///< Enforced power limit, for context.
     unsigned           temperatureC    = 0;
     unsigned long long memUsedBytes    = 0;
@@ -31,10 +32,12 @@ struct GpuTelemetrySample
 
 /// Polls NVIDIA GPU telemetry through NVML, which is loaded dynamically at
 /// runtime so there is no build- or link-time dependency on it and non-NVIDIA
-/// systems simply report an invalid sample. NVML is initialised lazily on the
-/// first Poll(), so an app that never opens the telemetry overlay never pays the
-/// (~100ms) NVML init cost. Poll() self-throttles the underlying driver queries,
-/// so it is fine to call every frame.
+/// systems simply report an invalid sample. The blocking NVML driver queries run
+/// on a background thread that is spun up lazily on the first Poll() (so an app
+/// that never opens the telemetry overlay never pays the ~100ms NVML init cost,
+/// and even the init happens off the main thread). Poll() itself just returns the
+/// latest sample the worker has published — it never touches the driver and never
+/// blocks — so the render thread's frame time never absorbs an NVML round-trip.
 class GpuTelemetry
 {
   public:

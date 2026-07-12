@@ -66,7 +66,9 @@ void SandboxApp::DrawOptionsWindow()
             ImGui::Text("%s", gpu.name.c_str());
             ImGui::Text("Clock: %u MHz core / %u MHz mem", gpu.coreClockMhz, gpu.memClockMhz);
             ImGui::Text("Util:  %u%% gpu / %u%% mem", gpu.gpuUtilPct, gpu.memUtilPct);
-            if (gpu.powerLimitWatts > 0.0)
+            if (!gpu.powerSupported)
+                ImGui::Text("Power: N/A    Temp: %u C", gpu.temperatureC);
+            else if (gpu.powerLimitWatts > 0.0)
                 ImGui::Text("Power: %.0f / %.0f W    Temp: %u C", gpu.powerWatts, gpu.powerLimitWatts,
                             gpu.temperatureC);
             else
@@ -139,14 +141,44 @@ void SandboxApp::DrawOptionsWindow()
                 };
 
                 const float clockMax = std::max(bufMax(_gpuClockHistory) * 1.1f, 500.0f);
-                const float powerMax = gpu.powerLimitWatts > 0.0 ? static_cast<float>(gpu.powerLimitWatts)
-                                                                 : std::max(bufMax(_gpuPowerHistory) * 1.1f, 50.0f);
                 drawGpuPlot("GPU Clock (MHz)###gpuClock", _gpuClockHistory, clockMax,
                             ImVec4(0.30f, 0.75f, 0.40f, 1.0f));
                 drawGpuPlot("GPU Utilization (%)###gpuUtil", _gpuUtilHistory, 100.0f,
                             ImVec4(0.35f, 0.60f, 0.95f, 1.0f));
-                drawGpuPlot("GPU Power (W)###gpuPower", _gpuPowerHistory, powerMax,
-                            ImVec4(0.95f, 0.55f, 0.25f, 1.0f));
+                // Power draw isn't exposed by every GPU (common on laptops); show a
+                // note instead of a flat-zero graph when it's unavailable.
+                if (gpu.powerSupported)
+                {
+                    const float powerMax = gpu.powerLimitWatts > 0.0
+                                               ? static_cast<float>(gpu.powerLimitWatts)
+                                               : std::max(bufMax(_gpuPowerHistory) * 1.1f, 50.0f);
+                    drawGpuPlot("GPU Power (W)###gpuPower", _gpuPowerHistory, powerMax,
+                                ImVec4(0.95f, 0.55f, 0.25f, 1.0f));
+                }
+                else
+                {
+                    // This GPU reports no power draw. Keep the exact footprint of a
+                    // graph — a 100px framed box, the same size ImPlot uses for the
+                    // plots above — so the panel layout doesn't shift when power is
+                    // unavailable; leave it empty with a centred N/A instead of a
+                    // flat-zero line.
+                    if (ImGui::BeginChild("###gpuPowerNA", ImVec2(-1.0f, 100.0f), ImGuiChildFlags_Borders))
+                    {
+                        const ImVec2 start = ImGui::GetCursorStartPos();
+                        const ImVec2 avail = ImGui::GetContentRegionAvail();
+
+                        const char *title = "GPU Power (W)";
+                        ImGui::SetCursorPosX(start.x + ((avail.x - ImGui::CalcTextSize(title).x) * 0.5f));
+                        ImGui::TextUnformatted(title);
+
+                        const char  *label     = "N/A (Unsupported by this GPU)";
+                        const ImVec2 labelSize = ImGui::CalcTextSize(label);
+                        ImGui::SetCursorPos(ImVec2(start.x + ((avail.x - labelSize.x) * 0.5f),
+                                                   start.y + ((avail.y - labelSize.y) * 0.5f)));
+                        ImGui::TextDisabled("%s", label);
+                    }
+                    ImGui::EndChild();
+                }
             }
         }
         else
