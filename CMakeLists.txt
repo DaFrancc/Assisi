@@ -202,6 +202,16 @@ target_include_directories(stb-headers INTERFACE "${stb_SOURCE_DIR}")
 add_library(stb::stb ALIAS stb-headers)
 
 # --- Assimp
+# Vendor zlib+minizip rather than picking up a system minizip. On distros that
+# ship minizip (e.g. Arch/Manjaro), assimp finds it via pkg-config but its headers
+# live under /usr/include/minizip/, whereas ZipArchiveIOSystem.cpp does
+# #include <unzip.h> unqualified -> "unzip.h: No such file". Forcing the bundled
+# build sets ASSIMP_BUILD_MINIZIP and adds contrib/unzip to the include path.
+set(ASSIMP_BUILD_ZLIB         ON  CACHE BOOL "" FORCE)
+# Assimp compiles its own sources with -Werror; newer GCC (13+) emits warnings in
+# upstream loaders (e.g. unused-but-set-variable in MS3DLoader.cpp) that we can't
+# fix without patching the vendored tree. Don't fail our build on assimp's warnings.
+set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_TESTS        OFF CACHE BOOL "" FORCE)
 set(ASSIMP_INSTALL            OFF CACHE BOOL "" FORCE)
 set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)

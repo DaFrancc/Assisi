@@ -42,8 +42,10 @@ target_link_libraries(Assisi-Render
     Assisi::Math
     Assisi::Window
     Assisi::Deps
-    nvrhi
+    # nvrhi_vk (Vulkan backend) references symbols defined in nvrhi (common),
+    # so it must precede nvrhi on the link line for single-pass static linkers (ld).
     nvrhi_vk
+    nvrhi
     Vulkan::Headers
 )
 
