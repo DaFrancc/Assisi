@@ -222,26 +222,42 @@ namespace
 {
 using Clock = std::chrono::steady_clock;
 
-/// Waits until `target`. Sleeps for most of the remaining time, leaving
-/// `margin` to spin — sleep_for() is coarse/jittery, but a short busy-wait
-/// for the last couple of ms reliably lands on the target instead of
-/// overshooting it.
-void SleepUntil(Clock::time_point target, Clock::duration margin = std::chrono::milliseconds(2))
+/// Waits until `target` while wasting as little CPU as possible. sleep_for()
+/// overshoots its request by a scheduler-dependent amount, so we can't sleep the
+/// whole way (we'd overshoot `target`) nor spin the whole way (that pins a core).
+/// We sleep to `target` minus a small self-tuning margin, then busy-spin only the
+/// sub-margin residual. The margin tracks the recently observed sleep overshoot:
+/// it ratchets up fast when a sleep runs long and decays slowly otherwise, so it
+/// stays just big enough to avoid overshooting without over-reserving spin time.
+///
+/// The old version reserved a fixed 2ms spin margin, so every capped frame
+/// busy-waited up to 2ms. On Linux (hi-res timers) the real overshoot is ~60us,
+/// so the margin converges there and the spin all but vanishes; on Windows (even
+/// with a 1ms timer period) it settles nearer 1ms. Static (not thread_local) is
+/// fine — only the main loop calls this.
+void SleepUntil(Clock::time_point target)
 {
-    const Clock::duration remaining = target - Clock::now();
-    if (remaining <= Clock::duration::zero())
-    {
-        return; // already at/past the target — don't wait at all
-    }
+    using Seconds = std::chrono::duration<double>;
 
-    if (remaining > margin)
+    static double marginSec = 1e-3; // conservative seed; converges within a few frames
+
+    const double remainingSec = Seconds(target - Clock::now()).count();
+    if (remainingSec > marginSec)
     {
-        std::this_thread::sleep_for(remaining - margin);
+        const double           requestSec = remainingSec - marginSec;
+        const Clock::time_point before     = Clock::now();
+        std::this_thread::sleep_for(Seconds(requestSec));
+        const double overshootSec = std::max(0.0, Seconds(Clock::now() - before).count() - requestSec);
+
+        // Ratchet up on a long sleep (with headroom), decay slowly otherwise;
+        // clamp so one scheduling hiccup can't inflate the margin unboundedly and
+        // so we never reserve more than a couple ms of spin.
+        marginSec = std::clamp(std::max(overshootSec * 1.25, marginSec * 0.98), 50e-6, 3e-3);
     }
 
     while (Clock::now() < target)
     {
-    } // spin for the remainder (all of it, if remaining <= margin)
+    } // spin the sub-margin residual (nothing at all if the sleep already reached target)
 }
 } // namespace
 
