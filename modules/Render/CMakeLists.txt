@@ -6,6 +6,7 @@ target_sources(Assisi-Render
     "include/Assisi/Render/AssetCache.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/DefaultMeshes.hpp"
+    "include/Assisi/Render/GpuTelemetry.hpp"
     "include/Assisi/Render/DefaultResources.hpp"
     "include/Assisi/Render/MeshBuffer.hpp"
     "include/Assisi/Render/MeshData.hpp"
@@ -25,6 +26,7 @@ target_sources(Assisi-Render
     "src/ComputeShader.cpp"
     "src/Buffer.cpp"
     "src/DefaultResources.cpp"
+    "src/GpuTelemetry.cpp"
     "src/MeshPass.cpp"
     "src/PostProcess.cpp"
     "src/Texture.cpp"
@@ -47,6 +49,10 @@ target_link_libraries(Assisi-Render
     nvrhi_vk
     nvrhi
     Vulkan::Headers
+  PRIVATE
+    # GpuTelemetry dlopen()s NVML at runtime; dl is needed on Linux (no-op alias
+    # on platforms that fold it into libc).
+    ${CMAKE_DL_LIBS}
 )
 
 add_library(Assisi::Render ALIAS Assisi-Render)

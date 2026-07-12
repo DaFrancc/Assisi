@@ -32,7 +32,7 @@ void SandboxApp::DrawOptionsWindow()
 {
     // F12 toggles the overlay. Handled here, in the app, so the engine no longer
     // reserves the key — a game can rebind or remove this freely.
-    if (GetInput().IsKeyPressed(Assisi::Window::Key::F12))
+    if (GetInput().IsKeyPressed(Assisi::Window::Key::F11))
     {
         _showOptions = !_showOptions;
     }
@@ -54,6 +54,105 @@ void SandboxApp::DrawOptionsWindow()
         const int fps = GetFps();
         ImGui::Text("CPU: %5.2f ms    GPU: %5.2f ms", GetCpuFrameMs(), GetGpuFrameMs());
         ImGui::Text("Frame: %5.2f ms (%d FPS)", fps > 0 ? 1000.0 / fps : 0.0, fps);
+
+        // GPU hardware telemetry (NVIDIA/NVML). Shown next to the GPU frame time
+        // because it explains it: when the frame rate is capped the GPU downclocks
+        // (low util -> low power state), so the same work takes longer and GPU-ms
+        // rises even though nothing about the scene changed. A low clock/power
+        // reading beside a high GPU-ms is that, not a regression.
+        const Assisi::Render::GpuTelemetrySample &gpu = _gpuTelemetry.Poll();
+        if (gpu.valid)
+        {
+            ImGui::Text("%s", gpu.name.c_str());
+            ImGui::Text("Clock: %u MHz core / %u MHz mem", gpu.coreClockMhz, gpu.memClockMhz);
+            ImGui::Text("Util:  %u%% gpu / %u%% mem", gpu.gpuUtilPct, gpu.memUtilPct);
+            if (gpu.powerLimitWatts > 0.0)
+                ImGui::Text("Power: %.0f / %.0f W    Temp: %u C", gpu.powerWatts, gpu.powerLimitWatts,
+                            gpu.temperatureC);
+            else
+                ImGui::Text("Power: %.0f W    Temp: %u C", gpu.powerWatts, gpu.temperatureC);
+            if (gpu.memTotalBytes > 0)
+                ImGui::Text("VRAM:  %llu / %llu MiB", gpu.memUsedBytes >> 20, gpu.memTotalBytes >> 20);
+
+            // Push one point per fresh NVML reading (Poll() is throttled, so the
+            // sequence only bumps ~5x/s) into the ring buffers, so the graphs span
+            // ~60s of history rather than a fraction of a second of frames.
+            if (gpu.sequence != _lastGpuSequence)
+            {
+                _lastGpuSequence = gpu.sequence;
+                _gpuClockHistory[_gpuTelemetryOffset] = static_cast<float>(gpu.coreClockMhz);
+                _gpuUtilHistory[_gpuTelemetryOffset]  = static_cast<float>(gpu.gpuUtilPct);
+                _gpuPowerHistory[_gpuTelemetryOffset] = static_cast<float>(gpu.powerWatts);
+                _gpuTelemetryOffset = (_gpuTelemetryOffset + 1) % kGpuHistory;
+                if (_gpuTelemetryCount < kGpuHistory)
+                {
+                    ++_gpuTelemetryCount;
+                }
+            }
+
+            if (_gpuTelemetryCount > 0)
+            {
+                // Before the ring wraps, samples sit in [0, count) in order, so
+                // plot from 0; once full, ImPlot's Offset marks the oldest sample.
+                const int   plotCount  = _gpuTelemetryCount;
+                const int   plotOffset = _gpuTelemetryCount < kGpuHistory ? 0 : _gpuTelemetryOffset;
+                const auto  bufMax     = [plotCount](const std::array<float, kGpuHistory> &buf)
+                {
+                    float m = 0.0f;
+                    for (int i = 0; i < plotCount; ++i)
+                    {
+                        m = std::max(m, buf[i]);
+                    }
+                    return m;
+                };
+
+                // One compact history plot per metric; y-axis tick labels stay on
+                // so values are readable. Clock/power auto-scale with headroom;
+                // util is a fixed 0-100%.
+                // `title` is shown above each plot (the unit lives there, so the
+                // y-axis label is left empty); the "###id" suffix keeps a stable
+                // ImGui id even though the visible text carries the unit.
+                const auto drawGpuPlot = [plotCount, plotOffset](const char *title,
+                                                                 const std::array<float, kGpuHistory> &buf,
+                                                                 float ymax, ImVec4 color)
+                {
+                    ImPlotSpec spec;
+                    spec.LineColor  = color;
+                    spec.FillColor  = color;
+                    spec.FillAlpha  = 0.25f;
+                    spec.LineWeight = 1.5f;
+                    spec.Offset     = plotOffset;
+                    // NoInputs: these are read-only readouts (limits are re-locked
+                    // every frame), so disable axis pan/zoom/drag — otherwise the
+                    // x-axis reads as a draggable control at the bottom of the plot.
+                    if (ImPlot::BeginPlot(title, ImVec2(-1.0f, 100.0f),
+                                          ImPlotFlags_NoMenus | ImPlotFlags_NoLegend | ImPlotFlags_NoInputs))
+                    {
+                        ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
+                                          ImPlotAxisFlags_NoHighlight);
+                        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, plotCount - 1, ImPlotCond_Always);
+                        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, ymax, ImPlotCond_Always);
+                        ImPlot::PlotShaded(title, buf.data(), plotCount, 0.0, 1.0, 0.0, spec);
+                        ImPlot::PlotLine(title, buf.data(), plotCount, 1.0, 0.0, spec);
+                        ImPlot::EndPlot();
+                    }
+                };
+
+                const float clockMax = std::max(bufMax(_gpuClockHistory) * 1.1f, 500.0f);
+                const float powerMax = gpu.powerLimitWatts > 0.0 ? static_cast<float>(gpu.powerLimitWatts)
+                                                                 : std::max(bufMax(_gpuPowerHistory) * 1.1f, 50.0f);
+                drawGpuPlot("GPU Clock (MHz)###gpuClock", _gpuClockHistory, clockMax,
+                            ImVec4(0.30f, 0.75f, 0.40f, 1.0f));
+                drawGpuPlot("GPU Utilization (%)###gpuUtil", _gpuUtilHistory, 100.0f,
+                            ImVec4(0.35f, 0.60f, 0.95f, 1.0f));
+                drawGpuPlot("GPU Power (W)###gpuPower", _gpuPowerHistory, powerMax,
+                            ImVec4(0.95f, 0.55f, 0.25f, 1.0f));
+            }
+        }
+        else
+        {
+            ImGui::TextDisabled("GPU telemetry unavailable (NVML not found)");
+        }
 
         // Combined CPU/GPU plot on one shared y-axis so their heights are directly
         // comparable. Floor the top at 4 ms so an idle scene doesn't magnify sub-ms
@@ -84,9 +183,10 @@ void SandboxApp::DrawOptionsWindow()
         gpuSpec.LineWeight = 1.5f;
         gpuSpec.Offset     = stats.offset;
 
-        if (ImPlot::BeginPlot("##frameGraph", ImVec2(-1.0f, 130.0f), ImPlotFlags_NoMenus))
+        if (ImPlot::BeginPlot("Frame Time (ms)###frameGraph", ImVec2(-1.0f, 120.0f),
+                              ImPlotFlags_NoMenus | ImPlotFlags_NoInputs))
         {
-            ImPlot::SetupAxes(nullptr, "ms", ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
+            ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
                               ImPlotAxisFlags_NoHighlight);
             ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, frameHistory - 1, ImPlotCond_Always);
             ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, plotMax, ImPlotCond_Always);

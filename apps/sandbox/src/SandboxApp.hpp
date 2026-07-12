@@ -22,12 +22,14 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
+#include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Texture.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <nvrhi/nvrhi.h>
 
+#include <array>
 #include <cstddef>
 #include <string>
 #include <string_view>
@@ -148,9 +150,27 @@ class SandboxApp : public Assisi::App::Application
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
     bool                _wasDragging    = false;
 
-    // Options overlay (frame graph + display/pacing settings), toggled with F12.
+    // Options overlay (frame graph + display/pacing settings), toggled with F11.
     // Owned by the app, not the engine — see DrawOptionsWindow in SandboxOptions.cpp.
     bool _showOptions = false;
+
+    // NVIDIA GPU telemetry (clocks/power/util/temp) for the options overlay.
+    // Lazily initialises NVML on first poll, so it costs nothing until the
+    // overlay is opened; reports an invalid sample on non-NVIDIA systems.
+    Assisi::Render::GpuTelemetry _gpuTelemetry;
+
+    // Ring-buffer history for the telemetry graphs, advanced once per fresh NVML
+    // sample (~5Hz, gated on GpuTelemetrySample::sequence) rather than per frame,
+    // so the buffers span ~1 min regardless of frame rate. _gpuTelemetryOffset is
+    // the next write slot / chronological start (ImPlot Offset), _gpuTelemetryCount
+    // saturates at the capacity. Only advance while the overlay is open.
+    static constexpr int                        kGpuHistory = 300; // ~60s at 5Hz
+    std::array<float, kGpuHistory>              _gpuClockHistory{};
+    std::array<float, kGpuHistory>              _gpuUtilHistory{};
+    std::array<float, kGpuHistory>              _gpuPowerHistory{};
+    int                                         _gpuTelemetryOffset = 0;
+    int                                         _gpuTelemetryCount  = 0;
+    unsigned long long                          _lastGpuSequence    = 0;
 
     // Eyedropper: while armed, the next scene entity-pick is written into the
     // captured EntityRef field instead of changing the selection. The target is
