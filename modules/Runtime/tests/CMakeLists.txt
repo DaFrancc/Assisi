@@ -3,6 +3,7 @@ add_executable(Assisi-Runtime-Tests
   TestSceneSerializer.cpp
   TestHierarchy.cpp
   TestDefaultMeshes.cpp
+  TestLifecycle.cpp
 )
 
 Assisi_apply_defaults(Assisi-Runtime-Tests)

@@ -16,6 +16,12 @@ namespace Assisi::Physics
 ///
 /// Trivially copyable — safe to store in SparseSet<T>.
 /// The actual body is owned by the PhysicsWorld; this is just a handle.
+///
+/// ACOMP(transient): registered only so a Scene can store it by ComponentId.
+/// It is never serialized — the bodyId is a live runtime handle, meaningless
+/// across runs. RigidBodyDescriptor (below) is the serialized form; a RigidBody
+/// is (re)created from it at load time.
+ACOMP(transient)
 struct RigidBody
 {
     JPH::BodyID bodyId;

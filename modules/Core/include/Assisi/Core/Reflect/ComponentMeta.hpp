@@ -16,6 +16,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
 
 namespace Assisi::Core::Reflect
@@ -60,6 +61,23 @@ struct ComponentMeta
     ///   entity_gen   — Entity::generation of the target entity.
     std::function<const void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)>
         getByEntity;
+
+    /// @brief Whether this component participates in serialization/introspection.
+    ///
+    /// True for normal ACOMP components. False for ACOMP(transient) components,
+    /// which register only to receive a stable ComponentId (so a Scene can store
+    /// them) but carry no serialize/addToScene/iterateEntities/getByEntity hooks
+    /// — those are all null. This is the explicit gate consumers must check
+    /// before invoking a hook; do not probe the hooks for null yourself.
+    /// Examples: Physics::RigidBody (wraps a live Jolt handle that must never be
+    /// saved), Runtime::DestroyTag (a transient per-frame lifecycle marker).
+    bool serializable = true;
+
+    /// @brief Alphabetical dense id, assigned by ComponentRegistry after startup
+    /// (see ComponentRegistry::IdOf). kInvalidComponentId until the registry
+    /// finalizes. Placed last and defaulted so generated positional aggregate
+    /// initialization of the preceding members is unaffected.
+    ComponentId id = kInvalidComponentId;
 };
 
 } // namespace Assisi::Core::Reflect

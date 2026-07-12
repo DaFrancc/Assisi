@@ -117,7 +117,7 @@ None of these are bugs, and per the round-2 principle missing features don't
 cap the score. They're listed because each is a *shape* decision that gets
 more expensive every time a new system builds on the current one.
 
-- [ ] **ECS lookup costs are linear-in-use with no cheap growth path.**
+- [x] **ECS lookup costs are linear-in-use with no cheap growth path.**
   `Scene::Get/Has/Remove` do an `unordered_map<type_index>` find per call
   (`Scene.hpp:87-117`); `Query` iteration does one sparse-set probe per
   required component per candidate entity (`Query.hpp:91-105`). Correct,
@@ -126,6 +126,30 @@ more expensive every time a new system builds on the current one.
   incremental path to tens of thousands of entities. Worth a deliberate
   decision (accept the ceiling / add static component IDs / group hot pairs)
   before more systems assume the current shapes.
+  *Done (2026-07-12): took the "add component IDs" option.* Every reflected
+  component now gets a dense, stable `Core::Reflect::ComponentId`, assigned by
+  `ComponentRegistry` by sorting all registrations alphabetically by name (new
+  `ComponentId.hpp`; `IdOf`/`ById`/`ComponentIdOf<T>`). `Scene` stores its
+  pools in a flat `vector<PoolStorage>` indexed by that id, so `Get/Has/Remove/
+  Add` are an O(1) array index — the `unordered_map<type_index>` hash is gone.
+  The ids double as a save-file/network identity (deterministic across runs),
+  which is why they are name-sorted rather than first-use. Storing a component
+  in a Scene now requires it be reflected (debug-asserted in `Add`); components
+  that need storage but must not serialize (`Physics::RigidBody`'s live Jolt
+  handle, `Runtime::DestroyTag`) use a new `ACOMP(transient)` "id-only"
+  registration — an id, no serialize hooks, gated by `ComponentMeta::
+  serializable` and the registry's new `SerializableComponents()` view.
+  *Two sub-points deliberately deferred (accept the ceiling for now):* the
+  `Query` per-candidate sparse-set probe is unchanged (only the once-per-query
+  pool resolution became an array index), and there is still no archetype /
+  grouping story. Dense ids are the precondition for both a bitmask-signature
+  `Query` and archetypes, so this unblocks that work without doing it yet.
+  *On "compile-time":* the ids are runtime-assigned (cached in a per-type
+  `static` local — effectively one load), not `constexpr`. True compile-time
+  dense ids would need a central or codegen-generated global type-list, which
+  is at odds with the ACOMP per-header auto-discovery and only buys compile-
+  time *dispatch* the design never uses; runtime dense ids give the array-
+  indexing and archetype growth path that this item is actually about.
 
 - [ ] **`PropagateTransforms` rebuilds every world matrix every frame.**
   (`Hierarchy.cpp:13-75`) — allocation-free after warmup (round 3's fix is

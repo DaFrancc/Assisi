@@ -77,7 +77,8 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
         {
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
-        }
+        },
+        true       // serializable
     });
     return true;
 }();
@@ -117,7 +118,8 @@ static const bool _reflectgen_SampleRef = []() -> bool
         {
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
-        }
+        },
+        true       // serializable
     });
     return true;
 }();
@@ -155,7 +157,26 @@ static const bool _reflectgen_SampleEmpty = []() -> bool
         {
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
-        }
+        },
+        true       // serializable
+    });
+    return true;
+}();
+
+// ── SampleTransient ───────────────────────────────────────────────────────────
+// ACOMP(transient): id-only registration, not serialized.
+static const bool _reflectgen_SampleTransient = []() -> bool
+{
+    using T = Assisi::Runtime::SampleTransient;
+    Assisi::Core::Reflect::ComponentRegistry::Instance().Register({
+        "SampleTransient",
+        typeid(T),
+        {},      // fields: none reflected
+        nullptr,   // serialize
+        nullptr,   // addToScene
+        nullptr,   // iterateEntities
+        nullptr,   // getByEntity
+        false      // serializable
     });
     return true;
 }();

@@ -56,4 +56,13 @@ struct SampleEmpty
 {
 };
 
+// id-only component: ACOMP(transient) registers for a ComponentId but emits no
+// serialization hooks (serializable = false). Any AFIELD here is deliberately
+// ignored — it proves the transient branch skips field codegen entirely.
+ACOMP(transient)
+struct SampleTransient
+{
+    AFIELD() int ignored = 0;
+};
+
 } // namespace Assisi::Runtime

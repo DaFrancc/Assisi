@@ -11,6 +11,7 @@ add_executable(Assisi-Core-Tests
   main.cpp
   TestAssetPath.cpp
   TestAssetSystem.cpp
+  TestComponentRegistry.cpp
   TestEventQueue.cpp
   TestTrivialString.cpp
 )

@@ -6,24 +6,10 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/TestComponents.hpp>
 #include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 using namespace Assisi::ECS;
-
-namespace
-{
-struct Position
-{
-    float x = 0.0f;
-};
-struct Velocity
-{
-    float x = 0.0f;
-};
-struct Tag
-{
-};
-} // namespace
 
 TEST_CASE("Query: yields only entities that have every requested component")
 {

@@ -23,6 +23,11 @@ namespace Assisi::Runtime
 /// @brief Marker component — entity is destroyed at end of PostUpdate.
 ///
 /// No data.  Presence on an entity is the signal; the value is irrelevant.
+///
+/// ACOMP(transient): registered only so a Scene can store it by ComponentId.
+/// Never serialized — it is a per-frame marker that is added and flushed within
+/// the same frame, so it has no meaning in a saved scene.
+ACOMP(transient)
 struct DestroyTag
 {
 };

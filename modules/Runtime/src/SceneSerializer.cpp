@@ -86,12 +86,9 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
     // match the final array order. No serialization yet.
     std::map<uint64_t, nlohmann::json> entityMap;
 
-    for (const auto &meta : registry.All())
+    for (const auto *meta : registry.SerializableComponents())
     {
-        if (!meta.iterateEntities)
-            continue;
-
-        meta.iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *)
+        meta->iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *)
         {
             entityMap.emplace(EntityKey(idx, gen), nlohmann::json{});
         });
@@ -107,15 +104,12 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
     const ScopedContextReset contextReset;
 
     // Pass 2: serialize components (context is live so EntityToIndex works).
-    for (const auto &meta : registry.All())
+    for (const auto *meta : registry.SerializableComponents())
     {
-        if (!meta.iterateEntities)
-            continue;
-
-        meta.iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *compPtr)
+        meta->iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *compPtr)
         {
             const uint64_t key = EntityKey(idx, gen);
-            entityMap[key]["components"][meta.name] = meta.serialize(compPtr);
+            entityMap[key]["components"][meta->name] = meta->serialize(compPtr);
         });
     }
 
@@ -175,6 +169,15 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
             if (!meta)
             {
                 Core::Log::Warn("SceneSerializer: unknown component '{}' - skipped", compName);
+                continue;
+            }
+            // Non-serializable (ACOMP(transient)) components have no addToScene
+            // hook and are never written by Save; if one appears in a file
+            // (hand-edited or from an older format), skip it rather than deref
+            // a null hook.
+            if (!meta->serializable)
+            {
+                Core::Log::Warn("SceneSerializer: non-serializable component '{}' - skipped", compName);
                 continue;
             }
             meta->addToScene(&scene, e.index, e.generation, compData);

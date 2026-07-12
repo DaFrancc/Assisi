@@ -75,9 +75,13 @@ class ParseTest(unittest.TestCase):
         # GhostComponent lives inside a // comment and must not be parsed.
         self.assertEqual(
             [c.name for c in self.components],
-            ["SampleAllTypes", "SampleRef", "SampleEmpty"],
+            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient"],
         )
         self.assertNotIn("GhostComponent", self.by_name)
+
+    def test_acomp_transient_flag_is_captured(self):
+        self.assertTrue(self.by_name["SampleTransient"].args.has("transient"))
+        self.assertFalse(self.by_name["SampleEmpty"].args.has("transient"))
 
     def test_captures_nested_namespace(self):
         self.assertEqual(self.by_name["SampleAllTypes"].namespaces, ["Assisi", "Runtime"])
@@ -111,6 +115,18 @@ class CodegenTest(unittest.TestCase):
         # ...but never in the serialize/deserialize bodies.
         self.assertNotIn("c.runtimeCache", cpp)
         self.assertNotIn("comp.runtimeCache", cpp)
+
+    def test_acomp_transient_emits_id_only_registration(self):
+        components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
+        cpp = reflectgen.generate_cpp(components, SAMPLE_INCLUDE)
+        # The transient component is registered (for its id) but marked
+        # non-serializable with null hooks, and its field is not (de)serialized.
+        self.assertIn('"SampleTransient"', cpp)
+        self.assertIn("false      // serializable", cpp)
+        self.assertNotIn("c.ignored", cpp)
+        self.assertNotIn("comp.ignored", cpp)
+        # Normal components carry the serializable=true marker.
+        self.assertIn("true       // serializable", cpp)
 
     def test_entity_ref_pulls_in_scene_serializer_include(self):
         with_ref = reflectgen.parse_header(FIXTURES / "Sample.hpp")

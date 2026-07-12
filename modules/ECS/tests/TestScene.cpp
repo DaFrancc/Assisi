@@ -5,6 +5,8 @@
 #include <type_traits>
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/TestComponents.hpp>
+#include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 using namespace Assisi::ECS;
 
@@ -16,18 +18,6 @@ static_assert(!std::is_copy_constructible_v<Scene>, "Scene must not be copy-cons
 static_assert(!std::is_copy_assignable_v<Scene>, "Scene must not be copy-assignable");
 static_assert(!std::is_move_constructible_v<Scene>, "Scene must not be move-constructible");
 static_assert(!std::is_move_assignable_v<Scene>, "Scene must not be move-assignable");
-
-namespace
-{
-struct Position
-{
-    float x = 0.0f;
-};
-struct Velocity
-{
-    float x = 0.0f;
-};
-} // namespace
 
 TEST_CASE("Scene: add / has / get / remove single-component lifecycle")
 {
@@ -128,3 +118,35 @@ TEST_CASE("Scene: adding a component twice is rejected, original kept")
     CHECK(scene.Add<Position>(e, {2.0f}) == nullptr);
     CHECK(scene.Get<Position>(e)->x == doctest::Approx(1.0f));
 }
+
+#ifndef NDEBUG
+// Scene indexes pools by Core::Reflect::ComponentId, so a component type must be
+// registered with the reflection system (ACOMP). Adding an unreflected type is a
+// programming error caught by a debug contract assert (compiled out in release).
+namespace
+{
+struct Unreflected
+{
+    int v = 0;
+};
+} // namespace
+
+TEST_CASE("Scene: adding an unreflected component trips a contract assert")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    Scene                                     scene;
+    const Entity                              e = scene.Create();
+
+    CHECK_THROWS_AS((void)scene.Add<Unreflected>(e), Assisi::Core::ContractViolation);
+}
+
+// Read-side lookups treat an unreflected type as simply absent — no assert, no
+// crash — so defensive Has/Get on a never-added type stays safe.
+TEST_CASE("Scene: reads of an unreflected component are safe and empty")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    CHECK_FALSE(scene.Has<Unreflected>(e));
+    CHECK(scene.Get<Unreflected>(e) == nullptr);
+}
+#endif // !NDEBUG

@@ -415,6 +415,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
     has_entity_refs  = any(
         f.cpp_type in entity_ref_types
         for comp in components
+        if not comp.args.has('transient')  # id-only components serialize nothing
         for f in comp.fields
         if not f.args.has('transient')
     )
@@ -436,8 +437,36 @@ namespace
 """)
 
     for comp in components:
-        fqn         = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
-        var_name    = f'_reflectgen_{comp.name}'
+        fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
+        var_name = f'_reflectgen_{comp.name}'
+
+        # ACOMP(transient): register only to receive a stable ComponentId (so a
+        # Scene can store the type) with no serialization hooks. serializable is
+        # false and every hook is null; consumers gate on ComponentMeta::
+        # serializable. See RigidBody / DestroyTag.
+        if comp.args.has('transient'):
+            blocks.append(f"""\
+// ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
+// ACOMP(transient): id-only registration, not serialized.
+static const bool {var_name} = []() -> bool
+{{
+    using T = {fqn};
+    Assisi::Core::Reflect::ComponentRegistry::Instance().Register({{
+        "{comp.name}",
+        typeid(T),
+        {{}},      // fields: none reflected
+        nullptr,   // serialize
+        nullptr,   // addToScene
+        nullptr,   // iterateEntities
+        nullptr,   // getByEntity
+        false      // serializable
+    }});
+    return true;
+}}();
+
+""")
+            continue
+
         field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
         serialize   = _indent(_gen_serialize(comp.fields), 12)
         deserialize = _indent(_gen_deserialize(comp.fields), 12)
@@ -471,7 +500,8 @@ static const bool {var_name} = []() -> bool
         {{
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{{entity_index, entity_gen}});
-        }}
+        }},
+        true       // serializable
     }});
     return true;
 }}();
@@ -503,6 +533,8 @@ def _detect_include_path(header: Path) -> str:
 def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:
     """Fail generation if any non-transient AFIELD has a known-unsupported type."""
     for comp in components:
+        if comp.args.has('transient'):
+            continue  # id-only component: its fields are never serialized
         for f in comp.fields:
             if f.args.has('transient'):
                 continue

@@ -245,19 +245,22 @@ void SandboxApp::DrawInspector()
 
     bool anyFieldEdited = false;
 
-    for (const auto &meta : ComponentRegistry::Instance().All())
+    // SerializableComponents() skips ACOMP(transient) id-only components
+    // (e.g. RigidBody/DestroyTag), which have no getByEntity hook and nothing
+    // to edit, so no per-item guard is needed here.
+    for (const auto *meta : ComponentRegistry::Instance().SerializableComponents())
     {
         const void *compPtr =
-            meta.getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation);
+            meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation);
 
         if (!compPtr)
             continue;
 
-        if (!ImGui::CollapsingHeader(meta.name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+        if (!ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
             continue;
 
-        ImGui::PushID(meta.name.c_str());
-        anyFieldEdited |= EditComponentFields(const_cast<void *>(compPtr), meta);
+        ImGui::PushID(meta->name.c_str());
+        anyFieldEdited |= EditComponentFields(const_cast<void *>(compPtr), *meta);
         ImGui::PopID();
     }
 

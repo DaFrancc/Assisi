@@ -39,6 +39,7 @@ assisi_reflect(
   HEADERS
     include/Assisi/Runtime/Components.hpp
     include/Assisi/Runtime/Hierarchy.hpp
+    include/Assisi/Runtime/Lifecycle.hpp
     include/Assisi/Runtime/LightComponents.hpp
 )
 

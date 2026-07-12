@@ -8,11 +8,11 @@
 /// it with the internal Registry so Destroy(entity) automatically removes the
 /// entity from every pool it belongs to.
 
-#include <typeindex>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
+#include <Assisi/Core/Assert.hpp>
+#include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Query.hpp>
 #include <Assisi/ECS/Registry.hpp>
 
@@ -25,8 +25,9 @@ struct Scene
 
     ~Scene()
     {
-        for (auto &[type, storage] : _pools)
-            storage.destroy(storage.pool);
+        for (auto &storage : _pools)
+            if (storage.pool)
+                storage.destroy(storage.pool);
     }
 
     // Non-copyable and non-movable: Scene owns its component pools as raw
@@ -89,8 +90,9 @@ struct Scene
     /// alive (no allocations freed) so they can be refilled without realloc.
     void Clear()
     {
-        for (auto &[type, storage] : _pools)
-            storage.clear(storage.pool);
+        for (auto &storage : _pools)
+            if (storage.pool)
+                storage.clear(storage.pool);
         _registry.Reset();
         _pendingDestroy.clear();
     }
@@ -113,34 +115,29 @@ struct Scene
     /// @brief Returns a pointer to the entity's component of type T, or nullptr if not present.
     template <typename T> T *Get(Entity entity)
     {
-        auto it = _pools.find(typeid(T));
-        if (it == _pools.end())
-            return nullptr;
-        return static_cast<SparseSet<T> *>(it->second.pool)->Get(entity);
+        SparseSet<T> *pool = GetPool<T>();
+        return pool ? pool->Get(entity) : nullptr;
     }
 
     /// @brief Returns a const pointer to the entity's component of type T, or nullptr if not present.
     template <typename T> const T *Get(Entity entity) const
     {
-        auto it = _pools.find(typeid(T));
-        if (it == _pools.end())
-            return nullptr;
-        return static_cast<const SparseSet<T> *>(it->second.pool)->Get(entity);
+        const SparseSet<T> *pool = GetPool<T>();
+        return pool ? pool->Get(entity) : nullptr;
     }
 
     /// @brief Returns true if the entity has a component of type T.
     template <typename T> bool Has(Entity entity) const
     {
-        auto it = _pools.find(typeid(T));
-        return it != _pools.end() && static_cast<const SparseSet<T> *>(it->second.pool)->Has(entity);
+        const SparseSet<T> *pool = GetPool<T>();
+        return pool && pool->Has(entity);
     }
 
     /// @brief Removes the component of type T from the entity.
     template <typename T> void Remove(Entity entity)
     {
-        auto it = _pools.find(typeid(T));
-        if (it != _pools.end())
-            static_cast<SparseSet<T> *>(it->second.pool)->Remove(entity);
+        if (SparseSet<T> *pool = GetPool<T>())
+            pool->Remove(entity);
     }
 
     /// @brief Returns a lazy view over all entities that have every component in Ts.
@@ -207,10 +204,10 @@ struct Scene
   private:
     struct PoolStorage
     {
-        void *pool;
-        void (*remove)(void *pool, Entity entity);
-        void (*clear)(void *pool);
-        void (*destroy)(void *pool);
+        void *pool                              = nullptr;
+        void (*remove)(void *pool, Entity entity) = nullptr;
+        void (*clear)(void *pool)                 = nullptr;
+        void (*destroy)(void *pool)               = nullptr;
     };
 
     template <typename T> static void RemoveFn(void *pool, Entity entity)
@@ -222,29 +219,47 @@ struct Scene
 
     template <typename T> static void DestroyFn(void *pool) { delete static_cast<SparseSet<T> *>(pool); }
 
-    /// @brief Returns a pointer to the pool for T, or nullptr if it has never been created.
-    template <typename T> SparseSet<T> *GetPool()
+    /// @brief Returns a pointer to the pool for T, or nullptr if it has never
+    /// been created in this scene.
+    ///
+    /// Pools are keyed by T's stable Core::Reflect::ComponentId, so this is a
+    /// bounds-checked array index — no hashing. An unreflected T resolves to
+    /// kInvalidComponentId and yields nullptr (it can never have a pool because
+    /// GetOrCreatePool asserts on it). const because the lookup does not create;
+    /// the returned pool is mutable since _pools holds type-erased owners.
+    template <typename T> SparseSet<T> *GetPool() const
     {
-        auto it = _pools.find(typeid(T));
-        if (it == _pools.end())
+        const Core::Reflect::ComponentId id = Core::Reflect::ComponentIdOf<T>();
+        if (id >= _pools.size() || !_pools[id].pool)
             return nullptr;
-        return static_cast<SparseSet<T> *>(it->second.pool);
+        return static_cast<SparseSet<T> *>(_pools[id].pool);
     }
 
     template <typename T> SparseSet<T> &GetOrCreatePool()
     {
-        auto it = _pools.find(typeid(T));
-        if (it != _pools.end())
-            return *static_cast<SparseSet<T> *>(it->second.pool);
+        const Core::Reflect::ComponentId id = Core::Reflect::ComponentIdOf<T>();
+        ASSISI_ASSERT(id != Core::Reflect::kInvalidComponentId,
+                      "Scene component types must be registered with the reflection "
+                      "system (ACOMP); this T has no ComponentId.");
 
-        auto *pool = new SparseSet<T>();
-        _registry.RegisterPool(pool);
-        _pools.emplace(typeid(T), PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>});
-        return *pool;
+        if (id >= _pools.size())
+            _pools.resize(id + 1);
+
+        PoolStorage &slot = _pools[id];
+        if (!slot.pool)
+        {
+            auto *pool = new SparseSet<T>();
+            _registry.RegisterPool(pool);
+            slot = PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>};
+        }
+        return *static_cast<SparseSet<T> *>(slot.pool);
     }
 
     Registry _registry;
-    std::unordered_map<std::type_index, PoolStorage> _pools;
+    /// Component pools indexed by Core::Reflect::ComponentId. Empty slots
+    /// (pool == nullptr) are ids whose component has not been added to this
+    /// scene — including gaps for components that belong to other modules.
+    std::vector<PoolStorage> _pools;
     std::vector<Entity> _pendingDestroy; ///< Entities queued by Destroy(), drained by FlushDestroyed().
 };
 
