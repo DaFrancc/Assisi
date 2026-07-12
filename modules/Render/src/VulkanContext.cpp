@@ -770,8 +770,15 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
         _frameQueryPending[slot] = false;
     }
 
+    // vkAcquireNextImageKHR blocks the CPU until the presentation engine hands
+    // back a swapchain image; under vsync/back-pressure that stall lands here (or
+    // in submit/present below). Fold it into _lastGpuWaitMs so it's excluded from
+    // the CPU frame-time figure rather than mislabeled as CPU work.
+    const std::chrono::steady_clock::time_point acquireStart = std::chrono::steady_clock::now();
     VkResult acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphores[slot],
                                                         VK_NULL_HANDLE, &_currentImageIndex);
+    _lastGpuWaitMs +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - acquireStart).count();
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
         // Swapchain is stale; the next explicit Resize() (from the window resize
@@ -806,6 +813,12 @@ void VulkanContext::EndFrame()
     // this function, and EndFrame() only runs when BeginFrame() returned a frame.
     const uint32_t slot = static_cast<uint32_t>(_frameCounter % kFramesInFlight);
 
+    // Submit + present block the CPU on the graphics queue / presentation engine;
+    // like the acquire above, that stall is idle-waiting on the GPU/display, not
+    // CPU work, so time it and fold it into _lastGpuWaitMs. GC (below, after this
+    // window) is genuine CPU work and stays counted.
+    const std::chrono::steady_clock::time_point presentWaitStart = std::chrono::steady_clock::now();
+
     _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
     _commandList->close();
 
@@ -826,6 +839,8 @@ void VulkanContext::EndFrame()
     presentInfo.pSwapchains = &_swapchain;
     presentInfo.pImageIndices = &_currentImageIndex;
     const VkResult presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+    _lastGpuWaitMs +=
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentWaitStart).count();
     // OUT_OF_DATE/SUBOPTIMAL are expected on resize; the window resize callback
     // recreates the swapchain, so they're not errors here. Anything else is.
     if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR &&

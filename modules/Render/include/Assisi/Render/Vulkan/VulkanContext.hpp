@@ -183,7 +183,11 @@ class VulkanContext
     // Per-slot GPU timer queries bracketing the whole command list, for the
     // debug frame-time readout. Read in BeginFrame() once the slot's event
     // query proves the frame finished (so the read never blocks). _lastGpuWaitMs
-    // records how long that event-query wait actually stalled the CPU.
+    // records how long the CPU stalled this frame waiting on the GPU/present
+    // pipeline — the frames-in-flight event-query wait plus the swapchain WSI
+    // blocking (vkAcquireNextImageKHR, submit, and vkQueuePresentKHR). Callers
+    // subtract it from the CPU frame time so those idle waits (which under
+    // vsync/back-pressure spike to a couple ms) aren't mislabeled as CPU work.
     std::array<nvrhi::TimerQueryHandle, kFramesInFlight> _timerQueries;
     float                                               _lastGpuFrameMs = 0.0f;
     double                                              _lastGpuWaitMs = 0.0;
