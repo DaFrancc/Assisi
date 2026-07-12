@@ -161,10 +161,10 @@ class SandboxApp : public Assisi::App::Application
 
     // Ring-buffer history for the telemetry graphs, advanced once per fresh NVML
     // sample (~5Hz, gated on GpuTelemetrySample::sequence) rather than per frame,
-    // so the buffers span ~1 min regardless of frame rate. _gpuTelemetryOffset is
+    // so the buffers span ~30s regardless of frame rate. _gpuTelemetryOffset is
     // the next write slot / chronological start (ImPlot Offset), _gpuTelemetryCount
     // saturates at the capacity. Only advance while the overlay is open.
-    static constexpr int                        kGpuHistory = 300; // ~60s at 5Hz
+    static constexpr int                        kGpuHistory = 150; // ~30s at 5Hz
     std::array<float, kGpuHistory>              _gpuClockHistory{};
     std::array<float, kGpuHistory>              _gpuUtilHistory{};
     std::array<float, kGpuHistory>              _gpuPowerHistory{};

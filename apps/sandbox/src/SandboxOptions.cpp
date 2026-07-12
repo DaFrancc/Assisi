@@ -76,7 +76,7 @@ void SandboxApp::DrawOptionsWindow()
 
             // Push one point per fresh NVML reading (Poll() is throttled, so the
             // sequence only bumps ~5x/s) into the ring buffers, so the graphs span
-            // ~60s of history rather than a fraction of a second of frames.
+            // ~30s of history rather than a fraction of a second of frames.
             if (gpu.sequence != _lastGpuSequence)
             {
                 _lastGpuSequence = gpu.sequence;
