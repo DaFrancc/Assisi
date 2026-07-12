@@ -57,13 +57,14 @@
 /// Flushing is handled automatically by Application::Run() at the end of
 /// each render frame.  Call Flush() manually in unit tests or custom loops.
 
-#include <cassert>
 #include <cstdint>
 #include <memory>
 #include <span>
 #include <typeindex>
 #include <unordered_map>
 #include <vector>
+
+#include <Assisi/Core/Assert.hpp>
 
 namespace Assisi::Core
 {
@@ -83,80 +84,90 @@ template <typename E> class EventSpan
   public:
     EventSpan() = default;
 
-    EventSpan(const E *data, std::size_t size, [[maybe_unused]] const std::uint32_t *version)
-        : _data(data), _size(size)
+    // `version` points at the queue's debug-only per-type counter, or is null in
+    // release (Read passes nullptr there). The snapshot fields are always present
+    // — they are a few bytes on a transient stack view — so the iterator/access
+    // paths carry no #ifndef; the ASSISI_ASSERT that reads them drops to nothing
+    // in release. A null version means "unchecked", handled by the assert itself.
+    EventSpan(const E *data, std::size_t size, const std::uint32_t *version)
+        : _data(data), _size(size), _version(version), _snapshot(version != nullptr ? *version : 0)
     {
-#ifndef NDEBUG
-        _version  = version;
-        _snapshot = (version != nullptr) ? *version : 0;
-#endif
     }
 
     struct Iterator
     {
-        const E *ptr = nullptr;
-#ifndef NDEBUG
-        const std::uint32_t *version  = nullptr;
+        const E             *ptr      = nullptr;
+        const std::uint32_t *version  = nullptr; ///< Debug counter, or null (release / unchecked).
         std::uint32_t        snapshot = 0;
-#endif
+
         const E &operator*() const
         {
-#ifndef NDEBUG
-            assert((version == nullptr || *version == snapshot) &&
-                   "EventQueue::Read view invalidated: an event of the same type was Push()ed while "
-                   "iterating it, which may have reallocated the backing vector. Copy the events or "
-                   "defer the push until after the loop.");
-#endif
+            ASSISI_ASSERT(version == nullptr || *version == snapshot,
+                          "EventQueue::Read view invalidated: an event of the same type was Push()ed "
+                          "while iterating it, which may have reallocated the backing vector. Copy the "
+                          "events or defer the push until after the loop.");
             return *ptr;
         }
         Iterator &operator++()
         {
+            // Check before advancing: a same-type Push in the loop body may have
+            // reallocated the vector, leaving ptr dangling. Fail here rather than
+            // do pointer arithmetic on a freed buffer.
+            ASSISI_ASSERT(version == nullptr || *version == snapshot,
+                          "EventQueue::Read view invalidated by a same-type Push mid-iteration.");
             ++ptr;
             return *this;
         }
+        // Deliberately no invalidation check here: comparison only looks at the
+        // snapshotted pointers, never the (possibly freed) buffer. The trade-off
+        // is that an invalidating Push right before the loop's exit test can end
+        // the loop instead of asserting — a missed detection, not UB;
+        // operator*/operator++ catch it on any continued use.
         bool operator==(const Iterator &other) const { return ptr == other.ptr; }
         bool operator!=(const Iterator &other) const { return ptr != other.ptr; }
     };
 
-    Iterator begin() const
-    {
-#ifndef NDEBUG
-        return Iterator{_data, _version, _snapshot};
-#else
-        return Iterator{_data};
-#endif
-    }
-    Iterator end() const
-    {
-#ifndef NDEBUG
-        return Iterator{_data + _size, _version, _snapshot};
-#else
-        return Iterator{_data + _size};
-#endif
-    }
+    Iterator begin() const { return Iterator{_data, _version, _snapshot}; }
+    Iterator end() const { return Iterator{_data + _size, _version, _snapshot}; }
 
     [[nodiscard]] std::size_t size() const { return _size; }
     [[nodiscard]] bool        empty() const { return _size == 0; }
-    const E                  *data() const { return _data; }
+
+    /// The raw pointer carries no version guard — it must be consumed before any
+    /// further Push of this event type. Debug builds assert it has not already
+    /// been invalidated at the point of the call.
+    const E *data() const
+    {
+        ASSISI_ASSERT(_version == nullptr || *_version == _snapshot,
+                      "EventQueue::Read view invalidated by a same-type Push before data() access.");
+        return _data;
+    }
 
     const E &operator[](std::size_t index) const
     {
-#ifndef NDEBUG
-        assert((_version == nullptr || *_version == _snapshot) &&
-               "EventQueue::Read view invalidated by a same-type Push before this access.");
-#endif
+        ASSISI_ASSERT(index < _size, "EventSpan index out of range.");
+        ASSISI_ASSERT(_version == nullptr || *_version == _snapshot,
+                      "EventQueue::Read view invalidated by a same-type Push before this access.");
         return _data[index];
     }
 
-    operator std::span<const E>() const { return std::span<const E>(_data, _size); }
+    /// Converts to an *unchecked* std::span over the same events: the span keeps
+    /// no version guard, so element access through it is not protected the way
+    /// this view's own iteration is. Convert only to hand the events to code that
+    /// consumes them before any further Push of this event type. Debug builds
+    /// assert the view is still valid at the moment of conversion.
+    operator std::span<const E>() const
+    {
+        ASSISI_ASSERT(_version == nullptr || *_version == _snapshot,
+                      "EventQueue::Read view invalidated by a same-type Push before converting to span.");
+        return std::span<const E>(_data, _size);
+    }
 
   private:
-    const E    *_data = nullptr;
-    std::size_t _size = 0;
-#ifndef NDEBUG
-    const std::uint32_t *_version  = nullptr;
+    const E             *_data     = nullptr;
+    std::size_t          _size     = 0;
+    const std::uint32_t *_version  = nullptr; ///< Debug counter address (read by begin/end), null in release.
     std::uint32_t        _snapshot = 0;
-#endif
 };
 
 /// @brief Per-frame event queue.

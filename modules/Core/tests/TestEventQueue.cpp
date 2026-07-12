@@ -2,7 +2,9 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 #include <vector>
 
@@ -18,6 +20,7 @@ struct Healed
 {
     int amount = 0;
 };
+
 } // namespace
 
 // Constructing a local EventQueue here is the point of de-singletonizing it:
@@ -86,3 +89,81 @@ TEST_CASE("EventQueue: flush clears every queue")
     REQUIRE(queue.Read<Damage>().size() == 1);
     CHECK(queue.Read<Damage>()[0].amount == 9);
 }
+
+// The read-view invalidation guard. With a throwing contract handler installed,
+// a fired ASSISI_ASSERT surfaces as a catchable ContractViolation. Debug-only —
+// the check compiles out in release.
+#ifndef NDEBUG
+TEST_CASE("EventQueue guard: pushing the same type while reading is caught")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    EventQueue                                queue;
+    for (int i = 0; i < 4; ++i)
+        queue.Push(Damage{i});
+
+    CHECK_THROWS_AS(([&]
+                     {
+                         int safety = 0;
+                         for (const Damage &damage : queue.Read<Damage>())
+                         {
+                             (void)damage;
+                             queue.Push(Damage{99}); // same type: may realloc the vector being read
+                             if (++safety > 1000)    // stop a missed detection from looping forever
+                                 break;
+                         }
+                     }()),
+                    ContractViolation);
+}
+
+TEST_CASE("EventQueue guard: indexing past the end of a read view is caught")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    EventQueue                                queue;
+    queue.Push(Damage{5});
+
+    const EventSpan<Damage> events = queue.Read<Damage>();
+    CHECK_NOTHROW((void)events[0]);
+    CHECK_THROWS_AS((void)events[1], ContractViolation);
+}
+
+TEST_CASE("EventQueue guard: pushing a different type while reading is allowed")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    EventQueue                                queue;
+    for (int i = 0; i < 4; ++i)
+        queue.Push(Damage{i});
+
+    int seen = 0;
+    // Healed lives in a different vector than the Damage view, so pushing it is
+    // safe and must not trip the guard.
+    CHECK_NOTHROW(([&]
+                   {
+                       for (const Damage &damage : queue.Read<Damage>())
+                       {
+                           (void)damage;
+                           ++seen;
+                           queue.Push(Healed{1});
+                       }
+                   }()));
+    CHECK(seen == 4);
+}
+
+TEST_CASE("EventQueue guard: copying out then pushing after the loop is allowed")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    EventQueue                                queue;
+    for (int i = 0; i < 4; ++i)
+        queue.Push(Damage{i});
+
+    std::vector<int> collected;
+    CHECK_NOTHROW(([&]
+                   {
+                       for (const Damage &damage : queue.Read<Damage>())
+                           collected.push_back(damage.amount);
+                   }()));
+    // Deferring the push until after the loop is the sanctioned pattern.
+    CHECK_NOTHROW(queue.Push(Damage{100}));
+    CHECK(collected.size() == 4);
+    CHECK(queue.Read<Damage>().size() == 5);
+}
+#endif // !NDEBUG

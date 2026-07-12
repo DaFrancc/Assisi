@@ -163,8 +163,11 @@ struct Scene
     ///
     /// `scene.Query<A>(Without<B>{})` yields entities with A and not B. Exclusion
     /// is a single-pass filter folded into the same iteration as the positive
-    /// match — it never runs a second loop. The same mid-loop mutation warning as
-    /// the plain overload applies, to the required *and* the excluded pools.
+    /// match — it never runs a second loop. The plain overload's mid-loop mutation
+    /// warning applies to the *required* pools (the Ts). Mutating an *excluded*
+    /// pool (an Es) mid-loop is safe: it is re-probed each step through its stable
+    /// pool address, nothing cached points into it, so a change there cannot
+    /// dangle the iterator (and the debug check does not count excluded pools).
     template <typename... Ts, typename... Es> QueryView<std::tuple<Ts...>, std::tuple<Es...>> Query(Without<Es...>)
     {
         std::tuple<SparseSet<Ts> *...> pools = {GetPool<Ts>()...};

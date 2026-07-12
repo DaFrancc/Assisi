@@ -4,11 +4,13 @@ Assisi_apply_defaults(Assisi-Core)
 target_sources(Assisi-Core
   PRIVATE
     "src/AssetSystem.cpp"
+    "src/Assert.cpp"
     "src/ComponentRegistry.cpp"
     "src/Logger.cpp"
     "src/Platform.cpp"
     "src/Sinks.cpp"
   PUBLIC
+    "include/Assisi/Core/Assert.hpp"
     "include/Assisi/Core/AssetPath.hpp"
     "include/Assisi/Core/AssetSystem.hpp"
     "include/Assisi/Core/Errors.hpp"

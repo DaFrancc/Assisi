@@ -200,3 +200,75 @@ TEST_CASE("SparseSet: adding the null/sentinel index is rejected, not UB")
     CHECK(set.Size() == 0);
     CHECK_FALSE(set.Has(NullEntity));
 }
+
+// The debug-only StructureVersion is the primitive the Query iterator's
+// mid-iteration mutation guard is built on: it must strictly increase on every
+// *structural* change and stay put on everything else. These tests pin that
+// contract directly (the guard's correctness reduces to it), so they only exist
+// in debug builds where the counter does.
+#ifndef NDEBUG
+TEST_CASE("SparseSet: StructureVersion increments on exactly the structural changes")
+{
+    SparseSet<int> set;
+    const Entity    a{.index = 0, .generation = 0};
+    const Entity    b{.index = 1, .generation = 0};
+
+    const uint32_t v0 = set.StructureVersion();
+
+    REQUIRE(set.Add(a, 10) != nullptr);
+    const uint32_t v1 = set.StructureVersion();
+    CHECK(v1 != v0); // Add bumped it
+
+    REQUIRE(set.Add(b, 20) != nullptr);
+    const uint32_t v2 = set.StructureVersion();
+    CHECK(v2 != v1); // second Add bumped it
+
+    set.Remove(a);
+    const uint32_t v3 = set.StructureVersion();
+    CHECK(v3 != v2); // Remove bumped it
+
+    set.Clear();
+    const uint32_t v4 = set.StructureVersion();
+    CHECK(v4 != v3); // Clear bumped it
+}
+
+TEST_CASE("SparseSet: read-only operations never bump StructureVersion")
+{
+    SparseSet<int> set;
+    const Entity    a{.index = 0, .generation = 0};
+    const Entity    b{.index = 1, .generation = 0};
+    REQUIRE(set.Add(a, 10) != nullptr);
+
+    const uint32_t before = set.StructureVersion();
+
+    // None of these mutate structure; the guard must not false-positive on them.
+    (void)set.Has(a);
+    (void)set.Get(a);
+    (void)set.Get(b);
+    (void)set.Size();
+    (void)set.Empty();
+    (void)set.Entities();
+    for (int value : set)
+        (void)value;
+
+    CHECK(set.StructureVersion() == before);
+}
+
+TEST_CASE("SparseSet: rejected/no-op mutations do not bump StructureVersion")
+{
+    SparseSet<int> set;
+    const Entity    a{.index = 0, .generation = 0};
+    const Entity    absent{.index = 7, .generation = 0};
+    REQUIRE(set.Add(a, 10) != nullptr);
+
+    const uint32_t before = set.StructureVersion();
+
+    CHECK(set.Add(a, 99) == nullptr); // duplicate: rejected before any change
+    CHECK(set.Add(NullEntity, 1) == nullptr); // sentinel: rejected
+    set.Remove(absent);                        // not present: early-out, no change
+
+    // A rejected Add or a no-op Remove changes nothing structurally, so a Query
+    // iterating this pool must NOT be told it was invalidated.
+    CHECK(set.StructureVersion() == before);
+}
+#endif // !NDEBUG

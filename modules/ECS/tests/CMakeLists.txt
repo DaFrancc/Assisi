@@ -17,6 +17,7 @@ target_include_directories(Assisi-ECS-Tests SYSTEM PRIVATE
 target_link_libraries(Assisi-ECS-Tests
   PRIVATE
     Assisi::ECS
+    Assisi::TestSupport
 )
 
 add_test(NAME ECS COMMAND Assisi-ECS-Tests)
