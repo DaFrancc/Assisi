@@ -11,6 +11,7 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <Assisi/Render/Bounds.hpp>
 #include <Assisi/Render/MeshData.hpp>
 
 namespace Assisi::Render
@@ -56,12 +57,16 @@ class MeshBuffer
         commandList->close();
         device->executeCommandList(commandList);
 
+        _localBounds = ComputeBoundingSphere(meshData);
         _sourceData = std::move(meshData);
     }
 
     nvrhi::IBuffer *VertexBuffer() const { return _vertexBuffer; }
     nvrhi::IBuffer *IndexBuffer() const { return _indexBuffer; }
     uint32_t IndexCount() const { return _indexCount; }
+
+    /// @brief Local-space bounding sphere fit at upload, for frustum culling.
+    const BoundingSphere &LocalBounds() const { return _localBounds; }
 
     /// @brief CPU-side geometry this buffer was last uploaded from (e.g. for physics).
     const MeshData &SourceData() const { return _sourceData; }
@@ -70,6 +75,7 @@ class MeshBuffer
     nvrhi::BufferHandle _vertexBuffer;
     nvrhi::BufferHandle _indexBuffer;
     uint32_t             _indexCount = 0;
+    BoundingSphere       _localBounds;
     MeshData              _sourceData;
 };
 } /* namespace Assisi::Render */

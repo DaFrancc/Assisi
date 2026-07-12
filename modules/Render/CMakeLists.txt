@@ -5,7 +5,9 @@ target_sources(Assisi-Render
   PUBLIC
     "include/Assisi/Render/AssetCache.hpp"
     "include/Assisi/Render/Buffer.hpp"
+    "include/Assisi/Render/Bounds.hpp"
     "include/Assisi/Render/DefaultMeshes.hpp"
+    "include/Assisi/Render/Frustum.hpp"
     "include/Assisi/Render/GpuTelemetry.hpp"
     "include/Assisi/Render/DefaultResources.hpp"
     "include/Assisi/Render/MeshBuffer.hpp"
@@ -26,6 +28,7 @@ target_sources(Assisi-Render
     "src/ComputeShader.cpp"
     "src/Buffer.cpp"
     "src/DefaultResources.cpp"
+    "src/Frustum.cpp"
     "src/GpuTelemetry.cpp"
     "src/MeshPass.cpp"
     "src/PostProcess.cpp"

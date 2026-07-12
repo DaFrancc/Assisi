@@ -27,6 +27,7 @@
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
+#include <Assisi/Runtime/Renderer.hpp>
 
 #include <nvrhi/nvrhi.h>
 
@@ -75,6 +76,15 @@ class SceneRenderer
     /// clear) so freed texture pointers aren't reused. No-op before Initialize().
     void InvalidateAssetBindings() { _meshPass.InvalidateBindingSets(); }
 
+    /// @brief Enable/disable view-frustum culling in the default draw path (on by
+    /// default). Turning it off submits every mesh, for A/B comparing the cull.
+    void SetFrustumCulling(bool enabled) { _frustumCulling = enabled; }
+    [[nodiscard]] bool FrustumCulling() const { return _frustumCulling; }
+
+    /// @brief Drawn/culled counts from the most recent Render(); zero before the
+    /// first frame. Reflects whether culling is actually removing anything.
+    [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
+
   private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int width, int height, const Camera &camera, const glm::mat4 &projection);
@@ -86,6 +96,9 @@ class SceneRenderer
     // Projection the froxel grid was last built against; a mismatch in Render()
     // triggers a rebuild. Identity forces one on the first frame.
     glm::mat4 _clusterProjection{1.f};
+
+    bool      _frustumCulling = true; // default draw path culls off-screen meshes
+    DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 };
 
 } // namespace Assisi::Runtime

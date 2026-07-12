@@ -265,6 +265,22 @@ void SandboxApp::DrawOptionsWindow()
             ImGui::Text("Min/Max: %6.2f / %6.2f ms", minMs, maxMs);
         }
         ImGui::Separator();
+        ImGui::TextUnformatted("Rendering");
+
+        // Live A/B toggle for view-frustum culling, with the per-frame drawn/culled
+        // tally beside it: if "culled" stays 0 while everything is on screen, the
+        // cull is inert here and can't explain a clock/util change (it only ever
+        // removes draws). Fly the camera until geometry leaves the view and the
+        // culled count should climb. Runtime-only — not persisted to options.json.
+        bool frustumCulling = _sceneRenderer.FrustumCulling();
+        if (ImGui::Checkbox("Frustum Culling", &frustumCulling))
+        {
+            _sceneRenderer.SetFrustumCulling(frustumCulling);
+        }
+        const Assisi::Runtime::DrawStats draw = _sceneRenderer.LastDrawStats();
+        ImGui::Text("Meshes: %u drawn / %u culled", draw.drawn, draw.culled);
+
+        ImGui::Separator();
 
         OptionsConfig &options = GetOptions();
 
