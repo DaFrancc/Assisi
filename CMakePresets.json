@@ -11,6 +11,10 @@
       "hidden": true,
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "warnings": {
+        "dev": false,
+        "deprecated": false
+      },
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "ASSISI_WARNINGS_AS_ERRORS": "OFF",

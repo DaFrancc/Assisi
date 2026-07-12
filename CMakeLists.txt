@@ -161,6 +161,43 @@ set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/out/deps" CACHE PATH "")
 # Skip remote update checks on subsequent configures (fast reconfigure).
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "" FORCE)
 
+# Keep third-party dependency configuration quiet. FetchContent pulls in a lot
+# of vendored CMake we don't own and can't clean up: glm's pre-3.10
+# cmake_minimum_required, assimp's CMP0175 add_custom_command usage, and pages of
+# message(STATUS) chatter (importer lists, "compiling zlib", version banners).
+# All of it buries our own build output, so we hush it for the duration of the
+# FetchContent block and restore normal verbosity afterwards. Two companion
+# pieces complete the muffling: -Wno-dev / -Wno-deprecated live in CMakePresets'
+# base preset (they silence the CMake author/deprecation warnings that a raised
+# log level would still print), and each dependency's include directories are
+# marked SYSTEM (the SYSTEM keyword on FetchContent_Declare, or SYSTEM on our
+# own include dirs) so their headers don't trip our /W4 + -Wconversion warnings
+# when we include them.
+set(_assisi_saved_message_log_level "${CMAKE_MESSAGE_LOG_LEVEL}")
+set(CMAKE_MESSAGE_LOG_LEVEL NOTICE)   # hide dep message(STATUS); keep WARNING/ERROR
+
+# Silence the CMake author/deprecation warnings that vendored dep CMake emits
+# (glm's pre-3.10 cmake_minimum_required; assimp's CMP0175 add_custom_command
+# usage). These MUST be set here rather than only via CMakePresets' `warnings`
+# field: the preset's -Wno-dev/-Wno-deprecated only apply to an explicit
+# `cmake --preset` run, but Ninja's auto-reconfigure ("Re-running CMake" on every
+# build) regenerates without them, so the preset alone leaves these showing on
+# every incremental build. CMAKE_WARN_DEPRECATED is restored after the block, and
+# CMP0175 is set as a per-policy *default* (only affects subdirs that don't set
+# it) and unset afterwards, so our own add_custom_command calls (e.g. reflectgen)
+# are still held to the current-CMake standard.
+# CMAKE_WARN_DEPRECATED is read from the cache, so a plain set() is ignored — it
+# must be forced in the cache. Save the prior cache state and restore it after the
+# block so our own CMake keeps its deprecation diagnostics.
+if (DEFINED CACHE{CMAKE_WARN_DEPRECATED})
+    set(_assisi_had_warn_deprecated ON)
+    set(_assisi_saved_warn_deprecated "$CACHE{CMAKE_WARN_DEPRECATED}")
+else()
+    set(_assisi_had_warn_deprecated OFF)
+endif()
+set(CMAKE_WARN_DEPRECATED OFF CACHE BOOL "" FORCE)
+set(CMAKE_POLICY_DEFAULT_CMP0175 OLD)   # assimp: add_custom_command without PRE/POST_BUILD
+
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
 
 # --- GLFW
@@ -172,6 +209,7 @@ FetchContent_Declare(glfw3
     GIT_REPOSITORY https://github.com/glfw/glfw.git
     GIT_TAG        3.4
     GIT_SHALLOW    TRUE
+    SYSTEM
 )
 FetchContent_MakeAvailable(glfw3)
 
@@ -182,6 +220,7 @@ FetchContent_Declare(glm
     GIT_REPOSITORY https://github.com/g-truc/glm.git
     GIT_TAG        1.0.1
     GIT_SHALLOW    TRUE
+    SYSTEM
 )
 FetchContent_MakeAvailable(glm)
 
@@ -198,7 +237,7 @@ FetchContent_Declare(stb
 )
 FetchContent_MakeAvailable(stb)
 add_library(stb-headers INTERFACE)
-target_include_directories(stb-headers INTERFACE "${stb_SOURCE_DIR}")
+target_include_directories(stb-headers SYSTEM INTERFACE "${stb_SOURCE_DIR}")
 add_library(stb::stb ALIAS stb-headers)
 
 # --- Assimp
@@ -220,6 +259,7 @@ FetchContent_Declare(assimp
     GIT_REPOSITORY https://github.com/assimp/assimp.git
     GIT_TAG        v5.4.3
     GIT_SHALLOW    TRUE
+    SYSTEM
 )
 FetchContent_MakeAvailable(assimp)
 if (NOT TARGET assimp::assimp)
@@ -240,6 +280,7 @@ FetchContent_Declare(JoltPhysics
     GIT_TAG        v5.2.0
     GIT_SHALLOW    TRUE
     SOURCE_SUBDIR  Build
+    SYSTEM
 )
 FetchContent_MakeAvailable(JoltPhysics)
 # Jolt v5.2.0 enables /WX; newer Windows SDK (10.0.26100+) emits a warning in
@@ -258,6 +299,7 @@ FetchContent_Declare(nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
     GIT_TAG        v3.11.3
     GIT_SHALLOW    TRUE
+    SYSTEM
 )
 FetchContent_MakeAvailable(nlohmann_json)
 
@@ -297,7 +339,7 @@ add_library(Assisi-ImGui STATIC
     "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
     "${imgui_SOURCE_DIR}/imgui_demo.cpp"
 )
-target_include_directories(Assisi-ImGui PUBLIC "${imgui_SOURCE_DIR}")
+target_include_directories(Assisi-ImGui SYSTEM PUBLIC "${imgui_SOURCE_DIR}")
 # ImGui doesn't use our strict warning flags, so don't apply Assisi defaults
 add_library(imgui::imgui ALIAS Assisi-ImGui)
 
@@ -320,7 +362,7 @@ add_library(Assisi-ImPlot STATIC
     "${implot_SOURCE_DIR}/implot.cpp"
     "${implot_SOURCE_DIR}/implot_items.cpp"
 )
-target_include_directories(Assisi-ImPlot PUBLIC "${implot_SOURCE_DIR}")
+target_include_directories(Assisi-ImPlot SYSTEM PUBLIC "${implot_SOURCE_DIR}")
 target_link_libraries(Assisi-ImPlot PUBLIC imgui::imgui)
 # Like ImGui, ImPlot isn't written against our strict warning flags — leave defaults off.
 add_library(implot::implot ALIAS Assisi-ImPlot)
@@ -335,6 +377,7 @@ FetchContent_Declare(nvrhi
     GIT_REPOSITORY https://github.com/NVIDIA-RTX/NVRHI.git
     GIT_TAG        8e8c36e37558acec333204619b95d9d2fcdc4a79 # NVRHI has no tagged releases; pinned to a specific commit
     GIT_SHALLOW    TRUE
+    SYSTEM
 )
 FetchContent_MakeAvailable(nvrhi)
 
@@ -348,8 +391,20 @@ FetchContent_Declare(glslang
     GIT_REPOSITORY https://github.com/KhronosGroup/glslang.git
     GIT_TAG        vulkan-sdk-1.4.350.1
     GIT_SHALLOW    TRUE
+    SYSTEM
 )
 FetchContent_MakeAvailable(glslang)
+
+# End of third-party dependencies — restore normal message verbosity and the
+# deprecation-warning / policy state so our own configuration output (modules,
+# reflectgen, apps) prints and is diagnosed as usual.
+set(CMAKE_MESSAGE_LOG_LEVEL "${_assisi_saved_message_log_level}")
+if (_assisi_had_warn_deprecated)
+    set(CMAKE_WARN_DEPRECATED "${_assisi_saved_warn_deprecated}" CACHE BOOL "" FORCE)
+else()
+    unset(CMAKE_WARN_DEPRECATED CACHE)
+endif()
+unset(CMAKE_POLICY_DEFAULT_CMP0175)
 
 # --- Assisi-Deps: aggregate third-party deps into one interface target
 add_library(Assisi-Deps INTERFACE)
