@@ -363,10 +363,77 @@ def _indent(text: str, spaces: int) -> str:
     return '\n'.join(pad + line if line.strip() else line for line in text.splitlines())
 
 
+# FieldType enum values that accept AFIELD(min=/max=) bounds, mapped to the
+# value range a bound may take. Floats use None ("any value"). Integer ranges
+# are capped at ±2^24 — FieldMeta stores bounds as float, and that is the
+# largest span where every integer is exactly representable, so a bound never
+# silently shifts when it round-trips through the metadata.
+NUMERIC_BOUND_RANGES: dict[str, Optional[tuple[int, int]]] = {
+    'Float':  None,
+    'Double': None,
+    'Int':    (-2**24, 2**24),
+    'Int32':  (-2**24, 2**24),
+    'UInt32': (0, 2**24),
+}
+
+
+def _validate_bounds(f: FieldInfo, tc: Optional['TypeCodegen']) -> tuple[Optional[float], Optional[float]]:
+    """Validate AFIELD(min=/max=) hints against the field's type.
+
+    Everything wrong here is a hard generation error — a typo like
+    AFIELD(min=O), a negative bound on an unsigned field, or a bound on a
+    bool silently dropping the clamp is exactly the kind of quiet
+    data-shape bug this generator refuses to emit.
+    """
+    raw_min = f.args.get('min')
+    raw_max = f.args.get('max')
+    if raw_min is None and raw_max is None:
+        return None, None
+
+    if tc is None or tc.enum_value not in NUMERIC_BOUND_RANGES:
+        raise ValueError(f'AFIELD(min=/max=) on field "{f.name}" of type '
+                         f'{f.cpp_type!r}: bounds only apply to numeric fields')
+
+    allowed = NUMERIC_BOUND_RANGES[tc.enum_value]
+
+    def parse(raw: Optional[str], key: str) -> Optional[float]:
+        if raw is None:
+            return None
+        try:
+            value = float(raw)
+        except ValueError:
+            raise ValueError(f'AFIELD({key}={raw!r}) on field "{f.name}" is not a number')
+        if allowed is not None:
+            lo, hi = allowed
+            if not value.is_integer():
+                raise ValueError(f'AFIELD({key}={raw}) on integer field "{f.name}" '
+                                 f'must be a whole number')
+            if not lo <= value <= hi:
+                raise ValueError(f'AFIELD({key}={raw}) on field "{f.name}" is outside '
+                                 f'the supported {f.cpp_type} bound range [{lo}, {hi}]')
+        return value
+
+    vmin = parse(raw_min, 'min')
+    vmax = parse(raw_max, 'max')
+    if vmin is not None and vmax is not None and vmin > vmax:
+        raise ValueError(f'AFIELD on field "{f.name}": min={vmin:g} exceeds max={vmax:g}')
+    return vmin, vmax
+
+
 def _gen_field_meta(f: FieldInfo) -> str:
     tc        = TYPES.get(f.cpp_type)
     ftype     = f'Assisi::Core::Reflect::FieldType::{tc.enum_value}' if tc else 'Assisi::Core::Reflect::FieldType::Unknown'
     transient = 'true' if f.args.has('transient') else 'false'
+    vmin, vmax = _validate_bounds(f, tc)
+    if vmin is not None or vmax is not None:
+        has_min = 'true' if vmin is not None else 'false'
+        has_max = 'true' if vmax is not None else 'false'
+        min_v   = f'{vmin}f' if vmin is not None else '0.f'
+        max_v   = f'{vmax}f' if vmax is not None else '0.f'
+        # Bounds are appended only when present so unannotated fields keep the
+        # short (golden-stable) initializer form.
+        return (f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, '
+                f'{has_min}, {has_max}, {min_v}, {max_v} }}')
     return f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient} }}'
 
 

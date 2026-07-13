@@ -153,6 +153,61 @@ class CodegenTest(unittest.TestCase):
         )
         self.assertEqual(components, [])
 
+    def test_min_max_bounds_are_emitted_in_field_meta(self):
+        components = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "    AFIELD(min = 0) float radius = 10.f;\n"
+            "    AFIELD(min = -1, max = 1) float bias = 0.f;\n"
+            "    AFIELD() float plain = 0.f;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")
+        # min-only: hasMin, hasMax, minValue, maxValue appended.
+        self.assertIn('offsetof(T, radius), false, true, false, 0.0f, 0.f', cpp)
+        # min and max together.
+        self.assertIn('offsetof(T, bias), false, true, true, -1.0f, 1.0f', cpp)
+        # Unannotated fields keep the short (golden-stable) initializer.
+        self.assertIn('offsetof(T, plain), false }', cpp)
+
+    def test_non_numeric_bound_is_a_hard_error(self):
+        components = _parse_source(
+            "namespace N {\nACOMP()\nstruct C { AFIELD(min = zero) float radius = 1.f; };\n}\n"
+        )
+        with self.assertRaises(ValueError):
+            reflectgen.generate_cpp(components, "N/C.hpp")
+
+    def test_integer_bounds_are_emitted(self):
+        components = _parse_source(
+            "namespace N {\nACOMP()\nstruct C { AFIELD(min = 0, max = 100) int32_t count = 1; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn("offsetof(T, count), false, true, true, 0.0f, 100.0f", cpp)
+
+    def _assert_bound_rejected(self, field_decl: str):
+        components = _parse_source(
+            "namespace N {\nACOMP()\nstruct C { " + field_decl + " };\n}\n"
+        )
+        with self.assertRaises(ValueError):
+            reflectgen.generate_cpp(components, "N/C.hpp")
+
+    def test_negative_bound_on_unsigned_field_is_a_hard_error(self):
+        self._assert_bound_rejected("AFIELD(min = -1) uint32_t count = 0;")
+
+    def test_fractional_bound_on_integer_field_is_a_hard_error(self):
+        self._assert_bound_rejected("AFIELD(min = 0.5) int32_t count = 1;")
+
+    def test_bound_on_non_numeric_field_is_a_hard_error(self):
+        self._assert_bound_rejected("AFIELD(min = 0) bool enabled = true;")
+        self._assert_bound_rejected("AFIELD(max = 1) glm::vec3 dir{};")
+
+    def test_min_greater_than_max_is_a_hard_error(self):
+        self._assert_bound_rejected("AFIELD(min = 2, max = 1) float radius = 1.f;")
+
+    def test_integer_bound_beyond_float_exact_range_is_a_hard_error(self):
+        # FieldMeta stores bounds as float; integers beyond 2^24 stop being
+        # exactly representable, so the generator refuses them.
+        self._assert_bound_rejected("AFIELD(max = 4294967295) uint32_t count = 0;")
+
 
 class ParserEdgeCaseTest(unittest.TestCase):
     """Fragile-parser surfaces the single golden fixture does not exercise:

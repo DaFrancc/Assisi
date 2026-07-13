@@ -9,6 +9,9 @@
 
 #include <imgui.h>
 
+#include <algorithm>
+#include <cfloat>
+#include <cstdint>
 #include <cstdio>
 #include <string>
 
@@ -32,18 +35,54 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
         switch (field.type)
         {
         case FieldType::Float:
-            edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f);
+        {
+            // AFIELD(min=/max=) editor hints. DragFloat treats min==max==0 as
+            // "no clamp", so open sides substitute ±FLT_MAX; AlwaysClamp also
+            // covers Ctrl+click text entry, which ignores plain drag bounds.
+            const float minBound = field.hasMin ? field.minValue : -FLT_MAX;
+            const float maxBound = field.hasMax ? field.maxValue : FLT_MAX;
+            edited = ImGui::DragFloat(field.name.c_str(), static_cast<float *>(fp), 0.01f, minBound, maxBound,
+                                      "%.3f", ImGuiSliderFlags_AlwaysClamp);
             break;
+        }
         case FieldType::Double:
+        {
             edited = ImGui::InputDouble(field.name.c_str(), static_cast<double *>(fp));
+            // InputDouble has no clamp support, so enforce the bounds after the
+            // edit instead.
+            if (edited)
+            {
+                double &value = *static_cast<double *>(fp);
+                if (field.hasMin)
+                {
+                    value = std::max(value, static_cast<double>(field.minValue));
+                }
+                if (field.hasMax)
+                {
+                    value = std::min(value, static_cast<double>(field.maxValue));
+                }
+            }
             break;
+        }
         case FieldType::Int:
         case FieldType::Int32:
-            edited = ImGui::DragInt(field.name.c_str(), static_cast<int *>(fp));
+        {
+            // reflectgen guarantees integer-field bounds are integral and in
+            // range, so the casts below are exact.
+            const int32_t minBound = field.hasMin ? static_cast<int32_t>(field.minValue) : INT32_MIN;
+            const int32_t maxBound = field.hasMax ? static_cast<int32_t>(field.maxValue) : INT32_MAX;
+            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S32, fp, 1.f, &minBound, &maxBound,
+                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
             break;
+        }
         case FieldType::UInt32:
-            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f);
+        {
+            const uint32_t minBound = field.hasMin ? static_cast<uint32_t>(field.minValue) : 0u;
+            const uint32_t maxBound = field.hasMax ? static_cast<uint32_t>(field.maxValue) : UINT32_MAX;
+            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
+                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
             break;
+        }
         case FieldType::Bool:
             edited = ImGui::Checkbox(field.name.c_str(), static_cast<bool *>(fp));
             break;

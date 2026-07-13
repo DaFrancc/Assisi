@@ -34,6 +34,14 @@ struct FieldMeta
     FieldType   type      = FieldType::Unknown;
     std::size_t offset    = 0;
     bool        transient = false; ///< If true, excluded from serialization.
+
+    // Editor hints from AFIELD(min=..., max=...): inclusive bounds an editor
+    // must clamp numeric edits to (e.g. a light radius that must not go
+    // negative). Hints only — serialization does not enforce them.
+    bool  hasMin   = false; ///< True when AFIELD supplied min=...
+    bool  hasMax   = false; ///< True when AFIELD supplied max=...
+    float minValue = 0.f;   ///< Inclusive lower bound; meaningful when hasMin.
+    float maxValue = 0.f;   ///< Inclusive upper bound; meaningful when hasMax.
 };
 
 } // namespace Assisi::Core::Reflect
