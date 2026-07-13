@@ -16,6 +16,7 @@
 
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
 
 #include <nvrhi/nvrhi.h>
 
@@ -73,5 +74,10 @@ class AssetCache
 
     std::unordered_map<Core::AssetPath, MeshBuffer> _meshes;
     std::unordered_map<Core::AssetPath, Texture>    _textures;
+
+    // Unrecognised mesh paths already warned about — ResolveMesh runs per
+    // entity per frame, so without this the fallback warning is log spam.
+    // Reset by Clear() alongside the caches themselves.
+    std::unordered_set<Core::AssetPath> _missingMeshWarned;
 };
 } /* namespace Assisi::Render */

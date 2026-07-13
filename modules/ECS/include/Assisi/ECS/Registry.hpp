@@ -60,9 +60,9 @@ struct Registry
 
     /// @brief Invokes fn(Entity) for every live entity, in ascending slot order.
     ///
-    /// Skips free slots.  Intended for tooling (entity pickers, inspectors); the
-    /// per-slot free-list check makes it O(n·free) — fine at editor scale, not a
-    /// hot-loop primitive (use Query for the frame loop).
+    /// Skips free slots.  Intended for tooling (entity pickers, inspectors);
+    /// O(n) over every slot ever allocated, so still prefer Query in the frame
+    /// loop, which only visits live component storage.
     template <typename Fn> void ForEachLive(Fn &&fn) const
     {
         for (uint32_t i = 0; i < static_cast<uint32_t>(_generations.size()); ++i)
@@ -92,6 +92,7 @@ struct Registry
     {
         _generations.clear();
         _freeSlots.clear();
+        _alive.clear();
         _aliveCount = 0;
     }
 
@@ -103,6 +104,11 @@ struct Registry
 
     std::vector<uint32_t> _generations; ///< One generation counter per slot.
     std::vector<uint32_t> _freeSlots;   ///< Slots available for reuse.
+    std::vector<bool>     _alive;       ///< Live flag per slot: O(1) liveness for
+                                        ///< IsAlive/EntityAt instead of scanning
+                                        ///< the free list (and it closes the hole
+                                        ///< where a forged handle carrying a freed
+                                        ///< slot's current generation passed).
     std::vector<PoolEntry> _pools;      ///< Registered component pools.
 
     std::size_t _aliveCount = 0;

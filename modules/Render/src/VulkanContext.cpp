@@ -696,7 +696,7 @@ void VulkanContext::Resize(uint32_t width, uint32_t height)
     (void)CreateSwapchainResources(width, height);
 }
 
-VkPresentModeKHR VulkanContext::ChoosePresentMode() const
+VkPresentModeKHR VulkanContext::ChoosePresentMode()
 {
     // FIFO (vsync) is the only present mode the spec guarantees is available, so
     // it needs no capability query.
@@ -719,6 +719,9 @@ VkPresentModeKHR VulkanContext::ChoosePresentMode() const
     }
 
     Core::Log::Warn("VulkanContext: IMMEDIATE present mode unsupported; vsync-off falls back to FIFO.");
+    // Record the fallback so IsVSyncEnabled() reports what the swapchain
+    // actually does — pacing decisions read this flag.
+    _vsyncEnabled = true;
     return VK_PRESENT_MODE_FIFO_KHR;
 }
 

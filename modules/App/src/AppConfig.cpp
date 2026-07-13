@@ -67,6 +67,17 @@ AppConfig AppConfig::LoadFromJson()
         Core::Log::Warn("Failed to parse game.json: {} — using defaults.", e.what());
     }
 
+    // A zero rate silently disables fixed update (step = inf) and a negative
+    // one makes the accumulator loop in Application::Run non-terminating, so
+    // reject both here rather than trusting the config file.
+    if (cfg.physicsHz <= 0.0)
+    {
+        const double fallbackHz = AppConfig{}.physicsHz;
+        Core::Log::Warn("game.json timing.physicsHz = {} is invalid (must be > 0) — using {} Hz.",
+                        cfg.physicsHz, fallbackHz);
+        cfg.physicsHz = fallbackHz;
+    }
+
     return cfg;
 }
 

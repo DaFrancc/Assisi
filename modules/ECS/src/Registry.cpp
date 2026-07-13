@@ -14,6 +14,7 @@ Entity Registry::Create()
         /* Reuse a previously freed slot. */
         const uint32_t index = _freeSlots.back();
         _freeSlots.pop_back();
+        _alive[index] = true;
 
         ++_aliveCount;
 
@@ -25,6 +26,7 @@ Entity Registry::Create()
     /* No free slots — grow the generations array with a new slot at index 0. */
     const auto index = static_cast<uint32_t>(_generations.size());
     _generations.push_back(0);
+    _alive.push_back(true);
 
     ++_aliveCount;
     return {.index = index, .generation = 0};
@@ -44,6 +46,7 @@ void Registry::Destroy(Entity entity)
 
     /* Bump the generation so any stored handles to this entity become stale. */
     ++_generations[entity.index];
+    _alive[entity.index] = false;
 
     /* Make the slot available for the next Create() call. */
     _freeSlots.push_back(entity.index);
@@ -62,8 +65,11 @@ void Registry::UnregisterPool(void *pool)
 
 bool Registry::IsAlive(Entity entity) const
 {
-    /* Bounds check first to safely handle NullEntity and out-of-range indices. */
-    return entity.index < _generations.size() && _generations[entity.index] == entity.generation;
+    /* Bounds check first to safely handle NullEntity and out-of-range indices.
+       The alive flag closes the case the generation compare alone misses: a
+       handle carrying a freed slot's already-bumped generation. */
+    return entity.index < _generations.size() && _generations[entity.index] == entity.generation &&
+           _alive[entity.index];
 }
 
 Entity Registry::EntityAt(uint32_t index) const
@@ -74,8 +80,9 @@ Entity Registry::EntityAt(uint32_t index) const
     }
 
     /* A slot present in the generations table is live unless it is currently
-       parked in the free list awaiting reuse. */
-    if (std::ranges::find(_freeSlots, index) != _freeSlots.end())
+       parked in the free list awaiting reuse — tracked by the O(1) alive flag
+       (this used to scan the free list, O(free) per call). */
+    if (!_alive[index])
     {
         return NullEntity;
     }

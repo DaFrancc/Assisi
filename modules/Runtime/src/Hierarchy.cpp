@@ -5,6 +5,7 @@
 #include <Assisi/Runtime/Components.hpp>
 
 #include <cstdint>
+#include <unordered_set>
 #include <vector>
 
 namespace Assisi::Runtime
@@ -38,6 +39,12 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
     thread_local std::vector<PassState> passState;
     thread_local uint32_t               passCounter = 0;
     const uint32_t                      pass = ++passCounter;
+
+    // Entities (index+generation packed) whose parent cycle was already
+    // reported. Propagation runs every frame, so without this a single bad
+    // .alvl loops one Error line forever. Bounded by the number of distinct
+    // cyclic entities ever seen — diagnostic-only state, never read back.
+    thread_local std::unordered_set<uint64_t> reportedCycles;
 
     auto slot = [&](uint32_t index) -> PassState &
     {
@@ -79,9 +86,13 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
                 /* A hand-edited .alvl can contain a parent loop (A->B->A). The
                    parent is already on this resolve stack, so recursing would not
                    terminate — break the cycle by treating this node as a root. */
-                Core::Log::Error(
-                    "PropagateTransforms: parent cycle at entity index {} (gen {}); treating as root",
-                    e.index, e.generation);
+                const uint64_t packed = (static_cast<uint64_t>(e.generation) << 32u) | e.index;
+                if (reportedCycles.insert(packed).second)
+                {
+                    Core::Log::Error(
+                        "PropagateTransforms: parent cycle at entity index {} (gen {}); treating as root",
+                        e.index, e.generation);
+                }
             }
             else if (parentTransform != nullptr)
             {

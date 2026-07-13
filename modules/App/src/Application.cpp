@@ -36,6 +36,24 @@ static std::string gCrashDumpPath;
 
 static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
 {
+    /* Write the minidump FIRST: Log::Fatal heap-allocates (std::format) and
+       takes the logger mutex, either of which can deadlock or re-fault on a
+       corrupted heap — losing the dump exactly when it matters. The dump path
+       below is Win32-only, no CRT heap. */
+    const char *dumpPath    = gCrashDumpPath.empty() ? "crash.dmp" : gCrashDumpPath.c_str();
+    bool        dumpWritten = false;
+    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (hFile != INVALID_HANDLE_VALUE)
+    {
+        MINIDUMP_EXCEPTION_INFORMATION mei{};
+        mei.ThreadId          = GetCurrentThreadId();
+        mei.ExceptionPointers = info;
+        mei.ClientPointers    = FALSE;
+        dumpWritten = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &mei,
+                                        nullptr, nullptr) != FALSE;
+        CloseHandle(hFile);
+    }
+
     const DWORD code = info->ExceptionRecord->ExceptionCode;
 
     const char *name = "UNKNOWN";
@@ -51,17 +69,8 @@ static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
     }
 
     Assisi::Core::Log::Fatal("Crash: unhandled exception 0x{:08X} ({})", static_cast<unsigned int>(code), name);
-
-    const char *dumpPath = gCrashDumpPath.empty() ? "crash.dmp" : gCrashDumpPath.c_str();
-    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile != INVALID_HANDLE_VALUE)
+    if (dumpWritten)
     {
-        MINIDUMP_EXCEPTION_INFORMATION mei{};
-        mei.ThreadId          = GetCurrentThreadId();
-        mei.ExceptionPointers = info;
-        mei.ClientPointers    = FALSE;
-        MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &mei, nullptr, nullptr);
-        CloseHandle(hFile);
         Assisi::Core::Log::Fatal("Crash: minidump written to {}", dumpPath);
     }
 
@@ -457,7 +466,7 @@ void Application::ConfigurePostProcess()
                            static_cast<uint32_t>(_options.msaaSamples));
     const nvrhi::FramebufferInfo after = _postProcess.SceneFramebufferInfo();
 
-    // Only fires for an actual sample-count change (F12 toggling into/out of
+    // Only fires for an actual sample-count change (F11 toggling into/out of
     // MSAA) — resizing alone never changes FramebufferInfo. When called during
     // Initialize() (before OnStart()), the derived OnRenderTargetsChanged runs
     // but no-ops because the derived render resources aren't built yet (e.g.

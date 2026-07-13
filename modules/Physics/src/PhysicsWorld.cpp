@@ -18,6 +18,7 @@
 #include <Jolt/RegisterTypes.h>
 
 #include <algorithm>
+#include <atomic>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -157,12 +158,13 @@ namespace
 /* Jolt's allocator, factory, and type registration are process-global, not
    per-PhysicsSystem. Refcount them so multiple PhysicsWorld instances share a
    single init/teardown instead of leaking the factory or tearing it out from
-   under a sibling instance. */
-int g_joltRefCount = 0;
+   under a sibling instance. Atomic so worlds constructed/destroyed on
+   different threads can't lose a count and double-free the factory. */
+std::atomic<int> gJoltRefCount{0};
 
 void AcquireJoltGlobals()
 {
-    if (g_joltRefCount++ == 0)
+    if (gJoltRefCount++ == 0)
     {
         /* Must be called before any Jolt allocations (including Impl member ctors). */
         JPH::RegisterDefaultAllocator();
@@ -173,12 +175,22 @@ void AcquireJoltGlobals()
 
 void ReleaseJoltGlobals()
 {
-    if (--g_joltRefCount == 0)
+    if (--gJoltRefCount == 0)
     {
         JPH::UnregisterTypes();
         delete JPH::Factory::sInstance;
         JPH::Factory::sInstance = nullptr;
     }
+}
+
+/* Jolt's BoxShape requires each half extent to be at least its convex radius
+   (cDefaultConvexRadius) and asserts below that — reachable from an ordinary
+   inspector drag. Clamp silently: a warning here would fire once per drag
+   tick. */
+JPH::Vec3 ClampedBoxHalfExtents(glm::vec3 halfExtents)
+{
+    const glm::vec3 clamped = glm::max(halfExtents, glm::vec3(JPH::cDefaultConvexRadius));
+    return {clamped.x, clamped.y, clamped.z};
 }
 } // namespace
 
@@ -243,7 +255,7 @@ RigidBody PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, glm::vec3
     const JPH::ObjectLayer layer = motion == BodyMotion::Static ? Layers::kStatic : Layers::kDynamic;
 
     JPH::BodyCreationSettings settings(
-        new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z)),
+        new JPH::BoxShape(ClampedBoxHalfExtents(halfExtents)),
         JPH::RVec3(position.x, position.y, position.z),
         JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(), joltMotion, layer);
 
@@ -453,7 +465,7 @@ void PhysicsWorld::ReshapeBox(const RigidBody &body, glm::vec3 halfExtents)
     if (!bodies.IsAdded(body.bodyId))
         return;
 
-    JPH::ShapeRefC newShape = new JPH::BoxShape(JPH::Vec3(halfExtents.x, halfExtents.y, halfExtents.z));
+    JPH::ShapeRefC newShape = new JPH::BoxShape(ClampedBoxHalfExtents(halfExtents));
     bodies.SetShape(body.bodyId, newShape, /*inUpdateMassProperties=*/true, JPH::EActivation::DontActivate);
 }
 

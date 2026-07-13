@@ -129,8 +129,9 @@ class VulkanContext
 
     /// @brief The present mode CreateSwapchainResources() should use for the current
     /// vsync state: FIFO when vsync is on (always supported), otherwise IMMEDIATE if
-    /// the device offers it, falling back to FIFO.
-    [[nodiscard]] VkPresentModeKHR ChoosePresentMode() const;
+    /// the device offers it, falling back to FIFO. The fallback writes _vsyncEnabled
+    /// back to true so IsVSyncEnabled() reports the mode actually in use.
+    [[nodiscard]] VkPresentModeKHR ChoosePresentMode();
 
     /// Installs the validation debug messenger in debug builds; no-op in
     /// release and when the debug-utils extension wasn't enabled.
