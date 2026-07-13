@@ -19,10 +19,15 @@ namespace Assisi::ECS
 
 /// @brief Local-space TRS with a cached world matrix updated by PropagateTransforms().
 ///
-/// Write to position/rotation/scale to move an entity. Read worldMatrix for
-/// rendering or any system that needs actual world-space coordinates.
-/// worldMatrix is not serialized — it is recomputed every frame.
-ACOMP()
+/// Write to position/rotation/scale to move an entity — through Scene::GetMut (or
+/// Scene::MarkChanged for a by-offset writer), since Transform is ACOMP(tracked):
+/// PropagateTransforms uses that change signal to skip entities whose local TRS
+/// and ancestors are unchanged. Read worldMatrix for rendering or any system that
+/// needs world-space coordinates. worldMatrix is not serialized — it is recomputed
+/// by PropagateTransforms only when this entity's local TRS or an ancestor changed
+/// (PropagateTransforms writes it via a plain Get, so that write does not itself
+/// re-mark the Transform changed).
+ACOMP(tracked)
 struct Transform
 {
     AFIELD() glm::vec3 position{0.f, 0.f, 0.f};

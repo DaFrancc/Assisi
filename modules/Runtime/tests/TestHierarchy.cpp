@@ -20,7 +20,7 @@ TEST_CASE("PropagateTransforms: a root's world matrix equals its local translati
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
 
-    PropagateTransforms(scene);
+    PropagateTransforms(scene, 0);
 
     const auto *t = scene.Get<Transform>(e);
     REQUIRE(t != nullptr);
@@ -37,7 +37,7 @@ TEST_CASE("PropagateTransforms: a child composes its parent's world transform")
     REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
 
-    PropagateTransforms(scene);
+    PropagateTransforms(scene, 0);
 
     const auto *ct = scene.Get<Transform>(child);
     REQUIRE(ct != nullptr);
@@ -57,7 +57,7 @@ TEST_CASE("PropagateTransforms: a three-deep chain composes transitively")
     REQUIRE(scene.Add(par, Parent{.parent = gp}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = par}) != nullptr);
 
-    PropagateTransforms(scene);
+    PropagateTransforms(scene, 0);
 
     CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(111.f));
 }
@@ -74,7 +74,7 @@ TEST_CASE("PropagateTransforms: siblings sharing a parent each compose correctly
     REQUIRE(scene.Add(c1, Parent{.parent = parent}) != nullptr);
     REQUIRE(scene.Add(c2, Parent{.parent = parent}) != nullptr);
 
-    PropagateTransforms(scene);
+    PropagateTransforms(scene, 0);
 
     CHECK(scene.Get<Transform>(c1)->worldMatrix[3][0] == doctest::Approx(11.f));
     CHECK(scene.Get<Transform>(c2)->worldMatrix[3][0] == doctest::Approx(12.f));
@@ -88,7 +88,7 @@ TEST_CASE("PropagateTransforms: a parent without a Transform acts as identity")
     REQUIRE(scene.Add(child, Transform{.position = {3.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
 
-    PropagateTransforms(scene);
+    PropagateTransforms(scene, 0);
 
     // Parent contributes an identity transform, so the child keeps its local.
     CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(3.f));
@@ -101,7 +101,7 @@ TEST_CASE("PropagateTransforms: an explicit NullEntity parent is treated as a ro
     REQUIRE(scene.Add(e, Transform{.position = {4.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(e, Parent{.parent = ECS::NullEntity}) != nullptr);
 
-    PropagateTransforms(scene);
+    PropagateTransforms(scene, 0);
 
     CHECK(scene.Get<Transform>(e)->worldMatrix[3][0] == doctest::Approx(4.f));
 }
@@ -125,7 +125,7 @@ TEST_CASE("PropagateTransforms: a deep chain composes correctly at every level")
         chain.push_back(e);
     }
 
-    PropagateTransforms(scene);
+    PropagateTransforms(scene, 0);
 
     // Each link adds 1 on x, so node i sits at cumulative world x = i + 1.
     for (int i = 0; i < kDepth; ++i)
@@ -155,7 +155,7 @@ TEST_CASE("PropagateTransforms: a shared ancestor is memoised correctly across b
     REQUIRE(scene.Add(la, Parent{.parent = a}) != nullptr);
     REQUIRE(scene.Add(lb, Parent{.parent = b}) != nullptr);
 
-    PropagateTransforms(scene);
+    PropagateTransforms(scene, 0);
 
     CHECK(scene.Get<Transform>(la)->worldMatrix[3][0] == doctest::Approx(111.f)); // 100+10+1
     CHECK(scene.Get<Transform>(lb)->worldMatrix[3][0] == doctest::Approx(122.f)); // 100+20+2
@@ -176,7 +176,7 @@ TEST_CASE("PropagateTransforms: a parent cycle does not overflow the stack")
     REQUIRE(scene.Add(a, Parent{.parent = b}) != nullptr); // A -> B
     REQUIRE(scene.Add(b, Parent{.parent = a}) != nullptr); // B -> A (cycle)
 
-    PropagateTransforms(scene); // must return rather than recurse to death
+    PropagateTransforms(scene, 0); // must return rather than recurse to death
 
     const auto *at = scene.Get<Transform>(a);
     const auto *bt = scene.Get<Transform>(b);
@@ -184,4 +184,60 @@ TEST_CASE("PropagateTransforms: a parent cycle does not overflow the stack")
     REQUIRE(bt != nullptr);
     CHECK(std::isfinite(at->worldMatrix[3][0]));
     CHECK(std::isfinite(bt->worldMatrix[3][1]));
+}
+
+// ── Change-detection dirty-skip (Transform is ACOMP(tracked)) ─────────────────
+
+TEST_CASE("PropagateTransforms: an unchanged entity is not recomputed")
+{
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+
+    const uint64_t tick = PropagateTransforms(scene, 0);
+    CHECK(scene.Get<Transform>(e)->worldMatrix[3][0] == doctest::Approx(10.f));
+
+    // Mutate the local position through the NON-stamping Get, so no change tick is
+    // recorded. A propagation resuming from `tick` must treat the entity as
+    // unchanged and leave worldMatrix at its old value (proving the skip).
+    scene.Get<Transform>(e)->position.x = 999.f;
+    const uint64_t tick2 = PropagateTransforms(scene, tick);
+
+    CHECK(scene.Get<Transform>(e)->worldMatrix[3][0] == doctest::Approx(10.f)); // skipped, not 999
+    CHECK(tick2 == tick);                                                       // no new writes
+}
+
+TEST_CASE("PropagateTransforms: a change via GetMut is recomputed")
+{
+    ECS::Scene scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+
+    const uint64_t tick = PropagateTransforms(scene, 0);
+
+    // GetMut stamps a change tick, so the resuming propagation must recompute.
+    scene.GetMut<Transform>(e)->position.x = 42.f;
+    PropagateTransforms(scene, tick);
+
+    CHECK(scene.Get<Transform>(e)->worldMatrix[3][0] == doctest::Approx(42.f));
+}
+
+TEST_CASE("PropagateTransforms: moving a parent recomputes an unchanged child")
+{
+    ECS::Scene scene;
+    const ECS::Entity parent = scene.Create();
+    const ECS::Entity child  = scene.Create();
+    REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
+
+    const uint64_t tick = PropagateTransforms(scene, 0);
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(11.f));
+
+    // Move only the parent; the child's own Transform is untouched. The child must
+    // still be recomputed because its ancestor changed.
+    scene.GetMut<Transform>(parent)->position.x = 100.f;
+    PropagateTransforms(scene, tick);
+
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(101.f)); // 100 + 1
 }

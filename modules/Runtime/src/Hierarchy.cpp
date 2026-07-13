@@ -4,74 +4,113 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
-#include <unordered_map>
-#include <unordered_set>
+#include <cstdint>
+#include <vector>
 
 namespace Assisi::Runtime
 {
 
-void PropagateTransforms(ECS::Scene &scene)
+namespace
 {
-    using TransformCache = std::unordered_map<uint64_t, glm::mat4>;
+glm::mat4 LocalMatrix(const Transform &t)
+{
+    return glm::translate(glm::mat4(1.f), t.position) * glm::mat4_cast(t.rotation) *
+           glm::scale(glm::mat4(1.f), t.scale);
+}
 
-    // Reused across calls rather than reallocated. PropagateTransforms runs at
-    // least twice per frame (game + camera scenes) and is a hot CPU path; clear()
-    // retains the allocated buckets, so after warmup no per-call heap allocation
-    // happens. thread_local keeps it correct if propagation is ever driven from
-    // more than one thread without adding a lock — the calls are otherwise
-    // sequential on the main thread and never re-entrant across each other.
-    thread_local TransformCache               cache;
-    thread_local std::unordered_set<uint64_t> onChain; // entities on the current recursion stack
-    cache.clear();
-    onChain.clear();
+// Per-entity scratch for one propagation pass, indexed by Entity::index. Replaces
+// the old unordered_map (memoisation) + unordered_set (cycle stack) with a single
+// dense, reused array — no per-entity hashing. `passId` stamps which pass last
+// touched a slot (so the array need never be cleared between passes); `resolving`
+// marks entities currently on the recursion stack for cycle detection.
+struct PassState
+{
+    uint32_t passId       = 0;
+    bool     worldChanged = false;
+    bool     resolving    = false;
+};
+} // namespace
 
-    auto entityKey = [](ECS::Entity e) -> uint64_t
+uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
+{
+    // Reused across calls; grows to the largest entity index seen. thread_local so
+    // propagation driven from another thread can't interleave with this one.
+    thread_local std::vector<PassState> passState;
+    thread_local uint32_t               passCounter = 0;
+    const uint32_t                      pass = ++passCounter;
+
+    auto slot = [&](uint32_t index) -> PassState &
     {
-        return (static_cast<uint64_t>(e.generation) << 32) | e.index;
+        if (index >= passState.size())
+            passState.resize(index + 1);
+        return passState[index];
     };
 
-    auto localMatrix = [](const Transform &t) -> glm::mat4
+    // Resolves e's worldMatrix, recomputing it only when e's local TRS changed
+    // (per the ECS change tick, since `lastTick`) or an ancestor changed; returns
+    // whether it changed this pass so a child can decide if it must recompute too.
+    // Recursive via C++23 deducing this (self), so parents resolve before children.
+    auto resolve = [&](this const auto &self, ECS::Entity e) -> bool
     {
-        return glm::translate(glm::mat4(1.f), t.position) * glm::mat4_cast(t.rotation) *
-               glm::scale(glm::mat4(1.f), t.scale);
-    };
+        Transform *t = scene.Get<Transform>(e);
+        if (t == nullptr)
+            return false; // a parent without a Transform contributes identity
 
-    // Recursive via C++23 deducing this (self) — resolves parents without a
-    // heap-allocated std::function closure.
-    auto worldMatrix = [&](this const auto &self, ECS::Entity e) -> glm::mat4
-    {
-        const uint64_t key = entityKey(e);
-        if (TransformCache::const_iterator it = cache.find(key); it != cache.end())
-            return it->second;
+        // Note: `slot()` may resize `passState` (invalidating references) during
+        // the parent recursion below, so never hold a PassState& across a self()
+        // call — re-fetch by index each time.
+        if (slot(e.index).passId == pass)
+            return slot(e.index).worldChanged; // already resolved this pass (shared parent)
 
-        const Transform *t = scene.Get<Transform>(e);
-        const glm::mat4 local = t ? localMatrix(*t) : glm::mat4(1.f);
+        slot(e.index).passId    = pass;
+        slot(e.index).resolving = true; // on the resolve stack, for cycle detection
 
-        glm::mat4 world = local;
-        if (const Parent *p = scene.Get<Parent>(e); p && p->parent != ECS::NullEntity)
+        const bool localChanged = scene.Changed<Transform>(e, lastTick);
+
+        bool             parentChanged = false;
+        const glm::mat4 *parentWorld   = nullptr;
+        if (const Parent *p = scene.Get<Parent>(e); p != nullptr && p->parent != ECS::NullEntity)
         {
-            /* Cycle guard: a hand-edited .alvl can contain a parent loop
-               (A->B->A). If this entity's parent is already on the chain we are
-               resolving, recursing would run until the stack dies — break the
-               cycle by treating this node as a root instead. */
-            if (onChain.contains(entityKey(p->parent)))
+            Transform *parentTransform = scene.Get<Transform>(p->parent);
+            const bool parentOnStack =
+                parentTransform != nullptr && slot(p->parent.index).passId == pass && slot(p->parent.index).resolving;
+            if (parentOnStack)
+            {
+                /* A hand-edited .alvl can contain a parent loop (A->B->A). The
+                   parent is already on this resolve stack, so recursing would not
+                   terminate — break the cycle by treating this node as a root. */
                 Core::Log::Error(
                     "PropagateTransforms: parent cycle at entity index {} (gen {}); treating as root",
                     e.index, e.generation);
-            else
+            }
+            else if (parentTransform != nullptr)
             {
-                onChain.insert(key);
-                world = self(p->parent) * local;
-                onChain.erase(key);
+                parentChanged = self(p->parent);
+                parentWorld   = &parentTransform->worldMatrix; // finalised by the recursion; pool ptr stays valid
             }
         }
 
-        cache.emplace(key, world);
-        return world;
+        const bool worldChanged = localChanged || parentChanged;
+        if (worldChanged)
+        {
+            const glm::mat4 local = LocalMatrix(*t);
+            // Written through the plain (non-stamping) Get: worldMatrix is derived
+            // output, so this must NOT re-mark the Transform changed, or every
+            // resolved entity would look dirty again next pass.
+            t->worldMatrix = parentWorld != nullptr ? (*parentWorld * local) : local;
+        }
+
+        slot(e.index).worldChanged = worldChanged;
+        slot(e.index).resolving    = false;
+        return worldChanged;
     };
 
     for (auto [entity, transform] : scene.Query<Transform>())
-        transform.worldMatrix = worldMatrix(entity);
+        resolve(entity);
+
+    // The tick a caller should pass as `lastTick` next frame: everything written
+    // up to now has been accounted for.
+    return scene.CurrentChangeTick();
 }
 
 } // namespace Assisi::Runtime

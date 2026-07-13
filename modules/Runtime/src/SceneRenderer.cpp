@@ -93,8 +93,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
         return;
     }
 
-    // Refresh world matrices before anything reads them (view matrix, draw).
-    PropagateTransforms(scene);
+    // Refresh world matrices before anything reads them (view matrix, draw). Only
+    // entities whose transform changed since last frame are recomputed; the tick
+    // bookmark carries that across frames.
+    _lastPropagationTick = PropagateTransforms(scene, _lastPropagationTick);
 
     const glm::mat4 projection = ProjectionMatrix(camera, AspectRatio(static_cast<int>(frame.width),
                                                                       static_cast<int>(frame.height)));

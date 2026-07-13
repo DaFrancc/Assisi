@@ -260,8 +260,15 @@ void SandboxApp::DrawInspector()
             continue;
 
         ImGui::PushID(meta->name.c_str());
-        anyFieldEdited |= EditComponentFields(const_cast<void *>(compPtr), *meta);
+        const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
         ImGui::PopID();
+
+        // Field edits write component memory by offset, bypassing Scene::GetMut's
+        // change stamping, so report it explicitly. No-op for untracked components;
+        // for a tracked one (Transform) this is what re-propagates the edit.
+        if (edited)
+            _scene->MarkChanged(_selectedEntity, meta->id);
+        anyFieldEdited |= edited;
     }
 
     // A typed AssetPath edit changes meshPath/albedoPath; re-resolve so the new

@@ -99,6 +99,10 @@ class SceneRenderer
 
     bool      _frustumCulling = true; // default draw path culls off-screen meshes
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
+
+    // Change-detection bookmark for PropagateTransforms: the scene tick at the end
+    // of the last propagation. 0 forces a full recompute on the first frame.
+    uint64_t _lastPropagationTick = 0;
 };
 
 } // namespace Assisi::Runtime
