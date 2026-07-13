@@ -4,8 +4,24 @@
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
+#include <algorithm>
+
 namespace Assisi::Runtime
 {
+
+namespace
+{
+// glm::normalize of a zero vector is NaN, and a zero direction can come
+// straight from a hand-edited level file — fall back to straight down
+// instead of NaN-poisoning the GPU light buffer.
+constexpr glm::vec3 kFallbackLightDirection{0.f, -1.f, 0.f};
+
+glm::vec3 SafeDirection(const glm::vec3 &direction)
+{
+    const float lengthSq = glm::dot(direction, direction);
+    return lengthSq > 0.f ? direction / glm::sqrt(lengthSq) : kFallbackLightDirection;
+}
+} // namespace
 
 bool LightingSystem::Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *commandList, int width, int height,
                                 float nearZ, float farZ, const glm::mat4 &projection)
@@ -44,7 +60,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
         const float outerCos = glm::cos(glm::radians(light.outerAngle));
         _spotLights.push_back({
             .positionRadius = {transform.position, light.radius},
-            .directionInner = {glm::normalize(light.direction), innerCos},
+            .directionInner = {SafeDirection(light.direction), innerCos},
             .colorIntensity = {light.color, light.intensity},
             .outerCutoff    = outerCos,
         });
@@ -53,12 +69,14 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     for (auto [entity, light] : scene.Query<DirectionalLight>())
     {
         _dirLights.push_back({
-            .directionIntensity = {glm::normalize(light.direction), light.intensity},
+            .directionIntensity = {SafeDirection(light.direction), light.intensity},
             .colorPad           = {light.color, 0.f},
         });
     }
 
-    _dirLightCount = static_cast<uint32_t>(_dirLights.size());
+    // Clamped for the same reason CullLights clamps its counts: Upload
+    // truncates at capacity and the shader must not read past it.
+    _dirLightCount = std::min(static_cast<uint32_t>(_dirLights.size()), Render::ClusterGrid::kMaxDirLights);
     _grid.CullLights(commandList, _pointLights, _spotLights, _dirLights, view);
 }
 

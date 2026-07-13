@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 
+#include <algorithm>
 #include <cstdint>
 
 namespace Assisi::Render
@@ -130,8 +131,11 @@ void ClusterGrid::CullLights(nvrhi::ICommandList *commandList, const std::vector
     CullPushConstants pc;
     pc.view = view;
     pc.gridDim = glm::uvec4(kNumX, kNumY, kNumZ, 0u);
-    pc.lightCounts = glm::uvec4(static_cast<uint32_t>(pointLights.size()), static_cast<uint32_t>(spotLights.size()),
-                                0u, 0u);
+    // Buffer::Upload truncates to capacity, so the counts sent to the shader
+    // must agree with what was actually uploaded — an un-clamped count makes
+    // the cull loop read past the buffer end (robustBufferAccess is off).
+    pc.lightCounts = glm::uvec4(std::min(static_cast<uint32_t>(pointLights.size()), kMaxPointLights),
+                                std::min(static_cast<uint32_t>(spotLights.size()), kMaxSpotLights), 0u, 0u);
 
     _cullShader.Dispatch(commandList, _cullBindingSet, kNumX, kNumY, kNumZ, &pc, sizeof(pc));
 }

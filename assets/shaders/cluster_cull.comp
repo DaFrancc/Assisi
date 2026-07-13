@@ -113,6 +113,16 @@ void main()
     if (pointCount > 0u) pointOffset = atomicAdd(globalPointCount, pointCount);
     if (spotCount  > 0u) spotOffset  = atomicAdd(globalSpotCount,  spotCount);
 
+    // The reservation counters are unbounded (worst case: every cluster keeps
+    // MAX_LIGHTS_PER_CLUSTER lights, far more than the flat buffer holds), so
+    // clamp each half to its region: a cluster whose reservation lands past
+    // the end stores fewer (or zero) indices instead of writing out of bounds
+    // into the other half / past the buffer.
+    pointOffset = min(pointOffset, MAX_LIGHT_INDICES);
+    pointCount  = min(pointCount,  MAX_LIGHT_INDICES - pointOffset);
+    spotOffset  = min(spotOffset,  MAX_LIGHT_INDICES);
+    spotCount   = min(spotCount,   MAX_LIGHT_INDICES - spotOffset);
+
     // Point indices occupy [0, MAX_LIGHT_INDICES); spot indices start at MAX_LIGHT_INDICES.
     for (uint i = 0u; i < pointCount; i++)
         lightIndexList[pointOffset + i] = localPointIdx[i];
