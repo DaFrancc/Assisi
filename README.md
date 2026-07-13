@@ -172,7 +172,7 @@ Override `OnStart`, `OnFixedUpdate(dt)`, `OnUpdate(dt)`, and `OnRender(RenderFra
 Configuration is split in two: `AppConfig` (loaded from `assets/game.json`) holds window, clear-color, and
 physics-rate settings a game ships with; `OptionsConfig` (persisted to `options.json`) holds user-facing
 runtime options — anti-aliasing mode, MSAA sample count, and VSync/FPS-limit — editable in-app through the
-**F12** options window.
+**F11** options window.
 
 ## Documentation
 Per-module overviews are in the section above, and the public API is documented with Doxygen-style

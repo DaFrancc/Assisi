@@ -76,7 +76,7 @@ class SandboxApp : public Assisi::App::Application
     void RefreshCameraMatrix();
 
     // --- ImGui panels ---
-    void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F12); see SandboxOptions.cpp
+    void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F11); see SandboxOptions.cpp
     void DrawDiagnosticsWindow();
     void DrawLevelsWindow();
     void DrawInspector();

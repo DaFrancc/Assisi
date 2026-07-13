@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file SandboxOptions.cpp
-/// @brief The F12 options overlay: a CPU/GPU frame graph, percentile frame-time
+/// @brief The F11 options overlay: a CPU/GPU frame graph, percentile frame-time
 /// stats, and the anti-aliasing / frame-sync controls.
 ///
 /// This lives in the app, not the engine base class: Application exposes the
@@ -30,7 +30,7 @@ using Assisi::App::OptionsConfig;
 
 void SandboxApp::DrawOptionsWindow()
 {
-    // F12 toggles the overlay. Handled here, in the app, so the engine no longer
+    // F11 toggles the overlay. Handled here, in the app, so the engine no longer
     // reserves the key — a game can rebind or remove this freely.
     if (GetInput().IsKeyPressed(Assisi::Window::Key::F11))
     {

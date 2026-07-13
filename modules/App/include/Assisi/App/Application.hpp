@@ -29,7 +29,7 @@ namespace Assisi::App
 ///   - OnUpdate(float dt)        — called every render frame
 ///   - OnRender(Render::RenderFrame&) — color/depth targets are already
 ///     cleared, called between BeginFrame() and EndFrame(). When an
-///     anti-aliasing mode is active (see F12 options), `frame` points at an
+///     anti-aliasing mode is active (see F11 options), `frame` points at an
 ///     offscreen target instead of the swapchain — PostProcess resolves it
 ///     into the swapchain afterwards, transparently to this override.
 ///
@@ -77,7 +77,7 @@ class Application
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int /*width*/, int /*height*/) {}
     /// @brief Called after the anti-aliasing mode/MSAA sample count changes
-    /// (F12 options window), before the next OnRender(). Only fires when the
+    /// (F11 options window), before the next OnRender(). Only fires when the
     /// new FramebufferInfo actually differs from the previous one — resizing
     /// the window alone never triggers this.
     virtual void OnRenderTargetsChanged(const nvrhi::FramebufferInfo & /*framebufferInfo*/) {}
