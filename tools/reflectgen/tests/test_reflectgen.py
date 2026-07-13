@@ -83,6 +83,10 @@ class ParseTest(unittest.TestCase):
         self.assertTrue(self.by_name["SampleTransient"].args.has("transient"))
         self.assertFalse(self.by_name["SampleEmpty"].args.has("transient"))
 
+    def test_acomp_tracked_flag_is_captured(self):
+        self.assertTrue(self.by_name["SampleAllTypes"].args.has("tracked"))
+        self.assertFalse(self.by_name["SampleRef"].args.has("tracked"))
+
     def test_captures_nested_namespace(self):
         self.assertEqual(self.by_name["SampleAllTypes"].namespaces, ["Assisi", "Runtime"])
 

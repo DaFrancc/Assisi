@@ -440,6 +440,16 @@ namespace
         fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
         var_name = f'_reflectgen_{comp.name}'
 
+        # ACOMP(tracked): opt this component into change detection by emitting a
+        # trailing tracksChanges arg. Omitted otherwise so the field defaults to
+        # false and the golden output for untracked components is unchanged. The
+        # serializable literal grows a trailing comma (on the code side, before
+        # its // comment) when the extra arg follows it.
+        _tracked   = comp.args.has('tracked')
+        _tail      = '\n        true       // tracksChanges' if _tracked else ''
+        serial_yes = ('true,' if _tracked else 'true').ljust(11) + '// serializable' + _tail
+        serial_no  = ('false,' if _tracked else 'false').ljust(11) + '// serializable' + _tail
+
         # ACOMP(transient): register only to receive a stable ComponentId (so a
         # Scene can store the type) with no serialization hooks. serializable is
         # false and every hook is null; consumers gate on ComponentMeta::
@@ -459,7 +469,7 @@ static const bool {var_name} = []() -> bool
         nullptr,   // addToScene
         nullptr,   // iterateEntities
         nullptr,   // getByEntity
-        false      // serializable
+        {serial_no}
     }});
     return true;
 }}();
@@ -501,7 +511,7 @@ static const bool {var_name} = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{{entity_index, entity_gen}});
         }},
-        true       // serializable
+        {serial_yes}
     }});
     return true;
 }}();

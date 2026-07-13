@@ -2,9 +2,10 @@
 #pragma once
 
 // Fixture header for reflectgen's golden tests. Deliberately exercises every
-// supported field type, a transient field, an empty component, namespaced
-// components, comment stripping, nested-brace initializers, and EntityRef
-// include emission. If you change this header, regenerate the golden output:
+// supported field type, a transient field, a tracked (change-detection)
+// component, an empty component, namespaced components, comment stripping,
+// nested-brace initializers, and EntityRef include emission. If you change this
+// header, regenerate the golden output:
 //   REFLECTGEN_UPDATE_GOLDEN=1 python tools/reflectgen/tests/test_reflectgen.py
 
 #include <cstdint>
@@ -24,7 +25,9 @@
 namespace Assisi::Runtime
 {
 
-ACOMP()
+// ACOMP(tracked): opts into change detection, so its registration carries
+// tracksChanges = true. Doubles as the "all supported field types" component.
+ACOMP(tracked)
 struct SampleAllTypes
 {
     AFIELD() float f = 1.0f;

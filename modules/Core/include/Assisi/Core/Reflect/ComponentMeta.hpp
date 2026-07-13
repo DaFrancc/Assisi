@@ -73,6 +73,16 @@ struct ComponentMeta
     /// saved), Runtime::DestroyTag (a transient per-frame lifecycle marker).
     bool serializable = true;
 
+    /// @brief Whether this component opts into ECS change detection (ACOMP(tracked)).
+    ///
+    /// True for components marked ACOMP(tracked). When set, a Scene gives this
+    /// type's pool a per-component change tick, stamped on mutable access
+    /// (Scene::GetMut / MarkChanged), so systems can process only the instances
+    /// that changed since they last ran (e.g. PropagateTransforms skipping
+    /// unmoved subtrees). False by default: a component pays nothing for tracking
+    /// it does not opt into.
+    bool tracksChanges = false;
+
     /// @brief Alphabetical dense id, assigned by ComponentRegistry after startup
     /// (see ComponentRegistry::IdOf). kInvalidComponentId until the registry
     /// finalizes. Placed last and defaulted so generated positional aggregate

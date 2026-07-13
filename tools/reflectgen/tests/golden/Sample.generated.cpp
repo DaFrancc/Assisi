@@ -78,7 +78,8 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
         },
-        true       // serializable
+        true,      // serializable
+        true       // tracksChanges
     });
     return true;
 }();
