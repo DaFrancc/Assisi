@@ -29,6 +29,11 @@ render hardware interface), glslang (build-time GLSL→SPIR-V shader compiler), 
 and doctest (unit tests). Rendering is **Vulkan**: a Vulkan-capable GPU and driver are required at
 runtime, but no Vulkan SDK is needed to build (the engine loads Vulkan dynamically).
 
+**Minimum CPU:** x86-64 with **AVX2** (Intel Haswell 2013+ / AMD Zen 2015+, and the FMA/F16C/LZCNT/BMI
+extensions that ship alongside it). This is a deliberate baseline — the engine is compiled with these
+instruction sets enabled globally for SIMD performance, so binaries will crash with an
+illegal-instruction fault on older CPUs.
+
 ### 3. Configure
 #### Windows (from a Visual Studio Developer Command Prompt):
 ```bash
