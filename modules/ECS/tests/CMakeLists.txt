@@ -20,6 +20,7 @@ add_executable(Assisi-ECS-Tests
   TestRegistry.cpp
   TestQuery.cpp
   TestScene.cpp
+  TestChangeDetection.cpp
 )
 
 Assisi_apply_defaults(Assisi-ECS-Tests)

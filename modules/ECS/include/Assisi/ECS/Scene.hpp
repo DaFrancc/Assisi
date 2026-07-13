@@ -8,11 +8,13 @@
 /// it with the internal Registry so Destroy(entity) automatically removes the
 /// entity from every pool it belongs to.
 
+#include <cstdint>
 #include <utility>
 #include <vector>
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Query.hpp>
 #include <Assisi/ECS/Registry.hpp>
 
@@ -109,14 +111,37 @@ struct Scene
     {
         if (!IsAlive(entity))
             return nullptr;
-        return GetOrCreatePool<T>().Add(entity, std::move(component));
+        SparseSet<T> &pool = GetOrCreatePool<T>();
+        T *added = pool.Add(entity, std::move(component));
+        if (added && pool.TracksChanges())
+            pool.Stamp(entity, ++_changeTick); // a fresh component counts as changed
+        return added;
     }
 
     /// @brief Returns a pointer to the entity's component of type T, or nullptr if not present.
+    ///
+    /// Read-only intent: this does NOT stamp change detection. Use GetMut to write
+    /// a tracked component so the change is observed; writing through this pointer
+    /// on a tracked type is a silent missed change.
     template <typename T> T *Get(Entity entity)
     {
         SparseSet<T> *pool = GetPool<T>();
         return pool ? pool->Get(entity) : nullptr;
+    }
+
+    /// @brief Like Get<T>, but marks the component changed (for ACOMP(tracked)
+    /// types) so change-detection consumers see the write. Prefer this over Get<T>
+    /// whenever you intend to modify a tracked component. Conservative: it stamps
+    /// on access, whether or not you actually alter the value.
+    template <typename T> T *GetMut(Entity entity)
+    {
+        SparseSet<T> *pool = GetPool<T>();
+        if (!pool)
+            return nullptr;
+        T *component = pool->Get(entity);
+        if (component && pool->TracksChanges())
+            pool->Stamp(entity, ++_changeTick);
+        return component;
     }
 
     /// @brief Returns a const pointer to the entity's component of type T, or nullptr if not present.
@@ -138,6 +163,42 @@ struct Scene
     {
         if (SparseSet<T> *pool = GetPool<T>())
             pool->Remove(entity);
+    }
+
+    // ── Change detection ──────────────────────────────────────────────────────
+    // A monotonic per-write tick, stamped onto a component whenever it is accessed
+    // mutably (Add / GetMut / MarkChanged) for an ACOMP(tracked) type. A consumer
+    // remembers the tick it last ran at; a component whose tick exceeds that has
+    // changed since. Conservative (mutable access stamps even if the value is
+    // unchanged) — safe over-reporting, never a missed change.
+
+    /// @brief The scene's current change tick — the value the most recent mutable
+    /// access stamped. Record it after a system runs; anything with a higher
+    /// ChangeTick next time has changed since.
+    uint64_t CurrentChangeTick() const { return _changeTick; }
+
+    /// @brief The last-written tick of the entity's T, or 0 (untracked / absent /
+    /// never written). Meaningful only for ACOMP(tracked) types.
+    template <typename T> uint64_t ChangeTick(Entity entity) const
+    {
+        const SparseSet<T> *pool = GetPool<T>();
+        return pool ? pool->ChangeTick(entity) : 0;
+    }
+
+    /// @brief True if the entity's T was written after `sinceTick`.
+    template <typename T> bool Changed(Entity entity, uint64_t sinceTick) const
+    {
+        return ChangeTick<T>(entity) > sinceTick;
+    }
+
+    /// @brief Marks the entity's component changed by ComponentId rather than
+    /// static type — for generic reflected writers (e.g. the inspector edits a
+    /// component through its field offsets, with no compile-time T). No-op for
+    /// untracked components or an entity without that component.
+    void MarkChanged(Entity entity, Core::Reflect::ComponentId id)
+    {
+        if (id < _pools.size() && _pools[id].stamp)
+            _pools[id].stamp(_pools[id].pool, entity, ++_changeTick);
     }
 
     /// @brief Returns a lazy view over all entities that have every component in Ts.
@@ -204,10 +265,11 @@ struct Scene
   private:
     struct PoolStorage
     {
-        void *pool                              = nullptr;
-        void (*remove)(void *pool, Entity entity) = nullptr;
-        void (*clear)(void *pool)                 = nullptr;
-        void (*destroy)(void *pool)               = nullptr;
+        void *pool                                          = nullptr;
+        void (*remove)(void *pool, Entity entity)           = nullptr;
+        void (*clear)(void *pool)                           = nullptr;
+        void (*destroy)(void *pool)                         = nullptr;
+        void (*stamp)(void *pool, Entity entity, uint64_t tick) = nullptr; // null unless the pool is tracked
     };
 
     template <typename T> static void RemoveFn(void *pool, Entity entity)
@@ -218,6 +280,11 @@ struct Scene
     template <typename T> static void ClearFn(void *pool) { static_cast<SparseSet<T> *>(pool)->Clear(); }
 
     template <typename T> static void DestroyFn(void *pool) { delete static_cast<SparseSet<T> *>(pool); }
+
+    template <typename T> static void StampFn(void *pool, Entity entity, uint64_t tick)
+    {
+        static_cast<SparseSet<T> *>(pool)->Stamp(entity, tick);
+    }
 
     /// @brief Returns a pointer to the pool for T, or nullptr if it has never
     /// been created in this scene.
@@ -250,7 +317,17 @@ struct Scene
         {
             auto *pool = new SparseSet<T>();
             _registry.RegisterPool(pool);
-            slot = PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>};
+            slot = PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>, nullptr};
+
+            // Wire change detection for ACOMP(tracked) types. The registry is
+            // finalized by the time a component is first added at runtime, so the
+            // meta lookup is valid here.
+            const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().ById(id);
+            if (meta && meta->tracksChanges)
+            {
+                pool->SetTracksChanges(true);
+                slot.stamp = &StampFn<T>;
+            }
         }
         return *static_cast<SparseSet<T> *>(slot.pool);
     }
@@ -261,6 +338,10 @@ struct Scene
     /// scene — including gaps for components that belong to other modules.
     std::vector<PoolStorage> _pools;
     std::vector<Entity> _pendingDestroy; ///< Entities queued by Destroy(), drained by FlushDestroyed().
+
+    /// Monotonic change-detection tick, bumped on each mutable access to a tracked
+    /// component (Add / GetMut / MarkChanged). See the Change detection section.
+    uint64_t _changeTick = 0;
 };
 
 } // namespace Assisi::ECS

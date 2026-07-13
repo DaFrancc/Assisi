@@ -32,4 +32,13 @@ struct Tag
 {
 };
 
+/// @brief Opts into change detection (ACOMP(tracked)) so the change-tick tests
+/// exercise the tracked storage/access path; Position/Velocity above stay
+/// untracked, giving a control that must always report tick 0.
+ACOMP(tracked)
+struct Tracked
+{
+    AFIELD() int value = 0;
+};
+
 } // namespace Assisi::ECS

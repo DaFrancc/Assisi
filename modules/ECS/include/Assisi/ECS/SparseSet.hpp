@@ -65,6 +65,8 @@ template <typename T> struct SparseSet
         _sparse[entity.index] = static_cast<uint32_t>(_dense.size());
         _entities.push_back(entity);
         T *added = &_dense.emplace_back(std::move(component));
+        if (_tracksChanges)
+            _changeTicks.push_back(0); // parallel to _dense; Scene stamps it right after Add
         BumpVersion();
         return added;
     }
@@ -88,11 +90,17 @@ template <typename T> struct SparseSet
 
             /* Re-point the sparse entry of the entity that was moved into the gap. */
             _sparse[_entities[removedPos].index] = removedPos;
+
+            /* Keep the change-tick lane in lockstep with the dense array. */
+            if (_tracksChanges)
+                _changeTicks[removedPos] = _changeTicks[lastPos];
         }
 
         _sparse[entity.index] = Invalid;
         _dense.pop_back();
         _entities.pop_back();
+        if (_tracksChanges)
+            _changeTicks.pop_back();
         BumpVersion();
     }
 
@@ -144,11 +152,51 @@ template <typename T> struct SparseSet
         _sparse.clear();
         _dense.clear();
         _entities.clear();
+        _changeTicks.clear(); // no-op when untracked (already empty)
         BumpVersion();
     }
 
     /// @brief Direct access to the packed entity array (parallel to dense).
     const std::vector<Entity> &Entities() const { return _entities; }
+
+    // ── Change detection ──────────────────────────────────────────────────────
+    // Opt-in per pool (ACOMP(tracked), wired by Scene at pool creation). When
+    // enabled, a parallel _changeTicks lane holds a per-component "last written"
+    // tick, stamped by the owning Scene on mutable access (Scene::GetMut /
+    // MarkChanged / Add). Systems compare it against the tick they last ran at to
+    // process only what changed. Untracked pools keep _changeTicks empty, so an
+    // untracked component costs nothing per instance.
+
+    /// @brief Enables (or disables) the change-tick lane for this pool. Called
+    /// once at pool creation; sizes _changeTicks to match any existing components.
+    void SetTracksChanges(bool enabled)
+    {
+        _tracksChanges = enabled;
+        if (enabled)
+            _changeTicks.assign(_dense.size(), 0);
+        else
+            _changeTicks.clear();
+    }
+
+    /// @brief Whether this pool maintains change ticks.
+    bool TracksChanges() const { return _tracksChanges; }
+
+    /// @brief Records `tick` as the entity's component's last-written tick.
+    /// No-op when untracked or the entity has no component here.
+    void Stamp(Entity entity, uint64_t tick)
+    {
+        if (_tracksChanges && Has(entity))
+            _changeTicks[_sparse[entity.index]] = tick;
+    }
+
+    /// @brief The entity's component's last-written tick, or 0 (never written /
+    /// untracked / absent).
+    uint64_t ChangeTick(Entity entity) const
+    {
+        if (!_tracksChanges || !Has(entity))
+            return 0;
+        return _changeTicks[_sparse[entity.index]];
+    }
 
 #ifndef NDEBUG
     /// @brief Debug-only counter bumped on every structural change (Add / Remove
@@ -172,6 +220,8 @@ template <typename T> struct SparseSet
     std::vector<uint32_t> _sparse; ///< Indexed by entity index → dense position.
     std::vector<T> _dense;         ///< Packed component values.
     std::vector<Entity> _entities; ///< Entity that owns each dense slot.
+    std::vector<uint64_t> _changeTicks; ///< Parallel to _dense; per-component last-written tick. Empty when untracked.
+    bool _tracksChanges = false;        ///< Whether the _changeTicks lane is maintained (ACOMP(tracked)).
 #ifndef NDEBUG
     uint32_t _structureVersion = 0; ///< See StructureVersion(); debug-only tripwire state.
 #endif
