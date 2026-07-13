@@ -183,7 +183,14 @@ void ActionMap::Bind(std::string_view action, MouseButton button)
 
 void ActionMap::Unbind(std::string_view action)
 {
-    _actions.erase(std::string(action));
+    // find() takes the heterogeneous (allocation-free) path; erase-by-key
+    // would have to materialise a std::string, defeating the table's
+    // transparent-lookup design.
+    const ActionTable::iterator it = _actions.find(action);
+    if (it != _actions.end())
+    {
+        _actions.erase(it);
+    }
 }
 
 void ActionMap::Clear()

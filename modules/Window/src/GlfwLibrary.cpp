@@ -9,8 +9,21 @@
 
 namespace Assisi::Window
 {
+namespace
+{
+void GlfwErrorCallback(int code, const char *description)
+{
+    Assisi::Core::Log::Error("GLFW error 0x{:08X}: {}", static_cast<unsigned int>(code),
+                             description != nullptr ? description : "(no description)");
+}
+} // namespace
+
 GlfwLibrary::GlfwLibrary()
 {
+    // Installed before glfwInit so init failures report their reason too;
+    // without a callback GLFW discards all error detail silently.
+    glfwSetErrorCallback(GlfwErrorCallback);
+
     /* Initialize GLFW. */
     if (glfwInit() != GLFW_TRUE)
     {

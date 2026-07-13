@@ -25,7 +25,10 @@ InputContext::InputContext(WindowContext &window) : _window(window.NativeHandle(
 void InputContext::Poll()
 {
     _prevKeys = _currKeys;
-    for (int k = 0; k < kKeyCount; ++k)
+    // GLFW key tokens start at Space (32, mirrored by Key::Space); querying
+    // codes below that raises GLFW_INVALID_ENUM on every poll. The skipped
+    // low entries stay false.
+    for (int k = static_cast<int>(Key::Space); k < kKeyCount; ++k)
     {
         _currKeys[k] = glfwGetKey(_window, k) == GLFW_PRESS;
     }

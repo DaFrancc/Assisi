@@ -156,18 +156,32 @@ void WindowContext::PollEvents()
     glfwPollEvents();
 }
 
+// The GLFW calls below dereference the window handle unchecked, so each entry
+// point guards against a failed-construction or moved-from WindowContext
+// (null handle) rather than trusting every caller to check IsValid() first.
+
 bool WindowContext::ShouldClose() const
 {
-    return glfwWindowShouldClose(_nativeWindowHandle) != 0;
+    // A window that doesn't exist reads as "close": callers loop on
+    // !ShouldClose(), and spinning forever on a dead window is the worse bug.
+    return _nativeWindowHandle == nullptr || glfwWindowShouldClose(_nativeWindowHandle) != 0;
 }
 
 void WindowContext::RequestClose() const
 {
+    if (_nativeWindowHandle == nullptr)
+    {
+        return;
+    }
     glfwSetWindowShouldClose(_nativeWindowHandle, GLFW_TRUE);
 }
 
 void WindowContext::SetTitle(const std::string &title) const
 {
+    if (_nativeWindowHandle == nullptr)
+    {
+        return;
+    }
     glfwSetWindowTitle(_nativeWindowHandle, title.c_str());
 }
 
@@ -176,7 +190,10 @@ WindowSize WindowContext::GetWindowSize() const
     int windowWidth = 0;
     int windowHeight = 0;
 
-    glfwGetWindowSize(_nativeWindowHandle, &windowWidth, &windowHeight);
+    if (_nativeWindowHandle != nullptr)
+    {
+        glfwGetWindowSize(_nativeWindowHandle, &windowWidth, &windowHeight);
+    }
 
     WindowSize result;
     result.Width = windowWidth;
@@ -189,7 +206,10 @@ WindowSize WindowContext::GetFramebufferSize() const
     int framebufferWidth = 0;
     int framebufferHeight = 0;
 
-    glfwGetFramebufferSize(_nativeWindowHandle, &framebufferWidth, &framebufferHeight);
+    if (_nativeWindowHandle != nullptr)
+    {
+        glfwGetFramebufferSize(_nativeWindowHandle, &framebufferWidth, &framebufferHeight);
+    }
 
     WindowSize result;
     result.Width = framebufferWidth;
