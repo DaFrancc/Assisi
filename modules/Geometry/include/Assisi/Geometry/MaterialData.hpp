@@ -28,7 +28,7 @@ namespace Assisi::Geometry
 /// (metallic = 1, roughness = 1) — correct when a glTF omits fields. The
 /// engine's fallback material for empty/missing references is a separate,
 /// deliberately different set (white, metallic 0, roughness 0.6) owned by the
-/// renderer's DefaultResources.
+/// renderer's AssetCache (see AssetCache::FallbackMaterial).
 ///
 /// Colour space is a fixed property of each channel, never per-file
 /// configuration: baseColor and emissive are sRGB; normal, metallic-roughness,

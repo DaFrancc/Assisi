@@ -4,6 +4,8 @@ layout(location = 0) in vec3  vWorldPos;
 layout(location = 1) in vec3  vNormal;
 layout(location = 2) in vec2  vTexCoord;
 layout(location = 3) in float vViewZ;
+layout(location = 4) in vec3  vTangent;
+layout(location = 5) in float vTangentSign;
 
 layout(location = 0) out vec4 outColor;
 
@@ -11,11 +13,30 @@ layout(location = 0) out vec4 outColor;
 // NVRHI's Vulkan backend keeps SRVs and samplers as separate descriptors
 // (HLSL t-register/s-register split), offset by VulkanBindingOffsets:
 // shaderResource at +0, sampler at +128. See MeshPass::Initialize.
-layout(binding = 0)   uniform texture2D uAlbedoTexture;
-layout(binding = 128) uniform sampler   uAlbedoSampler;
+//
+// baseColor stays at slot 0 (unchanged); the remaining PBR channels sit at
+// slots 6-9, deliberately past the clustered light buffers at 1-5 (they
+// collapse into one bindless table later, so the gap is harmless). One shared
+// sampler serves every channel.
+layout(binding = 0) uniform texture2D uBaseColorTexture;
+layout(binding = 6) uniform texture2D uNormalTexture;
+layout(binding = 7) uniform texture2D uMetallicRoughnessTexture;
+layout(binding = 8) uniform texture2D uOcclusionTexture;
+layout(binding = 9) uniform texture2D uEmissiveTexture;
+layout(binding = 128) uniform sampler uMaterialSampler;
+
+// ---- Per-material constants (mirrors Render::MaterialConstants, 64 bytes) ---
+// ConstantBuffer bindings are offset by +256; the per-frame block is slot 0
+// (256), this per-material block is slot 1 (257).
+layout(binding = 257) uniform MaterialConstants
+{
+    vec4  baseColorFactor;
+    vec4  emissiveFactorNormalScale; // xyz = emissive, w = normalScale
+    vec4  metalRoughOcclusion;       // x = metallic, y = roughness, z = occlusion strength, w = pad
+    uvec4 flags;                     // bit0 = has normal texture; rest reserved
+} uMaterial;
 
 // ---- Per-frame camera + cluster-grid parameters ------------------------
-// ConstantBuffer bindings are offset by +256 (VulkanBindingOffsets::constantBuffer).
 layout(binding = 256) uniform FrameConstants
 {
     mat4  view;
@@ -26,7 +47,7 @@ layout(binding = 256) uniform FrameConstants
 
 // ---- Clustered light buffers (must match Render::ClusterGrid GPU structs) --
 // StructuredBuffer_SRV shares the shaderResource (+0) space with Texture_SRV,
-// so these start at slot 1 (slot 0 is the albedo texture) — see MeshPass.cpp.
+// so these occupy slots 1-5 (slot 0 is baseColor) — see MeshPass.cpp.
 
 struct PointLight { vec4 positionRadius; vec4 colorIntensity; };
 
@@ -58,14 +79,63 @@ layout(std430, binding = 5) readonly buffer LightGrids     { LightGrid  lightGri
 // Must match Render::ClusterGrid::kMaxLightIndices.
 const uint kSpotIndexBase = 65536u;
 
-// No material system for metallic/roughness maps yet (see
-// docs/nvrhi-migration-todo.md) — a fixed, moderately rough dielectric looks
-// reasonable for every entity in the meantime.
-const float kMetallic  = 0.0;
-const float kRoughness = 0.6;
-const float kAmbient   = 0.03;
-
+const float kAmbient = 0.03;
 const float PI = 3.14159265359;
+
+// ---- Material sample ---------------------------------------------------
+// Everything that reads the material's textures + factors lives here, so the
+// lighting code below is agnostic to how the surface was authored. A later
+// bindless transition rewrites only the texture() fetches in this block.
+struct Surface
+{
+    vec3  albedo;
+    float metallic;
+    float roughness;
+    float occlusion; // 1 = unoccluded
+    vec3  emissive;
+    vec3  normal;    // world-space, normal-mapped if present
+};
+
+Surface SampleMaterial()
+{
+    Surface s;
+
+    // baseColor is an sRGB texture, so the sampler already returns linear values
+    // (filtered/mip-blended in linear space); multiply by the linear factor.
+    vec4 base = texture(sampler2D(uBaseColorTexture, uMaterialSampler), vTexCoord) * uMaterial.baseColorFactor;
+    s.albedo = base.rgb;
+
+    // glTF metallic-roughness packing: G = roughness, B = metallic. The texture
+    // is linear data (empty channel = white = 1, leaving the factor untouched).
+    vec2 mr = texture(sampler2D(uMetallicRoughnessTexture, uMaterialSampler), vTexCoord).gb;
+    s.roughness = clamp(uMaterial.metalRoughOcclusion.y * mr.x, 0.04, 1.0);
+    s.metallic  = clamp(uMaterial.metalRoughOcclusion.x * mr.y, 0.0, 1.0);
+
+    // Occlusion: R channel, lerped by strength (strength 0 = ignore the map).
+    float ao = texture(sampler2D(uOcclusionTexture, uMaterialSampler), vTexCoord).r;
+    s.occlusion = 1.0 + uMaterial.metalRoughOcclusion.z * (ao - 1.0);
+
+    s.emissive = texture(sampler2D(uEmissiveTexture, uMaterialSampler), vTexCoord).rgb *
+                 uMaterial.emissiveFactorNormalScale.xyz;
+
+    vec3 N = normalize(vNormal);
+    if (uMaterial.flags.x != 0u) // has normal texture
+    {
+        // Re-orthonormalize the interpolated tangent against N (Gram-Schmidt),
+        // then build the bitangent from the stored handedness.
+        vec3 T = normalize(vTangent - dot(vTangent, N) * N);
+        vec3 B = cross(N, T) * vTangentSign;
+        vec3 sampledNormal = texture(sampler2D(uNormalTexture, uMaterialSampler), vTexCoord).xyz * 2.0 - 1.0;
+        sampledNormal.xy *= uMaterial.emissiveFactorNormalScale.w; // normalScale
+        s.normal = normalize(mat3(T, B, N) * sampledNormal);
+    }
+    else
+    {
+        s.normal = N;
+    }
+
+    return s;
+}
 
 // ---- Cook-Torrance BRDF -------------------------------------------------
 
@@ -98,18 +168,18 @@ vec3 FresnelSchlick(float cosTheta, vec3 F0)
     return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
 }
 
-vec3 CookTorrance(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, vec3 F0)
+vec3 CookTorrance(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, vec3 F0, float roughness, float metallic)
 {
     float NdotL = max(dot(N, L), 0.0);
     if (NdotL == 0.0)
         return vec3(0.0);
 
     vec3  H        = normalize(V + L);
-    float NDF      = DistributionGGX(N, H, kRoughness);
-    float G        = GeometrySmith(N, V, L, kRoughness);
+    float NDF      = DistributionGGX(N, H, roughness);
+    float G        = GeometrySmith(N, V, L, roughness);
     vec3  F        = FresnelSchlick(max(dot(H, V), 0.0), F0);
     vec3  specular = (NDF * G * F) / (4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001);
-    vec3  kD       = (1.0 - F) * (1.0 - kMetallic);
+    vec3  kD       = (1.0 - F) * (1.0 - metallic);
     return (kD * albedo / PI + specular) * radiance * NdotL;
 }
 
@@ -145,12 +215,12 @@ uint ClusterIndex()
 
 void main()
 {
-    // The albedo texture is an sRGB format (SRGBA8_UNORM), so the sampler already
-    // returns linear values — filtered and mip-blended in linear space, which is
-    // why the sRGB->linear step no longer lives here in the shader.
-    vec3 albedo = texture(sampler2D(uAlbedoTexture, uAlbedoSampler), vTexCoord).rgb;
+    Surface surf = SampleMaterial();
 
-    vec3 N = normalize(vNormal);
+    vec3  albedo    = surf.albedo;
+    vec3  N         = surf.normal;
+    float roughness = surf.roughness;
+    float metallic  = surf.metallic;
 
     // Recover the camera's world-space position from the view matrix: for a
     // rigid view transform (View = R | t, t = -R * cameraPos), cameraPos =
@@ -158,7 +228,7 @@ void main()
     vec3 cameraPos = -transpose(mat3(uFrame.view)) * vec3(uFrame.view[3]);
     vec3 V = normalize(cameraPos - vWorldPos);
 
-    vec3 F0 = mix(vec3(0.04), albedo, kMetallic);
+    vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec3 Lo = vec3(0.0);
 
     uint dirLightCount = uFrame.lightCounts.x;
@@ -166,7 +236,7 @@ void main()
     {
         vec3 L        = normalize(-dirLights[i].directionIntensity.xyz);
         vec3 radiance = dirLights[i].colorPad.xyz * dirLights[i].directionIntensity.w;
-        Lo += CookTorrance(N, V, L, radiance, albedo, F0);
+        Lo += CookTorrance(N, V, L, radiance, albedo, F0, roughness, metallic);
     }
 
     uint clusterIdx  = ClusterIndex();
@@ -188,7 +258,7 @@ void main()
         vec3  L        = toLight / dist;
         vec3  radiance = lCol * lInt * Attenuation(dist, r);
 
-        Lo += CookTorrance(N, V, L, radiance, albedo, F0);
+        Lo += CookTorrance(N, V, L, radiance, albedo, F0, roughness, metallic);
     }
 
     for (uint i = 0u; i < spotCount; i++)
@@ -210,10 +280,12 @@ void main()
         float cone  = smoothstep(outer, inner, theta);
         vec3  radiance = lCol * lInt * Attenuation(dist, r) * cone;
 
-        Lo += CookTorrance(N, V, L, radiance, albedo, F0);
+        Lo += CookTorrance(N, V, L, radiance, albedo, F0, roughness, metallic);
     }
 
-    vec3 color = kAmbient * albedo + Lo;
+    // Ambient is scaled by the occlusion map (direct light already accounts for
+    // visibility via N·L); emissive is added on top, unlit.
+    vec3 color = kAmbient * albedo * surf.occlusion + Lo + surf.emissive;
 
     // Reinhard tone map + gamma correction
     color = color / (color + vec3(1.0));

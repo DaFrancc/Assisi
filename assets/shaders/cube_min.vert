@@ -8,7 +8,9 @@ layout(location = 3) in vec4 inTangent;
 layout(location = 0) out vec3  vWorldPos;
 layout(location = 1) out vec3  vNormal;
 layout(location = 2) out vec2  vTexCoord;
-layout(location = 3) out float vViewZ; // view-space Z (negative for geometry in front of camera)
+layout(location = 3) out float vViewZ;       // view-space Z (negative for geometry in front of camera)
+layout(location = 4) out vec3  vTangent;     // world-space tangent (for the normal-map TBN)
+layout(location = 5) out float vTangentSign; // bitangent handedness (glTF TANGENT.w)
 
 // Per-draw data. modelViewProjection and model are both needed: the former
 // for gl_Position, the latter for world-space lighting — 128 bytes total,
@@ -42,6 +44,11 @@ void main()
     // there's no room for a third matrix, and inverse() of a 3x3 is cheap.
     mat3 normalMatrix = transpose(inverse(mat3(pc.model)));
     vNormal   = normalize(normalMatrix * inNormal);
+    // Tangents are directions along the surface, so they transform by the plain
+    // model 3x3 (not the inverse-transpose) — the fragment shader re-orthonormalizes
+    // against the normal, absorbing any residual skew. w carries handedness.
+    vTangent     = mat3(pc.model) * inTangent.xyz;
+    vTangentSign = inTangent.w;
     vTexCoord = inTexCoord;
     vViewZ    = (uFrame.view * worldPos).z;
 

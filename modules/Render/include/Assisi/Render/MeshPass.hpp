@@ -7,12 +7,13 @@
 /// One pipeline shared by every entity: `MeshBuffer`'s vertex layout in, a
 /// per-draw model + model-view-projection matrix pushed as constants, a
 /// per-frame constant buffer carrying the camera and cluster-grid parameters,
-/// an albedo texture sampled per-entity, and clustered point/spot/directional
-/// lighting (see ClusterGrid) read directly from cube_min.frag. Normal maps
-/// and metallic/roughness maps are not wired up yet — see
-/// docs/nvrhi-migration-todo.md.
+/// a full glTF metallic-roughness Material (base colour, normal, metallic-
+/// roughness, occlusion, emissive — factors + textures) bound per-submesh, and
+/// clustered point/spot/directional lighting (see ClusterGrid) read directly
+/// from cube_min.frag.
 
 #include <cstdint>
+#include <span>
 #include <string>
 #include <unordered_map>
 
@@ -20,6 +21,7 @@
 
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
+#include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 
 namespace Assisi::Render
@@ -52,19 +54,20 @@ class MeshPass
     void UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &view, uint32_t screenWidth,
                               uint32_t screenHeight, float nearZ, float farZ, uint32_t dirLightCount) const;
 
-    /// @brief Records a draw of `mesh` with the given model and
-    /// model-view-projection matrices, sampling `albedoTexture` in the pixel
-    /// shader and lighting the surface from ClusterGrid's buffers.
-    /// @param albedoTexture  Pass nullptr to use a flat white fallback
-    /// (Render::DefaultResources::WhiteTexture).
+    /// @brief Records the draws for `mesh`'s LOD0 submeshes with the given model
+    /// and model-view-projection matrices, binding the Material for each submesh's
+    /// slot and lighting the surface from ClusterGrid's buffers.
+    /// @param materials  One Material per mesh material slot (see
+    /// MeshRenderer::materials). A submesh whose slot has no entry is skipped;
+    /// the pointers must stay valid until this draw is submitted.
     /// @pre IsValid() — call Initialize() first, and UpdateFrameConstants() this frame.
     void Draw(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer, uint32_t viewportWidth,
               uint32_t viewportHeight, const glm::mat4 &modelViewProjection, const glm::mat4 &model,
-              const MeshBuffer &mesh, nvrhi::ITexture *albedoTexture = nullptr) const;
+              const MeshBuffer &mesh, std::span<const Material *const> materials) const;
 
     bool IsValid() const { return _pipeline != nullptr; }
 
-    /// @brief Drops every cached albedo binding set. Call when the textures they
+    /// @brief Drops every cached material binding set. Call when the resources they
     /// reference may be freed or replaced (e.g. an AssetCache is cleared or a
     /// level is unloaded) so a later Draw() rebuilds against live resources
     /// instead of returning a binding set that pins a destroyed texture — or,
@@ -72,11 +75,12 @@ class MeshPass
     void InvalidateBindingSets() { _bindingSetCache.clear(); }
 
   private:
-    /// @brief Returns the binding set for `albedoTexture`, creating and caching it
-    /// on first use. NVRHI binding sets reference concrete resources, so one is
-    /// needed per distinct texture — unlike the mesh, which is bound directly via
-    /// vertex/index buffer bindings rather than through the binding set.
-    nvrhi::IBindingSet *GetOrCreateBindingSet(nvrhi::ITexture *albedoTexture) const;
+    /// @brief Returns the binding set for `material`, creating and caching it on
+    /// first use, keyed by the material's stable id. NVRHI binding sets reference
+    /// concrete resources (the material's constants buffer + five textures), so
+    /// one is needed per distinct material — unlike the mesh, which is bound
+    /// directly via vertex/index buffer bindings rather than the binding set.
+    nvrhi::IBindingSet *GetOrCreateBindingSet(const Material &material) const;
 
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
@@ -89,16 +93,15 @@ class MeshPass
     nvrhi::GraphicsPipelineHandle _pipeline;
     nvrhi::BufferHandle           _frameConstantsBuffer;
 
-    /// @brief Cache of binding sets keyed by the raw albedo texture pointer.
+    /// @brief Cache of binding sets keyed by the material's stable id (Material::Id).
     ///
-    /// @warning The key is a raw `ITexture*`, so entries are only valid while the
-    /// textures they reference stay alive. When the asset set backing the scene
-    /// changes (a level unload or an AssetCache clear frees textures), the owner
-    /// must call InvalidateBindingSets() — otherwise a freed address reused by a
-    /// new texture would return the stale binding set for the wrong resource, and
-    /// dead entries would pin their textures alive forever. A future streaming
-    /// path should evict per-texture (or key on a stable id/generation) rather
-    /// than clearing wholesale.
-    mutable std::unordered_map<nvrhi::ITexture *, nvrhi::BindingSetHandle> _bindingSetCache;
+    /// The id is monotonic and never reused (it survives AssetCache::Clear), so a
+    /// stale entry is dead, never wrong: an id whose material was freed simply
+    /// never comes up again. When the asset set backing the scene changes (a level
+    /// unload or an AssetCache clear frees the materials' GPU resources), the owner
+    /// still calls InvalidateBindingSets() for memory hygiene — otherwise dead
+    /// entries would pin their constants buffers and textures alive forever. A
+    /// future streaming path evicts per-id rather than clearing wholesale.
+    mutable std::unordered_map<uint32_t, nvrhi::BindingSetHandle> _bindingSetCache;
 };
 } /* namespace Assisi::Render */

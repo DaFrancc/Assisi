@@ -151,8 +151,7 @@ void SandboxApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
 
 void SandboxApp::ResolveMeshRendererAssets(Assisi::Runtime::MeshRenderer &mrc)
 {
-    mrc.mesh          = _assetCache.ResolveMesh(mrc.meshPath);
-    mrc.albedoTexture = _assetCache.ResolveTexture(mrc.albedoPath);
+    mrc.mesh = _assetCache.ResolveMesh(mrc.meshPath);
 
     // One resolved Material per mesh slot: the override path when the slot has a
     // non-empty entry, otherwise the material the mesh imported for that slot.

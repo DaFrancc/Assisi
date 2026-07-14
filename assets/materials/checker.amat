@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "type": "MaterialData",
+  "BaseColorFactor": [1.0, 1.0, 1.0, 1.0],
+  "BaseColorTexture": "textures/checker.png",
+  "MetallicFactor": 0.0,
+  "RoughnessFactor": 0.6,
+  "NormalScale": 1.0,
+  "OcclusionStrength": 1.0,
+  "EmissiveFactor": [0.0, 0.0, 0.0]
+}

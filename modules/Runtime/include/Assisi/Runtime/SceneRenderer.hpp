@@ -71,9 +71,9 @@ class SceneRenderer
     /// beyond the default Render() path.
     [[nodiscard]] Render::MeshPass &MeshPass() { return _meshPass; }
 
-    /// @brief Evict the mesh pass's cached albedo binding sets. Call after the
-    /// asset set backing the scene's textures changes (level unload / asset-cache
-    /// clear) so freed texture pointers aren't reused. No-op before Initialize().
+    /// @brief Evict the mesh pass's cached material binding sets. Call after the
+    /// asset set backing the scene's materials changes (level unload / asset-cache
+    /// clear) so freed GPU resources aren't reused. No-op before Initialize().
     void InvalidateAssetBindings() { _meshPass.InvalidateBindingSets(); }
 
     /// @brief Enable/disable view-frustum culling in the default draw path (on by

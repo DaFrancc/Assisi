@@ -92,9 +92,9 @@ class SandboxApp : public Assisi::App::Application
     /// @brief Re-resolves a MeshRenderer entity's mesh/texture from its current
     /// paths, so an inspector/browser edit takes effect without a level reload.
     void ReresolveEntityAssets(Assisi::ECS::Entity entity);
-    /// @brief Resolves one MeshRenderer's transient GPU pointers (mesh, albedo,
-    /// and one Material per mesh slot) from its durable paths. Shared by level
-    /// load and single-entity re-resolve.
+    /// @brief Resolves one MeshRenderer's transient GPU pointers (mesh and one
+    /// Material per mesh slot) from its durable paths. Shared by level load and
+    /// single-entity re-resolve.
     void ResolveMeshRendererAssets(Assisi::Runtime::MeshRenderer &mrc);
     /// @brief Reads _assetBrowserDir into the cached dirs/images lists. Called
     /// only when the listing may have changed, not every frame.
@@ -128,8 +128,8 @@ class SandboxApp : public Assisi::App::Application
     // OnRender is a single Render() call.
     Assisi::Runtime::SceneRenderer _sceneRenderer;
 
-    // Resolves each entity's meshPath/albedoPath to shared GPU resources; owns
-    // every mesh and texture the scene draws (deduped by path).
+    // Resolves each entity's meshPath/materialOverrides to shared GPU resources;
+    // owns every mesh, texture, and material the scene draws (deduped by path).
     Assisi::Render::AssetCache _assetCache;
 
     // Smoke test for ImGui texture display — loaded once in SetupScene. Owns its

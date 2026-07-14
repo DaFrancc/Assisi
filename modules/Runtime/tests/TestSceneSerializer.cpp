@@ -109,8 +109,8 @@ TEST_CASE("SceneSerializer: MeshRenderer asset paths round-trip; GPU handles don
     ECS::Scene        scene;
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, MeshRenderer{
-                             .meshPath   = Core::AssetPath{std::string_view{"prim://cube"}},
-                             .albedoPath = Core::AssetPath{std::string_view{"textures/checker.png"}},
+                             .meshPath          = Core::AssetPath{std::string_view{"prim://cube"}},
+                             .materialOverrides = {Core::AssetPath{std::string_view{"materials/checker.amat"}}},
                          }) != nullptr);
 
     ECS::Scene loaded;
@@ -120,11 +120,12 @@ TEST_CASE("SceneSerializer: MeshRenderer asset paths round-trip; GPU handles don
         loaded.Get<MeshRenderer>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(mrc != nullptr); // presence survives
     CHECK(mrc->meshPath.View() == "prim://cube");
-    CHECK(mrc->albedoPath.View() == "textures/checker.png");
-    // The mesh/texture handles are transient: never serialized, so they come
-    // back null and get re-resolved from the paths at load time.
+    REQUIRE(mrc->materialOverrides.size() == 1);
+    CHECK(mrc->materialOverrides[0].View() == "materials/checker.amat");
+    // The mesh/material handles are transient: never serialized, so they come
+    // back empty and get re-resolved from the paths at load time.
     CHECK(mrc->mesh == nullptr);
-    CHECK(mrc->albedoTexture == nullptr);
+    CHECK(mrc->materials.empty());
 }
 
 TEST_CASE("SceneSerializer: multiple components on one entity all round-trip")

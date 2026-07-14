@@ -3,7 +3,6 @@
 #include <Assisi/Render/MeshPass.hpp>
 
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Render/DefaultResources.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
@@ -79,20 +78,30 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
 
     // Texture_SRV/Sampler are separate descriptors in NVRHI's Vulkan backend (HLSL
     // t-register/s-register split, not GLSL's combined sampler2D); StructuredBuffer_SRV
-    // shares the same t-register space as Texture_SRV, so the light buffers below use
-    // slots 1-5 (slot 0 is the albedo texture) — see cube_min.frag for the matching
-    // `binding = N` declarations.
+    // shares the same t-register space as Texture_SRV. Slot map (see cube_min.frag
+    // for the matching `binding = N` declarations):
+    //   b0 = FrameConstants, b1 = MaterialConstants
+    //   t0 = baseColor, t1-t5 = clustered light buffers, t6-t9 = normal/MR/occlusion/emissive
+    //   s0 = shared sampler
+    // The material SRVs sit past the light buffers rather than contiguous with t0
+    // on purpose — the whole set collapses into one bindless table later, so the
+    // gap is harmless; don't "tidy" them adjacent.
     nvrhi::BindingLayoutDesc bindingLayoutDesc;
     bindingLayoutDesc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel;
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(DrawPushConstants)));
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0)); // FrameConstants
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(1)); // MaterialConstants
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));    // baseColor
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1)); // pointLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2)); // spotLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3)); // dirLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4)); // lightIndexList
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(5)); // lightGrid
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(6));          // normal
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(7));          // metallicRoughness
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(8));          // occlusion
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(9));          // emissive
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -162,9 +171,9 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm:
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }
 
-nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(nvrhi::ITexture *albedoTexture) const
+nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(const Material &material) const
 {
-    const auto it = _bindingSetCache.find(albedoTexture);
+    const auto it = _bindingSetCache.find(material.Id());
     if (it != _bindingSetCache.end())
     {
         return it->second;
@@ -173,7 +182,8 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(nvrhi::ITexture *albedoTextu
     nvrhi::BindingSetDesc bindingSetDesc;
     bindingSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(DrawPushConstants)));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _frameConstantsBuffer));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, albedoTexture));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(1, material.Constants()));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, material.BaseColor()));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
     bindingSetDesc.addItem(
         nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _clusterGrid->PointLightBuffer().NativeBuffer()));
@@ -185,33 +195,53 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(nvrhi::ITexture *albedoTextu
         nvrhi::BindingSetItem::StructuredBuffer_SRV(4, _clusterGrid->LightIndexBuffer().NativeBuffer()));
     bindingSetDesc.addItem(
         nvrhi::BindingSetItem::StructuredBuffer_SRV(5, _clusterGrid->LightGridBuffer().NativeBuffer()));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(6, material.Normal()));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(7, material.MetallicRoughness()));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(8, material.Occlusion()));
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(9, material.Emissive()));
     const nvrhi::BindingSetHandle bindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
 
-    return _bindingSetCache.emplace(albedoTexture, bindingSet).first->second;
+    return _bindingSetCache.emplace(material.Id(), bindingSet).first->second;
 }
 
 void MeshPass::Draw(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer, uint32_t viewportWidth,
                      uint32_t viewportHeight, const glm::mat4 &modelViewProjection, const glm::mat4 &model,
-                     const MeshBuffer &mesh, nvrhi::ITexture *albedoTexture) const
+                     const MeshBuffer &mesh, std::span<const Material *const> materials) const
 {
-    nvrhi::ITexture *resolvedAlbedo = albedoTexture != nullptr ? albedoTexture : DefaultResources::WhiteTexture(_device);
-
-    nvrhi::GraphicsState state;
-    state.pipeline = _pipeline;
-    state.framebuffer = framebuffer;
-    state.addBindingSet(GetOrCreateBindingSet(resolvedAlbedo));
-    state.viewport.addViewportAndScissorRect(
-        nvrhi::Viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
-    state.addVertexBuffer(nvrhi::VertexBufferBinding{mesh.VertexBuffer(), 0, 0});
-    state.indexBuffer = nvrhi::IndexBufferBinding{mesh.IndexBuffer(), nvrhi::Format::R32_UINT, 0};
-    commandList->setGraphicsState(state);
-
     const DrawPushConstants pushConstants{modelViewProjection, model};
-    commandList->setPushConstants(&pushConstants, sizeof(pushConstants));
 
-    nvrhi::DrawArguments drawArgs;
-    drawArgs.vertexCount = mesh.IndexCount();
-    commandList->drawIndexed(drawArgs);
+    // LOD0 only for now (screen-size LOD selection lands with the draw-item layer).
+    // EnsureSubMeshTables guarantees at least one LOD spanning one submesh.
+    const std::vector<Geometry::SubMesh> &subMeshes = mesh.SubMeshes();
+    const std::vector<Geometry::LodRange> &lods = mesh.Lods();
+    const Geometry::LodRange lod0 =
+        !lods.empty() ? lods.front() : Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
+
+    for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
+    {
+        const Geometry::SubMesh &subMesh = subMeshes[lod0.FirstSubMesh + i];
+        const Material *material = subMesh.MaterialSlot < materials.size() ? materials[subMesh.MaterialSlot] : nullptr;
+        if (material == nullptr)
+            continue; // No material resolved for this slot — skip rather than guess.
+
+        // Everything but the binding set is identical per submesh, but GraphicsState
+        // is a cheap value; rebuild it each time rather than mutate its static_vectors.
+        nvrhi::GraphicsState state;
+        state.pipeline = _pipeline;
+        state.framebuffer = framebuffer;
+        state.addBindingSet(GetOrCreateBindingSet(*material));
+        state.viewport.addViewportAndScissorRect(
+            nvrhi::Viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
+        state.addVertexBuffer(nvrhi::VertexBufferBinding{mesh.VertexBuffer(), 0, 0});
+        state.indexBuffer = nvrhi::IndexBufferBinding{mesh.IndexBuffer(), nvrhi::Format::R32_UINT, 0};
+        commandList->setGraphicsState(state);
+        commandList->setPushConstants(&pushConstants, sizeof(pushConstants));
+
+        nvrhi::DrawArguments drawArgs;
+        drawArgs.vertexCount = subMesh.IndexCount; // for drawIndexed this is the index count
+        drawArgs.startIndexLocation = subMesh.IndexOffset;
+        commandList->drawIndexed(drawArgs);
+    }
 }
 
 } // namespace Assisi::Render

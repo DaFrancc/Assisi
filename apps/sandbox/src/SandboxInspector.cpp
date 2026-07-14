@@ -310,9 +310,9 @@ void SandboxApp::DrawInspector()
         anyFieldEdited |= edited;
     }
 
-    // A typed AssetPath edit changes meshPath/albedoPath; re-resolve so the new
-    // mesh/texture shows without a level reload. (Browser picks re-resolve in
-    // SelectAsset.) Cheap — ResolveMesh/ResolveTexture are cached lookups.
+    // A typed AssetPath edit changes meshPath/materialOverrides; re-resolve so the
+    // new mesh/material shows without a level reload. (Browser picks re-resolve in
+    // SelectAsset.) Cheap — the AssetCache Resolve* calls are cached lookups.
     if (anyFieldEdited)
         ReresolveEntityAssets(_selectedEntity);
 

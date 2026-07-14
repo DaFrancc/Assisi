@@ -6,8 +6,9 @@
 ///
 /// Built by AssetCache::ResolveMaterial from a Geometry::MaterialData. Texture
 /// pointers are non-owning (AssetCache owns the Textures); empty channels are
-/// filled with DefaultResources fallbacks so the shader always samples a valid
-/// texture and never branches on null. The constants buffer holds the PBR
+/// filled with the cache's `prim://` default textures (white / flat normal) so
+/// the shader always samples a valid texture and never branches on null. The
+/// constants buffer holds the PBR
 /// factors and is laid out to become, verbatim, one row of the future bindless
 /// material table (a textureIndices field fills the reserved word then).
 

@@ -50,19 +50,13 @@ using ECS::Transform;
 ///     must outlive the component. `materials` holds one resolved Material per
 ///     mesh slot (override or mesh default); a slot with no entry draws with the
 ///     cache's fallback material.
-///
-/// `albedoPath` / `albedoTexture` are the pre-material single-texture path, kept
-/// until the mesh pass consumes `materials` (see docs/mesh-material-architecture.md
-/// §9, stage A4); they will be removed then.
 ACOMP()
 struct MeshRenderer
 {
     AFIELD() Assisi::Core::AssetPath meshPath;
-    AFIELD() Assisi::Core::AssetPath albedoPath;
     AFIELD() std::vector<Assisi::Core::AssetPath> materialOverrides;
 
     AFIELD(transient) const Assisi::Render::MeshBuffer *mesh = nullptr;
-    AFIELD(transient) const Assisi::Render::Texture *albedoTexture = nullptr;
     AFIELD(transient) std::vector<const Assisi::Render::Material *> materials;
 };
 

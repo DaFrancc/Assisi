@@ -39,10 +39,8 @@ DrawStats DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm:
         }
 
         const glm::mat4 modelViewProjection = viewProjection * transform.worldMatrix;
-        nvrhi::ITexture *albedoTexture =
-            meshRenderer.albedoTexture != nullptr ? meshRenderer.albedoTexture->NativeTexture() : nullptr;
         meshPass.Draw(commandList, framebuffer, viewportWidth, viewportHeight, modelViewProjection,
-                      transform.worldMatrix, *meshRenderer.mesh, albedoTexture);
+                      transform.worldMatrix, *meshRenderer.mesh, meshRenderer.materials);
         ++stats.drawn;
     }
     return stats;

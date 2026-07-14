@@ -17,7 +17,7 @@
           "rotation": [1.0, 0.0, 0.0, 0.0],
           "scale": [10.0, 0.5, 10.0]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "albedoPath": "textures/checker.png" },
+        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
         "RigidBodyDescriptor": {
           "halfExtents": [5.0, 0.25, 5.0],
           "isStatic": true,
@@ -32,7 +32,7 @@
           "rotation": [0.8536, 0.3536, 0.1464, 0.3536],
           "scale": [1.0, 1.0, 1.0]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "albedoPath": "textures/checker.png" },
+        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
         "RigidBodyDescriptor": {
           "halfExtents": [0.5, 0.5, 0.5],
           "isStatic": false,
@@ -47,7 +47,7 @@
           "rotation": [1.0, 0.0, 0.0, 0.0],
           "scale": [1.0, 1.0, 1.0]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "albedoPath": "textures/checker.png" },
+        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
         "RigidBodyDescriptor": {
           "halfExtents": [0.5, 0.5, 0.5],
           "isStatic": false
@@ -61,7 +61,7 @@
           "rotation": [1.0, 0.0, 0.0, 0.0],
           "scale": [1.0, 1.0, 1.0]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "albedoPath": "textures/checker.png" },
+        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
         "RigidBodyDescriptor": {
           "halfExtents": [0.5, 0.5, 0.5],
           "isStatic": false
@@ -75,7 +75,7 @@
           "rotation": [1.0, 0.0, 0.0, 0.0],
           "scale": [1.0, 1.0, 1.0]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "albedoPath": "textures/checker.png" },
+        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
         "RigidBodyDescriptor": {
           "halfExtents": [0.5, 0.5, 0.5],
           "isStatic": false
@@ -131,7 +131,7 @@
           "rotation": [1.0, 0.0, 0.0, 0.0],
           "scale": [0.5, 0.5, 0.5]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "albedoPath": "textures/checker.png" },
+        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
         "Parent": {
           "parent": 4
         }
