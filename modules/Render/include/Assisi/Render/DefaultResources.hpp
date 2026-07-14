@@ -16,13 +16,24 @@ namespace Assisi::Render
 {
 /// @brief Provides access to built-in fallback GPU resources.
 ///
-/// Only the albedo fallback exists so far — normal/metallic/roughness defaults
-/// return once those material channels are wired up, see
-/// docs/nvrhi-migration-todo.md.
+/// One 1x1 texture per material channel, so a Material with an empty channel
+/// samples a neutral default and the shader never branches on a null texture:
+///   - White sRGB    — baseColor (and emissive, though emissive factor is 0).
+///   - White linear  — metallic-roughness / occlusion: sampling 1.0 leaves the
+///                     per-material factor untouched (glTF "no texture" semantics).
+///   - Flat normal   — (128,128,255) linear = the +Z tangent-space normal, i.e.
+///                     "no perturbation".
+/// All are created lazily on first request and shared process-wide.
 class DefaultResources
 {
   public:
-    /// @brief Returns the engine-wide 1x1 white RGBA texture, creating it on first call.
+    /// @brief Engine-wide 1x1 white sRGB texture (albedo fallback).
     static nvrhi::ITexture *WhiteTexture(nvrhi::IDevice *device);
+
+    /// @brief 1x1 white *linear* texture (metallic-roughness / occlusion fallback).
+    static nvrhi::ITexture *WhiteLinearTexture(nvrhi::IDevice *device);
+
+    /// @brief 1x1 flat tangent-space normal (128,128,255) linear texture.
+    static nvrhi::ITexture *FlatNormalTexture(nvrhi::IDevice *device);
 };
 } /* namespace Assisi::Render */
