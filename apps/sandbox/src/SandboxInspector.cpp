@@ -196,6 +196,16 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             }
             break;
         }
+        case FieldType::AssetPathVector:
+        {
+            // Only MeshRenderer::materialOverrides uses this type; render it as
+            // one browse row per material slot of the entity's resolved mesh.
+            if (meta.name == "MeshRenderer" && field.name == "materialOverrides")
+                edited = EditMaterialSlots(*static_cast<Assisi::Runtime::MeshRenderer *>(mut), meta, field.offset);
+            else
+                ImGui::TextDisabled("%s: [unsupported vector]", field.name.c_str());
+            break;
+        }
         default:
             ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
             break;
@@ -209,6 +219,64 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
         ImGui::TextDisabled("(runtime-only)");
 
     return anyFieldEdited;
+}
+
+bool SandboxApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
+                                   const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
+{
+    ImGui::TextUnformatted("materialOverrides");
+
+    if (mrc.mesh == nullptr)
+    {
+        ImGui::TextDisabled("  (resolve a mesh to edit its materials)");
+        return false;
+    }
+
+    const std::vector<Assisi::Geometry::MaterialData> &slots = mrc.mesh->Materials();
+    if (slots.empty())
+    {
+        ImGui::TextDisabled("  (mesh has no material slots)");
+        return false;
+    }
+
+    bool edited = false;
+    for (std::size_t slot = 0; slot < slots.size(); ++slot)
+    {
+        ImGui::PushID(static_cast<int32_t>(slot));
+
+        // Current override for this slot ("" when the slot falls back to the
+        // mesh's imported default), shown in an editable text field.
+        char buf[Assisi::Core::kAssetPathMax + 1] = {};
+        if (slot < mrc.materialOverrides.size())
+            mrc.materialOverrides[slot].ToCStr(buf, sizeof(buf));
+
+        const float browseW = ImGui::GetFrameHeight();
+        ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - browseW - ImGui::GetStyle().ItemSpacing.x);
+        if (ImGui::InputText("##override", buf, sizeof(buf)))
+        {
+            if (mrc.materialOverrides.size() <= slot)
+                mrc.materialOverrides.resize(slot + 1);
+            mrc.materialOverrides[slot].Assign(buf);
+            edited = true;
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("...", ImVec2(browseW, 0.f)))
+            OpenAssetBrowserForSlot(meta, fieldOffset, static_cast<int32_t>(slot));
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Browse materials (.amat)");
+        ImGui::SameLine();
+
+        // Label by the mesh's imported material name, falling back to the index.
+        const std::string &name = slots[slot].Name;
+        if (name.empty())
+            ImGui::Text("slot %zu", slot);
+        else
+            ImGui::Text("slot %zu — %s", slot, name.c_str());
+
+        ImGui::PopID();
+    }
+
+    return edited;
 }
 
 void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)

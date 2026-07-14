@@ -50,6 +50,12 @@ bool IsThumbnailableImage(const std::filesystem::path &path)
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga";
 }
 
+/// @brief True for .amat material files.
+bool IsMaterialFile(const std::filesystem::path &path)
+{
+    return LowerExtension(path) == ".amat";
+}
+
 /// @brief True for mesh-file extensions Geometry::ImportMesh can load.
 bool IsMeshFile(const std::filesystem::path &path)
 {
@@ -107,6 +113,22 @@ void DrawMeshIcon(const ImVec2 &origin, float size)
     drawList->AddQuadFilled(upperRight, lowerRight, bottom, center, rightFace);
     drawList->AddQuadFilled(upperLeft, center, bottom, lowerLeft, leftFace);
 }
+
+/// @brief Paints a shaded sphere filling a @p size square at @p origin — the
+/// material-preview convention — so a .amat tile reads as "material" without an
+/// image asset. Warm tones distinguish it from the cool mesh cube.
+void DrawMaterialIcon(const ImVec2 &origin, float size)
+{
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+
+    const ImVec2 center(origin.x + size * 0.5f, origin.y + size * 0.5f);
+    const float  radius = size * 0.30f;
+
+    // Base disc, then a smaller offset highlight disc for a lit-sphere read.
+    drawList->AddCircleFilled(center, radius, IM_COL32(150, 120, 96, 255), 32);
+    drawList->AddCircleFilled(ImVec2(center.x - radius * 0.30f, center.y - radius * 0.30f), radius * 0.55f,
+                              IM_COL32(214, 188, 150, 255), 32);
+}
 } // namespace
 
 void SandboxApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
@@ -115,8 +137,16 @@ void SandboxApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta 
     _assetBrowserEntity      = _selectedEntity;
     _assetBrowserMeta        = &meta;
     _assetBrowserFieldOffset = fieldOffset;
+    _assetBrowserVectorSlot  = -1; // plain AssetPath field
     _assetBrowserDir.clear(); // always start at the asset root
     _assetBrowserDirty = true; // re-read on open
+}
+
+void SandboxApp::OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
+                                         int32_t slot)
+{
+    OpenAssetBrowserFor(meta, fieldOffset);
+    _assetBrowserVectorSlot = slot; // element [slot] of an AssetPathVector
 }
 
 void SandboxApp::SelectAsset(std::string_view vpath)
@@ -129,9 +159,21 @@ void SandboxApp::SelectAsset(std::string_view vpath)
             _assetBrowserMeta->getByEntity(_scene, _assetBrowserEntity.index, _assetBrowserEntity.generation);
         if (ptr != nullptr)
         {
-            auto *field = reinterpret_cast<Assisi::Core::AssetPath *>(
-                const_cast<char *>(static_cast<const char *>(ptr)) + _assetBrowserFieldOffset);
-            field->Assign(vpath);
+            char *fieldPtr = const_cast<char *>(static_cast<const char *>(ptr)) + _assetBrowserFieldOffset;
+            if (_assetBrowserVectorSlot < 0)
+            {
+                reinterpret_cast<Assisi::Core::AssetPath *>(fieldPtr)->Assign(vpath);
+            }
+            else
+            {
+                // Element [slot] of an AssetPathVector: grow the sparse override
+                // list with empty entries up to the slot, then assign.
+                auto              &overrides = *reinterpret_cast<std::vector<Assisi::Core::AssetPath> *>(fieldPtr);
+                const std::size_t  slot      = static_cast<std::size_t>(_assetBrowserVectorSlot);
+                if (overrides.size() <= slot)
+                    overrides.resize(slot + 1);
+                overrides[slot].Assign(vpath);
+            }
             ReresolveEntityAssets(_assetBrowserEntity);
         }
     }
@@ -174,6 +216,7 @@ void SandboxApp::RescanAssetBrowser()
     _assetBrowserDirs.clear();
     _assetBrowserImages.clear();
     _assetBrowserMeshes.clear();
+    _assetBrowserMaterials.clear();
     _assetBrowserReadError = false;
 
     const std::filesystem::path root   = Assisi::Core::AssetSystem::GetRoot();
@@ -196,10 +239,13 @@ void SandboxApp::RescanAssetBrowser()
             _assetBrowserImages.push_back(name);
         else if (IsMeshFile(entry.path()))
             _assetBrowserMeshes.push_back(name);
+        else if (IsMaterialFile(entry.path()))
+            _assetBrowserMaterials.push_back(name);
     }
     std::sort(_assetBrowserDirs.begin(), _assetBrowserDirs.end());
     std::sort(_assetBrowserImages.begin(), _assetBrowserImages.end());
     std::sort(_assetBrowserMeshes.begin(), _assetBrowserMeshes.end());
+    std::sort(_assetBrowserMaterials.begin(), _assetBrowserMaterials.end());
 }
 
 void SandboxApp::DrawAssetBrowser()
@@ -302,7 +348,11 @@ void SandboxApp::DrawAssetBrowser()
             ImGui::SameLine();
     }
 
-    // Then the thumbnailable assets, continuing the same grid flow.
+    // Then the thumbnailable assets and mesh files, continuing the same grid
+    // flow — but hidden while picking a material for a slot, where only a .amat
+    // is a valid choice.
+    if (_assetBrowserVectorSlot < 0)
+    {
     for (const std::string &img : _assetBrowserImages)
     {
         const std::string vpath = _assetBrowserDir.empty() ? img : _assetBrowserDir + "/" + img;
@@ -347,6 +397,31 @@ void SandboxApp::DrawAssetBrowser()
         DrawMeshIcon(tile, thumb);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
         ImGui::TextWrapped("%s", mesh.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        ImGui::PopID();
+
+        if (clicked)
+            SelectAsset(vpath);
+
+        if (++col % cols != 0)
+            ImGui::SameLine();
+    }
+    } // end (_assetBrowserVectorSlot < 0)
+
+    // Material files (.amat), always listed, shown as a shaded-sphere tile over a
+    // click target — the only pickable asset while browsing for a material slot.
+    for (const std::string &material : _assetBrowserMaterials)
+    {
+        const std::string vpath = _assetBrowserDir.empty() ? material : _assetBrowserDir + "/" + material;
+
+        ImGui::PushID(material.c_str());
+        ImGui::BeginGroup();
+        const ImVec2 tile    = ImGui::GetCursorScreenPos();
+        const bool   clicked = ImGui::Button("##material", ImVec2(thumb, thumb));
+        DrawMaterialIcon(tile, thumb);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
+        ImGui::TextWrapped("%s", material.c_str());
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
         ImGui::PopID();

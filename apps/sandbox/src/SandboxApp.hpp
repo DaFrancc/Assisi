@@ -87,6 +87,10 @@ class SandboxApp : public Assisi::App::Application
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
     /// the selected entity, and opens the window.
     void OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset);
+    /// @brief Arms the browser to write into element @p slot of an AssetPathVector
+    /// field (a MeshRenderer material slot), listing only materials, and opens it.
+    void OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
+                                 int32_t slot);
     /// @brief Writes @p vpath into the pinned browser target field and closes.
     void SelectAsset(std::string_view vpath);
     /// @brief Re-resolves a MeshRenderer entity's mesh/texture from its current
@@ -102,6 +106,13 @@ class SandboxApp : public Assisi::App::Application
 
     // --- Inspector helpers ---
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
+    /// @brief Draws one editable row per material slot of @p mrc's resolved mesh
+    /// (labelled by the imported material name), each a `.amat` path + browse
+    /// button writing into `materialOverrides[slot]`. @p fieldOffset is the offset
+    /// of the materialOverrides vector within the MeshRenderer. Returns true if a
+    /// row was edited (the caller re-resolves).
+    bool EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
+                           const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset);
     void HandlePhysicsEditing(bool anyFieldEdited);
 
     /// @brief Writes an eyedropper-picked entity into the armed EntityRef field.
@@ -193,13 +204,18 @@ class SandboxApp : public Assisi::App::Application
     Assisi::ECS::Entity                         _assetBrowserEntity      = Assisi::ECS::NullEntity;
     const Assisi::Core::Reflect::ComponentMeta *_assetBrowserMeta        = nullptr;
     std::size_t                                 _assetBrowserFieldOffset = 0;
+    /// @brief -1 when the target field is a plain AssetPath; >= 0 when it is
+    /// element `[slot]` of an AssetPathVector (a MeshRenderer material slot). In
+    /// the latter mode the browser lists only materials (and folders).
+    int32_t                                     _assetBrowserVectorSlot  = -1;
     std::string                                 _assetBrowserDir; ///< Current dir, relative to the asset root ("" = root).
 
     // Cached listing of _assetBrowserDir — re-read only on navigation / open /
     // Refresh (see _assetBrowserDirty), never per frame.
     std::vector<std::string> _assetBrowserDirs;
     std::vector<std::string> _assetBrowserImages;
-    std::vector<std::string> _assetBrowserMeshes; ///< .glb/.gltf files (no thumbnail; shown as cube tiles).
+    std::vector<std::string> _assetBrowserMeshes;    ///< .glb/.gltf files (no thumbnail; shown as cube tiles).
+    std::vector<std::string> _assetBrowserMaterials; ///< .amat files (shown as material-sphere tiles).
     bool                     _assetBrowserDirty     = true;
     bool                     _assetBrowserReadError = false;
     float                    _assetBrowserThumbSize = 256.f; ///< Tile size in px; adjustable via the zoom buttons.
