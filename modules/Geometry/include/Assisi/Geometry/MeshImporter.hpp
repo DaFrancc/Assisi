@@ -11,9 +11,13 @@
 ///
 /// Every byte read — the file itself *and* any external glTF buffers it
 /// references — goes through Core::AssetSystem, so the asset-root escape
-/// protection is never bypassed. The importer produces a single merged MeshData
-/// (all primitives across all scene nodes, with node world transforms baked in);
-/// materials and textures are not consumed yet.
+/// protection is never bypassed. The importer produces one MeshData with node
+/// world transforms baked in, bucketed into SubMeshes by (LOD, material):
+/// same-material primitives within a LOD merge into one submesh; the authored
+/// LOD convention is a `*_LOD<n>` node- or mesh-name suffix. Materials are
+/// extracted into MeshData::Materials (factors + texture paths resolved
+/// relative to the file); embedded images are NOT decoded — unpack .glb to
+/// separate files (see docs/mesh-material-architecture.md §3).
 
 #include <expected>
 #include <string_view>

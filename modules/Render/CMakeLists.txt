@@ -5,7 +5,6 @@ target_sources(Assisi-Render
   PUBLIC
     "include/Assisi/Render/AssetCache.hpp"
     "include/Assisi/Render/Buffer.hpp"
-    "include/Assisi/Render/Bounds.hpp"
     "include/Assisi/Render/Frustum.hpp"
     "include/Assisi/Render/GpuTelemetry.hpp"
     "include/Assisi/Render/DefaultResources.hpp"

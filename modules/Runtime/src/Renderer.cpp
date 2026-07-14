@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <Assisi/Render/Bounds.hpp>
+#include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Render/Frustum.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
@@ -29,8 +29,8 @@ DrawStats DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm:
 
         if (frustumCulling)
         {
-            const Assisi::Render::BoundingSphere worldBounds =
-                Assisi::Render::TransformedBoundingSphere(meshRenderer.mesh->LocalBounds(), transform.worldMatrix);
+            const Assisi::Geometry::BoundingSphere worldBounds =
+                Assisi::Geometry::TransformedBoundingSphere(meshRenderer.mesh->LocalBounds(), transform.worldMatrix);
             if (!frustum.IntersectsSphere(worldBounds))
             {
                 ++stats.culled;

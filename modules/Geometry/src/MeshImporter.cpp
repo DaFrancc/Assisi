@@ -11,10 +11,12 @@
 #include <fastgltf/tools.hpp>
 #include <fastgltf/types.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -51,8 +53,8 @@ bool IsGltfPath(std::string_view path) noexcept
 }
 
 /* Virtual-path directory containing @p vpath, or "" if it has no directory part.
-   Sibling buffers are resolved relative to this (kept as a virtual path so the
-   read still goes through AssetSystem's escape protection). */
+   Sibling buffers/images are resolved relative to this (kept as a virtual path so
+   the read still goes through AssetSystem's escape protection). */
 std::string ParentDir(std::string_view vpath)
 {
     const size_t slash = vpath.find_last_of('/');
@@ -71,6 +73,74 @@ glm::mat4 ToGlm(fastgltf::math::fmat4x4 matrix) noexcept
     }
     return result;
 }
+
+/* Parses the authored-LOD naming convention: a name ending in "_LOD<n>"
+   (case-insensitive, digits to the end) yields n. Anything else is nullopt. */
+std::optional<uint32_t> ParseLodSuffix(std::string_view name) noexcept
+{
+    constexpr std::string_view kTag = "_lod";
+
+    // The suffix must be the *last* underscore group: "Cube_LOD1" matches,
+    // "Cube_LOD1_old" does not (its tail is "_old").
+    const size_t underscore = name.find_last_of('_');
+    if (underscore == std::string_view::npos)
+    {
+        return std::nullopt;
+    }
+    const std::string_view tail = name.substr(underscore); // "_lod<digits>" expected
+    if (tail.size() <= kTag.size())
+    {
+        return std::nullopt;
+    }
+    for (size_t i = 0; i < kTag.size(); ++i)
+    {
+        if (static_cast<char>(std::tolower(static_cast<unsigned char>(tail[i]))) != kTag[i])
+        {
+            return std::nullopt;
+        }
+    }
+
+    uint32_t level = 0;
+    for (size_t i = kTag.size(); i < tail.size(); ++i)
+    {
+        const char c = tail[i];
+        if (c < '0' || c > '9')
+        {
+            return std::nullopt;
+        }
+        level = level * 10 + static_cast<uint32_t>(c - '0');
+    }
+    return level;
+}
+
+/* LOD level for a node's mesh: the node name carries the suffix, falling back
+   to the mesh name (DCC exporters differ on which one they stamp). No suffix
+   anywhere means LOD 0. */
+uint32_t LodLevelFor(const fastgltf::Node &node, const fastgltf::Asset &asset, size_t meshIndex) noexcept
+{
+    if (const auto fromNode = ParseLodSuffix(std::string_view{node.name}))
+    {
+        return *fromNode;
+    }
+    if (const auto fromMesh = ParseLodSuffix(std::string_view{asset.meshes[meshIndex].name}))
+    {
+        return *fromMesh;
+    }
+    return 0;
+}
+
+/* One warning of each kind per file, so a 200-primitive model doesn't log 200
+   identical lines. */
+struct ImportWarnings
+{
+    bool secondUvSet = false;
+    bool vertexColor = false;
+    bool skinning = false;
+    bool alphaMode = false;
+    bool doubleSided = false;
+    bool embeddedImage = false;
+    bool secondaryTexCoord = false;
+};
 
 /* Replaces every external-file buffer (left as a URI because we deliberately did
    NOT pass Options::LoadExternalBuffers) with bytes read through AssetSystem, so
@@ -116,6 +186,144 @@ bool ResolveExternalBuffers(fastgltf::Asset &asset, std::string_view virtualPath
         buffer.data = fastgltf::sources::Vector{std::move(owned)};
     }
     return true;
+}
+
+/* Virtual asset path for the image behind texture @p textureIndex, resolved
+   relative to the .gltf like external buffers are. Embedded images (GLB chunk /
+   data URIs) return an empty path — the unpack-to-separate-files stance: warn
+   once naming the fix and import the channel factor-only. */
+Core::AssetPath ResolveImagePath(const fastgltf::Asset &asset, size_t textureIndex, std::string_view virtualPath,
+                                 const std::string &parent, ImportWarnings &warnings)
+{
+    Core::AssetPath result;
+    if (textureIndex >= asset.textures.size())
+    {
+        return result;
+    }
+    const fastgltf::Texture &texture = asset.textures[textureIndex];
+    if (!texture.imageIndex.has_value() || *texture.imageIndex >= asset.images.size())
+    {
+        return result;
+    }
+
+    const fastgltf::Image &image = asset.images[*texture.imageIndex];
+    const auto            *uriSource = std::get_if<fastgltf::sources::URI>(&image.data);
+    if (uriSource == nullptr || uriSource->uri.isDataUri())
+    {
+        if (!warnings.embeddedImage)
+        {
+            warnings.embeddedImage = true;
+            Core::Log::Warn("MeshImporter: '{}' embeds image data; textures import factor-only. Unpack with "
+                            "`gltf-pipeline -i model.glb -o model.gltf --separate`.",
+                            virtualPath);
+        }
+        return result;
+    }
+
+    const std::string relative{uriSource->uri.path()};
+    const std::string sibling = parent.empty() ? relative : parent + "/" + relative;
+    result.Assign(sibling);
+    return result;
+}
+
+/* Maps one glTF material to CPU MaterialData: pbrMetallicRoughness factors plus
+   virtual asset paths for each texture channel. Unsupported authoring (alpha
+   modes, double-sided, secondary UV sets) is flattened with a warning — never
+   silently. */
+MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex, std::string_view virtualPath,
+                             const std::string &parent, ImportWarnings &warnings)
+{
+    MaterialData data;
+    const fastgltf::Material &material = asset.materials[materialIndex];
+    data.Name = std::string{std::string_view{material.name}};
+
+    const auto &pbr = material.pbrData;
+    data.BaseColorFactor =
+        glm::vec4(pbr.baseColorFactor[0], pbr.baseColorFactor[1], pbr.baseColorFactor[2], pbr.baseColorFactor[3]);
+    data.MetallicFactor = pbr.metallicFactor;
+    data.RoughnessFactor = pbr.roughnessFactor;
+    data.EmissiveFactor = glm::vec3(material.emissiveFactor[0], material.emissiveFactor[1], material.emissiveFactor[2]);
+
+    const auto texCoordCheck = [&](size_t texCoordIndex)
+    {
+        if (texCoordIndex != 0 && !warnings.secondaryTexCoord)
+        {
+            warnings.secondaryTexCoord = true;
+            Core::Log::Warn("MeshImporter: '{}' has a material sampling TEXCOORD_{} — only TEXCOORD_0 is "
+                            "supported; that channel will sample the wrong UVs.",
+                            virtualPath, texCoordIndex);
+        }
+    };
+
+    if (pbr.baseColorTexture.has_value())
+    {
+        texCoordCheck(pbr.baseColorTexture->texCoordIndex);
+        data.BaseColorTexture = ResolveImagePath(asset, pbr.baseColorTexture->textureIndex, virtualPath, parent, warnings);
+    }
+    if (pbr.metallicRoughnessTexture.has_value())
+    {
+        texCoordCheck(pbr.metallicRoughnessTexture->texCoordIndex);
+        data.MetallicRoughnessTexture =
+            ResolveImagePath(asset, pbr.metallicRoughnessTexture->textureIndex, virtualPath, parent, warnings);
+    }
+    if (material.normalTexture.has_value())
+    {
+        texCoordCheck(material.normalTexture->texCoordIndex);
+        data.NormalTexture = ResolveImagePath(asset, material.normalTexture->textureIndex, virtualPath, parent, warnings);
+        data.NormalScale = material.normalTexture->scale;
+    }
+    if (material.occlusionTexture.has_value())
+    {
+        texCoordCheck(material.occlusionTexture->texCoordIndex);
+        data.OcclusionTexture =
+            ResolveImagePath(asset, material.occlusionTexture->textureIndex, virtualPath, parent, warnings);
+        data.OcclusionStrength = material.occlusionTexture->strength;
+    }
+    if (material.emissiveTexture.has_value())
+    {
+        texCoordCheck(material.emissiveTexture->texCoordIndex);
+        data.EmissiveTexture = ResolveImagePath(asset, material.emissiveTexture->textureIndex, virtualPath, parent, warnings);
+    }
+
+    if (material.alphaMode != fastgltf::AlphaMode::Opaque && !warnings.alphaMode)
+    {
+        warnings.alphaMode = true;
+        Core::Log::Warn("MeshImporter: '{}' has a non-opaque material ('{}'); alpha modes are not supported yet — "
+                        "importing as opaque.",
+                        virtualPath, data.Name);
+    }
+    if (material.doubleSided && !warnings.doubleSided)
+    {
+        warnings.doubleSided = true;
+        Core::Log::Warn("MeshImporter: '{}' has a double-sided material ('{}'); rendering single-sided.", virtualPath,
+                        data.Name);
+    }
+
+    return data;
+}
+
+/* Warns (once per file) about vertex attributes the engine's vertex format
+   cannot carry yet — data that would otherwise be dropped silently. */
+void WarnDroppedAttributes(const fastgltf::Primitive &primitive, std::string_view virtualPath,
+                           ImportWarnings &warnings)
+{
+    if (!warnings.secondUvSet && primitive.findAttribute("TEXCOORD_1") != primitive.attributes.end())
+    {
+        warnings.secondUvSet = true;
+        Core::Log::Warn("MeshImporter: '{}' has TEXCOORD_1+; only TEXCOORD_0 is imported.", virtualPath);
+    }
+    if (!warnings.vertexColor && primitive.findAttribute("COLOR_0") != primitive.attributes.end())
+    {
+        warnings.vertexColor = true;
+        Core::Log::Warn("MeshImporter: '{}' has vertex colors (COLOR_0); they are not imported.", virtualPath);
+    }
+    if (!warnings.skinning && primitive.findAttribute("JOINTS_0") != primitive.attributes.end())
+    {
+        warnings.skinning = true;
+        Core::Log::Warn("MeshImporter: '{}' has skinning data (JOINTS_0/WEIGHTS_0); skinning is not supported — "
+                        "importing the bind pose.",
+                        virtualPath);
+    }
 }
 
 /* Appends one primitive's geometry to @p out, baking @p model / @p normalMatrix
@@ -195,6 +403,19 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
     }
 }
 
+/* One primitive occurrence in the scene: which primitive, with what baked
+   transform, in which LOD, using which material. Collected in traversal order
+   (phase 1), then bucketed by (lod, material slot) into submeshes (phase 2). */
+struct PrimitiveRecord
+{
+    const fastgltf::Primitive *primitive = nullptr;
+    glm::mat4 model{1.f};
+    uint32_t lodIndex = 0;     // dense index into the sorted distinct LOD levels
+    uint32_t materialSlot = 0; // dense slot in first-appearance order
+};
+
+constexpr size_t kNoMaterial = static_cast<size_t>(-1);
+
 } // namespace
 
 std::string_view ToString(MeshImportError error) noexcept
@@ -259,9 +480,11 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
         return std::unexpected(MeshImportError::NoGeometry);
     }
 
-    MeshData merged;
-    bool     allHaveTangents = true;
-    bool     allHaveUv       = true;
+    // --- Phase 1: collect (primitive, world transform, LOD level, material) records
+    // in traversal order, plus the raw LOD levels and glTF material keys seen. ---
+    std::vector<PrimitiveRecord> records;
+    std::vector<uint32_t>        rawLodLevels; // parallel to records until densified
+    std::vector<size_t>          slotKeys;     // slot -> glTF material index (or kNoMaterial)
 
     fastgltf::iterateSceneNodes(
         asset, sceneIndex, fastgltf::math::fmat4x4(),
@@ -271,21 +494,131 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
             {
                 return;
             }
-            const glm::mat4 model        = ToGlm(worldMatrix);
-            const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(model)));
+            const glm::mat4 model = ToGlm(worldMatrix);
+            const uint32_t  lodLevel = LodLevelFor(node, asset, *node.meshIndex);
             for (const fastgltf::Primitive &primitive : asset.meshes[*node.meshIndex].primitives)
             {
-                AppendPrimitive(asset, primitive, model, normalMatrix, merged, allHaveTangents, allHaveUv);
+                const size_t materialKey =
+                    primitive.materialIndex.has_value() ? *primitive.materialIndex : kNoMaterial;
+                uint32_t slot = 0;
+                if (const auto found = std::ranges::find(slotKeys, materialKey); found != slotKeys.end())
+                {
+                    slot = static_cast<uint32_t>(found - slotKeys.begin());
+                }
+                else
+                {
+                    slot = static_cast<uint32_t>(slotKeys.size());
+                    slotKeys.push_back(materialKey);
+                }
+                records.push_back(PrimitiveRecord{.primitive = &primitive, .model = model, .lodIndex = lodLevel,
+                                                  .materialSlot = slot});
+                rawLodLevels.push_back(lodLevel);
             }
         });
+
+    if (records.empty())
+    {
+        return std::unexpected(MeshImportError::NoGeometry);
+    }
+
+    // Densify LOD levels: distinct authored levels, ascending, become Lods[0..n).
+    std::vector<uint32_t> distinctLods = rawLodLevels;
+    std::ranges::sort(distinctLods);
+    distinctLods.erase(std::unique(distinctLods.begin(), distinctLods.end()), distinctLods.end());
+    if (distinctLods.size() > 1 &&
+        (distinctLods.front() != 0 || distinctLods.back() != distinctLods.size() - 1))
+    {
+        Core::Log::Warn("MeshImporter: '{}' has non-contiguous LOD levels (lowest {}, highest {}); they are used "
+                        "in ascending order.",
+                        virtualPath, distinctLods.front(), distinctLods.back());
+    }
+    for (PrimitiveRecord &record : records)
+    {
+        const auto found = std::ranges::lower_bound(distinctLods, record.lodIndex);
+        record.lodIndex = static_cast<uint32_t>(found - distinctLods.begin());
+    }
+
+    // --- Phase 2: bucket by (LOD, material slot). Stable sort preserves traversal
+    // order within a bucket, so same-material primitives still merge exactly as
+    // the flat importer did. ---
+    std::ranges::stable_sort(records, [](const PrimitiveRecord &a, const PrimitiveRecord &b)
+                             {
+                                 if (a.lodIndex != b.lodIndex)
+                                 {
+                                     return a.lodIndex < b.lodIndex;
+                                 }
+                                 return a.materialSlot < b.materialSlot;
+                             });
+
+    MeshData       merged;
+    ImportWarnings warnings;
+    bool           allHaveTangents = true;
+    bool           allHaveUv       = true;
+
+    for (size_t i = 0; i < records.size();)
+    {
+        const uint32_t lod = records[i].lodIndex;
+        const uint32_t slot = records[i].materialSlot;
+        const uint32_t indexOffset = static_cast<uint32_t>(merged.Indices.size());
+
+        for (; i < records.size() && records[i].lodIndex == lod && records[i].materialSlot == slot; ++i)
+        {
+            const PrimitiveRecord &record = records[i];
+            WarnDroppedAttributes(*record.primitive, virtualPath, warnings);
+            const glm::mat3 normalMatrix = glm::transpose(glm::inverse(glm::mat3(record.model)));
+            AppendPrimitive(asset, *record.primitive, record.model, normalMatrix, merged, allHaveTangents,
+                            allHaveUv);
+        }
+
+        const uint32_t indexCount = static_cast<uint32_t>(merged.Indices.size()) - indexOffset;
+        if (indexCount == 0)
+        {
+            continue; // bucket held only non-drawable primitives (no POSITION)
+        }
+
+        SubMesh subMesh;
+        subMesh.IndexOffset = indexOffset;
+        subMesh.IndexCount = indexCount;
+        subMesh.MaterialSlot = slot;
+        subMesh.LocalBounds = ComputeBoundingSphere(merged, indexOffset, indexCount);
+        subMesh.LocalAabb = ComputeAabb(merged, indexOffset, indexCount);
+        merged.SubMeshes.push_back(subMesh);
+
+        if (merged.Lods.size() <= lod)
+        {
+            merged.Lods.push_back(
+                LodRange{.FirstSubMesh = static_cast<uint32_t>(merged.SubMeshes.size()) - 1, .SubMeshCount = 0});
+        }
+        ++merged.Lods[lod].SubMeshCount;
+    }
 
     if (merged.Vertices.empty() || merged.Indices.empty())
     {
         return std::unexpected(MeshImportError::NoGeometry);
     }
 
+    // Material slot table: extract each used glTF material; a primitive with no
+    // material gets the spec-default MaterialData (metallic=1, roughness=1).
+    const std::string parent = ParentDir(virtualPath);
+    merged.Materials.reserve(slotKeys.size());
+    for (const size_t key : slotKeys)
+    {
+        if (key == kNoMaterial || key >= asset.materials.size())
+        {
+            MaterialData fallback;
+            fallback.Name = "default";
+            merged.Materials.push_back(std::move(fallback));
+        }
+        else
+        {
+            merged.Materials.push_back(ExtractMaterial(asset, key, virtualPath, parent, warnings));
+        }
+    }
+
     // If any primitive shipped without tangents, regenerate them for the whole
     // merged mesh — but only when UVs exist (Lengyel's method needs them).
+    // Buckets never share vertices, so accumulation cannot bleed across
+    // material seams.
     if (!allHaveTangents && allHaveUv)
     {
         ComputeTangents(merged);

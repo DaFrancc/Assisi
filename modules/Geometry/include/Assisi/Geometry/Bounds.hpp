@@ -2,14 +2,19 @@
 #pragma once
 
 /// @file Bounds.hpp
-/// @brief Coarse bounding volumes for visibility tests (frustum culling).
+/// @brief Coarse bounding-volume types (sphere + AABB) for visibility tests.
+///
+/// Lives in Geometry (not Render) because bounds are pure CPU math: the
+/// importer computes per-submesh bounds at import time, and physics/tools/
+/// tests can use them without linking the renderer. Render consumes these
+/// types for frustum culling (see Render/Frustum.hpp). The functions that fit
+/// bounds around mesh geometry live beside MeshData in MeshData.hpp — this
+/// header deliberately has no MeshData dependency so MeshData can embed these
+/// types per submesh.
 
-#include <cmath>
-
-#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
 
-namespace Assisi::Render
+namespace Assisi::Geometry
 {
 
 /// @brief A bounding sphere, the cheapest volume to both build and test.
@@ -25,37 +30,17 @@ struct BoundingSphere
     float     radius = 0.f; ///< 0 means "no geometry" (an empty mesh).
 };
 
-/// @brief Fits a bounding sphere around a mesh's vertices in its local space.
+/// @brief An axis-aligned bounding box in the mesh's local space.
 ///
-/// Centre is the AABB midpoint; radius is the exact farthest-vertex distance from
-/// that centre, so the sphere is guaranteed to enclose every vertex (never
-/// under-culls) while staying tighter than an AABB half-diagonal. Returns a
-/// zero-radius sphere at the origin for an empty mesh.
-inline BoundingSphere ComputeBoundingSphere(const Geometry::MeshData &meshData)
+/// Tighter than the sphere for flat or elongated geometry (the sphere's
+/// isotropic radius swallows a large floor). Kept beside the sphere so culling
+/// can use the cheap sphere reject first and the box for refinement — and it is
+/// the screen-space depth bound the future HZB occlusion test projects.
+struct Aabb
 {
-    if (meshData.Vertices.empty())
-    {
-        return {};
-    }
-
-    glm::vec3 min = meshData.Vertices.front().Position;
-    glm::vec3 max = min;
-    for (const Geometry::Vertex &vertex : meshData.Vertices)
-    {
-        min = glm::min(min, vertex.Position);
-        max = glm::max(max, vertex.Position);
-    }
-
-    const glm::vec3 center = (min + max) * 0.5f;
-    float           radiusSquared = 0.f;
-    for (const Geometry::Vertex &vertex : meshData.Vertices)
-    {
-        const glm::vec3 offset = vertex.Position - center;
-        radiusSquared = glm::max(radiusSquared, glm::dot(offset, offset));
-    }
-
-    return BoundingSphere{.center = center, .radius = std::sqrt(radiusSquared)};
-}
+    glm::vec3 min{0.f, 0.f, 0.f};
+    glm::vec3 max{0.f, 0.f, 0.f}; ///< min == max == origin means "no geometry".
+};
 
 /// @brief Maps a local-space bounding sphere through a world matrix.
 ///
@@ -73,4 +58,4 @@ inline BoundingSphere TransformedBoundingSphere(const BoundingSphere &local, con
     return BoundingSphere{.center = center, .radius = local.radius * maxScale};
 }
 
-} /* namespace Assisi::Render */
+} /* namespace Assisi::Geometry */

@@ -7,8 +7,8 @@
 #include <algorithm>
 #include <array>
 
+#include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/Bounds.hpp>
 
 namespace Assisi::Render
 {
@@ -36,7 +36,7 @@ class Frustum
     /// Conservative: a sphere straddling a corner may test "inside" against every
     /// plane yet fall in the corner void, so this can return true for a sphere
     /// just outside — the cost is a wasted draw, never a wrongly culled object.
-    [[nodiscard]] bool IntersectsSphere(const BoundingSphere &sphere) const
+    [[nodiscard]] bool IntersectsSphere(const Geometry::BoundingSphere &sphere) const
     {
         // Outside iff the sphere is fully behind any one plane (its centre farther
         // than the radius on the plane's outward side); otherwise potentially visible.

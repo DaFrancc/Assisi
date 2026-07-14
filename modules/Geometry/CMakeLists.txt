@@ -4,6 +4,8 @@ Assisi_apply_defaults(Assisi-Geometry)
 target_sources(Assisi-Geometry
   PUBLIC
     "include/Assisi/Geometry/MeshData.hpp"
+    "include/Assisi/Geometry/Bounds.hpp"
+    "include/Assisi/Geometry/MaterialData.hpp"
     "include/Assisi/Geometry/DefaultMeshes.hpp"
     "include/Assisi/Geometry/MeshImporter.hpp"
   PRIVATE
