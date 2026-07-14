@@ -9,6 +9,7 @@
 //   REFLECTGEN_UPDATE_GOLDEN=1 python tools/reflectgen/tests/test_reflectgen.py
 
 #include <cstdint>
+#include <vector>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -42,6 +43,7 @@ struct SampleAllTypes
     AFIELD() glm::quat q = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
     AFIELD() glm::mat4 m = glm::mat4{1.0f};
     AFIELD() Assisi::Core::AssetPath assetPath; // fixed-capacity path, serialized as a string
+    AFIELD() std::vector<Assisi::Core::AssetPath> paths; // list of paths -> JSON string array
     AFIELD(transient) float runtimeCache = 0.0f; // must not appear in (de)serialize
 };
 

@@ -28,6 +28,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             { "q", Assisi::Core::Reflect::FieldType::Quat, offsetof(T, q), false },
             { "m", Assisi::Core::Reflect::FieldType::Mat4, offsetof(T, m), false },
             { "assetPath", Assisi::Core::Reflect::FieldType::AssetPath, offsetof(T, assetPath), false },
+            { "paths", Assisi::Core::Reflect::FieldType::AssetPathVector, offsetof(T, paths), false },
             { "runtimeCache", Assisi::Core::Reflect::FieldType::Float, offsetof(T, runtimeCache), true }
         },
         [](const void* ptr) -> nlohmann::json
@@ -46,6 +47,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
                 { "q", { c.q.w, c.q.x, c.q.y, c.q.z } },
                 { "m", { c.m[0][0], c.m[0][1], c.m[0][2], c.m[0][3], c.m[1][0], c.m[1][1], c.m[1][2], c.m[1][3], c.m[2][0], c.m[2][1], c.m[2][2], c.m[2][3], c.m[3][0], c.m[3][1], c.m[3][2], c.m[3][3] } },
                 { "assetPath", std::string(c.assetPath.View()) },
+                { "paths", [&]{ nlohmann::json _arr = nlohmann::json::array(); for (const auto& _p : c.paths) _arr.push_back(std::string(_p.View())); return _arr; }() },
             };
         },
         [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
@@ -65,6 +67,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             { if (j.contains("q")) { const auto& _v = j.at("q"); comp.q = glm::quat{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }; } }
             { if (j.contains("m")) { const auto& _v = j.at("m"); comp.m = glm::mat4{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>(), _v[4].get<float>(), _v[5].get<float>(), _v[6].get<float>(), _v[7].get<float>(), _v[8].get<float>(), _v[9].get<float>(), _v[10].get<float>(), _v[11].get<float>(), _v[12].get<float>(), _v[13].get<float>(), _v[14].get<float>(), _v[15].get<float>() }; } }
             { if (j.contains("assetPath")) comp.assetPath.Assign(j.at("assetPath").get<std::string>()); }
+            { if (j.contains("paths")) { comp.paths.clear(); for (const auto& _e : j.at("paths")) { Assisi::Core::AssetPath _p; _p.Assign(_e.get<std::string>()); comp.paths.push_back(_p); } } }
             (void)scene.Add(e, comp);
         },
         [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)

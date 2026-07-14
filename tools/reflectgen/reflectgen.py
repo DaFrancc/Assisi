@@ -64,6 +64,18 @@ class TypeCodegen:
     deserialize: str  # statement;  {f} = field name, {a} = accessor
 
 
+# Shared codegen for std::vector<Core::AssetPath> — an IIFE builds the JSON
+# array on serialize; deserialize clears then repopulates. Defined once because
+# several element-name spellings (unqualified/qualified) map to it.
+_ASSET_PATH_VECTOR = TypeCodegen(
+    'AssetPathVector',
+    '[&]{{ nlohmann::json _arr = nlohmann::json::array(); '
+    'for (const auto& _p : {a}) _arr.push_back(std::string(_p.View())); return _arr; }}()',
+    '{{ if (j.contains("{f}")) {{ {a}.clear(); '
+    'for (const auto& _e : j.at("{f}")) {{ Assisi::Core::AssetPath _p; '
+    '_p.Assign(_e.get<std::string>()); {a}.push_back(_p); }} }} }}')
+
+
 # Serialize expressions produce values for json initializer lists.
 # Deserialize statements read from j.at("{f}") and assign to comp.{f}.
 #
@@ -138,14 +150,24 @@ TYPES: dict[str, TypeCodegen] = {
         'AssetPath',
         'std::string({a}.View())',
         '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+    # std::vector<Core::AssetPath> — a variable-length list of virtual paths
+    # (e.g. MeshRenderer's per-slot material overrides). Serialized as a JSON
+    # array of strings; deserialize clears then rebuilds, so a shorter saved
+    # array shrinks the vector rather than leaving stale tail entries. Accepts
+    # unqualified and qualified element spellings (no internal-whitespace forms;
+    # keep the declaration spelled like the keys below).
+    'std::vector<AssetPath>':               _ASSET_PATH_VECTOR,
+    'std::vector<Core::AssetPath>':         _ASSET_PATH_VECTOR,
+    'std::vector<Assisi::Core::AssetPath>': _ASSET_PATH_VECTOR,
 }
 
-# Types reflectgen recognises but deliberately does not (de)serialize. An
-# AFIELD() of one of these is a hard generation error rather than a silent skip
-# or a null-round-trip — emitting a stub that quietly loses data is worse than
-# failing loudly. Mark the field transient or implement its codegen in TYPES.
-# (Currently empty — every recognised type is supported — but the guard stays
-# so the next deliberately-unsupported type fails loudly instead of silently.)
+# reflectgen is default-deny: any non-transient AFIELD whose type is not in
+# TYPES is a hard generation error (see _check_unsupported), because emitting a
+# stub that silently drops that field on every save is worse than failing the
+# build. This dict is optional colour on that failure: a known-unsupported type
+# mapped to a human reason ("no string codegen yet") produces a better message
+# than the generic default. Fields listed here fail exactly like any other
+# unknown type — the entry only improves the diagnostic.
 UNSUPPORTED_TYPES: dict[str, str] = {}
 
 
@@ -438,16 +460,15 @@ def _gen_field_meta(f: FieldInfo) -> str:
 
 
 def _gen_serialize(fields: list[FieldInfo]) -> str:
+    # Default-deny (enforced in generate_cpp) guarantees every non-transient
+    # field is in TYPES, so there is no unsupported branch to emit.
     serializable = [f for f in fields if not f.args.has('transient') and TYPES.get(f.cpp_type)]
-    unsupported  = [f for f in fields if not f.args.has('transient') and not TYPES.get(f.cpp_type)]
 
-    if not serializable and not unsupported:
+    if not serializable:
         # Nothing to serialize — suppress unused-parameter warning.
         return '(void)ptr;\nreturn nlohmann::json{};'
 
     lines = ['const auto& c = *static_cast<const T*>(ptr);', 'return nlohmann::json{']
-    for f in unsupported:
-        lines.append(f'    /* WARNING: unsupported type \'{f.cpp_type}\' for field \'{f.name}\' — skipped */')
     for f in serializable:
         expr = TYPES[f.cpp_type].serialize.format(a=f'c.{f.name}', f=f.name)
         lines.append(f'    {{ "{f.name}", {expr} }},')
@@ -457,7 +478,6 @@ def _gen_serialize(fields: list[FieldInfo]) -> str:
 
 def _gen_deserialize(fields: list[FieldInfo]) -> str:
     serializable = [f for f in fields if not f.args.has('transient') and TYPES.get(f.cpp_type)]
-    unsupported  = [f for f in fields if not f.args.has('transient') and not TYPES.get(f.cpp_type)]
 
     lines = [
         'auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);',
@@ -465,11 +485,9 @@ def _gen_deserialize(fields: list[FieldInfo]) -> str:
         'T comp{};',
     ]
 
-    if not serializable and not unsupported:
+    if not serializable:
         lines.append('(void)j;')
     else:
-        for f in unsupported:
-            lines.append(f'/* WARNING: unsupported type \'{f.cpp_type}\' for field \'{f.name}\' — skipped */')
         for f in serializable:
             lines.append(TYPES[f.cpp_type].deserialize.format(f=f.name, a=f'comp.{f.name}'))
 
@@ -478,6 +496,11 @@ def _gen_deserialize(fields: list[FieldInfo]) -> str:
 
 
 def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
+    # Default-deny is enforced here (not only in main) so every path that emits
+    # code — the CLI and direct callers such as the golden tests — refuses an
+    # unserializable field rather than silently dropping it.
+    _check_unsupported(components, include_path)
+
     entity_ref_types = {'ECS::Entity', 'Assisi::ECS::Entity'}
     has_entity_refs  = any(
         f.cpp_type in entity_ref_types
@@ -608,19 +631,26 @@ def _detect_include_path(header: Path) -> str:
 
 
 def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:
-    """Fail generation if any non-transient AFIELD has a known-unsupported type."""
+    """Default-deny: fail generation if any non-transient AFIELD has a type
+    reflectgen cannot (de)serialize (i.e. absent from TYPES).
+
+    A silently-skipped field round-trips to nothing — every save drops it —
+    which is far worse than a build error. Mark the field AFIELD(transient) if
+    it is runtime-only, or add its codegen to TYPES. UNSUPPORTED_TYPES supplies
+    a richer reason string when one is known.
+    """
     for comp in components:
         if comp.args.has('transient'):
             continue  # id-only component: its fields are never serialized
         for f in comp.fields:
             if f.args.has('transient'):
                 continue
-            reason = UNSUPPORTED_TYPES.get(f.cpp_type)
-            if reason:
+            if f.cpp_type not in TYPES:
+                reason = UNSUPPORTED_TYPES.get(f.cpp_type, 'no codegen for this type')
                 raise ValueError(
                     f"{header_name}: field '{comp.name}::{f.name}' has type "
                     f"'{f.cpp_type}', which reflectgen cannot serialize ({reason}). "
-                    f"Implement its codegen or mark the field AFIELD(transient).")
+                    f"Add its codegen to TYPES or mark the field AFIELD(transient).")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -99,6 +99,7 @@ class ParseTest(unittest.TestCase):
         self.assertEqual(fields["q"], "glm::quat")
         self.assertEqual(fields["m"], "glm::mat4")
         self.assertEqual(fields["assetPath"], "Assisi::Core::AssetPath")
+        self.assertEqual(fields["paths"], "std::vector<Assisi::Core::AssetPath>")
         self.assertEqual(self.by_name["SampleRef"].fields[0].cpp_type, "ECS::Entity")
 
     def test_transient_flag_is_captured(self):
@@ -119,6 +120,18 @@ class CodegenTest(unittest.TestCase):
         # ...but never in the serialize/deserialize bodies.
         self.assertNotIn("c.runtimeCache", cpp)
         self.assertNotIn("comp.runtimeCache", cpp)
+
+    def test_asset_path_vector_serializes_as_a_string_array(self):
+        components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
+        cpp = reflectgen.generate_cpp(components, SAMPLE_INCLUDE)
+        # Field metadata carries the new enum value.
+        self.assertIn('"paths", Assisi::Core::Reflect::FieldType::AssetPathVector', cpp)
+        # Serialize builds a JSON array from each path's View().
+        self.assertIn("nlohmann::json::array()", cpp)
+        self.assertIn("_arr.push_back(std::string(_p.View()))", cpp)
+        # Deserialize clears then rebuilds (shorter saved arrays shrink the vector).
+        self.assertIn("comp.paths.clear()", cpp)
+        self.assertIn("comp.paths.push_back(_p)", cpp)
 
     def test_acomp_transient_emits_id_only_registration(self):
         components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
@@ -212,7 +225,7 @@ class CodegenTest(unittest.TestCase):
 class ParserEdgeCaseTest(unittest.TestCase):
     """Fragile-parser surfaces the single golden fixture does not exercise:
     namespace-stack tracking, brace-balancing, pointer stripping, and the
-    silent-skip path for genuinely unknown (but not guarded) types."""
+    default-deny hard failure for genuinely unknown types."""
 
     def test_nested_namespace_blocks_compose(self):
         # The golden uses the collapsed `namespace A::B` form; this is the
@@ -276,18 +289,28 @@ class ParserEdgeCaseTest(unittest.TestCase):
         self.assertNotIn("c.cache", cpp)
         self.assertNotIn("comp.cache", cpp)
 
-    def test_unknown_unguarded_type_warns_but_does_not_fail(self):
-        # A type in neither TYPES nor UNSUPPORTED_TYPES is a silent skip today
-        # (FieldType::Unknown + a WARNING comment). Lock that so it can't change
-        # unnoticed — the loud failure is reserved for UNSUPPORTED_TYPES.
+    def test_unknown_type_is_a_hard_error(self):
+        # reflectgen is default-deny: a non-transient field whose type is in
+        # neither TYPES nor anything else is a hard generation error, not a
+        # silent skip — a skipped field drops on every save. Both the standalone
+        # check and generate_cpp (which enforces it) must raise.
         components = _parse_source(
             "namespace N {\nACOMP()\nstruct C { AFIELD() SomeType data = {}; };\n}\n"
         )
-        reflectgen._check_unsupported(components, "C.hpp")  # must not raise
+        with self.assertRaises(ValueError):
+            reflectgen._check_unsupported(components, "C.hpp")
+        with self.assertRaises(ValueError):
+            reflectgen.generate_cpp(components, "N/C.hpp")
 
-        cpp = reflectgen.generate_cpp(components, "N/C.hpp")
-        self.assertIn("Assisi::Core::Reflect::FieldType::Unknown", cpp)
-        self.assertIn("WARNING: unsupported type 'SomeType' for field 'data'", cpp)
+    def test_transient_unknown_type_is_still_allowed(self):
+        # Transient fields are never serialized, so an unknown type is fine.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD(transient) SomeType data = {}; AFIELD() int a = 0; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")  # must not raise
+        self.assertIn("Assisi::Core::Reflect::FieldType::Unknown", cpp)  # in the meta table
+        self.assertNotIn("c.data", cpp)  # but never (de)serialized
 
 
 class UnsupportedTypeTest(unittest.TestCase):
