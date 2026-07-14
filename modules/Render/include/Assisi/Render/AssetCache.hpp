@@ -9,10 +9,10 @@
 /// so entities that name the same asset share one upload. It owns every mesh and
 /// texture it hands out, so the pointers it returns stay valid until Clear().
 ///
-/// Mesh paths currently resolve only the built-in `prim://` primitives (there is
-/// no mesh-file loader yet); an empty or unrecognised mesh path falls back to the
-/// unit cube so the entity still renders. Texture paths are virtual asset paths
-/// resolved through AssetSystem (see Texture::LoadFromAssets).
+/// Mesh paths resolve the built-in `prim://` primitives or a mesh file loaded
+/// through Geometry::ImportMesh (glTF today); an empty path, or one that fails to
+/// load, falls back to the unit cube so the entity still renders. Texture paths
+/// are virtual asset paths resolved through AssetSystem (see Texture::LoadFromAssets).
 
 #include <functional>
 #include <unordered_map>
@@ -21,8 +21,8 @@
 #include <nvrhi/nvrhi.h>
 
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
-#include <Assisi/Render/MeshData.hpp>
 #include <Assisi/Render/Texture.hpp>
 
 namespace Assisi::Render
@@ -41,9 +41,11 @@ class AssetCache
     void Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace = ColorSpace::Srgb);
 
     /// @brief Resolves a mesh path to a cached MeshBuffer, uploading on first use.
-    /// Recognises the built-in primitives (e.g. `prim://cube`). An empty or
-    /// unrecognised path falls back to the unit cube, so the return is never null.
-    /// The pointer stays valid until Clear().
+    /// Recognises the built-in primitives (e.g. `prim://cube`) and mesh files
+    /// (e.g. `models/robot.glb`, loaded via Geometry::ImportMesh). An empty path,
+    /// or a file that fails to load, falls back to the unit cube, so the return is
+    /// never null. A failed file load is attempted once, then remembered so it is
+    /// not re-parsed every frame. The pointer stays valid until Clear().
     const MeshBuffer *ResolveMesh(const Core::AssetPath &path);
 
     /// @brief Resolves a texture path to a cached Texture, loading on first use.
@@ -70,13 +72,15 @@ class AssetCache
     ColorSpace _textureColorSpace = ColorSpace::Srgb;
 
     // Registered at Initialize(); maps a `prim://` path to its mesh factory.
-    std::unordered_map<Core::AssetPath, std::function<MeshData()>> _primitiveFactories;
+    std::unordered_map<Core::AssetPath, std::function<Geometry::MeshData()>> _primitiveFactories;
 
     std::unordered_map<Core::AssetPath, MeshBuffer> _meshes;
     std::unordered_map<Core::AssetPath, Texture>    _textures;
 
-    // Unrecognised mesh paths already warned about — ResolveMesh runs per
-    // entity per frame, so without this the fallback warning is log spam.
+    // Mesh paths that failed to load (unknown primitive, or a file ImportMesh
+    // rejected). ResolveMesh runs per entity per frame, so this set serves two
+    // ends: it warns only once (no log spam) and it stops a broken path from
+    // being re-parsed every frame — the cube fallback is used without retrying.
     // Reset by Clear() alongside the caches themselves.
     std::unordered_set<Core::AssetPath> _missingMeshWarned;
 };

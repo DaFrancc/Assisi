@@ -11,14 +11,14 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Render/Bounds.hpp>
-#include <Assisi/Render/MeshData.hpp>
 
 namespace Assisi::Render
 {
 /// @brief Owner of an NVRHI vertex + index buffer pair for a single mesh.
 ///
-/// Vertex layout matches `Assisi::Render::Vertex`: Position, Normal,
+/// Vertex layout matches `Assisi::Geometry::Vertex`: Position, Normal,
 /// TextureCoordinates, Tangent.
 class MeshBuffer
 {
@@ -26,16 +26,16 @@ class MeshBuffer
     MeshBuffer() = default;
 
     /// @brief Uploads mesh data to the GPU immediately.
-    MeshBuffer(nvrhi::IDevice *device, MeshData meshData) { Upload(device, std::move(meshData)); }
+    MeshBuffer(nvrhi::IDevice *device, Geometry::MeshData meshData) { Upload(device, std::move(meshData)); }
 
     /// @brief Creates new GPU buffers and uploads `meshData` into them, replacing
     /// any buffers already owned by this instance.
-    void Upload(nvrhi::IDevice *device, MeshData meshData)
+    void Upload(nvrhi::IDevice *device, Geometry::MeshData meshData)
     {
         _indexCount = static_cast<uint32_t>(meshData.Indices.size());
 
         nvrhi::BufferDesc vertexDesc;
-        vertexDesc.byteSize = meshData.Vertices.size() * sizeof(Vertex);
+        vertexDesc.byteSize = meshData.Vertices.size() * sizeof(Geometry::Vertex);
         vertexDesc.isVertexBuffer = true;
         vertexDesc.debugName = "MeshBuffer::VertexBuffer";
         vertexDesc.initialState = nvrhi::ResourceStates::VertexBuffer;
@@ -69,13 +69,13 @@ class MeshBuffer
     const BoundingSphere &LocalBounds() const { return _localBounds; }
 
     /// @brief CPU-side geometry this buffer was last uploaded from (e.g. for physics).
-    const MeshData &SourceData() const { return _sourceData; }
+    const Geometry::MeshData &SourceData() const { return _sourceData; }
 
   private:
     nvrhi::BufferHandle _vertexBuffer;
     nvrhi::BufferHandle _indexBuffer;
     uint32_t             _indexCount = 0;
     BoundingSphere       _localBounds;
-    MeshData              _sourceData;
+    Geometry::MeshData    _sourceData;
 };
 } /* namespace Assisi::Render */

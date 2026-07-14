@@ -34,13 +34,27 @@ void SandboxApp::DrawHelloImageWindow()
 
 namespace
 {
-/// @brief True for image extensions stb_image (Texture::LoadFromAssets) decodes.
-bool IsThumbnailableImage(const std::filesystem::path &path)
+/// @brief Lowercased extension of @p path (including the leading dot), e.g. ".glb".
+std::string LowerExtension(const std::filesystem::path &path)
 {
     std::string ext = path.extension().string();
     std::transform(ext.begin(), ext.end(), ext.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return ext;
+}
+
+/// @brief True for image extensions stb_image (Texture::LoadFromAssets) decodes.
+bool IsThumbnailableImage(const std::filesystem::path &path)
+{
+    const std::string ext = LowerExtension(path);
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga";
+}
+
+/// @brief True for mesh-file extensions Geometry::ImportMesh can load.
+bool IsMeshFile(const std::filesystem::path &path)
+{
+    const std::string ext = LowerExtension(path);
+    return ext == ".glb" || ext == ".gltf";
 }
 
 /// @brief Paints a classic folder glyph (a tabbed body) filling a @p size square
@@ -62,6 +76,36 @@ void DrawFolderIcon(const ImVec2 &origin, float size)
 
     drawList->AddRectFilled(ImVec2(left, tabTop), ImVec2(tabRight, bodyTop + rounding), tab, rounding);
     drawList->AddRectFilled(ImVec2(left, bodyTop), ImVec2(right, bottom), body, rounding);
+}
+
+/// @brief Paints a simple isometric cube filling a @p size square at @p origin,
+/// so a mesh-file tile reads as "3D model" without an image asset — the mesh
+/// counterpart to DrawFolderIcon, in cool tones to distinguish it from a folder.
+void DrawMeshIcon(const ImVec2 &origin, float size)
+{
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+
+    const float  centerX = origin.x + size * 0.5f;
+    const float  centerY = origin.y + size * 0.5f;
+    const float  halfW   = size * 0.26f;
+    const float  halfH   = size * 0.30f;
+
+    // Hexagonal silhouette of a cube plus its centre, yielding three visible faces.
+    const ImVec2 top(centerX, centerY - halfH);
+    const ImVec2 upperRight(centerX + halfW, centerY - halfH * 0.5f);
+    const ImVec2 lowerRight(centerX + halfW, centerY + halfH * 0.5f);
+    const ImVec2 bottom(centerX, centerY + halfH);
+    const ImVec2 lowerLeft(centerX - halfW, centerY + halfH * 0.5f);
+    const ImVec2 upperLeft(centerX - halfW, centerY - halfH * 0.5f);
+    const ImVec2 center(centerX, centerY);
+
+    const ImU32 topFace   = IM_COL32(150, 172, 204, 255);
+    const ImU32 rightFace = IM_COL32(92, 112, 142, 255);
+    const ImU32 leftFace  = IM_COL32(62, 78, 104, 255);
+
+    drawList->AddQuadFilled(top, upperRight, center, upperLeft, topFace);
+    drawList->AddQuadFilled(upperRight, lowerRight, bottom, center, rightFace);
+    drawList->AddQuadFilled(upperLeft, center, bottom, lowerLeft, leftFace);
 }
 } // namespace
 
@@ -110,6 +154,7 @@ void SandboxApp::RescanAssetBrowser()
 {
     _assetBrowserDirs.clear();
     _assetBrowserImages.clear();
+    _assetBrowserMeshes.clear();
     _assetBrowserReadError = false;
 
     const std::filesystem::path root   = Assisi::Core::AssetSystem::GetRoot();
@@ -130,9 +175,12 @@ void SandboxApp::RescanAssetBrowser()
             _assetBrowserDirs.push_back(name);
         else if (IsThumbnailableImage(entry.path()))
             _assetBrowserImages.push_back(name);
+        else if (IsMeshFile(entry.path()))
+            _assetBrowserMeshes.push_back(name);
     }
     std::sort(_assetBrowserDirs.begin(), _assetBrowserDirs.end());
     std::sort(_assetBrowserImages.begin(), _assetBrowserImages.end());
+    std::sort(_assetBrowserMeshes.begin(), _assetBrowserMeshes.end());
 }
 
 void SandboxApp::DrawAssetBrowser()
@@ -256,6 +304,30 @@ void SandboxApp::DrawAssetBrowser()
         }
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
         ImGui::TextWrapped("%s", img.c_str());
+        ImGui::PopTextWrapPos();
+        ImGui::EndGroup();
+        ImGui::PopID();
+
+        if (clicked)
+            SelectAsset(vpath);
+
+        if (++col % cols != 0)
+            ImGui::SameLine();
+    }
+
+    // Finally the mesh files (.glb/.gltf). They have no thumbnail, so each shows a
+    // cube icon over a click target, continuing the same grid flow as folders.
+    for (const std::string &mesh : _assetBrowserMeshes)
+    {
+        const std::string vpath = _assetBrowserDir.empty() ? mesh : _assetBrowserDir + "/" + mesh;
+
+        ImGui::PushID(mesh.c_str());
+        ImGui::BeginGroup();
+        const ImVec2 tile    = ImGui::GetCursorScreenPos();
+        const bool   clicked = ImGui::Button("##mesh", ImVec2(thumb, thumb));
+        DrawMeshIcon(tile, thumb);
+        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
+        ImGui::TextWrapped("%s", mesh.c_str());
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
         ImGui::PopID();

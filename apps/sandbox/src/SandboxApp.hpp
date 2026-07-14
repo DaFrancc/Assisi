@@ -195,6 +195,7 @@ class SandboxApp : public Assisi::App::Application
     // Refresh (see _assetBrowserDirty), never per frame.
     std::vector<std::string> _assetBrowserDirs;
     std::vector<std::string> _assetBrowserImages;
+    std::vector<std::string> _assetBrowserMeshes; ///< .glb/.gltf files (no thumbnail; shown as cube tiles).
     bool                     _assetBrowserDirty     = true;
     bool                     _assetBrowserReadError = false;
     float                    _assetBrowserThumbSize = 256.f; ///< Tile size in px; adjustable via the zoom buttons.

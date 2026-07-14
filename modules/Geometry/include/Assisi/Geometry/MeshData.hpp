@@ -2,13 +2,18 @@
 #pragma once
 
 /// @file MeshData.hpp
-/// @brief CPU-side mesh representation used as input to MeshBuffer::Upload().
+/// @brief CPU-side mesh representation — the decode target for mesh importers
+///        and the input to Render's MeshBuffer::Upload().
+///
+/// This lives in Geometry (not Render) on purpose: it is pure CPU data with no
+/// GPU dependency, so importers, physics, tools, and tests can produce or read
+/// geometry without linking the renderer.
 
 #include <Assisi/Math/GLM.hpp>
 
 #include <vector>
 
-namespace Assisi::Render
+namespace Assisi::Geometry
 {
 /// @brief A single vertex with position, surface normal, UV coordinates, and tangent.
 struct Vertex
@@ -26,4 +31,4 @@ struct MeshData
     std::vector<Vertex> Vertices;
     std::vector<unsigned int> Indices; ///< Triangle list; every 3 indices form one triangle.
 };
-} /* namespace Assisi::Render */
+} /* namespace Assisi::Geometry */

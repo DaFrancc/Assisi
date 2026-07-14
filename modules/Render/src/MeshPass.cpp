@@ -52,6 +52,7 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
         return false;
     }
 
+    using Assisi::Geometry::Vertex;
     const nvrhi::VertexAttributeDesc attributes[] = {
         nvrhi::VertexAttributeDesc()
             .setName("POSITION")

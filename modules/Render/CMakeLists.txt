@@ -6,12 +6,10 @@ target_sources(Assisi-Render
     "include/Assisi/Render/AssetCache.hpp"
     "include/Assisi/Render/Buffer.hpp"
     "include/Assisi/Render/Bounds.hpp"
-    "include/Assisi/Render/DefaultMeshes.hpp"
     "include/Assisi/Render/Frustum.hpp"
     "include/Assisi/Render/GpuTelemetry.hpp"
     "include/Assisi/Render/DefaultResources.hpp"
     "include/Assisi/Render/MeshBuffer.hpp"
-    "include/Assisi/Render/MeshData.hpp"
     "include/Assisi/Render/MeshPass.hpp"
     "include/Assisi/Render/PostProcess.hpp"
     "include/Assisi/Render/RenderFrame.hpp"
@@ -45,6 +43,8 @@ target_link_libraries(Assisi-Render
   PUBLIC
     Assisi::Core
     Assisi::Math
+    # Geometry owns MeshData (exposed in MeshBuffer's API) and the mesh importer.
+    Assisi::Geometry
     Assisi::Window
     Assisi::Deps
     # nvrhi_vk (Vulkan backend) references symbols defined in nvrhi (common),

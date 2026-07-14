@@ -33,6 +33,12 @@ option(ASSISI_ENABLE_FAST_MATH "Enable fast-math in Release" ON)
 # Unit tests (pure-logic modules: ECS, asset-path, action-map, topo-sort).
 option(ASSISI_BUILD_TESTS "Build unit tests" ON)
 
+# Assimp is the deferred multi-format catch-all mesh-import backend (FBX/OBJ/DAE/…).
+# The runtime glTF path uses fastgltf; Assimp stays OFF so its heavy build doesn't
+# tax every configure until a second format backend is actually wired. Flip this ON
+# to fetch and build it (a future Geometry Assimp backend would then link it).
+option(ASSISI_ENABLE_ASSIMP "Build the Assimp multi-format mesh-import backend" OFF)
+
 # ------------------------------------------------------------
 # Central interface targets
 # ------------------------------------------------------------
@@ -240,31 +246,46 @@ add_library(stb-headers INTERFACE)
 target_include_directories(stb-headers SYSTEM INTERFACE "${stb_SOURCE_DIR}")
 add_library(stb::stb ALIAS stb-headers)
 
-# --- Assimp
-# Vendor zlib+minizip rather than picking up a system minizip. On distros that
-# ship minizip (e.g. Arch/Manjaro), assimp finds it via pkg-config but its headers
-# live under /usr/include/minizip/, whereas ZipArchiveIOSystem.cpp does
-# #include <unzip.h> unqualified -> "unzip.h: No such file". Forcing the bundled
-# build sets ASSIMP_BUILD_MINIZIP and adds contrib/unzip to the include path.
-set(ASSIMP_BUILD_ZLIB         ON  CACHE BOOL "" FORCE)
-# Assimp compiles its own sources with -Werror; newer GCC (13+) emits warnings in
-# upstream loaders (e.g. unused-but-set-variable in MS3DLoader.cpp) that we can't
-# fix without patching the vendored tree. Don't fail our build on assimp's warnings.
-set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_TESTS        OFF CACHE BOOL "" FORCE)
-set(ASSIMP_INSTALL            OFF CACHE BOOL "" FORCE)
-set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
-set(ASSIMP_NO_EXPORT          ON  CACHE BOOL "" FORCE)
-FetchContent_Declare(assimp
-    GIT_REPOSITORY https://github.com/assimp/assimp.git
-    GIT_TAG        v5.4.3
+# --- Assimp (deferred catch-all import backend; off by default, see ASSISI_ENABLE_ASSIMP)
+if (ASSISI_ENABLE_ASSIMP)
+    # Vendor zlib+minizip rather than picking up a system minizip. On distros that
+    # ship minizip (e.g. Arch/Manjaro), assimp finds it via pkg-config but its headers
+    # live under /usr/include/minizip/, whereas ZipArchiveIOSystem.cpp does
+    # #include <unzip.h> unqualified -> "unzip.h: No such file". Forcing the bundled
+    # build sets ASSIMP_BUILD_MINIZIP and adds contrib/unzip to the include path.
+    set(ASSIMP_BUILD_ZLIB         ON  CACHE BOOL "" FORCE)
+    # Assimp compiles its own sources with -Werror; newer GCC (13+) emits warnings in
+    # upstream loaders (e.g. unused-but-set-variable in MS3DLoader.cpp) that we can't
+    # fix without patching the vendored tree. Don't fail our build on assimp's warnings.
+    set(ASSIMP_WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_TESTS        OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_INSTALL            OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+    set(ASSIMP_NO_EXPORT          ON  CACHE BOOL "" FORCE)
+    FetchContent_Declare(assimp
+        GIT_REPOSITORY https://github.com/assimp/assimp.git
+        GIT_TAG        v5.4.3
+        GIT_SHALLOW    TRUE
+        SYSTEM
+    )
+    FetchContent_MakeAvailable(assimp)
+    if (NOT TARGET assimp::assimp)
+        add_library(assimp::assimp ALIAS assimp)
+    endif()
+endif()
+
+# --- fastgltf (glTF 2.0 loader; the runtime mesh-import backend in Geometry).
+# Depends only on simdjson, which its CMake fetches automatically.
+set(FASTGLTF_ENABLE_TESTS    OFF CACHE BOOL "" FORCE)
+set(FASTGLTF_ENABLE_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(FASTGLTF_ENABLE_DOCS     OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(fastgltf
+    GIT_REPOSITORY https://github.com/spnda/fastgltf.git
+    GIT_TAG        v0.9.0
     GIT_SHALLOW    TRUE
     SYSTEM
 )
-FetchContent_MakeAvailable(assimp)
-if (NOT TARGET assimp::assimp)
-    add_library(assimp::assimp ALIAS assimp)
-endif()
+FetchContent_MakeAvailable(fastgltf)
 
 # --- Jolt Physics
 set(FLOATING_POINT_EXCEPTIONS_ENABLED    OFF CACHE BOOL "" FORCE)
@@ -413,7 +434,6 @@ target_link_libraries(Assisi-Deps INTERFACE
     glfw
     glm::glm
     stb::stb
-    assimp::assimp
     imgui::imgui
 )
 
@@ -427,6 +447,9 @@ include(cmake/AssisiReflect.cmake)
 # ------------------------------------------------------------
 add_subdirectory(modules/Core)
 add_subdirectory(modules/Math)
+# Geometry sits above Core+Math and below Render: CPU-side mesh data and the
+# mesh-file importer (glTF via fastgltf), with no GPU dependency.
+add_subdirectory(modules/Geometry)
 add_subdirectory(modules/Window)
 add_subdirectory(modules/Render)
 add_subdirectory(modules/ECS)

@@ -4,13 +4,13 @@
 
 #include <cstddef>
 
+#include <Assisi/Geometry/DefaultMeshes.hpp>
+#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/DefaultMeshes.hpp>
-#include <Assisi/Render/MeshData.hpp>
 
-using Assisi::Render::CreateUnitCubeMesh;
-using Assisi::Render::MeshData;
-using Assisi::Render::Vertex;
+using Assisi::Geometry::CreateUnitCubeMesh;
+using Assisi::Geometry::MeshData;
+using Assisi::Geometry::Vertex;
 
 // A texture maps onto a face without mirroring iff the world-space tangent
 // (d pos / d u) and bitangent (d pos / d v) form a frame whose cross product

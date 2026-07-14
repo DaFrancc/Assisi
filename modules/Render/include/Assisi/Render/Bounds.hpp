@@ -6,8 +6,8 @@
 
 #include <cmath>
 
+#include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/MeshData.hpp>
 
 namespace Assisi::Render
 {
@@ -31,7 +31,7 @@ struct BoundingSphere
 /// that centre, so the sphere is guaranteed to enclose every vertex (never
 /// under-culls) while staying tighter than an AABB half-diagonal. Returns a
 /// zero-radius sphere at the origin for an empty mesh.
-inline BoundingSphere ComputeBoundingSphere(const MeshData &meshData)
+inline BoundingSphere ComputeBoundingSphere(const Geometry::MeshData &meshData)
 {
     if (meshData.Vertices.empty())
     {
@@ -40,7 +40,7 @@ inline BoundingSphere ComputeBoundingSphere(const MeshData &meshData)
 
     glm::vec3 min = meshData.Vertices.front().Position;
     glm::vec3 max = min;
-    for (const Vertex &vertex : meshData.Vertices)
+    for (const Geometry::Vertex &vertex : meshData.Vertices)
     {
         min = glm::min(min, vertex.Position);
         max = glm::max(max, vertex.Position);
@@ -48,7 +48,7 @@ inline BoundingSphere ComputeBoundingSphere(const MeshData &meshData)
 
     const glm::vec3 center = (min + max) * 0.5f;
     float           radiusSquared = 0.f;
-    for (const Vertex &vertex : meshData.Vertices)
+    for (const Geometry::Vertex &vertex : meshData.Vertices)
     {
         const glm::vec3 offset = vertex.Position - center;
         radiusSquared = glm::max(radiusSquared, glm::dot(offset, offset));

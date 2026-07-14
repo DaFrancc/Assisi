@@ -2,14 +2,14 @@
 #pragma once
 
 /// @file DefaultMeshes.hpp
-/// @brief Factory functions for built-in primitive meshes.
+/// @brief Factory functions for built-in primitive meshes, plus tangent generation.
 
-#include <Assisi/Render/MeshData.hpp>
+#include <Assisi/Geometry/MeshData.hpp>
 
 #include <cmath>
 #include <vector>
 
-namespace Assisi::Render
+namespace Assisi::Geometry
 {
 
 /// @brief Computes and fills the Tangent field of every vertex in @p mesh.
@@ -142,4 +142,4 @@ inline MeshData CreateUnitCubeMesh()
 
     return mesh;
 }
-} /* namespace Assisi::Render */
+} /* namespace Assisi::Geometry */
