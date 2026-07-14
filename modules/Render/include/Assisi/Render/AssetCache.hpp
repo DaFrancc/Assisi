@@ -2,18 +2,26 @@
 #pragma once
 
 /// @file AssetCache.hpp
-/// @brief Path-keyed cache resolving AssetPaths to shared GPU meshes and textures.
+/// @brief Path-keyed cache resolving AssetPaths to shared GPU meshes, textures,
+///        and materials.
 ///
 /// The game holds asset *paths* on its components (see MeshRenderer);
 /// the AssetCache turns those paths into concrete GPU resources, deduplicating
-/// so entities that name the same asset share one upload. It owns every mesh and
-/// texture it hands out, so the pointers it returns stay valid until Clear().
+/// so entities that name the same asset share one upload. It owns every mesh,
+/// texture, and material it hands out, so the pointers it returns stay valid
+/// until Clear().
 ///
 /// Mesh paths resolve the built-in `prim://` primitives or a mesh file loaded
 /// through Geometry::ImportMesh (glTF today); an empty path, or one that fails to
 /// load, falls back to the unit cube so the entity still renders. Texture paths
-/// are virtual asset paths resolved through AssetSystem (see Texture::LoadFromAssets).
+/// are virtual asset paths resolved through AssetSystem (see Texture::LoadFromAssets),
+/// plus a handful of `prim://` solid-colour texture primitives that stand in for
+/// a material's empty channels (white, linear white, flat normal) — engine-
+/// generated assets that live in this same cache rather than a separate static,
+/// so a device rebuild regenerates them uniformly. Material paths resolve `.amat`
+/// files (empty/failed -> a neutral fallback material).
 
+#include <cstdint>
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
@@ -21,7 +29,9 @@
 #include <nvrhi/nvrhi.h>
 
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/Texture.hpp>
 
@@ -32,33 +42,57 @@ class AssetCache
   public:
     AssetCache() = default;
 
-    /// @brief Bind to a device and register the built-in `prim://` primitives.
-    /// Must be called before any Resolve* call. @p textureColorSpace selects how
-    /// this cache's textures are loaded: Srgb for scene albedo (the default —
-    /// the mesh shader wants linear-filtered colour), Linear for textures shown
-    /// straight through ImGui (e.g. asset-browser thumbnails), which must not be
-    /// gamma-decoded by the sampler.
+    /// @brief Bind to a device, register the built-in `prim://` mesh and texture
+    /// primitives, and build the fallback material. Must be called before any
+    /// Resolve* call. @p textureColorSpace is the default colour space for
+    /// ResolveTexture calls that don't specify one — Srgb for scene albedo, Linear
+    /// for textures shown straight through ImGui (e.g. asset-browser thumbnails).
     void Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace = ColorSpace::Srgb);
 
     /// @brief Resolves a mesh path to a cached MeshBuffer, uploading on first use.
     /// Recognises the built-in primitives (e.g. `prim://cube`) and mesh files
     /// (e.g. `models/robot.glb`, loaded via Geometry::ImportMesh). An empty path,
     /// or a file that fails to load, falls back to the unit cube, so the return is
-    /// never null. A failed file load is attempted once, then remembered so it is
-    /// not re-parsed every frame. The pointer stays valid until Clear().
+    /// never null. A failed file load is attempted once, then remembered. The
+    /// pointer stays valid until Clear().
     const MeshBuffer *ResolveMesh(const Core::AssetPath &path);
 
-    /// @brief Resolves a texture path to a cached Texture, loading on first use.
-    /// An empty path returns null (the mesh pass then draws its flat-white
-    /// fallback); a non-empty path that fails to load also returns null, after a
-    /// warning, and the failure is remembered so it isn't retried every frame.
-    /// A successful pointer stays valid until Clear().
-    const Texture *ResolveTexture(const Core::AssetPath &path);
+    /// @brief Resolves a texture path to a cached Texture, loading on first use,
+    /// in the cache's default colour space (see Initialize).
+    const Texture *ResolveTexture(const Core::AssetPath &path)
+    {
+        return ResolveTexture(path, _textureColorSpace);
+    }
 
-    /// @brief Drops every cached mesh and texture, freeing their GPU resources.
-    /// Any binding sets referencing those textures (see MeshPass) must be
-    /// invalidated in the same breath. The registered primitives survive — only
-    /// their uploaded buffers are dropped and will re-upload on next resolve.
+    /// @brief Resolves a texture path in an explicit colour space. The cache is
+    /// keyed on (path, colour space), so the same file can be resident as both an
+    /// sRGB colour map and a linear data map without one clobbering the other.
+    /// An empty path returns null; a non-empty path that fails to load also
+    /// returns null (after a one-time warning). `prim://` texture primitives
+    /// (white / white-linear / flat-normal) resolve here too, in their own fixed
+    /// colour space. A successful pointer stays valid until Clear().
+    const Texture *ResolveTexture(const Core::AssetPath &path, ColorSpace colorSpace);
+
+    /// @brief Resolves a `.amat` material path to a cached Material, loading on
+    /// first use. An empty path, or a file that fails to load/parse, returns the
+    /// neutral fallback material — so the return is never null. The pointer stays
+    /// valid until Clear().
+    const Material *ResolveMaterial(const Core::AssetPath &path);
+
+    /// @brief The material a mesh imported for one of its slots (from the glTF
+    /// material), built on first use. Used when a MeshRenderer leaves that slot's
+    /// override empty. Returns the fallback material if the mesh isn't resolved or
+    /// the slot is out of range. Never null.
+    const Material *MeshDefaultMaterial(const Core::AssetPath &meshPath, uint32_t slot);
+
+    /// @brief The neutral fallback material (id 0): white albedo, metallic 0,
+    /// roughness 0.6 — the engine's pre-material look. Never null.
+    const Material *FallbackMaterial() const { return &_fallbackMaterial; }
+
+    /// @brief Drops every cached mesh, texture, and material, freeing their GPU
+    /// resources, and rebuilds the fallback material. Any binding sets referencing
+    /// those resources (see MeshPass) must be invalidated in the same breath.
+    /// Stable material ids are NOT reused across Clear().
     void Clear();
 
   private:
@@ -66,22 +100,81 @@ class AssetCache
     /// it on first use, or null if @p path names no known primitive.
     const MeshBuffer *ResolvePrimitive(const Core::AssetPath &path);
 
+    /// @brief Resolves @p path (or, if empty/failed, @p fallbackPrimitive) to a
+    /// native texture in @p space, for one material channel. Sets @p *outPresent
+    /// to whether the real (non-fallback) texture was used.
+    nvrhi::ITexture *ResolveChannel(const Core::AssetPath &path, ColorSpace space,
+                                    const Core::AssetPath &fallbackPrimitive, bool *outPresent = nullptr);
+
+    /// @brief Populates @p material's textures + constants from @p data, assigning
+    /// it @p id.
+    void BuildMaterial(Material &material, const Geometry::MaterialData &data, uint32_t id);
+
+    /// @brief (Re)build the id-0 fallback material from the engine defaults.
+    void BuildFallbackMaterial();
+
+    // A texture cache key: the same file may be resident once per colour space.
+    struct TextureKey
+    {
+        Core::AssetPath path;
+        ColorSpace      space;
+        bool operator==(const TextureKey &other) const { return space == other.space && path == other.path; }
+    };
+    struct TextureKeyHash
+    {
+        std::size_t operator()(const TextureKey &key) const
+        {
+            return std::hash<Core::AssetPath>{}(key.path) ^ (static_cast<std::size_t>(key.space) * 0x9e3779b9u);
+        }
+    };
+
+    // A mesh-default-material key: (mesh path, slot index).
+    struct MeshSlotKey
+    {
+        Core::AssetPath meshPath;
+        uint32_t        slot = 0;
+        bool operator==(const MeshSlotKey &other) const { return slot == other.slot && meshPath == other.meshPath; }
+    };
+    struct MeshSlotKeyHash
+    {
+        std::size_t operator()(const MeshSlotKey &key) const
+        {
+            return std::hash<Core::AssetPath>{}(key.meshPath) ^ (static_cast<std::size_t>(key.slot) * 0x9e3779b9u);
+        }
+    };
+
+    // A `prim://` solid-colour texture primitive descriptor.
+    struct SolidColor
+    {
+        unsigned char r, g, b, a;
+        ColorSpace    space;
+    };
+
     nvrhi::IDevice *_device = nullptr;
+    ColorSpace      _textureColorSpace = ColorSpace::Srgb;
 
-    // Colour space every texture in this cache is loaded with (see Initialize()).
-    ColorSpace _textureColorSpace = ColorSpace::Srgb;
-
-    // Registered at Initialize(); maps a `prim://` path to its mesh factory.
+    // Registered at Initialize(): `prim://` mesh factories and solid-colour
+    // texture primitives (white / white-linear / flat-normal).
     std::unordered_map<Core::AssetPath, std::function<Geometry::MeshData()>> _primitiveFactories;
+    std::unordered_map<Core::AssetPath, SolidColor>                          _texturePrimitives;
 
-    std::unordered_map<Core::AssetPath, MeshBuffer> _meshes;
-    std::unordered_map<Core::AssetPath, Texture>    _textures;
+    std::unordered_map<Core::AssetPath, MeshBuffer>                    _meshes;
+    std::unordered_map<TextureKey, Texture, TextureKeyHash>            _textures;
+    std::unordered_map<Core::AssetPath, Material>                      _materials;         // .amat files
+    std::unordered_map<MeshSlotKey, Material, MeshSlotKeyHash>         _meshDefaultMaterials;
 
-    // Mesh paths that failed to load (unknown primitive, or a file ImportMesh
-    // rejected). ResolveMesh runs per entity per frame, so this set serves two
-    // ends: it warns only once (no log spam) and it stops a broken path from
-    // being re-parsed every frame — the cube fallback is used without retrying.
-    // Reset by Clear() alongside the caches themselves.
+    // The id-0 fallback; rebuilt on Clear (its texture pointers would dangle).
+    Material _fallbackMaterial;
+
+    // Monotonic, process-lifetime material id. NOT reset by Clear(), so an id is
+    // never reused — a stale binding-set entry keyed on it is dead, never wrong.
+    // Starts at 1; id 0 is reserved for the fallback material.
+    uint32_t _nextMaterialId = 1;
+
+    // Mesh paths that failed to load (see ResolveMesh): warn once, and don't
+    // re-parse a broken path every frame. Reset by Clear().
     std::unordered_set<Core::AssetPath> _missingMeshWarned;
+    // Material paths that failed to load/parse: same rationale.
+    std::unordered_set<Core::AssetPath> _missingMaterialWarned;
 };
 } /* namespace Assisi::Render */
