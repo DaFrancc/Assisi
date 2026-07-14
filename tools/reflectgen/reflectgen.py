@@ -51,6 +51,7 @@ class ComponentInfo:
     namespaces: list   # e.g. ['Assisi', 'Runtime']
     args:       AnnotArgs
     fields:     list   # list[FieldInfo]
+    is_asset:   bool = False  # True for AASSET (standalone asset), False for ACOMP
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -81,47 +82,50 @@ _ASSET_PATH_VECTOR = TypeCodegen(
 #
 # GLM quat: memory layout {x,y,z,w}, constructor glm::quat(w,x,y,z).
 # We serialize as [w,x,y,z] to match math convention.
+# The deserialize template's {a} is the write target (accessor). It is
+# "comp.<field>" for a component and "a.<field>" for an AASSET instance, so
+# every template must route writes through {a} — never a hardcoded "comp.".
 TYPES: dict[str, TypeCodegen] = {
     'float':     TypeCodegen(
         'Float',
         '{a}',
-        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<float>();'),
+        'if (j.contains("{f}")) {a} = j.at("{f}").get<float>();'),
     'double':    TypeCodegen(
         'Double',
         '{a}',
-        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<double>();'),
+        'if (j.contains("{f}")) {a} = j.at("{f}").get<double>();'),
     'int':       TypeCodegen(
         'Int',
         '{a}',
-        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<int>();'),
+        'if (j.contains("{f}")) {a} = j.at("{f}").get<int>();'),
     'int32_t':   TypeCodegen(
         'Int32',
         '{a}',
-        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<int32_t>();'),
+        'if (j.contains("{f}")) {a} = j.at("{f}").get<int32_t>();'),
     'uint32_t':  TypeCodegen(
         'UInt32',
         '{a}',
-        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<uint32_t>();'),
+        'if (j.contains("{f}")) {a} = j.at("{f}").get<uint32_t>();'),
     'bool':      TypeCodegen(
         'Bool',
         '{a}',
-        'if (j.contains("{f}")) comp.{f} = j.at("{f}").get<bool>();'),
+        'if (j.contains("{f}")) {a} = j.at("{f}").get<bool>();'),
     'glm::vec2': TypeCodegen(
         'Vec2',
         '{{ {a}.x, {a}.y }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>() }}; }} }}'),
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = {{ _v[0].get<float>(), _v[1].get<float>() }}; }} }}'),
     'glm::vec3': TypeCodegen(
         'Vec3',
         '{{ {a}.x, {a}.y, {a}.z }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>() }}; }} }}'),
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>() }}; }} }}'),
     'glm::vec4': TypeCodegen(
         'Vec4',
         '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
     'glm::quat': TypeCodegen(
         'Quat',
         '{{ {a}.w, {a}.x, {a}.y, {a}.z }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); comp.{f} = glm::quat{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
+        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = glm::quat{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
     # glm::mat4 — 16 floats in column-major order (m[col][row]). Serialized as a
     # flat JSON array of 16; glm::mat4's 16-scalar constructor consumes the same
     # column-major order, so the round-trip is exact.
@@ -245,6 +249,7 @@ def strip_comments(text: str) -> str:
 # ──────────────────────────────────────────────────────────────────────────────
 
 _ACOMP_RE  = re.compile(r'\bACOMP\s*\(([^)]*)\)')
+_AASSET_RE = re.compile(r'\bAASSET\s*\(([^)]*)\)')
 _AFIELD_RE = re.compile(r'\bAFIELD\s*\(([^)]*)\)')
 _STRUCT_RE = re.compile(r'\bstruct\s+(\w+)')
 _NS_RE     = re.compile(r'\bnamespace\s+([\w:]+)')
@@ -318,6 +323,7 @@ def parse_header(path: Path) -> list[ComponentInfo]:
     i               = 0
     n               = len(text)
     pending_acomp: Optional[AnnotArgs] = None
+    pending_is_asset = False
 
     while i < n:
         # ── Namespace ───────────────────────────────────────────────────────
@@ -334,14 +340,21 @@ def parse_header(path: Path) -> list[ComponentInfo]:
                 i = j + 1
                 continue
 
-        # ── ACOMP ───────────────────────────────────────────────────────────
+        # ── ACOMP / AASSET ──────────────────────────────────────────────────
         acomp_m = _ACOMP_RE.match(text, i)
         if acomp_m:
             pending_acomp = parse_annot_args(acomp_m.group(1))
+            pending_is_asset = False
             i = acomp_m.end()
             continue
+        aasset_m = _AASSET_RE.match(text, i)
+        if aasset_m:
+            pending_acomp = parse_annot_args(aasset_m.group(1))
+            pending_is_asset = True
+            i = aasset_m.end()
+            continue
 
-        # ── Struct (only matters after ACOMP) ───────────────────────────────
+        # ── Struct (only matters after ACOMP/AASSET) ────────────────────────
         if pending_acomp is not None:
             struct_m = _STRUCT_RE.match(text, i)
             if struct_m:
@@ -354,13 +367,16 @@ def parse_header(path: Path) -> list[ComponentInfo]:
                         namespaces=list(ns_stack),
                         args=pending_acomp,
                         fields=fields,
+                        is_asset=pending_is_asset,
                     ))
                     pending_acomp = None
+                    pending_is_asset = False
                     brace_depth += body.count('{') - body.count('}')
                     i = end
                     continue
                 else:
                     pending_acomp = None
+                    pending_is_asset = False
 
         # ── Brace / namespace tracking ───────────────────────────────────────
         ch = text[i]
@@ -495,38 +511,119 @@ def _gen_deserialize(fields: list[FieldInfo]) -> str:
     return '\n'.join(lines)
 
 
+def _gen_deserialize_asset(fields: list[FieldInfo]) -> str:
+    """Deserialize for an AASSET: write fields into a caller-owned instance
+    (out_ptr), no scene/entity machinery. Per-field 'if present' so absent keys
+    leave the instance's current value untouched (forward-compat)."""
+    serializable = [f for f in fields if not f.args.has('transient') and TYPES.get(f.cpp_type)]
+
+    if not serializable:
+        return '(void)j;\n(void)out_ptr;'
+
+    lines = ['auto& a = *static_cast<T*>(out_ptr);']
+    for f in serializable:
+        lines.append(TYPES[f.cpp_type].deserialize.format(f=f.name, a=f'a.{f.name}'))
+    return '\n'.join(lines)
+
+
+# EntityRef is meaningless in a standalone asset (there is no scene to resolve
+# a serial index against), and its codegen references Runtime::SceneSerializer,
+# which an asset's home module (e.g. Geometry) does not link. Forbid it.
+_ENTITY_REF_TYPES = {'ECS::Entity', 'Assisi::ECS::Entity'}
+
+
+def _check_asset_fields(components: list[ComponentInfo], header_name: str) -> None:
+    for comp in components:
+        if not comp.is_asset:
+            continue
+        for f in comp.fields:
+            if f.args.has('transient'):
+                continue
+            if f.cpp_type in _ENTITY_REF_TYPES:
+                raise ValueError(
+                    f"{header_name}: asset '{comp.name}' field '{f.name}' is an "
+                    f"EntityRef, which AASSET types cannot serialize (no scene to "
+                    f"resolve against). Remove it or mark it AFIELD(transient).")
+
+
+def _gen_asset_block(comp: ComponentInfo) -> str:
+    fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
+    var_name = f'_reflectgen_{comp.name}'
+    field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
+    serialize   = _indent(_gen_serialize(comp.fields), 12)
+    deserialize = _indent(_gen_deserialize_asset(comp.fields), 12)
+
+    return f"""\
+// ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
+// AASSET: standalone asset type, registered with AssetTypeRegistry.
+static const bool {var_name} = []() -> bool
+{{
+    using T = {fqn};
+    Assisi::Core::Reflect::AssetTypeRegistry::Instance().Register({{
+        "{comp.name}",
+        typeid(T),
+        {{
+            {field_metas}
+        }},
+        [](const void* ptr) -> nlohmann::json
+        {{
+{serialize}
+        }},
+        [](const nlohmann::json& j, void* out_ptr)
+        {{
+{deserialize}
+        }},
+    }});
+    return true;
+}}();
+
+"""
+
+
 def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
     # Default-deny is enforced here (not only in main) so every path that emits
     # code — the CLI and direct callers such as the golden tests — refuses an
     # unserializable field rather than silently dropping it.
     _check_unsupported(components, include_path)
+    _check_asset_fields(components, include_path)
 
-    entity_ref_types = {'ECS::Entity', 'Assisi::ECS::Entity'}
-    has_entity_refs  = any(
-        f.cpp_type in entity_ref_types
-        for comp in components
+    component_infos = [c for c in components if not c.is_asset]
+    asset_infos     = [c for c in components if c.is_asset]
+
+    has_entity_refs = any(
+        f.cpp_type in _ENTITY_REF_TYPES
+        for comp in component_infos
         if not comp.args.has('transient')  # id-only components serialize nothing
         for f in comp.fields
         if not f.args.has('transient')
     )
 
+    # Includes are conditional on what the header actually declares. An
+    # asset-only header (e.g. Geometry's MaterialData) must NOT pull in
+    # ComponentRegistry / ECS::Scene — its home module does not link ECS.
+    includes = []
+    if component_infos:
+        includes.append('#include <Assisi/Core/Reflect/ComponentRegistry.hpp>')
+        includes.append('#include <Assisi/ECS/Scene.hpp>')
+        if has_entity_refs:
+            includes.append('#include <Assisi/Runtime/SceneSerializer.hpp>')
+    if asset_infos:
+        includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
+    includes.append(f'#include <{include_path}>')
+    include_block = '\n'.join(includes)
+
     blocks = []
-    scene_serializer_include = (
-        '#include <Assisi/Runtime/SceneSerializer.hpp>\n' if has_entity_refs else ''
-    )
     blocks.append(f"""\
 // AUTO-GENERATED by reflectgen — do not edit.
 // Source: {include_path}
 
-#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
-#include <Assisi/ECS/Scene.hpp>
-{scene_serializer_include}#include <{include_path}>
+{include_block}
 
 namespace
 {{
 """)
 
-    for comp in components:
+    for comp in component_infos:
         fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
         var_name = f'_reflectgen_{comp.name}'
 
@@ -607,6 +704,9 @@ static const bool {var_name} = []() -> bool
 }}();
 
 """)
+
+    for comp in asset_infos:
+        blocks.append(_gen_asset_block(comp))
 
     blocks.append('} // namespace\n')
     return ''.join(blocks)

@@ -13,6 +13,7 @@
 #include <string>
 
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 namespace Assisi::Geometry
@@ -32,25 +33,26 @@ namespace Assisi::Geometry
 /// Colour space is a fixed property of each channel, never per-file
 /// configuration: baseColor and emissive are sRGB; normal, metallic-roughness,
 /// and occlusion are linear.
+AASSET()
 struct MaterialData
 {
     // --- Factors (glTF pbrMetallicRoughness + friends) ---
-    glm::vec4 BaseColorFactor{1.f, 1.f, 1.f, 1.f};
-    float     MetallicFactor = 1.f;
-    float     RoughnessFactor = 1.f;
-    float     NormalScale = 1.f;
-    float     OcclusionStrength = 1.f;
-    glm::vec3 EmissiveFactor{0.f, 0.f, 0.f};
+    AFIELD() glm::vec4 BaseColorFactor{1.f, 1.f, 1.f, 1.f};
+    AFIELD() float     MetallicFactor = 1.f;
+    AFIELD() float     RoughnessFactor = 1.f;
+    AFIELD() float     NormalScale = 1.f;
+    AFIELD() float     OcclusionStrength = 1.f;
+    AFIELD() glm::vec3 EmissiveFactor{0.f, 0.f, 0.f};
 
     // --- Texture channels (virtual asset paths; empty = factor-only) ---
-    Core::AssetPath BaseColorTexture;         ///< sRGB.
-    Core::AssetPath NormalTexture;            ///< Linear; xyz in [0,1] -> *2-1.
-    Core::AssetPath MetallicRoughnessTexture; ///< Linear; glTF packing: G = roughness, B = metallic.
-    Core::AssetPath OcclusionTexture;         ///< Linear; R channel (often the same file as MR).
-    Core::AssetPath EmissiveTexture;          ///< sRGB.
+    AFIELD() Assisi::Core::AssetPath BaseColorTexture;         ///< sRGB.
+    AFIELD() Assisi::Core::AssetPath NormalTexture;            ///< Linear; xyz in [0,1] -> *2-1.
+    AFIELD() Assisi::Core::AssetPath MetallicRoughnessTexture; ///< Linear; glTF packing: G = roughness, B = metallic.
+    AFIELD() Assisi::Core::AssetPath OcclusionTexture;         ///< Linear; R channel (often the same file as MR).
+    AFIELD() Assisi::Core::AssetPath EmissiveTexture;          ///< sRGB.
 
     /// @brief Display label (the glTF material name). UI only — never
-    /// serialized into .amat files, never used as a lookup key.
+    /// serialized into .amat, never a lookup key, so deliberately not AFIELD.
     std::string Name;
 };
 

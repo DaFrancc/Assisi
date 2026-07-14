@@ -16,6 +16,15 @@
 #define ACOMP(...)
 #define AFIELD(...)
 
+/// AASSET(...) — marks a struct as a reflected standalone asset type (e.g. a
+/// Material saved as a .amat file). Like ACOMP but registers into the
+/// AssetTypeRegistry instead of ComponentRegistry: the generated code has no
+/// scene/entity hooks — just serialize(const T&) -> json and
+/// deserialize(json, T&). Fields are marked with AFIELD, same as components.
+/// Asset types must not contain AFIELD EntityRef fields (there is no scene to
+/// resolve them against).
+#define AASSET(...)
+
 /// AEVENT() — marks a struct as an event type.
 /// Compiles to nothing today; reserved for future reflectgen support
 /// (serialization, network replication interception).

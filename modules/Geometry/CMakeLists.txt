@@ -31,6 +31,15 @@ target_link_libraries(Assisi-Geometry
 
 add_library(Assisi::Geometry ALIAS Assisi-Geometry)
 
+# MaterialData is an AASSET: reflectgen emits its AssetTypeRegistry registration
+# (serialize/deserialize for .amat). The generated OBJECT library inherits
+# Geometry's include paths (and Core -> nlohmann_json) transitively.
+assisi_reflect(
+  TARGET Assisi-Geometry
+  HEADERS
+    include/Assisi/Geometry/MaterialData.hpp
+)
+
 if (ASSISI_BUILD_TESTS)
   add_subdirectory(tests)
 endif()

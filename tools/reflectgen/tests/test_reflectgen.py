@@ -344,6 +344,67 @@ class UnsupportedTypeTest(unittest.TestCase):
             del reflectgen.UNSUPPORTED_TYPES["std::string"]
 
 
+class AssetTypeTest(unittest.TestCase):
+    """AASSET: standalone asset types register with AssetTypeRegistry, not
+    ComponentRegistry, and emit no scene/entity machinery."""
+
+    _MAT = (
+        "#include <Assisi/Core/AssetPath.hpp>\n"
+        "#include <vector>\n"
+        "namespace Assisi::Geometry {\n"
+        "AASSET()\n"
+        "struct MaterialData {\n"
+        "    AFIELD() glm::vec4 BaseColorFactor{1,1,1,1};\n"
+        "    AFIELD() float MetallicFactor = 1.f;\n"
+        "    AFIELD() Assisi::Core::AssetPath BaseColorTexture;\n"
+        "    AFIELD() std::vector<Assisi::Core::AssetPath> layers;\n"
+        "    AFIELD(transient) int cache = 0;\n"
+        "};\n}\n"
+    )
+
+    def test_aasset_is_flagged_as_asset(self):
+        comps = _parse_source(self._MAT)
+        self.assertEqual(len(comps), 1)
+        self.assertTrue(comps[0].is_asset)
+        self.assertEqual(comps[0].namespaces, ["Assisi", "Geometry"])
+
+    def test_aasset_registers_with_asset_registry_not_component(self):
+        cpp = reflectgen.generate_cpp(_parse_source(self._MAT), "Assisi/Geometry/MaterialData.hpp")
+        self.assertIn("AssetTypeRegistry::Instance().Register", cpp)
+        self.assertNotIn("ComponentRegistry", cpp)
+        # Asset-only header must not drag in ECS (its module may not link it).
+        self.assertNotIn("Assisi/ECS/Scene.hpp", cpp)
+        self.assertNotIn("scene_ptr", cpp)
+        # Deserialize writes into the caller's instance, not a scene.
+        self.assertIn("void* out_ptr", cpp)
+        self.assertIn("auto& a = *static_cast<T*>(out_ptr)", cpp)
+        self.assertIn("a.MetallicFactor = j.at(\"MetallicFactor\")", cpp)
+        # Transient field is in the meta table but never (de)serialized.
+        self.assertIn('"cache", Assisi::Core::Reflect::FieldType::Int', cpp)
+        self.assertNotIn("a.cache", cpp)
+        self.assertNotIn("c.cache", cpp)
+
+    def test_aasset_entity_ref_field_is_rejected(self):
+        src = (
+            "#include <Assisi/ECS/Entity.hpp>\n"
+            "namespace N {\nAASSET()\nstruct Bad { AFIELD() ECS::Entity owner = ECS::NullEntity; };\n}\n"
+        )
+        with self.assertRaises(ValueError):
+            reflectgen.generate_cpp(_parse_source(src), "N/Bad.hpp")
+
+    def test_component_and_asset_in_one_header_pull_both_includes(self):
+        src = (
+            "#include <Assisi/Core/AssetPath.hpp>\n"
+            "namespace N {\n"
+            "ACOMP()\nstruct C { AFIELD() int a = 0; };\n"
+            "AASSET()\nstruct A { AFIELD() float b = 0.f; };\n"
+            "}\n"
+        )
+        cpp = reflectgen.generate_cpp(_parse_source(src), "N/Mixed.hpp")
+        self.assertIn("ComponentRegistry", cpp)
+        self.assertIn("AssetTypeRegistry", cpp)
+
+
 class IncludePathTest(unittest.TestCase):
     def test_detects_path_after_include_segment(self):
         p = Path("modules") / "Runtime" / "include" / "Assisi" / "Runtime" / "Foo.hpp"

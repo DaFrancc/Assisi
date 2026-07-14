@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-Core)
 target_sources(Assisi-Core
   PRIVATE
     "src/AssetSystem.cpp"
+    "src/AssetTypeRegistry.cpp"
     "src/Assert.cpp"
     "src/ComponentRegistry.cpp"
     "src/Logger.cpp"
@@ -23,6 +24,8 @@ target_sources(Assisi-Core
     "include/Assisi/Core/Reflect/FieldMeta.hpp"
     "include/Assisi/Core/Reflect/ComponentMeta.hpp"
     "include/Assisi/Core/Reflect/ComponentRegistry.hpp"
+    "include/Assisi/Core/Reflect/AssetTypeMeta.hpp"
+    "include/Assisi/Core/Reflect/AssetTypeRegistry.hpp"
     "include/Assisi/Prelude.hpp"
     "include/Assisi/ShortNames.hpp"
 )
