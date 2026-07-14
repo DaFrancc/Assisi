@@ -1,5 +1,11 @@
 # Mesh / texture / material system — design notes
 
+> **Superseded (2026-07-14)** by `docs/mesh-material-architecture.md`. Both of
+> the "two orthogonal decisions" below are resolved there: texture packaging =
+> unpack to separate files (embedded images warn + import factor-only), and
+> multi-material = submeshes with a per-slot material table (Level 2 is the
+> designed baseline, not a fallback). Kept for the original reasoning.
+
 Captured 2026-07-14. **Geometry loading is built; materials/textures are not.**
 This records where the mesh→texture→material pipeline should go, so the current
 "glTF loads geometry only" state isn't mistaken for the finished design, and so
