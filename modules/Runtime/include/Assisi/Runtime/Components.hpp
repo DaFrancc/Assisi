@@ -6,21 +6,25 @@
 ///
 /// Components are stored in SparseSet<T>, which holds them in a std::vector and
 /// moves them on insert/remove — so any movable type works; trivial-copyability
-/// is not required. These particular components stay trivially copyable because
-/// they are plain data (an AssetPath is a fixed inline buffer, not a heap
-/// string), which keeps them cheap, but that is a property, not a constraint.
+/// is not required. Transform/Camera stay trivially copyable (plain data), but
+/// MeshRenderer deliberately spends that property: its material lists are
+/// std::vectors (variable slot count), so it is movable but not trivially
+/// copyable — see docs/mesh-material-architecture.md §4.
 /// Use Transform for position/rotation/scale and MeshRenderer
-/// to associate a mesh and texture with an entity.
+/// to associate a mesh and its materials with an entity.
 ///
 /// Transform itself is defined one layer down in Assisi/ECS/Transform.hpp so
 /// renderer-free modules (Physics, hierarchy) can use it without dragging in
 /// nvrhi; it is re-exported below as Runtime::Transform for the render-facing
 /// code that names it that way.
 
+#include <vector>
+
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/Texture.hpp>
 
@@ -31,28 +35,35 @@ namespace Assisi::Runtime
 /// Re-exported here so `Runtime::Transform` keeps naming it; see ECS/Transform.hpp.
 using ECS::Transform;
 
-/// @brief Associates a GPU mesh and albedo texture with an entity.
+/// @brief Associates a GPU mesh and its per-slot materials with an entity.
 ///
 /// Two layers, by design:
-///   - `meshPath` / `albedoPath` are the **durable** references — virtual asset
-///     paths (e.g. "prim://cube", "textures/crate.png") that persist in the
-///     level file. An empty path selects the engine default (unit cube / flat
-///     white).
-///   - `mesh` / `albedoTexture` are **transient** non-owning pointers resolved
-///     from those paths by the asset cache at load time; the referenced GPU
-///     resources must outlive the component. A null `albedoTexture` falls back
-///     to a flat white default (see Render::DefaultResources::WhiteTexture).
+///   - `meshPath` / `materialOverrides` are the **durable** references — virtual
+///     asset paths that persist in the level file. `meshPath` (e.g. "prim://cube",
+///     "models/helmet.gltf") selects the geometry; empty → the unit cube.
+///     `materialOverrides` is a sparse, per-material-slot list of `.amat` paths:
+///     entry `i` overrides slot `i`; an empty or absent entry means "use the
+///     material the mesh imported for that slot". Shorter than the mesh's slot
+///     count is fine.
+///   - `mesh` / `materials` are **transient** non-owning pointers resolved from
+///     those paths by the asset cache at load time; the referenced GPU resources
+///     must outlive the component. `materials` holds one resolved Material per
+///     mesh slot (override or mesh default); a slot with no entry draws with the
+///     cache's fallback material.
 ///
-/// Normal/metallic/roughness maps aren't wired up yet — see
-/// docs/nvrhi-migration-todo.md.
+/// `albedoPath` / `albedoTexture` are the pre-material single-texture path, kept
+/// until the mesh pass consumes `materials` (see docs/mesh-material-architecture.md
+/// §9, stage A4); they will be removed then.
 ACOMP()
 struct MeshRenderer
 {
     AFIELD() Assisi::Core::AssetPath meshPath;
     AFIELD() Assisi::Core::AssetPath albedoPath;
+    AFIELD() std::vector<Assisi::Core::AssetPath> materialOverrides;
 
     AFIELD(transient) const Assisi::Render::MeshBuffer *mesh = nullptr;
     AFIELD(transient) const Assisi::Render::Texture *albedoTexture = nullptr;
+    AFIELD(transient) std::vector<const Assisi::Render::Material *> materials;
 };
 
 /// @brief Projection and activation parameters for a camera entity.

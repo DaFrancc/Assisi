@@ -146,8 +146,28 @@ void SandboxApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
     Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     if (mrc == nullptr)
         return;
-    mrc->mesh          = _assetCache.ResolveMesh(mrc->meshPath);
-    mrc->albedoTexture = _assetCache.ResolveTexture(mrc->albedoPath);
+    ResolveMeshRendererAssets(*mrc);
+}
+
+void SandboxApp::ResolveMeshRendererAssets(Assisi::Runtime::MeshRenderer &mrc)
+{
+    mrc.mesh          = _assetCache.ResolveMesh(mrc.meshPath);
+    mrc.albedoTexture = _assetCache.ResolveTexture(mrc.albedoPath);
+
+    // One resolved Material per mesh slot: the override path when the slot has a
+    // non-empty entry, otherwise the material the mesh imported for that slot.
+    // A primitive mesh has no slot table, so this leaves `materials` empty and
+    // the draw path uses the cache's fallback material.
+    const std::size_t slotCount = mrc.mesh != nullptr ? mrc.mesh->Materials().size() : 0;
+    mrc.materials.clear();
+    mrc.materials.reserve(slotCount);
+    for (std::size_t slot = 0; slot < slotCount; ++slot)
+    {
+        const bool hasOverride = slot < mrc.materialOverrides.size() && !mrc.materialOverrides[slot].Empty();
+        mrc.materials.push_back(hasOverride ? _assetCache.ResolveMaterial(mrc.materialOverrides[slot])
+                                            : _assetCache.MeshDefaultMaterial(mrc.meshPath,
+                                                                              static_cast<uint32_t>(slot)));
+    }
 }
 
 void SandboxApp::RescanAssetBrowser()

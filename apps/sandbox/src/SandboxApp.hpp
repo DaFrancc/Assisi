@@ -92,6 +92,10 @@ class SandboxApp : public Assisi::App::Application
     /// @brief Re-resolves a MeshRenderer entity's mesh/texture from its current
     /// paths, so an inspector/browser edit takes effect without a level reload.
     void ReresolveEntityAssets(Assisi::ECS::Entity entity);
+    /// @brief Resolves one MeshRenderer's transient GPU pointers (mesh, albedo,
+    /// and one Material per mesh slot) from its durable paths. Shared by level
+    /// load and single-entity re-resolve.
+    void ResolveMeshRendererAssets(Assisi::Runtime::MeshRenderer &mrc);
     /// @brief Reads _assetBrowserDir into the cached dirs/images lists. Called
     /// only when the listing may have changed, not every frame.
     void RescanAssetBrowser();

@@ -125,10 +125,7 @@ void SandboxApp::LoadLevel(const std::string &name)
     _sceneRenderer.InvalidateAssetBindings();
 
     for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
-    {
-        mrc.mesh          = _assetCache.ResolveMesh(mrc.meshPath);
-        mrc.albedoTexture = _assetCache.ResolveTexture(mrc.albedoPath);
-    }
+        ResolveMeshRendererAssets(mrc);
 
     for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::Transform,
                                              Assisi::Physics::RigidBodyDescriptor>())
