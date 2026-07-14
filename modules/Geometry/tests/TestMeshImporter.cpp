@@ -88,6 +88,32 @@ TEST_CASE("ImportMesh: loads a glTF triangle via an AssetSystem-mediated externa
     fs::remove_all(root);
 }
 
+TEST_CASE("ImportMesh: a single-material mesh degenerates to one full-range submesh")
+{
+    const fs::path root = WriteTriangleAssets();
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("triangle.gltf");
+    REQUIRE(result.has_value());
+
+    // One submesh spanning the whole index range, one LOD, one material slot —
+    // the shape the flat importer's output maps onto with no behaviour change.
+    REQUIRE(result->SubMeshes.size() == 1);
+    CHECK(result->SubMeshes[0].IndexOffset == 0);
+    CHECK(result->SubMeshes[0].IndexCount == result->Indices.size());
+    CHECK(result->SubMeshes[0].MaterialSlot == 0);
+    REQUIRE(result->Lods.size() == 1);
+    CHECK(result->Lods[0].FirstSubMesh == 0);
+    CHECK(result->Lods[0].SubMeshCount == 1);
+    REQUIRE(result->Materials.size() == 1); // the primitive has no material -> spec-default slot
+
+    // The submesh's local bounds enclose the triangle (0,0,0)-(1,0,0)-(0,1,0).
+    CHECK(result->SubMeshes[0].LocalAabb.min.x == doctest::Approx(0.0f));
+    CHECK(result->SubMeshes[0].LocalAabb.max.x == doctest::Approx(1.0f));
+    CHECK(result->SubMeshes[0].LocalAabb.max.y == doctest::Approx(1.0f));
+
+    fs::remove_all(root);
+}
+
 TEST_CASE("ImportMesh: rejects unsupported extensions")
 {
     const std::expected<MeshData, MeshImportError> result = ImportMesh("model.fbx");
@@ -102,6 +128,198 @@ TEST_CASE("ImportMesh: reports a read failure for a missing glTF")
     const std::expected<MeshData, MeshImportError> result = ImportMesh("does_not_exist.gltf");
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == MeshImportError::ReadFailed);
+
+    fs::remove_all(root);
+}
+
+namespace
+{
+// One mesh, two primitives, two distinct materials. The importer must keep them
+// as two submeshes (materials differ) sharing one LOD, and extract both
+// materials — including the second's baseColorTexture as a virtual asset path
+// resolved relative to the .gltf. The two triangles live at z=0 and z=1 so the
+// per-submesh bounds are distinguishable.
+constexpr std::string_view kTwoMaterialGltf = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [
+    { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 },
+    { "attributes": { "POSITION": 2 }, "indices": 3, "material": 1 }
+  ] } ],
+  "materials": [
+    { "name": "red",   "pbrMetallicRoughness": { "baseColorFactor": [1.0, 0.0, 0.0, 1.0],
+      "metallicFactor": 0.25, "roughnessFactor": 0.75 } },
+    { "name": "green", "pbrMetallicRoughness": { "baseColorFactor": [0.0, 1.0, 0.0, 1.0],
+      "baseColorTexture": { "index": 0 } } }
+  ],
+  "textures": [ { "source": 0 } ],
+  "images": [ { "uri": "textures/green.png" } ],
+  "buffers": [ { "uri": "two.bin", "byteLength": 84 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 72, "byteLength": 6,  "target": 34963 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 78, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" },
+    { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 1.0], "max": [1.0, 1.0, 1.0] },
+    { "bufferView": 3, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
+fs::path WriteTwoMaterialAssets()
+{
+    const fs::path root = fs::temp_directory_path() / "assisi_geometry_test_mat";
+    fs::remove_all(root);
+    fs::create_directories(root);
+
+    {
+        std::ofstream gltf(root / "two.gltf", std::ios::binary);
+        gltf.write(kTwoMaterialGltf.data(), static_cast<std::streamsize>(kTwoMaterialGltf.size()));
+    }
+    {
+        // Layout: pos0 (z=0), pos1 (z=1), idx0, idx1 — matching the bufferViews.
+        const float    pos0[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float    pos1[9] = {0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f};
+        const uint16_t idx0[3] = {0, 1, 2};
+        const uint16_t idx1[3] = {0, 1, 2};
+        std::ofstream  bin(root / "two.bin", std::ios::binary);
+        bin.write(reinterpret_cast<const char *>(pos0), sizeof(pos0));
+        bin.write(reinterpret_cast<const char *>(pos1), sizeof(pos1));
+        bin.write(reinterpret_cast<const char *>(idx0), sizeof(idx0));
+        bin.write(reinterpret_cast<const char *>(idx1), sizeof(idx1));
+    }
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    return root;
+}
+} // namespace
+
+TEST_CASE("ImportMesh: two materials become two submeshes with extracted material data")
+{
+    const fs::path root = WriteTwoMaterialAssets();
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("two.gltf");
+    REQUIRE(result.has_value());
+
+    CHECK(result->Vertices.size() == 6);
+    CHECK(result->Indices.size() == 6);
+
+    // Two submeshes, one LOD spanning both, two material slots.
+    REQUIRE(result->SubMeshes.size() == 2);
+    REQUIRE(result->Lods.size() == 1);
+    CHECK(result->Lods[0].FirstSubMesh == 0);
+    CHECK(result->Lods[0].SubMeshCount == 2);
+    REQUIRE(result->Materials.size() == 2);
+
+    // Submesh ranges are contiguous, disjoint, and cover the whole index buffer.
+    CHECK(result->SubMeshes[0].IndexOffset == 0);
+    CHECK(result->SubMeshes[0].IndexCount == 3);
+    CHECK(result->SubMeshes[1].IndexOffset == 3);
+    CHECK(result->SubMeshes[1].IndexCount == 3);
+    CHECK(result->SubMeshes[0].MaterialSlot == 0);
+    CHECK(result->SubMeshes[1].MaterialSlot == 1);
+
+    // Per-submesh bounds separate the z=0 and z=1 triangles.
+    CHECK(result->SubMeshes[0].LocalAabb.max.z == doctest::Approx(0.0f));
+    CHECK(result->SubMeshes[1].LocalAabb.min.z == doctest::Approx(1.0f));
+
+    // Material 0 factors carried through.
+    const Assisi::Geometry::MaterialData &red = result->Materials[0];
+    CHECK(red.Name == "red");
+    CHECK(red.BaseColorFactor.r == doctest::Approx(1.0f));
+    CHECK(red.BaseColorFactor.g == doctest::Approx(0.0f));
+    CHECK(red.MetallicFactor == doctest::Approx(0.25f));
+    CHECK(red.RoughnessFactor == doctest::Approx(0.75f));
+    CHECK(red.BaseColorTexture.View().empty());
+
+    // Material 1's baseColorTexture resolves to a virtual path relative to the .gltf.
+    const Assisi::Geometry::MaterialData &green = result->Materials[1];
+    CHECK(green.Name == "green");
+    CHECK(green.BaseColorFactor.g == doctest::Approx(1.0f));
+    CHECK(green.BaseColorTexture.View() == "textures/green.png");
+
+    fs::remove_all(root);
+}
+
+namespace
+{
+// Two nodes referencing the same one-primitive mesh; the second node's name
+// carries the "_LOD1" suffix. The importer must place them in separate LODs.
+constexpr std::string_view kLodGltf = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0, 1 ] } ],
+  "nodes": [
+    { "mesh": 0, "name": "Cube" },
+    { "mesh": 0, "name": "Cube_LOD1", "translation": [5.0, 0.0, 0.0] }
+  ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1 } ] } ],
+  "buffers": [ { "uri": "lod.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
+fs::path WriteLodAssets()
+{
+    const fs::path root = fs::temp_directory_path() / "assisi_geometry_test_lod";
+    fs::remove_all(root);
+    fs::create_directories(root);
+
+    {
+        std::ofstream gltf(root / "lod.gltf", std::ios::binary);
+        gltf.write(kLodGltf.data(), static_cast<std::streamsize>(kLodGltf.size()));
+    }
+    {
+        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const uint16_t indices[3]   = {0, 1, 2};
+        std::ofstream  bin(root / "lod.bin", std::ios::binary);
+        bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
+        bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
+    }
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    return root;
+}
+} // namespace
+
+TEST_CASE("ImportMesh: a _LOD<n> node-name suffix splits geometry into LODs")
+{
+    const fs::path root = WriteLodAssets();
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("lod.gltf");
+    REQUIRE(result.has_value());
+
+    // Both nodes drawn -> 6 verts, 6 indices; one submesh per LOD.
+    CHECK(result->Vertices.size() == 6);
+    CHECK(result->Indices.size() == 6);
+    REQUIRE(result->SubMeshes.size() == 2);
+    REQUIRE(result->Lods.size() == 2);
+
+    // LOD0 (from "Cube") then LOD1 (from "Cube_LOD1"), one submesh each.
+    CHECK(result->Lods[0].SubMeshCount == 1);
+    CHECK(result->Lods[1].SubMeshCount == 1);
+    CHECK(result->Lods[0].FirstSubMesh == 0);
+    CHECK(result->Lods[1].FirstSubMesh == 1);
+
+    // The LOD1 node is translated +5 in x, so its submesh bounds are shifted.
+    const Assisi::Geometry::SubMesh &lod0 = result->SubMeshes[result->Lods[0].FirstSubMesh];
+    const Assisi::Geometry::SubMesh &lod1 = result->SubMeshes[result->Lods[1].FirstSubMesh];
+    CHECK(lod0.LocalAabb.max.x == doctest::Approx(1.0f));
+    CHECK(lod1.LocalAabb.min.x == doctest::Approx(5.0f));
 
     fs::remove_all(root);
 }
