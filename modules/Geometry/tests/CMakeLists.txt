@@ -2,6 +2,7 @@ add_executable(Assisi-Geometry-Tests
   main.cpp
   TestDefaultMeshes.cpp
   TestMeshImporter.cpp
+  TestMaterialFile.cpp
 )
 
 Assisi_apply_defaults(Assisi-Geometry-Tests)
@@ -15,6 +16,13 @@ target_include_directories(Assisi-Geometry-Tests SYSTEM PRIVATE
 target_link_libraries(Assisi-Geometry-Tests
   PRIVATE
     Assisi::Geometry
+)
+
+# MaterialData's AssetTypeRegistry registration lives in the generated OBJECT
+# library; force its TU into the test link (OBJECT libs are otherwise only
+# pulled in on demand) so DeserializeMaterial/SerializeMaterial find the meta.
+target_sources(Assisi-Geometry-Tests PRIVATE
+  $<TARGET_OBJECTS:Assisi-Geometry-Generated>
 )
 
 add_test(NAME Geometry COMMAND Assisi-Geometry-Tests)
