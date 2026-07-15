@@ -42,8 +42,18 @@ layout(binding = 256) uniform FrameConstants
     mat4  view;
     uvec4 gridDim;            // xyz used, w unused
     vec4  screenSizeNearFar;  // xy = screen size, z = nearZ, w = farZ
-    uvec4 lightCounts;        // x = directional light count, yzw unused
+    uvec4 lightCounts;        // x = directional light count, y = debug view mode, zw unused
 } uFrame;
+
+// Debug view modes (must match Render::MaterialDebugView). 0 = normal lit render;
+// the rest short-circuit to a single material channel for inspection.
+const uint kDebugNone      = 0u;
+const uint kDebugBaseColor = 1u;
+const uint kDebugMetallic  = 2u;
+const uint kDebugRoughness = 3u;
+const uint kDebugNormal    = 4u;
+const uint kDebugOcclusion = 5u;
+const uint kDebugEmissive  = 6u;
 
 // ---- Clustered light buffers (must match Render::ClusterGrid GPU structs) --
 // StructuredBuffer_SRV shares the shaderResource (+0) space with Texture_SRV,
@@ -216,6 +226,30 @@ uint ClusterIndex()
 void main()
 {
     Surface surf = SampleMaterial();
+
+    // Debug views short-circuit the lighting: output one channel straight, so the
+    // material's inputs can be inspected in isolation. Colour channels (base /
+    // emissive) are linear here, so gamma-encode them for display; the scalar
+    // data channels show raw, and the normal is mapped to [0,1] as an RGB.
+    uint debugMode = uFrame.lightCounts.y;
+    if (debugMode != kDebugNone)
+    {
+        if (debugMode == kDebugBaseColor)
+            outColor = vec4(pow(surf.albedo, vec3(1.0 / 2.2)), 1.0);
+        else if (debugMode == kDebugMetallic)
+            outColor = vec4(vec3(surf.metallic), 1.0);
+        else if (debugMode == kDebugRoughness)
+            outColor = vec4(vec3(surf.roughness), 1.0);
+        else if (debugMode == kDebugNormal)
+            outColor = vec4(surf.normal * 0.5 + 0.5, 1.0);
+        else if (debugMode == kDebugOcclusion)
+            outColor = vec4(vec3(surf.occlusion), 1.0);
+        else if (debugMode == kDebugEmissive)
+            outColor = vec4(pow(surf.emissive, vec3(1.0 / 2.2)), 1.0);
+        else
+            outColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
 
     vec3  albedo    = surf.albedo;
     vec3  N         = surf.normal;

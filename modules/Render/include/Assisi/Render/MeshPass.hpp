@@ -26,6 +26,21 @@
 
 namespace Assisi::Render
 {
+/// @brief Which material channel the mesh pass visualizes instead of the lit
+/// result. None = the normal render; the rest short-circuit the shader to one
+/// channel for debugging. Values must match the `kDebug*` constants in
+/// cube_min.frag (packed into FrameConstants).
+enum class MaterialDebugView : uint32_t
+{
+    None = 0,
+    BaseColor,
+    Metallic,
+    Roughness,
+    Normal,
+    Occlusion,
+    Emissive,
+};
+
 class MeshPass
 {
   public:
@@ -52,7 +67,8 @@ class MeshPass
     /// @brief Updates the per-frame constant buffer (camera view matrix and
     /// cluster-grid parameters). Call once per frame, before any Draw() calls.
     void UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &view, uint32_t screenWidth,
-                              uint32_t screenHeight, float nearZ, float farZ, uint32_t dirLightCount) const;
+                              uint32_t screenHeight, float nearZ, float farZ, uint32_t dirLightCount,
+                              MaterialDebugView debugView = MaterialDebugView::None) const;
 
     /// @brief Records the draws for `mesh`'s LOD0 submeshes with the given model
     /// and model-view-projection matrices, binding the Material for each submesh's

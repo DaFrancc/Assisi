@@ -81,6 +81,12 @@ class SceneRenderer
     void SetFrustumCulling(bool enabled) { _frustumCulling = enabled; }
     [[nodiscard]] bool FrustumCulling() const { return _frustumCulling; }
 
+    /// @brief Select a material-channel debug view (None = normal lit render).
+    /// The mesh pass short-circuits its shader to that channel — for inspecting
+    /// base colour / metallic / roughness / normal / occlusion / emissive.
+    void SetDebugView(Render::MaterialDebugView view) { _debugView = view; }
+    [[nodiscard]] Render::MaterialDebugView DebugView() const { return _debugView; }
+
     /// @brief Drawn/culled counts from the most recent Render(); zero before the
     /// first frame. Reflects whether culling is actually removing anything.
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
@@ -98,6 +104,7 @@ class SceneRenderer
     glm::mat4 _clusterProjection{1.f};
 
     bool      _frustumCulling = true; // default draw path culls off-screen meshes
+    Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 
     // Change-detection bookmark for PropagateTransforms: the scene tick at the end

@@ -160,14 +160,15 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 }
 
 void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &view, uint32_t screenWidth,
-                                    uint32_t screenHeight, float nearZ, float farZ, uint32_t dirLightCount) const
+                                    uint32_t screenHeight, float nearZ, float farZ, uint32_t dirLightCount,
+                                    MaterialDebugView debugView) const
 {
     FrameConstants constants;
     constants.view = view;
     constants.gridDim = glm::uvec4(ClusterGrid::kNumX, ClusterGrid::kNumY, ClusterGrid::kNumZ, 0u);
     constants.screenSizeNearFar =
         glm::vec4(static_cast<float>(screenWidth), static_cast<float>(screenHeight), nearZ, farZ);
-    constants.lightCounts = glm::uvec4(dirLightCount, 0u, 0u, 0u);
+    constants.lightCounts = glm::uvec4(dirLightCount, static_cast<uint32_t>(debugView), 0u, 0u);
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }
 

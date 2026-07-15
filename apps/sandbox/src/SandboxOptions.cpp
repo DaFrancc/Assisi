@@ -280,6 +280,17 @@ void SandboxApp::DrawOptionsWindow()
         const Assisi::Runtime::DrawStats draw = _sceneRenderer.LastDrawStats();
         ImGui::Text("Meshes: %u drawn / %u culled", draw.drawn, draw.culled);
 
+        // Material-channel debug view: short-circuits the mesh shader to one
+        // channel so PBR inputs can be inspected. Runtime-only, order matches
+        // Render::MaterialDebugView.
+        static const char *kDebugViewNames[] = {"Off",       "Base Color", "Metallic", "Roughness",
+                                                "Normal",    "Occlusion",  "Emissive"};
+        int32_t            debugViewIndex     = static_cast<int32_t>(_sceneRenderer.DebugView());
+        if (ImGui::Combo("Debug View", &debugViewIndex, kDebugViewNames, IM_ARRAYSIZE(kDebugViewNames)))
+        {
+            _sceneRenderer.SetDebugView(static_cast<Assisi::Render::MaterialDebugView>(debugViewIndex));
+        }
+
         ImGui::Separator();
 
         OptionsConfig &options = GetOptions();

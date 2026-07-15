@@ -112,7 +112,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
 
     _lighting.Update(frame.commandList, scene, view);
     _meshPass.UpdateFrameConstants(frame.commandList, view, frame.width, frame.height, camera.nearZ, camera.farZ,
-                                   _lighting.DirLightCount());
+                                   _lighting.DirLightCount(), _debugView);
     _lastDrawStats = DrawScene(scene, view, projection, frame.commandList, frame.framebuffer, frame.width,
                                frame.height, _meshPass, _frustumCulling);
 }
