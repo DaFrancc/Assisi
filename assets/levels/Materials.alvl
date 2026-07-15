@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "entities": [
+    { "components": { "DirectionalLight": { "direction": [-0.3, -1.0, -0.4], "color": [1.0, 1.0, 1.0], "intensity": 2.5 } } },
+    { "components": { "Transform": { "position": [0.0, -1.0, 0.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [20.0, 1.0, 20.0] }, "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] } } },
+    { "components": { "Transform": { "position": [0.0, 1.0, 0.0], "rotation": [0.707, 0.707, 0.0, 0.0], "scale": [1.5, 1.5, 1.5] }, "MeshRenderer": { "meshPath": "models/DamagedHelmet/DamagedHelmet.gltf", "materialOverrides": [] } } },
+    { "components": { "Transform": { "position": [3.0, 3.0, 3.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] }, "PointLight": { "color": [1.0, 0.95, 0.9], "intensity": 40.0, "radius": 12.0 } } },
+    { "components": { "Transform": { "position": [-3.0, 2.0, 3.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] }, "PointLight": { "color": [0.4, 0.6, 1.0], "intensity": 30.0, "radius": 12.0 } } },
+    { "components": { "Transform": { "position": [0.0, 2.0, -4.0], "rotation": [1.0, 0.0, 0.0, 0.0], "scale": [1.0, 1.0, 1.0] }, "PointLight": { "color": [1.0, 0.5, 0.3], "intensity": 25.0, "radius": 12.0 } } }
+  ]
+}
