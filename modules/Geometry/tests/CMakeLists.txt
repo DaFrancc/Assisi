@@ -1,5 +1,6 @@
 add_executable(Assisi-Geometry-Tests
   main.cpp
+  TestBounds.cpp
   TestDefaultMeshes.cpp
   TestMeshImporter.cpp
   TestMaterialFile.cpp

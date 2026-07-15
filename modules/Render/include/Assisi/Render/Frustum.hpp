@@ -45,6 +45,26 @@ class Frustum
         });
     }
 
+    /// @brief True if any part of the (world-space) AABB lies inside the frustum.
+    ///
+    /// Tighter than the sphere for flat/elongated geometry. Same conservative
+    /// caveat: a box straddling a frustum corner may pass every plane yet sit in
+    /// the corner void — a wasted draw, never a wrongly culled object. Feed it a
+    /// world-space box (Geometry::TransformedAabb).
+    [[nodiscard]] bool IntersectsAabb(const Geometry::Aabb &aabb) const
+    {
+        // Outside iff the box is fully behind any one plane. Test only the box's
+        // "positive vertex" — the corner furthest along the plane's inward normal:
+        // if even that corner is behind the plane, every corner is.
+        return std::ranges::none_of(_planes, [&aabb](const glm::vec4 &plane) {
+            const glm::vec3 normal(plane);
+            const glm::vec3 positiveVertex(normal.x >= 0.f ? aabb.max.x : aabb.min.x,
+                                           normal.y >= 0.f ? aabb.max.y : aabb.min.y,
+                                           normal.z >= 0.f ? aabb.max.z : aabb.min.z);
+            return glm::dot(normal, positiveVertex) + plane.w < 0.f;
+        });
+    }
+
   private:
     std::array<glm::vec4, 6> _planes{};
 };

@@ -58,4 +58,29 @@ inline BoundingSphere TransformedBoundingSphere(const BoundingSphere &local, con
     return BoundingSphere{.center = center, .radius = local.radius * maxScale};
 }
 
+/// @brief Maps a local-space AABB through a world matrix, re-fitting a new
+///        axis-aligned box around the transformed one (Arvo's method).
+///
+/// The world box is built from the transformed centre plus an extent formed by
+/// the absolute value of the matrix's linear part times the local extent — the
+/// closed form of "transform the eight corners and take their min/max", without
+/// materialising the corners. Exact under translation/scale/axis-aligned
+/// rotation; under an off-axis rotation the re-fit box is a conservative
+/// over-estimate (still never smaller than the geometry), which is all a cull
+/// needs. Rows/cols follow GLM's column-major layout (`worldMatrix[col]`).
+inline Aabb TransformedAabb(const Aabb &local, const glm::mat4 &worldMatrix)
+{
+    const glm::vec3 center = 0.5f * (local.min + local.max);
+    const glm::vec3 extent = 0.5f * (local.max - local.min);
+
+    const glm::vec3 worldCenter = glm::vec3(worldMatrix * glm::vec4(center, 1.f));
+    // Columns are the absolute basis vectors; abs3x3 * extent sums |basis_j| *
+    // extent_j into each world axis — the half-size of the re-fit box.
+    const glm::mat3 absBasis(glm::abs(glm::vec3(worldMatrix[0])), glm::abs(glm::vec3(worldMatrix[1])),
+                             glm::abs(glm::vec3(worldMatrix[2])));
+    const glm::vec3 worldExtent = absBasis * extent;
+
+    return Aabb{.min = worldCenter - worldExtent, .max = worldCenter + worldExtent};
+}
+
 } /* namespace Assisi::Geometry */

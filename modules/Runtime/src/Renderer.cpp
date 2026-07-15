@@ -38,9 +38,21 @@ DrawStats DrawScene(const DrawSceneParams &params)
 
         if (params.frustumCulling)
         {
-            const Assisi::Geometry::BoundingSphere worldBounds =
+            // Two-level whole-mesh cull: the cheap sphere reject (one point
+            // transform + a scalar) throws out most off-screen meshes, then the
+            // tighter AABB refine catches ones the sphere's isotropic radius kept
+            // but the box excludes. Both are conservative — nothing visible is
+            // ever culled; the AABB just wastes fewer draws on flat/elongated meshes.
+            const Assisi::Geometry::BoundingSphere worldSphere =
                 Assisi::Geometry::TransformedBoundingSphere(mesh->LocalBounds(), transform.worldMatrix);
-            if (!frustum.IntersectsSphere(worldBounds))
+            if (!frustum.IntersectsSphere(worldSphere))
+            {
+                ++stats.culledMeshes;
+                continue;
+            }
+            const Assisi::Geometry::Aabb worldAabb =
+                Assisi::Geometry::TransformedAabb(mesh->LocalAabb(), transform.worldMatrix);
+            if (!frustum.IntersectsAabb(worldAabb))
             {
                 ++stats.culledMeshes;
                 continue;

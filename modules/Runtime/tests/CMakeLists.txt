@@ -1,6 +1,7 @@
 add_executable(Assisi-Runtime-Tests
   main.cpp
   TestDrawItem.cpp
+  TestFrustum.cpp
   TestSceneSerializer.cpp
   TestHierarchy.cpp
   TestLifecycle.cpp
