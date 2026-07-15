@@ -77,6 +77,18 @@ _ASSET_PATH_VECTOR = TypeCodegen(
     '_p.Assign(_e.get<std::string>()); {a}.push_back(_p); }} }} }}')
 
 
+# Shared codegen for std::vector<Core::AssetId> — the material-override list.
+# Each element is a { guid, path-hint } object built by SerializeAssetId; the
+# hint is discarded on load. Mirrors _ASSET_PATH_VECTOR but routes through the
+# AssetId JSON helpers instead of raw strings.
+_ASSET_ID_VECTOR = TypeCodegen(
+    'AssetIdVector',
+    '[&]{{ nlohmann::json _arr = nlohmann::json::array(); '
+    'for (const auto& _e : {a}) _arr.push_back(Assisi::Core::SerializeAssetId(_e)); return _arr; }}()',
+    '{{ if (j.contains("{f}")) {{ {a}.clear(); '
+    'for (const auto& _e : j.at("{f}")) {a}.push_back(Assisi::Core::DeserializeAssetId(_e)); }} }}')
+
+
 # Serialize expressions produce values for json initializer lists.
 # Deserialize statements read from j.at("{f}") and assign to comp.{f}.
 #
@@ -163,6 +175,32 @@ TYPES: dict[str, TypeCodegen] = {
     'std::vector<AssetPath>':               _ASSET_PATH_VECTOR,
     'std::vector<Core::AssetPath>':         _ASSET_PATH_VECTOR,
     'std::vector<Assisi::Core::AssetPath>': _ASSET_PATH_VECTOR,
+    # Core::AssetId — a stable GUID reference. Serialized as { guid, path-hint }
+    # via the Core AssetId JSON helpers; deserialize reads the guid and discards
+    # the hint (see AssetIdJson.hpp / decision D2). Accepts every spelling.
+    'AssetId': TypeCodegen(
+        'AssetId',
+        'Assisi::Core::SerializeAssetId({a})',
+        '{{ if (j.contains("{f}")) {a} = Assisi::Core::DeserializeAssetId(j.at("{f}")); }}'),
+    'Core::AssetId': TypeCodegen(
+        'AssetId',
+        'Assisi::Core::SerializeAssetId({a})',
+        '{{ if (j.contains("{f}")) {a} = Assisi::Core::DeserializeAssetId(j.at("{f}")); }}'),
+    'Assisi::Core::AssetId': TypeCodegen(
+        'AssetId',
+        'Assisi::Core::SerializeAssetId({a})',
+        '{{ if (j.contains("{f}")) {a} = Assisi::Core::DeserializeAssetId(j.at("{f}")); }}'),
+    # std::vector<Core::AssetId> — MeshRenderer's per-slot material overrides.
+    'std::vector<AssetId>':               _ASSET_ID_VECTOR,
+    'std::vector<Core::AssetId>':         _ASSET_ID_VECTOR,
+    'std::vector<Assisi::Core::AssetId>': _ASSET_ID_VECTOR,
+}
+
+# Field types whose codegen calls the Core AssetId JSON helpers; a generated file
+# with any such field must include the helper header.
+_ASSET_ID_TYPES = {
+    'AssetId', 'Core::AssetId', 'Assisi::Core::AssetId',
+    'std::vector<AssetId>', 'std::vector<Core::AssetId>', 'std::vector<Assisi::Core::AssetId>',
 }
 
 # reflectgen is default-deny: any non-transient AFIELD whose type is not in
@@ -598,6 +636,16 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
         if not f.args.has('transient')
     )
 
+    # AssetId fields (in components or assets) call the Core AssetId JSON helpers,
+    # so a generated file that has any must include their header.
+    has_asset_ids = any(
+        f.cpp_type in _ASSET_ID_TYPES
+        for comp in components
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient')
+    )
+
     # Includes are conditional on what the header actually declares. An
     # asset-only header (e.g. Geometry's MaterialData) must NOT pull in
     # ComponentRegistry / ECS::Scene — its home module does not link ECS.
@@ -609,6 +657,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
             includes.append('#include <Assisi/Runtime/SceneSerializer.hpp>')
     if asset_infos:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
+    if has_asset_ids:
+        includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     includes.append(f'#include <{include_path}>')
     include_block = '\n'.join(includes)
 

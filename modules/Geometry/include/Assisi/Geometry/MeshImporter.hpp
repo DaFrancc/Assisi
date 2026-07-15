@@ -20,12 +20,21 @@
 /// separate files (see docs/mesh-material-architecture.md §3).
 
 #include <expected>
+#include <functional>
 #include <string_view>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 
 namespace Assisi::Geometry
 {
+
+/// @brief Resolves a virtual asset path to a stable GUID. The editor backs this
+///        with its AssetDatabase; a shipped build (or a test) may pass an empty
+///        resolver, in which case every texture channel imports nil (factor-
+///        only). Kept as an injected callback so Geometry never depends on the
+///        editor-only database directly.
+using AssetIdResolver = std::function<Core::AssetId(std::string_view virtualPath)>;
 
 /// @brief Why an ImportMesh call failed.
 enum class MeshImportError
@@ -44,7 +53,10 @@ std::string_view ToString(MeshImportError error) noexcept;
 ///
 /// @param virtualPath Asset-relative path, e.g. "models/robot.glb". The extension
 ///        selects the backend; only `.gltf`/`.glb` are supported at present.
+/// @param resolveId Maps each resolved texture path to its GUID for the imported
+///        materials' channels. Empty → channels import nil (factor-only).
 /// @return The merged geometry, or a MeshImportError describing the failure.
-std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath);
+std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath,
+                                                    const AssetIdResolver &resolveId = {});
 
 } /* namespace Assisi::Geometry */

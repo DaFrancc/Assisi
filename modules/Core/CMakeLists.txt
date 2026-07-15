@@ -5,6 +5,7 @@ target_sources(Assisi-Core
   PRIVATE
     "src/AssetDatabase.cpp"
     "src/AssetId.cpp"
+    "src/AssetIdJson.cpp"
     "src/AssetSidecar.cpp"
     "src/AssetSystem.cpp"
     "src/AssetTypeRegistry.cpp"
@@ -18,6 +19,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/Assert.hpp"
     "include/Assisi/Core/AssetDatabase.hpp"
     "include/Assisi/Core/AssetId.hpp"
+    "include/Assisi/Core/AssetIdJson.hpp"
     "include/Assisi/Core/AssetPath.hpp"
     "include/Assisi/Core/AssetProvider.hpp"
     "include/Assisi/Core/AssetSidecar.hpp"

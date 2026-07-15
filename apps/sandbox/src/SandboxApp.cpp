@@ -3,6 +3,7 @@
 #include "SandboxApp.hpp"
 #include "SandboxImGui.hpp"
 
+#include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -19,6 +20,9 @@
 
 #include <expected>
 #include <fstream>
+#include <optional>
+#include <string>
+#include <string_view>
 
 // ---------------------------------------------------------------------------
 // Setup helpers
@@ -117,6 +121,25 @@ void SandboxApp::ReimportAssets()
         return;
     }
     Assisi::Core::Log::Info("Asset reimport: {} assets indexed (GUID sidecars reconciled).", *result);
+
+    // Wire the (rebuilt) database into the two places that translate ids:
+    //   - serialization's path hint (D2): saved GUID references carry a readable
+    //     last-known path regenerated from the database.
+    //   - the asset cache: id↔path so mesh/material/texture resolution and glTF
+    //     import speak GUIDs. Reserved built-ins resolve without the database.
+    // The lambdas capture `this`, so re-running reimport reuses the same (now
+    // freshly rebuilt) database — no need to reinstall, but harmless if we do.
+    Assisi::Core::SetAssetIdHintResolver([this](const Assisi::Core::AssetId &id)
+                                         { return _assetDatabase.PathFor(id).value_or(std::string{}); });
+    _assetCache.SetAssetResolvers(
+        [this](const Assisi::Core::AssetId &id) -> Assisi::Core::AssetPath
+        {
+            const std::optional<std::string> path = _assetDatabase.PathFor(id);
+            return path ? Assisi::Core::AssetPath{std::string_view{*path}} : Assisi::Core::AssetPath{};
+        },
+        [this](std::string_view vpath) -> Assisi::Core::AssetId
+        { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); });
+
     // The browser lists by extension and never shows `.aast`, but a reimport may
     // have created sidecars, so force a re-read on next open.
     _assetBrowserDirty = true;

@@ -11,6 +11,7 @@ add_executable(Assisi-Core-Tests
   main.cpp
   TestAssetDatabase.cpp
   TestAssetId.cpp
+  TestAssetIdJson.cpp
   TestAssetPath.cpp
   TestAssetSystem.cpp
   TestComponentRegistry.cpp

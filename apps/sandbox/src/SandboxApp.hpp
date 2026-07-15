@@ -114,6 +114,11 @@ class SandboxApp : public Assisi::App::Application
     /// row was edited (the caller re-resolves).
     bool EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
                            const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset);
+    /// @brief Draws the path input for an AssetId field (@p inputId is the ImGui
+    /// id): display = the id's resolved virtual path, typing a path re-resolves
+    /// the id via the database. Returns true and writes @p id when edited. The
+    /// caller lays out the browse button + label to the right.
+    bool AssetIdPathField(const char *inputId, Assisi::Core::AssetId &id);
     void HandlePhysicsEditing(bool anyFieldEdited);
 
     /// @brief Writes an eyedropper-picked entity into the armed EntityRef field.
@@ -148,7 +153,7 @@ class SandboxApp : public Assisi::App::Application
     // OnRender is a single Render() call.
     Assisi::Runtime::SceneRenderer _sceneRenderer;
 
-    // Resolves each entity's meshPath/materialOverrides to shared GPU resources;
+    // Resolves each entity's mesh/materialOverrides ids to shared GPU resources;
     // owns every mesh, texture, and material the scene draws (deduped by path).
     Assisi::Render::AssetCache _assetCache;
 

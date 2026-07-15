@@ -12,15 +12,15 @@
 
 #include <string>
 
-#include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Math/GLM.hpp>
 
 namespace Assisi::Geometry
 {
 
-/// @brief One material: PBR factors plus virtual asset paths for each texture
-///        channel. An empty path means "channel is factor-only" — the renderer
+/// @brief One material: PBR factors plus a GUID reference for each texture
+///        channel. A nil id means "channel is factor-only" — the renderer
 ///        substitutes a default texture (white / flat normal), so shaders never
 ///        branch on missing channels.
 ///
@@ -44,12 +44,12 @@ struct MaterialData
     AFIELD() float     OcclusionStrength = 1.f;
     AFIELD() glm::vec3 EmissiveFactor{0.f, 0.f, 0.f};
 
-    // --- Texture channels (virtual asset paths; empty = factor-only) ---
-    AFIELD() Assisi::Core::AssetPath BaseColorTexture;         ///< sRGB.
-    AFIELD() Assisi::Core::AssetPath NormalTexture;            ///< Linear; xyz in [0,1] -> *2-1.
-    AFIELD() Assisi::Core::AssetPath MetallicRoughnessTexture; ///< Linear; glTF packing: G = roughness, B = metallic.
-    AFIELD() Assisi::Core::AssetPath OcclusionTexture;         ///< Linear; R channel (often the same file as MR).
-    AFIELD() Assisi::Core::AssetPath EmissiveTexture;          ///< sRGB.
+    // --- Texture channels (GUID references; nil = factor-only) ---
+    AFIELD() Assisi::Core::AssetId BaseColorTexture;         ///< sRGB.
+    AFIELD() Assisi::Core::AssetId NormalTexture;            ///< Linear; xyz in [0,1] -> *2-1.
+    AFIELD() Assisi::Core::AssetId MetallicRoughnessTexture; ///< Linear; glTF packing: G = roughness, B = metallic.
+    AFIELD() Assisi::Core::AssetId OcclusionTexture;         ///< Linear; R channel (often the same file as MR).
+    AFIELD() Assisi::Core::AssetId EmissiveTexture;          ///< sRGB.
 
     /// @brief Display label (the glTF material name). UI only — never
     /// serialized into .amat, never a lookup key, so deliberately not AFIELD.

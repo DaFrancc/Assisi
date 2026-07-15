@@ -4,6 +4,7 @@
 
 #include <string>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MaterialFile.hpp>
 
@@ -25,11 +26,13 @@ MaterialData MakeFullMaterial()
     m.NormalScale = 0.75f;
     m.OcclusionStrength = 0.5f;
     m.EmissiveFactor = {1.0f, 0.5f, 0.25f};
-    m.BaseColorTexture.Assign("models/crate/albedo.png");
-    m.NormalTexture.Assign("models/crate/normal.png");
-    m.MetallicRoughnessTexture.Assign("models/crate/mr.png");
-    m.OcclusionTexture.Assign("models/crate/ao.png");
-    m.EmissiveTexture.Assign("models/crate/emissive.png");
+    // Distinct GUIDs per channel so a round-trip that swapped or dropped one is
+    // caught. (Channel references are AssetIds now, not paths.)
+    m.BaseColorTexture         = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
+    m.NormalTexture            = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000002");
+    m.MetallicRoughnessTexture = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000003");
+    m.OcclusionTexture         = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000004");
+    m.EmissiveTexture          = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000005");
     m.Name = "crate"; // not serialized — deliberately not round-tripped
     return m;
 }
@@ -81,7 +84,7 @@ TEST_CASE("MaterialFile: absent fields keep their default (forward-compatible lo
     // Defaults preserved for everything absent.
     CHECK(restored->RoughnessFactor == doctest::Approx(1.0f));
     CHECK(restored->BaseColorFactor.x == doctest::Approx(1.0f));
-    CHECK(restored->BaseColorTexture.View().empty());
+    CHECK(restored->BaseColorTexture.IsNil());
 }
 
 TEST_CASE("MaterialFile: invalid JSON and wrong type are rejected")

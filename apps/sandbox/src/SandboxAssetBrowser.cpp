@@ -160,19 +160,22 @@ void SandboxApp::SelectAsset(std::string_view vpath)
         if (ptr != nullptr)
         {
             char *fieldPtr = const_cast<char *>(static_cast<const char *>(ptr)) + _assetBrowserFieldOffset;
+            // The browser picks a file path; the stored reference is a GUID, so
+            // translate through the database (nil if the path has no sidecar).
+            const Assisi::Core::AssetId id = _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{});
             if (_assetBrowserVectorSlot < 0)
             {
-                reinterpret_cast<Assisi::Core::AssetPath *>(fieldPtr)->Assign(vpath);
+                *reinterpret_cast<Assisi::Core::AssetId *>(fieldPtr) = id;
             }
             else
             {
-                // Element [slot] of an AssetPathVector: grow the sparse override
-                // list with empty entries up to the slot, then assign.
-                auto              &overrides = *reinterpret_cast<std::vector<Assisi::Core::AssetPath> *>(fieldPtr);
+                // Element [slot] of an AssetIdVector: grow the sparse override
+                // list with nil entries up to the slot, then assign.
+                auto              &overrides = *reinterpret_cast<std::vector<Assisi::Core::AssetId> *>(fieldPtr);
                 const std::size_t  slot      = static_cast<std::size_t>(_assetBrowserVectorSlot);
                 if (overrides.size() <= slot)
                     overrides.resize(slot + 1);
-                overrides[slot].Assign(vpath);
+                overrides[slot] = id;
             }
             ReresolveEntityAssets(_assetBrowserEntity);
         }
@@ -193,21 +196,20 @@ void SandboxApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
 
 void SandboxApp::ResolveMeshRendererAssets(Assisi::Runtime::MeshRenderer &mrc)
 {
-    mrc.mesh = _assetCache.ResolveMesh(mrc.meshPath);
+    mrc.meshBuffer = _assetCache.ResolveMesh(mrc.mesh);
 
-    // One resolved Material per mesh slot: the override path when the slot has a
-    // non-empty entry, otherwise the material the mesh imported for that slot.
+    // One resolved Material per mesh slot: the override when the slot has a
+    // non-nil entry, otherwise the material the mesh imported for that slot.
     // A primitive mesh has no slot table, so this leaves `materials` empty and
     // the draw path uses the cache's fallback material.
-    const std::size_t slotCount = mrc.mesh != nullptr ? mrc.mesh->Materials().size() : 0;
+    const std::size_t slotCount = mrc.meshBuffer != nullptr ? mrc.meshBuffer->Materials().size() : 0;
     mrc.materials.clear();
     mrc.materials.reserve(slotCount);
     for (std::size_t slot = 0; slot < slotCount; ++slot)
     {
-        const bool hasOverride = slot < mrc.materialOverrides.size() && !mrc.materialOverrides[slot].Empty();
+        const bool hasOverride = slot < mrc.materialOverrides.size() && !mrc.materialOverrides[slot].IsNil();
         mrc.materials.push_back(hasOverride ? _assetCache.ResolveMaterial(mrc.materialOverrides[slot])
-                                            : _assetCache.MeshDefaultMaterial(mrc.meshPath,
-                                                                              static_cast<uint32_t>(slot)));
+                                            : _assetCache.MeshDefaultMaterial(mrc.mesh, static_cast<uint32_t>(slot)));
     }
 }
 

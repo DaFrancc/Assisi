@@ -188,22 +188,22 @@ bool ResolveExternalBuffers(fastgltf::Asset &asset, std::string_view virtualPath
     return true;
 }
 
-/* Virtual asset path for the image behind texture @p textureIndex, resolved
-   relative to the .gltf like external buffers are. Embedded images (GLB chunk /
-   data URIs) return an empty path — the unpack-to-separate-files stance: warn
+/* GUID for the image behind texture @p textureIndex. Resolves the image URI to a
+   virtual path relative to the .gltf (like external buffers), then maps it to a
+   stable id via @p resolveId. Embedded images (GLB chunk / data URIs) and an
+   absent resolver return the nil id — the unpack-to-separate-files stance: warn
    once naming the fix and import the channel factor-only. */
-Core::AssetPath ResolveImagePath(const fastgltf::Asset &asset, size_t textureIndex, std::string_view virtualPath,
-                                 const std::string &parent, ImportWarnings &warnings)
+Core::AssetId ResolveImageId(const fastgltf::Asset &asset, size_t textureIndex, std::string_view virtualPath,
+                             const std::string &parent, const AssetIdResolver &resolveId, ImportWarnings &warnings)
 {
-    Core::AssetPath result;
     if (textureIndex >= asset.textures.size())
     {
-        return result;
+        return {};
     }
     const fastgltf::Texture &texture = asset.textures[textureIndex];
     if (!texture.imageIndex.has_value() || *texture.imageIndex >= asset.images.size())
     {
-        return result;
+        return {};
     }
 
     const fastgltf::Image &image = asset.images[*texture.imageIndex];
@@ -217,13 +217,14 @@ Core::AssetPath ResolveImagePath(const fastgltf::Asset &asset, size_t textureInd
                             "`gltf-pipeline -i model.glb -o model.gltf --separate`.",
                             virtualPath);
         }
-        return result;
+        return {};
     }
 
     const std::string relative{uriSource->uri.path()};
     const std::string sibling = parent.empty() ? relative : parent + "/" + relative;
-    result.Assign(sibling);
-    return result;
+    // No resolver (shipped/test) → nil id (factor-only). Otherwise the database
+    // maps the resolved path to its stable GUID; an unknown path yields nil too.
+    return resolveId ? resolveId(sibling) : Core::AssetId{};
 }
 
 /* Maps one glTF material to CPU MaterialData: pbrMetallicRoughness factors plus
@@ -231,7 +232,7 @@ Core::AssetPath ResolveImagePath(const fastgltf::Asset &asset, size_t textureInd
    modes, double-sided, secondary UV sets) is flattened with a warning — never
    silently. */
 MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex, std::string_view virtualPath,
-                             const std::string &parent, ImportWarnings &warnings)
+                             const std::string &parent, const AssetIdResolver &resolveId, ImportWarnings &warnings)
 {
     MaterialData data;
     const fastgltf::Material &material = asset.materials[materialIndex];
@@ -258,31 +259,34 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
     if (pbr.baseColorTexture.has_value())
     {
         texCoordCheck(pbr.baseColorTexture->texCoordIndex);
-        data.BaseColorTexture = ResolveImagePath(asset, pbr.baseColorTexture->textureIndex, virtualPath, parent, warnings);
+        data.BaseColorTexture =
+            ResolveImageId(asset, pbr.baseColorTexture->textureIndex, virtualPath, parent, resolveId, warnings);
     }
     if (pbr.metallicRoughnessTexture.has_value())
     {
         texCoordCheck(pbr.metallicRoughnessTexture->texCoordIndex);
         data.MetallicRoughnessTexture =
-            ResolveImagePath(asset, pbr.metallicRoughnessTexture->textureIndex, virtualPath, parent, warnings);
+            ResolveImageId(asset, pbr.metallicRoughnessTexture->textureIndex, virtualPath, parent, resolveId, warnings);
     }
     if (material.normalTexture.has_value())
     {
         texCoordCheck(material.normalTexture->texCoordIndex);
-        data.NormalTexture = ResolveImagePath(asset, material.normalTexture->textureIndex, virtualPath, parent, warnings);
+        data.NormalTexture =
+            ResolveImageId(asset, material.normalTexture->textureIndex, virtualPath, parent, resolveId, warnings);
         data.NormalScale = material.normalTexture->scale;
     }
     if (material.occlusionTexture.has_value())
     {
         texCoordCheck(material.occlusionTexture->texCoordIndex);
         data.OcclusionTexture =
-            ResolveImagePath(asset, material.occlusionTexture->textureIndex, virtualPath, parent, warnings);
+            ResolveImageId(asset, material.occlusionTexture->textureIndex, virtualPath, parent, resolveId, warnings);
         data.OcclusionStrength = material.occlusionTexture->strength;
     }
     if (material.emissiveTexture.has_value())
     {
         texCoordCheck(material.emissiveTexture->texCoordIndex);
-        data.EmissiveTexture = ResolveImagePath(asset, material.emissiveTexture->textureIndex, virtualPath, parent, warnings);
+        data.EmissiveTexture =
+            ResolveImageId(asset, material.emissiveTexture->textureIndex, virtualPath, parent, resolveId, warnings);
     }
 
     if (material.alphaMode != fastgltf::AlphaMode::Opaque && !warnings.alphaMode)
@@ -436,7 +440,7 @@ std::string_view ToString(MeshImportError error) noexcept
     return "unknown error";
 }
 
-std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath)
+std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath, const AssetIdResolver &resolveId)
 {
     if (!IsGltfPath(virtualPath))
     {
@@ -611,7 +615,7 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
         }
         else
         {
-            merged.Materials.push_back(ExtractMaterial(asset, key, virtualPath, parent, warnings));
+            merged.Materials.push_back(ExtractMaterial(asset, key, virtualPath, parent, resolveId, warnings));
         }
     }
 

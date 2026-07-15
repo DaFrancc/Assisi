@@ -104,13 +104,19 @@ TEST_CASE("SceneSerializer: an empty scene round-trips to an empty scene")
     CHECK(loaded.AliveCount() == 0);
 }
 
-TEST_CASE("SceneSerializer: MeshRenderer asset paths round-trip; GPU handles don't")
+TEST_CASE("SceneSerializer: MeshRenderer asset ids round-trip; GPU handles don't")
 {
+    // Reserved built-in id for prim://cube, plus an arbitrary material id. No hint
+    // resolver is installed, so the GUIDs serialize without a path hint and the
+    // ids round-trip on their own.
+    const Core::AssetId cubeId     = Core::BuiltinAssetId::Cube;
+    const Core::AssetId materialId = *Core::AssetId::Parse("8c08e9c0-e9fb-4f84-a9ba-7a90223526fd");
+
     ECS::Scene        scene;
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, MeshRenderer{
-                             .meshPath          = Core::AssetPath{std::string_view{"prim://cube"}},
-                             .materialOverrides = {Core::AssetPath{std::string_view{"materials/checker.amat"}}},
+                             .mesh              = cubeId,
+                             .materialOverrides = {materialId},
                          }) != nullptr);
 
     ECS::Scene loaded;
@@ -119,12 +125,12 @@ TEST_CASE("SceneSerializer: MeshRenderer asset paths round-trip; GPU handles don
     const MeshRenderer *mrc =
         loaded.Get<MeshRenderer>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(mrc != nullptr); // presence survives
-    CHECK(mrc->meshPath.View() == "prim://cube");
+    CHECK(mrc->mesh == cubeId);
     REQUIRE(mrc->materialOverrides.size() == 1);
-    CHECK(mrc->materialOverrides[0].View() == "materials/checker.amat");
+    CHECK(mrc->materialOverrides[0] == materialId);
     // The mesh/material handles are transient: never serialized, so they come
-    // back empty and get re-resolved from the paths at load time.
-    CHECK(mrc->mesh == nullptr);
+    // back empty and get re-resolved from the ids at load time.
+    CHECK(mrc->meshBuffer == nullptr);
     CHECK(mrc->materials.empty());
 }
 

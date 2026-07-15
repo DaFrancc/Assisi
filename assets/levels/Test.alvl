@@ -4,8 +4,16 @@
     {
       "components": {
         "DirectionalLight": {
-          "direction": [-0.4, -1.0, -0.5],
-          "color": [1.0, 1.0, 1.0],
+          "direction": [
+            -0.4,
+            -1.0,
+            -0.5
+          ],
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
           "intensity": 0.5
         }
       }
@@ -13,13 +21,41 @@
     {
       "components": {
         "Transform": {
-          "position": [0.0, -0.25, 0.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0],
-          "scale": [10.0, 0.5, 10.0]
+          "position": [
+            0.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            10.0,
+            0.5,
+            10.0
+          ]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
+        "MeshRenderer": {
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          },
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ]
+        },
         "RigidBodyDescriptor": {
-          "halfExtents": [5.0, 0.25, 5.0],
+          "halfExtents": [
+            5.0,
+            0.25,
+            5.0
+          ],
           "isStatic": true,
           "enableCCD": true
         }
@@ -28,13 +64,41 @@
     {
       "components": {
         "Transform": {
-          "position": [0.0, 6.0, 0.0],
-          "rotation": [0.8536, 0.3536, 0.1464, 0.3536],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            0.0,
+            6.0,
+            0.0
+          ],
+          "rotation": [
+            0.8536,
+            0.3536,
+            0.1464,
+            0.3536
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
+        "MeshRenderer": {
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          },
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ]
+        },
         "RigidBodyDescriptor": {
-          "halfExtents": [0.5, 0.5, 0.5],
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
           "isStatic": false,
           "enableCCD": true
         }
@@ -43,13 +107,41 @@
     {
       "components": {
         "Transform": {
-          "position": [-3.0, 0.5, -2.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            -3.0,
+            0.5,
+            -2.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
+        "MeshRenderer": {
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          },
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ]
+        },
         "RigidBodyDescriptor": {
-          "halfExtents": [0.5, 0.5, 0.5],
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
           "isStatic": false
         }
       }
@@ -57,13 +149,41 @@
     {
       "components": {
         "Transform": {
-          "position": [0.0, 0.5, -3.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            0.0,
+            0.5,
+            -3.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
+        "MeshRenderer": {
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          },
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ]
+        },
         "RigidBodyDescriptor": {
-          "halfExtents": [0.5, 0.5, 0.5],
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
           "isStatic": false
         }
       }
@@ -71,13 +191,41 @@
     {
       "components": {
         "Transform": {
-          "position": [3.0, 0.5, -2.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            3.0,
+            0.5,
+            -2.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
+        "MeshRenderer": {
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          },
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ]
+        },
         "RigidBodyDescriptor": {
-          "halfExtents": [0.5, 0.5, 0.5],
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
           "isStatic": false
         }
       }
@@ -85,12 +233,29 @@
     {
       "components": {
         "Transform": {
-          "position": [0.0, 4.0, -1.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            0.0,
+            4.0,
+            -1.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
         "PointLight": {
-          "color": [1.0, 1.0, 1.0],
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
           "intensity": 150.0,
           "radius": 8.0
         }
@@ -99,12 +264,29 @@
     {
       "components": {
         "Transform": {
-          "position": [-1.0, 2.5, 0.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            -1.0,
+            2.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
         "PointLight": {
-          "color": [0.2, 0.4, 1.0],
+          "color": [
+            0.2,
+            0.4,
+            1.0
+          ],
           "intensity": 200.0,
           "radius": 50.0
         }
@@ -113,12 +295,29 @@
     {
       "components": {
         "Transform": {
-          "position": [5.0, 2.5, 0.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            5.0,
+            2.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
         "PointLight": {
-          "color": [1.0, 0.1, 0.1],
+          "color": [
+            1.0,
+            0.1,
+            0.1
+          ],
           "intensity": 200.0,
           "radius": 30.0
         }
@@ -127,11 +326,35 @@
     {
       "components": {
         "Transform": {
-          "position": [0.0, 1.5, 0.0],
-          "rotation": [1.0, 0.0, 0.0, 0.0],
-          "scale": [0.5, 0.5, 0.5]
+          "position": [
+            0.0,
+            1.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            0.5,
+            0.5,
+            0.5
+          ]
         },
-        "MeshRenderer": { "meshPath": "prim://cube", "materialOverrides": ["materials/checker.amat"] },
+        "MeshRenderer": {
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          },
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ]
+        },
         "Parent": {
           "parent": 4
         }
@@ -140,9 +363,22 @@
     {
       "components": {
         "Transform": {
-          "position": [0.0, 3.0, 8.0],
-          "rotation": [0.984, -0.179, 0.0, 0.0],
-          "scale": [1.0, 1.0, 1.0]
+          "position": [
+            0.0,
+            3.0,
+            8.0
+          ],
+          "rotation": [
+            0.984,
+            -0.179,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
         },
         "Camera": {
           "fovDegrees": 60.0,

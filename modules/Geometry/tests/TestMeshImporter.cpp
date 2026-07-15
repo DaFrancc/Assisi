@@ -7,6 +7,7 @@
 #include <fstream>
 #include <string_view>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp>
@@ -205,7 +206,21 @@ TEST_CASE("ImportMesh: two materials become two submeshes with extracted materia
 {
     const fs::path root = WriteTwoMaterialAssets();
 
-    const std::expected<MeshData, MeshImportError> result = ImportMesh("two.gltf");
+    // A resolver stands in for the editor's AssetDatabase: it maps the texture's
+    // resolved virtual path to a known id, and records the path it was asked for.
+    const Assisi::Core::AssetId kGreenId = *Assisi::Core::AssetId::Parse("11111111-1111-4111-8111-111111111111");
+    std::string                 seenPath;
+    const auto                  resolveId = [&](std::string_view vpath) -> Assisi::Core::AssetId
+    {
+        if (vpath == "textures/green.png")
+        {
+            seenPath = std::string(vpath);
+            return kGreenId;
+        }
+        return {};
+    };
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("two.gltf", resolveId);
     REQUIRE(result.has_value());
 
     CHECK(result->Vertices.size() == 6);
@@ -237,13 +252,15 @@ TEST_CASE("ImportMesh: two materials become two submeshes with extracted materia
     CHECK(red.BaseColorFactor.g == doctest::Approx(0.0f));
     CHECK(red.MetallicFactor == doctest::Approx(0.25f));
     CHECK(red.RoughnessFactor == doctest::Approx(0.75f));
-    CHECK(red.BaseColorTexture.View().empty());
+    CHECK(red.BaseColorTexture.IsNil()); // no texture → nil id
 
-    // Material 1's baseColorTexture resolves to a virtual path relative to the .gltf.
+    // Material 1's baseColorTexture resolves to a virtual path relative to the
+    // .gltf, which the resolver then maps to its stable GUID.
     const Assisi::Geometry::MaterialData &green = result->Materials[1];
     CHECK(green.Name == "green");
     CHECK(green.BaseColorFactor.g == doctest::Approx(1.0f));
-    CHECK(green.BaseColorTexture.View() == "textures/green.png");
+    CHECK(seenPath == "textures/green.png"); // resolver saw the correct resolved path
+    CHECK(green.BaseColorTexture == kGreenId);
 
     fs::remove_all(root);
 }

@@ -60,7 +60,30 @@ const MeshBuffer *AssetCache::ResolvePrimitive(const Core::AssetPath &path)
     return &buffer;
 }
 
-const MeshBuffer *AssetCache::ResolveMesh(const Core::AssetPath &path)
+Core::AssetPath AssetCache::PathForId(const Core::AssetId &id) const
+{
+    if (id.IsNil())
+        return {};
+
+    // Reserved built-ins map to their `prim://` path from the static table, so
+    // the primitives resolve even before (or without) an editor database.
+    if (id.IsReserved())
+    {
+        for (const Core::BuiltinAssetEntry &entry : Core::BuiltinAssets())
+            if (entry.id == id)
+                return Core::AssetPath{entry.virtualPath};
+        return {};
+    }
+
+    return _idToPath ? _idToPath(id) : Core::AssetPath{};
+}
+
+const MeshBuffer *AssetCache::ResolveMesh(const Core::AssetId &id)
+{
+    return ResolveMeshPath(PathForId(id));
+}
+
+const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
 {
     // ResolvePrimitive also serves the mesh cache: any path already uploaded
     // (primitive or file) is returned here on subsequent frames.
@@ -73,7 +96,10 @@ const MeshBuffer *AssetCache::ResolveMesh(const Core::AssetPath &path)
     // An empty path is the expected "unset" default and is never a file.
     if (!path.Empty() && !_missingMeshWarned.contains(path))
     {
-        std::expected<Geometry::MeshData, Geometry::MeshImportError> imported = Geometry::ImportMesh(path.View());
+        // Hand the importer the path→id resolver so a glTF's texture channels are
+        // stored as stable ids (resolved back to textures when a material builds).
+        std::expected<Geometry::MeshData, Geometry::MeshImportError> imported =
+            Geometry::ImportMesh(path.View(), _pathToId);
         if (imported)
         {
             MeshBuffer &buffer = _meshes[path];
@@ -128,9 +154,10 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, ColorSpac
     return &texture;
 }
 
-nvrhi::ITexture *AssetCache::ResolveChannel(const Core::AssetPath &path, ColorSpace space,
+nvrhi::ITexture *AssetCache::ResolveChannel(const Core::AssetId &channelId, ColorSpace space,
                                             const Core::AssetPath &fallbackPrimitive, bool *outPresent)
 {
+    const Core::AssetPath path = PathForId(channelId);
     if (!path.Empty())
     {
         if (const Texture *texture = ResolveTexture(path, space))
@@ -175,7 +202,12 @@ void AssetCache::BuildFallbackMaterial()
     BuildMaterial(_fallbackMaterial, data, 0);
 }
 
-const Material *AssetCache::ResolveMaterial(const Core::AssetPath &path)
+const Material *AssetCache::ResolveMaterial(const Core::AssetId &id)
+{
+    return ResolveMaterialPath(PathForId(id));
+}
+
+const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
 {
     if (path.Empty())
         return &_fallbackMaterial;
@@ -210,14 +242,17 @@ const Material *AssetCache::ResolveMaterial(const Core::AssetPath &path)
     return &material;
 }
 
-const Material *AssetCache::MeshDefaultMaterial(const Core::AssetPath &meshPath, uint32_t slot)
+const Material *AssetCache::MeshDefaultMaterial(const Core::AssetId &meshId, uint32_t slot)
 {
-    MeshSlotKey key{meshPath, slot};
+    // Key the default-material cache by the mesh's resolved path (built-ins map to
+    // their `prim://` path), preserving the existing per-(mesh,slot) dedup.
+    const Core::AssetPath meshPath = PathForId(meshId);
+    MeshSlotKey           key{meshPath, slot};
     if (std::unordered_map<MeshSlotKey, Material, MeshSlotKeyHash>::iterator it = _meshDefaultMaterials.find(key);
         it != _meshDefaultMaterials.end())
         return &it->second;
 
-    const MeshBuffer *mesh = ResolveMesh(meshPath);
+    const MeshBuffer *mesh = ResolveMeshPath(meshPath);
     if (mesh == nullptr || slot >= mesh->Materials().size())
         return &_fallbackMaterial;
 

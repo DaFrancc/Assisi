@@ -2,6 +2,7 @@
 
 #include "SandboxApp.hpp"
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -13,6 +14,7 @@
 #include <cfloat>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
 
 bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
@@ -132,6 +134,24 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             ImGui::TextUnformatted(field.name.c_str());
             break;
         }
+        case FieldType::AssetId:
+        {
+            // Stored as a GUID; shown/edited as its resolved virtual path (the
+            // database translates both ways). Same [ input ][…] label layout as
+            // AssetPath.
+            auto             *id      = static_cast<Assisi::Core::AssetId *>(fp);
+            const std::string inputId = "##" + field.name;
+            if (AssetIdPathField(inputId.c_str(), *id))
+                edited = true;
+            ImGui::SameLine();
+            if (ImGui::Button("...", ImVec2(ImGui::GetFrameHeight(), 0.f)))
+                OpenAssetBrowserFor(meta, field.offset);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Browse assets");
+            ImGui::SameLine();
+            ImGui::TextUnformatted(field.name.c_str());
+            break;
+        }
         case FieldType::EntityRef:
         {
             auto      *ref   = static_cast<Assisi::ECS::Entity *>(fp);
@@ -196,7 +216,7 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             }
             break;
         }
-        case FieldType::AssetPathVector:
+        case FieldType::AssetIdVector:
         {
             // Only MeshRenderer::materialOverrides uses this type; render it as
             // one browse row per material slot of the entity's resolved mesh.
@@ -226,13 +246,13 @@ bool SandboxApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
 {
     ImGui::TextUnformatted("materialOverrides");
 
-    if (mrc.mesh == nullptr)
+    if (mrc.meshBuffer == nullptr)
     {
         ImGui::TextDisabled("  (resolve a mesh to edit its materials)");
         return false;
     }
 
-    const std::vector<Assisi::Geometry::MaterialData> &slots = mrc.mesh->Materials();
+    const std::vector<Assisi::Geometry::MaterialData> &slots = mrc.meshBuffer->Materials();
     if (slots.empty())
     {
         ImGui::TextDisabled("  (mesh has no material slots)");
@@ -244,23 +264,21 @@ bool SandboxApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
     {
         ImGui::PushID(static_cast<int32_t>(slot));
 
-        // Current override for this slot ("" when the slot falls back to the
-        // mesh's imported default), shown in an editable text field.
-        char buf[Assisi::Core::kAssetPathMax + 1] = {};
+        // Current override for this slot (nil id when the slot falls back to the
+        // mesh's imported default), shown/edited as its resolved path.
+        Assisi::Core::AssetId slotId;
         if (slot < mrc.materialOverrides.size())
-            mrc.materialOverrides[slot].ToCStr(buf, sizeof(buf));
+            slotId = mrc.materialOverrides[slot];
 
-        const float browseW = ImGui::GetFrameHeight();
-        ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - browseW - ImGui::GetStyle().ItemSpacing.x);
-        if (ImGui::InputText("##override", buf, sizeof(buf)))
+        if (AssetIdPathField("##override", slotId))
         {
             if (mrc.materialOverrides.size() <= slot)
                 mrc.materialOverrides.resize(slot + 1);
-            mrc.materialOverrides[slot].Assign(buf);
+            mrc.materialOverrides[slot] = slotId;
             edited = true;
         }
         ImGui::SameLine();
-        if (ImGui::Button("...", ImVec2(browseW, 0.f)))
+        if (ImGui::Button("...", ImVec2(ImGui::GetFrameHeight(), 0.f)))
             OpenAssetBrowserForSlot(meta, fieldOffset, static_cast<int32_t>(slot));
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Browse materials (.amat)");
@@ -277,6 +295,25 @@ bool SandboxApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
     }
 
     return edited;
+}
+
+bool SandboxApp::AssetIdPathField(const char *inputId, Assisi::Core::AssetId &id)
+{
+    // Display an id as its current virtual path; typing a path re-resolves the id
+    // through the database (nil when the path is unknown). The caller lays out the
+    // browse button and label to the right, so this only sizes+draws the input.
+    char buf[Assisi::Core::kAssetPathMax + 1] = {};
+    if (const std::optional<std::string> path = _assetDatabase.PathFor(id))
+        std::snprintf(buf, sizeof(buf), "%s", path->c_str());
+
+    const float browseW = ImGui::GetFrameHeight();
+    ImGui::SetNextItemWidth(ImGui::CalcItemWidth() - browseW - ImGui::GetStyle().ItemSpacing.x);
+    if (ImGui::InputText(inputId, buf, sizeof(buf)))
+    {
+        id = _assetDatabase.IdFor(buf).value_or(Assisi::Core::AssetId{});
+        return true;
+    }
+    return false;
 }
 
 void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
@@ -378,7 +415,7 @@ void SandboxApp::DrawInspector()
         anyFieldEdited |= edited;
     }
 
-    // A typed AssetPath edit changes meshPath/materialOverrides; re-resolve so the
+    // A typed asset-id edit changes mesh/materialOverrides; re-resolve so the
     // new mesh/material shows without a level reload. (Browser picks re-resolve in
     // SelectAsset.) Cheap — the AssetCache Resolve* calls are cached lookups.
     if (anyFieldEdited)

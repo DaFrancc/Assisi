@@ -22,7 +22,7 @@ DrawStats DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm:
     DrawStats stats;
     for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
     {
-        if (meshRenderer.mesh == nullptr)
+        if (meshRenderer.meshBuffer == nullptr)
         {
             continue;
         }
@@ -30,7 +30,8 @@ DrawStats DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm:
         if (frustumCulling)
         {
             const Assisi::Geometry::BoundingSphere worldBounds =
-                Assisi::Geometry::TransformedBoundingSphere(meshRenderer.mesh->LocalBounds(), transform.worldMatrix);
+                Assisi::Geometry::TransformedBoundingSphere(meshRenderer.meshBuffer->LocalBounds(),
+                                                            transform.worldMatrix);
             if (!frustum.IntersectsSphere(worldBounds))
             {
                 ++stats.culled;
@@ -40,7 +41,7 @@ DrawStats DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm:
 
         const glm::mat4 modelViewProjection = viewProjection * transform.worldMatrix;
         meshPass.Draw(commandList, framebuffer, viewportWidth, viewportHeight, modelViewProjection,
-                      transform.worldMatrix, *meshRenderer.mesh, meshRenderer.materials);
+                      transform.worldMatrix, *meshRenderer.meshBuffer, meshRenderer.materials);
         ++stats.drawn;
     }
     return stats;

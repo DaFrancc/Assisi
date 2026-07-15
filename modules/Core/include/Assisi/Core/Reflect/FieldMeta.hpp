@@ -26,6 +26,8 @@ enum class FieldType
     EntityRef,       ///< ECS::Entity serialized as a stable serial index via SceneSerializer.
     AssetPath,       ///< Core::AssetPath — a fixed-capacity virtual asset path, serialized as a string.
     AssetPathVector, ///< std::vector<Core::AssetPath> — serialized as a JSON array of strings.
+    AssetId,         ///< Core::AssetId — a stable GUID reference, serialized as { guid, path-hint }.
+    AssetIdVector,   ///< std::vector<Core::AssetId> — serialized as a JSON array of { guid, path-hint }.
     Unknown,
 };
 

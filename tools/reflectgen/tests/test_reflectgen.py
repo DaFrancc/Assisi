@@ -133,6 +133,30 @@ class CodegenTest(unittest.TestCase):
         self.assertIn("comp.paths.clear()", cpp)
         self.assertIn("comp.paths.push_back(_p)", cpp)
 
+    def test_asset_id_serializes_via_the_core_helpers(self):
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct Ref {\n"
+            "  AFIELD() Assisi::Core::AssetId mesh;\n"
+            "  AFIELD() std::vector<Assisi::Core::AssetId> slots;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/Ref.hpp")
+        # Field metadata carries the new enum values.
+        self.assertIn('"mesh", Assisi::Core::Reflect::FieldType::AssetId', cpp)
+        self.assertIn('"slots", Assisi::Core::Reflect::FieldType::AssetIdVector', cpp)
+        # Serialize/deserialize route through the Core AssetId JSON helpers.
+        self.assertIn("Assisi::Core::SerializeAssetId(c.mesh)", cpp)
+        self.assertIn("comp.mesh = Assisi::Core::DeserializeAssetId(", cpp)
+        self.assertIn("Assisi::Core::DeserializeAssetId(_e)", cpp)  # vector element
+        # An AssetId field pulls in the helper header.
+        self.assertIn("#include <Assisi/Core/AssetIdJson.hpp>", cpp)
+
+    def test_no_asset_id_include_without_asset_id_fields(self):
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct Plain { AFIELD() int x = 0; };\n}\n"
+        )
+        self.assertNotIn("AssetIdJson", reflectgen.generate_cpp(comps, "N/Plain.hpp"))
+
     def test_acomp_transient_emits_id_only_registration(self):
         components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
         cpp = reflectgen.generate_cpp(components, SAMPLE_INCLUDE)
