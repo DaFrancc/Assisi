@@ -175,6 +175,10 @@ class SandboxApp : public Assisi::App::Application
     /// physics body). No-op if the entity already has it. Used by the inspector's
     /// Add Component field.
     void AddComponentToSelected(const Assisi::Core::Reflect::ComponentMeta &meta);
+    /// @brief Removes @p meta's component from the selected entity, cleaning up any
+    /// associated runtime state (e.g. a RigidBodyDescriptor's Jolt body). Used by
+    /// the inspector's per-component delete button.
+    void RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta);
     /// @brief Starts the 0.5 s eased camera move that reframes @p entity, choosing
     /// a framing distance from its bounds. Used by an entity-list double-click.
     void FocusCameraOn(Assisi::ECS::Entity entity);
@@ -280,6 +284,13 @@ class SandboxApp : public Assisi::App::Application
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
     bool                _wasDragging    = false;
+
+    // Per-component delete confirmation: the inspector's X button arms a two-step
+    // confirm for one component at a time. Scoped to an entity so switching
+    // selection cancels a pending confirm rather than deleting from the new one.
+    Assisi::Core::Reflect::ComponentId _pendingDeleteComponent =
+        Assisi::Core::Reflect::kInvalidComponentId;
+    Assisi::ECS::Entity _pendingDeleteEntity = Assisi::ECS::NullEntity;
 
     // Options overlay (frame graph + display/pacing settings), toggled with F11.
     // Owned by the app, not the engine — see DrawOptionsWindow in SandboxOptions.cpp.

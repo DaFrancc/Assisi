@@ -201,6 +201,16 @@ struct Scene
             _pools[id].stamp(_pools[id].pool, entity, ++_changeTick);
     }
 
+    /// @brief Removes the entity's component identified by ComponentId rather than
+    /// static type — for generic tooling (e.g. the inspector's delete-component
+    /// button), which has a ComponentMeta but no compile-time T. No-op if the
+    /// scene has no pool for that id or the entity lacks that component.
+    void RemoveById(Entity entity, Core::Reflect::ComponentId id)
+    {
+        if (id < _pools.size() && _pools[id].pool && _pools[id].remove)
+            _pools[id].remove(_pools[id].pool, entity);
+    }
+
     /// @brief Returns a lazy view over all entities that have every component in Ts.
     ///
     /// Iterates the smallest matching pool and skips entities absent from the others.

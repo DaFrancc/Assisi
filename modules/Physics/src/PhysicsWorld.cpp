@@ -322,6 +322,27 @@ void PhysicsWorld::Clear()
     _impl->snapshots.clear();
 }
 
+void PhysicsWorld::RemoveBody(const RigidBody &body)
+{
+    const JPH::BodyID id = body.bodyId;
+    if (id.IsInvalid())
+        return;
+
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (bodies.IsAdded(id))
+        bodies.RemoveBody(id);
+    bodies.DestroyBody(id);
+
+    // Drop it from the bookkeeping so CaptureState/InterpolateTransforms and a
+    // later Clear() never touch the freed id. Match on the index+sequence key
+    // rather than BodyID identity to avoid depending on operator==.
+    const std::uint32_t key = id.GetIndexAndSequenceNumber();
+    const auto matches = [key](const JPH::BodyID &b) { return b.GetIndexAndSequenceNumber() == key; };
+    std::erase_if(_impl->allBodyIds, matches);
+    std::erase_if(_impl->dynamicBodyIds, matches);
+    _impl->snapshots.erase(key);
+}
+
 void PhysicsWorld::Update(float deltaTime)
 {
     _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jobSystem);

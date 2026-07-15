@@ -118,6 +118,13 @@ class PhysicsWorld
     /// dimensions) at runtime without recreating the body.
     void ReshapeBody(const RigidBody &body, const ColliderShapeDesc &shape);
 
+    /// @brief Removes and destroys a single body, dropping it from the simulation.
+    ///
+    /// Use when an entity's collider is deleted at runtime (the inspector's remove
+    /// button). No-op for an invalid handle; the RigidBody component should be
+    /// removed from the entity alongside this call.
+    void RemoveBody(const RigidBody &body);
+
     /// @brief Enables or disables continuous collision detection (CCD) on a body.
     ///
     /// Only meaningful for dynamic bodies; no-op on static bodies.

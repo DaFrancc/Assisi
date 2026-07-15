@@ -47,6 +47,24 @@ TEST_CASE("Scene: querying or removing a never-created pool is safe")
     scene.Remove<Position>(e); // must not crash
 }
 
+TEST_CASE("Scene: RemoveById removes a component by ComponentId")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<Position>(e, {5.0f}) != nullptr);
+    REQUIRE(scene.Has<Position>(e));
+
+    const Assisi::Core::Reflect::ComponentId id = Assisi::Core::Reflect::ComponentIdOf<Position>();
+    scene.RemoveById(e, id);
+    CHECK_FALSE(scene.Has<Position>(e));
+
+    // Idempotent, and safe on an id whose pool exists but the entity lacks it,
+    // and on an out-of-range id.
+    scene.RemoveById(e, id);
+    scene.RemoveById(e, Assisi::Core::Reflect::kInvalidComponentId);
+    CHECK_FALSE(scene.Has<Position>(e));
+}
+
 TEST_CASE("Scene: destroy is deferred until FlushDestroyed")
 {
     Scene scene;

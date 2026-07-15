@@ -625,6 +625,30 @@ void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMe
     }
 }
 
+void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
+{
+    if (_selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
+    {
+        return;
+    }
+
+    // Tear down runtime state that lives outside the reflected fields before the
+    // pool entry disappears. A RigidBodyDescriptor owns a Jolt body (via the
+    // transient RigidBody handle); drop both so the collider stops simulating.
+    // MeshRenderer's transient pointers are non-owning (the AssetCache owns the
+    // GPU resources), so removing it needs no extra cleanup.
+    if (meta.name == "RigidBodyDescriptor")
+    {
+        if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
+        {
+            _physics.RemoveBody(*rbc);
+        }
+        _scene->Remove<Assisi::Physics::RigidBody>(_selectedEntity);
+    }
+
+    _scene->RemoveById(_selectedEntity, meta.id);
+}
+
 void SandboxApp::DrawInspector()
 {
     using namespace Assisi::Core::Reflect;
@@ -663,6 +687,11 @@ void SandboxApp::DrawInspector()
 
     bool anyFieldEdited = false;
 
+    // A delete-confirm is armed for one component of one entity; if the selection
+    // moved on, drop it rather than carry it to the newly selected entity.
+    if (_pendingDeleteEntity != _selectedEntity)
+        _pendingDeleteComponent = Assisi::Core::Reflect::kInvalidComponentId;
+
     // SerializableComponents() skips ACOMP(transient) id-only components
     // (e.g. RigidBody/DestroyTag), which have no getByEntity hook and nothing
     // to edit, so no per-item guard is needed here.
@@ -679,19 +708,53 @@ void SandboxApp::DrawInspector()
         if (!compPtr)
             continue;
 
-        if (!ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
-            continue;
-
         ImGui::PushID(meta->name.c_str());
-        const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
-        ImGui::PopID();
 
-        // Field edits write component memory by offset, bypassing Scene::GetMut's
-        // change stamping, so report it explicitly. No-op for untracked components;
-        // for a tracked one (Transform) this is what re-propagates the edit.
-        if (edited)
-            _scene->MarkChanged(_selectedEntity, meta->id);
-        anyFieldEdited |= edited;
+        // Per-component delete: the X button arms a two-step confirm that replaces
+        // it with [Delete] [Cancel]; both are laid out left of the header so the
+        // row reads "[X] ComponentName".
+        bool deleted = false;
+        if (_pendingDeleteComponent == meta->id)
+        {
+            if (ImGui::SmallButton("Delete"))
+            {
+                RemoveComponentFromSelected(*meta);
+                _pendingDeleteComponent = Assisi::Core::Reflect::kInvalidComponentId;
+                deleted                 = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Cancel"))
+                _pendingDeleteComponent = Assisi::Core::Reflect::kInvalidComponentId;
+        }
+        else if (ImGui::SmallButton("X"))
+        {
+            _pendingDeleteComponent = meta->id;
+            _pendingDeleteEntity    = _selectedEntity;
+        }
+        else if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Remove component");
+        }
+
+        if (deleted)
+        {
+            // The component (and its stale compPtr) is gone; don't render its fields.
+            ImGui::PopID();
+            continue;
+        }
+
+        ImGui::SameLine();
+        if (ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
+            // Field edits write component memory by offset, bypassing Scene::GetMut's
+            // change stamping, so report it explicitly. No-op for untracked
+            // components; for a tracked one (Transform) this re-propagates the edit.
+            if (edited)
+                _scene->MarkChanged(_selectedEntity, meta->id);
+            anyFieldEdited |= edited;
+        }
+        ImGui::PopID();
     }
 
     // A typed asset-id edit changes mesh/materialOverrides; re-resolve so the
