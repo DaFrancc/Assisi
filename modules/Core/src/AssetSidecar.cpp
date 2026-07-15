@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Core/AssetSidecar.hpp>
 
+#include <Assisi/Core/ContentHash.hpp>
+
 #include <nlohmann/json.hpp>
 
 namespace Assisi::Core
@@ -42,6 +44,13 @@ std::string SerializeSidecar(const AssetSidecar &sidecar)
             subAssets.push_back(std::move(object));
         }
         document["subAssets"] = std::move(subAssets);
+    }
+
+    // Source hash: a fixed-width hex string (a 64-bit value doesn't fit a JSON
+    // number without precision loss). Emitted only when present.
+    if (sidecar.sourceHash.has_value())
+    {
+        document["sourceHash"] = ToHex64(*sidecar.sourceHash);
     }
 
     return document.dump(2);
@@ -88,6 +97,13 @@ std::expected<AssetSidecar, AssetSidecarError> DeserializeSidecar(std::string_vi
             sidecar.subAssets.push_back(
                 AssetSubAsset{.slot = entry.value("slot", std::uint32_t{0}), .material = *material});
         }
+    }
+
+    // Source hash (optional): a malformed value is dropped, not fatal — a missing
+    // hash simply reads as "never stamped", which the reconciler treats as stale.
+    if (const auto found = document.find("sourceHash"); found != document.end() && found->is_string())
+    {
+        sidecar.sourceHash = FromHex64(found->get<std::string>());
     }
 
     return sidecar;

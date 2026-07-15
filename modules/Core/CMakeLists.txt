@@ -24,6 +24,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/AssetProvider.hpp"
     "include/Assisi/Core/AssetSidecar.hpp"
     "include/Assisi/Core/AssetSystem.hpp"
+    "include/Assisi/Core/ContentHash.hpp"
     "include/Assisi/Core/Errors.hpp"
     "include/Assisi/Core/LooseFileProvider.hpp"
     "include/Assisi/Core/EventQueue.hpp"

@@ -34,6 +34,7 @@
 #include <cstddef>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -137,12 +138,19 @@ class SandboxApp : public Assisi::App::Application
     /// but not yet the resolution key (asset-database S1).
     void ReimportAssets();
 
-    /// @brief Explodes every indexed glTF that has no material manifest yet into
-    /// sibling `.amat` files (+ sidecars) and records its slot→material bindings
-    /// (asset-database S3). Editor-only; runs inside ReimportAssets between the
-    /// two database scans. Returns how many meshes were exploded, so the caller
-    /// only rescans when something changed.
-    std::size_t ExplodeUnprocessedMeshes();
+    /// @brief Brings every indexed glTF's materials up to date (asset-database
+    /// S3/S4). A glTF with no manifest is exploded into `.amat` children; one
+    /// that already has a manifest is reconciled against its current source —
+    /// auto-refreshing provably-safe changes (geometry-only, additive slots) and
+    /// badging anything ambiguous stale (see _staleMeshes) without clobbering it.
+    /// Editor-only; runs inside ReimportAssets between the two database scans.
+    /// Returns whether any file was written, so the caller only rescans then.
+    bool ReconcileMeshMaterials();
+
+    /// @brief Whether a mesh asset (by virtual path) was left stale by the last
+    /// reconcile — its source changed in a way that could not be auto-resolved.
+    /// Drives the asset-browser stale badge.
+    [[nodiscard]] bool IsAssetStale(std::string_view vpath) const;
 
     Assisi::ECS::Entity PickEntity(glm::vec2 mousePos);
 
@@ -168,6 +176,11 @@ class SandboxApp : public Assisi::App::Application
     // populates it by scanning the asset root and generating `.aast` sidecars.
     // Built but not yet the resolution key — references still resolve by path.
     Assisi::Core::AssetDatabase _assetDatabase;
+
+    // Mesh assets (by virtual path) the last reconcile left stale: their glTF
+    // source changed in a way the conservative classifier couldn't auto-resolve
+    // (S4/D5). Surfaced as a badge in the asset browser. Rebuilt each reconcile.
+    std::unordered_set<std::string> _staleMeshes;
 
     // Smoke test for ImGui texture display — loaded once in SetupScene. Owns its
     // texture (not routed through _assetCache, which LoadLevel Clears).

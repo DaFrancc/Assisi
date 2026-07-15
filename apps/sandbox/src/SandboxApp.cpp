@@ -143,16 +143,16 @@ void SandboxApp::ReimportAssets()
         [this](std::string_view vpath) -> Assisi::Core::AssetId
         { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); });
 
-    // S3: materialize glTF materials into `.amat` children + slot→material
-    // manifests. The explosion writes new files, so rebuild afterwards to bring
-    // them (and the manifests it stamped onto the glTF sidecars) into the DB —
-    // only when something was actually exploded (steady state does nothing). The
-    // hint resolver is already installed above, so written `.amat` channels carry
+    // S3/S4: bring glTF materials up to date — explode new meshes, reconcile
+    // already-exploded ones against their current source. Any write means new/
+    // updated files + manifests, so rebuild afterwards to bring them into the DB
+    // (only when something changed — steady state does nothing). The hint
+    // resolver is already installed above, so written `.amat` channels carry
     // regenerated path hints (D2).
-    if (ExplodeUnprocessedMeshes() > 0)
+    if (ReconcileMeshMaterials())
     {
         if (const std::expected<std::size_t, Assisi::Core::AssetError> rescan = _assetDatabase.Rebuild(); rescan)
-            Assisi::Core::Log::Info("Asset reimport: {} assets indexed after material explosion.", *rescan);
+            Assisi::Core::Log::Info("Asset reimport: {} assets indexed after material reconcile.", *rescan);
     }
 
     // The browser lists by extension and never shows `.aast`, but a reimport may
@@ -160,7 +160,7 @@ void SandboxApp::ReimportAssets()
     _assetBrowserDirty = true;
 }
 
-std::size_t SandboxApp::ExplodeUnprocessedMeshes()
+bool SandboxApp::ReconcileMeshMaterials()
 {
     // Case-insensitive glTF-extension test on the virtual path.
     const auto isGltf = [](std::string_view path)
@@ -183,28 +183,73 @@ std::size_t SandboxApp::ExplodeUnprocessedMeshes()
     // texture GUIDs the mesh would have imported.
     const auto resolveTextureId = [this](std::string_view vpath) -> Assisi::Core::AssetId
     { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); };
+    // Existing `.amat` files, by their GUID, so the reconciler can load and
+    // compare them against the fresh material table.
+    const auto resolveMaterialPath = [this](const Assisi::Core::AssetId &id) -> std::string
+    { return _assetDatabase.PathFor(id).value_or(std::string{}); };
 
-    std::size_t exploded = 0;
+    _staleMeshes.clear();
+    bool changed = false;
     for (const auto &[id, path] : _assetDatabase.Assets())
     {
-        // Reconcile-not-clobber: a glTF that already carries a manifest is done.
-        if (!isGltf(path) || _assetDatabase.HasManifest(id))
+        if (!isGltf(path))
             continue;
 
-        const std::expected<std::size_t, Assisi::Geometry::MeshImportError> result =
-            Assisi::Geometry::ExplodeGltfMaterials(path, resolveTextureId);
-        if (result)
+        if (!_assetDatabase.HasManifest(id))
         {
-            Assisi::Core::Log::Info("Asset reimport: exploded {} material(s) from '{}'.", *result, path);
-            ++exploded;
+            // First sight: materialize the glTF's materials into `.amat` children.
+            const std::expected<std::size_t, Assisi::Geometry::MeshImportError> result =
+                Assisi::Geometry::ExplodeGltfMaterials(path, resolveTextureId);
+            if (result)
+            {
+                Assisi::Core::Log::Info("Asset reimport: exploded {} material(s) from '{}'.", *result, path);
+                changed = true;
+            }
+            else
+            {
+                Assisi::Core::Log::Warn("Asset reimport: could not explode '{}' ({}).", path,
+                                        Assisi::Geometry::ToString(result.error()));
+            }
+            continue;
         }
-        else
+
+        // Already exploded: reconcile against the current source (S4/D5).
+        const Assisi::Geometry::ReconcileResult result =
+            Assisi::Geometry::ReconcileGltfMaterials(path, resolveTextureId, resolveMaterialPath);
+        switch (result.outcome)
         {
-            Assisi::Core::Log::Warn("Asset reimport: could not explode '{}' ({}).", path,
-                                    Assisi::Geometry::ToString(result.error()));
+        case Assisi::Geometry::ReconcileOutcome::UpToDate:
+            break;
+        case Assisi::Geometry::ReconcileOutcome::Stamped:
+            Assisi::Core::Log::Info("Asset reimport: recorded source hash for '{}'.", path);
+            break;
+        case Assisi::Geometry::ReconcileOutcome::GeometryOnly:
+            Assisi::Core::Log::Info("Asset reimport: '{}' source changed but materials are unchanged; refreshed.",
+                                    path);
+            break;
+        case Assisi::Geometry::ReconcileOutcome::AdditiveSlots:
+            Assisi::Core::Log::Info("Asset reimport: '{}' gained {} material slot(s); wrote defaults.", path,
+                                    result.addedSlots);
+            break;
+        case Assisi::Geometry::ReconcileOutcome::ConflictStale:
+            _staleMeshes.insert(path);
+            Assisi::Core::Log::Warn("Asset reimport: '{}' changed in a way that needs manual resolution; left "
+                                    "stale (materials untouched).",
+                                    path);
+            break;
+        case Assisi::Geometry::ReconcileOutcome::Failed:
+            Assisi::Core::Log::Warn("Asset reimport: could not reconcile '{}'.", path);
+            break;
         }
+        if (result.changedDisk)
+            changed = true;
     }
-    return exploded;
+    return changed;
+}
+
+bool SandboxApp::IsAssetStale(std::string_view vpath) const
+{
+    return _staleMeshes.find(std::string{vpath}) != _staleMeshes.end();
 }
 
 void SandboxApp::SetupScene()

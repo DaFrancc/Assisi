@@ -22,9 +22,12 @@
 /// a `.amat` that already exists on disk, is left untouched.
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
+#include <functional>
 #include <string_view>
 
+#include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp> // AssetIdResolver, MeshImportError
 
 namespace Assisi::Geometry
@@ -47,5 +50,50 @@ namespace Assisi::Geometry
 ///         (which must already exist) could not be read.
 [[nodiscard]] std::expected<std::size_t, MeshImportError>
 ExplodeGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver &resolveTextureId);
+
+/// @brief What a reconcile of an already-exploded glTF against its current
+///        source concluded (S4 / D5, conservative classifier).
+enum class ReconcileOutcome : std::uint8_t
+{
+    UpToDate,      ///< Stored source hash matches — nothing changed, no work.
+    Stamped,       ///< First S4 sighting: source hash recorded; materials current.
+    GeometryOnly,  ///< Source changed but every material is identical — hash refreshed.
+    AdditiveSlots, ///< New slots appended (existing unchanged) — default `.amat`s written.
+    ConflictStale, ///< Not provably safe (slot removed/reordered, or a material differs)
+                   ///< — left untouched and still stale; needs manual resolution.
+    Failed,        ///< The glTF or an existing `.amat` could not be read/imported.
+};
+
+/// @brief The result of ReconcileGltfMaterials.
+struct ReconcileResult
+{
+    ReconcileOutcome outcome     = ReconcileOutcome::Failed;
+    std::size_t      addedSlots  = 0;     ///< Slots newly materialized (AdditiveSlots).
+    bool             changedDisk = false; ///< Whether any file was written (caller rescans).
+};
+
+/// @brief Reconcile an already-exploded glTF (one carrying a manifest) against
+///        its current source, per the conservative S4/D5 policy.
+///
+/// Recomputes the glTF's content hash and compares it to the stamped one. If it
+/// matches → UpToDate. If the composite predates S4 (no stamp) → the hash is
+/// recorded and it is treated as current (Stamped). On a mismatch the new
+/// material table is compared, slot-by-slot, against the existing `.amat`s:
+///   - all materials identical → **GeometryOnly**, hash refreshed;
+///   - new slots appended, existing unchanged → **AdditiveSlots**, a default
+///     `.amat` (+ sidecar) written for each and the manifest extended;
+///   - anything else (slot removed/reordered, a material's fields differ, or an
+///     existing `.amat` is unreadable) → **ConflictStale**: nothing is written,
+///     so the mismatch keeps being detected until resolved by hand.
+///
+/// Existing `.amat` files are never overwritten or deleted — the guarantee that
+/// makes silent auto-reconcile safe. Manual Reimport re-runs this pass.
+///
+/// @param resolveTextureId Path→GUID for importing the fresh material table.
+/// @param resolveMaterialPath GUID→virtual-path, to load each existing `.amat`
+///        named in the manifest for the comparison.
+[[nodiscard]] ReconcileResult
+ReconcileGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver &resolveTextureId,
+                       const std::function<std::string(const Core::AssetId &)> &resolveMaterialPath);
 
 } /* namespace Assisi::Geometry */

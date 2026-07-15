@@ -129,6 +129,26 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
     drawList->AddCircleFilled(ImVec2(center.x - radius * 0.30f, center.y - radius * 0.30f), radius * 0.55f,
                               IM_COL32(214, 188, 150, 255), 32);
 }
+
+/// @brief Paints a small amber "!" badge in the top-right corner of a @p size
+/// tile at @p origin, marking an asset whose source changed but couldn't be
+/// auto-reconciled (S4). Drawn over the tile icon, so it reads at a glance.
+void DrawStaleBadge(const ImVec2 &origin, float size)
+{
+    ImDrawList *drawList = ImGui::GetWindowDrawList();
+
+    const float  radius = std::max(6.f, size * 0.12f);
+    const ImVec2 center(origin.x + size - radius - 4.f, origin.y + radius + 4.f);
+    const ImU32  amber = IM_COL32(230, 160, 40, 255);
+    const ImU32  dark  = IM_COL32(40, 30, 10, 255);
+
+    drawList->AddCircleFilled(center, radius, amber, 20);
+    drawList->AddCircle(center, radius, dark, 20, 1.5f);
+    // The exclamation mark: a short stem above a dot.
+    drawList->AddLine(ImVec2(center.x, center.y - radius * 0.45f), ImVec2(center.x, center.y + radius * 0.10f), dark,
+                      std::max(1.5f, radius * 0.18f));
+    drawList->AddCircleFilled(ImVec2(center.x, center.y + radius * 0.45f), std::max(1.f, radius * 0.12f), dark, 8);
+}
 } // namespace
 
 void SandboxApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
@@ -407,12 +427,20 @@ void SandboxApp::DrawAssetBrowser()
         ImGui::BeginGroup();
         const ImVec2 tile    = ImGui::GetCursorScreenPos();
         const bool   clicked = ImGui::Button("##mesh", ImVec2(thumb, thumb));
+        const bool   hovered = ImGui::IsItemHovered();
         DrawMeshIcon(tile, thumb);
+        const bool stale = IsAssetStale(vpath);
+        if (stale)
+            DrawStaleBadge(tile, thumb);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
         ImGui::TextWrapped("%s", mesh.c_str());
         ImGui::PopTextWrapPos();
         ImGui::EndGroup();
         ImGui::PopID();
+
+        if (stale && hovered)
+            ImGui::SetTooltip("Source changed since import — needs manual reconcile.\nMaterials were left "
+                              "untouched (no auto-resolve).");
 
         if (clicked)
             SelectAsset(vpath);

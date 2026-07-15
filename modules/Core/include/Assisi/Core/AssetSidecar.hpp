@@ -25,6 +25,7 @@
 
 #include <cstdint>
 #include <expected>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -52,6 +53,12 @@ struct AssetSidecar
     /// @brief Composite manifest: `slot → material GUID`. Empty for a leaf
     ///        asset. Order is not significant — each entry names its own slot.
     std::vector<AssetSubAsset> subAssets;
+
+    /// @brief Content hash of the composite's *source* (the `.gltf`/`.glb`) at
+    ///        the time its materials were exploded (S4/D5). Absent on a leaf
+    ///        asset, and on a composite sidecar written before S4. A mismatch
+    ///        against the current source marks the composite stale.
+    std::optional<std::uint64_t> sourceHash;
 };
 
 /// @brief Mint a fresh random UUIDv4. Editor-only (asset authoring). The version

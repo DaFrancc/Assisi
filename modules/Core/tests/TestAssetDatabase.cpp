@@ -174,6 +174,21 @@ TEST_CASE("AssetSidecar round-trips a composite manifest")
         DeserializeSidecar(SerializeSidecar(AssetSidecar{.guid = meshId}));
     REQUIRE(leaf.has_value());
     CHECK(leaf->subAssets.empty());
+    CHECK_FALSE(leaf->sourceHash.has_value());
+}
+
+TEST_CASE("AssetSidecar round-trips a source hash")
+{
+    const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
+
+    AssetSidecar sidecar{.guid = meshId};
+    sidecar.subAssets.push_back(AssetSubAsset{.slot = 0, .material = meshId});
+    sidecar.sourceHash = 0xdeadbeefcafef00dULL;
+
+    const std::expected<AssetSidecar, AssetSidecarError> parsed = DeserializeSidecar(SerializeSidecar(sidecar));
+    REQUIRE(parsed.has_value());
+    REQUIRE(parsed->sourceHash.has_value());
+    CHECK(*parsed->sourceHash == 0xdeadbeefcafef00dULL);
 }
 
 TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMaterial")

@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -65,6 +66,108 @@ std::string ReadFile(const fs::path &path)
     return buffer.str();
 }
 
+// Overwrites model.gltf with @p text — stands in for a DCC re-export.
+void OverwriteGltf(const fs::path &root, std::string_view text)
+{
+    std::ofstream gltf(root / "model.gltf", std::ios::binary | std::ios::trunc);
+    gltf.write(text.data(), static_cast<std::streamsize>(text.size()));
+}
+
+// Resolve a material GUID to its `.amat` virtual path by scanning the root for
+// the sidecar carrying it — the reconciler's AssetDatabase stand-in for tests.
+std::string ResolveMaterialPathIn(const fs::path &root, const AssetId &id)
+{
+    for (const fs::directory_entry &entry : fs::recursive_directory_iterator(root))
+    {
+        if (entry.path().extension() != ".aast" || entry.path().stem().extension() != ".amat")
+            continue;
+        const std::expected<AssetSidecar, Assisi::Core::AssetSidecarError> side =
+            DeserializeSidecar(ReadFile(entry.path()));
+        if (side && side->guid == id)
+            return fs::relative(entry.path().parent_path() / entry.path().stem(), root).generic_string();
+    }
+    return {};
+}
+
+// A material glTF with a second, texture-less "Metal" material on a second
+// primitive — reconciling from kMaterialGltf to this appends slot 1 (Wood is
+// byte-identical), the additive-safe case.
+constexpr std::string_view kTwoMaterialGltf = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [
+    { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 },
+    { "attributes": { "POSITION": 0 }, "indices": 1, "material": 1 }
+  ] } ],
+  "materials": [
+    { "name": "Wood", "pbrMetallicRoughness": {
+        "baseColorFactor": [0.8, 0.6, 0.4, 1.0], "baseColorTexture": { "index": 0 } } },
+    { "name": "Metal", "pbrMetallicRoughness": { "baseColorFactor": [0.2, 0.2, 0.2, 1.0] } }
+  ],
+  "textures": [ { "source": 0 } ],
+  "images": [ { "uri": "wood.png" } ],
+  "buffers": [ { "uri": "triangle.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
+// kMaterialGltf with the base-color factor changed — the material differs, so a
+// reconcile can't prove it safe (ConflictStale).
+constexpr std::string_view kMaterialGltfChangedFactor = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 } ] } ],
+  "materials": [ { "name": "Wood", "pbrMetallicRoughness": {
+      "baseColorFactor": [0.1, 0.2, 0.3, 1.0], "baseColorTexture": { "index": 0 } } } ],
+  "textures": [ { "source": 0 } ],
+  "images": [ { "uri": "wood.png" } ],
+  "buffers": [ { "uri": "triangle.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
+// kMaterialGltf with only a non-material change (the accessor bounds) — same
+// materials, different source bytes: GeometryOnly.
+constexpr std::string_view kMaterialGltfChangedGeometry = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0 } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1, "material": 0 } ] } ],
+  "materials": [ { "name": "Wood", "pbrMetallicRoughness": {
+      "baseColorFactor": [0.8, 0.6, 0.4, 1.0], "baseColorTexture": { "index": 0 } } } ],
+  "textures": [ { "source": 0 } ],
+  "images": [ { "uri": "wood.png" } ],
+  "buffers": [ { "uri": "triangle.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [2.0, 2.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
 // Writes the glTF, its external buffer, a stand-in texture, and the glTF's
 // `.aast` sidecar (as the reconcile pass would have, with @p gltfId). Points
 // AssetSystem at the fresh root and returns it.
@@ -127,6 +230,7 @@ TEST_CASE("ExplodeGltfMaterials writes a .amat + sidecar and the glTF manifest")
         DeserializeSidecar(ReadFile(root / "model.gltf.aast"));
     REQUIRE(gltfSidecar.has_value());
     CHECK(gltfSidecar->guid == gltfId); // identity preserved (reconcile-not-clobber)
+    CHECK(gltfSidecar->sourceHash.has_value()); // stamped for S4 stale detection
     REQUIRE(gltfSidecar->subAssets.size() == 1);
     CHECK(gltfSidecar->subAssets[0].slot == 0);
 
@@ -161,6 +265,139 @@ TEST_CASE("ExplodeGltfMaterials is idempotent: an existing .amat keeps its id an
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolve).has_value());
     CHECK(ReadFile(root / "model_Wood.amat") == firstAmat);
     CHECK(ReadFile(root / "model_Wood.amat.aast") == firstSidecar);
+
+    fs::remove_all(root);
+}
+
+// --- Reconcile (S4/D5) -----------------------------------------------------
+
+using Assisi::Geometry::ReconcileGltfMaterials;
+using Assisi::Geometry::ReconcileOutcome;
+using Assisi::Geometry::ReconcileResult;
+
+namespace
+{
+// The two resolvers ReconcileGltfMaterials needs, closed over a test root.
+auto MakeTextureResolver(AssetId woodId)
+{
+    return [woodId](std::string_view path) -> AssetId { return path == "wood.png" ? woodId : AssetId{}; };
+}
+} // namespace
+
+TEST_CASE("ReconcileGltfMaterials: unchanged source is up to date")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+
+    const ReconcileResult result = ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat);
+    CHECK(result.outcome == ReconcileOutcome::UpToDate);
+    CHECK_FALSE(result.changedDisk);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ReconcileGltfMaterials: a pre-S4 manifest (no hash) is stamped")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+
+    // Strip the stamped hash to simulate an S3-era sidecar.
+    std::expected<AssetSidecar, Assisi::Core::AssetSidecarError> side =
+        DeserializeSidecar(ReadFile(root / "model.gltf.aast"));
+    REQUIRE(side.has_value());
+    side->sourceHash.reset();
+    {
+        std::ofstream out(root / "model.gltf.aast", std::ios::binary | std::ios::trunc);
+        const std::string text = SerializeSidecar(*side);
+        out.write(text.data(), static_cast<std::streamsize>(text.size()));
+    }
+
+    const ReconcileResult result = ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat);
+    CHECK(result.outcome == ReconcileOutcome::Stamped);
+    // The sidecar now carries a hash; a follow-up reconcile is up to date.
+    const std::expected<AssetSidecar, Assisi::Core::AssetSidecarError> restamped =
+        DeserializeSidecar(ReadFile(root / "model.gltf.aast"));
+    REQUIRE(restamped.has_value());
+    CHECK(restamped->sourceHash.has_value());
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::UpToDate);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ReconcileGltfMaterials: a changed material is left stale, untouched")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+    const std::string amatBefore = ReadFile(root / "model_Wood.amat");
+
+    OverwriteGltf(root, kMaterialGltfChangedFactor);
+    const ReconcileResult result = ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat);
+    CHECK(result.outcome == ReconcileOutcome::ConflictStale);
+    CHECK_FALSE(result.changedDisk);
+    // The authored material is not clobbered, and the mismatch keeps being seen.
+    CHECK(ReadFile(root / "model_Wood.amat") == amatBefore);
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::ConflictStale);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ReconcileGltfMaterials: a non-material change refreshes the hash only")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+    const std::string amatBefore = ReadFile(root / "model_Wood.amat");
+
+    OverwriteGltf(root, kMaterialGltfChangedGeometry);
+    const ReconcileResult result = ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat);
+    CHECK(result.outcome == ReconcileOutcome::GeometryOnly);
+    CHECK(result.changedDisk);
+    CHECK(ReadFile(root / "model_Wood.amat") == amatBefore); // material untouched
+    // Hash refreshed, so the next reconcile is up to date.
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::UpToDate);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("ReconcileGltfMaterials: a new slot is materialized (additive)")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+    const std::string woodBefore = ReadFile(root / "model_Wood.amat");
+
+    OverwriteGltf(root, kTwoMaterialGltf);
+    const ReconcileResult result = ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat);
+    CHECK(result.outcome == ReconcileOutcome::AdditiveSlots);
+    CHECK(result.addedSlots == 1);
+    CHECK(result.changedDisk);
+    // The existing slot is untouched; the new slot gets its own default .amat.
+    CHECK(ReadFile(root / "model_Wood.amat") == woodBefore);
+    CHECK(fs::exists(root / "model_Metal_1.amat"));
+
+    const std::expected<AssetSidecar, Assisi::Core::AssetSidecarError> side =
+        DeserializeSidecar(ReadFile(root / "model.gltf.aast"));
+    REQUIRE(side.has_value());
+    CHECK(side->subAssets.size() == 2); // both slots now bound
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::UpToDate);
 
     fs::remove_all(root);
 }
