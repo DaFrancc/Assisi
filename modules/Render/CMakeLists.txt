@@ -29,6 +29,7 @@ target_sources(Assisi-Render
     "src/Frustum.cpp"
     "src/GpuTelemetry.cpp"
     "src/MeshPass.cpp"
+    "src/OutlinePass.cpp"
     "src/PostProcess.cpp"
     "src/Texture.cpp"
     "src/VulkanContext.cpp"

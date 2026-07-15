@@ -24,6 +24,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/MeshPass.hpp>
+#include <Assisi/Render/OutlinePass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/LightingSystem.hpp>
@@ -97,13 +98,29 @@ class SceneRenderer
     /// first frame. Reflects whether culling is actually removing anything.
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
 
+    /// @brief Mark one entity to receive an always-on-top orange silhouette
+    /// outline (a selection highlight). Pass ECS::NullEntity to clear it. The
+    /// entity must carry a Transform and a MeshRenderer with a resolved mesh, or
+    /// the outline is silently skipped. Drawn each Render() after the scene.
+    void SetHighlightedEntity(ECS::Entity entity) { _highlightedEntity = entity; }
+    [[nodiscard]] ECS::Entity HighlightedEntity() const { return _highlightedEntity; }
+
   private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int width, int height, const Camera &camera, const glm::mat4 &projection);
 
-    nvrhi::IDevice    *_device = nullptr;
-    LightingSystem     _lighting;
-    Render::MeshPass   _meshPass;
+    /// @brief Draw the selection outline for _highlightedEntity (if any) as an
+    /// always-on-top overlay after the scene. No-op when nothing is highlighted or
+    /// the outline pass is unavailable.
+    void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, ECS::Scene &scene);
+
+    nvrhi::IDevice     *_device = nullptr;
+    LightingSystem      _lighting;
+    Render::MeshPass    _meshPass;
+    Render::OutlinePass _outlinePass;
+
+    // The entity drawn with a selection outline this frame (NullEntity = none).
+    ECS::Entity _highlightedEntity = ECS::NullEntity;
 
     // Projection the froxel grid was last built against; a mismatch in Render()
     // triggers a rebuild. Identity forces one on the first frame.

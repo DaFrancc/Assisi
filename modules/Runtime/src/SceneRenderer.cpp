@@ -16,6 +16,14 @@ namespace
 constexpr const char *kSceneVertexShader = "shaders/cube_min.vert.spv";
 constexpr const char *kScenePixelShader = "shaders/cube_min.frag.spv";
 
+// Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
+// a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
+// the orange border. The edge pass reuses the shared fullscreen-triangle vertex shader.
+constexpr const char *kOutlineMaskVertexShader = "shaders/outline_mask.vert.spv";
+constexpr const char *kOutlineMaskPixelShader  = "shaders/outline_mask.frag.spv";
+constexpr const char *kOutlineEdgeVertexShader = "shaders/fullscreen.vert.spv";
+constexpr const char *kOutlineEdgePixelShader  = "shaders/outline_edge.frag.spv";
+
 float AspectRatio(int width, int height)
 {
     return height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
@@ -51,6 +59,16 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
         return false;
     }
 
+    // The selection outline is an editor/gameplay convenience, not core to drawing
+    // a scene — if its pipelines fail to build, log and carry on without it rather
+    // than failing the whole renderer.
+    if (!_outlinePass.Initialize(device, framebufferInfo, static_cast<uint32_t>(width),
+                                 static_cast<uint32_t>(height), kOutlineMaskVertexShader, kOutlineMaskPixelShader,
+                                 kOutlineEdgeVertexShader, kOutlineEdgePixelShader))
+    {
+        Core::Log::Warn("SceneRenderer: selection outline unavailable (outline pass failed to initialise).");
+    }
+
     return true;
 }
 
@@ -81,6 +99,12 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     if (!_meshPass.IsValid())
     {
         return true; // nothing built yet — nothing to rebuild
+    }
+    // Rebuild the outline pipelines against the new format too; a failure there
+    // only drops the highlight, so it doesn't fail the render-target change.
+    if (!_outlinePass.RebuildPipeline(framebufferInfo))
+    {
+        Core::Log::Warn("SceneRenderer: selection outline pipeline rebuild failed; highlight disabled.");
     }
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
@@ -122,6 +146,26 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .farZ           = camera.farZ,
                                                .frustumCulling = _frustumCulling,
                                                .sortDraws      = _sortDraws});
+
+    DrawHighlightOutline(frame, projection * view, scene);
+}
+
+void SceneRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
+                                         ECS::Scene &scene)
+{
+    if (!_outlinePass.IsValid() || _highlightedEntity == ECS::NullEntity || !scene.IsAlive(_highlightedEntity))
+    {
+        return;
+    }
+
+    const Transform    *transform = scene.Get<Transform>(_highlightedEntity);
+    const MeshRenderer *renderer  = scene.Get<MeshRenderer>(_highlightedEntity);
+    if (transform == nullptr || renderer == nullptr || renderer->meshBuffer == nullptr)
+    {
+        return; // nothing to outline (no placement or no resolved mesh)
+    }
+
+    _outlinePass.Draw(frame, viewProjection, *renderer->meshBuffer, transform->worldMatrix);
 }
 
 } // namespace Assisi::Runtime
