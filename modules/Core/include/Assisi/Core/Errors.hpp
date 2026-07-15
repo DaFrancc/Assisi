@@ -16,6 +16,7 @@ enum class AssetError
     RootEscape,         ///< The resolved path would escape the asset root directory.
     FileOpenFailed,     ///< The file exists but could not be opened.
     FileReadFailed,     ///< The file was opened but reading its contents failed.
-    FileWriteFailed     ///< The file could not be created or written (writable user root).
+    FileWriteFailed,    ///< The file could not be created or written (writable user root).
+    UnknownAssetId      ///< An AssetProvider was asked for an id it does not serve.
 };
 } // namespace Assisi::Core

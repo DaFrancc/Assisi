@@ -3,18 +3,27 @@ Assisi_apply_defaults(Assisi-Core)
 
 target_sources(Assisi-Core
   PRIVATE
+    "src/AssetDatabase.cpp"
+    "src/AssetId.cpp"
+    "src/AssetSidecar.cpp"
     "src/AssetSystem.cpp"
     "src/AssetTypeRegistry.cpp"
     "src/Assert.cpp"
     "src/ComponentRegistry.cpp"
+    "src/LooseFileProvider.cpp"
     "src/Logger.cpp"
     "src/Platform.cpp"
     "src/Sinks.cpp"
   PUBLIC
     "include/Assisi/Core/Assert.hpp"
+    "include/Assisi/Core/AssetDatabase.hpp"
+    "include/Assisi/Core/AssetId.hpp"
     "include/Assisi/Core/AssetPath.hpp"
+    "include/Assisi/Core/AssetProvider.hpp"
+    "include/Assisi/Core/AssetSidecar.hpp"
     "include/Assisi/Core/AssetSystem.hpp"
     "include/Assisi/Core/Errors.hpp"
+    "include/Assisi/Core/LooseFileProvider.hpp"
     "include/Assisi/Core/EventQueue.hpp"
     "include/Assisi/Core/Logger.hpp"
     "include/Assisi/Core/Sinks.hpp"
