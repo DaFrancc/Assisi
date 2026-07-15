@@ -86,6 +86,14 @@ class MeshBuffer
     nvrhi::IBuffer *IndexBuffer() const { return _indexBuffer; }
     uint32_t IndexCount() const { return _indexCount; }
 
+    /// @brief Stable, process-unique id assigned by AssetCache at upload (never
+    /// reused; survives Clear()). 0 = unassigned. Symmetric with Material::Id —
+    /// it keys the draw sort by mesh and becomes the arena mesh index later
+    /// (docs/mesh-material-architecture.md §1). Set once by the cache; the
+    /// MeshBuffer itself never mints.
+    uint32_t Id() const { return _id; }
+    void SetId(uint32_t id) { _id = id; }
+
     /// @brief Local-space bounding sphere over the whole mesh, for frustum culling.
     const Geometry::BoundingSphere &LocalBounds() const { return _localBounds; }
 
@@ -107,6 +115,7 @@ class MeshBuffer
     nvrhi::BufferHandle _vertexBuffer;
     nvrhi::BufferHandle _indexBuffer;
     uint32_t             _indexCount = 0;
+    uint32_t             _id = 0; ///< Assigned by AssetCache; 0 until then.
     Geometry::BoundingSphere _localBounds;
     Geometry::Aabb           _localAabb;
     std::vector<Geometry::SubMesh>      _subMeshes;

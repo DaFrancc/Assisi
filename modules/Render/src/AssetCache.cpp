@@ -57,6 +57,7 @@ const MeshBuffer *AssetCache::ResolvePrimitive(const Core::AssetPath &path)
 
     MeshBuffer &buffer = _meshes[path];
     buffer.Upload(_device, factory->second());
+    buffer.SetId(_nextMeshId++);
     return &buffer;
 }
 
@@ -104,6 +105,7 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
         {
             MeshBuffer &buffer = _meshes[path];
             buffer.Upload(_device, std::move(*imported));
+            buffer.SetId(_nextMeshId++);
             return &buffer;
         }
 

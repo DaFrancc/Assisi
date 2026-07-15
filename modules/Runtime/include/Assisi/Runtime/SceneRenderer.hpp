@@ -81,6 +81,12 @@ class SceneRenderer
     void SetFrustumCulling(bool enabled) { _frustumCulling = enabled; }
     [[nodiscard]] bool FrustumCulling() const { return _frustumCulling; }
 
+    /// @brief Enable/disable draw-list sorting by sort key (on by default). Off
+    /// submits in query order — the image is identical, but the material/mesh bind
+    /// counts in LastDrawStats climb, which is how the sort's payoff is measured.
+    void SetSortDraws(bool enabled) { _sortDraws = enabled; }
+    [[nodiscard]] bool SortDraws() const { return _sortDraws; }
+
     /// @brief Select a material-channel debug view (None = normal lit render).
     /// The mesh pass short-circuits its shader to that channel — for inspecting
     /// base colour / metallic / roughness / normal / occlusion / emissive.
@@ -104,6 +110,7 @@ class SceneRenderer
     glm::mat4 _clusterProjection{1.f};
 
     bool      _frustumCulling = true; // default draw path culls off-screen meshes
+    bool      _sortDraws      = true; // default draw path sorts by sort key before submit
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 

@@ -186,6 +186,12 @@ class AssetCache
     // The id-0 fallback; rebuilt on Clear (its texture pointers would dangle).
     Material _fallbackMaterial;
 
+    // Monotonic, process-lifetime mesh id, assigned to each MeshBuffer at upload.
+    // NOT reset by Clear() (symmetric with _nextMaterialId): a re-resolved mesh
+    // gets a fresh id, an old id is never reused — so the draw sort key stays
+    // unambiguous across a level reload.
+    uint32_t _nextMeshId = 1;
+
     // Monotonic, process-lifetime material id. NOT reset by Clear(), so an id is
     // never reused — a stale binding-set entry keyed on it is dead, never wrong.
     // Starts at 1; id 0 is reserved for the fallback material.

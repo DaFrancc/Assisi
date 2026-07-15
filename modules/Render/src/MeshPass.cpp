@@ -205,44 +205,68 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(const Material &material) co
     return _bindingSetCache.emplace(material.Id(), bindingSet).first->second;
 }
 
-void MeshPass::Draw(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer, uint32_t viewportWidth,
-                     uint32_t viewportHeight, const glm::mat4 &modelViewProjection, const glm::mat4 &model,
-                     const MeshBuffer &mesh, std::span<const Material *const> materials) const
+MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, const glm::mat4 &viewProjection,
+                                       std::span<const DrawItem> items) const
 {
-    const DrawPushConstants pushConstants{modelViewProjection, model};
+    nvrhi::ICommandList *const commandList = frame.commandList;
+    SubmitStats                stats;
 
-    // LOD0 only for now (screen-size LOD selection lands with the draw-item layer).
-    // EnsureSubMeshTables guarantees at least one LOD spanning one submesh.
-    const std::vector<Geometry::SubMesh> &subMeshes = mesh.SubMeshes();
-    const std::vector<Geometry::LodRange> &lods = mesh.Lods();
-    const Geometry::LodRange lod0 =
-        !lods.empty() ? lods.front() : Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
+    // The previous item's material id / mesh pointer, to count the distinct
+    // binding-set / vertex-buffer runs the sort produced. NVRHI caches graphics
+    // state across setGraphicsState calls, so re-issuing an unchanged binding set
+    // or vertex buffer costs nothing on the GPU — these counters report the real
+    // state changes, which a good sort keeps near the number of distinct
+    // materials/meshes rather than the draw count. UINT32_MAX / nullptr never
+    // match a real id/pointer, so the first item counts as both a bind.
+    uint32_t          prevMaterialId = UINT32_MAX;
+    const MeshBuffer *prevMesh       = nullptr;
 
-    for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
+    for (const DrawItem &item : items)
     {
-        const Geometry::SubMesh &subMesh = subMeshes[lod0.FirstSubMesh + i];
-        const Material *material = subMesh.MaterialSlot < materials.size() ? materials[subMesh.MaterialSlot] : nullptr;
-        if (material == nullptr)
-            continue; // No material resolved for this slot — skip rather than guess.
+        if (item.material == nullptr || item.mesh == nullptr)
+        {
+            continue; // producer should have filtered these; belt and suspenders
+        }
 
-        // Everything but the binding set is identical per submesh, but GraphicsState
-        // is a cheap value; rebuild it each time rather than mutate its static_vectors.
+        if (item.material->Id() != prevMaterialId)
+        {
+            ++stats.materialBinds;
+            prevMaterialId = item.material->Id();
+        }
+        if (item.mesh != prevMesh)
+        {
+            ++stats.meshBinds;
+            prevMesh = item.mesh;
+        }
+
+        const Geometry::SubMesh &subMesh = item.mesh->SubMeshes()[item.submeshIndex];
+
+        // GraphicsState is a cheap value; rebuild it each item rather than mutate
+        // its static_vectors. NVRHI compares it against the cached state and only
+        // re-binds what actually changed since the previous item.
         nvrhi::GraphicsState state;
         state.pipeline = _pipeline;
-        state.framebuffer = framebuffer;
-        state.addBindingSet(GetOrCreateBindingSet(*material));
+        state.framebuffer = frame.framebuffer;
+        state.addBindingSet(GetOrCreateBindingSet(*item.material));
         state.viewport.addViewportAndScissorRect(
-            nvrhi::Viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
-        state.addVertexBuffer(nvrhi::VertexBufferBinding{mesh.VertexBuffer(), 0, 0});
-        state.indexBuffer = nvrhi::IndexBufferBinding{mesh.IndexBuffer(), nvrhi::Format::R32_UINT, 0};
+            nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
+        state.addVertexBuffer(nvrhi::VertexBufferBinding{item.mesh->VertexBuffer(), 0, 0});
+        state.indexBuffer = nvrhi::IndexBufferBinding{item.mesh->IndexBuffer(), nvrhi::Format::R32_UINT, 0};
         commandList->setGraphicsState(state);
+
+        // Push constants are invalidated by setGraphicsState, so (re)set them per
+        // item — cheap, and always required before the draw.
+        const DrawPushConstants pushConstants{viewProjection * item.model, item.model};
         commandList->setPushConstants(&pushConstants, sizeof(pushConstants));
 
         nvrhi::DrawArguments drawArgs;
         drawArgs.vertexCount = subMesh.IndexCount; // for drawIndexed this is the index count
         drawArgs.startIndexLocation = subMesh.IndexOffset;
         commandList->drawIndexed(drawArgs);
+        ++stats.drawCalls;
     }
+
+    return stats;
 }
 
 } // namespace Assisi::Render

@@ -21,8 +21,10 @@
 
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/ClusterGrid.hpp>
+#include <Assisi/Render/DrawItem.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
+#include <Assisi/Render/RenderFrame.hpp>
 
 namespace Assisi::Render
 {
@@ -70,16 +72,27 @@ class MeshPass
                               uint32_t screenHeight, float nearZ, float farZ, uint32_t dirLightCount,
                               MaterialDebugView debugView = MaterialDebugView::None) const;
 
-    /// @brief Records the draws for `mesh`'s LOD0 submeshes with the given model
-    /// and model-view-projection matrices, binding the Material for each submesh's
-    /// slot and lighting the surface from ClusterGrid's buffers.
-    /// @param materials  One Material per mesh material slot (see
-    /// MeshRenderer::materials). A submesh whose slot has no entry is skipped;
-    /// the pointers must stay valid until this draw is submitted.
+    /// @brief State-change counts from one Submit — the consumer half of the
+    /// draw-stats (the producer counts drawn/culled). materialBinds/meshBinds are
+    /// the distinct binding-set / vertex-buffer runs the sorted items reduced to;
+    /// a well-sorted list makes them far smaller than drawCalls.
+    struct SubmitStats
+    {
+        uint32_t drawCalls    = 0;
+        uint32_t materialBinds = 0;
+        uint32_t meshBinds     = 0;
+    };
+
+    /// @brief Records `items` into `frame` in order — one drawIndexed per DrawItem,
+    /// binding each item's Material and mesh vertex/index buffers. The caller sorts
+    /// the span by DrawItem::sortKey first (material/mesh-major), so consecutive
+    /// items share state and NVRHI's state cache collapses the redundant binds; the
+    /// MVP is derived per item as `viewProjection * item.model`. Items must
+    /// reference live resources (valid until the frame is submitted).
+    /// @param frame  The frame's command list + framebuffer + viewport size.
     /// @pre IsValid() — call Initialize() first, and UpdateFrameConstants() this frame.
-    void Draw(nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer, uint32_t viewportWidth,
-              uint32_t viewportHeight, const glm::mat4 &modelViewProjection, const glm::mat4 &model,
-              const MeshBuffer &mesh, std::span<const Material *const> materials) const;
+    [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, const glm::mat4 &viewProjection,
+                                     std::span<const DrawItem> items) const;
 
     bool IsValid() const { return _pipeline != nullptr; }
 

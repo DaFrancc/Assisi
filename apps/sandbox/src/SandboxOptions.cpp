@@ -277,8 +277,20 @@ void SandboxApp::DrawOptionsWindow()
         {
             _sceneRenderer.SetFrustumCulling(frustumCulling);
         }
+
+        // A/B toggle for draw-list sorting. The image is identical either way; the
+        // material/mesh bind tally below is the tell: sorting collapses same-state
+        // draws into runs, so the bind counts drop toward the number of distinct
+        // materials/meshes. Turn it off and they climb toward the drawn-item count.
+        bool sortDraws = _sceneRenderer.SortDraws();
+        if (ImGui::Checkbox("Sort Draws", &sortDraws))
+        {
+            _sceneRenderer.SetSortDraws(sortDraws);
+        }
+
         const Assisi::Runtime::DrawStats draw = _sceneRenderer.LastDrawStats();
-        ImGui::Text("Meshes: %u drawn / %u culled", draw.drawn, draw.culled);
+        ImGui::Text("Items: %u drawn / %u meshes culled", draw.drawnItems, draw.culledMeshes);
+        ImGui::Text("Binds: %u material / %u mesh", draw.materialBinds, draw.meshBinds);
 
         // Material-channel debug view: short-circuits the mesh shader to one
         // channel so PBR inputs can be inspected. Runtime-only, order matches

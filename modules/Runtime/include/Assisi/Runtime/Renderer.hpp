@@ -11,38 +11,56 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/MeshPass.hpp>
+#include <Assisi/Render/RenderFrame.hpp>
 
 namespace Assisi::Runtime
 {
 
-/// @brief How many mesh entities a DrawScene call submitted versus culled.
-/// Useful as a live overlay readout and to confirm culling is actually firing.
+/// @brief What one DrawScene call produced and consumed: how much geometry
+/// survived culling and how many GPU state changes the sorted submission
+/// reduced to. A live overlay readout — and the seam's measurable payoff: with
+/// sorting on, materialBinds/meshBinds fall toward the count of distinct
+/// materials/meshes; with it off (A/B toggle) they climb toward drawnItems.
 struct DrawStats
 {
-    uint32_t drawn  = 0; ///< Entities whose draw was recorded.
-    uint32_t culled = 0; ///< Entities skipped by frustum culling this pass.
+    uint32_t drawnItems    = 0; ///< DrawItems (visible submeshes) submitted.
+    uint32_t culledMeshes  = 0; ///< Whole mesh entities skipped by frustum culling.
+    uint32_t materialBinds = 0; ///< Distinct binding-set runs the sort reduced to.
+    uint32_t meshBinds     = 0; ///< Distinct vertex/index-buffer runs the sort reduced to.
 };
 
-/// @brief Draws all entities in `scene` that have both a Transform and a
-///        MeshRenderer, using the shared `meshPass` pipeline.
+/// @brief Everything one DrawScene call needs, grouped so the call site reads as
+/// named fields rather than a dozen positional arguments. The three references
+/// (scene, meshPass, frame) are required and must outlive the call; the rest have
+/// sensible defaults. Built at the call site with designated initializers.
+struct DrawSceneParams
+{
+    Assisi::ECS::Scene        &scene;    ///< ECS scene to draw.
+    const Assisi::Render::MeshPass &meshPass; ///< Shared pipeline; must be initialized.
+    const Assisi::Render::RenderFrame &frame; ///< Command list + framebuffer + viewport size.
+
+    glm::mat4 view{1.f};       ///< View matrix (e.g. Runtime::ViewMatrix).
+    glm::mat4 projection{1.f}; ///< Projection matrix (e.g. Runtime::ProjectionMatrix).
+    float     nearZ = 0.f;     ///< Camera near plane, for the sort key's depth quantization.
+    float     farZ  = 0.f;     ///< Camera far plane.
+
+    bool frustumCulling = true; ///< Skip meshes outside the view frustum.
+    bool sortDraws      = true; ///< Sort the draw list by sort key before submitting.
+};
+
+/// @brief Extract, sort, and submit a draw list for every Transform+MeshRenderer
+///        entity in the scene, through the shared mesh pass.
 ///
-/// Entities whose MeshRenderer::mesh is null are skipped silently. When
-/// `frustumCulling` is true, entities whose world-space bounding sphere falls
-/// entirely outside the view frustum are also skipped (the sphere test is
-/// conservative, so nothing visible is ever culled); pass false to submit every
-/// mesh unconditionally — useful for A/B comparing the cull's cost/benefit.
+/// The producer half: each entity whose MeshRenderer is resolved is whole-mesh
+/// frustum-culled (conservative sphere test — nothing visible is ever culled),
+/// its LOD0 submeshes emitted as one DrawItem each (skipping slots with no
+/// resolved material), and — when `sortDraws` is true — the list is sorted by
+/// DrawItem::sortKey so MeshPass::Submit records it in material/mesh-major,
+/// front-to-back order. `frustumCulling` false submits every mesh; `sortDraws`
+/// false submits in query order — both for A/B comparing the seam (the image is
+/// identical either way, only the bind counts change).
 ///
-/// @param scene       ECS scene to query.
-/// @param view        View matrix (e.g. from Runtime::ViewMatrix).
-/// @param projection  Projection matrix (e.g. from Runtime::ProjectionMatrix).
-/// @param commandList Open command list to record draws into.
-/// @param framebuffer Target framebuffer for this frame.
-/// @param viewportWidth,viewportHeight  Framebuffer size in pixels.
-/// @param meshPass    Shared pipeline; must already be initialized.
-/// @param frustumCulling  Skip meshes outside the view frustum (default true).
-/// @return Counts of drawn and culled entities.
-DrawStats DrawScene(Assisi::ECS::Scene &scene, const glm::mat4 &view, const glm::mat4 &projection,
-                    nvrhi::ICommandList *commandList, nvrhi::IFramebuffer *framebuffer, uint32_t viewportWidth,
-                    uint32_t viewportHeight, const Assisi::Render::MeshPass &meshPass, bool frustumCulling = true);
+/// @return Drawn/culled counts and the submission's state-change tally.
+DrawStats DrawScene(const DrawSceneParams &params);
 
 } // namespace Assisi::Runtime
