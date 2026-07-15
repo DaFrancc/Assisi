@@ -10,6 +10,7 @@ target_sources(Assisi-Sandbox
     "src/SandboxInspector.cpp"
     "src/SandboxAssetBrowser.cpp"
     "src/SandboxLevels.cpp"
+    "src/SandboxPlay.cpp"
 )
 
 target_link_libraries(Assisi-Sandbox

@@ -21,7 +21,9 @@
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/SceneRegistry.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/GpuTelemetry.hpp>
@@ -33,6 +35,7 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -77,6 +80,10 @@ class SandboxApp : public Assisi::App::Application
     /// @brief Recomputes _cameraTransform.worldMatrix from its TRS. The camera is
     /// parentless, so world == local; call before reading the view matrix.
     void RefreshCameraMatrix();
+    /// @brief Reseeds _yaw/_pitch from the camera's current rotation so the fly
+    /// controller resumes from the new orientation without snapping — called when
+    /// a focus animation ends (or is cancelled by manual look input).
+    void SyncYawPitchFromRotation();
 
     // --- ImGui panels ---
     void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F11); see SandboxOptions.cpp
@@ -85,6 +92,8 @@ class SandboxApp : public Assisi::App::Application
     void DrawInspector();
     void DrawHelloImageWindow(); // ImGui-texture-display smoke test
     void DrawAssetBrowser();
+    void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7); see SandboxPlay.cpp
+    void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see SandboxPlay.cpp
 
     // --- Asset browser helpers ---
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
@@ -130,6 +139,45 @@ class SandboxApp : public Assisi::App::Application
     void ScanLevels();
     void LoadLevel(const std::string &name);
     void SaveLevel(const std::string &name);
+
+    // --- Play control (F5 run / F6 pause / F7 stop) ---
+    /// @brief Enters play from the editing state: snapshots the scene so Stop can
+    /// restore it, then begins simulating. No-op unless currently Editing.
+    void StartPlay();
+    /// @brief Resumes a paused simulation in place. No-op unless currently Paused.
+    void ResumePlay();
+    /// @brief Freezes simulation where it stands — physics, and any game-logic
+    /// systems, stop ticking; nothing resets. No-op unless currently Playing.
+    void PausePlay();
+    /// @brief Stops simulating and restores the scene to the pre-play snapshot,
+    /// discarding anything play mode changed. No-op when already Editing.
+    void StopPlay();
+    /// @brief True only while the world is actively simulating (physics + any game
+    /// systems tick). False in both Editing and Paused; the editor camera/picking
+    /// stay live regardless, so the scene is always navigable.
+    [[nodiscard]] bool IsSimulating() const { return _playState == PlayState::Playing; }
+
+    /// @brief Re-resolves every MeshRenderer's transient GPU pointers and rebuilds
+    /// the physics bodies from their descriptors. Shared by the snapshot restore
+    /// (StopPlay) and level load — both replace the scene's entities wholesale, so
+    /// the transient state has to be rebuilt from the durable components.
+    void RebindSceneAssetsAndPhysics();
+    /// @brief Creates a Jolt body for @p entity from @p desc at @p tc's pose and
+    /// attaches a RigidBody. Shared by the scene rebuild and live component-add.
+    void AddPhysicsBody(Assisi::ECS::Entity entity, const Assisi::ECS::Transform &tc,
+                        const Assisi::Physics::RigidBodyDescriptor &desc);
+    /// @brief Creates a fresh entity with a Transform a few units in front of the
+    /// editor camera (an empty object to build up via Add Component), selects it,
+    /// and returns it. Used by the entity list's + button.
+    Assisi::ECS::Entity CreateEntity();
+    /// @brief Adds @p meta's component to the selected entity with default field
+    /// values, wiring up any runtime state the component needs (mesh re-resolve,
+    /// physics body). No-op if the entity already has it. Used by the inspector's
+    /// Add Component field.
+    void AddComponentToSelected(const Assisi::Core::Reflect::ComponentMeta &meta);
+    /// @brief Starts the 0.5 s eased camera move that reframes @p entity, choosing
+    /// a framing distance from its bounds. Used by an entity-list double-click.
+    void FocusCameraOn(Assisi::ECS::Entity entity);
 
     /// @brief Runs the editor-only reconcile pass: scans the asset root,
     /// generating a `.aast` sidecar (with a minted GUID) for any asset that
@@ -236,6 +284,36 @@ class SandboxApp : public Assisi::App::Application
     // Options overlay (frame graph + display/pacing settings), toggled with F11.
     // Owned by the app, not the engine — see DrawOptionsWindow in SandboxOptions.cpp.
     bool _showOptions = false;
+
+    // --- Play control (game-control window, F5/F6/F7; see SandboxPlay.cpp) ---
+    // Physics and any game-logic systems tick only while Playing; the editor
+    // camera and picking stay live in every state so the scene is always
+    // navigable. Run snapshots the scene so Stop can restore it, Pause freezes
+    // in place, Stop restores the snapshot and returns to Editing.
+    enum class PlayState : std::uint8_t
+    {
+        Editing,
+        Playing,
+        Paused
+    };
+    PlayState   _playState = PlayState::Editing;
+    std::string _playSnapshot; ///< Scene JSON captured at Run; restored on Stop.
+
+    // Camera focus animation (entity-list double-click). A fixed-duration eased
+    // move that reframes the camera on an object; while active it owns the camera
+    // transform (UpdateCamera advances it and skips fly control). Manual look
+    // input cancels it. Always kCameraFocusDuration regardless of travel distance.
+    bool                   _cameraFocusActive  = false;
+    float                  _cameraFocusElapsed = 0.f;
+    glm::vec3              _cameraFocusStartPos{0.f};
+    glm::vec3              _cameraFocusEndPos{0.f};
+    glm::quat              _cameraFocusStartRot{1.f, 0.f, 0.f, 0.f};
+    glm::quat              _cameraFocusEndRot{1.f, 0.f, 0.f, 0.f};
+    static constexpr float kCameraFocusDuration = 0.25f;
+
+    // Inspector "Add Component" search field: the in-progress substring the user
+    // is typing; matched case-insensitively against addable component names.
+    char _addComponentBuf[64] = {};
 
     // NVIDIA GPU telemetry (clocks/power/util/temp) for the options overlay.
     // Lazily initialises NVML on first poll, so it costs nothing until the

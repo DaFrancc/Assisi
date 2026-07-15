@@ -116,25 +116,16 @@ void SandboxApp::LoadLevel(const std::string &name)
     if (!Assisi::Runtime::SceneSerializer::LoadFromFile(*_scene, "levels/" + name + ".alvl"))
         return;
 
+    // A load also ends any in-progress play session: the snapshot describes the
+    // old scene, so it must not survive into the new one.
+    _playState = PlayState::Editing;
+    _playSnapshot.clear();
     _selectedEntity = Assisi::ECS::NullEntity;
-    _physics.Clear();
 
     // New asset set: drop the old cache and evict the mesh pass's binding sets
     // (they key on raw texture pointers we're about to free) before re-resolving.
     _assetCache.Clear();
     _sceneRenderer.InvalidateAssetBindings();
 
-    for (auto [e, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
-        ResolveMeshRendererAssets(mrc);
-
-    for (auto [e, tc, desc] : _scene->Query<Assisi::Runtime::Transform,
-                                             Assisi::Physics::RigidBodyDescriptor>())
-    {
-        const auto motion = desc.isStatic ? Assisi::Physics::BodyMotion::Static
-                                          : Assisi::Physics::BodyMotion::Dynamic;
-        const auto rbc    = _physics.AddBox(tc.position, tc.rotation, desc.halfExtents, motion);
-        if (desc.enableCCD)
-            _physics.SetBodyCCD(rbc, true);
-        (void)_scene->Add<Assisi::Physics::RigidBody>(e, rbc);
-    }
+    RebindSceneAssetsAndPhysics();
 }

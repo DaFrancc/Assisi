@@ -4,6 +4,7 @@
 #include "SandboxImGui.hpp"
 
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -65,6 +66,34 @@ void SandboxApp::UpdateCamera(float dt)
     auto      &input          = GetInput();
     const bool imguiWantsMouse = ImGuiWantsMouse();
 
+    // A double-click focus animation owns the camera for its fixed duration.
+    // Entering look mode cancels it (the author is taking over); otherwise advance
+    // the eased blend and skip fly control this frame. The blend is a function of
+    // normalized time only, so it always lasts kCameraFocusDuration regardless of
+    // how far the camera travels.
+    if (_cameraFocusActive)
+    {
+        if (_actions.IsActionPressed("LookMode", input) && !imguiWantsMouse)
+        {
+            _cameraFocusActive = false;
+            SyncYawPitchFromRotation();
+        }
+        else
+        {
+            _cameraFocusElapsed += dt;
+            const float u = glm::clamp(_cameraFocusElapsed / kCameraFocusDuration, 0.f, 1.f);
+            const float s = u * u * (3.f - (2.f * u)); // smoothstep: ease in and out
+            _cameraTransform.position = glm::mix(_cameraFocusStartPos, _cameraFocusEndPos, s);
+            _cameraTransform.rotation = glm::slerp(_cameraFocusStartRot, _cameraFocusEndRot, s);
+            if (u >= 1.f)
+            {
+                _cameraFocusActive = false;
+                SyncYawPitchFromRotation();
+            }
+            return;
+        }
+    }
+
     if (_actions.IsActionPressed("LookMode", input) && !imguiWantsMouse)
         input.SetMouseCaptured(true);
     if (_actions.IsActionReleased("LookMode", input))
@@ -113,6 +142,104 @@ void SandboxApp::RefreshCameraMatrix()
     _cameraTransform.worldMatrix = glm::translate(glm::mat4(1.f), _cameraTransform.position) *
                                    glm::mat4_cast(_cameraTransform.rotation) *
                                    glm::scale(glm::mat4(1.f), _cameraTransform.scale);
+}
+
+void SandboxApp::SyncYawPitchFromRotation()
+{
+    // Invert the fly controller's forward-from-(yaw,pitch) mapping so it resumes
+    // from wherever a focus animation left the camera without snapping back.
+    const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
+    _pitch = glm::degrees(std::asin(glm::clamp(forward.y, -1.f, 1.f)));
+    _yaw   = glm::degrees(std::atan2(forward.z, forward.x));
+}
+
+namespace
+{
+// Builds an orientation that looks along @p forwardWanted, matching the fly
+// camera's basis convention (columns right, up, -forward). Returns identity for a
+// degenerate (near-zero) direction, and swaps the reference up when looking almost
+// straight up or down so the cross products stay well-conditioned.
+glm::quat LookRotation(glm::vec3 forwardWanted)
+{
+    const float length = glm::length(forwardWanted);
+    if (length < 1e-6f)
+    {
+        return glm::quat(1.f, 0.f, 0.f, 0.f);
+    }
+    const glm::vec3 forward = forwardWanted / length;
+    glm::vec3       worldUp(0.f, 1.f, 0.f);
+    if (glm::abs(glm::dot(forward, worldUp)) > 0.999f)
+    {
+        worldUp = glm::vec3(0.f, 0.f, 1.f);
+    }
+    const glm::vec3 right = glm::normalize(glm::cross(forward, worldUp));
+    const glm::vec3 up    = glm::normalize(glm::cross(right, forward));
+    return glm::quat_cast(glm::mat3(right, up, -forward));
+}
+} // namespace
+
+void SandboxApp::FocusCameraOn(Assisi::ECS::Entity entity)
+{
+    if (_scene == nullptr || !_scene->IsAlive(entity))
+    {
+        return;
+    }
+    const Assisi::Runtime::Transform *tc = _scene->Get<Assisi::Runtime::Transform>(entity);
+    if (tc == nullptr)
+    {
+        return; // nothing to frame without a world placement
+    }
+
+    // World bounding sphere: a mesh's local sphere mapped through the transform, or
+    // a small default around the entity's origin for an empty (mesh-less) object.
+    Assisi::Geometry::BoundingSphere world;
+    const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
+    if (mrc != nullptr && mrc->meshBuffer != nullptr && mrc->meshBuffer->LocalBounds().radius > 0.f)
+    {
+        world = Assisi::Geometry::TransformedBoundingSphere(mrc->meshBuffer->LocalBounds(), tc->worldMatrix);
+    }
+    else
+    {
+        world.center           = glm::vec3(tc->worldMatrix[3]);
+        const float scaleX     = glm::length(glm::vec3(tc->worldMatrix[0]));
+        const float scaleY     = glm::length(glm::vec3(tc->worldMatrix[1]));
+        const float scaleZ     = glm::length(glm::vec3(tc->worldMatrix[2]));
+        world.radius           = 0.5f * glm::max(scaleX, glm::max(scaleY, scaleZ));
+    }
+    if (world.radius <= 0.f)
+    {
+        world.radius = 0.5f;
+    }
+
+    RefreshCameraMatrix();
+    const glm::vec3 camPos = _cameraTransform.position;
+    const glm::vec3 toCam  = camPos - world.center;
+    const float     dist   = glm::length(toCam);
+
+    // Distance at which the sphere fills the vertical FOV, with a margin so it
+    // isn't edge-to-edge: r / sin(halfFov) puts the sphere tangent to the frame.
+    constexpr float kFrameMargin = 4.f;
+    const float     halfFovY     = glm::radians(_camera.fovDegrees) * 0.5f;
+    const float     sinHalf      = glm::sin(halfFovY);
+    const float     framingDist  = sinHalf > 1e-4f ? (world.radius / sinHalf) * kFrameMargin : world.radius * 3.f;
+
+    // First attempt: dolly along the current line of sight to the framing distance,
+    // preserving the viewing angle. If the camera is already inside (or all but on
+    // top of) the object, that direction is unreliable — give up repositioning and
+    // keep the current position, only re-aiming at the centre.
+    glm::vec3 targetPos = camPos;
+    if (dist >= world.radius && dist > 1e-4f)
+    {
+        const glm::vec3 dirToCam = toCam / dist;
+        targetPos                = world.center + (dirToCam * framingDist);
+    }
+
+    _cameraFocusStartPos = camPos;
+    _cameraFocusEndPos   = targetPos;
+    _cameraFocusStartRot = _cameraTransform.rotation;
+    _cameraFocusEndRot   = LookRotation(world.center - targetPos);
+    _cameraFocusElapsed  = 0.f;
+    _cameraFocusActive   = true;
 }
 
 // ---------------------------------------------------------------------------

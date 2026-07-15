@@ -534,17 +534,27 @@ void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
     // Blend physics-driven Transforms between their last two fixed-step poses
     // before the scene's world matrices are propagated in Render(), so bodies
     // move smoothly at the display's refresh rate rather than the physics rate.
-    _physics.InterpolateTransforms(*_scene, GetInterpolationAlpha());
+    // Only while simulating: paused/stopped, physics must not stomp the Transforms
+    // (an inspector edit or the frozen pose is authoritative then).
+    if (IsSimulating())
+    {
+        _physics.InterpolateTransforms(*_scene, GetInterpolationAlpha());
+    }
 
     // Refresh the editor camera's world matrix from its TRS before the view
     // matrix is derived from it; SceneRenderer propagates the game scene it draws.
     RefreshCameraMatrix();
+    // The selected entity gets an always-on-top orange selection outline.
+    _sceneRenderer.SetHighlightedEntity(_selectedEntity);
     _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera);
 }
 
 void SandboxApp::OnFixedUpdate(float dt)
 {
-    if (!_scene)
+    // Simulation ticks only while the game is running (Run, not Pause/Stop). When
+    // it isn't, physics is frozen so the scene only renders — the editor camera
+    // and picking still run from OnUpdate, which is not gated here.
+    if (!_scene || !IsSimulating())
         return;
     _physics.Update(dt);
     // Snapshot the new poses for render interpolation; OnRender blends them.
@@ -602,6 +612,8 @@ void SandboxApp::OnImGui()
 {
     DrawOptionsWindow();
     DrawDiagnosticsWindow();
+    DrawGameControlWindow();
+    DrawEntityListWindow();
     DrawLevelsWindow();
     DrawInspector();
     DrawHelloImageWindow();

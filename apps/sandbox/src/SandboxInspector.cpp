@@ -10,12 +10,17 @@
 
 #include <imgui.h>
 
+#include <nlohmann/json.hpp>
+
 #include <algorithm>
+#include <cctype>
 #include <cfloat>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <optional>
 #include <string>
+#include <vector>
 
 bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
 {
@@ -360,7 +365,11 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
             _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
         if (rbc && desc)
         {
-            _physics.ReshapeBox(*rbc, desc->halfExtents);
+            _physics.ReshapeBody(*rbc, Assisi::Physics::PhysicsWorld::ColliderShapeDesc{
+                                           .shape       = desc->shape,
+                                           .halfExtents = desc->halfExtents,
+                                           .radius      = desc->radius,
+                                           .halfHeight  = desc->halfHeight});
             _physics.SetBodyCCD(*rbc, desc->enableCCD);
         }
     }
@@ -401,6 +410,42 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
         }
     }
     _wasDragging = nowDragging;
+}
+
+void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
+{
+    if (_selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
+    {
+        return;
+    }
+    // Adding one the entity already has would overwrite it — skip (the Add
+    // Component field also filters these out of its suggestions).
+    if (meta.getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr)
+    {
+        return;
+    }
+
+    // Default-construct it: an empty JSON object leaves every field at its default
+    // via the per-field if-contains deserialization — the same path the level
+    // loader uses, so no component needs a bespoke "make default" hook.
+    meta.addToScene(_scene, _selectedEntity.index, _selectedEntity.generation, nlohmann::json::object());
+
+    // A couple of components carry runtime state beyond their reflected fields;
+    // wire it up so the add takes effect immediately rather than at next reload.
+    if (meta.name == "MeshRenderer")
+    {
+        ReresolveEntityAssets(_selectedEntity); // nil mesh → fallback cube, so it draws
+    }
+    else if (meta.name == "RigidBodyDescriptor")
+    {
+        const auto *tc   = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
+        const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
+        if (tc != nullptr && desc != nullptr &&
+            _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) == nullptr)
+        {
+            AddPhysicsBody(_selectedEntity, *tc, *desc);
+        }
+    }
 }
 
 void SandboxApp::DrawInspector()
@@ -468,6 +513,84 @@ void SandboxApp::DrawInspector()
                         angularVelocity.z);
             ImGui::Text("Speed:  %.3f m/s", glm::length(linearVelocity));
             ImGui::Text("CCD:    %s", _physics.IsBodyCCDEnabled(*rbc) ? "LinearCast (on)" : "Discrete (off)");
+        }
+    }
+
+    // --- Add Component ---------------------------------------------------------
+    ImGui::Separator();
+    ImGui::TextUnformatted("Add Component");
+    ImGui::SetNextItemWidth(-1.f);
+    const bool entered = ImGui::InputText("##addcomponent", _addComponentBuf, sizeof(_addComponentBuf),
+                                          ImGuiInputTextFlags_EnterReturnsTrue);
+
+    const auto toLower = [](std::string text)
+    {
+        std::transform(text.begin(), text.end(), text.begin(),
+                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return text;
+    };
+    const std::string queryLower = toLower(_addComponentBuf);
+
+    if (!queryLower.empty())
+    {
+        // Rank addable components (serializable, not already on the entity) whose
+        // lowercased name contains the query: earliest match position first (so a
+        // prefix wins), then shorter name, then alphabetical. Recomputed every
+        // frame, so it tracks each keystroke and deletion live.
+        struct Match
+        {
+            const ComponentMeta *meta;
+            std::size_t          pos;
+        };
+        std::vector<Match>   matches;
+        const ComponentMeta *exact = nullptr;
+        for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
+        {
+            if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr)
+                continue;
+            const std::string nameLower = toLower(meta->name);
+            const std::size_t pos       = nameLower.find(queryLower);
+            if (pos == std::string::npos)
+                continue;
+            matches.push_back(Match{meta, pos});
+            if (nameLower == queryLower)
+                exact = meta;
+        }
+        std::sort(matches.begin(), matches.end(),
+                  [](const Match &a, const Match &b)
+                  {
+                      if (a.pos != b.pos)
+                          return a.pos < b.pos;
+                      if (a.meta->name.size() != b.meta->name.size())
+                          return a.meta->name.size() < b.meta->name.size();
+                      return a.meta->name < b.meta->name;
+                  });
+
+        // Enter commits an exact (case-insensitive) name even if it isn't ranked
+        // first; otherwise the author picks a row.
+        if (entered && exact != nullptr)
+        {
+            AddComponentToSelected(*exact);
+            _addComponentBuf[0] = '\0';
+        }
+        else if (matches.empty())
+        {
+            ImGui::TextDisabled("(no matching component)");
+        }
+        else
+        {
+            constexpr std::size_t kMaxSuggestions = 8;
+            const std::size_t     shown           = std::min(matches.size(), kMaxSuggestions);
+            for (std::size_t i = 0; i < shown; ++i)
+            {
+                ImGui::PushID(static_cast<int32_t>(i));
+                if (ImGui::Selectable(matches[i].meta->name.c_str()))
+                {
+                    AddComponentToSelected(*matches[i].meta);
+                    _addComponentBuf[0] = '\0';
+                }
+                ImGui::PopID();
+            }
         }
     }
 
