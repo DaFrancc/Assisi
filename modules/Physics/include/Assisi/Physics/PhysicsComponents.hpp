@@ -9,6 +9,8 @@
 #include <Jolt/Jolt.h>
 #include <Jolt/Physics/Body/BodyID.h>
 
+#include <cstdint>
+
 namespace Assisi::Physics
 {
 
@@ -29,13 +31,13 @@ struct RigidBody
 
 /// @brief Which collision primitive a RigidBodyDescriptor builds.
 ///
-/// AENUM so it reflects as a dropdown and serializes by value. Plain `enum class`
-/// (a 4-byte `int` underlying, which reflected enums use), since there are only a
-/// handful of shapes. Each shape reads a different subset of RigidBodyDescriptor's
-/// dimension fields; the descriptor uses AFIELD(radio) so the inspector only
-/// shows the dimensions the chosen shape actually uses.
+/// AENUM so it reflects as a dropdown and serializes by value. A 1-byte
+/// underlying is plenty for a handful of shapes (reflectgen records the width so
+/// the inspector reads/writes it correctly). Each shape reads a different subset
+/// of RigidBodyDescriptor's dimension fields; the descriptor uses AFIELD(radio)
+/// so the inspector only shows the dimensions the chosen shape actually uses.
 AENUM()
-enum class ColliderShape
+enum class ColliderShape : std::uint8_t
 {
     Box,      ///< Axis-aligned box from `halfExtents`.
     Sphere,   ///< Sphere from `radius`.

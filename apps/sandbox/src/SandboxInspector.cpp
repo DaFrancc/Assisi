@@ -46,6 +46,54 @@ const Assisi::Core::Reflect::FieldMeta *FindField(const Assisi::Core::Reflect::C
     return nullptr;
 }
 
+/// @brief Read a reflected enum's value from `fp` at its true underlying width.
+///
+/// A reflected enum may have any fixed-width underlying (1/2/4/8 bytes), so it
+/// must be read at that exact width — treating an 8/16-bit enum as a 4-byte int
+/// reads (and a write would clobber) neighbouring bytes. `signed_` sign-extends.
+std::int64_t ReadEnumValue(const void *fp, std::uint8_t size, bool signed_)
+{
+    switch (size)
+    {
+    case 1:
+        return signed_ ? std::int64_t(*static_cast<const std::int8_t *>(fp))
+                       : std::int64_t(*static_cast<const std::uint8_t *>(fp));
+    case 2:
+        return signed_ ? std::int64_t(*static_cast<const std::int16_t *>(fp))
+                       : std::int64_t(*static_cast<const std::uint16_t *>(fp));
+    case 4:
+        return signed_ ? std::int64_t(*static_cast<const std::int32_t *>(fp))
+                       : std::int64_t(*static_cast<const std::uint32_t *>(fp));
+    case 8:
+        return *static_cast<const std::int64_t *>(fp);
+    default:
+        return 0;
+    }
+}
+
+/// @brief Write `value` into a reflected enum at `fp` at its underlying width.
+/// Truncation is the same bit pattern for signed/unsigned, so no sign flag.
+void WriteEnumValue(void *fp, std::uint8_t size, std::int64_t value)
+{
+    switch (size)
+    {
+    case 1:
+        *static_cast<std::int8_t *>(fp) = static_cast<std::int8_t>(value);
+        break;
+    case 2:
+        *static_cast<std::int16_t *>(fp) = static_cast<std::int16_t>(value);
+        break;
+    case 4:
+        *static_cast<std::int32_t *>(fp) = static_cast<std::int32_t>(value);
+        break;
+    case 8:
+        *static_cast<std::int64_t *>(fp) = value;
+        break;
+    default:
+        break;
+    }
+}
+
 /// @brief Resolve a field's radio state against a live component instance.
 ///
 /// A listener (radioSource set) follows a sibling broadcaster enum. Because a
@@ -83,8 +131,8 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
 
     const auto readEnum = [component](const FieldMeta *fm) -> std::int64_t
     {
-        // Reflected enums are stored as a 4-byte int (see AENUM).
-        return *reinterpret_cast<const int32_t *>(static_cast<const char *>(component) + fm->offset);
+        const void *fp = static_cast<const char *>(component) + fm->offset;
+        return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
     };
 
     // Fold from the root down. `state` holds the resolved visibility of the source
@@ -204,10 +252,11 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             break;
         case FieldType::Enum:
         {
-            // Enums are stored as their (4-byte) underlying integer (see AENUM).
-            // Show the reflected enumerators as a dropdown; write the picked value.
-            auto       &value   = *static_cast<int32_t *>(fp);
-            const char *preview = "(unknown)";
+            // Enums are stored as their underlying integer, whose width varies
+            // (see AENUM); read/write it at field.enumSize so an 8/16-bit enum
+            // isn't clobbered. Show the enumerators as a dropdown.
+            const std::int64_t value = ReadEnumValue(fp, field.enumSize, field.enumSigned);
+            const char        *preview = "(unknown)";
             for (const auto &constant : field.enumConstants)
             {
                 if (constant.value == value)
@@ -223,7 +272,7 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
                     const bool selected = (constant.value == value);
                     if (ImGui::Selectable(constant.name.c_str(), selected))
                     {
-                        value  = static_cast<int32_t>(constant.value);
+                        WriteEnumValue(fp, field.enumSize, constant.value);
                         edited = true;
                     }
                     if (selected)

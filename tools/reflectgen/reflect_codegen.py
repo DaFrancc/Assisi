@@ -102,10 +102,11 @@ def _gen_field_meta(f: FieldInfo) -> str:
     enum_active     = f.enum_info is not None
     listener_active = f.radio is not None and f.radio.source != ''
 
-    # FieldMeta's trailing members are positional (bounds, then enumConstants,
-    # then the radio trio), so emitting a later block forces every earlier block
-    # to be emitted at its default. Blocks that no field needs are omitted, which
-    # keeps unannotated fields at the short, golden-stable initializer form.
+    # FieldMeta's trailing members are positional (bounds, then the enum block —
+    # enumConstants/enumSize/enumSigned — then the radio trio), so emitting a later
+    # block forces every earlier block to be emitted at its default. Blocks that no
+    # field needs are omitted, keeping unannotated fields at the short,
+    # golden-stable initializer form.
     tail: list[str] = []
 
     if bounds_active or enum_active or listener_active:
@@ -119,8 +120,11 @@ def _gen_field_meta(f: FieldInfo) -> str:
         if enum_active:
             consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
             tail.append(f'{{ {consts} }}')
+            tail.append(str(f.enum_info.size))
+            tail.append('true' if f.enum_info.is_signed else 'false')
         else:
-            tail.append('{}')  # empty enumConstants: a non-enum listener still needs the slot
+            # Non-enum listener: empty enumConstants, size 0 (marks "not an enum").
+            tail += ['{}', '0', 'false']
 
     if listener_active:
         values = ', '.join(str(v) for v in f.radio.values)

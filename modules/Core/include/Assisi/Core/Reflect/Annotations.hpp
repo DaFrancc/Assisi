@@ -56,9 +56,12 @@
 /// AENUM() — marks an `enum class` so reflectgen records its enumerators, making
 /// it usable as an AFIELD type (serialized by value, edited as a dropdown). The
 /// enum must be defined in the same header as the component(s) that use it, and
-/// reachable from their namespace. Use a 4-byte underlying type (the default
-/// `int`, or `: std::uint32_t`) — the inspector reads the value as a 4-byte int.
+/// reachable from their namespace. Any fixed-width underlying type works (the
+/// default `int`, or an explicit `: std::uint8_t` / `: std::int16_t` / etc.):
+/// reflectgen records the width so the inspector reads/writes the field at its
+/// true size. Platform-dependent `long` / `unsigned long` are rejected — spell
+/// the width explicitly.
 ///
 ///   AENUM()
-///   enum class ColliderShape : std::uint32_t { Box, Sphere, Capsule };
+///   enum class ColliderShape : std::uint8_t { Box, Sphere, Capsule };
 #define AENUM(...)

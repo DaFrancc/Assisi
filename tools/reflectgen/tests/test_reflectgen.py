@@ -461,6 +461,47 @@ class EnumTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             _parse_source(src)
 
+    def _enum_size(self, underlying_decl: str):
+        """Parse `enum class E <underlying_decl> { A, B }` and return its EnumInfo."""
+        src = (f"#include <cstdint>\nnamespace N {{\n"
+               f"AENUM()\nenum class E {underlying_decl} {{ A, B }};\n"
+               f"ACOMP()\nstruct C {{ AFIELD() E e = E::A; }};\n}}\n")
+        return _parse_source(src)[0].fields[0].enum_info
+
+    def test_default_underlying_is_4_byte_signed(self):
+        info = self._enum_size("")
+        self.assertEqual((info.size, info.is_signed), (4, True))
+
+    def test_underlying_widths_and_signedness(self):
+        cases = {
+            ": std::uint8_t":  (1, False),
+            ": int8_t":        (1, True),
+            ": uint16_t":      (2, False),
+            ": std::int16_t":  (2, True),
+            ": uint32_t":      (4, False),
+            ": int":           (4, True),
+            ": unsigned":      (4, False),
+            ": std::uint64_t": (8, False),
+            ": int64_t":       (8, True),
+        }
+        for decl, expected in cases.items():
+            info = self._enum_size(decl)
+            self.assertEqual((info.size, info.is_signed), expected, decl)
+
+    def test_enum_size_is_emitted_in_field_meta(self):
+        cpp = reflectgen.generate_cpp(_parse_source(
+            "#include <cstdint>\nnamespace N {\n"
+            "AENUM()\nenum class E : std::uint8_t { A, B };\n"
+            "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n"), "N/C.hpp")
+        # ... enumConstants }, size, signed
+        self.assertIn('{ { "A", 0 }, { "B", 1 } }, 1, false', cpp)
+
+    def test_platform_dependent_long_underlying_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self._enum_size(": long")
+        with self.assertRaises(ValueError):
+            self._enum_size(": unsigned long")
+
 
 class RadioTest(unittest.TestCase):
     """AFIELD(radio ...): a broadcaster enum (AFIELD(radioBroadcast)) plus listener
@@ -523,15 +564,17 @@ class RadioTest(unittest.TestCase):
             "AFIELD(radioListen = {source = mode, value = {Low, High}, behavior = grey}) int32_t n = 0;"
         ))
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
-        # Non-enum listener: defaulted bounds + empty enumConstants, then the trio.
+        # Non-enum listener: defaulted bounds + empty enum block (size 0), then the trio.
         self.assertIn(
-            'offsetof(T, n), false, false, false, 0.f, 0.f, {}, "mode", { 1, 2 }, '
+            'offsetof(T, n), false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 1, 2 }, '
             "Assisi::Core::Reflect::RadioBehavior::Grey",
             cpp,
         )
-        # The broadcaster enum stays an ordinary enum field (no radio members).
+        # The broadcaster enum stays an ordinary enum field (no radio members),
+        # now carrying its width (default int -> 4, signed).
         self.assertIn(
-            'offsetof(T, mode), false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } } }',
+            'offsetof(T, mode), false, false, false, 0.f, 0.f, '
+            '{ { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 4, true }',
             cpp,
         )
 
@@ -542,7 +585,7 @@ class RadioTest(unittest.TestCase):
             "AFIELD(radioBroadcast, radioListen = {source = mode, value = High, behavior = vanish}) Sub sub = Sub::A;"
         )), "N/C.hpp")
         self.assertIn(
-            'offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, '
+            'offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, '
             '"mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish',
             cpp,
         )
@@ -553,7 +596,7 @@ class RadioTest(unittest.TestCase):
             "AFIELD(min = 0, radioListen = {source = mode, value = High, behavior = vanish}) int32_t n = 0;"
         )), "N/C.hpp")
         self.assertIn(
-            'offsetof(T, n), false, true, false, 0.0f, 0.f, {}, "mode", { 2 }, '
+            'offsetof(T, n), false, true, false, 0.0f, 0.f, {}, 0, false, "mode", { 2 }, '
             "Assisi::Core::Reflect::RadioBehavior::Vanish",
             cpp,
         )

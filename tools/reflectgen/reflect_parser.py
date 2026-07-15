@@ -34,6 +34,8 @@ class EnumInfo:
     name:      str                 # unqualified, e.g. 'ColliderShape'
     fqn:       str                 # fully-qualified, e.g. 'Assisi::Physics::ColliderShape'
     constants: list                # list[tuple[str, int]] in declaration order
+    size:      int  = 4            # underlying byte width: 1/2/4/8
+    is_signed: bool = True         # underlying type is signed (default `int` is)
 
 
 @dataclass
@@ -159,10 +161,53 @@ _AASSET_RE = re.compile(r'\bAASSET\s*\(([^)]*)\)')
 _AENUM_RE  = re.compile(r'\bAENUM\s*\(([^)]*)\)')
 _AFIELD_RE = re.compile(r'\bAFIELD\s*\(([^)]*)\)')
 _STRUCT_RE = re.compile(r'\bstruct\s+(\w+)')
-# `enum class Name` / `enum struct Name`, with an optional `: underlying` — the
-# name is captured; the brace body is extracted separately.
-_ENUM_RE   = re.compile(r'\benum\s+(?:class|struct)\s+(\w+)\s*(?::\s*[\w:]+\s*)?')
+# `enum class Name` / `enum struct Name`, with an optional `: underlying`. Both
+# the name (group 1) and the underlying-type spelling (group 2, up to the body's
+# `{`) are captured; the brace body is extracted separately.
+_ENUM_RE   = re.compile(r'\benum\s+(?:class|struct)\s+(\w+)\s*(?::\s*([^{]+))?')
 _NS_RE     = re.compile(r'\bnamespace\s+([\w:]+)')
+
+# Underlying-type spelling → (byte width, is_signed). Whitespace is normalised to
+# single spaces before lookup. Only fixed-width types and the `int`/`unsigned`
+# defaults are supported; platform-dependent `long`/`unsigned long` are omitted
+# on purpose so their ambiguous width fails the build (see _enum_underlying).
+_ENUM_UNDERLYING: dict[str, tuple[int, bool]] = {
+    'char':                   (1, True),   # impl-defined signedness; treat as signed
+    'signed char':            (1, True),
+    'unsigned char':          (1, False),
+    'int8_t':                 (1, True),  'std::int8_t':  (1, True),
+    'uint8_t':                (1, False), 'std::uint8_t': (1, False),
+    'short':                  (2, True),  'short int':    (2, True),  'signed short': (2, True),
+    'unsigned short':         (2, False), 'unsigned short int': (2, False),
+    'int16_t':                (2, True),  'std::int16_t': (2, True),
+    'uint16_t':               (2, False), 'std::uint16_t': (2, False),
+    'int':                    (4, True),  'signed':       (4, True),  'signed int':   (4, True),
+    'unsigned':               (4, False), 'unsigned int': (4, False),
+    'int32_t':                (4, True),  'std::int32_t': (4, True),
+    'uint32_t':               (4, False), 'std::uint32_t': (4, False),
+    'long long':              (8, True),  'signed long long': (8, True), 'long long int': (8, True),
+    'unsigned long long':     (8, False), 'unsigned long long int': (8, False),
+    'int64_t':                (8, True),  'std::int64_t': (8, True),
+    'uint64_t':               (8, False), 'std::uint64_t': (8, False),
+}
+
+
+def _enum_underlying(underlying: Optional[str], enum_name: str, header_name: str) -> tuple[int, bool]:
+    """Map an `enum class` underlying-type spelling to (byte width, is_signed).
+
+    None means no `: type` was given, so the C++ default underlying for a scoped
+    enum applies: `int` (4-byte signed). An unrecognised spelling — including the
+    platform-dependent `long` — is a hard build error, since the editor must know
+    the exact width to read/write the field without corrupting neighbours."""
+    if underlying is None:
+        return 4, True
+    key = ' '.join(underlying.split())
+    if key not in _ENUM_UNDERLYING:
+        raise ValueError(
+            f"{header_name}: AENUM enum '{enum_name}' has underlying type '{key}', which "
+            f"reflectgen does not support. Use a fixed-width integer type (int8_t, uint16_t, "
+            f"int32_t, uint64_t, ...) or the default `int`; 'long' is platform-dependent.")
+    return _ENUM_UNDERLYING[key]
 
 
 def parse_enum_constants(body: str) -> list:
@@ -458,11 +503,13 @@ def parse_header(path: Path) -> list[ComponentInfo]:
                     f"{path.name}: AENUM is not followed by an 'enum class' / 'enum struct' "
                     f"definition (got: '{snippet}...').")
             enum_name = enum_m.group(1)
+            size, is_signed = _enum_underlying(enum_m.group(2), enum_name, path.name)
             body, end = _extract_brace_body(text, enum_m.end())
             if body is None:
                 raise ValueError(f"{path.name}: AENUM enum '{enum_name}' has no '{{ ... }}' body.")
             fqn = '::'.join(ns_stack + [enum_name]) if ns_stack else enum_name
-            info = EnumInfo(name=enum_name, fqn=fqn, constants=parse_enum_constants(body))
+            info = EnumInfo(name=enum_name, fqn=fqn, constants=parse_enum_constants(body),
+                            size=size, is_signed=is_signed)
             enums[enum_name] = info
             enums[fqn] = info
             i = end

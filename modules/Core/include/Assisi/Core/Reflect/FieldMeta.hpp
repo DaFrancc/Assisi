@@ -73,6 +73,13 @@ struct FieldMeta
     // in declaration order. Empty for every other field type.
     std::vector<EnumConstant> enumConstants;
 
+    // The enum's underlying storage, so an editor reads/writes the field at its
+    // true width instead of assuming a 4-byte int (which would corrupt neighbours
+    // for an 8/16-bit enum). enumSize is the byte width (1/2/4/8); 0 marks a
+    // non-enum field. enumSigned selects sign-extension when reading.
+    std::uint8_t enumSize   = 0;     ///< Underlying byte width; 0 = not an enum.
+    bool         enumSigned = false; ///< Underlying type is signed (sign-extend on read).
+
     // Radio: declarative editor visibility driven by a sibling enum's value. A
     // field annotated AFIELD(radioListen = { source = enumField, value = ...,
     // behavior = grey|vanish }) is "active" only while that sibling enum equals

@@ -23,7 +23,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             { "i32", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, i32), false },
             { "u32", Assisi::Core::Reflect::FieldType::UInt32, offsetof(T, u32), false },
             { "flag", Assisi::Core::Reflect::FieldType::Bool, offsetof(T, flag), false },
-            { "shape", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, shape), false, false, false, 0.f, 0.f, { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } } },
+            { "shape", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, shape), false, false, false, 0.f, 0.f, { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, 4, false },
             { "v2", Assisi::Core::Reflect::FieldType::Vec2, offsetof(T, v2), false },
             { "v3", Assisi::Core::Reflect::FieldType::Vec3, offsetof(T, v3), false },
             { "v4", Assisi::Core::Reflect::FieldType::Vec4, offsetof(T, v4), false },
@@ -197,10 +197,10 @@ static const bool _reflectgen_SampleRadio = []() -> bool
         "SampleRadio",
         typeid(T),
         {
-            { "mode", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, mode), false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } } },
-            { "intensity", Assisi::Core::Reflect::FieldType::Float, offsetof(T, intensity), false, false, false, 0.f, 0.f, {}, "mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { "sub", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, "mode", { 1, 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { "level", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, level), false, true, false, 0.0f, 0.f, {}, "sub", { 1 }, Assisi::Core::Reflect::RadioBehavior::Grey }
+            { "mode", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, mode), false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 1, false },
+            { "intensity", Assisi::Core::Reflect::FieldType::Float, offsetof(T, intensity), false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { "sub", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, "mode", { 1, 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { "level", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, level), false, true, false, 0.0f, 0.f, {}, 0, false, "sub", { 1 }, Assisi::Core::Reflect::RadioBehavior::Grey }
         },
         [](const void* ptr) -> nlohmann::json
         {

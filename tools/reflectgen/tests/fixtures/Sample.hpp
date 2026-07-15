@@ -88,8 +88,10 @@ struct SampleTransient
 // and a broadcaster (of level) — a chain. The listeners exercise both behaviors,
 // single-value and set-value forms, and a bound coexisting with a radio object
 // on the same field.
+// 1-byte underlying: exercises reflectgen recording a non-default enum width so
+// the inspector reads/writes it at 1 byte instead of assuming 4.
 AENUM()
-enum class SampleMode
+enum class SampleMode : std::uint8_t
 {
     Off,
     Low,
