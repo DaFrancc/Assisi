@@ -29,6 +29,12 @@ find_package(Python3 REQUIRED COMPONENTS Interpreter)
 set(_ASSISI_REFLECTGEN "${CMAKE_SOURCE_DIR}/tools/reflectgen/reflectgen.py"
     CACHE FILEPATH "Path to the reflectgen code-generation script" FORCE)
 
+# reflectgen.py is a thin CLI over sibling modules (reflect_parser/_types/
+# _codegen); depend on all of them so editing any one regenerates the output.
+file(GLOB _ASSISI_REFLECTGEN_SOURCES "${CMAKE_SOURCE_DIR}/tools/reflectgen/*.py")
+set(_ASSISI_REFLECTGEN_SOURCES "${_ASSISI_REFLECTGEN_SOURCES}"
+    CACHE INTERNAL "reflectgen implementation files the generated sources depend on" FORCE)
+
 function(assisi_reflect)
     cmake_parse_arguments(_ARG "" "TARGET" "HEADERS" ${ARGN})
 
@@ -59,7 +65,7 @@ function(assisi_reflect)
                     "${_ASSISI_REFLECTGEN}"
                     "${_abs}"
                     --outdir "${CMAKE_CURRENT_BINARY_DIR}/generated"
-            DEPENDS "${_abs}" "${_ASSISI_REFLECTGEN}"
+            DEPENDS "${_abs}" "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
             COMMENT "reflectgen: ${_header}"
             VERBATIM
         )
