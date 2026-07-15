@@ -15,6 +15,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/ShortString.hpp>
 #include <Assisi/ECS/Entity.hpp>
 
 // A commented-out annotation the parser MUST ignore. If comment stripping
@@ -56,6 +57,7 @@ struct SampleAllTypes
     AFIELD() glm::quat q = glm::quat{1.0f, 0.0f, 0.0f, 0.0f};
     AFIELD() glm::mat4 m = glm::mat4{1.0f};
     AFIELD() Assisi::Core::AssetPath assetPath; // fixed-capacity path, serialized as a string
+    AFIELD() Assisi::Core::ShortString label; // fixed-capacity name, serialized as a string
     AFIELD() std::vector<Assisi::Core::AssetPath> paths; // list of paths -> JSON string array
     AFIELD(transient) float runtimeCache = 0.0f; // must not appear in (de)serialize
 };

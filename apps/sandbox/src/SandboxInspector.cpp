@@ -5,8 +5,10 @@
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
 
 #include <imgui.h>
 
@@ -281,6 +283,19 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
                     }
                 }
                 ImGui::EndCombo();
+            }
+            break;
+        }
+        case FieldType::String:
+        {
+            // FieldType::String is Core::ShortString (the only String type today).
+            auto *str = static_cast<Assisi::Core::ShortString *>(fp);
+            char  buf[Assisi::Core::kShortStringMax + 1];
+            str->ToCStr(buf, sizeof(buf));
+            if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
+            {
+                str->Assign(buf);
+                edited = true;
             }
             break;
         }
@@ -625,6 +640,25 @@ void SandboxApp::DrawInspector()
     }
 
     ImGui::Text("Entity [%u:%u]", _selectedEntity.index, _selectedEntity.generation);
+
+    // Rename field: every entity gets an always-available name box. It reads the
+    // optional Name component and creates one on first edit, so naming an entity
+    // is a single click-and-type — no "add component" step. An empty name leaves
+    // the entity showing its id in the list.
+    {
+        Assisi::Runtime::Name *nameComp = _scene->Get<Assisi::Runtime::Name>(_selectedEntity);
+        char                   nameBuf[Assisi::Core::kShortStringMax + 1] = {};
+        if (nameComp != nullptr)
+            nameComp->value.ToCStr(nameBuf, sizeof(nameBuf));
+        ImGui::SetNextItemWidth(-1.f);
+        if (ImGui::InputTextWithHint("##entityname", "Name", nameBuf, sizeof(nameBuf)))
+        {
+            if (nameComp == nullptr)
+                nameComp = _scene->Add<Assisi::Runtime::Name>(_selectedEntity, {});
+            if (nameComp != nullptr)
+                nameComp->value.Assign(nameBuf);
+        }
+    }
     ImGui::Separator();
 
     bool anyFieldEdited = false;
@@ -634,6 +668,11 @@ void SandboxApp::DrawInspector()
     // to edit, so no per-item guard is needed here.
     for (const auto *meta : ComponentRegistry::Instance().SerializableComponents())
     {
+        // Name is edited by the rename field above; don't also list it as a
+        // generic component.
+        if (meta->name == "Name")
+            continue;
+
         const void *compPtr =
             meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation);
 
@@ -708,6 +747,8 @@ void SandboxApp::DrawInspector()
         const ComponentMeta *exact = nullptr;
         for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
         {
+            if (meta->name == "Name") // managed by the rename field, not added here
+                continue;
             if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr)
                 continue;
             const std::string nameLower = toLower(meta->name);

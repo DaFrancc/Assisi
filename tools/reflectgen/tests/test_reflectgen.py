@@ -133,6 +133,17 @@ class CodegenTest(unittest.TestCase):
         self.assertIn("comp.paths.clear()", cpp)
         self.assertIn("comp.paths.push_back(_p)", cpp)
 
+    def test_short_string_serializes_as_a_string(self):
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Core::ShortString label;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"label", Assisi::Core::Reflect::FieldType::String', cpp)
+        self.assertIn("std::string(c.label.View())", cpp)          # serialize
+        self.assertIn('comp.label.Assign(j.at("label").get<std::string>())', cpp)  # deserialize
+
     def test_asset_id_serializes_via_the_core_helpers(self):
         comps = _parse_source(
             "namespace N {\nACOMP()\nstruct Ref {\n"

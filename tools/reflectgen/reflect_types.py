@@ -107,6 +107,23 @@ TYPES: dict[str, TypeCodegen] = {
         'EntityRef',
         '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0u)) : nlohmann::json(nullptr))',
         '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint32_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+    # Core::ShortString — a small fixed-capacity inline string (e.g. an entity
+    # Name). Serialized as a JSON string of its view; Assign() re-imposes the
+    # capacity on load. Same codegen as AssetPath but a distinct FieldType so the
+    # editor renders a plain text box (no asset-browse button). Accepts every
+    # spelling.
+    'ShortString': TypeCodegen(
+        'String',
+        'std::string({a}.View())',
+        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+    'Core::ShortString': TypeCodegen(
+        'String',
+        'std::string({a}.View())',
+        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+    'Assisi::Core::ShortString': TypeCodegen(
+        'String',
+        'std::string({a}.View())',
+        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
     # Core::AssetPath — a fixed-capacity virtual asset path. Serialized as a JSON
     # string of its view; Assign() re-imposes the length limit on load. Accepts
     # both qualified and unqualified names.

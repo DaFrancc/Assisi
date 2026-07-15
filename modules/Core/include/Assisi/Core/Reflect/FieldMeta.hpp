@@ -25,7 +25,8 @@ enum class FieldType
     Vec4,
     Quat,
     Mat4,
-    Enum,            ///< An AENUM-annotated `enum class`; stored as its (4-byte) underlying integer.
+    Enum,            ///< An AENUM-annotated `enum class`; stored as its underlying integer (see enumSize).
+    String,          ///< Core::ShortString — a fixed-capacity inline string, serialized as a string.
     EntityRef,       ///< ECS::Entity serialized as a stable serial index via SceneSerializer.
     AssetPath,       ///< Core::AssetPath — a fixed-capacity virtual asset path, serialized as a string.
     AssetPathVector, ///< std::vector<Core::AssetPath> — serialized as a JSON array of strings.

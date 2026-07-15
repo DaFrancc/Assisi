@@ -6,6 +6,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -271,8 +272,15 @@ void SandboxApp::DrawEntityListWindow()
     _scene->ForEachEntity(
         [&](Assisi::ECS::Entity entity)
         {
-            char label[48];
-            std::snprintf(label, sizeof(label), "Entity [%u:%u]", entity.index, entity.generation);
+            // Show the entity's Name if it has a non-empty one; otherwise fall back
+            // to its [index:generation] id. PushID(index) keeps rows distinct even
+            // when two entities share a name.
+            char        label[64];
+            const auto *nameComp = _scene->Get<Assisi::Runtime::Name>(entity);
+            if (nameComp != nullptr && !nameComp->value.Empty())
+                nameComp->value.ToCStr(label, sizeof(label));
+            else
+                std::snprintf(label, sizeof(label), "Entity [%u:%u]", entity.index, entity.generation);
 
             ImGui::PushID(static_cast<int32_t>(entity.index));
             const bool selected = (entity == _selectedEntity);

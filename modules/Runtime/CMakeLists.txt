@@ -41,6 +41,7 @@ assisi_reflect(
     include/Assisi/Runtime/Hierarchy.hpp
     include/Assisi/Runtime/Lifecycle.hpp
     include/Assisi/Runtime/LightComponents.hpp
+    include/Assisi/Runtime/NameComponent.hpp
 )
 
 add_library(Assisi::Runtime ALIAS Assisi-Runtime)
