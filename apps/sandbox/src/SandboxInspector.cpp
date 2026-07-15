@@ -609,7 +609,21 @@ void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMe
 
     // A couple of components carry runtime state beyond their reflected fields;
     // wire it up so the add takes effect immediately rather than at next reload.
-    if (meta.name == "MeshRenderer")
+    if (meta.name == "Transform")
+    {
+        // Entities start transform-less; when the author gives one a placement,
+        // drop it in front of the camera so it lands in view rather than at the
+        // world origin.
+        if (auto *tc = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity))
+        {
+            RefreshCameraMatrix();
+            const glm::vec3 forward =
+                glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
+            constexpr float kSpawnDistance = 5.f;
+            tc->position = _cameraTransform.position + forward * kSpawnDistance;
+        }
+    }
+    else if (meta.name == "MeshRenderer")
     {
         ReresolveEntityAssets(_selectedEntity); // nil mesh → fallback cube, so it draws
     }

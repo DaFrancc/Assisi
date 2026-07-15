@@ -138,19 +138,12 @@ Assisi::ECS::Entity SandboxApp::CreateEntity()
         return Assisi::ECS::NullEntity;
     }
 
-    // An empty object carrying just a Transform, placed a few units ahead of the
-    // camera so it lands in view; the author builds it up via Add Component.
-    RefreshCameraMatrix();
-    const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
-    constexpr float kSpawnDistance = 5.f;
-
+    // A bare entity — no components, not even a Transform. Not every entity is
+    // spatial, so a Transform is opt-in: adding one (via Add Component) places the
+    // entity in front of the camera (see AddComponentToSelected). The author
+    // builds the entity up from here.
     const Assisi::ECS::Entity entity = _scene->Create();
-
-    Assisi::ECS::Transform tc;
-    tc.position = _cameraTransform.position + forward * kSpawnDistance;
-    (void)_scene->Add<Assisi::ECS::Transform>(entity, tc);
-
-    _selectedEntity = entity;
+    _selectedEntity                  = entity;
     return entity;
 }
 
