@@ -283,6 +283,12 @@ void SandboxApp::DrawAssetBrowser()
     if (ImGui::Button("Refresh"))
         _assetBrowserDirty = true;
 
+    // Re-run the editor reconcile pass: generate `.aast` sidecars for any newly
+    // added assets and rebuild the GUID database. Also marks the browser dirty.
+    ImGui::SameLine();
+    if (ImGui::Button("Reimport"))
+        ReimportAssets();
+
     // Zoom controls for the icon size.
     ImGui::SameLine();
     ImGui::TextUnformatted("Size");

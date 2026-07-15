@@ -81,6 +81,11 @@ void SandboxApp::OnStart()
     }
     _scene = *mainScene;
 
+    // Editor reconcile pass: give every asset a `.aast` GUID sidecar and build
+    // the GUID→path database. Runs here (not in Application) because it is
+    // editor-only — a shipped game consumes a baked index, never scans/writes.
+    ReimportAssets();
+
     SetupCamera();
     SetupScene();
     ScanLevels();
@@ -101,6 +106,20 @@ void SandboxApp::OnStart()
                               _selectedEntity = e.entity;
                           }
                       });
+}
+
+void SandboxApp::ReimportAssets()
+{
+    const std::expected<std::size_t, Assisi::Core::AssetError> result = _assetDatabase.Rebuild();
+    if (!result)
+    {
+        Assisi::Core::Log::Warn("Asset reimport failed: asset root unavailable.");
+        return;
+    }
+    Assisi::Core::Log::Info("Asset reimport: {} assets indexed (GUID sidecars reconciled).", *result);
+    // The browser lists by extension and never shows `.aast`, but a reimport may
+    // have created sidecars, so force a re-read on next open.
+    _assetBrowserDirty = true;
 }
 
 void SandboxApp::SetupScene()

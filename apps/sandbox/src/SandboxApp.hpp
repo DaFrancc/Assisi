@@ -15,6 +15,7 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
+#include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -123,6 +124,14 @@ class SandboxApp : public Assisi::App::Application
     void LoadLevel(const std::string &name);
     void SaveLevel(const std::string &name);
 
+    /// @brief Runs the editor-only reconcile pass: scans the asset root,
+    /// generating a `.aast` sidecar (with a minted GUID) for any asset that
+    /// lacks one and rebuilding the GUID→path database. Auto-run once at
+    /// startup and re-run by the asset browser's Reimport button. Refs are
+    /// still path-based this stage, so nothing rebinds — the database is built
+    /// but not yet the resolution key (asset-database S1).
+    void ReimportAssets();
+
     Assisi::ECS::Entity PickEntity(glm::vec2 mousePos);
 
     // --- Systems ---
@@ -142,6 +151,11 @@ class SandboxApp : public Assisi::App::Application
     // Resolves each entity's meshPath/materialOverrides to shared GPU resources;
     // owns every mesh, texture, and material the scene draws (deduped by path).
     Assisi::Render::AssetCache _assetCache;
+
+    // Editor-only GUID identity index (asset-database S1). ReimportAssets()
+    // populates it by scanning the asset root and generating `.aast` sidecars.
+    // Built but not yet the resolution key — references still resolve by path.
+    Assisi::Core::AssetDatabase _assetDatabase;
 
     // Smoke test for ImGui texture display — loaded once in SetupScene. Owns its
     // texture (not routed through _assetCache, which LoadLevel Clears).
