@@ -39,10 +39,18 @@ class AnnotArgs:
 
 
 @dataclass
+class EnumInfo:
+    name:      str                 # unqualified, e.g. 'ColliderShape'
+    fqn:       str                 # fully-qualified, e.g. 'Assisi::Physics::ColliderShape'
+    constants: list                # list[tuple[str, int]] in declaration order
+
+
+@dataclass
 class FieldInfo:
-    name:     str
-    cpp_type: str
-    args:     AnnotArgs
+    name:      str
+    cpp_type:  str
+    args:      AnnotArgs
+    enum_info: Optional[EnumInfo] = None  # set when cpp_type names an AENUM enum
 
 
 @dataclass
@@ -288,9 +296,43 @@ def strip_comments(text: str) -> str:
 
 _ACOMP_RE  = re.compile(r'\bACOMP\s*\(([^)]*)\)')
 _AASSET_RE = re.compile(r'\bAASSET\s*\(([^)]*)\)')
+_AENUM_RE  = re.compile(r'\bAENUM\s*\(([^)]*)\)')
 _AFIELD_RE = re.compile(r'\bAFIELD\s*\(([^)]*)\)')
 _STRUCT_RE = re.compile(r'\bstruct\s+(\w+)')
+# `enum class Name` / `enum struct Name`, with an optional `: underlying` — the
+# name is captured; the brace body is extracted separately.
+_ENUM_RE   = re.compile(r'\benum\s+(?:class|struct)\s+(\w+)\s*(?::\s*[\w:]+\s*)?')
 _NS_RE     = re.compile(r'\bnamespace\s+([\w:]+)')
+
+
+def parse_enum_constants(body: str) -> list:
+    """Parse an enum body into [(name, value), ...] in declaration order.
+
+    Handles implicit auto-increment and explicit integer values (decimal or
+    0x-hex, possibly negative). A non-integer initializer (e.g. referencing
+    another constant or an expression) is a hard error — reflectgen needs the
+    concrete value to serialize by number and to drive the editor combo.
+    """
+    constants: list = []
+    next_value = 0
+    for raw in body.split(','):
+        entry = raw.strip()
+        if not entry:
+            continue
+        if '=' in entry:
+            enum_name, _, raw_value = entry.partition('=')
+            enum_name = enum_name.strip()
+            try:
+                value = int(raw_value.strip(), 0)
+            except ValueError:
+                raise ValueError(f"AENUM enumerator '{enum_name}' has a non-integer "
+                                 f"value '{raw_value.strip()}'; only integer literals are supported")
+        else:
+            enum_name = entry
+            value = next_value
+        constants.append((enum_name, value))
+        next_value = value + 1
+    return constants
 # Field declaration: optional cv/storage-class keywords, type with optional
 # namespace/template args, optional ptr/ref, name, optional default, semicolon.
 # - Type modifiers (const, unsigned, etc.) can precede the base type token.
@@ -338,22 +380,34 @@ def _find_fields_in_body(body: str, source_header: str) -> list[FieldInfo]:
         args = parse_annot_args(m.group(1))
         rest = body[m.end():]
         fm = _FIELD_RE.match(rest.lstrip())
-        if fm:
-            raw_type = fm.group(1).strip()
-            name     = fm.group(2).strip()
-            cpp_type = raw_type.replace('const ', '').replace('*', '').replace('&', '').strip()
-            fields.append(FieldInfo(name=name, cpp_type=cpp_type, args=args))
-        else:
-            print(f'  warning: AFIELD not followed by a recognisable field declaration '
-                  f'in {source_header}', file=sys.stderr)
+        if not fm:
+            # A malformed AFIELD would otherwise silently drop the field — and its
+            # data on every save. Fail the build loudly instead of moving on.
+            snippet = ' '.join(rest.lstrip()[:60].split())
+            raise ValueError(
+                f"{source_header}: AFIELD is not followed by a recognisable field "
+                f"declaration (got: '{snippet}...'). A reflected field must be a plain "
+                f"'Type name;' declaration immediately after the AFIELD(...) macro.")
+        raw_type = fm.group(1).strip()
+        name     = fm.group(2).strip()
+        cpp_type = raw_type.replace('const ', '').replace('*', '').replace('&', '').strip()
+        fields.append(FieldInfo(name=name, cpp_type=cpp_type, args=args))
         i = m.end()
     return fields
 
 
 def parse_header(path: Path) -> list[ComponentInfo]:
-    """Parse a header file and return all ACOMP-annotated components."""
+    """Parse a header file and return all ACOMP-annotated components.
+
+    AENUM-annotated `enum class`es in the same header are collected first, and
+    any component field whose type names one is resolved to it (enum_info),
+    which is what lets reflectgen (de)serialize the field and emit its combo.
+    """
     text = strip_comments(path.read_text(encoding='utf-8'))
     components: list[ComponentInfo] = []
+    # Enum lookups, keyed by both the unqualified name and the fully-qualified
+    # spelling so a field can reference the enum either way.
+    enums: dict[str, EnumInfo] = {}
 
     ns_stack:       list[str] = []
     ns_open_depths: list[int] = []
@@ -378,7 +432,7 @@ def parse_header(path: Path) -> list[ComponentInfo]:
                 i = j + 1
                 continue
 
-        # ── ACOMP / AASSET ──────────────────────────────────────────────────
+        # ── ACOMP / AASSET / AENUM ──────────────────────────────────────────
         acomp_m = _ACOMP_RE.match(text, i)
         if acomp_m:
             pending_acomp = parse_annot_args(acomp_m.group(1))
@@ -390,6 +444,30 @@ def parse_header(path: Path) -> list[ComponentInfo]:
             pending_acomp = parse_annot_args(aasset_m.group(1))
             pending_is_asset = True
             i = aasset_m.end()
+            continue
+        aenum_m = _AENUM_RE.match(text, i)
+        if aenum_m:
+            # AENUM must be immediately followed (bar whitespace) by an
+            # `enum class`/`enum struct` with a body — anything else is a
+            # malformed annotation, which is a hard error, not a silent skip.
+            j = aenum_m.end()
+            while j < n and text[j] in ' \t\n\r':
+                j += 1
+            enum_m = _ENUM_RE.match(text, j)
+            if not enum_m:
+                snippet = ' '.join(text[j:j + 60].split())
+                raise ValueError(
+                    f"{path.name}: AENUM is not followed by an 'enum class' / 'enum struct' "
+                    f"definition (got: '{snippet}...').")
+            enum_name = enum_m.group(1)
+            body, end = _extract_brace_body(text, enum_m.end())
+            if body is None:
+                raise ValueError(f"{path.name}: AENUM enum '{enum_name}' has no '{{ ... }}' body.")
+            fqn = '::'.join(ns_stack + [enum_name]) if ns_stack else enum_name
+            info = EnumInfo(name=enum_name, fqn=fqn, constants=parse_enum_constants(body))
+            enums[enum_name] = info
+            enums[fqn] = info
+            i = end
             continue
 
         # ── Struct (only matters after ACOMP/AASSET) ────────────────────────
@@ -426,6 +504,11 @@ def parse_header(path: Path) -> list[ComponentInfo]:
                 ns_stack.pop()
                 ns_open_depths.pop()
         i += 1
+
+    # Resolve enum-typed fields now that every AENUM in the header is known.
+    for comp in components:
+        for f in comp.fields:
+            f.enum_info = enums.get(f.cpp_type)
 
     return components
 
@@ -496,11 +579,31 @@ def _validate_bounds(f: FieldInfo, tc: Optional['TypeCodegen']) -> tuple[Optiona
     return vmin, vmax
 
 
+def _field_tc(f: FieldInfo) -> Optional['TypeCodegen']:
+    """The codegen for a field. An AENUM enum synthesizes one that (de)serializes
+    through its underlying integer (int64 on the wire, cast back to the enum);
+    every other type comes from the TYPES table. Returns None for an unsupported
+    type — the signal _check_unsupported turns into a hard error."""
+    if f.enum_info is not None:
+        return TypeCodegen(
+            'Enum',
+            'static_cast<std::int64_t>({a})',
+            'if (j.contains("{f}")) {a} = static_cast<' + f.enum_info.fqn +
+            '>(j.at("{f}").get<std::int64_t>());')
+    return TYPES.get(f.cpp_type)
+
+
 def _gen_field_meta(f: FieldInfo) -> str:
-    tc        = TYPES.get(f.cpp_type)
+    tc        = _field_tc(f)
     ftype     = f'Assisi::Core::Reflect::FieldType::{tc.enum_value}' if tc else 'Assisi::Core::Reflect::FieldType::Unknown'
     transient = 'true' if f.args.has('transient') else 'false'
     vmin, vmax = _validate_bounds(f, tc)
+    if f.enum_info is not None:
+        # Enum: emit the enumerator table as the trailing FieldMeta member. Bounds
+        # don't apply (validated above), so the hint args stay at their defaults.
+        consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
+        return (f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, '
+                f'false, false, 0.f, 0.f, {{ {consts} }} }}')
     if vmin is not None or vmax is not None:
         has_min = 'true' if vmin is not None else 'false'
         has_max = 'true' if vmax is not None else 'false'
@@ -513,10 +616,15 @@ def _gen_field_meta(f: FieldInfo) -> str:
     return f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient} }}'
 
 
+def _is_serializable(f: FieldInfo) -> bool:
+    """A non-transient field reflectgen has codegen for (a TYPES entry or an enum)."""
+    return not f.args.has('transient') and _field_tc(f) is not None
+
+
 def _gen_serialize(fields: list[FieldInfo]) -> str:
     # Default-deny (enforced in generate_cpp) guarantees every non-transient
-    # field is in TYPES, so there is no unsupported branch to emit.
-    serializable = [f for f in fields if not f.args.has('transient') and TYPES.get(f.cpp_type)]
+    # field has codegen, so there is no unsupported branch to emit.
+    serializable = [f for f in fields if _is_serializable(f)]
 
     if not serializable:
         # Nothing to serialize — suppress unused-parameter warning.
@@ -524,14 +632,14 @@ def _gen_serialize(fields: list[FieldInfo]) -> str:
 
     lines = ['const auto& c = *static_cast<const T*>(ptr);', 'return nlohmann::json{']
     for f in serializable:
-        expr = TYPES[f.cpp_type].serialize.format(a=f'c.{f.name}', f=f.name)
+        expr = _field_tc(f).serialize.format(a=f'c.{f.name}', f=f.name)
         lines.append(f'    {{ "{f.name}", {expr} }},')
     lines.append('};')
     return '\n'.join(lines)
 
 
 def _gen_deserialize(fields: list[FieldInfo]) -> str:
-    serializable = [f for f in fields if not f.args.has('transient') and TYPES.get(f.cpp_type)]
+    serializable = [f for f in fields if _is_serializable(f)]
 
     lines = [
         'auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);',
@@ -543,7 +651,7 @@ def _gen_deserialize(fields: list[FieldInfo]) -> str:
         lines.append('(void)j;')
     else:
         for f in serializable:
-            lines.append(TYPES[f.cpp_type].deserialize.format(f=f.name, a=f'comp.{f.name}'))
+            lines.append(_field_tc(f).deserialize.format(f=f.name, a=f'comp.{f.name}'))
 
     lines.append('(void)scene.Add(e, comp);')
     return '\n'.join(lines)
@@ -553,14 +661,14 @@ def _gen_deserialize_asset(fields: list[FieldInfo]) -> str:
     """Deserialize for an AASSET: write fields into a caller-owned instance
     (out_ptr), no scene/entity machinery. Per-field 'if present' so absent keys
     leave the instance's current value untouched (forward-compat)."""
-    serializable = [f for f in fields if not f.args.has('transient') and TYPES.get(f.cpp_type)]
+    serializable = [f for f in fields if _is_serializable(f)]
 
     if not serializable:
         return '(void)j;\n(void)out_ptr;'
 
     lines = ['auto& a = *static_cast<T*>(out_ptr);']
     for f in serializable:
-        lines.append(TYPES[f.cpp_type].deserialize.format(f=f.name, a=f'a.{f.name}'))
+        lines.append(_field_tc(f).deserialize.format(f=f.name, a=f'a.{f.name}'))
     return '\n'.join(lines)
 
 
@@ -646,6 +754,15 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
         if not f.args.has('transient')
     )
 
+    # Enum fields (de)serialize through a std::int64_t cast, which needs <cstdint>.
+    has_enums = any(
+        f.enum_info is not None
+        for comp in components
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient')
+    )
+
     # Includes are conditional on what the header actually declares. An
     # asset-only header (e.g. Geometry's MaterialData) must NOT pull in
     # ComponentRegistry / ECS::Scene — its home module does not link ECS.
@@ -659,6 +776,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
+    if has_enums:
+        includes.append('#include <cstdint>')
     includes.append(f'#include <{include_path}>')
     include_block = '\n'.join(includes)
 
@@ -795,12 +914,13 @@ def _check_unsupported(components: list[ComponentInfo], header_name: str) -> Non
         for f in comp.fields:
             if f.args.has('transient'):
                 continue
-            if f.cpp_type not in TYPES:
+            if _field_tc(f) is None:
                 reason = UNSUPPORTED_TYPES.get(f.cpp_type, 'no codegen for this type')
                 raise ValueError(
                     f"{header_name}: field '{comp.name}::{f.name}' has type "
                     f"'{f.cpp_type}', which reflectgen cannot serialize ({reason}). "
-                    f"Add its codegen to TYPES or mark the field AFIELD(transient).")
+                    f"Add its codegen to TYPES, mark it AFIELD(transient), or (for an "
+                    f"enum class) annotate it AENUM().")
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -29,3 +29,13 @@
 /// Compiles to nothing today; reserved for future reflectgen support
 /// (serialization, network replication interception).
 #define AEVENT(...)
+
+/// AENUM() — marks an `enum class` so reflectgen records its enumerators, making
+/// it usable as an AFIELD type (serialized by value, edited as a dropdown). The
+/// enum must be defined in the same header as the component(s) that use it, and
+/// reachable from their namespace. Use a 4-byte underlying type (the default
+/// `int`, or `: std::uint32_t`) — the inspector reads the value as a 4-byte int.
+///
+///   AENUM()
+///   enum class ColliderShape : std::uint32_t { Box, Sphere, Capsule };
+#define AENUM(...)

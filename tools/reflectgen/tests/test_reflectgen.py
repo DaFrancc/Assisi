@@ -429,6 +429,65 @@ class AssetTypeTest(unittest.TestCase):
         self.assertIn("AssetTypeRegistry", cpp)
 
 
+class EnumTest(unittest.TestCase):
+    _SRC = (
+        "#include <cstdint>\n"
+        "namespace N {\n"
+        "AENUM()\nenum class Shape : uint32_t { Box, Sphere, Capsule = 5, Cylinder };\n"
+        "ACOMP()\nstruct Body { AFIELD() Shape shape = Shape::Sphere; AFIELD() int n = 0; };\n"
+        "}\n"
+    )
+
+    def test_enum_field_is_resolved_with_constants(self):
+        comp = _parse_source(self._SRC)[0]
+        shape = comp.fields[0]
+        self.assertIsNotNone(shape.enum_info)
+        self.assertEqual(shape.enum_info.fqn, "N::Shape")
+        self.assertEqual(shape.enum_info.constants,
+                         [("Box", 0), ("Sphere", 1), ("Capsule", 5), ("Cylinder", 6)])
+
+    def test_enum_field_generates_meta_and_roundtrip(self):
+        cpp = reflectgen.generate_cpp(_parse_source(self._SRC), "N/Body.hpp")
+        self.assertIn("FieldType::Enum", cpp)
+        self.assertIn('{ "Capsule", 5 }', cpp)
+        self.assertIn("static_cast<std::int64_t>(c.shape)", cpp)
+        self.assertIn("static_cast<N::Shape>(j.at(\"shape\").get<std::int64_t>())", cpp)
+        self.assertIn("#include <cstdint>", cpp)
+
+    def test_non_integer_enumerator_is_rejected(self):
+        src = ("#include <cstdint>\nnamespace N {\n"
+               "AENUM()\nenum class E : uint32_t { A = someExpr };\n"
+               "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+
+class MalformedMacroTest(unittest.TestCase):
+    """A misused reflection macro must fail generation loudly, never be silently
+    skipped — a dropped field would lose its data on every save."""
+
+    def test_afield_without_a_field_declaration_raises(self):
+        src = "namespace N {\nACOMP()\nstruct Bad { AFIELD() };\n}\n"
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+    def test_afield_on_a_method_raises(self):
+        # AFIELD marking something that isn't a plain 'Type name;' field.
+        src = "namespace N {\nACOMP()\nstruct Bad { AFIELD() void step() {} };\n}\n"
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+    def test_aenum_not_followed_by_enum_raises(self):
+        src = "namespace N {\nAENUM()\nstruct NotAnEnum { int x; };\n}\n"
+        with self.assertRaises(ValueError):
+            _parse_source(src)
+
+    def test_unsupported_field_type_still_raises(self):
+        src = "namespace N {\nACOMP()\nstruct C { AFIELD() SomeUnknownType t; };\n}\n"
+        with self.assertRaises(ValueError):
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+
+
 class IncludePathTest(unittest.TestCase):
     def test_detects_path_after_include_segment(self):
         p = Path("modules") / "Runtime" / "include" / "Assisi" / "Runtime" / "Foo.hpp"

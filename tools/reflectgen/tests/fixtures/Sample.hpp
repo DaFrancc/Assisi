@@ -26,6 +26,18 @@
 namespace Assisi::Runtime
 {
 
+// AENUM: an enum class usable as an AFIELD type. reflectgen records its
+// enumerators so the field (de)serializes by value and the inspector shows a
+// dropdown. Exercises implicit auto-increment and an explicit value.
+AENUM()
+enum class SampleShape : uint32_t
+{
+    Box,
+    Sphere,
+    Capsule = 5,
+    Cylinder,
+};
+
 // ACOMP(tracked): opts into change detection, so its registration carries
 // tracksChanges = true. Doubles as the "all supported field types" component.
 ACOMP(tracked)
@@ -37,6 +49,7 @@ struct SampleAllTypes
     AFIELD() int32_t i32 = 4;
     AFIELD() uint32_t u32 = 5;
     AFIELD() bool flag = true;
+    AFIELD() SampleShape shape = SampleShape::Sphere;
     AFIELD() glm::vec2 v2 = {1.0f, 2.0f};
     AFIELD() glm::vec3 v3 = {1.0f, 2.0f, 3.0f};
     AFIELD() glm::vec4 v4 = {1.0f, 2.0f, 3.0f, 4.0f};

@@ -4,6 +4,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+#include <cstdint>
 #include <Assisi/Testing/Sample.hpp>
 
 namespace
@@ -22,6 +23,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             { "i32", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, i32), false },
             { "u32", Assisi::Core::Reflect::FieldType::UInt32, offsetof(T, u32), false },
             { "flag", Assisi::Core::Reflect::FieldType::Bool, offsetof(T, flag), false },
+            { "shape", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, shape), false, false, false, 0.f, 0.f, { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } } },
             { "v2", Assisi::Core::Reflect::FieldType::Vec2, offsetof(T, v2), false },
             { "v3", Assisi::Core::Reflect::FieldType::Vec3, offsetof(T, v3), false },
             { "v4", Assisi::Core::Reflect::FieldType::Vec4, offsetof(T, v4), false },
@@ -41,6 +43,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
                 { "i32", c.i32 },
                 { "u32", c.u32 },
                 { "flag", c.flag },
+                { "shape", static_cast<std::int64_t>(c.shape) },
                 { "v2", { c.v2.x, c.v2.y } },
                 { "v3", { c.v3.x, c.v3.y, c.v3.z } },
                 { "v4", { c.v4.x, c.v4.y, c.v4.z, c.v4.w } },
@@ -61,6 +64,7 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             if (j.contains("i32")) comp.i32 = j.at("i32").get<int32_t>();
             if (j.contains("u32")) comp.u32 = j.at("u32").get<uint32_t>();
             if (j.contains("flag")) comp.flag = j.at("flag").get<bool>();
+            if (j.contains("shape")) comp.shape = static_cast<Assisi::Runtime::SampleShape>(j.at("shape").get<std::int64_t>());
             { if (j.contains("v2")) { const auto& _v = j.at("v2"); comp.v2 = { _v[0].get<float>(), _v[1].get<float>() }; } }
             { if (j.contains("v3")) { const auto& _v = j.at("v3"); comp.v3 = { _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>() }; } }
             { if (j.contains("v4")) { const auto& _v = j.at("v4"); comp.v4 = { _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }; } }

@@ -88,6 +88,39 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
         case FieldType::Bool:
             edited = ImGui::Checkbox(field.name.c_str(), static_cast<bool *>(fp));
             break;
+        case FieldType::Enum:
+        {
+            // Enums are stored as their (4-byte) underlying integer (see AENUM).
+            // Show the reflected enumerators as a dropdown; write the picked value.
+            auto       &value   = *static_cast<int32_t *>(fp);
+            const char *preview = "(unknown)";
+            for (const auto &constant : field.enumConstants)
+            {
+                if (constant.value == value)
+                {
+                    preview = constant.name.c_str();
+                    break;
+                }
+            }
+            if (ImGui::BeginCombo(field.name.c_str(), preview))
+            {
+                for (const auto &constant : field.enumConstants)
+                {
+                    const bool selected = (constant.value == value);
+                    if (ImGui::Selectable(constant.name.c_str(), selected))
+                    {
+                        value  = static_cast<int32_t>(constant.value);
+                        edited = true;
+                    }
+                    if (selected)
+                    {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            break;
+        }
         case FieldType::Vec2:
             edited = ImGui::DragFloat2(field.name.c_str(), static_cast<float *>(fp), 0.01f);
             break;
