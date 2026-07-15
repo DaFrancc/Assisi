@@ -83,4 +83,34 @@ struct SampleTransient
     AFIELD() int ignored = 0;
 };
 
+// Radio: declarative editor visibility. `mode` is a broadcaster
+// (AFIELD(radioBroadcast) on an AENUM enum); `sub` is BOTH a listener (of mode)
+// and a broadcaster (of level) — a chain. The listeners exercise both behaviors,
+// single-value and set-value forms, and a bound coexisting with a radio object
+// on the same field.
+AENUM()
+enum class SampleMode
+{
+    Off,
+    Low,
+    High,
+};
+
+AENUM()
+enum class SampleSub
+{
+    A,
+    B,
+};
+
+ACOMP()
+struct SampleRadio
+{
+    AFIELD(radioBroadcast) SampleMode mode = SampleMode::Off;
+    AFIELD(radioListen = {source = mode, value = High, behavior = vanish}) float intensity = 1.0f;
+    AFIELD(radioBroadcast, radioListen = {source = mode, value = {Low, High}, behavior = vanish})
+    SampleSub sub = SampleSub::A;
+    AFIELD(min = 0, radioListen = {source = sub, value = B, behavior = grey}) int32_t level = 0;
+};
+
 } // namespace Assisi::Runtime

@@ -22,6 +22,102 @@
 #include <string>
 #include <vector>
 
+namespace
+{
+
+/// @brief Editor visibility of an AFIELD(radio) listener for the current data.
+enum class RadioVisibility
+{
+    Active, ///< Source enum is at one of the field's values — edit normally.
+    Greyed, ///< Not active; show disabled (radioBehavior = grey).
+    Hidden, ///< Not active; omit entirely (radioBehavior = vanish).
+};
+
+const Assisi::Core::Reflect::FieldMeta *FindField(const Assisi::Core::Reflect::ComponentMeta &meta,
+                                                  const std::string &name)
+{
+    for (const auto &candidate : meta.fields)
+    {
+        if (candidate.name == name)
+        {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
+
+/// @brief Resolve a field's radio state against a live component instance.
+///
+/// A listener (radioSource set) follows a sibling broadcaster enum. Because a
+/// source may itself be a listener, this walks the source chain up to the root
+/// broadcaster and folds back down: while any source in the chain is inactive,
+/// this field hides unconditionally; once every source above is active, the
+/// field is Active if its own source's current value is one of radioValues,
+/// otherwise it applies its own radioBehavior. Non-listener fields are always
+/// Active. reflectgen validates the chain exists and is acyclic, so the bounded
+/// walk and the lookup misses handled here are purely defensive.
+RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect::ComponentMeta &meta,
+                              const Assisi::Core::Reflect::FieldMeta &field)
+{
+    using Assisi::Core::Reflect::FieldMeta;
+    using Assisi::Core::Reflect::RadioBehavior;
+
+    if (field.radioSource.empty())
+    {
+        return RadioVisibility::Active;
+    }
+
+    // Collect the chain: field, its source, its source's source, ... up to the
+    // root broadcaster (a field with no radioSource). Bounded by the field count
+    // since the graph is acyclic.
+    std::vector<const FieldMeta *> chain;
+    for (const FieldMeta *cur = &field; cur != nullptr && chain.size() <= meta.fields.size();)
+    {
+        chain.push_back(cur);
+        if (cur->radioSource.empty())
+        {
+            break;
+        }
+        cur = FindField(meta, cur->radioSource);
+    }
+
+    const auto readEnum = [component](const FieldMeta *fm) -> std::int64_t
+    {
+        // Reflected enums are stored as a 4-byte int (see AENUM).
+        return *reinterpret_cast<const int32_t *>(static_cast<const char *>(component) + fm->offset);
+    };
+
+    // Fold from the root down. `state` holds the resolved visibility of the source
+    // one level up as we descend toward `field` (chain front).
+    RadioVisibility state = RadioVisibility::Active; // the root broadcaster
+    for (std::size_t i = chain.size(); i-- > 1;)
+    {
+        const FieldMeta *listener = chain[i - 1];
+        const FieldMeta *source   = chain[i];
+        if (state != RadioVisibility::Active)
+        {
+            state = RadioVisibility::Hidden; // an inactive source hides its listeners outright
+            continue;
+        }
+        const std::int64_t current = readEnum(source);
+        bool               match   = false;
+        for (const std::int64_t value : listener->radioValues)
+        {
+            if (current == value)
+            {
+                match = true;
+                break;
+            }
+        }
+        state = match ? RadioVisibility::Active
+                      : (listener->radioBehavior == RadioBehavior::Vanish ? RadioVisibility::Hidden
+                                                                          : RadioVisibility::Greyed);
+    }
+    return state;
+}
+
+} // namespace
+
 bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     using namespace Assisi::Core::Reflect;
@@ -35,8 +131,21 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             continue;
         anyEditable = true;
 
+        // AFIELD(radio) listeners follow a sibling enum: hide or grey them when
+        // that enum isn't at one of the field's active values.
+        const RadioVisibility radio = EvaluateRadio(mut, meta, field);
+        if (radio == RadioVisibility::Hidden)
+        {
+            continue;
+        }
+        const bool greyed = (radio == RadioVisibility::Greyed);
+
         void *fp = static_cast<char *>(mut) + field.offset;
         ImGui::PushID(field.name.c_str());
+        if (greyed)
+        {
+            ImGui::BeginDisabled();
+        }
 
         bool edited = false;
         switch (field.type)
@@ -269,6 +378,10 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             break;
         }
 
+        if (greyed)
+        {
+            ImGui::EndDisabled();
+        }
         anyFieldEdited |= edited;
         ImGui::PopID();
     }

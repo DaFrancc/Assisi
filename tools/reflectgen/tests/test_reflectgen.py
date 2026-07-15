@@ -75,7 +75,7 @@ class ParseTest(unittest.TestCase):
         # GhostComponent lives inside a // comment and must not be parsed.
         self.assertEqual(
             [c.name for c in self.components],
-            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient"],
+            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient", "SampleRadio"],
         )
         self.assertNotIn("GhostComponent", self.by_name)
 
@@ -460,6 +460,167 @@ class EnumTest(unittest.TestCase):
                "ACOMP()\nstruct C { AFIELD() E e = E::A; };\n}\n")
         with self.assertRaises(ValueError):
             _parse_source(src)
+
+
+class RadioTest(unittest.TestCase):
+    """AFIELD(radio ...): a broadcaster enum (AFIELD(radioBroadcast)) plus listener
+    fields (AFIELD(radioListen = { source, value, behavior })) whose editor
+    visibility follows it. A field may be both, forming a chain. Every misuse is a
+    hard build failure."""
+
+    # `mode` broadcasts, `sub` is a broadcaster-listener of it — a two-link chain.
+    def _src(self, body: str) -> str:
+        return (
+            "#include <cstdint>\n"
+            "namespace N {\n"
+            "AENUM()\nenum class Mode { Off, Low, High };\n"
+            "AENUM()\nenum class Sub { A, B };\n"
+            "ACOMP()\nstruct C {\n" + body + "\n};\n}\n"
+        )
+
+    def _fields(self, body: str):
+        comp = _parse_source(self._src(body))[0]
+        return {f.name: f for f in comp.fields}
+
+    # ── resolution ──────────────────────────────────────────────────────────
+
+    def test_broadcaster_field_is_flagged(self):
+        f = self._fields("AFIELD(radioBroadcast) Mode mode = Mode::Off;")["mode"]
+        self.assertTrue(f.radio.is_broadcast)
+        self.assertEqual(f.radio.source, "")
+
+    def test_single_value_listener_resolves(self):
+        f = self._fields(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = High, behavior = vanish}) float x = 0.f;"
+        )["x"]
+        self.assertEqual(f.radio.source, "mode")
+        self.assertEqual(f.radio.values, [2])
+        self.assertEqual(f.radio.behavior, "Vanish")
+
+    def test_value_set_listener_resolves(self):
+        f = self._fields(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = {Low, High}, behavior = grey}) int32_t n = 0;"
+        )["n"]
+        self.assertEqual(f.radio.values, [1, 2])
+        self.assertEqual(f.radio.behavior, "Grey")
+
+    def test_field_can_be_both_broadcaster_and_listener(self):
+        fields = self._fields(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioBroadcast, radioListen = {source = mode, value = High, behavior = vanish}) Sub sub = Sub::A;\n"
+            "AFIELD(radioListen = {source = sub, value = B, behavior = grey}) int32_t n = 0;"
+        )
+        sub = fields["sub"]
+        self.assertTrue(sub.radio.is_broadcast)  # broadcasts to `n`
+        self.assertEqual(sub.radio.source, "mode")  # and listens to `mode`
+        self.assertEqual(fields["n"].radio.source, "sub")
+
+    def test_listener_emits_radio_members_in_field_meta(self):
+        comps = _parse_source(self._src(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = {Low, High}, behavior = grey}) int32_t n = 0;"
+        ))
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        # Non-enum listener: defaulted bounds + empty enumConstants, then the trio.
+        self.assertIn(
+            'offsetof(T, n), false, false, false, 0.f, 0.f, {}, "mode", { 1, 2 }, '
+            "Assisi::Core::Reflect::RadioBehavior::Grey",
+            cpp,
+        )
+        # The broadcaster enum stays an ordinary enum field (no radio members).
+        self.assertIn(
+            'offsetof(T, mode), false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } } }',
+            cpp,
+        )
+
+    def test_both_roles_emit_enum_constants_and_radio_members(self):
+        # A broadcaster-listener enum carries BOTH its enumConstants and the trio.
+        cpp = reflectgen.generate_cpp(_parse_source(self._src(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioBroadcast, radioListen = {source = mode, value = High, behavior = vanish}) Sub sub = Sub::A;"
+        )), "N/C.hpp")
+        self.assertIn(
+            'offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, '
+            '"mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish',
+            cpp,
+        )
+
+    def test_bound_and_radio_coexist_on_one_field(self):
+        cpp = reflectgen.generate_cpp(_parse_source(self._src(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(min = 0, radioListen = {source = mode, value = High, behavior = vanish}) int32_t n = 0;"
+        )), "N/C.hpp")
+        self.assertIn(
+            'offsetof(T, n), false, true, false, 0.0f, 0.f, {}, "mode", { 2 }, '
+            "Assisi::Core::Reflect::RadioBehavior::Vanish",
+            cpp,
+        )
+
+    # ── hard-fail validation ────────────────────────────────────────────────
+
+    def _assert_rejected(self, body: str):
+        with self.assertRaises(ValueError):
+            _parse_source(self._src(body))
+
+    def test_broadcast_on_non_enum_is_rejected(self):
+        self._assert_rejected("AFIELD(radioBroadcast) float notAnEnum = 0.f;")
+
+    def test_listen_to_missing_field_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD(radioListen = {source = ghost, value = High, behavior = grey}) float x = 0.f;")
+
+    def test_listen_to_non_enum_field_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD() float src = 0.f;\n"
+            "AFIELD(radioListen = {source = src, value = High, behavior = grey}) float x = 0.f;")
+
+    def test_listen_to_non_broadcaster_enum_is_rejected(self):
+        # Target is an enum but not itself marked AFIELD(radioBroadcast).
+        self._assert_rejected(
+            "AFIELD() Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = High, behavior = grey}) float x = 0.f;")
+
+    def test_listen_to_self_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast, radioListen = {source = x, value = High, behavior = grey}) Mode x = Mode::Off;")
+
+    def test_direct_cycle_is_rejected(self):
+        # Two broadcaster-listeners following each other: a <-> b.
+        self._assert_rejected(
+            "AFIELD(radioBroadcast, radioListen = {source = b, value = B, behavior = grey}) Sub a = Sub::A;\n"
+            "AFIELD(radioBroadcast, radioListen = {source = a, value = A, behavior = grey}) Sub b = Sub::A;")
+
+    def test_unknown_enumerator_value_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = Sideways, behavior = grey}) float x = 0.f;")
+
+    def test_value_set_with_one_unknown_member_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = {Low, Nope}, behavior = grey}) float x = 0.f;")
+
+    def test_bad_behavior_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = High, behavior = sparkle}) float x = 0.f;")
+
+    def test_missing_behavior_key_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = High}) float x = 0.f;")
+
+    def test_unknown_radio_key_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = {source = mode, value = High, behavior = grey, extra = 1}) float x = 0.f;")
+
+    def test_non_object_listen_spec_is_rejected(self):
+        self._assert_rejected(
+            "AFIELD(radioBroadcast) Mode mode = Mode::Off;\n"
+            "AFIELD(radioListen = mode) float x = 0.f;")
 
 
 class MalformedMacroTest(unittest.TestCase):

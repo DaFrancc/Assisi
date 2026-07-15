@@ -32,7 +32,8 @@ struct RigidBody
 /// AENUM so it reflects as a dropdown and serializes by value. Plain `enum class`
 /// (a 4-byte `int` underlying, which reflected enums use), since there are only a
 /// handful of shapes. Each shape reads a different subset of RigidBodyDescriptor's
-/// dimension fields (see there).
+/// dimension fields; the descriptor uses AFIELD(radio) so the inspector only
+/// shows the dimensions the chosen shape actually uses.
 AENUM()
 enum class ColliderShape
 {
@@ -45,17 +46,21 @@ enum class ColliderShape
 /// @brief Serializable descriptor for a rigid body's collider.
 ///
 /// Stored in the level file; consumed at load time to create a RigidBody and the
-/// underlying Jolt body. `shape` selects the primitive; only the fields that
-/// shape uses matter (a Sphere ignores `halfExtents`/`halfHeight`, etc.).
+/// underlying Jolt body. `shape` is a radio source: each dimension field lists
+/// the shapes it applies to and vanishes from the inspector for the others (only
+/// the fields that shape uses matter — a Sphere ignores `halfExtents`/`halfHeight`).
 ACOMP()
 struct RigidBodyDescriptor
 {
-    AFIELD() ColliderShape shape = ColliderShape::Box; ///< Collision primitive to build.
-    AFIELD() glm::vec3 halfExtents{0.5f, 0.5f, 0.5f};  ///< Box half-extents in world units.
-    AFIELD(min = 0.0) float radius     = 0.5f;         ///< Sphere/Capsule/Cylinder radius.
-    AFIELD(min = 0.0) float halfHeight = 0.5f;         ///< Capsule/Cylinder half-height of the cylindrical part.
-    AFIELD() bool      isStatic  = false;              ///< True = immovable static body.
-    AFIELD() bool      enableCCD = false;              ///< Enable continuous collision detection (dynamic only).
+    AFIELD(radioBroadcast) ColliderShape shape = ColliderShape::Box; ///< Collision primitive to build.
+    AFIELD(radioListen = {source = shape, value = Box, behavior = vanish})
+    glm::vec3 halfExtents{0.5f, 0.5f, 0.5f}; ///< Box half-extents in world units.
+    AFIELD(min = 0.0, radioListen = {source = shape, value = {Sphere, Capsule, Cylinder}, behavior = vanish})
+    float radius = 0.5f; ///< Sphere/Capsule/Cylinder radius.
+    AFIELD(min = 0.0, radioListen = {source = shape, value = {Capsule, Cylinder}, behavior = vanish})
+    float      halfHeight = 0.5f;         ///< Capsule/Cylinder half-height of the cylindrical part.
+    AFIELD() bool      isStatic  = false; ///< True = immovable static body.
+    AFIELD() bool      enableCCD = false; ///< Enable continuous collision detection (dynamic only).
 };
 
 } // namespace Assisi::Physics

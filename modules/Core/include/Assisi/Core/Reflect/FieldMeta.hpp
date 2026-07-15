@@ -45,6 +45,15 @@ struct EnumConstant
     std::int64_t value = 0;
 };
 
+/// @brief What an editor does to a "radio" listener field when its source enum
+/// is not at one of the field's active values (see FieldMeta::radioSource).
+enum class RadioBehavior
+{
+    None,   ///< Not a radio listener (the default).
+    Grey,   ///< Disable (grey out) the field while inactive.
+    Vanish, ///< Hide the field entirely while inactive.
+};
+
 struct FieldMeta
 {
     std::string name;
@@ -63,6 +72,20 @@ struct FieldMeta
     // Populated only for FieldType::Enum: the enumerators to offer in an editor,
     // in declaration order. Empty for every other field type.
     std::vector<EnumConstant> enumConstants;
+
+    // Radio: declarative editor visibility driven by a sibling enum's value. A
+    // field annotated AFIELD(radioListen = { source = enumField, value = ...,
+    // behavior = grey|vanish }) is "active" only while that sibling enum equals
+    // one of radioValues; otherwise the editor greys or hides it per
+    // radioBehavior. A broadcaster enum (AFIELD(radioBroadcast)) carries no radio
+    // metadata here — it is an ordinary enum field that listeners reference by
+    // name. Sources may themselves be listeners: when a source is inactive its
+    // listeners hide unconditionally, so the editor resolves visibility by
+    // walking radioSource up the chain (reflectgen rejects cycles). radioSource is
+    // empty for every non-listener field.
+    std::string               radioSource;                          ///< Sibling enum field this field's visibility follows ("" = not a listener).
+    std::vector<std::int64_t> radioValues;                          ///< Enum values at which this field is active; meaningful when radioSource set.
+    RadioBehavior             radioBehavior = RadioBehavior::None;   ///< Editor treatment while inactive.
 };
 
 } // namespace Assisi::Core::Reflect

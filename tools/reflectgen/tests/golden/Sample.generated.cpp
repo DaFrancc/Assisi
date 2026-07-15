@@ -189,4 +189,54 @@ static const bool _reflectgen_SampleTransient = []() -> bool
     return true;
 }();
 
+// ── SampleRadio ───────────────────────────────────────────────────────────────
+static const bool _reflectgen_SampleRadio = []() -> bool
+{
+    using T = Assisi::Runtime::SampleRadio;
+    Assisi::Core::Reflect::ComponentRegistry::Instance().Register({
+        "SampleRadio",
+        typeid(T),
+        {
+            { "mode", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, mode), false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } } },
+            { "intensity", Assisi::Core::Reflect::FieldType::Float, offsetof(T, intensity), false, false, false, 0.f, 0.f, {}, "mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { "sub", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, "mode", { 1, 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { "level", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, level), false, true, false, 0.0f, 0.f, {}, "sub", { 1 }, Assisi::Core::Reflect::RadioBehavior::Grey }
+        },
+        [](const void* ptr) -> nlohmann::json
+        {
+            const auto& c = *static_cast<const T*>(ptr);
+            return nlohmann::json{
+                { "mode", static_cast<std::int64_t>(c.mode) },
+                { "intensity", c.intensity },
+                { "sub", static_cast<std::int64_t>(c.sub) },
+                { "level", c.level },
+            };
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            T comp{};
+            if (j.contains("mode")) comp.mode = static_cast<Assisi::Runtime::SampleMode>(j.at("mode").get<std::int64_t>());
+            if (j.contains("intensity")) comp.intensity = j.at("intensity").get<float>();
+            if (j.contains("sub")) comp.sub = static_cast<Assisi::Runtime::SampleSub>(j.at("sub").get<std::int64_t>());
+            if (j.contains("level")) comp.level = j.at("level").get<int32_t>();
+            (void)scene.Add(e, comp);
+        },
+        [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            for (auto [e, comp] : scene.Query<T>())
+                cb(e.index, e.generation, &comp);
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        true       // serializable
+    });
+    return true;
+}();
+
 } // namespace

@@ -46,11 +46,28 @@ class EnumInfo:
 
 
 @dataclass
+class RadioInfo:
+    """Resolved AFIELD(radio ...) metadata for one field.
+
+    A *broadcaster* (AFIELD(radioBroadcast) on an enum) sets is_broadcast. A
+    *listener* (AFIELD(radioListen = { source, value, behavior })) sets
+    source/values/behavior, with `values` already resolved from enumerator names
+    to their integer values. A field can be BOTH — an enum that follows another
+    broadcaster while broadcasting to its own listeners (a radio chain).
+    """
+    is_broadcast: bool = False     # AFIELD(radioBroadcast) flag on an enum field
+    source:       str  = ''        # sibling broadcaster enum field name ('' = not a listener)
+    values:       list = field(default_factory=list)  # list[int]: active enum values
+    behavior:     str  = 'None'    # 'None' | 'Grey' | 'Vanish'
+
+
+@dataclass
 class FieldInfo:
     name:      str
     cpp_type:  str
     args:      AnnotArgs
-    enum_info: Optional[EnumInfo] = None  # set when cpp_type names an AENUM enum
+    enum_info: Optional[EnumInfo]  = None  # set when cpp_type names an AENUM enum
+    radio:     Optional[RadioInfo] = None  # set by _resolve_radio after parsing
 
 
 @dataclass
@@ -226,8 +243,13 @@ UNSUPPORTED_TYPES: dict[str, str] = {}
 # ──────────────────────────────────────────────────────────────────────────────
 
 def _split_args(s: str) -> list[str]:
-    """Split by comma, respecting quoted strings."""
-    result, current, in_quote, qchar = [], [], False, ''
+    """Split by comma, respecting quoted strings and {brace} nesting.
+
+    Brace-awareness is what lets a single AFIELD argument carry a nested object
+    with its own commas, e.g. `radio = { listen = shape, value = {A, B} }` — only
+    top-level commas separate arguments. The same helper splits that nested body.
+    """
+    result, current, in_quote, qchar, depth = [], [], False, '', 0
     for ch in s:
         if in_quote:
             current.append(ch)
@@ -236,7 +258,13 @@ def _split_args(s: str) -> list[str]:
         elif ch in ('"', "'"):
             in_quote, qchar = True, ch
             current.append(ch)
-        elif ch == ',':
+        elif ch == '{':
+            depth += 1
+            current.append(ch)
+        elif ch == '}':
+            depth -= 1
+            current.append(ch)
+        elif ch == ',' and depth == 0:
             result.append(''.join(current))
             current = []
         else:
@@ -333,6 +361,144 @@ def parse_enum_constants(body: str) -> list:
         constants.append((enum_name, value))
         next_value = value + 1
     return constants
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Radio (declarative editor visibility) parsing + validation
+# ──────────────────────────────────────────────────────────────────────────────
+
+# behavior spelling (lower-case in the annotation) → FieldMeta enumerator.
+_RADIO_BEHAVIORS = {'grey': 'Grey', 'vanish': 'Vanish'}
+_RADIO_KEYS      = {'source', 'value', 'behavior'}
+
+
+def _parse_value_list(raw: str) -> list[str]:
+    """Parse a radio `value` — a single enumerator `E1` or a set `{E1, E2}` —
+    into a list of enumerator-name strings."""
+    raw = raw.strip()
+    if raw.startswith('{') and raw.endswith('}'):
+        return [tok.strip() for tok in _split_args(raw[1:-1]) if tok.strip()]
+    return [raw] if raw else []
+
+
+def parse_radio_spec(raw: str, where: str) -> dict:
+    """Parse the `{ source = ..., value = ..., behavior = ... }` object of an
+    AFIELD(radioListen = {...}) listener into a {key: raw_value} dict. `where`
+    names the field for diagnostics. Structure errors are hard failures."""
+    raw = raw.strip()
+    if not (raw.startswith('{') and raw.endswith('}')):
+        raise ValueError(
+            f"{where}: AFIELD(radioListen = ...) must be a brace object "
+            f"'{{ source = ..., value = ..., behavior = ... }}' (got: '{raw}').")
+    spec: dict = {}
+    for tok in _split_args(raw[1:-1]):
+        tok = tok.strip()
+        if not tok:
+            continue
+        if '=' not in tok:
+            raise ValueError(
+                f"{where}: AFIELD(radio) sub-argument '{tok}' is not a key = value pair.")
+        key, _, value = tok.partition('=')
+        spec[key.strip()] = value.strip()
+    return spec
+
+
+def _resolve_radio(comp: 'ComponentInfo', header_name: str) -> None:
+    """Resolve and validate every field's AFIELD(radio ...) against its struct,
+    attaching a RadioInfo to each field. A field may be a broadcaster
+    (AFIELD(radioBroadcast) on an enum), a listener (AFIELD(radioListen = {
+    source, value, behavior })), or both — listeners can follow a broadcaster
+    that itself follows another, forming a chain.
+
+    Every misuse is a hard build failure: a broadcaster that isn't an enum, a
+    listener naming a missing / non-enum / non-broadcaster field, an unknown
+    enumerator, a bad behavior, or a cycle in the source chain."""
+    by_name = {f.name: f for f in comp.fields}
+
+    for f in comp.fields:
+        where         = f"{header_name}: field '{comp.name}::{f.name}'"
+        has_broadcast = f.args.has('radioBroadcast')   # AFIELD(radioBroadcast)
+        raw_spec      = f.args.get('radioListen')      # AFIELD(radioListen={..})
+        info          = RadioInfo()
+
+        if has_broadcast:
+            if f.enum_info is None:
+                raise ValueError(
+                    f"{where} is marked AFIELD(radioBroadcast) but is not an AENUM enum "
+                    f"field (its type is '{f.cpp_type}'). Only enum fields can broadcast.")
+            info.is_broadcast = True
+
+        if raw_spec is not None:
+            spec = parse_radio_spec(raw_spec, where)
+            missing = _RADIO_KEYS - spec.keys()
+            unknown = spec.keys() - _RADIO_KEYS
+            if missing:
+                raise ValueError(
+                    f"{where}: AFIELD(radioListen) is missing {sorted(missing)}; it needs "
+                    f"source, value, and behavior.")
+            if unknown:
+                raise ValueError(
+                    f"{where}: AFIELD(radioListen) has unknown key(s) {sorted(unknown)}; only "
+                    f"source, value, behavior are allowed.")
+
+            source_name = spec['source']
+            if source_name == f.name:
+                raise ValueError(f"{where}: AFIELD(radioListen) cannot listen to itself.")
+            source = by_name.get(source_name)
+            if source is None:
+                raise ValueError(
+                    f"{where}: AFIELD(radioListen source = {source_name}) names no field in "
+                    f"struct '{comp.name}'.")
+            if source.enum_info is None:
+                raise ValueError(
+                    f"{where}: AFIELD(radioListen) follows '{source_name}', which is not an "
+                    f"AENUM enum field.")
+            if not source.args.has('radioBroadcast'):
+                raise ValueError(
+                    f"{where}: AFIELD(radioListen) follows '{source_name}', which is not "
+                    f"marked AFIELD(radioBroadcast).")
+
+            value_names = _parse_value_list(spec['value'])
+            if not value_names:
+                raise ValueError(f"{where}: AFIELD(radioListen value = ...) is empty.")
+            const_map = {name: val for name, val in source.enum_info.constants}
+            values: list = []
+            for vname in value_names:
+                if vname not in const_map:
+                    raise ValueError(
+                        f"{where}: AFIELD(radioListen value = {vname}) is not an enumerator "
+                        f"of '{source.enum_info.name}' (valid: {sorted(const_map)}).")
+                values.append(const_map[vname])
+
+            behavior = _RADIO_BEHAVIORS.get(spec['behavior'].lower())
+            if behavior is None:
+                raise ValueError(
+                    f"{where}: AFIELD(radioListen behavior = {spec['behavior']}) must be "
+                    f"'grey' or 'vanish'.")
+
+            info.source   = source_name
+            info.values   = values
+            info.behavior = behavior
+
+        f.radio = info
+
+    # Chains must be acyclic — the runtime resolves visibility by walking source
+    # links, and a cycle (A follows B follows A) would never terminate. Follow
+    # each listener's chain and reject a repeat.
+    for start in comp.fields:
+        if start.radio is None or not start.radio.source:
+            continue
+        seen: set = set()
+        cur = start
+        while cur.radio is not None and cur.radio.source:
+            if cur.name in seen:
+                raise ValueError(
+                    f"{header_name}: AFIELD(radioListen) cycle detected in struct "
+                    f"'{comp.name}' involving '{cur.name}'.")
+            seen.add(cur.name)
+            cur = by_name[cur.radio.source]  # existence validated above
+
+
 # Field declaration: optional cv/storage-class keywords, type with optional
 # namespace/template args, optional ptr/ref, name, optional default, semicolon.
 # - Type modifiers (const, unsigned, etc.) can precede the base type token.
@@ -510,6 +676,11 @@ def parse_header(path: Path) -> list[ComponentInfo]:
         for f in comp.fields:
             f.enum_info = enums.get(f.cpp_type)
 
+    # Radio references resolve against sibling fields (and their enum_info), so
+    # this must run after enum resolution. Any misuse raises here.
+    for comp in components:
+        _resolve_radio(comp, path.name)
+
     return components
 
 
@@ -598,22 +769,41 @@ def _gen_field_meta(f: FieldInfo) -> str:
     ftype     = f'Assisi::Core::Reflect::FieldType::{tc.enum_value}' if tc else 'Assisi::Core::Reflect::FieldType::Unknown'
     transient = 'true' if f.args.has('transient') else 'false'
     vmin, vmax = _validate_bounds(f, tc)
-    if f.enum_info is not None:
-        # Enum: emit the enumerator table as the trailing FieldMeta member. Bounds
-        # don't apply (validated above), so the hint args stay at their defaults.
-        consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
-        return (f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, '
-                f'false, false, 0.f, 0.f, {{ {consts} }} }}')
-    if vmin is not None or vmax is not None:
+
+    bounds_active   = vmin is not None or vmax is not None
+    enum_active     = f.enum_info is not None
+    listener_active = f.radio is not None and f.radio.source != ''
+
+    # FieldMeta's trailing members are positional (bounds, then enumConstants,
+    # then the radio trio), so emitting a later block forces every earlier block
+    # to be emitted at its default. Blocks that no field needs are omitted, which
+    # keeps unannotated fields at the short, golden-stable initializer form.
+    tail: list[str] = []
+
+    if bounds_active or enum_active or listener_active:
         has_min = 'true' if vmin is not None else 'false'
         has_max = 'true' if vmax is not None else 'false'
         min_v   = f'{vmin}f' if vmin is not None else '0.f'
         max_v   = f'{vmax}f' if vmax is not None else '0.f'
-        # Bounds are appended only when present so unannotated fields keep the
-        # short (golden-stable) initializer form.
-        return (f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, '
-                f'{has_min}, {has_max}, {min_v}, {max_v} }}')
-    return f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient} }}'
+        tail += [has_min, has_max, min_v, max_v]
+
+    if enum_active or listener_active:
+        if enum_active:
+            consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
+            tail.append(f'{{ {consts} }}')
+        else:
+            tail.append('{}')  # empty enumConstants: a non-enum listener still needs the slot
+
+    if listener_active:
+        values = ', '.join(str(v) for v in f.radio.values)
+        tail += [
+            f'"{f.radio.source}"',
+            f'{{ {values} }}',
+            f'Assisi::Core::Reflect::RadioBehavior::{f.radio.behavior}',
+        ]
+
+    base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}'
+    return base + ' }' if not tail else base + ', ' + ', '.join(tail) + ' }'
 
 
 def _is_serializable(f: FieldInfo) -> bool:
