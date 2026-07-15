@@ -401,3 +401,156 @@ TEST_CASE("ReconcileGltfMaterials: a new slot is materialized (additive)")
 
     fs::remove_all(root);
 }
+
+// --- Prompt-driven conflict resolution (S4 second half / D5) ----------------
+
+using Assisi::Geometry::AcceptGltfSource;
+using Assisi::Geometry::DiffGltfMaterials;
+using Assisi::Geometry::MaterialDiff;
+using Assisi::Geometry::RegenerateGltfMaterials;
+using Assisi::Geometry::SlotChange;
+
+// The GUID recorded in an `.amat`'s sidecar — to assert regenerate preserves it.
+AssetId AmatIdIn(const fs::path &amatSidecar)
+{
+    const std::expected<AssetSidecar, Assisi::Core::AssetSidecarError> side = DeserializeSidecar(ReadFile(amatSidecar));
+    return side ? side->guid : AssetId{};
+}
+
+TEST_CASE("DiffGltfMaterials: a changed factor is reported as a per-slot conflict")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+
+    OverwriteGltf(root, kMaterialGltfChangedFactor);
+    const MaterialDiff diff = DiffGltfMaterials("model.gltf", resolveTex, resolveMat);
+    REQUIRE(diff.valid);
+    REQUIRE(diff.slots.size() == 1);
+    CHECK(diff.slots[0].slot == 0);
+    CHECK(diff.slots[0].change == SlotChange::Changed);
+    CHECK(diff.slots[0].name == "Wood");
+    CHECK(diff.HasConflict());
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Removed")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+
+    // Explode the two-material version, then drop back to one material: slot 0
+    // survives unchanged, slot 1 is removed.
+    OverwriteGltf(root, kTwoMaterialGltf);
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+    OverwriteGltf(root, kMaterialGltf);
+
+    const MaterialDiff removedDiff = DiffGltfMaterials("model.gltf", resolveTex, resolveMat);
+    REQUIRE(removedDiff.valid);
+    REQUIRE(removedDiff.slots.size() == 2);
+    CHECK(removedDiff.slots[0].change == SlotChange::Unchanged);
+    CHECK(removedDiff.slots[1].change == SlotChange::Removed);
+    CHECK(removedDiff.HasConflict());
+
+    // The reverse (one material exploded, source grows to two) reports slot 1
+    // Added — the additive-safe case, no conflict.
+    const fs::path  root2   = WriteMaterialAssets(MintAssetId());
+    const auto      resMat2 = [&root2](const AssetId &id) { return ResolveMaterialPathIn(root2, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+    OverwriteGltf(root2, kTwoMaterialGltf);
+    const MaterialDiff addedDiff = DiffGltfMaterials("model.gltf", resolveTex, resMat2);
+    REQUIRE(addedDiff.valid);
+    REQUIRE(addedDiff.slots.size() == 2);
+    CHECK(addedDiff.slots[0].change == SlotChange::Unchanged);
+    CHECK(addedDiff.slots[1].change == SlotChange::Added);
+    CHECK_FALSE(addedDiff.HasConflict());
+
+    fs::remove_all(root);
+    fs::remove_all(root2);
+}
+
+TEST_CASE("RegenerateGltfMaterials: overwrites the material from source, keeping its GUID")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+    const AssetId woodBefore = AmatIdIn(root / "model_Wood.amat.aast");
+
+    OverwriteGltf(root, kMaterialGltfChangedFactor);
+    REQUIRE(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::ConflictStale);
+
+    const std::optional<std::size_t> slots = RegenerateGltfMaterials("model.gltf", resolveTex, resolveMat);
+    REQUIRE(slots.has_value());
+    CHECK(*slots == 1);
+
+    // The body now carries the new source factor, and the GUID is preserved.
+    const std::expected<Assisi::Geometry::MaterialData, Assisi::Geometry::MaterialFileError> material =
+        DeserializeMaterial(ReadFile(root / "model_Wood.amat"));
+    REQUIRE(material.has_value());
+    CHECK(material->BaseColorFactor.x == doctest::Approx(0.1f));
+    CHECK(AmatIdIn(root / "model_Wood.amat.aast") == woodBefore);
+
+    // The conflict is cleared — a follow-up reconcile is up to date.
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::UpToDate);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("RegenerateGltfMaterials: a dropped slot leaves the manifest short, orphaned file kept")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+
+    OverwriteGltf(root, kTwoMaterialGltf);
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+    REQUIRE(fs::exists(root / "model_Metal.amat"));
+    OverwriteGltf(root, kMaterialGltf); // slot 1 removed at source
+
+    const std::optional<std::size_t> slots = RegenerateGltfMaterials("model.gltf", resolveTex, resolveMat);
+    REQUIRE(slots.has_value());
+    CHECK(*slots == 1); // only the surviving slot is bound now
+
+    const std::expected<AssetSidecar, Assisi::Core::AssetSidecarError> side =
+        DeserializeSidecar(ReadFile(root / "model.gltf.aast"));
+    REQUIRE(side.has_value());
+    CHECK(side->subAssets.size() == 1);
+    // The dropped slot's file is orphaned, never deleted.
+    CHECK(fs::exists(root / "model_Metal.amat"));
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::UpToDate);
+
+    fs::remove_all(root);
+}
+
+TEST_CASE("AcceptGltfSource: accepts the source without touching the materials")
+{
+    const AssetId  gltfId = MintAssetId();
+    const AssetId  woodId = MintAssetId();
+    const fs::path root   = WriteMaterialAssets(gltfId);
+    const auto     resolveTex = MakeTextureResolver(woodId);
+    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
+    const std::string amatBefore = ReadFile(root / "model_Wood.amat");
+
+    OverwriteGltf(root, kMaterialGltfChangedFactor);
+    REQUIRE(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::ConflictStale);
+
+    REQUIRE(AcceptGltfSource("model.gltf"));
+    // The material is byte-identical (hand-edit kept), and the stale state clears.
+    CHECK(ReadFile(root / "model_Wood.amat") == amatBefore);
+    CHECK(ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat).outcome == ReconcileOutcome::UpToDate);
+
+    fs::remove_all(root);
+}

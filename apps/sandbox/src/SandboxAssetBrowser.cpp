@@ -439,11 +439,18 @@ void SandboxApp::DrawAssetBrowser()
         ImGui::PopID();
 
         if (stale && hovered)
-            ImGui::SetTooltip("Source changed since import — needs manual reconcile.\nMaterials were left "
-                              "untouched (no auto-resolve).");
+            ImGui::SetTooltip("Source changed since import — click to resolve.\nMaterials were left untouched "
+                              "(no auto-resolve).");
 
         if (clicked)
-            SelectAsset(vpath);
+        {
+            // A stale mesh can't be picked into a field until it is resolved:
+            // clicking one opens the resolution prompt instead of selecting it.
+            if (stale)
+                OpenStaleResolution(vpath);
+            else
+                SelectAsset(vpath);
+        }
 
         if (++col % cols != 0)
             ImGui::SameLine();

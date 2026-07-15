@@ -25,7 +25,10 @@
 #include <cstdint>
 #include <expected>
 #include <functional>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Geometry/MeshImporter.hpp> // AssetIdResolver, MeshImportError
@@ -95,5 +98,81 @@ struct ReconcileResult
 [[nodiscard]] ReconcileResult
 ReconcileGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver &resolveTextureId,
                        const std::function<std::string(const Core::AssetId &)> &resolveMaterialPath);
+
+// --- Prompt-driven conflict resolution (S4 second half / D5) ---------------
+//
+// ReconcileGltfMaterials auto-resolves only provably-safe diffs and leaves
+// everything else ConflictStale. These three functions back the user-facing
+// resolution the author reaches for a stale asset: DiffGltfMaterials describes
+// *what* conflicts (to render a prompt), and RegenerateGltfMaterials /
+// AcceptGltfSource *apply* the author's decision. Both write paths are gated on
+// an explicit user choice, so RegenerateGltfMaterials is allowed to overwrite
+// authored `.amat` bodies — the one place the reconcile-not-clobber default is
+// deliberately lifted.
+
+/// @brief How one material slot changed between an exploded glTF's stored
+///        `.amat`s and its current source.
+enum class SlotChange : std::uint8_t
+{
+    Unchanged, ///< The source slot matches the stored `.amat` field-for-field.
+    Changed,   ///< The source slot differs from the stored `.amat` (a conflict).
+    Added,     ///< A new source slot with no stored `.amat` yet.
+    Removed,   ///< A stored slot the source no longer has (a conflict).
+};
+
+/// @brief One row of a MaterialDiff: a slot and how it changed.
+struct SlotDiff
+{
+    std::uint32_t slot   = 0;
+    SlotChange    change = SlotChange::Unchanged;
+    std::string   name;             ///< Source material name (empty for a Removed slot; may be empty if unnamed).
+    Core::AssetId existing;         ///< The stored `.amat` GUID for this slot (nil for Added).
+};
+
+/// @brief The per-slot classification of a stale glTF against its stored
+///        materials — the data a resolution prompt renders. Slot-ordered over
+///        the union of old and new slots.
+struct MaterialDiff
+{
+    bool                  valid = false; ///< False if the glTF/sidecar/import could not be read.
+    std::vector<SlotDiff> slots;
+
+    /// @brief Whether any slot is a Changed or Removed conflict. (Added alone is
+    /// the additive-safe case ReconcileGltfMaterials already handles, so a mesh
+    /// left stale always has a conflict; still useful to render the detail.)
+    [[nodiscard]] bool HasConflict() const;
+};
+
+/// @brief Classify @p gltfVirtualPath's current source against its stored
+///        `.amat` manifest, slot by slot. Reads the same inputs the reconciler's
+///        conflict path does, but returns per-slot detail for a prompt instead of
+///        a single verdict. @p valid is false if any read/import failed.
+[[nodiscard]] MaterialDiff
+DiffGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver &resolveTextureId,
+                  const std::function<std::string(const Core::AssetId &)> &resolveMaterialPath);
+
+/// @brief Apply the author's "regenerate from source" choice: re-import the glTF
+///        and overwrite the manifested `.amat` bodies with the fresh table,
+///        **preserving each surviving slot's GUID** (so references and the
+///        manifest stay valid), minting a file for any appended slot. Slots the
+///        source dropped fall out of the rewritten manifest; their orphaned
+///        `.amat` files are left on disk (never deleted). The source hash is
+///        refreshed, clearing the stale state.
+///
+/// This is the authorized-clobber path — it exists precisely to discard
+/// hand-edits the author chose not to keep. @p resolveMaterialPath maps a stored
+/// GUID to the `.amat` path to overwrite.
+///
+/// @return The new manifest slot count, or nullopt if the glTF/sidecar could not
+///         be read or imported (nothing is written in that case).
+[[nodiscard]] std::optional<std::size_t>
+RegenerateGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver &resolveTextureId,
+                        const std::function<std::string(const Core::AssetId &)> &resolveMaterialPath);
+
+/// @brief Apply the author's "keep my materials" choice: accept the current
+///        source by re-stamping its hash into the glTF sidecar, leaving every
+///        `.amat` and the manifest untouched. Clears the stale state without
+///        changing any authored material. Returns false on a read/write failure.
+[[nodiscard]] bool AcceptGltfSource(std::string_view gltfVirtualPath);
 
 } /* namespace Assisi::Geometry */

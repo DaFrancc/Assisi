@@ -148,6 +148,79 @@ bool SameMaterialFields(const MaterialData &a, const MaterialData &b)
            a.EmissiveTexture == b.EmissiveTexture;
 }
 
+/// @brief Load the stored `.amat` for each manifest slot into a dense slot→
+///        material vector, returning it and the slot count (highest slot + 1).
+///        A gap slot, or an `.amat` that can't be resolved/read/parsed, stays
+///        nullopt — the callers treat that as "can't prove safe" / "conflict".
+std::vector<std::optional<MaterialData>>
+LoadManifestMaterials(const Core::AssetSidecar &sidecar,
+                      const std::function<std::string(const Core::AssetId &)> &resolveMaterialPath,
+                      std::size_t &oldCount)
+{
+    oldCount = 0;
+    for (const Core::AssetSubAsset &entry : sidecar.subAssets)
+    {
+        oldCount = std::max<std::size_t>(oldCount, static_cast<std::size_t>(entry.slot) + 1);
+    }
+    std::vector<std::optional<MaterialData>> materials(oldCount);
+    for (const Core::AssetSubAsset &entry : sidecar.subAssets)
+    {
+        const std::string path = resolveMaterialPath(entry.material);
+        if (path.empty())
+        {
+            continue;
+        }
+        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(path);
+        if (!text)
+        {
+            continue;
+        }
+        const std::expected<MaterialData, MaterialFileError> material = DeserializeMaterial(*text);
+        if (material)
+        {
+            materials[entry.slot] = *material;
+        }
+    }
+    return materials;
+}
+
+/// @brief Overwrite @p amatAbs's body with @p material, **keeping its GUID** —
+///        the existing sidecar's id is preserved (or a fresh one minted if the
+///        `.amat` is new). Unlike WriteMaterialFile this deliberately clobbers an
+///        existing body; it is used only on the user-authorized regenerate path.
+///        Returns the (preserved or minted) id, nil on any write failure.
+Core::AssetId OverwriteMaterialFile(const fs::path &amatAbs, const MaterialData &material)
+{
+    const std::expected<std::string, MaterialFileError> amatText = SerializeMaterial(material);
+    if (!amatText)
+    {
+        Core::Log::Error("AssetImport: cannot serialize material '{}' ({}).", amatAbs.generic_string(),
+                         ToString(amatText.error()));
+        return {};
+    }
+    if (!WriteWholeFile(amatAbs, *amatText))
+    {
+        Core::Log::Warn("AssetImport: failed to overwrite '{}'.", amatAbs.generic_string());
+        return {};
+    }
+
+    // Keep the slot's identity: reuse the existing sidecar's GUID if present, so
+    // the manifest and every reference to this material stay valid across the
+    // body rewrite. Only a brand-new file mints (and needs a sidecar written).
+    const fs::path amatSidecar = SidecarPathOf(amatAbs);
+    if (fs::exists(amatSidecar))
+    {
+        return ExistingSidecarId(amatSidecar);
+    }
+    const Core::AssetId id = Core::MintAssetId();
+    if (!WriteWholeFile(amatSidecar, Core::SerializeSidecar(Core::AssetSidecar{.guid = id})))
+    {
+        Core::Log::Warn("AssetImport: failed to write sidecar for '{}'.", amatAbs.generic_string());
+        return {};
+    }
+    return id;
+}
+
 } // namespace
 
 std::expected<std::size_t, MeshImportError> ExplodeGltfMaterials(std::string_view gltfVirtualPath,
@@ -282,30 +355,8 @@ ReconcileResult ReconcileGltfMaterials(std::string_view gltfVirtualPath, const A
     // Dense slot→material from the manifest; a hole or an unreadable/ unparseable
     // `.amat` means we can't safely compare, so treat the whole thing as a
     // conflict rather than risk clobbering authored state.
-    std::size_t oldCount = 0;
-    for (const Core::AssetSubAsset &entry : sidecar->subAssets)
-    {
-        oldCount = std::max<std::size_t>(oldCount, static_cast<std::size_t>(entry.slot) + 1);
-    }
-    std::vector<std::optional<MaterialData>> oldMaterials(oldCount);
-    for (const Core::AssetSubAsset &entry : sidecar->subAssets)
-    {
-        const std::string path = resolveMaterialPath(entry.material);
-        if (path.empty())
-        {
-            continue;
-        }
-        const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(path);
-        if (!text)
-        {
-            continue;
-        }
-        const std::expected<MaterialData, MaterialFileError> material = DeserializeMaterial(*text);
-        if (material)
-        {
-            oldMaterials[entry.slot] = *material;
-        }
-    }
+    std::size_t                              oldCount     = 0;
+    std::vector<std::optional<MaterialData>> oldMaterials = LoadManifestMaterials(*sidecar, resolveMaterialPath, oldCount);
 
     // Provably-safe requires every existing slot to be present and byte-for-byte
     // (field-for-field) what the new source produces.
@@ -354,6 +405,219 @@ ReconcileResult ReconcileGltfMaterials(std::string_view gltfVirtualPath, const A
     return {.outcome     = added > 0 ? ReconcileOutcome::AdditiveSlots : ReconcileOutcome::GeometryOnly,
             .addedSlots  = added,
             .changedDisk = wrote};
+}
+
+// --- Prompt-driven conflict resolution (S4 second half / D5) ---------------
+
+bool MaterialDiff::HasConflict() const
+{
+    for (const SlotDiff &slot : slots)
+    {
+        if (slot.change == SlotChange::Changed || slot.change == SlotChange::Removed)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+MaterialDiff DiffGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver &resolveTextureId,
+                               const std::function<std::string(const Core::AssetId &)> &resolveMaterialPath)
+{
+    const std::expected<fs::path, Core::AssetError> gltfAbs = Core::AssetSystem::Resolve(gltfVirtualPath);
+    if (!gltfAbs)
+    {
+        return {};
+    }
+    const std::optional<std::string> sidecarText = ReadWholeFile(SidecarPathOf(*gltfAbs));
+    if (!sidecarText.has_value())
+    {
+        return {};
+    }
+    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> sidecar = Core::DeserializeSidecar(*sidecarText);
+    if (!sidecar.has_value())
+    {
+        return {};
+    }
+    const std::expected<MeshData, MeshImportError> imported = ImportMesh(gltfVirtualPath, resolveTextureId);
+    if (!imported)
+    {
+        return {};
+    }
+    const std::vector<MaterialData> &newTable = imported->Materials;
+
+    std::size_t                              oldCount = 0;
+    std::vector<std::optional<MaterialData>> oldMaterials =
+        LoadManifestMaterials(*sidecar, resolveMaterialPath, oldCount);
+
+    // A stored GUID per slot, so the diff can report which `.amat` each row is.
+    std::vector<Core::AssetId> oldIds(oldCount);
+    for (const Core::AssetSubAsset &entry : sidecar->subAssets)
+    {
+        oldIds[entry.slot] = entry.material;
+    }
+
+    MaterialDiff diff;
+    diff.valid                = true;
+    const std::size_t slotMax = std::max<std::size_t>(oldCount, newTable.size());
+    diff.slots.reserve(slotMax);
+    for (std::size_t slot = 0; slot < slotMax; ++slot)
+    {
+        SlotDiff row;
+        row.slot = static_cast<std::uint32_t>(slot);
+        if (slot < newTable.size())
+        {
+            row.name = newTable[slot].Name;
+        }
+
+        if (slot >= newTable.size())
+        {
+            // The source no longer has this slot — a stored material with nothing
+            // to match against.
+            row.change   = SlotChange::Removed;
+            row.existing = slot < oldCount ? oldIds[slot] : Core::AssetId{};
+        }
+        else if (slot >= oldCount || !oldMaterials[slot].has_value())
+        {
+            // No stored `.amat` for this source slot (appended, or a hole/unreadable
+            // entry). Either way there is nothing authored here to conflict with.
+            row.change = SlotChange::Added;
+        }
+        else
+        {
+            row.existing = oldIds[slot];
+            row.change   = SameMaterialFields(newTable[slot], *oldMaterials[slot]) ? SlotChange::Unchanged
+                                                                                   : SlotChange::Changed;
+        }
+        diff.slots.push_back(std::move(row));
+    }
+    return diff;
+}
+
+std::optional<std::size_t>
+RegenerateGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver &resolveTextureId,
+                        const std::function<std::string(const Core::AssetId &)> &resolveMaterialPath)
+{
+    const std::expected<fs::path, Core::AssetError> gltfAbs = Core::AssetSystem::Resolve(gltfVirtualPath);
+    if (!gltfAbs)
+    {
+        return std::nullopt;
+    }
+    const fs::path                   gltfSidecarPath = SidecarPathOf(*gltfAbs);
+    const std::optional<std::string> sidecarText     = ReadWholeFile(gltfSidecarPath);
+    if (!sidecarText.has_value())
+    {
+        return std::nullopt;
+    }
+    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> sidecar = Core::DeserializeSidecar(*sidecarText);
+    if (!sidecar.has_value() || sidecar->guid.IsNil())
+    {
+        return std::nullopt;
+    }
+    const std::optional<std::uint64_t> currentHash = HashGltfSource(gltfVirtualPath);
+    if (!currentHash.has_value())
+    {
+        return std::nullopt;
+    }
+    const std::expected<MeshData, MeshImportError> imported = ImportMesh(gltfVirtualPath, resolveTextureId);
+    if (!imported)
+    {
+        return std::nullopt;
+    }
+    const std::vector<MaterialData> &newTable = imported->Materials;
+
+    // The stored GUID per existing slot, so a surviving slot's file is overwritten
+    // in place (identity preserved) rather than re-minted.
+    std::size_t oldCount = 0;
+    for (const Core::AssetSubAsset &entry : sidecar->subAssets)
+    {
+        oldCount = std::max<std::size_t>(oldCount, static_cast<std::size_t>(entry.slot) + 1);
+    }
+    std::vector<Core::AssetId> oldIds(oldCount);
+    for (const Core::AssetSubAsset &entry : sidecar->subAssets)
+    {
+        oldIds[entry.slot] = entry.material;
+    }
+
+    const fs::path    parentDir = gltfAbs->parent_path();
+    const std::string modelStem = gltfAbs->stem().string();
+
+    // Rebuild the manifest from the fresh table. Slots the source dropped simply
+    // do not carry over (their `.amat` files are orphaned on disk, never deleted).
+    std::vector<Core::AssetSubAsset> manifest;
+    manifest.reserve(newTable.size());
+    for (std::size_t slot = 0; slot < newTable.size(); ++slot)
+    {
+        const MaterialData &material = newTable[slot];
+
+        // A surviving slot with a resolvable stored file: overwrite that file,
+        // keeping its GUID so references and level data stay bound.
+        fs::path amatAbs;
+        if (slot < oldCount && !oldIds[slot].IsNil())
+        {
+            const std::string existingPath = resolveMaterialPath(oldIds[slot]);
+            if (!existingPath.empty())
+            {
+                const std::expected<fs::path, Core::AssetError> resolved =
+                    Core::AssetSystem::Resolve(existingPath);
+                if (resolved)
+                {
+                    amatAbs = *resolved;
+                }
+            }
+        }
+        // Appended slot (or a stored file that no longer resolves): a fresh,
+        // slot-suffixed file so it can never collide with a surviving slot's name.
+        if (amatAbs.empty())
+        {
+            amatAbs = parentDir / (modelStem + "_" + SanitizeName(material.Name) + "_" + std::to_string(slot) + ".amat");
+        }
+
+        const Core::AssetId materialId = OverwriteMaterialFile(amatAbs, material);
+        if (materialId.IsNil())
+        {
+            continue; // write failed -> leave this slot unbound -> fallback
+        }
+        manifest.push_back(Core::AssetSubAsset{.slot = static_cast<std::uint32_t>(slot), .material = materialId});
+    }
+
+    Core::AssetSidecar updated{.guid = sidecar->guid, .subAssets = std::move(manifest), .sourceHash = *currentHash};
+    if (!WriteWholeFile(gltfSidecarPath, Core::SerializeSidecar(updated)))
+    {
+        Core::Log::Warn("RegenerateGltfMaterials: rewrote materials but failed to write the manifest for '{}'.",
+                        gltfVirtualPath);
+        return std::nullopt;
+    }
+    return updated.subAssets.size();
+}
+
+bool AcceptGltfSource(std::string_view gltfVirtualPath)
+{
+    const std::expected<fs::path, Core::AssetError> gltfAbs = Core::AssetSystem::Resolve(gltfVirtualPath);
+    if (!gltfAbs)
+    {
+        return false;
+    }
+    const fs::path                   gltfSidecarPath = SidecarPathOf(*gltfAbs);
+    const std::optional<std::string> sidecarText     = ReadWholeFile(gltfSidecarPath);
+    if (!sidecarText.has_value())
+    {
+        return false;
+    }
+    const std::expected<Core::AssetSidecar, Core::AssetSidecarError> sidecar = Core::DeserializeSidecar(*sidecarText);
+    if (!sidecar.has_value())
+    {
+        return false;
+    }
+    const std::optional<std::uint64_t> currentHash = HashGltfSource(gltfVirtualPath);
+    if (!currentHash.has_value())
+    {
+        return false;
+    }
+
+    Core::AssetSidecar accepted = *sidecar;
+    accepted.sourceHash         = *currentHash;
+    return WriteWholeFile(gltfSidecarPath, Core::SerializeSidecar(accepted));
 }
 
 } /* namespace Assisi::Geometry */

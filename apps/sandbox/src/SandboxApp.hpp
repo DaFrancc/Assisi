@@ -18,6 +18,7 @@
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/Reflect/Annotations.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
+#include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/SceneRegistry.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -152,6 +153,24 @@ class SandboxApp : public Assisi::App::Application
     /// Drives the asset-browser stale badge.
     [[nodiscard]] bool IsAssetStale(std::string_view vpath) const;
 
+    // --- Stale-material resolution prompt (asset-database S4 / D5) ---
+    /// @brief Arms the resolution modal for a stale glTF: computes its per-slot
+    /// diff and requests the popup open next frame. Reached by clicking a stale
+    /// mesh tile, or auto-opened for a stale mesh live in the open scene.
+    void OpenStaleResolution(const std::string &vpath);
+    /// @brief Draws the modal that shows a stale mesh's material conflicts and the
+    /// author's choices (regenerate from source / keep mine / later). Called from
+    /// OnImGui once per frame.
+    void DrawStaleResolutionModal();
+    /// @brief Applies the author's choice to the current _staleResolveTarget:
+    /// @p regenerate true overwrites the materials from source, false keeps them
+    /// and just accepts the new source hash. Clears the stale flag and, on
+    /// regenerate, rebuilds the database and re-resolves live entities.
+    void ApplyStaleResolution(bool regenerate);
+    /// @brief Advances the liveness queue: opens the next still-stale mesh, or
+    /// clears the modal target when the queue is empty. Called after each choice.
+    void AdvanceStaleQueue();
+
     Assisi::ECS::Entity PickEntity(glm::vec2 mousePos);
 
     // --- Systems ---
@@ -181,6 +200,16 @@ class SandboxApp : public Assisi::App::Application
     // source changed in a way the conservative classifier couldn't auto-resolve
     // (S4/D5). Surfaced as a badge in the asset browser. Rebuilt each reconcile.
     std::unordered_set<std::string> _staleMeshes;
+
+    // Stale-material resolution modal (S4 second half / D5 prompt). The target is
+    // the glTF being resolved ("" = closed); the diff is its per-slot conflict
+    // detail, computed once on open. _staleResolveRequestOpen latches an
+    // ImGui::OpenPopup on the next frame. The queue holds still-stale meshes that
+    // are live in the open scene, prompted one after another (D5 liveness).
+    std::string                     _staleResolveTarget;
+    Assisi::Geometry::MaterialDiff  _staleResolveDiff;
+    bool                            _staleResolveRequestOpen = false;
+    std::vector<std::string>        _staleResolveQueue;
 
     // Smoke test for ImGui texture display — loaded once in SetupScene. Owns its
     // texture (not routed through _assetCache, which LoadLevel Clears).

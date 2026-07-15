@@ -19,6 +19,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <expected>
@@ -155,6 +156,30 @@ void SandboxApp::ReimportAssets()
             Assisi::Core::Log::Info("Asset reimport: {} assets indexed after material reconcile.", *rescan);
     }
 
+    // Liveness (D5): a stale mesh currently drawn in the open scene can't wait for
+    // the author to click its badge — queue it for an immediate resolution prompt.
+    // Non-live stale meshes just keep their badge (resolved on click / next load).
+    // At startup the scene has no MeshRenderers yet, so this finds nothing then;
+    // it fires on the manual Reimport button with a level loaded.
+    _staleResolveQueue.clear();
+    if (_scene != nullptr && !_staleMeshes.empty())
+    {
+        for (auto [entity, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
+        {
+            const std::optional<std::string> meshPath = _assetDatabase.PathFor(mrc.mesh);
+            if (meshPath && _staleMeshes.contains(*meshPath) &&
+                std::find(_staleResolveQueue.begin(), _staleResolveQueue.end(), *meshPath) ==
+                    _staleResolveQueue.end())
+            {
+                _staleResolveQueue.push_back(*meshPath);
+            }
+        }
+        if (_staleResolveTarget.empty()) // don't interrupt a prompt already open
+        {
+            AdvanceStaleQueue();
+        }
+    }
+
     // The browser lists by extension and never shows `.aast`, but a reimport may
     // have created sidecars, so force a re-read on next open.
     _assetBrowserDirty = true;
@@ -250,6 +275,205 @@ bool SandboxApp::ReconcileMeshMaterials()
 bool SandboxApp::IsAssetStale(std::string_view vpath) const
 {
     return _staleMeshes.find(std::string{vpath}) != _staleMeshes.end();
+}
+
+// The two resolvers the reconcile/diff/regenerate calls need, backed by the
+// database — a texture path→GUID and a material GUID→virtual-path.
+namespace
+{
+Assisi::Core::AssetId ResolveTextureIdWith(const Assisi::Core::AssetDatabase &db, std::string_view vpath)
+{
+    return db.IdFor(vpath).value_or(Assisi::Core::AssetId{});
+}
+std::string ResolveMaterialPathWith(const Assisi::Core::AssetDatabase &db, const Assisi::Core::AssetId &id)
+{
+    return db.PathFor(id).value_or(std::string{});
+}
+} // namespace
+
+void SandboxApp::OpenStaleResolution(const std::string &vpath)
+{
+    _staleResolveTarget = vpath;
+    _staleResolveDiff   = Assisi::Geometry::DiffGltfMaterials(
+        vpath, [this](std::string_view p) { return ResolveTextureIdWith(_assetDatabase, p); },
+        [this](const Assisi::Core::AssetId &id) { return ResolveMaterialPathWith(_assetDatabase, id); });
+    _staleResolveRequestOpen = true;
+}
+
+void SandboxApp::AdvanceStaleQueue()
+{
+    // Skip any queued mesh that is no longer stale (already resolved this session).
+    while (!_staleResolveQueue.empty())
+    {
+        const std::string next = _staleResolveQueue.front();
+        _staleResolveQueue.erase(_staleResolveQueue.begin());
+        if (IsAssetStale(next))
+        {
+            OpenStaleResolution(next);
+            return;
+        }
+    }
+    _staleResolveTarget.clear(); // queue drained — modal stays closed
+}
+
+void SandboxApp::ApplyStaleResolution(bool regenerate)
+{
+    const std::string target = _staleResolveTarget;
+    if (target.empty())
+    {
+        return;
+    }
+
+    bool applied = false;
+    if (regenerate)
+    {
+        const std::optional<std::size_t> slots = Assisi::Geometry::RegenerateGltfMaterials(
+            target, [this](std::string_view p) { return ResolveTextureIdWith(_assetDatabase, p); },
+            [this](const Assisi::Core::AssetId &id) { return ResolveMaterialPathWith(_assetDatabase, id); });
+        applied = slots.has_value();
+        if (applied)
+        {
+            Assisi::Core::Log::Info("Resolved '{}': regenerated {} material slot(s) from source.", target, *slots);
+        }
+        else
+        {
+            Assisi::Core::Log::Warn("Resolve '{}': regeneration failed; left stale.", target);
+        }
+    }
+    else
+    {
+        applied = Assisi::Geometry::AcceptGltfSource(target);
+        if (applied)
+        {
+            Assisi::Core::Log::Info("Resolved '{}': kept existing materials, accepted new source.", target);
+        }
+        else
+        {
+            Assisi::Core::Log::Warn("Resolve '{}': could not accept source; left stale.", target);
+        }
+    }
+
+    if (applied)
+    {
+        _staleMeshes.erase(target);
+
+        // Regeneration wrote new `.amat`s and rewrote the manifest, so bring the
+        // database back in sync and re-resolve any live entity that draws this
+        // mesh. Accepting the source touches only the glTF's hash — nothing the
+        // database or a resolved entity depends on — so neither is needed there.
+        if (regenerate)
+        {
+            if (const std::expected<std::size_t, Assisi::Core::AssetError> rescan = _assetDatabase.Rebuild(); rescan)
+            {
+                Assisi::Core::Log::Info("Asset reimport: {} assets indexed after regenerate.", *rescan);
+            }
+            if (_scene != nullptr)
+            {
+                for (auto [entity, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
+                {
+                    ResolveMeshRendererAssets(mrc);
+                }
+            }
+            _assetBrowserDirty = true;
+        }
+    }
+
+    AdvanceStaleQueue(); // open the next live-stale mesh, or close the modal
+}
+
+void SandboxApp::DrawStaleResolutionModal()
+{
+    static constexpr const char *kPopupId = "Resolve material conflict";
+    if (_staleResolveRequestOpen)
+    {
+        ImGui::OpenPopup(kPopupId);
+        _staleResolveRequestOpen = false;
+    }
+
+    const ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(520.f, 0.f), ImGuiCond_Appearing);
+    if (!ImGui::BeginPopupModal(kPopupId, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        return;
+    }
+
+    ImGui::TextWrapped("The source of '%s' changed in a way that can't be auto-resolved. "
+                       "Choose how to reconcile its materials:",
+                       _staleResolveTarget.c_str());
+    ImGui::Separator();
+
+    if (_staleResolveDiff.valid && !_staleResolveDiff.slots.empty())
+    {
+        if (ImGui::BeginTable("stale_slots", 3,
+                              ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp))
+        {
+            ImGui::TableSetupColumn("Slot", ImGuiTableColumnFlags_WidthFixed, 40.f);
+            ImGui::TableSetupColumn("Material");
+            ImGui::TableSetupColumn("Change", ImGuiTableColumnFlags_WidthFixed, 90.f);
+            ImGui::TableHeadersRow();
+            for (const Assisi::Geometry::SlotDiff &slot : _staleResolveDiff.slots)
+            {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%u", slot.slot);
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(slot.name.empty() ? "(unnamed)" : slot.name.c_str());
+                ImGui::TableNextColumn();
+                const char *label = "unchanged";
+                ImVec4      color(0.6f, 0.6f, 0.6f, 1.f);
+                switch (slot.change)
+                {
+                case Assisi::Geometry::SlotChange::Unchanged:
+                    break;
+                case Assisi::Geometry::SlotChange::Changed:
+                    label = "changed";
+                    color = ImVec4(0.90f, 0.63f, 0.16f, 1.f); // amber — a conflict
+                    break;
+                case Assisi::Geometry::SlotChange::Added:
+                    label = "added";
+                    color = ImVec4(0.45f, 0.78f, 0.45f, 1.f); // green — safe
+                    break;
+                case Assisi::Geometry::SlotChange::Removed:
+                    label = "removed";
+                    color = ImVec4(0.86f, 0.36f, 0.36f, 1.f); // red — a conflict
+                    break;
+                }
+                ImGui::TextColored(color, "%s", label);
+            }
+            ImGui::EndTable();
+        }
+    }
+    else
+    {
+        ImGui::TextColored(ImVec4(0.86f, 0.36f, 0.36f, 1.f), "Could not read the current diff.");
+    }
+
+    ImGui::Separator();
+    ImGui::TextWrapped("Regenerate from source overwrites the materials with the new source, discarding hand-edits "
+                       "to changed slots (each material keeps its GUID). Keep my materials accepts the source and "
+                       "stops flagging it, leaving every material untouched.");
+    ImGui::Spacing();
+
+    if (ImGui::Button("Regenerate from source"))
+    {
+        ApplyStaleResolution(/*regenerate=*/true);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Keep my materials"))
+    {
+        ApplyStaleResolution(/*regenerate=*/false);
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Later"))
+    {
+        AdvanceStaleQueue(); // leave it stale/badged; move to the next live one
+        ImGui::CloseCurrentPopup();
+    }
+
+    ImGui::EndPopup();
 }
 
 void SandboxApp::SetupScene()
@@ -382,4 +606,5 @@ void SandboxApp::OnImGui()
     DrawInspector();
     DrawHelloImageWindow();
     DrawAssetBrowser();
+    DrawStaleResolutionModal();
 }
