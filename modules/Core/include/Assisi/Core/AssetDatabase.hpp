@@ -25,22 +25,21 @@
 /// actually loaded, not here.
 
 #include <cstddef>
+#include <cstdint>
 #include <expected>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/Core/AssetSidecar.hpp> // MintAssetId; AssetSubAsset (manifest entries).
 #include <Assisi/Core/Errors.hpp>
 
 namespace Assisi::Core
 {
-
-/// @brief Mint a fresh random UUIDv4. Editor-only (asset authoring). The version
-///        and variant nibbles are set per RFC 4122, so a minted id can never
-///        collide with the reserved built-in range.
-[[nodiscard]] AssetId MintAssetId();
 
 /// @brief Editor-time index of every asset under the asset root, keyed by id.
 class AssetDatabase
@@ -69,9 +68,31 @@ class AssetDatabase
     /// @brief Number of registered ids, including the reserved built-ins.
     [[nodiscard]] std::size_t Count() const noexcept;
 
+    /// @brief Every registered file asset (id, path) — excludes the reserved
+    ///        built-ins, which are not files. The editor iterates this to find
+    ///        importable composites (glTFs) to explode. Order is unspecified.
+    ///        Cold path (once per reimport); paths stay std::string to match the
+    ///        DB's storage and PathFor(), so long scan paths never truncate.
+    [[nodiscard]] std::vector<std::pair<AssetId, std::string>> Assets() const;
+
+    /// @brief Whether @p meshId carries a composite manifest — i.e. its glTF
+    ///        materials have already been exploded into `.amat` children. The
+    ///        explosion pass skips a mesh that already has one (reconcile).
+    [[nodiscard]] bool HasManifest(AssetId meshId) const;
+
+    /// @brief The default material bound to @p slot of composite @p meshId,
+    ///        from the mesh's `.aast` manifest — the stored replacement for the
+    ///        retired live `MeshDefaultMaterial` derivation (D4). Nil when the
+    ///        mesh has no manifest, or the slot is unlisted.
+    [[nodiscard]] AssetId SlotMaterial(AssetId meshId, std::uint32_t slot) const;
+
   private:
     std::unordered_map<AssetId, std::string> _idToPath;
     std::unordered_map<std::string, AssetId> _pathToId;
+
+    // Composite manifests: mesh id → slot-indexed default material ids (index =
+    // slot; nil fills any gap). Read from each sidecar's `subAssets` on Rebuild.
+    std::unordered_map<AssetId, std::vector<AssetId>> _manifests;
 };
 
 } // namespace Assisi::Core

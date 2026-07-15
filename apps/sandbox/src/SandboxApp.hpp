@@ -137,6 +137,13 @@ class SandboxApp : public Assisi::App::Application
     /// but not yet the resolution key (asset-database S1).
     void ReimportAssets();
 
+    /// @brief Explodes every indexed glTF that has no material manifest yet into
+    /// sibling `.amat` files (+ sidecars) and records its slot→material bindings
+    /// (asset-database S3). Editor-only; runs inside ReimportAssets between the
+    /// two database scans. Returns how many meshes were exploded, so the caller
+    /// only rescans when something changed.
+    std::size_t ExplodeUnprocessedMeshes();
+
     Assisi::ECS::Entity PickEntity(glm::vec2 mousePos);
 
     // --- Systems ---

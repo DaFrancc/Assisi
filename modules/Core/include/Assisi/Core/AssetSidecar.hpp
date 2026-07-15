@@ -10,10 +10,13 @@
 /// missing sidecars; the database reads their ids to build the GUID→path map.
 /// See docs/asset-database-architecture.md §2.
 ///
-/// S1 stores only the id. Import settings (texture color space, compression) and
-/// the composite manifest (a glTF's `slot → material GUID`) are named in the doc
-/// and land in later stages; the envelope (`version`/`type`) is forward-
-/// compatible, so older sidecars keep loading as fields are added.
+/// S1 stored only the id. S3 adds the **composite manifest** — a glTF's
+/// `slot → material GUID` list (`subAssets`) written by the material-explosion
+/// pass. A leaf asset (texture, `.amat`, level) has an empty manifest. Import
+/// settings (texture color space, compression) and a `sourceHash` for
+/// stale-detection (D5/S4) are named in the doc and land later; the envelope
+/// (`version`/`type`) is forward-compatible, so older sidecars keep loading as
+/// fields are added.
 ///
 /// The `.aast` file is an **editor source artifact** — it does not ship (the
 /// cooker consumes it into a baked pak index, S5). The *reader* below ships
@@ -24,17 +27,39 @@
 #include <expected>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <Assisi/Core/AssetId.hpp>
 
 namespace Assisi::Core
 {
 
+/// @brief One entry of a composite asset's manifest: the material a mesh slot
+///        binds to by default. Written by the glTF material-explosion pass (S3),
+///        read back as the default mesh→material binding (retiring the live
+///        `AssetCache::MeshDefaultMaterial` derivation — D4).
+struct AssetSubAsset
+{
+    std::uint32_t slot = 0;  ///< Dense material-slot index in the mesh.
+    AssetId       material;  ///< The `.amat` GUID exploded for that slot.
+};
+
 /// @brief The deserialized contents of a `.aast` sidecar.
 struct AssetSidecar
 {
     AssetId guid; ///< The asset's stable identity.
+
+    /// @brief Composite manifest: `slot → material GUID`. Empty for a leaf
+    ///        asset. Order is not significant — each entry names its own slot.
+    std::vector<AssetSubAsset> subAssets;
 };
+
+/// @brief Mint a fresh random UUIDv4. Editor-only (asset authoring). The version
+///        and variant nibbles are set per RFC 4122, so a minted id can never
+///        collide with the reserved built-in range. Declared here (beside the
+///        sidecar writer) so the material-explosion pass in Geometry can mint
+///        child-`.amat` ids without depending on the editor-only AssetDatabase.
+[[nodiscard]] AssetId MintAssetId();
 
 /// @brief Why reading a `.aast` sidecar failed.
 enum class AssetSidecarError

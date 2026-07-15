@@ -199,17 +199,22 @@ void SandboxApp::ResolveMeshRendererAssets(Assisi::Runtime::MeshRenderer &mrc)
     mrc.meshBuffer = _assetCache.ResolveMesh(mrc.mesh);
 
     // One resolved Material per mesh slot: the override when the slot has a
-    // non-nil entry, otherwise the material the mesh imported for that slot.
-    // A primitive mesh has no slot table, so this leaves `materials` empty and
-    // the draw path uses the cache's fallback material.
+    // non-nil entry, otherwise the mesh's default for that slot — the material
+    // GUID the glTF manifest recorded at import (D4), read from the database
+    // rather than re-derived live. A primitive mesh has no slot table, so this
+    // leaves `materials` empty and the draw path uses the cache's fallback.
     const std::size_t slotCount = mrc.meshBuffer != nullptr ? mrc.meshBuffer->Materials().size() : 0;
     mrc.materials.clear();
     mrc.materials.reserve(slotCount);
     for (std::size_t slot = 0; slot < slotCount; ++slot)
     {
         const bool hasOverride = slot < mrc.materialOverrides.size() && !mrc.materialOverrides[slot].IsNil();
-        mrc.materials.push_back(hasOverride ? _assetCache.ResolveMaterial(mrc.materialOverrides[slot])
-                                            : _assetCache.MeshDefaultMaterial(mrc.mesh, static_cast<uint32_t>(slot)));
+        const Assisi::Core::AssetId materialId =
+            hasOverride ? mrc.materialOverrides[slot]
+                        : _assetDatabase.SlotMaterial(mrc.mesh, static_cast<std::uint32_t>(slot));
+        // ResolveMaterial(nil) yields the fallback, so an unexploded mesh or an
+        // out-of-range slot still renders.
+        mrc.materials.push_back(_assetCache.ResolveMaterial(materialId));
     }
 }
 

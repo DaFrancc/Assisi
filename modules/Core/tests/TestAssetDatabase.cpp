@@ -2,10 +2,13 @@
 
 #include <doctest/doctest.h>
 
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <utility>
+#include <vector>
 
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/Core/AssetId.hpp>
@@ -145,6 +148,64 @@ TEST_CASE("AssetDatabase::Rebuild is idempotent")
     CHECK(*second == 2);
     CHECK(db.IdFor("textures/crate.png") == firstId);
     CHECK(ReadFile(root / "textures" / "crate.png.aast") == firstSidecar);
+}
+
+TEST_CASE("AssetSidecar round-trips a composite manifest")
+{
+    const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
+    const AssetId matA   = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
+    const AssetId matB   = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000002");
+
+    AssetSidecar sidecar{.guid = meshId};
+    sidecar.subAssets.push_back(AssetSubAsset{.slot = 0, .material = matA});
+    sidecar.subAssets.push_back(AssetSubAsset{.slot = 1, .material = matB});
+
+    const std::expected<AssetSidecar, AssetSidecarError> parsed = DeserializeSidecar(SerializeSidecar(sidecar));
+    REQUIRE(parsed.has_value());
+    CHECK(parsed->guid == meshId);
+    REQUIRE(parsed->subAssets.size() == 2);
+    CHECK(parsed->subAssets[0].slot == 0);
+    CHECK(parsed->subAssets[0].material == matA);
+    CHECK(parsed->subAssets[1].slot == 1);
+    CHECK(parsed->subAssets[1].material == matB);
+
+    // A leaf sidecar (no manifest) stays that way, and is byte-identical to S1.
+    const std::expected<AssetSidecar, AssetSidecarError> leaf =
+        DeserializeSidecar(SerializeSidecar(AssetSidecar{.guid = meshId}));
+    REQUIRE(leaf.has_value());
+    CHECK(leaf->subAssets.empty());
+}
+
+TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMaterial")
+{
+    const fs::path root = MakeTree();
+
+    // Give checker.amat a known manifest via a hand-written glTF-style sidecar on
+    // crate.png (any file can carry one; the DB does not care about the type).
+    const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
+    const AssetId matId  = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000009");
+    AssetSidecar  sidecar{.guid = meshId};
+    sidecar.subAssets.push_back(AssetSubAsset{.slot = 2, .material = matId});
+    WriteFile(root / "textures" / "crate.png.aast", SerializeSidecar(sidecar));
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+
+    CHECK(db.HasManifest(meshId));
+    CHECK(db.SlotMaterial(meshId, 2) == matId);
+    // A gap slot and an out-of-range slot resolve to nil, not a crash.
+    CHECK(db.SlotMaterial(meshId, 0).IsNil());
+    CHECK(db.SlotMaterial(meshId, 7).IsNil());
+    // A leaf asset (checker.amat) has no manifest.
+    const AssetId checkerId = *db.IdFor("materials/checker.amat");
+    CHECK_FALSE(db.HasManifest(checkerId));
+
+    // Assets() lists the file assets (both payloads), never the built-ins.
+    const std::vector<std::pair<AssetId, std::string>> assets = db.Assets();
+    CHECK(assets.size() == 2);
+    for (const auto &[id, path] : assets)
+        CHECK_FALSE(id.IsReserved());
 }
 
 TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")

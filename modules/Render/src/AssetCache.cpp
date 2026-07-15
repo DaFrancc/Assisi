@@ -242,31 +242,11 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
     return &material;
 }
 
-const Material *AssetCache::MeshDefaultMaterial(const Core::AssetId &meshId, uint32_t slot)
-{
-    // Key the default-material cache by the mesh's resolved path (built-ins map to
-    // their `prim://` path), preserving the existing per-(mesh,slot) dedup.
-    const Core::AssetPath meshPath = PathForId(meshId);
-    MeshSlotKey           key{meshPath, slot};
-    if (std::unordered_map<MeshSlotKey, Material, MeshSlotKeyHash>::iterator it = _meshDefaultMaterials.find(key);
-        it != _meshDefaultMaterials.end())
-        return &it->second;
-
-    const MeshBuffer *mesh = ResolveMeshPath(meshPath);
-    if (mesh == nullptr || slot >= mesh->Materials().size())
-        return &_fallbackMaterial;
-
-    Material &material = _meshDefaultMaterials[key];
-    BuildMaterial(material, mesh->Materials()[slot], _nextMaterialId++);
-    return &material;
-}
-
 void AssetCache::Clear()
 {
     _meshes.clear();
     _textures.clear();
     _materials.clear();
-    _meshDefaultMaterials.clear();
     _missingMeshWarned.clear();
     _missingMaterialWarned.clear();
     // _nextMaterialId is deliberately NOT reset: ids are never reused, so a stale

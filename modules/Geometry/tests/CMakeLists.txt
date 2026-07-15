@@ -3,6 +3,7 @@ add_executable(Assisi-Geometry-Tests
   TestDefaultMeshes.cpp
   TestMeshImporter.cpp
   TestMaterialFile.cpp
+  TestAssetImport.cpp
 )
 
 Assisi_apply_defaults(Assisi-Geometry-Tests)

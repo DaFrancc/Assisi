@@ -9,9 +9,11 @@ target_sources(Assisi-Geometry
     "include/Assisi/Geometry/DefaultMeshes.hpp"
     "include/Assisi/Geometry/MeshImporter.hpp"
     "include/Assisi/Geometry/MaterialFile.hpp"
+    "include/Assisi/Geometry/AssetImport.hpp"
   PRIVATE
     "src/MeshImporter.cpp"
     "src/MaterialFile.cpp"
+    "src/AssetImport.cpp"
 )
 
 target_include_directories(Assisi-Geometry

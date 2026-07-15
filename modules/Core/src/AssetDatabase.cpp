@@ -93,6 +93,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild()
 {
     _idToPath.clear();
     _pathToId.clear();
+    _manifests.clear();
 
     // Seed the reserved built-ins first — they resolve to primitive factories,
     // not files, so the scan never touches them.
@@ -166,6 +167,23 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild()
                 continue;
             }
             id = sidecar->guid;
+
+            // Composite manifest (S3): flatten `slot → material` into a dense
+            // slot-indexed vector, nil-filling any gap so SlotMaterial() is a
+            // plain bounds-checked index. A duplicate slot: last entry wins.
+            if (!sidecar->subAssets.empty())
+            {
+                std::vector<AssetId> slots;
+                for (const AssetSubAsset &entry : sidecar->subAssets)
+                {
+                    if (entry.slot >= slots.size())
+                    {
+                        slots.resize(entry.slot + 1);
+                    }
+                    slots[entry.slot] = entry.material;
+                }
+                _manifests.insert_or_assign(id, std::move(slots));
+            }
         }
         else
         {
@@ -218,6 +236,37 @@ std::optional<AssetId> AssetDatabase::IdFor(std::string_view virtualPath) const
 std::size_t AssetDatabase::Count() const noexcept
 {
     return _idToPath.size();
+}
+
+std::vector<std::pair<AssetId, std::string>> AssetDatabase::Assets() const
+{
+    std::vector<std::pair<AssetId, std::string>> assets;
+    assets.reserve(_idToPath.size());
+    for (const auto &[id, path] : _idToPath)
+    {
+        // Skip the reserved built-ins: they are primitive factories, not files
+        // an editor pass can open or explode.
+        if (!id.IsReserved())
+        {
+            assets.emplace_back(id, path);
+        }
+    }
+    return assets;
+}
+
+bool AssetDatabase::HasManifest(AssetId meshId) const
+{
+    return _manifests.contains(meshId);
+}
+
+AssetId AssetDatabase::SlotMaterial(AssetId meshId, std::uint32_t slot) const
+{
+    const auto found = _manifests.find(meshId);
+    if (found == _manifests.end() || slot >= found->second.size())
+    {
+        return {};
+    }
+    return found->second[slot];
 }
 
 } // namespace Assisi::Core

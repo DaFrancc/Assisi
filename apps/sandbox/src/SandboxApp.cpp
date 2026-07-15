@@ -7,6 +7,7 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -18,6 +19,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cctype>
+#include <cstddef>
 #include <expected>
 #include <fstream>
 #include <optional>
@@ -140,9 +143,68 @@ void SandboxApp::ReimportAssets()
         [this](std::string_view vpath) -> Assisi::Core::AssetId
         { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); });
 
+    // S3: materialize glTF materials into `.amat` children + slot→material
+    // manifests. The explosion writes new files, so rebuild afterwards to bring
+    // them (and the manifests it stamped onto the glTF sidecars) into the DB —
+    // only when something was actually exploded (steady state does nothing). The
+    // hint resolver is already installed above, so written `.amat` channels carry
+    // regenerated path hints (D2).
+    if (ExplodeUnprocessedMeshes() > 0)
+    {
+        if (const std::expected<std::size_t, Assisi::Core::AssetError> rescan = _assetDatabase.Rebuild(); rescan)
+            Assisi::Core::Log::Info("Asset reimport: {} assets indexed after material explosion.", *rescan);
+    }
+
     // The browser lists by extension and never shows `.aast`, but a reimport may
     // have created sidecars, so force a re-read on next open.
     _assetBrowserDirty = true;
+}
+
+std::size_t SandboxApp::ExplodeUnprocessedMeshes()
+{
+    // Case-insensitive glTF-extension test on the virtual path.
+    const auto isGltf = [](std::string_view path)
+    {
+        const auto endsWith = [path](std::string_view suffix)
+        {
+            if (path.size() < suffix.size())
+                return false;
+            const std::string_view tail = path.substr(path.size() - suffix.size());
+            for (std::size_t i = 0; i < suffix.size(); ++i)
+                if (std::tolower(static_cast<unsigned char>(tail[i])) != suffix[i])
+                    return false;
+            return true;
+        };
+        return endsWith(".gltf") || endsWith(".glb");
+    };
+
+    // Texture channels in the written `.amat`s resolve through the database, the
+    // same map the asset cache uses — so an exploded material references the same
+    // texture GUIDs the mesh would have imported.
+    const auto resolveTextureId = [this](std::string_view vpath) -> Assisi::Core::AssetId
+    { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); };
+
+    std::size_t exploded = 0;
+    for (const auto &[id, path] : _assetDatabase.Assets())
+    {
+        // Reconcile-not-clobber: a glTF that already carries a manifest is done.
+        if (!isGltf(path) || _assetDatabase.HasManifest(id))
+            continue;
+
+        const std::expected<std::size_t, Assisi::Geometry::MeshImportError> result =
+            Assisi::Geometry::ExplodeGltfMaterials(path, resolveTextureId);
+        if (result)
+        {
+            Assisi::Core::Log::Info("Asset reimport: exploded {} material(s) from '{}'.", *result, path);
+            ++exploded;
+        }
+        else
+        {
+            Assisi::Core::Log::Warn("Asset reimport: could not explode '{}' ({}).", path,
+                                    Assisi::Geometry::ToString(result.error()));
+        }
+    }
+    return exploded;
 }
 
 void SandboxApp::SetupScene()

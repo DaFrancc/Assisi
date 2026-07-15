@@ -103,12 +103,6 @@ class AssetCache
     /// stays valid until Clear().
     const Material *ResolveMaterial(const Core::AssetId &id);
 
-    /// @brief The material a mesh imported for one of its slots (from the glTF
-    /// material), built on first use. Used when a MeshRenderer leaves that slot's
-    /// override nil. Returns the fallback material if the mesh isn't resolved or
-    /// the slot is out of range. Never null.
-    const Material *MeshDefaultMaterial(const Core::AssetId &meshId, uint32_t slot);
-
     /// @brief The neutral fallback material (id 0): white albedo, metallic 0,
     /// roughness 0.6 — the engine's pre-material look. Never null.
     const Material *FallbackMaterial() const { return &_fallbackMaterial; }
@@ -125,8 +119,8 @@ class AssetCache
     /// installed id→path resolver. Nil/unknown ids return an empty path.
     Core::AssetPath PathForId(const Core::AssetId &id) const;
 
-    /// @brief Path-keyed mesh resolve (built-in or file). Shared by ResolveMesh
-    /// and MeshDefaultMaterial after they translate an id to a path.
+    /// @brief Path-keyed mesh resolve (built-in or file). Backs ResolveMesh after
+    /// it translates an id to a path.
     const MeshBuffer *ResolveMeshPath(const Core::AssetPath &path);
 
     /// @brief Path-keyed `.amat` resolve. Backs ResolveMaterial after translation.
@@ -165,21 +159,6 @@ class AssetCache
         }
     };
 
-    // A mesh-default-material key: (mesh path, slot index).
-    struct MeshSlotKey
-    {
-        Core::AssetPath meshPath;
-        uint32_t        slot = 0;
-        bool operator==(const MeshSlotKey &other) const { return slot == other.slot && meshPath == other.meshPath; }
-    };
-    struct MeshSlotKeyHash
-    {
-        std::size_t operator()(const MeshSlotKey &key) const
-        {
-            return std::hash<Core::AssetPath>{}(key.meshPath) ^ (static_cast<std::size_t>(key.slot) * 0x9e3779b9u);
-        }
-    };
-
     // A `prim://` solid-colour texture primitive descriptor.
     struct SolidColor
     {
@@ -200,10 +179,9 @@ class AssetCache
     std::unordered_map<Core::AssetPath, std::function<Geometry::MeshData()>> _primitiveFactories;
     std::unordered_map<Core::AssetPath, SolidColor>                          _texturePrimitives;
 
-    std::unordered_map<Core::AssetPath, MeshBuffer>                    _meshes;
-    std::unordered_map<TextureKey, Texture, TextureKeyHash>            _textures;
-    std::unordered_map<Core::AssetPath, Material>                      _materials;         // .amat files
-    std::unordered_map<MeshSlotKey, Material, MeshSlotKeyHash>         _meshDefaultMaterials;
+    std::unordered_map<Core::AssetPath, MeshBuffer>         _meshes;
+    std::unordered_map<TextureKey, Texture, TextureKeyHash> _textures;
+    std::unordered_map<Core::AssetPath, Material>           _materials; // .amat files
 
     // The id-0 fallback; rebuilt on Clear (its texture pointers would dangle).
     Material _fallbackMaterial;
