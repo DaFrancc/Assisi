@@ -43,13 +43,24 @@ class PhysicsWorld
     PhysicsWorld(const PhysicsWorld &) = delete;
     PhysicsWorld &operator=(const PhysicsWorld &) = delete;
 
-    /// @brief Creates an axis-aligned box body and returns its component.
+    /// @brief The collider primitive + its dimensions, gathered into one struct so
+    /// the body-creation calls don't take a growing pile of shape parameters. Only
+    /// the fields the chosen `shape` uses are read.
+    struct ColliderShapeDesc
+    {
+        ColliderShape shape = ColliderShape::Box;
+        glm::vec3     halfExtents{0.5f, 0.5f, 0.5f}; ///< Box.
+        float         radius     = 0.5f;             ///< Sphere/Capsule/Cylinder.
+        float         halfHeight = 0.5f;             ///< Capsule/Cylinder cylindrical half-height.
+    };
+
+    /// @brief Creates a rigid body with the given collider and returns its component.
     ///
-    /// @param position     Centre of the box in world space.
-    /// @param rotation     Initial orientation as a quaternion.
-    /// @param halfExtents  Half-widths along each axis (box goes ±halfExtents).
-    /// @param motion       Static bodies never move; dynamic bodies fall under gravity.
-    RigidBody AddBox(glm::vec3 position, glm::quat rotation, glm::vec3 halfExtents, BodyMotion motion);
+    /// @param position   Centre of the body in world space.
+    /// @param rotation   Initial orientation as a quaternion (normalized internally).
+    /// @param shape      Collider primitive and its dimensions.
+    /// @param motion     Static bodies never move; dynamic bodies fall under gravity.
+    RigidBody AddBody(glm::vec3 position, glm::quat rotation, const ColliderShapeDesc &shape, BodyMotion motion);
 
     /// @brief Advances the simulation by `deltaTime` seconds.
     void Update(float deltaTime);
@@ -101,11 +112,11 @@ class PhysicsWorld
     /// @brief Teleports a body to the given position and rotation, and reactivates it.
     void SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation);
 
-    /// @brief Replaces the collision shape of an existing box body with new half-extents.
+    /// @brief Replaces the collision shape of an existing body.
     ///
-    /// Use this to apply inspector edits to `halfExtents` at runtime without
-    /// recreating the body.
-    void ReshapeBox(const RigidBody &body, glm::vec3 halfExtents);
+    /// Use this to apply inspector edits to the collider (shape type or its
+    /// dimensions) at runtime without recreating the body.
+    void ReshapeBody(const RigidBody &body, const ColliderShapeDesc &shape);
 
     /// @brief Enables or disables continuous collision detection (CCD) on a body.
     ///

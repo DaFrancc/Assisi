@@ -13,6 +13,9 @@
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
+#include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
+#include <Jolt/Physics/Collision/Shape/CylinderShape.h>
+#include <Jolt/Physics/Collision/Shape/SphereShape.h>
 #include <Jolt/Physics/PhysicsSettings.h>
 #include <Jolt/Physics/PhysicsSystem.h>
 #include <Jolt/RegisterTypes.h>
@@ -144,7 +147,7 @@ struct PhysicsWorld::Impl
     };
 
     /// Keyed by BodyID's packed index+sequence so a lookup survives a body
-    /// flipping motion type (which keeps its ID). Populated in AddBox, torn down
+    /// flipping motion type (which keeps its ID). Populated in AddBody, torn down
     /// in Clear.
     std::unordered_map<JPH::uint32, MotionSnapshot> snapshots;
 };
@@ -191,6 +194,27 @@ JPH::Vec3 ClampedBoxHalfExtents(glm::vec3 halfExtents)
 {
     const glm::vec3 clamped = glm::max(halfExtents, glm::vec3(JPH::cDefaultConvexRadius));
     return {clamped.x, clamped.y, clamped.z};
+}
+
+// Builds the Jolt collision shape for a descriptor. Radii/half-heights are clamped
+// to the convex radius, like the box extents above, so a zeroed dimension field
+// (reachable from an inspector drag) can't create a degenerate, asserting shape.
+JPH::ShapeRefC MakeShape(const PhysicsWorld::ColliderShapeDesc &shape)
+{
+    const float radius     = glm::max(shape.radius, JPH::cDefaultConvexRadius);
+    const float halfHeight = glm::max(shape.halfHeight, JPH::cDefaultConvexRadius);
+    switch (shape.shape)
+    {
+    case ColliderShape::Sphere:
+        return new JPH::SphereShape(radius);
+    case ColliderShape::Capsule:
+        return new JPH::CapsuleShape(halfHeight, radius);
+    case ColliderShape::Cylinder:
+        return new JPH::CylinderShape(halfHeight, radius);
+    case ColliderShape::Box:
+        break;
+    }
+    return new JPH::BoxShape(ClampedBoxHalfExtents(shape.halfExtents));
 }
 } // namespace
 
@@ -246,8 +270,8 @@ PhysicsWorld::~PhysicsWorld()
     ReleaseJoltGlobals();
 }
 
-RigidBody PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, glm::vec3 halfExtents,
-                                        BodyMotion motion)
+RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const ColliderShapeDesc &shape,
+                                BodyMotion motion)
 {
     const JPH::EMotionType joltMotion =
         motion == BodyMotion::Static ? JPH::EMotionType::Static : JPH::EMotionType::Dynamic;
@@ -255,8 +279,7 @@ RigidBody PhysicsWorld::AddBox(glm::vec3 position, glm::quat rotation, glm::vec3
     const JPH::ObjectLayer layer = motion == BodyMotion::Static ? Layers::kStatic : Layers::kDynamic;
 
     JPH::BodyCreationSettings settings(
-        new JPH::BoxShape(ClampedBoxHalfExtents(halfExtents)),
-        JPH::RVec3(position.x, position.y, position.z),
+        MakeShape(shape), JPH::RVec3(position.x, position.y, position.z),
         JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(), joltMotion, layer);
 
     // Always allocate motion properties so the motion type can be changed at runtime
@@ -438,8 +461,12 @@ void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, g
 
     const bool isStatic = bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static;
 
+    // Normalize before handing the quaternion to Jolt: a hand-authored or imported
+    // rotation is often a hair off unit length (e.g. a level's [0.707, 0.707, 0, 0]
+    // has length^2 0.9997), and Jolt asserts IsNormalized() when it rotates with it.
+    // AddBody normalizes for the same reason.
     bodies.SetPositionAndRotation(body.bodyId, JPH::RVec3(position.x, position.y, position.z),
-                                  JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w),
+                                  JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(),
                                   isStatic ? JPH::EActivation::DontActivate : JPH::EActivation::Activate);
 
     // Velocity is only meaningful for dynamic bodies; static bodies have no active motion.
@@ -459,14 +486,14 @@ void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, g
     }
 }
 
-void PhysicsWorld::ReshapeBox(const RigidBody &body, glm::vec3 halfExtents)
+void PhysicsWorld::ReshapeBody(const RigidBody &body, const ColliderShapeDesc &shape)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
     if (!bodies.IsAdded(body.bodyId))
         return;
 
-    JPH::ShapeRefC newShape = new JPH::BoxShape(ClampedBoxHalfExtents(halfExtents));
-    bodies.SetShape(body.bodyId, newShape, /*inUpdateMassProperties=*/true, JPH::EActivation::DontActivate);
+    bodies.SetShape(body.bodyId, MakeShape(shape), /*inUpdateMassProperties=*/true,
+                    JPH::EActivation::DontActivate);
 }
 
 void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
@@ -477,7 +504,7 @@ void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
 
     // Set motion quality even when the body is currently Static. Motion quality
     // is a stored property (our bodies always have motion properties, since
-    // AddBox sets mAllowDynamicOrKinematic), so it sticks and takes effect once
+    // AddBody sets mAllowDynamicOrKinematic), so it sticks and takes effect once
     // the body is Dynamic again. Guarding on Dynamic here used to make this a
     // silent no-op: the inspector freezes the selected body to Static while a
     // widget is active, so the CCD checkbox toggled on a frozen body and never

@@ -27,14 +27,33 @@ struct RigidBody
     JPH::BodyID bodyId;
 };
 
-/// @brief Serializable descriptor for a box-shaped rigid body.
+/// @brief Which collision primitive a RigidBodyDescriptor builds.
 ///
-/// Stored in the level file; consumed at load time to create a
-/// RigidBody and the underlying Jolt body.  Not used at runtime.
+/// AENUM so it reflects as a dropdown and serializes by value. Plain `enum class`
+/// (a 4-byte `int` underlying, which reflected enums use), since there are only a
+/// handful of shapes. Each shape reads a different subset of RigidBodyDescriptor's
+/// dimension fields (see there).
+AENUM()
+enum class ColliderShape
+{
+    Box,      ///< Axis-aligned box from `halfExtents`.
+    Sphere,   ///< Sphere from `radius`.
+    Capsule,  ///< Capsule (cylinder + hemispherical caps) from `radius` + `halfHeight`.
+    Cylinder, ///< Cylinder from `radius` + `halfHeight`.
+};
+
+/// @brief Serializable descriptor for a rigid body's collider.
+///
+/// Stored in the level file; consumed at load time to create a RigidBody and the
+/// underlying Jolt body. `shape` selects the primitive; only the fields that
+/// shape uses matter (a Sphere ignores `halfExtents`/`halfHeight`, etc.).
 ACOMP()
 struct RigidBodyDescriptor
 {
-    AFIELD() glm::vec3 halfExtents{0.5f, 0.5f, 0.5f}; ///< Box half-extents in world units.
+    AFIELD() ColliderShape shape = ColliderShape::Box; ///< Collision primitive to build.
+    AFIELD() glm::vec3 halfExtents{0.5f, 0.5f, 0.5f};  ///< Box half-extents in world units.
+    AFIELD(min = 0.0) float radius     = 0.5f;         ///< Sphere/Capsule/Cylinder radius.
+    AFIELD(min = 0.0) float halfHeight = 0.5f;         ///< Capsule/Cylinder half-height of the cylindrical part.
     AFIELD() bool      isStatic  = false;              ///< True = immovable static body.
     AFIELD() bool      enableCCD = false;              ///< Enable continuous collision detection (dynamic only).
 };
