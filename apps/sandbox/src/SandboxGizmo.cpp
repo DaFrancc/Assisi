@@ -182,10 +182,10 @@ void SandboxApp::DrawTransformGizmo()
         const std::optional<nlohmann::json> after = history->SnapshotComponent(_selectedEntity, transformId);
         if (after.has_value() && *after != *_gizmoBeforePose)
         {
-            const char *action =
-                _gizmoOp == GizmoOp::Rotate ? "Rotate" : _gizmoOp == GizmoOp::Scale ? "Scale" : "Move";
+            // A gizmo drag is just a Transform edit — label it the same as an
+            // inspector Transform change so the two read consistently in history.
             Sandbox::Transaction txn;
-            txn.label           = EditLabel(action, _selectedEntity);
+            txn.label           = EditLabel("Edit Transform", _selectedEntity);
             txn.selectionBefore = _selectedEntity;
             txn.selectionAfter  = _selectedEntity;
             txn.cmds.push_back(Sandbox::ComponentDelta{_selectedEntity, transformId, _gizmoBeforePose, after});
