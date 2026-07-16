@@ -323,10 +323,14 @@ Each stage builds + runs; the editor stays usable throughout.
   survives play via exact-identity Stop restore). History cleared on level load.
   *Remaining polish:* the debug divergence checker (Save-hash tripwire for a missed
   edit site) — deferred to keep this stage focused; low-risk follow-up.
-- **Stage 3 — entity lifetime + polish.** Entity delete (subtree capture) + create,
-  through `EntityDelta` + `ReviveAt`. Edit menu / History panel showing transaction
-  labels (also the best debugging tool). Depth cap. Modified-`*` marker tied to the
-  stack position at last `SaveLevel` (Unreal/Unity dirty-state integration).
+- **Stage 3 — entity lifetime + polish. DONE (2026-07-16).** Entity create
+  (`CreateEntity` → `EntityDelta`) and delete (`DeleteEntity`: subtree gathered via
+  the `Parent` pool, snapshotted, physics torn down, destroyed — one transaction;
+  Delete key + a `-` button in the Entities window). History panel (Photoshop-style
+  linear view, click a row to jump; jumps deferred to `OnUpdate` top). Depth cap
+  (Stage 1). Modified-`*` marker in the window title, via a per-transaction state
+  token recorded at `SaveLevel`. Deletion/create both ride the Stage-1 apply engine
+  (two-phase `ReviveAt`), so no new core logic — only capture + UI.
 
 ## 11. Deferred / open
 
