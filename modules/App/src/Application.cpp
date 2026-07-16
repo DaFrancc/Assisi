@@ -321,6 +321,12 @@ void Application::Run()
         // above guarantees accumulator < physicsStep, so this stays in [0, 1).
         _interpolationAlpha = static_cast<float>(accumulator / physicsStep);
 
+        // Run work marshalled back to the main thread (Jobs().RunOnMain) at this
+        // safe point — before OnUpdate's systems run and before any render command
+        // list is open. This is where deferred level loads land (see SandboxApp);
+        // background async results (streaming) will publish here too.
+        _jobs.DrainMain();
+
         OnUpdate(static_cast<float>(dt));
 
         // Frame pacing is exclusive with vsync: only cap here in FpsLimit mode with

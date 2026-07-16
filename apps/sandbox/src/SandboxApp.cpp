@@ -577,15 +577,9 @@ void SandboxApp::OnUpdate(float dt)
     if (!_scene)
         return;
 
-    // Apply a UI-requested level load now — before RenderFrame() opens a command
-    // list and records draws that bind the asset cache's bindless table.
-    // LoadLevel frees/rebuilds that table; doing it mid-frame faults the GPU.
-    if (_pendingLevelLoad)
-    {
-        LoadLevel(*_pendingLevelLoad);
-        _pendingLevelLoad.reset();
-    }
-
+    // A UI-requested level load is marshalled via Jobs().RunOnMain (see
+    // SandboxLevels) and applied in Application::Run's DrainMain, which runs just
+    // before this — so by here the new scene is already resident.
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
 }

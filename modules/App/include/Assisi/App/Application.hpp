@@ -8,6 +8,7 @@
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/PostProcess.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -105,6 +106,13 @@ class Application
     /// (ctx.events); this accessor is for app code outside a system.
     Core::EventQueue &GetEvents() { return _events; }
 
+    /// @brief The engine's shared task scheduler (design:
+    /// docs/job-system-design-notes.md). Owned by Application; its main-thread
+    /// queue is drained once per frame in Run() just before OnUpdate. Use
+    /// Jobs().RunOnMain(...) to marshal background results back to a safe point,
+    /// ParallelFor(...) to fan work out, or Run(pool, fn) for async chains.
+    Core::JobSystem &Jobs() { return _jobs; }
+
     void      RequestClose();
     int       GetFps()             const { return _fps; }
 
@@ -164,6 +172,12 @@ class Application
 
     std::unique_ptr<Window::WindowContext> _window;
     std::unique_ptr<Window::InputContext>  _input;
+
+    // Declared before the subsystems (post-process, and the derived app's caches)
+    // so it is destroyed last: workers join only after everything that might have
+    // scheduled work is already gone. Derived-class members are destroyed before
+    // this base's, so the app's AssetCache etc. can safely use it up to teardown.
+    Core::JobSystem _jobs;
 
     Render::PostProcess _postProcess;
     Core::EventQueue    _events;
