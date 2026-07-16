@@ -443,6 +443,19 @@ target_link_libraries(Assisi-Deps INTERFACE
 include(cmake/AssisiReflect.cmake)
 
 # ------------------------------------------------------------
+# Ship builds: strip at link time.
+# Our own code compiles without -g, but several vendored static libs (assimp,
+# glslang, SPIRV-Tools, ...) bake -g into their objects regardless of our
+# Release build type, dragging ~27 MB of DWARF into the final executable. A
+# link-time strip drops all of it no matter which object carried it. Gated on
+# Release (ship) only, so RelWithDebInfo (dev) and Debug keep their symbols.
+# Placed *after* the FetchContent block so only our modules/apps below inherit
+# it — the deps' own tool executables (glslang StandAlone, etc.) are untouched.
+if (NOT MSVC)
+  add_link_options($<$<CONFIG:Release>:-s>)
+endif()
+
+# ------------------------------------------------------------
 # Project modules / apps (based on your existing layout)
 # ------------------------------------------------------------
 add_subdirectory(modules/Core)
