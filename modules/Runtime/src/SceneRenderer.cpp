@@ -189,7 +189,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
 void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
                                     const glm::mat4 &view, const glm::vec3 &cameraPosition, ECS::Scene &scene)
 {
-    if (!_editorIconsVisible || !_iconPass.IsValid())
+    if (!_iconPass.IsValid())
     {
         return;
     }
@@ -199,20 +199,41 @@ void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm:
     const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
     const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
 
-    // One icon per placement-only entity (has a Transform, no mesh to draw), unless
-    // it is beyond the LOD distance from the camera.
     constexpr float maxDistanceSq = kMaxIconDistance * kMaxIconDistance;
     _iconPositions.clear();
-    for (auto [entity, transform] : scene.Query<Transform>(ECS::Without<MeshRenderer>{}))
+
+    // One icon per placement-only entity (has a Transform, no mesh to draw), unless
+    // it is beyond the LOD distance from the camera — editor decoration, shown only
+    // when editor icons are enabled.
+    if (_editorIconsVisible)
     {
-        const glm::vec3 position(transform.worldMatrix[3]);
-        const glm::vec3 offset = position - cameraPosition;
-        if (glm::dot(offset, offset) <= maxDistanceSq)
+        for (auto [entity, transform] : scene.Query<Transform>(ECS::Without<MeshRenderer>{}))
         {
-            _iconPositions.push_back(position);
+            const glm::vec3 position(transform.worldMatrix[3]);
+            const glm::vec3 offset = position - cameraPosition;
+            if (glm::dot(offset, offset) <= maxDistanceSq)
+            {
+                _iconPositions.push_back(position);
+            }
         }
     }
 
+    // A MeshRenderer whose mesh is still streaming in (meshBuffer == null) shows the
+    // same billboard as a placeholder until the mesh pops in — regardless of the
+    // editor-icon toggle, since this reflects real load state, not editor chrome.
+    // Not distance-culled: a loading entity should never be invisibly absent.
+    for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+    {
+        if (meshRenderer.meshBuffer == nullptr)
+        {
+            _iconPositions.emplace_back(transform.worldMatrix[3]);
+        }
+    }
+
+    if (_iconPositions.empty())
+    {
+        return;
+    }
     _iconPass.Draw(frame, viewProjection, cameraRight, cameraUp, _iconPositions);
 }
 
@@ -231,15 +252,19 @@ void SceneRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, const
     }
     const MeshRenderer *renderer = scene.Get<MeshRenderer>(_highlightedEntity);
 
+    // A placement-only entity shows a billboard only in editor mode; a MeshRenderer
+    // whose mesh is still loading shows one always (see DrawEditorIcons). Outline
+    // whichever is actually on screen so selection tracks it.
+    const bool placementIcon = renderer == nullptr && _editorIconsVisible;
+    const bool loadingMesh    = renderer != nullptr && renderer->meshBuffer == nullptr;
+
     if (renderer != nullptr && renderer->meshBuffer != nullptr)
     {
         _outlinePass.Draw(frame, viewProjection, *renderer->meshBuffer, transform->worldMatrix);
     }
-    else if (renderer == nullptr && _editorIconsVisible)
+    else if (placementIcon || loadingMesh)
     {
-        // A placement-only entity is drawn as a billboard icon; outline that quad so
-        // its selection matches a mesh's. Only while icons are shown (editor mode),
-        // since there is nothing on screen to outline otherwise.
+        // Outline the billboard quad so its selection matches a mesh's.
         const glm::vec3 center(transform->worldMatrix[3]);
         const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
         const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);

@@ -389,4 +389,9 @@ class SandboxApp : public Assisi::App::Application
     // never mid-frame: LoadLevel frees GPU assets (incl. the bindless table) that
     // this frame's already-recorded draws still reference, which faults the GPU.
     std::optional<std::string> _pendingLevelLoad;
+
+    // True while the current scene still has async mesh/material loads in flight
+    // (or on the frame one just finished), driving the per-frame re-resolve in
+    // OnUpdate that upgrades MeshRenderers as assets stream in. See ResolveMesh.
+    bool _assetsWereLoading = false;
 };

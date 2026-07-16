@@ -491,7 +491,7 @@ void SandboxApp::SetupScene()
     // The asset cache owns the bindless material-texture table (stage D), which
     // the mesh pipeline binds — so initialise it before the scene renderer and
     // thread its layout/table through.
-    _assetCache.Initialize(device);
+    _assetCache.Initialize(device, &Jobs());
 
     // The engine's default scene-render path owns lighting + the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
@@ -505,7 +505,7 @@ void SandboxApp::SetupScene()
     }
     // Thumbnails are drawn straight through ImGui, so they must not be sampled as
     // sRGB (which would gamma-decode them and show them too dark) — load linear.
-    _thumbnailCache.Initialize(device, Assisi::Render::ColorSpace::Linear);
+    _thumbnailCache.Initialize(device, &Jobs(), Assisi::Render::ColorSpace::Linear);
     if (std::expected<void, Assisi::Core::AssetError> loaded =
             // Displayed through ImGui, not the mesh shader — load linear so the
             // sampler doesn't gamma-decode it (same reason as the thumbnails).
@@ -579,7 +579,19 @@ void SandboxApp::OnUpdate(float dt)
 
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // SandboxLevels) and applied in Application::Run's DrainMain, which runs just
-    // before this — so by here the new scene is already resident.
+    // before this — so the scene graph is here, but its meshes/materials stream in
+    // asynchronously. While loads are in flight (and for one frame after the last
+    // finishes, to pick up the final result), re-resolve every MeshRenderer so its
+    // transient pointers upgrade in place: a null meshBuffer (billboard placeholder)
+    // becomes the mesh, and the fallback material becomes the real one.
+    const bool loadsPending = _assetCache.HasPendingLoads();
+    if (loadsPending || _assetsWereLoading)
+    {
+        for (auto [entity, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
+            ResolveMeshRendererAssets(mrc);
+        _assetsWereLoading = loadsPending;
+    }
+
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
 }

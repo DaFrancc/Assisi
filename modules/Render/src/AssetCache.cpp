@@ -1,6 +1,10 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <algorithm>
+#include <array>
+#include <cstddef>
+#include <optional>
+#include <string>
 #include <string_view>
 #include <utility>
 
@@ -38,11 +42,61 @@ constexpr uint32_t kInitialBindlessCapacity = 256u;
 // (see Buffer::Upload) rather than resized into — keeping the handle stable
 // matters more than the ceiling.
 constexpr uint32_t kMaxMaterials = 4096u;
+
+// The five PBR texture channels, in MaterialTextures order (base, normal,
+// metallic-roughness, occlusion, emissive). Each pairs the colour space the
+// channel decodes in with the `prim://` default that stands in for an empty or
+// failed channel; `isNormal` flags the one whose presence drives the shader's
+// normal-mapping bit.
+struct ChannelDesc
+{
+    ColorSpace             space;
+    const Core::AssetPath *fallback;
+    bool                   isNormal;
+};
+
+const std::array<ChannelDesc, 5> kChannels = {{
+    {ColorSpace::Srgb, &kWhiteTexture, false},        // baseColor
+    {ColorSpace::Linear, &kFlatNormalTexture, true},  // normal
+    {ColorSpace::Linear, &kWhiteLinearTexture, false}, // metallic-roughness
+    {ColorSpace::Linear, &kWhiteLinearTexture, false}, // occlusion
+    {ColorSpace::Srgb, &kWhiteTexture, false},         // emissive
+}};
+
+Core::AssetId ChannelId(const Geometry::MaterialData &data, std::size_t channel)
+{
+    switch (channel)
+    {
+    case 0: return data.BaseColorTexture;
+    case 1: return data.NormalTexture;
+    case 2: return data.MetallicRoughnessTexture;
+    case 3: return data.OcclusionTexture;
+    default: return data.EmissiveTexture;
+    }
+}
+
+// One channel's decoded image, produced on a worker. `image` is empty for an
+// unset channel or one whose decode failed (→ the prim:// fallback at publish);
+// `path` keys the texture cache so a texture shared across materials uploads once.
+struct DecodedChannel
+{
+    std::optional<DecodedImage> image;
+    Core::AssetPath             path;
+};
+
+// The full result of a material load job: the parsed data plus every channel's
+// decoded pixels, ready for the main thread to upload and build.
+struct MaterialLoadBundle
+{
+    Geometry::MaterialData        data;
+    std::array<DecodedChannel, 5> channels;
+};
 } // namespace
 
-void AssetCache::Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace)
+void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace)
 {
     _device = device;
+    _jobs = jobs;
     _textureColorSpace = textureColorSpace;
 
     // The shared geometry arena's single vertex format is Geometry::Vertex.
@@ -68,7 +122,6 @@ void AssetCache::Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace
     // Clear() so MeshPass binds it once; BuildFallbackMaterial fills row 0 below.
     _materialTable.Create(_device, sizeof(MaterialConstants), kMaxMaterials, /*allowUnorderedAccess=*/false,
                           "AssetCache::MaterialTable");
-    _materialTableCpu.clear();
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
 
@@ -125,34 +178,49 @@ const MeshBuffer *AssetCache::ResolveMesh(const Core::AssetId &id)
 const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
 {
     // ResolvePrimitive also serves the mesh cache: any path already uploaded
-    // (primitive or file) is returned here on subsequent frames.
+    // (primitive or file) is returned here on subsequent frames. Primitives are
+    // generated in-process and cheap, so they stay synchronous.
     if (const MeshBuffer *mesh = ResolvePrimitive(path))
         return mesh;
 
-    // Not a primitive and not yet cached. Try loading it as a mesh file — but
-    // only once per path: a broken path must not be re-parsed every frame, so a
-    // prior failure recorded in _missingMeshWarned short-circuits to the cube.
-    // An empty path is the expected "unset" default and is never a file.
-    if (!path.Empty() && !_missingMeshWarned.contains(path))
-    {
-        // Hand the importer the path→id resolver so a glTF's texture channels are
-        // stored as stable ids (resolved back to textures when a material builds).
-        std::expected<Geometry::MeshData, Geometry::MeshImportError> imported =
-            Geometry::ImportMesh(path.View(), _pathToId);
-        if (imported)
-        {
-            MeshBuffer &buffer = _meshes[path];
-            buffer.Upload(_arena, std::move(*imported));
-            buffer.SetId(_nextMeshId++);
-            return &buffer;
-        }
+    // An empty path is the "unset" default (never a file); a path that already
+    // failed to import falls back to the cube and isn't retried.
+    if (path.Empty() || _missingMeshWarned.contains(path))
+        return ResolvePrimitive(kCubePrimitive);
 
-        _missingMeshWarned.insert(path);
-        Core::Log::Warn("AssetCache: no mesh for '{}' ({}), falling back to prim://cube.", path.View(),
-                        Geometry::ToString(imported.error()));
-    }
+    // A mesh file. If a load is already in flight, report "still loading" (null) so
+    // the caller shows a placeholder; the re-resolve loop will pick up the buffer
+    // once it's uploaded. Otherwise kick the import: assimp runs on a worker (pure
+    // CPU over the path + a copy of the path→id resolver), then the arena upload
+    // and cache insert publish back on the main thread.
+    if (_meshLoading.contains(path))
+        return nullptr;
 
-    return ResolvePrimitive(kCubePrimitive);
+    _meshLoading.insert(path);
+    const uint64_t   epoch = _loadEpoch;
+    Core::AssetPath  loadPath = path;
+    PathToIdFn       pathToId = _pathToId; // copy: the worker must not touch cache state
+
+    _jobs->Run(Core::Pool::Worker,
+               [loadPath, pathToId] { return Geometry::ImportMesh(loadPath.View(), pathToId); })
+        .Then(Core::Pool::Main,
+              [this, loadPath, epoch](std::expected<Geometry::MeshData, Geometry::MeshImportError> imported) {
+                  _meshLoading.erase(loadPath);
+                  if (epoch != _loadEpoch)
+                      return; // the level that asked for this mesh has since unloaded — drop it
+                  if (!imported)
+                  {
+                      _missingMeshWarned.insert(loadPath);
+                      Core::Log::Warn("AssetCache: no mesh for '{}' ({}), falling back to prim://cube.",
+                                      loadPath.View(), Geometry::ToString(imported.error()));
+                      return; // a later resolve returns the cube
+                  }
+                  MeshBuffer &buffer = _meshes[loadPath];
+                  buffer.Upload(_arena, std::move(*imported));
+                  buffer.SetId(_nextMeshId++);
+              });
+
+    return nullptr; // loading — placeholder for now
 }
 
 const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, ColorSpace colorSpace)
@@ -251,18 +319,26 @@ void AssetCache::BuildMaterial(Material &material, const Geometry::MaterialData 
 void AssetCache::WriteMaterialToTable(const Material &material)
 {
     const uint32_t id = material.Id();
-    if (id >= _materialTableCpu.size())
-        _materialTableCpu.resize(id + 1);
-    _materialTableCpu[id] = material.Constants();
+    if (id >= kMaxMaterials)
+    {
+        Core::Log::Warn("AssetCache: material id {} exceeds the material table capacity ({}); it will render "
+                        "with a stale/garbage row.",
+                        id, kMaxMaterials);
+        return;
+    }
 
-    // Re-upload the dense prefix. Materials are built at load time (rare), not per
-    // frame, so re-sending the small prefix on each build is cheaper than tracking
-    // a partial-row write path — and Buffer::Upload already warns-and-drops rows
-    // past kMaxMaterials. Uses a throwaway command list like the other cache
-    // uploads (textures, the geometry arena).
+    // Write ONLY this material's row, at its own offset — never re-upload the whole
+    // table. Materials build incrementally across frames during an async load; a
+    // full-prefix re-upload would rewrite every already-resident material's row on
+    // a throwaway command list that races the in-flight frame's reads of the table,
+    // which flickers the whole scene. This row is brand new (no draw references
+    // this material yet — loading entities use the fallback), so writing it touches
+    // no bytes an in-flight frame reads.
+    const MaterialConstants row = material.Constants();
     nvrhi::CommandListHandle commandList = _device->createCommandList();
     commandList->open();
-    _materialTable.Upload(commandList, _materialTableCpu.data(), static_cast<uint32_t>(_materialTableCpu.size()));
+    commandList->writeBuffer(_materialTable.NativeBuffer(), &row, sizeof(row),
+                             static_cast<uint64_t>(id) * sizeof(MaterialConstants));
     commandList->close();
     _device->executeCommandList(commandList);
 }
@@ -294,11 +370,15 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
     if (std::unordered_map<Core::AssetPath, Material>::iterator it = _materials.find(path); it != _materials.end())
         return &it->second;
 
-    // Load once: a broken/missing .amat short-circuits to the fallback and is
-    // remembered, so it isn't re-read and re-parsed every frame.
-    if (_missingMaterialWarned.contains(path))
+    // A broken/missing .amat, or one whose load is already in flight, resolves to
+    // the fallback for now (a model whose material isn't ready renders white).
+    if (_missingMaterialWarned.contains(path) || _materialLoading.contains(path))
         return &_fallbackMaterial;
 
+    // Parse the .amat on the main thread — it's small, and resolving its channel
+    // ids to paths needs the asset database (main-thread state). The expensive part
+    // (decoding the channel images) then runs on a worker; the upload + build
+    // publishes back on the main thread. Until then, the fallback stands in.
     std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(path.View());
     if (!text)
     {
@@ -316,9 +396,92 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
         return &_fallbackMaterial;
     }
 
-    Material &material = _materials[path];
-    BuildMaterial(material, *data, _nextMaterialId++);
-    return &material;
+    // Resolve each channel's texture path now (needs the DB); empty channels stay
+    // empty and resolve to a prim:// default at publish time.
+    std::array<Core::AssetPath, 5> channelPaths;
+    for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
+        channelPaths[ch] = PathForId(ChannelId(*data, ch));
+
+    _materialLoading.insert(path);
+    const uint64_t         epoch = _loadEpoch;
+    Core::AssetPath        loadPath = path;
+    Geometry::MaterialData materialData = std::move(*data);
+    Core::JobSystem       *jobs = _jobs; // captured by value; the worker must not touch cache state
+
+    _jobs
+        ->Run(Core::Pool::Worker,
+              [jobs, materialData, channelPaths]() -> MaterialLoadBundle {
+                  // Worker: decode every channel image, in parallel across the
+                  // channels — a texture-heavy material (e.g. a full glTF PBR set)
+                  // then costs max(channel) rather than sum(channel). Pure CPU over
+                  // copied inputs; each channel writes a disjoint slot, so no
+                  // synchronisation is needed. Nested ParallelFor is deadlock-free
+                  // (the waiting worker runs the sub-tasks itself — help-waiting).
+                  MaterialLoadBundle bundle;
+                  bundle.data = materialData;
+                  jobs->ParallelFor(static_cast<uint32_t>(kChannels.size()), 1,
+                                    [&bundle, &channelPaths](uint32_t begin, uint32_t end) {
+                                        for (uint32_t ch = begin; ch < end; ++ch)
+                                        {
+                                            if (channelPaths[ch].Empty())
+                                                continue; // unset channel → fallback prim at publish
+                                            bundle.channels[ch].path = channelPaths[ch];
+                                            std::expected<DecodedImage, Core::AssetError> img =
+                                                Texture::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
+                                            if (img)
+                                                bundle.channels[ch].image = std::move(*img);
+                                            // a decode failure leaves the image empty → fallback prim at publish
+                                        }
+                                    });
+                  return bundle;
+              })
+        .Then(Core::Pool::Main, [this, loadPath, epoch](MaterialLoadBundle bundle) {
+            _materialLoading.erase(loadPath);
+            if (epoch != _loadEpoch)
+                return; // the level that asked for this material has since unloaded — drop it
+
+            // Publish (main thread): resolve each channel to a bindless slot, then
+            // build the material and write its table row. Every slot/row written
+            // here is brand new — no draw references this material yet (loading
+            // entities use the fallback), so nothing an in-flight frame reads is
+            // mutated.
+            MaterialTextures textures;
+            uint32_t        *slots[5] = {&textures.baseColor, &textures.normal, &textures.metallicRoughness,
+                                         &textures.occlusion, &textures.emissive};
+            for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
+            {
+                DecodedChannel &dc = bundle.channels[ch];
+                if (dc.image.has_value())
+                {
+                    // Dedup by (path, space): a texture shared across materials is
+                    // uploaded once, even if it was decoded on more than one worker.
+                    const TextureKey key{dc.path, kChannels[ch].space};
+                    if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
+                    {
+                        *slots[ch] = it->second.BindlessIndex();
+                    }
+                    else
+                    {
+                        Texture &texture = _textures[key];
+                        texture.UploadDecoded(_device, *dc.image, std::string(dc.path.View()).c_str());
+                        *slots[ch] = RegisterBindlessTexture(texture);
+                    }
+                    if (kChannels[ch].isNormal)
+                        textures.hasNormalTexture = true;
+                }
+                else
+                {
+                    const Texture *fallback = ResolveTexture(*kChannels[ch].fallback, kChannels[ch].space);
+                    *slots[ch] = fallback != nullptr ? fallback->BindlessIndex() : 0u;
+                }
+            }
+
+            Material &material = _materials[loadPath];
+            material.Create(_device, _nextMaterialId++, bundle.data, textures);
+            WriteMaterialToTable(material);
+        });
+
+    return &_fallbackMaterial; // fallback while loading
 }
 
 void AssetCache::Clear()
@@ -331,6 +494,16 @@ void AssetCache::Clear()
     // is still executing. waitForIdle guarantees no command buffer is in flight,
     // so the frees below are safe; a stall on level load is fine.
     _device->waitForIdle();
+
+    // Cancel every in-flight async load: bump the epoch so their publishes become
+    // no-ops (they check it on the main thread), and forget the "loading" marks.
+    // The worker jobs themselves may still be decoding; they finish, publish, and
+    // are dropped. Do this before freeing so a publish landing during this Clear
+    // (it can't — we're on the main thread, same as DrainMain) would already see
+    // the new epoch.
+    ++_loadEpoch;
+    _meshLoading.clear();
+    _materialLoading.clear();
 
     _meshes.clear();
     _arena.Reset(); // wholesale free — the MeshBuffers that held ranges are gone.
@@ -348,12 +521,11 @@ void AssetCache::Clear()
     _missingMeshWarned.clear();
     _missingMaterialWarned.clear();
 
-    // Reset the material table to empty and hand out ids from 1 again: an id is a
-    // row in the table, so ids stay dense per asset set. Row 0 (the fallback) is
-    // repopulated by BuildFallbackMaterial below. The buffer handle is unchanged
-    // (fixed capacity), so MeshPass's bound material table stays valid. Safe to
-    // rewrite here because waitForIdle above drained any frame that read it.
-    _materialTableCpu.clear();
+    // Hand out ids from 1 again: an id is a row in the table, so ids stay dense per
+    // asset set. Row 0 (the fallback) is repopulated by BuildFallbackMaterial below,
+    // overwriting its old row in place. The buffer handle is unchanged (fixed
+    // capacity), so MeshPass's bound material table stays valid; stale rows from the
+    // previous asset set are simply never referenced (no entity points at them).
     _nextMaterialId = 1;
 
     // The fallback's texture pointers dangled when _textures cleared; rebuild it

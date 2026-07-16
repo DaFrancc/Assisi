@@ -40,6 +40,7 @@
 
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
 #include <Assisi/Render/Buffer.hpp>
@@ -55,12 +56,14 @@ class AssetCache
   public:
     AssetCache() = default;
 
-    /// @brief Bind to a device, register the built-in `prim://` mesh and texture
-    /// primitives, and build the fallback material. Must be called before any
-    /// Resolve* call. @p textureColorSpace is the default colour space for
-    /// ResolveTexture calls that don't specify one — Srgb for scene albedo, Linear
-    /// for textures shown straight through ImGui (e.g. asset-browser thumbnails).
-    void Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace = ColorSpace::Srgb);
+    /// @brief Bind to a device + job system, register the built-in `prim://` mesh
+    /// and texture primitives, and build the fallback material. Must be called
+    /// before any Resolve* call. @p jobs drives async mesh/material loading (mesh
+    /// import + image decode run on its workers; GPU upload + publish on the main
+    /// thread — see ResolveMesh/ResolveMaterial). @p textureColorSpace is the
+    /// default colour space for ResolveTexture calls that don't specify one — Srgb
+    /// for scene albedo, Linear for textures shown straight through ImGui.
+    void Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace = ColorSpace::Srgb);
 
     /// @brief Id↔path translators supplied by the editor (from the AssetDatabase).
     using IdToPathFn = std::function<Core::AssetPath(const Core::AssetId &)>;
@@ -76,12 +79,14 @@ class AssetCache
         _pathToId = std::move(pathToId);
     }
 
-    /// @brief Resolves a mesh id to a cached MeshBuffer, uploading on first use.
-    /// Recognises the reserved built-in primitives (e.g. `prim://cube`) and mesh
-    /// files (loaded via Geometry::ImportMesh). A nil/unknown id, or a file that
-    /// fails to load, falls back to the unit cube, so the return is never null. A
-    /// failed file load is attempted once, then remembered. The pointer stays
-    /// valid until Clear().
+    /// @brief Resolves a mesh id to a cached MeshBuffer. Built-in primitives (e.g.
+    /// `prim://cube`) resolve synchronously. A mesh **file** imports on a worker
+    /// thread: the first resolve kicks the load and returns **nullptr** ("still
+    /// loading" — the caller shows a placeholder); once the import finishes and
+    /// uploads (on the main thread), subsequent resolves return the buffer. A
+    /// nil/unknown id, or a file that fails to load, resolves to the unit cube. The
+    /// pointer stays valid until Clear(). Poll again (see HasPendingLoads) until a
+    /// loading mesh becomes non-null.
     const MeshBuffer *ResolveMesh(const Core::AssetId &id);
 
     /// @brief Resolves a texture path to a cached Texture, loading on first use,
@@ -100,15 +105,26 @@ class AssetCache
     /// colour space. A successful pointer stays valid until Clear().
     const Texture *ResolveTexture(const Core::AssetPath &path, ColorSpace colorSpace);
 
-    /// @brief Resolves a `.amat` material id to a cached Material, loading on
-    /// first use. A nil/unknown id, or a file that fails to load/parse, returns
-    /// the neutral fallback material — so the return is never null. The pointer
-    /// stays valid until Clear().
+    /// @brief Resolves a `.amat` material id to a cached Material. The `.amat` is
+    /// parsed on the main thread; its **images decode on a worker thread**, so the
+    /// first resolve kicks the load and returns the neutral **fallback** material
+    /// meanwhile — a model whose material isn't ready yet renders with the fallback
+    /// white look. Once the material's images are decoded and uploaded (publish, on
+    /// the main thread) the real material is built and later resolves return it. A
+    /// nil/unknown id, or a file that fails to load/parse, stays on the fallback.
+    /// Never null; the pointer stays valid until Clear(). Poll again (see
+    /// HasPendingLoads) until a loading material upgrades from the fallback.
     const Material *ResolveMaterial(const Core::AssetId &id);
 
     /// @brief The neutral fallback material (id 0): white albedo, metallic 0,
-    /// roughness 0.6 — the engine's pre-material look. Never null.
+    /// roughness 0.6 — the engine's pre-material look, also shown while a real
+    /// material is still loading. Never null.
     const Material *FallbackMaterial() const { return &_fallbackMaterial; }
+
+    /// @brief Whether any async mesh/material load is still in flight. The app
+    /// re-resolves its scene's MeshRenderers each frame while this is true, so
+    /// components upgrade (placeholder→mesh, fallback→real material) as loads land.
+    bool HasPendingLoads() const { return !_meshLoading.empty() || !_materialLoading.empty(); }
 
     /// @brief The bindless material-texture descriptor table and its layout
     /// (GPU-driven stage D). Every resolved texture holds a slot here; materials
@@ -223,10 +239,10 @@ class AssetCache
 
     // Material table (GPU-driven stage D): row `Material::Id()` holds a material's
     // MaterialConstants. Fixed capacity (stable handle across Clear, so MeshPass
-    // binds it once); the CPU shadow mirrors the rows so a single build can
-    // re-upload the dense prefix without reading back from the GPU.
-    Buffer                         _materialTable;
-    std::vector<MaterialConstants> _materialTableCpu;
+    // binds it once). Rows are written one at a time at build time, each at its own
+    // offset (see WriteMaterialToTable) — never a whole-prefix re-upload, which
+    // would race in-flight frames reading other rows and flicker the scene.
+    Buffer _materialTable;
 
     std::unordered_map<Core::AssetPath, MeshBuffer>         _meshes;
     std::unordered_map<TextureKey, Texture, TextureKeyHash> _textures;
@@ -253,5 +269,26 @@ class AssetCache
     std::unordered_set<Core::AssetPath> _missingMeshWarned;
     // Material paths that failed to load/parse: same rationale.
     std::unordered_set<Core::AssetPath> _missingMaterialWarned;
+
+    // --- Async loading (workers decode/import; the main thread publishes) -------
+    // AssetCache is only mutated on the main thread: worker jobs run pure CPU
+    // (ImportMesh / Texture::DecodeImage) over copied inputs and touch no cache
+    // state; their results publish back via _jobs->RunOnMain, so no locks are
+    // needed. Non-owning; the app (Application) owns the job system and outlives
+    // the cache.
+    Core::JobSystem *_jobs = nullptr;
+
+    // Bumped by Clear(). Every load captures the epoch at kick time; a publish
+    // whose epoch no longer matches is dropped — that cancels in-flight loads from
+    // a level that has since been unloaded (their decoded data is discarded and no
+    // GPU resource is created).
+    uint64_t _loadEpoch = 0;
+
+    // Paths with a load job in flight — so a re-resolve while loading returns the
+    // placeholder (null mesh / fallback material) without re-kicking, and
+    // HasPendingLoads() knows work is outstanding. Cleared by Clear() (the epoch
+    // bump makes the in-flight publishes no-ops).
+    std::unordered_set<Core::AssetPath> _meshLoading;
+    std::unordered_set<Core::AssetPath> _materialLoading;
 };
 } /* namespace Assisi::Render */
