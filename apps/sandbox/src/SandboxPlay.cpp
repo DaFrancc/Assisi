@@ -389,10 +389,11 @@ void SandboxApp::DrawEntityListWindow()
 {
     ImGui::Begin("Entities");
 
-    // + adds a new (empty) entity in front of the camera and selects it.
+    // + adds a new (empty) entity in front of the camera and selects it, and asks
+    // the list to scroll to its row below so the new entity comes into view.
     if (ImGui::Button("+"))
     {
-        (void)CreateEntity();
+        _scrollToEntity = CreateEntity();
     }
     if (ImGui::IsItemHovered())
     {
@@ -446,6 +447,12 @@ void SandboxApp::DrawEntityListWindow()
                     // animation, so keep it out of the ForEachEntity scan.
                     focusRequest = entity;
                 }
+            }
+            // Bring a just-created entity into view (once), centred in the list.
+            if (entity == _scrollToEntity)
+            {
+                ImGui::SetScrollHereY(0.5f);
+                _scrollToEntity = Assisi::ECS::NullEntity;
             }
             ImGui::PopID();
         });

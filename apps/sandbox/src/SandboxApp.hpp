@@ -347,6 +347,9 @@ class SandboxApp : public Assisi::App::Application
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
     bool                _wasDragging    = false;
+    // Requests the Entities list scroll to this entity's row next time it draws
+    // (set when a new entity is created, so it comes into view). NullEntity = none.
+    Assisi::ECS::Entity _scrollToEntity = Assisi::ECS::NullEntity;
 
     // Transform-gizmo state (see SandboxGizmo.cpp): which handle set is shown, and
     // whether it manipulates in world or the entity's local axes.
