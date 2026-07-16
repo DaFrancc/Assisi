@@ -182,8 +182,8 @@ class SandboxApp : public Assisi::App::Application
     /// @brief The entity's Name (if it has a non-empty one), else "". Used to tag
     /// undo labels with the affected entity.
     [[nodiscard]] std::string EntityDisplayName(Assisi::ECS::Entity entity) const;
-    /// @brief Builds an undo transaction label: the action, plus " — <name>" when
-    /// the entity is named (e.g. "Edit Transform — Player", or just "Add Camera").
+    /// @brief Builds an undo transaction label: the action, plus " - <name>" when
+    /// the entity is named (e.g. "Edit Transform - Player"), else its id.
     [[nodiscard]] std::string EditLabel(std::string_view action, Assisi::ECS::Entity entity) const;
 
     // --- Level management ---

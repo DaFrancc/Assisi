@@ -692,15 +692,17 @@ std::string SandboxApp::EditLabel(std::string_view action, Assisi::ECS::Entity e
         return label; // no entity to attribute it to (shouldn't happen for real edits)
 
     // Always attribute the edit to an entity: its Name if it has one, otherwise its
-    // [index:generation] id, so every history row identifies what it acted on.
+    // [index:generation] id, so every history row identifies what it acted on. A
+    // plain ASCII " - " separator — the default ImGui font atlas has no em-dash
+    // glyph, so "—" would render as "?".
     if (const std::string name = EntityDisplayName(entity); !name.empty())
     {
-        label += " — " + name;
+        label += " - " + name;
     }
     else
     {
         char buf[32];
-        std::snprintf(buf, sizeof(buf), " — Entity [%u:%u]", entity.index, entity.generation);
+        std::snprintf(buf, sizeof(buf), " - Entity [%u:%u]", entity.index, entity.generation);
         label += buf;
     }
     return label;
