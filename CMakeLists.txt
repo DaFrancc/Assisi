@@ -359,8 +359,16 @@ add_library(Assisi-ImGui STATIC
     "${imgui_SOURCE_DIR}/imgui_tables.cpp"
     "${imgui_SOURCE_DIR}/imgui_widgets.cpp"
     "${imgui_SOURCE_DIR}/imgui_demo.cpp"
+    # FreeType font rasterizer: proper hinting/anti-aliasing, so UI text is crisp
+    # rather than the soft look stb_truetype gives (especially at editor sizes).
+    "${imgui_SOURCE_DIR}/misc/freetype/imgui_freetype.cpp"
 )
 target_include_directories(Assisi-ImGui SYSTEM PUBLIC "${imgui_SOURCE_DIR}")
+# IMGUI_ENABLE_FREETYPE makes ImGui build its font atlas through FreeType by
+# default (PUBLIC so any TU that includes imgui.h sees the FreeType-gated APIs).
+find_package(Freetype REQUIRED)
+target_compile_definitions(Assisi-ImGui PUBLIC IMGUI_ENABLE_FREETYPE)
+target_link_libraries(Assisi-ImGui PUBLIC Freetype::Freetype)
 # ImGui doesn't use our strict warning flags, so don't apply Assisi defaults
 add_library(imgui::imgui ALIAS Assisi-ImGui)
 
