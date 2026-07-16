@@ -211,15 +211,17 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, const glm::mat4
     nvrhi::ICommandList *const commandList = frame.commandList;
     SubmitStats                stats;
 
-    // The previous item's material id / mesh pointer, to count the distinct
+    // The previous item's material id / vertex buffer, to count the distinct
     // binding-set / vertex-buffer runs the sort produced. NVRHI caches graphics
     // state across setGraphicsState calls, so re-issuing an unchanged binding set
     // or vertex buffer costs nothing on the GPU — these counters report the real
-    // state changes, which a good sort keeps near the number of distinct
-    // materials/meshes rather than the draw count. UINT32_MAX / nullptr never
-    // match a real id/pointer, so the first item counts as both a bind.
-    uint32_t          prevMaterialId = UINT32_MAX;
-    const MeshBuffer *prevMesh       = nullptr;
+    // state changes. Since every mesh now sub-allocates from the one shared
+    // GeometryArena (stage C), the vertex buffer is the same for all items, so
+    // meshBinds collapses to ~1 — that collapse is the point of the arena.
+    // UINT32_MAX / nullptr never match a real id/pointer, so the first item
+    // counts as both a bind.
+    uint32_t              prevMaterialId    = UINT32_MAX;
+    const nvrhi::IBuffer *prevVertexBuffer  = nullptr;
 
     for (const DrawItem &item : items)
     {
@@ -233,10 +235,10 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, const glm::mat4
             ++stats.materialBinds;
             prevMaterialId = item.material->Id();
         }
-        if (item.mesh != prevMesh)
+        if (item.mesh->VertexBuffer() != prevVertexBuffer)
         {
             ++stats.meshBinds;
-            prevMesh = item.mesh;
+            prevVertexBuffer = item.mesh->VertexBuffer();
         }
 
         const Geometry::SubMesh &subMesh = item.mesh->SubMeshes()[item.submeshIndex];
@@ -259,9 +261,13 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, const glm::mat4
         const DrawPushConstants pushConstants{viewProjection * item.model, item.model};
         commandList->setPushConstants(&pushConstants, sizeof(pushConstants));
 
+        // Arena addressing: index values stay mesh-local, so baseVertex
+        // (startVertexLocation) shifts them into this mesh's vertex range, and
+        // startIndexLocation picks the mesh's slice of the shared index buffer.
         nvrhi::DrawArguments drawArgs;
         drawArgs.vertexCount = subMesh.IndexCount; // for drawIndexed this is the index count
-        drawArgs.startIndexLocation = subMesh.IndexOffset;
+        drawArgs.startIndexLocation = item.mesh->IndexBase() + subMesh.IndexOffset;
+        drawArgs.startVertexLocation = item.mesh->VertexBase();
         commandList->drawIndexed(drawArgs);
         ++stats.drawCalls;
     }

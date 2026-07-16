@@ -32,6 +32,9 @@ void AssetCache::Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace
     _device = device;
     _textureColorSpace = textureColorSpace;
 
+    // The shared geometry arena's single vertex format is Geometry::Vertex.
+    _arena.Initialize(_device, sizeof(Geometry::Vertex));
+
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
 
     // White sRGB stands in for empty baseColor/emissive channels; white *linear*
@@ -56,7 +59,7 @@ const MeshBuffer *AssetCache::ResolvePrimitive(const Core::AssetPath &path)
         return nullptr;
 
     MeshBuffer &buffer = _meshes[path];
-    buffer.Upload(_device, factory->second());
+    buffer.Upload(_arena, factory->second());
     buffer.SetId(_nextMeshId++);
     return &buffer;
 }
@@ -104,7 +107,7 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
         if (imported)
         {
             MeshBuffer &buffer = _meshes[path];
-            buffer.Upload(_device, std::move(*imported));
+            buffer.Upload(_arena, std::move(*imported));
             buffer.SetId(_nextMeshId++);
             return &buffer;
         }
@@ -247,6 +250,7 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
 void AssetCache::Clear()
 {
     _meshes.clear();
+    _arena.Reset(); // wholesale free — the MeshBuffers that held ranges are gone.
     _textures.clear();
     _materials.clear();
     _missingMeshWarned.clear();

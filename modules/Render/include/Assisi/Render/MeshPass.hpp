@@ -73,9 +73,10 @@ class MeshPass
                               MaterialDebugView debugView = MaterialDebugView::None) const;
 
     /// @brief State-change counts from one Submit — the consumer half of the
-    /// draw-stats (the producer counts drawn/culled). materialBinds/meshBinds are
-    /// the distinct binding-set / vertex-buffer runs the sorted items reduced to;
-    /// a well-sorted list makes them far smaller than drawCalls.
+    /// draw-stats (the producer counts drawn/culled). materialBinds is the
+    /// distinct binding-set runs the sorted items reduced to; meshBinds is the
+    /// distinct vertex-buffer runs, which the shared GeometryArena (stage C)
+    /// collapses to ~1 since every mesh draws from the one arena buffer.
     struct SubmitStats
     {
         uint32_t drawCalls    = 0;

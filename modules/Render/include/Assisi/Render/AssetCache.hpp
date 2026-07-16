@@ -41,6 +41,7 @@
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Render/GeometryArena.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/Texture.hpp>
@@ -178,6 +179,11 @@ class AssetCache
     // texture primitives (white / white-linear / flat-normal).
     std::unordered_map<Core::AssetPath, std::function<Geometry::MeshData()>> _primitiveFactories;
     std::unordered_map<Core::AssetPath, SolidColor>                          _texturePrimitives;
+
+    // One shared vertex/index buffer every mesh sub-allocates a range from
+    // (GPU-driven stage C). MeshBuffers hold ranges into this, not their own
+    // buffers; Clear() resets it. Reset by Clear() (wholesale free).
+    GeometryArena _arena;
 
     std::unordered_map<Core::AssetPath, MeshBuffer>         _meshes;
     std::unordered_map<TextureKey, Texture, TextureKeyHash> _textures;

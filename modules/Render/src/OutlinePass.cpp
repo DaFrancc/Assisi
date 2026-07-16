@@ -273,16 +273,20 @@ void OutlinePass::RecordMaskPass(const RenderFrame &frame, const glm::mat4 &mode
         for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
         {
             const Geometry::SubMesh &subMesh = mesh.SubMeshes()[lod0.FirstSubMesh + i];
+            // Arena addressing: baseVertex + index-buffer slice (see MeshPass::Submit).
             nvrhi::DrawArguments      drawArgs;
-            drawArgs.vertexCount        = subMesh.IndexCount;
-            drawArgs.startIndexLocation = subMesh.IndexOffset;
+            drawArgs.vertexCount         = subMesh.IndexCount;
+            drawArgs.startIndexLocation  = mesh.IndexBase() + subMesh.IndexOffset;
+            drawArgs.startVertexLocation = mesh.VertexBase();
             commandList->drawIndexed(drawArgs);
         }
     }
     else
     {
         nvrhi::DrawArguments drawArgs;
-        drawArgs.vertexCount = mesh.IndexCount();
+        drawArgs.vertexCount         = mesh.IndexCount();
+        drawArgs.startIndexLocation  = mesh.IndexBase();
+        drawArgs.startVertexLocation = mesh.VertexBase();
         commandList->drawIndexed(drawArgs);
     }
 }

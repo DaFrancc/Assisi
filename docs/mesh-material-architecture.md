@@ -9,8 +9,8 @@ on. Design reviewed by two independent adversarial review passes; their findings
 (hot-reload contract, sort-key depth bits, default-deny codegen, per-submesh cull
 removal, texture-compression hook, streaming contracts) are folded in.
 
-**Stages A1–A5 and B are built** — see "Current state"; the GPU-driven stages
-C–G remain. The point of
+**Stages A1–A5, B, and C are built** — see "Current state"; the GPU-driven
+stages D–G remain. The point of
 this doc is that the data structures and interfaces designed today survive the
 entire roadmap — submeshes, material assets, instancing, batching, LODs, GPU
 culling, bindless, streaming — with internals swapped, never producers rewritten.
@@ -67,13 +67,16 @@ AABB cull, **B**) has landed. What's built, by stage (commits in `asset-upgrade`
   level (`39ebd40`, `eb7d3de`, `10a7088`, `38e289c`, `f2f6296`).
 - **A5** — DrawItem submission layer: extract → sort → Submit (`dfb7fa8`).
 - **B** — two-level whole-mesh AABB cull refine (`cbc9ec4`).
+- **C** — shared geometry arena: per-mesh vertex/index buffers replaced by one
+  `GeometryArena`; each mesh is a range, bound once and drawn by base offset
+  (mesh binds collapse to ~1).
 
 The asset-identity layer (`asset-database-architecture.md`) has landed through
 **S4**: GUID identity core with `.aast` sidecars and database, path→GUID
 reference migration, glTF material explosion into `.amat` children + manifest,
 and source-change detection with prompt-driven conflict resolution.
 
-**Remaining:** GPU-driven stages **C–G** (geometry arena, bindless,
+**Remaining:** GPU-driven stages **D–G** (bindless,
 indirect/instancing, compute cull, HZB occlusion) and asset-DB **S5** (final
 reference migration).
 
@@ -559,7 +562,7 @@ numbers.
 | **A4** | Full PBR shader + MeshRenderer v2 + editor UX (live edits per mutation contract) + hand-migrate the two .alvl levels + debug view mode (roughness/metal/normal visualization via FrameConstants flag) | ✅ done (`39ebd40`, `eb7d3de`, `10a7088`, `38e289c`, `f2f6296`) | DamagedHelmet (unpacked) renders all channels; factors-only material matches flat defaults |
 | **A5** | DrawItem layer: extract → sort → Submit; expanded DrawStats | ✅ done (`dfb7fa8`) | sort on/off A/B: identical image, different bind counts |
 | **B** | Per-mesh AABB in CPU cull (data exists since A1) | ✅ done (`cbc9ec4`) | GPU-driven doc stage 1 |
-| **C** | Shared geometry arena (MeshBuffer → ranges; vertex-format constraint from §1 decided here) | ⬜ not started | stage 2 |
+| **C** | Shared geometry arena (MeshBuffer → ranges; vertex-format constraint from §1 decided here) | ✅ done | stage 2 |
 | **D** | Per-instance GPU buffer + bindless (kills the binding-set cache; MaterialConstants pad → textureIndices) | ⬜ not started | stage 3; descriptor-indexing spike first |
 | **E** | CPU-built indirect draws + instancing (Submit interior only) | ⬜ not started | stage 4 |
 | **F** | Compute cull + screen-size LOD select (replaces extract/sort) | ⬜ not started | stage 5 |

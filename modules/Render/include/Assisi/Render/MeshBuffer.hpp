@@ -2,10 +2,14 @@
 #pragma once
 
 /// @file MeshBuffer.hpp
-/// @brief GPU-side mesh storage backed by NVRHI vertex/index buffers.
+/// @brief A mesh's range record into a shared GeometryArena, plus the
+///        submesh / LOD / material-slot tables that address it (GPU-driven
+///        stage C).
 ///
-/// Upload CPU-side `MeshData` once; NVRHI buffer handles are reference-counted,
-/// so no manual destructor is needed. Copyable and movable.
+/// Upload CPU-side `MeshData` once into an arena; the arena owns the GPU
+/// buffers, this class just records where the mesh's vertices/indices landed
+/// (base offsets) and which arena holds them. Copyable and movable — it is a
+/// lightweight handle, not a buffer owner.
 ///
 /// The CPU vertex/index data is NOT retained after upload — bounds live in the
 /// submesh table, and any future CPU consumer (mesh colliders, editor picking)
@@ -19,6 +23,7 @@
 
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Render/GeometryArena.hpp>
 
 namespace Assisi::Render
 {
@@ -27,52 +32,34 @@ namespace Assisi::Render
 ///
 /// Vertex layout matches `Assisi::Geometry::Vertex`: Position, Normal,
 /// TextureCoordinates, Tangent. Draw submission addresses geometry as
-/// `(MeshBuffer, submeshIndex)` — a submesh is an index range into the shared
-/// index buffer. When the shared geometry arena lands (GPU-driven stage 2),
-/// this class becomes a range record into arena buffers; submesh offsets are
-/// already relative, so consumers don't change.
+/// `(MeshBuffer, submeshIndex)` — a submesh is an index range into the arena's
+/// shared index buffer, offset by this mesh's arena base (see VertexBase /
+/// IndexBase). Submesh offsets stay mesh-relative, so consumers add the base at
+/// draw time and never rewrite index data.
 class MeshBuffer
 {
   public:
     MeshBuffer() = default;
 
-    /// @brief Uploads mesh data to the GPU immediately.
-    MeshBuffer(nvrhi::IDevice *device, Geometry::MeshData meshData) { Upload(device, std::move(meshData)); }
-
-    /// @brief Creates new GPU buffers and uploads `meshData` into them, replacing
-    /// any buffers already owned by this instance.
+    /// @brief Sub-allocates a range in @p arena and uploads `meshData` into it.
     ///
     /// Normalizes the degenerate case first (a mesh with no submesh table gains
-    /// one full-range submesh — factory/primitive meshes rely on this), then
-    /// keeps the submesh/LOD/material tables and drops the vertex/index data.
-    void Upload(nvrhi::IDevice *device, Geometry::MeshData meshData)
+    /// one full-range submesh — factory/primitive meshes rely on this), records
+    /// the arena and the returned base offsets, then keeps the
+    /// submesh/LOD/material tables and drops the vertex/index data. The arena
+    /// owns the GPU buffers; this instance only references them.
+    void Upload(GeometryArena &arena, Geometry::MeshData meshData)
     {
         Geometry::EnsureSubMeshTables(meshData);
 
         _indexCount = static_cast<uint32_t>(meshData.Indices.size());
 
-        nvrhi::BufferDesc vertexDesc;
-        vertexDesc.byteSize = meshData.Vertices.size() * sizeof(Geometry::Vertex);
-        vertexDesc.isVertexBuffer = true;
-        vertexDesc.debugName = "MeshBuffer::VertexBuffer";
-        vertexDesc.initialState = nvrhi::ResourceStates::VertexBuffer;
-        vertexDesc.keepInitialState = true;
-        _vertexBuffer = device->createBuffer(vertexDesc);
-
-        nvrhi::BufferDesc indexDesc;
-        indexDesc.byteSize = meshData.Indices.size() * sizeof(unsigned int);
-        indexDesc.isIndexBuffer = true;
-        indexDesc.debugName = "MeshBuffer::IndexBuffer";
-        indexDesc.initialState = nvrhi::ResourceStates::IndexBuffer;
-        indexDesc.keepInitialState = true;
-        _indexBuffer = device->createBuffer(indexDesc);
-
-        nvrhi::CommandListHandle commandList = device->createCommandList();
-        commandList->open();
-        commandList->writeBuffer(_vertexBuffer, meshData.Vertices.data(), vertexDesc.byteSize);
-        commandList->writeBuffer(_indexBuffer, meshData.Indices.data(), indexDesc.byteSize);
-        commandList->close();
-        device->executeCommandList(commandList);
+        const GeometryArena::Range range =
+            arena.Allocate(meshData.Vertices.data(), static_cast<uint32_t>(meshData.Vertices.size()),
+                           meshData.Indices.data(), static_cast<uint32_t>(meshData.Indices.size()));
+        _arena = &arena;
+        _vertexBase = range.vertexBase;
+        _indexBase = range.indexBase;
 
         _localBounds = Geometry::ComputeBoundingSphere(meshData);
         _localAabb = Geometry::ComputeAabb(meshData);
@@ -82,8 +69,18 @@ class MeshBuffer
         // Vertex/index data is deliberately not retained (see file comment).
     }
 
-    nvrhi::IBuffer *VertexBuffer() const { return _vertexBuffer; }
-    nvrhi::IBuffer *IndexBuffer() const { return _indexBuffer; }
+    /// @brief The arena's shared vertex/index buffers (null until Upload). Read
+    /// fresh each frame so an arena grow/compaction that swaps the handle is
+    /// transparent to the draw loop.
+    nvrhi::IBuffer *VertexBuffer() const { return _arena != nullptr ? _arena->VertexBuffer() : nullptr; }
+    nvrhi::IBuffer *IndexBuffer() const { return _arena != nullptr ? _arena->IndexBuffer() : nullptr; }
+
+    /// @brief This mesh's base offset into the arena, in vertices — drawIndexed's
+    /// startVertexLocation (added to every mesh-local index).
+    uint32_t VertexBase() const { return _vertexBase; }
+    /// @brief This mesh's base offset into the arena, in indices — added to a
+    /// submesh's IndexOffset to form startIndexLocation.
+    uint32_t IndexBase() const { return _indexBase; }
     uint32_t IndexCount() const { return _indexCount; }
 
     /// @brief Stable, process-unique id assigned by AssetCache at upload (never
@@ -112,8 +109,12 @@ class MeshBuffer
     const std::vector<Geometry::MaterialData> &Materials() const { return _materials; }
 
   private:
-    nvrhi::BufferHandle _vertexBuffer;
-    nvrhi::BufferHandle _indexBuffer;
+    // The arena that owns this mesh's geometry, and where the mesh landed in it.
+    // A pointer (not a raw buffer handle) so an arena grow/compaction that swaps
+    // the underlying buffer is picked up automatically. Null until Upload().
+    const GeometryArena *_arena = nullptr;
+    uint32_t             _vertexBase = 0; ///< Base offset into the arena, in vertices.
+    uint32_t             _indexBase = 0;  ///< Base offset into the arena, in indices.
     uint32_t             _indexCount = 0;
     uint32_t             _id = 0; ///< Assigned by AssetCache; 0 until then.
     Geometry::BoundingSphere _localBounds;
