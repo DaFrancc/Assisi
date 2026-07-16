@@ -16,12 +16,16 @@
 #include <imgui_impl_vulkan.h>
 #include <implot.h>
 
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
 #include <algorithm>
 #include <array>
+#include <expected>
+#include <filesystem>
+#include <string>
 #include <cstdint>
 #include <unordered_map>
 
@@ -109,6 +113,48 @@ void SweepRetiredTextures()
         }
     }
 }
+
+// Loads the editor's Nerd Font (JetBrainsMono NL Mono) into the ImGui atlas, so the
+// UI renders full Unicode punctuation (em-dash, arrows) and Nerd Font icon glyphs
+// instead of the default ProggyClean's ASCII-only set. Falls back to the built-in
+// font if the asset can't be resolved or loaded, so a missing font never breaks the
+// editor. Called before the Vulkan backend builds the font texture.
+void LoadEditorFont()
+{
+    ImGuiIO &io = ImGui::GetIO();
+
+    // Rasterize the ASCII/Latin text ranges the UI uses, plus the Nerd Font
+    // private-use area (BMP) where its icons live. Static so the pointer stays valid
+    // until the atlas is built. Codepoints the font lacks are simply skipped.
+    static const ImWchar kRanges[] = {
+        0x0020, 0x00FF, // Basic Latin + Latin-1 Supplement
+        0x2000, 0x206F, // General Punctuation (em-dash 0x2014, quotes, bullet, ellipsis)
+        0x2190, 0x21FF, // Arrows
+        0x2500, 0x25FF, // Box drawing + geometric shapes
+        0xE000, 0xF8FF, // Nerd Font icons (BMP private-use area)
+        0,
+    };
+
+    constexpr const char *kFontVPath = "editor/JetBrainsMono/JetBrainsMonoNLNerdFontMono-Regular.ttf";
+    constexpr float        kFontSize = 16.0f;
+
+    const std::expected<std::filesystem::path, Core::AssetError> resolved =
+        Core::AssetSystem::Resolve(kFontVPath);
+    if (resolved.has_value())
+    {
+        const std::string path = resolved->string();
+        if (io.Fonts->AddFontFromFileTTF(path.c_str(), kFontSize, nullptr, kRanges) != nullptr)
+        {
+            return; // font loaded — it becomes the default
+        }
+        Core::Log::Warn("DebugUI: failed to load editor font '{}'; using the built-in font.", kFontVPath);
+    }
+    else
+    {
+        Core::Log::Warn("DebugUI: editor font '{}' not found; using the built-in font.", kFontVPath);
+    }
+    io.Fonts->AddFontDefault();
+}
 } // namespace
 
 void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::VulkanContext &vulkanContext)
@@ -126,6 +172,10 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     // main window would need per-viewport swapchains managed by the Vulkan
     // backend — out of scope for now.
     io.ConfigDragClickToInputText = true;
+
+    // Load the editor Nerd Font before the Vulkan backend builds the atlas (so the
+    // UI gets Unicode punctuation + icon glyphs, not ProggyClean's ASCII-only set).
+    LoadEditorFont();
 
     ImGui::StyleColorsDark();
 
