@@ -20,8 +20,10 @@
 void SandboxApp::HandleEntityPicking()
 {
     auto &input = GetInput();
+    // Skip picking when the click is meant for the transform gizmo (hovered or being
+    // dragged) — otherwise clicking a handle would also reselect whatever's behind it.
     if (_actions.IsActionPressed("Select", input) &&
-        !input.IsMouseCaptured() && !ImGuiWantsMouse())
+        !input.IsMouseCaptured() && !ImGuiWantsMouse() && !IsUsingGizmo())
     {
         const Assisi::ECS::Entity picked = PickEntity(input.MousePosition());
 

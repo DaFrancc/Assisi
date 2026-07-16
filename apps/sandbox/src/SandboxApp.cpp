@@ -647,6 +647,10 @@ void SandboxApp::DrawDiagnosticsWindow()
 
 void SandboxApp::OnImGui()
 {
+    // First: resets ImGuizmo's per-frame state and draws the manipulator over the
+    // scene (behind the panels below). Also refreshes IsUsingGizmo() for picking.
+    DrawTransformGizmo();
+
     DrawOptionsWindow();
     DrawDiagnosticsWindow();
     DrawGameControlWindow();

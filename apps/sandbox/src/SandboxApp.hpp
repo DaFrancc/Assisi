@@ -61,6 +61,15 @@ struct EntitySelectionChangedEvent
 class SandboxApp : public Assisi::App::Application
 {
   public:
+    /// @brief Transform-gizmo handle set. Public so the free helpers in
+    /// SandboxGizmo.cpp can map it to ImGuizmo's operation enum.
+    enum class GizmoOp
+    {
+        Translate,
+        Rotate,
+        Scale
+    };
+
     /// @brief Virtual path (under the asset root) of a level to open once at
     /// startup, from the command line — e.g. "levels/Materials.alvl". Empty = none.
     /// OnStart resolves it through Core::AssetSystem and loads it. Call before Run().
@@ -100,6 +109,10 @@ class SandboxApp : public Assisi::App::Application
     void DrawAssetBrowser();
     void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7); see SandboxPlay.cpp
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see SandboxPlay.cpp
+    void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see SandboxGizmo.cpp
+    /// @brief True while the transform gizmo is hovered or being dragged — entity
+    /// picking checks this so a click on the gizmo doesn't reselect what's behind it.
+    [[nodiscard]] bool IsUsingGizmo() const;
 
     // --- Asset browser helpers ---
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
@@ -294,6 +307,11 @@ class SandboxApp : public Assisi::App::Application
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
     bool                _wasDragging    = false;
+
+    // Transform-gizmo state (see SandboxGizmo.cpp): which handle set is shown, and
+    // whether it manipulates in world or the entity's local axes.
+    GizmoOp _gizmoOp        = GizmoOp::Translate;
+    bool    _gizmoLocalSpace = false; // false = world axes
 
     // Per-component delete confirmation: the inspector's X button arms a two-step
     // confirm for one component at a time. Scoped to an entity so switching

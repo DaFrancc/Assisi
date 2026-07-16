@@ -388,6 +388,30 @@ target_link_libraries(Assisi-ImPlot PUBLIC imgui::imgui)
 # Like ImGui, ImPlot isn't written against our strict warning flags — leave defaults off.
 add_library(implot::implot ALIAS Assisi-ImPlot)
 
+# --- ImGuizmo (transform manipulator gizmo built on Dear ImGui)
+# Unlike ImGui/ImPlot, ImGuizmo ships its own CMakeLists — which builds a duplicate
+# imgui target and its example app. We only want the source, so stop MakeAvailable
+# from add_subdirectory'ing it by pointing SOURCE_SUBDIR at a directory that holds no
+# CMakeLists (the documented populate-only trick — DOWNLOAD_ONLY is not a real
+# FetchContent keyword). Then compile the one source we need into our own static lib
+# against imgui::imgui (ImGuizmo.cpp needs imgui_internal.h). No release is tagged
+# compatible with ImGui 1.92, so pin a specific master commit.
+FetchContent_Declare(imguizmo
+    GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
+    GIT_TAG        fd138a7ce089cfcbfee16da8e8692f37a0e9481e
+    GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  do-not-configure-imguizmo
+)
+FetchContent_MakeAvailable(imguizmo)
+
+add_library(Assisi-ImGuizmo STATIC
+    "${imguizmo_SOURCE_DIR}/src/ImGuizmo.cpp"
+)
+target_include_directories(Assisi-ImGuizmo SYSTEM PUBLIC "${imguizmo_SOURCE_DIR}/src")
+target_link_libraries(Assisi-ImGuizmo PUBLIC imgui::imgui)
+# Third-party, not written against our strict warning flags — leave defaults off.
+add_library(imguizmo::imguizmo ALIAS Assisi-ImGuizmo)
+
 # --- NVRHI (Vulkan backend only; DX11/DX12 disabled — Windows+Linux via Vulkan)
 set(NVRHI_WITH_VULKAN     ON  CACHE BOOL "" FORCE)
 set(NVRHI_WITH_DX11       OFF CACHE BOOL "" FORCE)

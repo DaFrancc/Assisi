@@ -11,11 +11,13 @@ target_sources(Assisi-Sandbox
     "src/SandboxAssetBrowser.cpp"
     "src/SandboxLevels.cpp"
     "src/SandboxPlay.cpp"
+    "src/SandboxGizmo.cpp"
 )
 
 target_link_libraries(Assisi-Sandbox
   PRIVATE
     Assisi::App
+    imguizmo::imguizmo
     nlohmann_json::nlohmann_json
 )
 
