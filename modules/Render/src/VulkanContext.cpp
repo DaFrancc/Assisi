@@ -193,6 +193,31 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
         return false;
     }
 
+    // Descriptor indexing / bindless (GPU-driven stage D). These are Vulkan 1.2
+    // *core* but *optional* feature bits, so a 1.3 device can still lack them.
+    // The bindless material table needs an unbounded, partially-bound,
+    // non-uniformly-indexed sampled-image array, and the indirect-draw stages
+    // need drawIndirectCount. Required here (well before D) so unsupported
+    // hardware fails loudly at selection instead of mid-migration — see
+    // docs/mesh-material-architecture.md §10. Must stay in lock-step with the
+    // enables in CreateLogicalDevice.
+    if (features12.descriptorIndexing != VK_TRUE || features12.runtimeDescriptorArray != VK_TRUE ||
+        features12.shaderSampledImageArrayNonUniformIndexing != VK_TRUE ||
+        features12.descriptorBindingPartiallyBound != VK_TRUE ||
+        features12.descriptorBindingVariableDescriptorCount != VK_TRUE || features12.drawIndirectCount != VK_TRUE)
+    {
+        Core::Log::Info("  rejected: missing bindless/descriptor-indexing support "
+                        "(descriptorIndexing={}, runtimeDescriptorArray={}, "
+                        "shaderSampledImageArrayNonUniformIndexing={}, descriptorBindingPartiallyBound={}, "
+                        "descriptorBindingVariableDescriptorCount={}, drawIndirectCount={})",
+                        features12.descriptorIndexing == VK_TRUE, features12.runtimeDescriptorArray == VK_TRUE,
+                        features12.shaderSampledImageArrayNonUniformIndexing == VK_TRUE,
+                        features12.descriptorBindingPartiallyBound == VK_TRUE,
+                        features12.descriptorBindingVariableDescriptorCount == VK_TRUE,
+                        features12.drawIndirectCount == VK_TRUE);
+        return false;
+    }
+
     return true;
 }
 
@@ -293,6 +318,17 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
     features12.timelineSemaphore = VK_TRUE;
+    // Descriptor indexing / bindless (GPU-driven stage D). Enabled so the device
+    // is created bindless-ready: an unbounded, partially-bound, non-uniformly-
+    // indexed sampled-image array for the material table, plus drawIndirectCount
+    // for the indirect-draw stages. DeviceMeetsRequirements already verified the
+    // chosen device supports all of these, so requesting them here can't fail.
+    features12.descriptorIndexing = VK_TRUE;
+    features12.runtimeDescriptorArray = VK_TRUE;
+    features12.shaderSampledImageArrayNonUniformIndexing = VK_TRUE;
+    features12.descriptorBindingPartiallyBound = VK_TRUE;
+    features12.descriptorBindingVariableDescriptorCount = VK_TRUE;
+    features12.drawIndirectCount = VK_TRUE;
     features12.pNext = &features13;
 
     // Core 1.0 features. Anisotropic filtering is optional in the spec, so it is
