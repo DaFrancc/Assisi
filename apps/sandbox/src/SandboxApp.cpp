@@ -89,6 +89,11 @@ void SandboxApp::OnStart()
     }
     _scene = *mainScene;
 
+    // Editor-only undo/redo. Binds the Main scene (stable for the session — level
+    // loads Clear it in place, never swap the object). The rebind hook rebuilds the
+    // transient state serialization drops after an apply. See EditHistory.hpp.
+    _history.emplace(*_scene, MakeEditRebindHook());
+
     // Editor reconcile pass: give every asset a `.aast` GUID sidecar and build
     // the GUID→path database. Runs here (not in Application) because it is
     // editor-only — a shipped game consumes a baked index, never scans/writes.
@@ -592,6 +597,11 @@ void SandboxApp::OnUpdate(float dt)
     if (!_scene)
         return;
 
+    // Apply a requested undo/redo here, at the top of the frame: the previous
+    // frame's FlushDestroyed has run (so a revived slot is free) and no render
+    // command list is open (so scene mutation is safe).
+    HandleUndoRedoHotkeys();
+
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // SandboxLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in
@@ -621,6 +631,109 @@ void SandboxApp::FlushDeferred()
 }
 
 // ---------------------------------------------------------------------------
+// Undo/redo (editor-only)
+// ---------------------------------------------------------------------------
+
+Sandbox::EditHistory::RebindHook SandboxApp::MakeEditRebindHook()
+{
+    return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
+    { ApplyEditRebind(entity, id, present); };
+}
+
+Sandbox::EditHistory *SandboxApp::ActiveHistory()
+{
+    switch (_playState)
+    {
+    case PlayState::Editing:
+        return _history ? &*_history : nullptr;
+    case PlayState::Paused:
+        return _pausedHistory ? &*_pausedHistory : nullptr;
+    case PlayState::Playing:
+        return nullptr; // the simulation owns the scene; edits are neither captured nor undoable
+    }
+    return nullptr;
+}
+
+void SandboxApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
+{
+    // Dispatch by component identity to the same transient-rebuild paths the live
+    // edits use. Ids resolve once (function-local statics in ComponentIdOf).
+    using namespace Assisi;
+    static const Core::Reflect::ComponentId kTransform = Core::Reflect::ComponentIdOf<Runtime::Transform>();
+    static const Core::Reflect::ComponentId kRigidBodyDesc =
+        Core::Reflect::ComponentIdOf<Physics::RigidBodyDescriptor>();
+    static const Core::Reflect::ComponentId kMeshRenderer = Core::Reflect::ComponentIdOf<Runtime::MeshRenderer>();
+
+    if (id == kTransform)
+    {
+        // A restored/edited Transform must drag any physics body to the new pose;
+        // Add already re-stamped the change tick, so PropagateTransforms reruns.
+        if (present)
+        {
+            const auto *rbc = _scene->Get<Physics::RigidBody>(entity);
+            const auto *tc  = _scene->Get<Runtime::Transform>(entity);
+            if (rbc && tc)
+                _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+        }
+    }
+    else if (id == kRigidBodyDesc)
+    {
+        if (present)
+        {
+            // Descriptor came back: rebuild the Jolt body from it (mirrors the
+            // component-add path), unless a body somehow already exists.
+            const auto *tc   = _scene->Get<Runtime::Transform>(entity);
+            const auto *desc = _scene->Get<Physics::RigidBodyDescriptor>(entity);
+            if (tc && desc && _scene->Get<Physics::RigidBody>(entity) == nullptr)
+                AddPhysicsBody(entity, *tc, *desc);
+        }
+        else
+        {
+            // Descriptor removed: tear down its Jolt body + the transient handle
+            // (RigidBody is ACOMP(transient), never in the payload).
+            if (const auto *rbc = _scene->Get<Physics::RigidBody>(entity))
+                _physics.RemoveBody(*rbc);
+            _scene->Remove<Physics::RigidBody>(entity);
+        }
+    }
+    else if (id == kMeshRenderer)
+    {
+        // Rebuild the mesh/material GPU pointers from the restored ids.
+        if (present)
+            ReresolveEntityAssets(entity);
+    }
+}
+
+void SandboxApp::HandleUndoRedoHotkeys()
+{
+    // Route to whichever history is live now — the main one while editing, the
+    // scratch one while paused, none while playing (physics owns Transforms then).
+    // Also gated off while a text field has the keyboard (ImGui's own InputText undo
+    // owns Ctrl-Z then). Runs at the top of OnUpdate — a safe point to mutate.
+    Sandbox::EditHistory *history = ActiveHistory();
+    if (history == nullptr || ImGuiWantsKeyboard())
+        return;
+
+    const ImGuiIO &io = ImGui::GetIO();
+    if (!io.KeyCtrl)
+        return;
+
+    // Ctrl-Y or Ctrl-Shift-Z = redo; Ctrl-Z = undo.
+    std::optional<Assisi::ECS::Entity> restoredSelection;
+    if (ImGui::IsKeyPressed(ImGuiKey_Y, false) || (io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false)))
+        restoredSelection = history->Redo();
+    else if (!io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_Z, false))
+        restoredSelection = history->Undo();
+
+    if (restoredSelection.has_value())
+    {
+        // Restore the selection the transaction recorded; a revived entity is valid
+        // again, and a destroyed one lands on NullEntity (empty inspector).
+        _selectedEntity = *restoredSelection;
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ImGui panels
 // ---------------------------------------------------------------------------
 
@@ -647,6 +760,10 @@ void SandboxApp::DrawDiagnosticsWindow()
 
 void SandboxApp::OnImGui()
 {
+    // Reset the per-frame "an edit widget is being held" accumulator; the gizmo and
+    // inspector raise it below, and the end-of-frame capture sweep reads it.
+    _captureEditingActive = false;
+
     // First: resets ImGuizmo's per-frame state and draws the manipulator over the
     // scene (behind the panels below). Also refreshes IsUsingGizmo() for picking.
     DrawTransformGizmo();
@@ -660,4 +777,11 @@ void SandboxApp::OnImGui()
     DrawHelloImageWindow();
     DrawAssetBrowser();
     DrawStaleResolutionModal();
+
+    // After every panel has drawn (so each open gesture sees its final value):
+    // commit finished drags/typing, drop no-ops, abandon dead-entity gestures.
+    // Never mid-panel — the commit only reads the scene + stores JSON, but keeping
+    // it at one point keeps the capture model simple. Playing captures nothing.
+    if (Sandbox::EditHistory *history = ActiveHistory())
+        history->EndFrameSweep(_captureEditingActive);
 }

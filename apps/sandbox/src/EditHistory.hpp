@@ -125,6 +125,36 @@ class EditHistory
     /// oldest transaction.
     void Push(Transaction txn);
 
+    // --- Capture (record-before-write, design doc §5) ----------------------
+    //
+    // ImGui writes a value *inside* the widget call, so the only way to know the
+    // pre-edit value is to snapshot it before drawing. Each edit site opens a
+    // gesture (RecordBefore) before writing; the gesture is closed either
+    // immediately (CommitGesture, for instant edits) or by the end-of-frame sweep
+    // (for multi-frame drags/typing). A gesture whose before == after is dropped,
+    // which absorbs click-without-drag and Escape-revert for free.
+
+    /// @brief Idempotently opens a capture gesture for (entity, id), snapshotting
+    /// the component's current reflected JSON as `before` (nullopt if absent).
+    /// Call once per edit site *before* the write. A second call for an
+    /// already-open gesture only refreshes its liveness (keeps the original
+    /// `before`). No-op while applying. @p selection is restored with the commit.
+    void RecordBefore(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, std::string label,
+                      Assisi::ECS::Entity selection);
+
+    /// @brief Immediately closes the gesture for (entity, id): serializes `after`
+    /// and pushes a transaction unless before == after. For instant edits (asset
+    /// pick, eyedropper, add/remove component) that complete within one call.
+    /// No-op if no gesture is open for the key, or while applying.
+    void CommitGesture(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id);
+
+    /// @brief End-of-frame sweep for drag/type gestures. Commits any open gesture
+    /// whose widget is no longer being manipulated (or whose component block is no
+    /// longer drawn), drops no-ops, and abandons gestures whose entity has died.
+    /// @p editingActive is true while an edit widget (inspector drag/type or the
+    /// gizmo) is still being held this frame — such gestures stay open.
+    void EndFrameSweep(bool editingActive);
+
     [[nodiscard]] bool CanUndo() const { return !_undo.empty(); }
     [[nodiscard]] bool CanRedo() const { return !_redo.empty(); }
 
@@ -163,6 +193,31 @@ class EditHistory
         Redo
     };
 
+    /// @brief One in-progress capture gesture — a component whose `before` has
+    /// been snapshotted and whose commit is pending (a drag in progress, or an
+    /// instant edit about to be committed this frame).
+    struct OpenGesture
+    {
+        Assisi::ECS::Entity                entity;
+        Assisi::Core::Reflect::ComponentId id;
+        std::string                        label;
+        std::optional<nlohmann::json>      before;
+        Assisi::ECS::Entity                selection;
+        bool                               touchedThisFrame = true;
+    };
+
+    OpenGesture *FindOpen(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id);
+
+    /// @brief Serialize a live component to JSON under a raw-entity scope (so
+    /// EntityRef fields capture as raw handles), or nullopt if the component is
+    /// absent. Shared by capture snapshotting.
+    std::optional<nlohmann::json> SerializeComponent(Assisi::ECS::Entity entity,
+                                                     Assisi::Core::Reflect::ComponentId id) const;
+
+    /// @brief Turn a resolved gesture into a transaction if before != after.
+    /// Returns true if a transaction was pushed.
+    bool CommitOpenGesture(const OpenGesture &gesture);
+
     void ApplyTransaction(const Transaction &txn, Direction dir);
 
     /// @brief Brings component `id` on `entity` to `target`: nullopt removes it,
@@ -175,6 +230,7 @@ class EditHistory
     RebindHook               _rebind;
     std::vector<Transaction> _undo;
     std::vector<Transaction> _redo;
+    std::vector<OpenGesture> _open; ///< Capture gestures awaiting commit (§5).
     bool                     _applying = false;
 };
 

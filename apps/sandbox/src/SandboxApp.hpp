@@ -31,6 +31,8 @@
 #include <Assisi/Render/Texture.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
+#include "EditHistory.hpp"
+
 #include <nvrhi/nvrhi.h>
 
 #include <array>
@@ -153,6 +155,25 @@ class SandboxApp : public Assisi::App::Application
 
     /// @brief Writes an eyedropper-picked entity into the armed EntityRef field.
     void ApplyEyedropperPick(Assisi::ECS::Entity picked);
+
+    // --- Undo/redo (editor-only; see EditHistory.hpp + docs/editor-undo-redo-design-notes.md) ---
+    /// @brief Ctrl-Z / Ctrl-Y / Ctrl-Shift-Z, handled at the top of OnUpdate (a
+    /// safe point: after the prior frame's FlushDestroyed, before systems run).
+    /// Gated on the editor being idle-typed-into and a history being active.
+    void HandleUndoRedoHotkeys();
+    /// @brief The EditHistory rebind hook: rebuilds the transient state that
+    /// serialization excludes after a component is restored/removed by an apply —
+    /// physics body (RigidBodyDescriptor), body pose (Transform), resolved asset
+    /// pointers (MeshRenderer). Routed through the same helpers the live edits use.
+    void ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present);
+    /// @brief Builds the rebind hook bound to this app (shared by both histories).
+    Sandbox::EditHistory::RebindHook MakeEditRebindHook();
+    /// @brief The history that captures and applies edits *right now*, or nullptr
+    /// when editing must not be captured. Editing -> the persistent main history;
+    /// Paused -> a scratch history discarded when play resumes or stops; Playing ->
+    /// nullptr (the simulation owns the scene, edits are neither captured nor
+    /// undoable). This is the single switch every capture/undo site routes through.
+    [[nodiscard]] Sandbox::EditHistory *ActiveHistory();
 
     // --- Level management ---
     void ScanLevels();
@@ -313,6 +334,22 @@ class SandboxApp : public Assisi::App::Application
     GizmoOp _gizmoOp        = GizmoOp::Translate;
     bool    _gizmoLocalSpace = false; // false = world axes
 
+    // --- Undo/redo (editor-only) ---
+    // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-
+    // write) and applies undo/redo in the Editing state. See EditHistory.hpp.
+    // std::optional because it binds a Scene& not available until the Main scene is
+    // created; it persists across play sessions (Stop restores exact identity so its
+    // entity handles stay valid — see StopPlay).
+    std::optional<Sandbox::EditHistory> _history;
+    // A throwaway history active only while Paused: edits made during a pause are
+    // undoable there, but the whole container is discarded when play resumes or
+    // stops, so paused undo never leaks into the persistent editing history.
+    std::optional<Sandbox::EditHistory> _pausedHistory;
+    // Accumulated across a frame's ImGui panels: true if an edit widget (inspector
+    // drag/type, or the gizmo) is still being manipulated. The end-of-OnImGui sweep
+    // reads it to decide whether an open capture gesture has ended. Reset each frame.
+    bool _captureEditingActive = false;
+
     // Per-component delete confirmation: the inspector's X button arms a two-step
     // confirm for one component at a time. Scoped to an entity so switching
     // selection cancels a pending confirm rather than deleting from the new one.
@@ -335,8 +372,21 @@ class SandboxApp : public Assisi::App::Application
         Playing,
         Paused
     };
-    PlayState   _playState = PlayState::Editing;
-    std::string _playSnapshot; ///< Scene JSON captured at Run; restored on Stop.
+    PlayState _playState = PlayState::Editing;
+
+    // One entity's exact-identity snapshot for the play/stop restore. Unlike a
+    // Save() (which renumbers entities to dense serial indices), this keeps the
+    // exact (index, generation) handle so Stop can restore entities *in place* via
+    // Scene::ReviveAt — which is what lets the editing undo history survive a play
+    // session: its stored handles still resolve after Stop. Components are the
+    // reflected JSON of each serializable component, captured under a raw-entity
+    // context (EntityRef fields as raw handles), same as the undo capture path.
+    struct PlayEntitySnapshot
+    {
+        Assisi::ECS::Entity                     handle;
+        std::vector<Sandbox::ComponentSnapshot> components;
+    };
+    std::vector<PlayEntitySnapshot> _playSnapshot; ///< Captured at Run; restored on Stop.
 
     // Camera focus animation (entity-list double-click). A fixed-duration eased
     // move that reframes the camera on an object; while active it owns the camera

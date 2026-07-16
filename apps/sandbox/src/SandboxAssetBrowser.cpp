@@ -179,6 +179,13 @@ void SandboxApp::SelectAsset(std::string_view vpath)
             _assetBrowserMeta->getByEntity(_scene, _assetBrowserEntity.index, _assetBrowserEntity.generation);
         if (ptr != nullptr)
         {
+            // One-frame capture around this raw-offset asset write (another
+            // off-inspector edit site the inspector's record-before-write misses).
+            Sandbox::EditHistory *history = ActiveHistory();
+            if (history != nullptr)
+                history->RecordBefore(_assetBrowserEntity, _assetBrowserMeta->id, "Assign asset",
+                                      _assetBrowserEntity);
+
             char *fieldPtr = const_cast<char *>(static_cast<const char *>(ptr)) + _assetBrowserFieldOffset;
             // The browser picks a file path; the stored reference is a GUID, so
             // translate through the database (nil if the path has no sidecar).
@@ -198,6 +205,9 @@ void SandboxApp::SelectAsset(std::string_view vpath)
                 overrides[slot] = id;
             }
             ReresolveEntityAssets(_assetBrowserEntity);
+
+            if (history != nullptr)
+                history->CommitGesture(_assetBrowserEntity, _assetBrowserMeta->id);
         }
     }
     _assetBrowserOpen = false;

@@ -4,10 +4,15 @@
 #include "SandboxImGui.hpp"
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/ComponentMeta.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
+
+#include <utility>
+#include <vector>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -69,11 +74,32 @@ void SandboxApp::StartPlay()
     {
         return;
     }
+
     // Snapshot the whole scene so Stop can restore it exactly, discarding whatever
-    // play mode changes (physics settling, spawns, etc.).
-    _playSnapshot = Assisi::Runtime::SceneSerializer::Save(*_scene).dump();
-    _playState    = PlayState::Playing;
-    Assisi::Core::Log::Info("Play: started (scene snapshotted).");
+    // play mode changes (physics settling, spawns, etc.). Unlike a Save()/Load()
+    // round-trip, this records each entity's *exact* (index, generation) handle and
+    // component JSON, so Stop can revive entities in place (Scene::ReviveAt) rather
+    // than renumbering them — which is what keeps the editing undo history's stored
+    // handles valid across the play session (edit -> play -> stop -> undo works).
+    _playSnapshot.clear();
+    {
+        Assisi::Runtime::SceneSerializer::ScopedRawEntityContext rawContext(*_scene);
+        const auto &registry = Assisi::Core::Reflect::ComponentRegistry::Instance();
+        _scene->ForEachEntity(
+            [&](Assisi::ECS::Entity entity)
+            {
+                std::vector<Sandbox::ComponentSnapshot> components;
+                for (const auto *meta : registry.SerializableComponents())
+                {
+                    if (const void *comp = meta->getByEntity(_scene, entity.index, entity.generation))
+                        components.push_back({meta->id, meta->serialize(comp)});
+                }
+                _playSnapshot.push_back({entity, std::move(components)});
+            });
+    }
+
+    _playState = PlayState::Playing;
+    Assisi::Core::Log::Info("Play: started (scene snapshotted, {} entities).", _playSnapshot.size());
 }
 
 void SandboxApp::ResumePlay()
@@ -82,6 +108,10 @@ void SandboxApp::ResumePlay()
     {
         return;
     }
+    // Leaving Paused: the scratch pause-history is discarded (its edits stay in the
+    // scene and the simulation carries on, but they were never part of the editing
+    // history and their undo does not persist).
+    _pausedHistory.reset();
     _playState = PlayState::Playing;
 }
 
@@ -91,6 +121,10 @@ void SandboxApp::PausePlay()
     {
         return;
     }
+    // Entering Paused: open a fresh scratch history so edits made while paused are
+    // undoable *within the pause*, without ever touching the persistent editing
+    // history. Bound to the same scene + rebind hook as the main one.
+    _pausedHistory.emplace(*_scene, MakeEditRebindHook());
     _playState = PlayState::Paused;
 }
 
@@ -101,30 +135,53 @@ void SandboxApp::StopPlay()
         return;
     }
 
-    // Restore the pre-play snapshot. Load() clears the scene and rebuilds fresh
-    // entities, so the transient GPU pointers and physics bodies are gone and get
-    // rebuilt from the durable components — same as a level load, minus the
-    // asset-cache clear: the asset set never changed, so the cached meshes,
-    // materials, and their binding sets are all still valid.
+    // Discard the scratch pause-history first (whatever the pause let you undo dies
+    // with the pause). The editing history is deliberately NOT cleared — the restore
+    // below rebuilds entities at their exact pre-play handles, so its stored handles
+    // stay valid and the pre-play edits remain undoable.
+    _pausedHistory.reset();
+
     if (!_playSnapshot.empty())
     {
-        const nlohmann::json snapshot =
-            nlohmann::json::parse(_playSnapshot, nullptr, /*allow_exceptions=*/false);
-        if (snapshot.is_discarded())
+        // Tear down the current (play-state) scene, then rebuild the snapshot at
+        // EXACT identity. Destroy+flush (not Scene::Clear) keeps the registry's slot
+        // table intact so ReviveAt can restore each entity's original handle; the
+        // physics world is wiped and rebuilt wholesale by RebindSceneAssetsAndPhysics,
+        // so the play-state Jolt bodies need no per-entity teardown here.
+        std::vector<Assisi::ECS::Entity> live;
+        _scene->ForEachEntity([&](Assisi::ECS::Entity entity) { live.push_back(entity); });
+        for (const Assisi::ECS::Entity entity : live)
+            _scene->Destroy(entity);
+        _scene->FlushDestroyed();
+
         {
-            Assisi::Core::Log::Error("Play: stop could not parse the scene snapshot; scene left as-is.");
+            Assisi::Runtime::SceneSerializer::ScopedRawEntityContext rawContext(*_scene);
+            const auto &registry = Assisi::Core::Reflect::ComponentRegistry::Instance();
+
+            // Phase 1: revive every entity at its exact handle before any component
+            // is added, so EntityRef fields (Parent) resolve against live targets.
+            for (const PlayEntitySnapshot &snap : _playSnapshot)
+                _scene->ReviveAt(snap.handle);
+
+            // Phase 2: restore each entity's components from the captured JSON.
+            for (const PlayEntitySnapshot &snap : _playSnapshot)
+            {
+                for (const Sandbox::ComponentSnapshot &comp : snap.components)
+                {
+                    if (const auto *meta = registry.ById(comp.id); meta != nullptr && meta->addToScene)
+                        meta->addToScene(_scene, snap.handle.index, snap.handle.generation, comp.data);
+                }
+            }
         }
-        else
-        {
-            Assisi::Runtime::SceneSerializer::Load(*_scene, snapshot);
-            _selectedEntity = Assisi::ECS::NullEntity;
-            RebindSceneAssetsAndPhysics();
-        }
+
+        _selectedEntity = Assisi::ECS::NullEntity;
+        RebindSceneAssetsAndPhysics();
     }
 
     _playState = PlayState::Editing;
     _playSnapshot.clear();
-    Assisi::Core::Log::Info("Play: stopped (scene restored).");
+
+    Assisi::Core::Log::Info("Play: stopped (scene restored at exact identity).");
 }
 
 // ---------------------------------------------------------------------------

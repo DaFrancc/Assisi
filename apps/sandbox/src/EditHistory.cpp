@@ -111,6 +111,7 @@ void EditHistory::Clear()
 {
     _undo.clear();
     _redo.clear();
+    _open.clear(); // any in-flight gesture references entity handles about to dangle
 }
 
 const std::string &EditHistory::NextUndoLabel() const
@@ -121,6 +122,110 @@ const std::string &EditHistory::NextUndoLabel() const
 const std::string &EditHistory::NextRedoLabel() const
 {
     return _redo.empty() ? kEmptyLabel : _redo.back().label;
+}
+
+// ---------------------------------------------------------------------------
+// Capture (record-before-write, design doc §5)
+// ---------------------------------------------------------------------------
+
+std::optional<nlohmann::json> EditHistory::SerializeComponent(Entity entity, Reflect::ComponentId id) const
+{
+    const Reflect::ComponentMeta *meta = Reflect::ComponentRegistry::Instance().ById(id);
+    if (!meta || !meta->serializable || !meta->getByEntity || !meta->serialize)
+        return std::nullopt;
+    const void *comp = meta->getByEntity(&_scene, entity.index, entity.generation);
+    if (comp == nullptr)
+        return std::nullopt; // component absent — a valid capture state (add/remove)
+
+    // Raw handles for EntityRef fields, matching the apply-time restore context.
+    Rt::SceneSerializer::ScopedRawEntityContext rawContext(_scene);
+    return meta->serialize(comp);
+}
+
+EditHistory::OpenGesture *EditHistory::FindOpen(Entity entity, Reflect::ComponentId id)
+{
+    for (OpenGesture &gesture : _open)
+        if (gesture.id == id && gesture.entity == entity)
+            return &gesture;
+    return nullptr;
+}
+
+void EditHistory::RecordBefore(Entity entity, Reflect::ComponentId id, std::string label, Entity selection)
+{
+    if (_applying)
+        return; // an apply's writes are not themselves edits to capture
+
+    if (OpenGesture *existing = FindOpen(entity, id))
+    {
+        existing->touchedThisFrame = true; // keep the original `before`; just refresh liveness
+        return;
+    }
+    _open.push_back(OpenGesture{.entity           = entity,
+                                .id               = id,
+                                .label            = std::move(label),
+                                .before           = SerializeComponent(entity, id),
+                                .selection        = selection,
+                                .touchedThisFrame = true});
+}
+
+bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
+{
+    const std::optional<nlohmann::json> after = SerializeComponent(gesture.entity, gesture.id);
+    if (gesture.before == after)
+        return false; // no net change — drops click-without-drag and Escape-revert
+
+    Transaction txn;
+    txn.label           = gesture.label;
+    txn.selectionBefore = gesture.selection;
+    txn.selectionAfter  = gesture.selection;
+    txn.cmds.push_back(ComponentDelta{gesture.entity, gesture.id, gesture.before, after});
+    Push(std::move(txn));
+    return true;
+}
+
+void EditHistory::CommitGesture(Entity entity, Reflect::ComponentId id)
+{
+    if (_applying)
+        return;
+    OpenGesture *gesture = FindOpen(entity, id);
+    if (gesture == nullptr)
+        return;
+    CommitOpenGesture(*gesture);
+    // Erase by key (CommitOpenGesture may have pushed, but never mutates _open).
+    std::erase_if(_open, [&](const OpenGesture &g) { return g.id == id && g.entity == entity; });
+}
+
+void EditHistory::EndFrameSweep(bool editingActive)
+{
+    if (_applying)
+        return;
+
+    for (auto it = _open.begin(); it != _open.end();)
+    {
+        OpenGesture &gesture = *it;
+
+        // The entity died mid-gesture (a delete elsewhere): nothing coherent to
+        // commit against — abandon.
+        if (!_scene.IsAlive(gesture.entity))
+        {
+            it = _open.erase(it);
+            continue;
+        }
+
+        // Still being manipulated this frame (a drag/type in progress, or the gizmo
+        // held) and its block was drawn — leave it open to coalesce.
+        if (editingActive && gesture.touchedThisFrame)
+        {
+            gesture.touchedThisFrame = false; // reset for next frame's RecordBefore
+            ++it;
+            continue;
+        }
+
+        // The gesture ended — either the widget released (!editingActive) or its
+        // block is no longer drawn (!touched). Commit if it changed, else drop.
+        CommitOpenGesture(gesture);
+        it = _open.erase(it);
+    }
 }
 
 // ---------------------------------------------------------------------------

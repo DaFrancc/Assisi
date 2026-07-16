@@ -144,6 +144,13 @@ bool SandboxApp::LoadLevelFromPath(const std::string &virtualPath)
     _playSnapshot.clear();
     _selectedEntity = Assisi::ECS::NullEntity;
 
+    // A fresh scene rebuilds entity identity densely from {0,0}: every handle the
+    // undo stacks hold now dangles (and could alias a different entity), so wipe
+    // the history. (Load's Scene::Clear already reset the registry.)
+    if (_history)
+        _history->Clear();
+    _pausedHistory.reset(); // a load ends any play session, scratch history included
+
     // New asset set: drop the old cache and evict the mesh pass's binding sets
     // (they key on raw texture pointers we're about to free) before re-resolving.
     _assetCache.Clear();

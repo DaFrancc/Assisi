@@ -55,9 +55,18 @@ void SandboxApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
     if (!ptr)
         return;
 
+    // One-frame capture around this raw-offset EntityRef write (an off-inspector
+    // edit site that would otherwise slip past the inspector's record-before-write).
+    Sandbox::EditHistory *history = ActiveHistory();
+    if (history != nullptr)
+        history->RecordBefore(_eyedropperEntity, _eyedropperMeta->id, "Assign reference", _eyedropperEntity);
+
     auto *field = reinterpret_cast<Assisi::ECS::Entity *>(
         const_cast<char *>(static_cast<const char *>(ptr)) + _eyedropperFieldOffset);
     *field = picked;
+
+    if (history != nullptr)
+        history->CommitGesture(_eyedropperEntity, _eyedropperMeta->id);
 }
 
 // ---------------------------------------------------------------------------

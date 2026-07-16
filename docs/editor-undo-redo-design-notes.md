@@ -250,13 +250,23 @@ save/load); undo payloads use raw handles (correct only because of `ReviveAt`).
    assert; a revived entity still in `_pendingDestroy` gets re-killed by the flush.
    Fix: apply at top of `OnUpdate` (§6); `Scene::ReviveAt` also erases the handle
    from `_pendingDestroy`.
-4. **Play mode / level load wipe identity** — `StopPlay`/`LoadLevel`/`Scene::Clear`
-   rebuild entities densely from `{0,0}`; stored handles dangle *and can alias* a
-   different entity at the same slot (corruption, no assert). **Clear both stacks**
-   on level load, `StopPlay`, and `Scene::Clear`; **capture/apply only in
-   `PlayState::Editing`**. (Preserving edit-mode undo across play — as Unity does —
-   is a future option: route Stop's restore through `ReviveAt`-exact
-   deserialization instead of `Clear`+`Create`. Leave the door open; don't build.)
+4. **Play mode / level load wipe identity** — a naive `Save`/`Load` restore
+   rebuilds entities densely from `{0,0}`; stored handles dangle *and can alias* a
+   different entity at the same slot (corruption, no assert). **Level load** still
+   clears the history (a genuinely new scene). **Play**, however, keeps a richer
+   contract (implemented Stage 2, refining the original "clear on Stop"):
+   - **Editing** — the persistent main history is active.
+   - **Playing** — no history active; capture/apply frozen (physics owns Transforms).
+   - **Paused** — a *separate scratch history* is active; edits made while paused are
+     undoable there, but the whole container is discarded when play resumes or
+     stops (paused undo never leaks into the editing history).
+   - **The editing history survives a play session.** `StartPlay` snapshots each
+     entity's *exact* `(index, generation)` + component JSON (raw-entity context);
+     `StopPlay` tears the scene down (Destroy+flush, **not** `Scene::Clear`, so the
+     slot table survives) and rebuilds it via `ReviveAt` at those exact handles.
+     Because identity is preserved, the pre-play history's stored handles stay
+     valid: **edit → play → stop → undo works.** This is the §8.4/§11 "route Stop
+     through `ReviveAt`-exact restore" item — now built, not deferred.
 5. **Capture-before-write** — §5; post-hoc capture reads already-modified memory.
 6. **Commit triggers per widget** — §5; drags vs combos/checkboxes differ; drop
    `before == after`.
@@ -302,12 +312,17 @@ Each stage builds + runs; the editor stays usable throughout.
   container + `EditCommand` variant + apply engine (reverse/forward, two-phase,
   rebind table, `_applying` guard) with a couple of hand-built transactions
   exercised in a unit-ish test.
-- **Stage 2 — capture wiring.** Record-before-write at all edit sites: inspector
-  (pre-draw snapshot per visible component + end-of-frame commit sweep), gizmo,
-  eyedropper, `SelectAsset`, rename, add/remove component. Commit-trigger table,
-  no-op drop, gesture abandon on selection change. Hotkeys (Ctrl-Z / Ctrl-Y /
-  Ctrl-Shift-Z, gated on `!WantTextInput`), applied at top of `OnUpdate`.
-  History cleared on level load / Stop / Clear. Debug divergence checker.
+- **Stage 2 — capture wiring. DONE (2026-07-16).** Record-before-write at all edit
+  sites: inspector (pre-draw snapshot per visible component + end-of-frame commit
+  sweep), gizmo, eyedropper, `SelectAsset`, rename, add/remove component. Coarse
+  commit trigger (an inspector-scoped "any widget active" / gizmo `IsUsing` signal
+  keeps a gesture open; it commits on release), no-op `before == after` drop.
+  Hotkeys (Ctrl-Z / Ctrl-Y / Ctrl-Shift-Z, gated on `!WantTextInput`), applied at
+  top of `OnUpdate`. Play-state contract per §8.4 (main history in Editing, scratch
+  history in Paused discarded on resume/stop, none while Playing; editing history
+  survives play via exact-identity Stop restore). History cleared on level load.
+  *Remaining polish:* the debug divergence checker (Save-hash tripwire for a missed
+  edit site) — deferred to keep this stage focused; low-risk follow-up.
 - **Stage 3 — entity lifetime + polish.** Entity delete (subtree capture) + create,
   through `EntityDelta` + `ReviveAt`. Edit menu / History panel showing transaction
   labels (also the best debugging tool). Depth cap. Modified-`*` marker tied to the
@@ -315,7 +330,9 @@ Each stage builds + runs; the editor stays usable throughout.
 
 ## 11. Deferred / open
 
-- Edit-mode undo surviving Play (§8.4) — later, via `ReviveAt`-exact Stop restore.
+- ~~Edit-mode undo surviving Play (§8.4)~~ — **built in Stage 2** via exact-identity
+  (`ReviveAt`) Stop restore + a scratch pause history.
+- Debug divergence checker (§8.15) — the one Stage 2 item not yet built.
 - Transaction merge policy for consecutive same-`(entity, component, label)` edits
   in a short window (Unity's `CollapseUndoOperations`) — escape hatch if
   per-deactivation commits make text editing a per-keystroke Ctrl-Z crawl.

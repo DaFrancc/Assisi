@@ -333,6 +333,203 @@ TEST_CASE("EditHistory: the rebind hook fires during apply and only during apply
     CHECK_FALSE(sawApplyingFalse);           // every call happened while applying
 }
 
+// ---------------------------------------------------------------------------
+// Capture layer (record-before-write)
+// ---------------------------------------------------------------------------
+
+TEST_CASE("EditHistory: a captured drag commits on gesture end")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    const auto tid = IdOf("Transform");
+
+    EditHistory hist(scene);
+
+    // Frame 1: open the gesture (before = pos 1), then the "widget" writes pos 2.
+    hist.RecordBefore(e, tid, "Move", e);
+    scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
+    hist.EndFrameSweep(/*editingActive=*/true); // still dragging — no commit yet
+    CHECK_FALSE(hist.CanUndo());
+
+    // Frame 2: still holding, value moves again to 3.
+    hist.RecordBefore(e, tid, "Move", e); // idempotent — keeps before = pos 1
+    scene.GetMut<Transform>(e)->position = {3.f, 0.f, 0.f};
+    hist.EndFrameSweep(/*editingActive=*/true);
+    CHECK_FALSE(hist.CanUndo());
+
+    // Frame 3: released. One transaction spanning the whole drag (pos 1 -> 3).
+    hist.EndFrameSweep(/*editingActive=*/false);
+    REQUIRE(hist.CanUndo());
+
+    hist.Undo();
+    CHECK(scene.Get<Transform>(e)->position.x == doctest::Approx(1.f));
+    hist.Redo();
+    CHECK(scene.Get<Transform>(e)->position.x == doctest::Approx(3.f));
+}
+
+TEST_CASE("EditHistory: a no-op gesture (click without change) commits nothing")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    const auto tid = IdOf("Transform");
+
+    EditHistory hist(scene);
+    hist.RecordBefore(e, tid, "Move", e);
+    // no write happened
+    hist.EndFrameSweep(/*editingActive=*/false);
+    CHECK_FALSE(hist.CanUndo());
+}
+
+TEST_CASE("EditHistory: CommitGesture closes an instant edit immediately")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{}) != nullptr);
+    const auto cid = IdOf("Camera");
+
+    EditHistory hist(scene);
+    hist.RecordBefore(e, cid, "Add Camera", e); // before = absent
+    REQUIRE(scene.Add(e, Camera{.fovDegrees = 55.f}) != nullptr);
+    hist.CommitGesture(e, cid);
+
+    REQUIRE(hist.CanUndo());
+    hist.Undo();
+    CHECK_FALSE(scene.Has<Camera>(e));
+}
+
+TEST_CASE("EditHistory: a gesture whose entity dies is abandoned, not committed")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{}) != nullptr);
+    const auto tid = IdOf("Transform");
+
+    EditHistory hist(scene);
+    hist.RecordBefore(e, tid, "Move", e);
+    scene.GetMut<Transform>(e)->position = {5.f, 0.f, 0.f};
+
+    scene.Destroy(e);
+    scene.FlushDestroyed();
+
+    hist.EndFrameSweep(/*editingActive=*/false); // entity gone — must not throw or commit
+    CHECK_FALSE(hist.CanUndo());
+}
+
+TEST_CASE("EditHistory: capture is suppressed while applying")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    const auto tid = IdOf("Transform");
+
+    // A rebind hook that tries to record during apply must be ignored (RecordBefore
+    // no-ops while _applying), so an undo can't spawn a spurious transaction.
+    EditHistory hist(scene);
+    // Seed one real transaction to undo.
+    const auto before = CaptureComponent(scene, e, tid);
+    scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
+    const auto after = CaptureComponent(scene, e, tid);
+    Transaction txn;
+    txn.cmds.push_back(ComponentDelta{e, tid, before, after});
+    hist.Push(std::move(txn));
+
+    hist.Undo();
+    // A record attempted mid-apply would have left an open gesture; a following
+    // sweep would then commit it. Prove nothing is pending.
+    hist.RecordBefore(e, tid, "Move", e); // this one is outside apply, legitimately opens
+    hist.EndFrameSweep(false);            // no write -> no-op drop
+    CHECK(hist.RedoDepth() == 1);         // only the seeded transaction, nothing extra
+    CHECK(hist.UndoDepth() == 0);
+}
+
+// ---------------------------------------------------------------------------
+// The editing history survives an exact-identity play/stop cycle.
+//
+// StopPlay restores the scene by reviving entities at their *exact* prior handles
+// (Scene::ReviveAt) rather than renumbering them via Save/Load — which is what
+// keeps a pre-play editing history's stored handles valid. This test mimics that
+// snapshot/restore and proves an undo recorded before "play" still applies after
+// "stop". (The real StartPlay/StopPlay live in SandboxPlay.cpp; the mechanism is
+// what's exercised here.)
+// ---------------------------------------------------------------------------
+
+namespace
+{
+struct EntitySnap
+{
+    Entity                         handle;
+    std::vector<ComponentSnapshot> components;
+};
+
+std::vector<EntitySnap> SnapshotScene(Scene &scene)
+{
+    std::vector<EntitySnap> out;
+    scene.ForEachEntity([&](Entity e) { out.push_back({e, SnapshotEntity(scene, e)}); });
+    return out;
+}
+
+// Mimics StopPlay: destroy every live entity (keeping the registry table intact),
+// then revive each snapshot entity at its exact handle and restore its components.
+void RestoreSceneExact(Scene &scene, const std::vector<EntitySnap> &snapshot)
+{
+    std::vector<Entity> live;
+    scene.ForEachEntity([&](Entity e) { live.push_back(e); });
+    for (Entity e : live)
+        scene.Destroy(e);
+    scene.FlushDestroyed();
+
+    SceneSerializer::ScopedRawEntityContext raw(scene);
+    const auto                             &registry = Core::Reflect::ComponentRegistry::Instance();
+    for (const EntitySnap &snap : snapshot)
+        scene.ReviveAt(snap.handle);
+    for (const EntitySnap &snap : snapshot)
+        for (const ComponentSnapshot &comp : snap.components)
+            if (const auto *meta = registry.ById(comp.id); meta && meta->addToScene)
+                meta->addToScene(&scene, snap.handle.index, snap.handle.generation, comp.data);
+}
+} // namespace
+
+TEST_CASE("EditHistory: an editing undo survives a play (snapshot -> restore) cycle")
+{
+    Scene        scene;
+    const Entity a = scene.Create();
+    const Entity b = scene.Create(); // a second entity so identity isn't trivially {0,0}
+    REQUIRE(scene.Add(a, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(b, Transform{}) != nullptr);
+
+    const auto tid = IdOf("Transform");
+
+    // --- Editing: record a change to a.position (1 -> 5). ---
+    EditHistory hist(scene);
+    const auto  before = CaptureComponent(scene, a, tid);
+    scene.GetMut<Transform>(a)->position = {5.f, 0.f, 0.f};
+    const auto after = CaptureComponent(scene, a, tid);
+    Transaction txn;
+    txn.selectionBefore = a;
+    txn.selectionAfter  = a;
+    txn.cmds.push_back(ComponentDelta{a, tid, before, after});
+    hist.Push(std::move(txn));
+
+    // --- Play: snapshot, then let "physics" scramble the transforms. ---
+    const std::vector<EntitySnap> snapshot = SnapshotScene(scene);
+    scene.GetMut<Transform>(a)->position = {99.f, 99.f, 99.f};
+    scene.GetMut<Transform>(b)->position = {42.f, 0.f, 0.f};
+
+    // --- Stop: exact-identity restore. a comes back at pos 5 (its pre-play edit). ---
+    RestoreSceneExact(scene, snapshot);
+    REQUIRE(scene.IsAlive(a));
+    CHECK(scene.EntityAt(a.index) == a); // exact handle preserved
+    CHECK(scene.Get<Transform>(a)->position.x == doctest::Approx(5.f));
+
+    // --- The pre-play undo still resolves against the restored handle. ---
+    const auto sel = hist.Undo();
+    REQUIRE(sel.has_value());
+    CHECK(*sel == a);
+    CHECK(scene.Get<Transform>(a)->position.x == doctest::Approx(1.f)); // reverted to pre-edit
+}
+
 TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 {
     Scene       scene;

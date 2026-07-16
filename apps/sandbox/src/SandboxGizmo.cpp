@@ -121,8 +121,26 @@ void SandboxApp::DrawTransformGizmo()
                                                             : kScaleSnap;
     const glm::vec3 snap(snapValue);
 
-    if (ImGuizmo::Manipulate(&view[0][0], &proj[0][0], operation, mode, &world[0][0], nullptr,
-                             io.KeyCtrl ? &snap[0] : nullptr))
+    // Record-before-write: while the gizmo is NOT being dragged, keep snapshotting
+    // the selected Transform's pre-drag pose. When a drag begins the snapshot is
+    // frozen (RecordBefore is idempotent) and stops updating; the end-of-frame sweep
+    // commits one transaction spanning the whole drag once it releases.
+    if (Sandbox::EditHistory *history = ActiveHistory(); history != nullptr && !ImGuizmo::IsUsing())
+    {
+        const char *label = _gizmoOp == GizmoOp::Rotate ? "Rotate" : _gizmoOp == GizmoOp::Scale ? "Scale" : "Move";
+        history->RecordBefore(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>(), label,
+                              _selectedEntity);
+    }
+
+    const bool manipulated = ImGuizmo::Manipulate(&view[0][0], &proj[0][0], operation, mode, &world[0][0],
+                                                  nullptr, io.KeyCtrl ? &snap[0] : nullptr);
+
+    // A held gizmo keeps its capture gesture open until release (mirrors the
+    // inspector's active-widget signal).
+    if (ImGuizmo::IsUsing())
+        _captureEditingActive = true;
+
+    if (manipulated)
     {
         const glm::mat4 local = glm::inverse(parentWorld) * world;
 

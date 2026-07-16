@@ -602,6 +602,13 @@ void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMe
         return;
     }
 
+    // Capture as one transaction: record the absent-before state, then commit after
+    // the add *and* its side effects below (camera-facing placement, physics body),
+    // so undo restores exactly what the author sees.
+    Sandbox::EditHistory *history = ActiveHistory();
+    if (history != nullptr)
+        history->RecordBefore(_selectedEntity, meta.id, "Add " + meta.name, _selectedEntity);
+
     // Default-construct it: an empty JSON object leaves every field at its default
     // via the per-field if-contains deserialization — the same path the level
     // loader uses, so no component needs a bespoke "make default" hook.
@@ -637,6 +644,9 @@ void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMe
             AddPhysicsBody(_selectedEntity, *tc, *desc);
         }
     }
+
+    if (history != nullptr)
+        history->CommitGesture(_selectedEntity, meta.id);
 }
 
 void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
@@ -645,6 +655,11 @@ void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compon
     {
         return;
     }
+
+    // Capture the present-before state so undo can restore the removed component.
+    Sandbox::EditHistory *history = ActiveHistory();
+    if (history != nullptr)
+        history->RecordBefore(_selectedEntity, meta.id, "Remove " + meta.name, _selectedEntity);
 
     // Tear down runtime state that lives outside the reflected fields before the
     // pool entry disappears. A RigidBodyDescriptor owns a Jolt body (via the
@@ -661,6 +676,9 @@ void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compon
     }
 
     _scene->RemoveById(_selectedEntity, meta.id);
+
+    if (history != nullptr)
+        history->CommitGesture(_selectedEntity, meta.id);
 }
 
 void SandboxApp::DrawInspector()
@@ -685,7 +703,16 @@ void SandboxApp::DrawInspector()
     // the entity showing its id in the list.
     {
         Assisi::Runtime::Name *nameComp = _scene->Get<Assisi::Runtime::Name>(_selectedEntity);
-        char                   nameBuf[Assisi::Core::kShortStringMax + 1] = {};
+
+        // Record-before-write for the rename: capture the Name state (present or
+        // absent) before the field can change it, so the first-keystroke *creation*
+        // of the Name component is captured as absent -> present.
+        if (Sandbox::EditHistory *history = ActiveHistory())
+            history->RecordBefore(_selectedEntity,
+                                  Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Name>(), "Rename",
+                                  _selectedEntity);
+
+        char nameBuf[Assisi::Core::kShortStringMax + 1] = {};
         if (nameComp != nullptr)
             nameComp->value.ToCStr(nameBuf, sizeof(nameBuf));
         ImGui::SetNextItemWidth(-1.f);
@@ -760,6 +787,12 @@ void SandboxApp::DrawInspector()
         ImGui::SameLine();
         if (ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
         {
+            // Record-before-write: snapshot this component's pre-edit JSON before its
+            // widgets (which write in-place). Idempotent across a drag; the sweep at
+            // end of frame commits or drops it. See EditHistory.hpp §5.
+            if (Sandbox::EditHistory *history = ActiveHistory())
+                history->RecordBefore(_selectedEntity, meta->id, meta->name, _selectedEntity);
+
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
             // Field edits write component memory by offset, bypassing Scene::GetMut's
             // change stamping, so report it explicitly. No-op for untracked
@@ -923,6 +956,14 @@ void SandboxApp::DrawInspector()
             }
         }
     }
+
+    // Feed the capture sweep: while an inspector widget is actively manipulated
+    // (a drag held, a text field focused), its edit gesture must stay open until
+    // release. Scoped to this window (root+children) so activity elsewhere — the
+    // AA combo, the Save-As field — doesn't hold a component gesture open. Same
+    // signal shape as HandlePhysicsEditing's _wasDragging, computed independently.
+    if (ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
+        _captureEditingActive = true;
 
     HandlePhysicsEditing(anyFieldEdited);
     ImGui::End();
