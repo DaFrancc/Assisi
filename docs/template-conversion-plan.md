@@ -87,5 +87,5 @@ template down.
 
 ## Related
 
-- Round-2 code review burndown: `docs/code-review-2026-07-round2.md` (this is the
+- Round-2 code review burndown: `docs/old/code-review-2026-07-round2.md` (this is the
   follow-on to the "GameApplication dead layer" and asset-resolution items).

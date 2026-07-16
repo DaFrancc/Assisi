@@ -2,7 +2,7 @@
 
 Captured 2026-07-14. **This is the authoritative design for the mesh → material →
 draw-submission pipeline.** It supersedes the "two orthogonal decisions" in
-`mesh-texture-material-design-notes.md` (both are resolved here) and defines the
+`old/mesh-texture-material-design-notes.md` (both are resolved here) and defines the
 foundation that the GPU-driven roadmap (`gpu-driven-rendering-design-notes.md`,
 stages 1–6) and the streaming roadmap (`asset-streaming-design-notes.md`) build
 on. Design reviewed by two independent adversarial review passes; their findings
@@ -567,6 +567,6 @@ Khronos model (slots + overrides in the editor), both unpacked via
 
 - `docs/gpu-driven-rendering-design-notes.md` — stages 1–6 = B–G here.
 - `docs/asset-streaming-design-notes.md` — builds on §8's contracts.
-- `docs/mesh-texture-material-design-notes.md` — superseded by this doc.
-- `docs/mesh-material-architecture-plan.md` — the working plan this doc was
+- `docs/old/mesh-texture-material-design-notes.md` — superseded by this doc.
+- `docs/old/mesh-material-architecture-plan.md` — the working plan this doc was
   written from (review findings and their disposition).
