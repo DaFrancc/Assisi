@@ -3,6 +3,9 @@ out/
 build/
 CMakeFiles/
 CMakeCache.txt
+
+# Local convenience symlinks to the built executables (see shortcuts/)
+shortcuts/
 cmake_install.cmake
 
 # Conan
