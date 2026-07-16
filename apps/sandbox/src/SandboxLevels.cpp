@@ -47,8 +47,15 @@ void SandboxApp::DrawLevelsWindow()
 
         const float halfW =
             (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        // Defer the actual load to the next OnUpdate — never load from OnImGui,
+        // which runs mid-frame after the scene draws that bind the asset cache's
+        // bindless table are already recorded (see _pendingLevelLoad / LoadLevel).
+        // Multiple clicks in one frame collapse to one load; the button is
+        // disabled while a load is pending so it reads as "loading".
+        ImGui::BeginDisabled(_pendingLevelLoad.has_value());
         if (ImGui::Button("Load", ImVec2(halfW, 0.0f)))
-            LoadLevel(_levelFiles[_selectedLevel]);
+            _pendingLevelLoad = _levelFiles[_selectedLevel];
+        ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Save", ImVec2(-1.0f, 0.0f)))
             SaveLevel(_levelFiles[_selectedLevel]);

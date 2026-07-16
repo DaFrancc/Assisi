@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : require
 
 layout(location = 0) in vec3  vWorldPos;
 layout(location = 1) in vec3  vNormal;
@@ -9,21 +10,21 @@ layout(location = 5) in float vTangentSign;
 
 layout(location = 0) out vec4 outColor;
 
-// ---- Material textures ------------------------------------------------
-// NVRHI's Vulkan backend keeps SRVs and samplers as separate descriptors
-// (HLSL t-register/s-register split), offset by VulkanBindingOffsets:
-// shaderResource at +0, sampler at +128. See MeshPass::Initialize.
-//
-// baseColor stays at slot 0 (unchanged); the remaining PBR channels sit at
-// slots 6-9, deliberately past the clustered light buffers at 1-5 (they
-// collapse into one bindless table later, so the gap is harmless). One shared
-// sampler serves every channel.
-layout(binding = 0) uniform texture2D uBaseColorTexture;
-layout(binding = 6) uniform texture2D uNormalTexture;
-layout(binding = 7) uniform texture2D uMetallicRoughnessTexture;
-layout(binding = 8) uniform texture2D uOcclusionTexture;
-layout(binding = 9) uniform texture2D uEmissiveTexture;
+// ---- Material textures (bindless) -------------------------------------
+// Every material texture lives in one bindless array in descriptor set 1; a
+// material's channels are slots in it, indexed via MaterialConstants below.
+// NVRHI keeps SRVs and samplers as separate descriptors (HLSL t/s split); the
+// one shared sampler stays in set 0 at +128. See MeshPass.
+layout(set = 1, binding = 0) uniform texture2D uTextures[];
 layout(binding = 128) uniform sampler uMaterialSampler;
+
+// Sample a bindless material texture by slot. nonuniformEXT is a no-op while the
+// index is per-draw-uniform (one material per draw) and becomes correct once
+// instanced batching makes it vary between fragments (stage E).
+vec4 sampleMaterialTex(uint slot, vec2 uv)
+{
+    return texture(sampler2D(uTextures[nonuniformEXT(slot)], uMaterialSampler), uv);
+}
 
 // ---- Per-material constants (mirrors Render::MaterialConstants, 64 bytes) ---
 // ConstantBuffer bindings are offset by +256; the per-frame block is slot 0
@@ -34,6 +35,8 @@ layout(binding = 257) uniform MaterialConstants
     vec4  emissiveFactorNormalScale; // xyz = emissive, w = normalScale
     vec4  metalRoughOcclusion;       // x = metallic, y = roughness, z = occlusion strength, w = pad
     uvec4 flags;                     // bit0 = has normal texture; rest reserved
+    uvec4 texIndices;                // bindless slots: x=baseColor y=normal z=metalRough w=occlusion
+    uvec4 texIndicesEmissive;        // x = emissive bindless slot
 } uMaterial;
 
 // ---- Per-frame camera + cluster-grid parameters ------------------------
@@ -112,20 +115,20 @@ Surface SampleMaterial()
 
     // baseColor is an sRGB texture, so the sampler already returns linear values
     // (filtered/mip-blended in linear space); multiply by the linear factor.
-    vec4 base = texture(sampler2D(uBaseColorTexture, uMaterialSampler), vTexCoord) * uMaterial.baseColorFactor;
+    vec4 base = sampleMaterialTex(uMaterial.texIndices.x, vTexCoord) * uMaterial.baseColorFactor;
     s.albedo = base.rgb;
 
     // glTF metallic-roughness packing: G = roughness, B = metallic. The texture
     // is linear data (empty channel = white = 1, leaving the factor untouched).
-    vec2 mr = texture(sampler2D(uMetallicRoughnessTexture, uMaterialSampler), vTexCoord).gb;
+    vec2 mr = sampleMaterialTex(uMaterial.texIndices.z, vTexCoord).gb;
     s.roughness = clamp(uMaterial.metalRoughOcclusion.y * mr.x, 0.04, 1.0);
     s.metallic  = clamp(uMaterial.metalRoughOcclusion.x * mr.y, 0.0, 1.0);
 
     // Occlusion: R channel, lerped by strength (strength 0 = ignore the map).
-    float ao = texture(sampler2D(uOcclusionTexture, uMaterialSampler), vTexCoord).r;
+    float ao = sampleMaterialTex(uMaterial.texIndices.w, vTexCoord).r;
     s.occlusion = 1.0 + uMaterial.metalRoughOcclusion.z * (ao - 1.0);
 
-    s.emissive = texture(sampler2D(uEmissiveTexture, uMaterialSampler), vTexCoord).rgb *
+    s.emissive = sampleMaterialTex(uMaterial.texIndicesEmissive.x, vTexCoord).rgb *
                  uMaterial.emissiveFactorNormalScale.xyz;
 
     vec3 N = normalize(vNormal);
@@ -135,7 +138,7 @@ Surface SampleMaterial()
         // then build the bitangent from the stored handedness.
         vec3 T = normalize(vTangent - dot(vTangent, N) * N);
         vec3 B = cross(N, T) * vTangentSign;
-        vec3 sampledNormal = texture(sampler2D(uNormalTexture, uMaterialSampler), vTexCoord).xyz * 2.0 - 1.0;
+        vec3 sampledNormal = sampleMaterialTex(uMaterial.texIndices.y, vTexCoord).xyz * 2.0 - 1.0;
         sampledNormal.xy *= uMaterial.emissiveFactorNormalScale.w; // normalScale
         s.normal = normalize(mat3(T, B, N) * sampledNormal);
     }

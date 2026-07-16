@@ -54,7 +54,17 @@ class Texture
     nvrhi::ITexture *NativeTexture() const { return _texture; }
     bool IsValid() const { return _texture != nullptr; }
 
+    /// @brief Sentinel for "not yet registered in a bindless descriptor table".
+    static constexpr uint32_t kInvalidBindlessIndex = UINT32_MAX;
+
+    /// @brief This texture's slot in the AssetCache's bindless descriptor table
+    /// (GPU-driven stage D). Assigned once by the cache at resolve time; shared
+    /// textures keep one slot. kInvalidBindlessIndex until registered.
+    uint32_t BindlessIndex() const { return _bindlessIndex; }
+    void SetBindlessIndex(uint32_t index) { _bindlessIndex = index; }
+
   private:
     nvrhi::TextureHandle _texture;
+    uint32_t             _bindlessIndex = kInvalidBindlessIndex;
 };
 } /* namespace Assisi::Render */

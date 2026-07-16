@@ -22,27 +22,31 @@
 namespace Assisi::Render
 {
 
-/// @brief Per-material constants (std140-friendly, 64 bytes). Mirrors the
-/// `MaterialConstants` uniform block in the mesh shader.
+/// @brief Per-material constants (std140-friendly, 96 bytes). Mirrors the
+/// `MaterialConstants` uniform block in the mesh shader. The texIndices words
+/// are each channel's slot in the bindless descriptor table (stage D).
 struct MaterialConstants
 {
     glm::vec4  baseColorFactor{1.f, 1.f, 1.f, 1.f};
     glm::vec4  emissiveFactorNormalScale{0.f, 0.f, 0.f, 1.f}; ///< xyz = emissive, w = normalScale.
     glm::vec4  metalRoughOcclusion{1.f, 1.f, 1.f, 0.f};       ///< x = metallic, y = roughness, z = occlusion, w = pad.
     glm::uvec4 flags{0u, 0u, 0u, 0u};                          ///< bit0 = has normal texture; rest reserved.
+    glm::uvec4 texIndices{0u, 0u, 0u, 0u};        ///< bindless slots: x=baseColor y=normal z=metalRough w=occlusion.
+    glm::uvec4 texIndicesEmissive{0u, 0u, 0u, 0u}; ///< x = emissive bindless slot; yzw reserved.
 };
-static_assert(sizeof(MaterialConstants) == 64, "MaterialConstants must stay 64 bytes (bindless table row).");
+static_assert(sizeof(MaterialConstants) == 96, "MaterialConstants must match the shader's uniform block.");
 
-/// @brief The five texture channels of a PBR material, already resolved to
-/// GPU textures (defaults substituted for empty channels).
+/// @brief The five texture channels of a PBR material, resolved to their slots
+/// in the bindless descriptor table (empty channels resolve to a default
+/// texture's slot, so every channel is a valid index).
 struct MaterialTextures
 {
-    nvrhi::ITexture *baseColor = nullptr;
-    nvrhi::ITexture *normal = nullptr;
-    nvrhi::ITexture *metallicRoughness = nullptr;
-    nvrhi::ITexture *occlusion = nullptr;
-    nvrhi::ITexture *emissive = nullptr;
-    bool             hasNormalTexture = false; ///< False when the normal channel is the flat default.
+    uint32_t baseColor = 0;
+    uint32_t normal = 0;
+    uint32_t metallicRoughness = 0;
+    uint32_t occlusion = 0;
+    uint32_t emissive = 0;
+    bool     hasNormalTexture = false; ///< False when the normal channel is the flat default.
 };
 
 class Material
@@ -58,11 +62,9 @@ class Material
 
     uint32_t Id() const { return _id; }
 
-    nvrhi::ITexture *BaseColor() const { return _textures.baseColor; }
-    nvrhi::ITexture *Normal() const { return _textures.normal; }
-    nvrhi::ITexture *MetallicRoughness() const { return _textures.metallicRoughness; }
-    nvrhi::ITexture *Occlusion() const { return _textures.occlusion; }
-    nvrhi::ITexture *Emissive() const { return _textures.emissive; }
+    /// @brief The material's per-channel bindless texture slots (indices into the
+    /// AssetCache descriptor table), as also packed into the constants buffer.
+    const MaterialTextures &Textures() const { return _textures; }
 
     nvrhi::IBuffer *Constants() const { return _constants; }
 

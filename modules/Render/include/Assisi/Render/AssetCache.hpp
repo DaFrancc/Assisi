@@ -108,6 +108,14 @@ class AssetCache
     /// roughness 0.6 — the engine's pre-material look. Never null.
     const Material *FallbackMaterial() const { return &_fallbackMaterial; }
 
+    /// @brief The bindless material-texture descriptor table and its layout
+    /// (GPU-driven stage D). Every resolved texture holds a slot here; materials
+    /// reference channels by index. The MeshPass adds the layout to its pipeline
+    /// (register space 1) and binds the table each draw. Stable across Clear()
+    /// (the contents reset, the handles do not), so consumers bind once.
+    nvrhi::IBindingLayout *BindlessLayout() const { return _bindlessLayout; }
+    nvrhi::IDescriptorTable *BindlessTable() const { return _bindlessTable; }
+
     /// @brief Drops every cached mesh, texture, and material, freeing their GPU
     /// resources, and rebuilds the fallback material. Any binding sets referencing
     /// those resources (see MeshPass) must be invalidated in the same breath.
@@ -132,11 +140,16 @@ class AssetCache
     const MeshBuffer *ResolvePrimitive(const Core::AssetPath &path);
 
     /// @brief Resolves channel id @p channelId (or, if nil/failed, @p
-    /// fallbackPrimitive) to a native texture in @p space, for one material
-    /// channel. Sets @p *outPresent to whether the real (non-fallback) texture
-    /// was used.
-    nvrhi::ITexture *ResolveChannel(const Core::AssetId &channelId, ColorSpace space,
-                                    const Core::AssetPath &fallbackPrimitive, bool *outPresent = nullptr);
+    /// fallbackPrimitive) for one material channel, returning the texture's slot
+    /// in the bindless descriptor table. Sets @p *outPresent to whether the real
+    /// (non-fallback) texture was used.
+    uint32_t ResolveChannel(const Core::AssetId &channelId, ColorSpace space,
+                            const Core::AssetPath &fallbackPrimitive, bool *outPresent = nullptr);
+
+    /// @brief Ensures @p texture has a slot in the bindless descriptor table,
+    /// assigning and writing one on first call. Returns the slot. Growing the
+    /// table past its capacity resizes it (keeping existing entries).
+    uint32_t RegisterBindlessTexture(Texture &texture);
 
     /// @brief Populates @p material's textures + constants from @p data, assigning
     /// it @p id.
@@ -184,6 +197,15 @@ class AssetCache
     // (GPU-driven stage C). MeshBuffers hold ranges into this, not their own
     // buffers; Clear() resets it. Reset by Clear() (wholesale free).
     GeometryArena _arena;
+
+    // Bindless material-texture table (GPU-driven stage D). Every resolved
+    // Texture is written here once and keys materials by index. The handles are
+    // created at Initialize and stay stable across Clear() (only _nextBindlessSlot
+    // resets and the default textures re-register), so MeshPass binds them once.
+    nvrhi::BindingLayoutHandle   _bindlessLayout;
+    nvrhi::DescriptorTableHandle _bindlessTable;
+    uint32_t                     _bindlessCapacity = 0;
+    uint32_t                     _nextBindlessSlot = 0;
 
     std::unordered_map<Core::AssetPath, MeshBuffer>         _meshes;
     std::unordered_map<TextureKey, Texture, TextureKeyHash> _textures;

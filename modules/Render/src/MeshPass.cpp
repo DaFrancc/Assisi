@@ -37,12 +37,17 @@ struct FrameConstants
 };
 } // namespace
 
-bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo,
-                          const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath,
-                          const ClusterGrid &clusterGrid)
+bool MeshPass::Initialize(const InitParams &params)
 {
+    nvrhi::IDevice *const           device = params.device;
+    const nvrhi::FramebufferInfo   &framebufferInfo = params.framebufferInfo;
+    const std::string              &vertexShaderSpvPath = params.vertexShaderSpvPath;
+    const std::string              &pixelShaderSpvPath = params.pixelShaderSpvPath;
+
     _device = device;
-    _clusterGrid = &clusterGrid;
+    _clusterGrid = params.clusterGrid;
+    _bindlessLayout = params.bindlessLayout;
+    _bindlessTable = params.bindlessTable;
 
     _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
     _pixelShader = LoadSpirvShader(device, pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
@@ -91,17 +96,15 @@ bool MeshPass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(DrawPushConstants)));
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0)); // FrameConstants
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(1)); // MaterialConstants
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));    // baseColor
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
+    // The five material textures no longer live here — they moved to the bindless
+    // table (register space 1); the shader samples them by index (stage D). The
+    // shared sampler stays in set 0. Light buffers keep slots 1-5.
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1)); // pointLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2)); // spotLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3)); // dirLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4)); // lightIndexList
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(5)); // lightGrid
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(6));          // normal
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(7));          // metallicRoughness
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(8));          // occlusion
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(9));          // emissive
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -140,7 +143,8 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     pipelineDesc.inputLayout = _inputLayout;
     pipelineDesc.VS = _vertexShader;
     pipelineDesc.PS = _pixelShader;
-    pipelineDesc.addBindingLayout(_bindingLayout);
+    pipelineDesc.addBindingLayout(_bindingLayout);  // set 0: CBs, sampler, light buffers
+    pipelineDesc.addBindingLayout(_bindlessLayout);  // set 1: bindless material textures
     pipelineDesc.renderState.rasterState.cullMode = nvrhi::RasterCullMode::Back;
     // Meshes are authored CCW-front (standard convention). NVRHI's Vulkan backend
     // flips the viewport (VKViewportWithDXCoords) to undo Vulkan's native Y-down
@@ -184,8 +188,9 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(const Material &material) co
     bindingSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(DrawPushConstants)));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _frameConstantsBuffer));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(1, material.Constants()));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, material.BaseColor()));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
+    // Material textures are no longer here — the shader samples them from the
+    // bindless table (set 1) by the indices in material.Constants().
     bindingSetDesc.addItem(
         nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _clusterGrid->PointLightBuffer().NativeBuffer()));
     bindingSetDesc.addItem(
@@ -196,10 +201,6 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(const Material &material) co
         nvrhi::BindingSetItem::StructuredBuffer_SRV(4, _clusterGrid->LightIndexBuffer().NativeBuffer()));
     bindingSetDesc.addItem(
         nvrhi::BindingSetItem::StructuredBuffer_SRV(5, _clusterGrid->LightGridBuffer().NativeBuffer()));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(6, material.Normal()));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(7, material.MetallicRoughness()));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(8, material.Occlusion()));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(9, material.Emissive()));
     const nvrhi::BindingSetHandle bindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
 
     return _bindingSetCache.emplace(material.Id(), bindingSet).first->second;
@@ -249,7 +250,8 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, const glm::mat4
         nvrhi::GraphicsState state;
         state.pipeline = _pipeline;
         state.framebuffer = frame.framebuffer;
-        state.addBindingSet(GetOrCreateBindingSet(*item.material));
+        state.addBindingSet(GetOrCreateBindingSet(*item.material)); // set 0
+        state.addBindingSet(_bindlessTable);                        // set 1: bindless textures
         state.viewport.addViewportAndScissorRect(
             nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
         state.addVertexBuffer(nvrhi::VertexBufferBinding{item.mesh->VertexBuffer(), 0, 0});

@@ -18,6 +18,9 @@ void Material::Create(nvrhi::IDevice *device, uint32_t id, const Geometry::Mater
     constants.metalRoughOcclusion =
         glm::vec4(source.MetallicFactor, source.RoughnessFactor, source.OcclusionStrength, 0.f);
     constants.flags = glm::uvec4(textures.hasNormalTexture ? 1u : 0u, 0u, 0u, 0u);
+    constants.texIndices =
+        glm::uvec4(textures.baseColor, textures.normal, textures.metallicRoughness, textures.occlusion);
+    constants.texIndicesEmissive = glm::uvec4(textures.emissive, 0u, 0u, 0u);
 
     nvrhi::BufferDesc desc;
     desc.byteSize = sizeof(MaterialConstants);

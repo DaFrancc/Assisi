@@ -36,6 +36,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -384,4 +385,8 @@ class SandboxApp : public Assisi::App::Application
     std::vector<std::string> _levelFiles;
     int                      _selectedLevel = 0;
     char                     _saveAsName[128] = {};
+    // A level load requested from the UI (OnImGui), applied at the next OnUpdate —
+    // never mid-frame: LoadLevel frees GPU assets (incl. the bindless table) that
+    // this frame's already-recorded draws still reference, which faults the GPU.
+    std::optional<std::string> _pendingLevelLoad;
 };

@@ -488,16 +488,20 @@ void SandboxApp::SetupScene()
 
     const auto fbSize = GetWindow().GetFramebufferSize();
 
+    // The asset cache owns the bindless material-texture table (stage D), which
+    // the mesh pipeline binds — so initialise it before the scene renderer and
+    // thread its layout/table through.
+    _assetCache.Initialize(device);
+
     // The engine's default scene-render path owns lighting + the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo so it's already correct if options.json saved an MSAA mode.
-    if (!_sceneRenderer.Initialize(device, GetSceneFramebufferInfo(), fbSize.Width, fbSize.Height, _camera))
+    if (!_sceneRenderer.Initialize(device, GetSceneFramebufferInfo(), fbSize.Width, fbSize.Height, _camera,
+                                   _assetCache.BindlessLayout(), _assetCache.BindlessTable()))
     {
         RequestClose();
         return;
     }
-
-    _assetCache.Initialize(device);
     // Thumbnails are drawn straight through ImGui, so they must not be sampled as
     // sRGB (which would gamma-decode them and show them too dark) — load linear.
     _thumbnailCache.Initialize(device, Assisi::Render::ColorSpace::Linear);
@@ -571,6 +575,15 @@ void SandboxApp::OnUpdate(float dt)
 
     if (!_scene)
         return;
+
+    // Apply a UI-requested level load now — before RenderFrame() opens a command
+    // list and records draws that bind the asset cache's bindless table.
+    // LoadLevel frees/rebuilds that table; doing it mid-frame faults the GPU.
+    if (_pendingLevelLoad)
+    {
+        LoadLevel(*_pendingLevelLoad);
+        _pendingLevelLoad.reset();
+    }
 
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});

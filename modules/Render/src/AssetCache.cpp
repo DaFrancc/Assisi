@@ -1,5 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
+#include <algorithm>
 #include <string_view>
 #include <utility>
 
@@ -25,6 +26,10 @@ const Core::AssetPath kCubePrimitive{std::string_view{"prim://cube"}};
 const Core::AssetPath kWhiteTexture{std::string_view{"prim://white"}};             // baseColor / emissive.
 const Core::AssetPath kWhiteLinearTexture{std::string_view{"prim://white-linear"}}; // metallic-roughness / occlusion.
 const Core::AssetPath kFlatNormalTexture{std::string_view{"prim://flat-normal"}};   // unperturbed tangent-space normal.
+
+// Starting slot count for the bindless material-texture table; it grows past this
+// on demand as more distinct textures resolve.
+constexpr uint32_t kInitialBindlessCapacity = 256u;
 } // namespace
 
 void AssetCache::Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace)
@@ -34,6 +39,21 @@ void AssetCache::Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace
 
     // The shared geometry arena's single vertex format is Geometry::Vertex.
     _arena.Initialize(_device, sizeof(Geometry::Vertex));
+
+    // Bindless material-texture table (GPU-driven stage D): a Pixel-visible
+    // Texture_SRV array in its own register space. Every resolved texture takes a
+    // slot; materials reference channels by index. Sized on demand as textures
+    // resolve (see RegisterBindlessTexture); starts at kInitialBindlessCapacity.
+    nvrhi::BindlessLayoutDesc bindlessDesc;
+    bindlessDesc.visibility = nvrhi::ShaderType::Pixel;
+    bindlessDesc.firstSlot = 0;
+    bindlessDesc.maxCapacity = 16384;
+    bindlessDesc.addRegisterSpace(nvrhi::BindingLayoutItem::Texture_SRV(0));
+    _bindlessLayout = _device->createBindlessLayout(bindlessDesc);
+    _bindlessTable = _device->createDescriptorTable(_bindlessLayout);
+    _bindlessCapacity = kInitialBindlessCapacity;
+    _nextBindlessSlot = 0;
+    _device->resizeDescriptorTable(_bindlessTable, _bindlessCapacity, false);
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
 
@@ -138,6 +158,7 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, ColorSpac
 
         Texture &texture = _textures[key];
         texture.UploadSolidColor(_device, color.r, color.g, color.b, color.a, color.space, path.View().data());
+        RegisterBindlessTexture(texture);
         return &texture;
     }
 
@@ -156,11 +177,29 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, ColorSpac
         // returning null lets the material substitute its channel default.
         return nullptr;
     }
+    RegisterBindlessTexture(texture);
     return &texture;
 }
 
-nvrhi::ITexture *AssetCache::ResolveChannel(const Core::AssetId &channelId, ColorSpace space,
-                                            const Core::AssetPath &fallbackPrimitive, bool *outPresent)
+uint32_t AssetCache::RegisterBindlessTexture(Texture &texture)
+{
+    if (texture.BindlessIndex() != Texture::kInvalidBindlessIndex)
+        return texture.BindlessIndex();
+
+    const uint32_t slot = _nextBindlessSlot++;
+    if (slot >= _bindlessCapacity)
+    {
+        _bindlessCapacity = std::max(_bindlessCapacity * 2u, slot + 1u);
+        _device->resizeDescriptorTable(_bindlessTable, _bindlessCapacity, true);
+    }
+    _device->writeDescriptorTable(_bindlessTable,
+                                  nvrhi::BindingSetItem::Texture_SRV(slot, texture.NativeTexture()));
+    texture.SetBindlessIndex(slot);
+    return slot;
+}
+
+uint32_t AssetCache::ResolveChannel(const Core::AssetId &channelId, ColorSpace space,
+                                    const Core::AssetPath &fallbackPrimitive, bool *outPresent)
 {
     const Core::AssetPath path = PathForId(channelId);
     if (!path.Empty())
@@ -169,7 +208,7 @@ nvrhi::ITexture *AssetCache::ResolveChannel(const Core::AssetId &channelId, Colo
         {
             if (outPresent != nullptr)
                 *outPresent = true;
-            return texture->NativeTexture();
+            return texture->BindlessIndex();
         }
     }
 
@@ -177,7 +216,7 @@ nvrhi::ITexture *AssetCache::ResolveChannel(const Core::AssetId &channelId, Colo
         *outPresent = false;
     // The primitive dictates its own colour space; `space` here is a harmless hint.
     const Texture *fallback = ResolveTexture(fallbackPrimitive, space);
-    return fallback != nullptr ? fallback->NativeTexture() : nullptr;
+    return fallback != nullptr ? fallback->BindlessIndex() : 0u;
 }
 
 void AssetCache::BuildMaterial(Material &material, const Geometry::MaterialData &data, uint32_t id)
@@ -249,8 +288,26 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
 
 void AssetCache::Clear()
 {
+    // Drain the GPU before freeing anything. Clear() destroys resources a
+    // still-in-flight frame may reference — the bindless descriptor table it has
+    // bound, the textures and arena buffers it samples/draws. Freeing those
+    // mid-use is the rapid-load crash ("VkDescriptorSet ... destroyed ... without
+    // UPDATE_AFTER_BIND"): a Load lands while the previous frame's command buffer
+    // is still executing. waitForIdle guarantees no command buffer is in flight,
+    // so the frees below are safe; a stall on level load is fine.
+    _device->waitForIdle();
+
     _meshes.clear();
     _arena.Reset(); // wholesale free — the MeshBuffers that held ranges are gone.
+
+    // Drop every bindless table entry (releasing the textures they referenced),
+    // then re-reserve. The handle is unchanged, so MeshPass's bound table stays
+    // valid; the default textures re-register via BuildFallbackMaterial below.
+    _device->resizeDescriptorTable(_bindlessTable, 0, false);
+    _bindlessCapacity = kInitialBindlessCapacity;
+    _nextBindlessSlot = 0;
+    _device->resizeDescriptorTable(_bindlessTable, _bindlessCapacity, false);
+
     _textures.clear();
     _materials.clear();
     _missingMeshWarned.clear();

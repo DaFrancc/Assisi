@@ -86,7 +86,7 @@ foreach(_shader_in ${_sandbox_vk_shader_sources})
     set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}.spv")
     add_custom_command(
         OUTPUT "${_shader_out}"
-        COMMAND $<TARGET_FILE:glslang-standalone> -V "${_shader_in}" -o "${_shader_out}"
+        COMMAND $<TARGET_FILE:glslang-standalone> --target-env vulkan1.3 "${_shader_in}" -o "${_shader_out}"
         DEPENDS "${_shader_in}" glslang-standalone
         COMMENT "Compiling ${_shader_rel} to SPIR-V"
         VERBATIM

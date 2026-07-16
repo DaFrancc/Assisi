@@ -47,9 +47,13 @@ class SceneRenderer
     ///        (e.g. Application::GetSceneFramebufferInfo()).
     /// @param width,height     Viewport size in pixels, for the initial cluster grid.
     /// @param camera           Projection params (near/far/FOV) of the active camera.
+    /// @param bindlessLayout / bindlessTable  The scene AssetCache's bindless
+    ///        material-texture table + layout, threaded into the mesh pipeline
+    ///        (stage D). Must outlive the renderer.
     /// @return false if the lighting compute shaders or the mesh pipeline failed to build.
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int width,
-                                  int height, const Camera &camera);
+                                  int height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
+                                  nvrhi::IDescriptorTable *bindlessTable);
 
     /// @brief Rebuild the cluster froxel grid for a new viewport/projection.
     /// Call from the application's resize hook. No-op until Initialize() succeeds.

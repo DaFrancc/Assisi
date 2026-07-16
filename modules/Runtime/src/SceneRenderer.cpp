@@ -46,7 +46,8 @@ float AspectRatio(int width, int height)
 } // namespace
 
 bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int width,
-                               int height, const Camera &camera)
+                               int height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
+                               nvrhi::IDescriptorTable *bindlessTable)
 {
     _device = device;
 
@@ -68,7 +69,13 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
     }
     _clusterProjection = projection;
 
-    if (!_meshPass.Initialize(device, framebufferInfo, kSceneVertexShader, kScenePixelShader, _lighting.Grid()))
+    if (!_meshPass.Initialize(Render::MeshPass::InitParams{.device = device,
+                                                           .framebufferInfo = framebufferInfo,
+                                                           .vertexShaderSpvPath = kSceneVertexShader,
+                                                           .pixelShaderSpvPath = kScenePixelShader,
+                                                           .clusterGrid = &_lighting.Grid(),
+                                                           .bindlessLayout = bindlessLayout,
+                                                           .bindlessTable = bindlessTable}))
     {
         Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
         return false;

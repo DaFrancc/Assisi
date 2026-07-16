@@ -48,14 +48,29 @@ class MeshPass
   public:
     MeshPass() = default;
 
-    /// @brief Loads `vertexShaderSpvPath`/`pixelShaderSpvPath` (compiled SPIR-V,
-    /// see ShaderModule.hpp) and builds the pipeline against the given
-    /// framebuffer format. `clusterGrid` must outlive this MeshPass — its
-    /// light buffers are bound directly into every binding set this pass creates.
+    /// @brief Inputs to Initialize(). Grouped into a struct so the call site
+    /// stays legible and adding an input doesn't ripple through every caller.
+    struct InitParams
+    {
+        nvrhi::IDevice        *device = nullptr;
+        nvrhi::FramebufferInfo framebufferInfo;
+        /// Compiled-SPIR-V shader paths (see ShaderModule.hpp).
+        std::string vertexShaderSpvPath;
+        std::string pixelShaderSpvPath;
+        /// Must outlive the pass — its light buffers bind into every binding set.
+        const ClusterGrid *clusterGrid = nullptr;
+        /// The AssetCache's bindless material-texture table + layout (stage D):
+        /// the layout joins the pipeline as register space 1, the table binds
+        /// every draw. Both must outlive the pass (AssetCache owns them; the
+        /// handles stay stable across Clear()).
+        nvrhi::IBindingLayout   *bindlessLayout = nullptr;
+        nvrhi::IDescriptorTable *bindlessTable = nullptr;
+    };
+
+    /// @brief Loads the shaders and builds the pipeline against the framebuffer
+    /// format in @p params.
     /// @return false if either shader failed to load or the pipeline failed to build.
-    [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo,
-                                  const std::string &vertexShaderSpvPath, const std::string &pixelShaderSpvPath,
-                                  const ClusterGrid &clusterGrid);
+    [[nodiscard]] bool Initialize(const InitParams &params);
 
     /// @brief Recreates just the graphics pipeline against a new FramebufferInfo,
     /// reusing the shaders/input layout/binding layout already loaded by
@@ -122,6 +137,13 @@ class MeshPass
     nvrhi::SamplerHandle          _sampler;
     nvrhi::GraphicsPipelineHandle _pipeline;
     nvrhi::BufferHandle           _frameConstantsBuffer;
+
+    // The AssetCache's bindless material-texture table + its layout (stage D).
+    // Non-owning: the AssetCache owns them and keeps the handles stable across
+    // Clear(). The layout is register space 1 in the pipeline; the table is bound
+    // as the second binding set each draw.
+    nvrhi::BindingLayoutHandle   _bindlessLayout;
+    nvrhi::DescriptorTableHandle _bindlessTable;
 
     /// @brief Cache of binding sets keyed by the material's stable id (Material::Id).
     ///
