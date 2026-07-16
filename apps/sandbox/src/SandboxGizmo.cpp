@@ -62,19 +62,15 @@ void SandboxApp::DrawTransformGizmo()
     // IsUsing/IsOver read false when the gizmo isn't shown.
     ImGuizmo::BeginFrame();
 
-    const bool haveTarget = _scene != nullptr && _selectedEntity != Assisi::ECS::NullEntity &&
-                            _scene->IsAlive(_selectedEntity) &&
-                            _scene->Get<Rt::Transform>(_selectedEntity) != nullptr;
-    if (!haveTarget)
+    if (_scene == nullptr || _selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
     {
-        // Nothing to manipulate — clear any in-progress gizmo capture state so a
-        // selection change mid-drag can't later commit a stale before/after.
-        _gizmoManipulating    = false;
-        _gizmoWasManipulating = false;
-        _gizmoBeforePose.reset();
         return;
     }
     const Rt::Transform *transform = _scene->Get<Rt::Transform>(_selectedEntity);
+    if (transform == nullptr)
+    {
+        return; // placement-less entity — nothing to manipulate
+    }
 
     // Mode switches, ignored while a text field is capturing keys so typing a name
     // doesn't also retarget the gizmo.
@@ -125,30 +121,22 @@ void SandboxApp::DrawTransformGizmo()
                                                             : kScaleSnap;
     const glm::vec3 snap(snapValue);
 
-    // The gizmo owns its Transform edit as its own transaction (NOT the shared
-    // record-before-write gesture), so an inspector edit to the same Transform is
-    // never mislabelled with the gizmo's mode. Snapshot the pre-drag pose each idle
-    // frame; it freezes for the duration of a drag and is the transaction's `before`.
-    Sandbox::EditHistory     *history     = ActiveHistory();
-    const Assisi::Core::Reflect::ComponentId transformId =
-        Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
-
-    const bool wasUsing = ImGuizmo::IsUsing(); // last frame's state, until Manipulate runs below
-    if (history != nullptr && !wasUsing)
-        _gizmoBeforePose = history->SnapshotComponent(_selectedEntity, transformId);
+    // A gizmo drag is just a Transform edit, so it rides the *same* record-before-
+    // write gesture the inspector uses — keyed by (entity, Transform), it's literally
+    // the same gesture, one commit, one "Edit Transform" label. Snapshot the pre-drag
+    // pose while not dragging (idempotent, so it freezes once the drag starts); the
+    // end-of-frame sweep commits it on release.
+    if (Sandbox::EditHistory *history = ActiveHistory(); history != nullptr && !ImGuizmo::IsUsing())
+        history->RecordBefore(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>(),
+                              EditLabel("Edit Transform", _selectedEntity), _selectedEntity);
 
     const bool manipulated = ImGuizmo::Manipulate(&view[0][0], &proj[0][0], operation, mode, &world[0][0],
                                                   nullptr, io.KeyCtrl ? &snap[0] : nullptr);
 
-    const bool nowUsing = ImGuizmo::IsUsing();
-    _gizmoManipulating  = nowUsing; // inspector reads this to skip its own Transform capture
-    if (nowUsing)
+    // A held gizmo keeps the shared gesture open until release (mirrors the
+    // inspector's active-widget signal).
+    if (ImGuizmo::IsUsing())
         _captureEditingActive = true;
-
-    // On drag start, drop any Transform gesture the inspector had open on this
-    // entity so the two don't both commit for the single change.
-    if (history != nullptr && nowUsing && !_gizmoWasManipulating)
-        history->AbandonGesture(_selectedEntity, transformId);
 
     if (manipulated)
     {
@@ -174,23 +162,4 @@ void SandboxApp::DrawTransformGizmo()
             }
         }
     }
-
-    // On drag release, commit one transaction spanning the whole drag (dropped if the
-    // pose didn't actually change — a click without a drag).
-    if (history != nullptr && !nowUsing && _gizmoWasManipulating && _gizmoBeforePose.has_value())
-    {
-        const std::optional<nlohmann::json> after = history->SnapshotComponent(_selectedEntity, transformId);
-        if (after.has_value() && *after != *_gizmoBeforePose)
-        {
-            // A gizmo drag is just a Transform edit — label it the same as an
-            // inspector Transform change so the two read consistently in history.
-            Sandbox::Transaction txn;
-            txn.label           = EditLabel("Edit Transform", _selectedEntity);
-            txn.selectionBefore = _selectedEntity;
-            txn.selectionAfter  = _selectedEntity;
-            txn.cmds.push_back(Sandbox::ComponentDelta{_selectedEntity, transformId, _gizmoBeforePose, after});
-            history->Push(std::move(txn));
-        }
-    }
-    _gizmoWasManipulating = nowUsing;
 }

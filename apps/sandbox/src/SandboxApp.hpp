@@ -353,16 +353,6 @@ class SandboxApp : public Assisi::App::Application
     GizmoOp _gizmoOp        = GizmoOp::Translate;
     bool    _gizmoLocalSpace = false; // false = world axes
 
-    // The gizmo owns its Transform edits as its own transaction (kept off the shared
-    // record-before-write gesture so an inspector Transform edit isn't mislabelled
-    // with the gizmo's mode). _gizmoBeforePose is the pre-drag Transform JSON,
-    // snapshotted each idle frame; on drag release a Move/Rotate/Scale transaction
-    // is pushed. _gizmoManipulating (this frame) tells the inspector to skip its own
-    // Transform capture while the gizmo drives it.
-    std::optional<nlohmann::json> _gizmoBeforePose;
-    bool                          _gizmoManipulating    = false;
-    bool                          _gizmoWasManipulating = false;
-
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-
     // write) and applies undo/redo in the Editing state. See EditHistory.hpp.

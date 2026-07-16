@@ -643,22 +643,6 @@ TEST_CASE("EditHistory: RecordBefore refreshes the label of an open gesture (kee
     CHECK(scene.Get<Transform>(e)->position.x == doctest::Approx(1.f)); // before was preserved
 }
 
-TEST_CASE("EditHistory: AbandonGesture drops an open gesture without committing")
-{
-    Scene        scene;
-    const Entity e = scene.Create();
-    REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
-    const auto tid = IdOf("Transform");
-
-    EditHistory hist(scene);
-    hist.RecordBefore(e, tid, "Edit Transform", e);
-    scene.GetMut<Transform>(e)->position = {5.f, 0.f, 0.f};
-
-    hist.AbandonGesture(e, tid); // another editor took over — drop it
-    hist.EndFrameSweep(false);   // nothing pending to commit
-    CHECK_FALSE(hist.CanUndo());
-}
-
 TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 {
     Scene       scene;

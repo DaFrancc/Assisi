@@ -221,13 +221,6 @@ bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
     return true;
 }
 
-void EditHistory::AbandonGesture(Entity entity, Reflect::ComponentId id)
-{
-    // Drop an open gesture without committing — used when another editor takes over
-    // the same component (e.g. the gizmo grabbing a Transform the inspector had open).
-    std::erase_if(_open, [&](const OpenGesture &g) { return g.id == id && g.entity == entity; });
-}
-
 void EditHistory::CommitGesture(Entity entity, Reflect::ComponentId id)
 {
     if (_applying)

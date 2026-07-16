@@ -149,18 +149,6 @@ class EditHistory
     /// No-op if no gesture is open for the key, or while applying.
     void CommitGesture(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id);
 
-    /// @brief Drops any open gesture for (entity, id) *without* committing. Used
-    /// when a different editor takes over the same component mid-edit (the gizmo
-    /// grabbing a Transform the inspector had a gesture open on), so the two don't
-    /// both commit a transaction for the one change.
-    void AbandonGesture(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id);
-
-    /// @brief Serialize one live component to JSON under a raw-entity scope, or
-    /// nullopt if absent. Public so an edit site that manages its own transaction
-    /// (the gizmo) can snapshot before/after without the gesture machinery.
-    [[nodiscard]] std::optional<nlohmann::json> SnapshotComponent(Assisi::ECS::Entity entity,
-                                                                  Assisi::Core::Reflect::ComponentId id) const;
-
     /// @brief End-of-frame sweep for drag/type gestures. Commits any open gesture
     /// whose widget is no longer being manipulated (or whose component block is no
     /// longer drawn), drops no-ops, and abandons gestures whose entity has died.
@@ -242,6 +230,12 @@ class EditHistory
     };
 
     OpenGesture *FindOpen(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id);
+
+    /// @brief Serialize a live component to JSON under a raw-entity scope (so
+    /// EntityRef fields capture as raw handles), or nullopt if absent. Shared by
+    /// capture snapshotting.
+    [[nodiscard]] std::optional<nlohmann::json> SnapshotComponent(Assisi::ECS::Entity entity,
+                                                                  Assisi::Core::Reflect::ComponentId id) const;
 
     /// @brief Turn a resolved gesture into a transaction if before != after.
     /// Returns true if a transaction was pushed.

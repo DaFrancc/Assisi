@@ -791,12 +791,10 @@ void SandboxApp::DrawInspector()
         {
             // Record-before-write: snapshot this component's pre-edit JSON before its
             // widgets (which write in-place). Idempotent across a drag; the sweep at
-            // end of frame commits or drops it. See EditHistory.hpp §5. Skip Transform
-            // while the gizmo is dragging it — the gizmo owns that edit (and its label),
-            // so capturing here too would double-commit and mislabel it.
-            const bool gizmoOwnsThis =
-                _gizmoManipulating && meta->id == Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Transform>();
-            if (Sandbox::EditHistory *history = ActiveHistory(); history != nullptr && !gizmoOwnsThis)
+            // end of frame commits or drops it. See EditHistory.hpp §5. The gizmo
+            // shares this same (entity, Transform) gesture, so a gizmo drag and an
+            // inspector Transform edit are one coalesced transaction, not two.
+            if (Sandbox::EditHistory *history = ActiveHistory())
                 history->RecordBefore(_selectedEntity, meta->id, EditLabel("Edit " + meta->name, _selectedEntity),
                                       _selectedEntity);
 
