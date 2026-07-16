@@ -708,14 +708,18 @@ void SandboxApp::HandleUndoRedoHotkeys()
 {
     // Route to whichever history is live now — the main one while editing, the
     // scratch one while paused, none while playing (physics owns Transforms then).
-    // Also gated off while a text field has the keyboard (ImGui's own InputText undo
-    // owns Ctrl-Z then). Runs at the top of OnUpdate — a safe point to mutate.
+    // Runs at the top of OnUpdate — a safe point to mutate.
     Sandbox::EditHistory *history = ActiveHistory();
-    if (history == nullptr || ImGuiWantsKeyboard())
+    if (history == nullptr)
         return;
 
     const ImGuiIO &io = ImGui::GetIO();
-    if (!io.KeyCtrl)
+    // Gate on WantTextInput, NOT WantCaptureKeyboard: the latter is true whenever
+    // an ImGui window is merely focused (which it is right after any inspector
+    // edit), so it would swallow Ctrl-Z for every ImGui-driven edit. WantTextInput
+    // is true only while a text field is actively being typed into — exactly when
+    // ImGui's own InputText undo should own Ctrl-Z instead (design notes §8.12).
+    if (io.WantTextInput || !io.KeyCtrl)
         return;
 
     // Ctrl-Y or Ctrl-Shift-Z = redo; Ctrl-Z = undo.
