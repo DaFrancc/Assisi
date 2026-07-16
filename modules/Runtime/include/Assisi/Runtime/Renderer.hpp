@@ -17,16 +17,17 @@ namespace Assisi::Runtime
 {
 
 /// @brief What one DrawScene call produced and consumed: how much geometry
-/// survived culling and how many GPU state changes the sorted submission
-/// reduced to. A live overlay readout — and the seam's measurable payoff: with
-/// sorting on, materialBinds/meshBinds fall toward the count of distinct
-/// materials/meshes; with it off (A/B toggle) they climb toward drawnItems.
+/// survived culling and how far the indirect submission collapsed it (stage E).
+/// A live overlay readout — and the seam's measurable payoff: sorting places
+/// identical same-material meshes adjacent so they coalesce, so `batches` falls
+/// toward the count of distinct meshes; with sorting off (A/B toggle) it climbs
+/// toward drawnItems (every item its own batch).
 struct DrawStats
 {
-    uint32_t drawnItems    = 0; ///< DrawItems (visible submeshes) submitted.
-    uint32_t culledMeshes  = 0; ///< Whole mesh entities skipped by frustum culling.
-    uint32_t materialBinds = 0; ///< Distinct binding-set runs the sort reduced to.
-    uint32_t meshBinds     = 0; ///< Distinct vertex/index-buffer runs the sort reduced to.
+    uint32_t drawnItems   = 0; ///< DrawItems (visible submeshes) submitted == instances.
+    uint32_t culledMeshes = 0; ///< Whole mesh entities skipped by frustum culling.
+    uint32_t batches      = 0; ///< Instanced draw commands after coalescing same-geometry runs.
+    uint32_t drawCalls    = 0; ///< drawIndexedIndirect API calls issued (~1 with one arena).
 };
 
 /// @brief Everything one DrawScene call needs, grouped so the call site reads as

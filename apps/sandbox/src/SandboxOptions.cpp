@@ -279,9 +279,10 @@ void SandboxApp::DrawOptionsWindow()
         }
 
         // A/B toggle for draw-list sorting. The image is identical either way; the
-        // material/mesh bind tally below is the tell: sorting collapses same-state
-        // draws into runs, so the bind counts drop toward the number of distinct
-        // materials/meshes. Turn it off and they climb toward the drawn-item count.
+        // batch tally below is the tell: sorting puts identical same-material meshes
+        // adjacent so they coalesce into one instanced indirect draw, dropping the
+        // batch count toward the number of distinct meshes. Turn it off and it climbs
+        // toward the drawn-item count (every item its own batch).
         bool sortDraws = _sceneRenderer.SortDraws();
         if (ImGui::Checkbox("Sort Draws", &sortDraws))
         {
@@ -290,7 +291,7 @@ void SandboxApp::DrawOptionsWindow()
 
         const Assisi::Runtime::DrawStats draw = _sceneRenderer.LastDrawStats();
         ImGui::Text("Items: %u drawn / %u meshes culled", draw.drawnItems, draw.culledMeshes);
-        ImGui::Text("Binds: %u material / %u mesh", draw.materialBinds, draw.meshBinds);
+        ImGui::Text("Draws: %u batches / %u indirect calls", draw.batches, draw.drawCalls);
 
         // Material-channel debug view: short-circuits the mesh shader to one
         // channel so PBR inputs can be inspected. Runtime-only, order matches

@@ -148,17 +148,28 @@ this incrementally.
 
 ## Current state
 
-Stage 0/1, partial:
+Stages 1–4 (this doc's numbering = `mesh-material-architecture.md`'s B–E) are
+built. The mapping and per-stage status live in that doc's §9 rollout table;
+briefly:
 
-- **Coarse CPU frustum culling** is shipped: `Render::BoundingSphere` +
-  `ComputeBoundingSphere`/`TransformedBoundingSphere` (`Bounds.hpp`),
-  `Render::Frustum` (Gribb–Hartmann, zero-to-one depth) (`Frustum.hpp/.cpp`),
-  `MeshBuffer` caches each mesh's local sphere at upload, and `Runtime::DrawScene`
-  culls each entity's world-space sphere before submitting.
-- A **runtime toggle + drawn/culled counter** lives in the F12 overlay
-  (`SceneRenderer::SetFrustumCulling`, `DrawStats`), for A/B measurement.
-- **Not done for stage 1:** the per-mesh AABB. Sphere only, so large flat objects
-  (a 60×60 floor) never cull — accepted until occlusion or an AABB refine lands.
+- **Stage 1 (B):** coarse CPU frustum culling — `Render::BoundingSphere` +
+  `ComputeBoundingSphere`/`TransformedBoundingSphere`, `Render::Frustum`
+  (Gribb–Hartmann, zero-to-one depth), plus the per-mesh AABB refine. Runtime
+  toggle + drawn/culled counter in the F12 overlay (`SetFrustumCulling`,
+  `DrawStats`) for A/B measurement.
+- **Stage 2 (C):** shared `GeometryArena` — one vertex + one index buffer, meshes
+  are ranges (base offsets); the single-buffer precondition for indirect draws.
+- **Stage 3 (D):** per-instance GPU buffer (world matrix + material id, indexed by
+  gl_InstanceIndex) + bindless material textures + material table; one global
+  binding set, no per-draw binds.
+- **Stage 4 (E):** CPU-built indirect draws — `MeshPass::Submit` coalesces
+  consecutive same-(mesh,submesh) items into instanced
+  `DrawIndexedIndirectArguments` and multi-draws the frame with one
+  `drawIndexedIndirect` per arena buffer-group (~1). Device requires
+  `multiDrawIndirect` + `drawIndirectFirstInstance`. Overlay shows
+  instances→batches→indirect-calls; the "Sort Draws" A/B now measures instancing.
 
-Everything from stage 2 on is unbuilt. Revisit when instance counts actually
-approach the point where the CPU per-object draw loop becomes the bottleneck.
+**Stages 5–6 (F–G) are unbuilt:** move frustum cull + LOD select to a compute
+pass feeding an indirect count buffer (F), then two-phase HZB occlusion (G).
+Revisit when instance counts approach the point where the CPU per-object extract
+loop becomes the bottleneck.

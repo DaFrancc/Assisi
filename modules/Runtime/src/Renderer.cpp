@@ -109,9 +109,9 @@ DrawStats DrawScene(const DrawSceneParams &params)
 
     const Assisi::Render::MeshPass::SubmitStats submitStats = meshPass.Submit(params.frame, items);
 
-    stats.drawnItems    = submitStats.drawCalls;
-    stats.materialBinds = submitStats.materialBinds;
-    stats.meshBinds     = submitStats.meshBinds;
+    stats.drawnItems = submitStats.instances;
+    stats.batches    = submitStats.batches;
+    stats.drawCalls  = submitStats.drawCalls;
     return stats;
 }
 

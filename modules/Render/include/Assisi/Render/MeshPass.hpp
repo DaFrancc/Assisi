@@ -98,28 +98,36 @@ class MeshPass
                               uint32_t screenWidth, uint32_t screenHeight, float nearZ, float farZ,
                               uint32_t dirLightCount, MaterialDebugView debugView = MaterialDebugView::None) const;
 
-    /// @brief State-change counts from one Submit — the consumer half of the
-    /// draw-stats (the producer counts drawn/culled). Since stage D the pass binds
-    /// one global set, so these are no longer bind counts but batching diagnostics:
-    /// materialBinds is the distinct material-id runs the sort produced (a proxy
-    /// for how instanceable the frame is), meshBinds the distinct vertex-buffer
-    /// runs — ~1, since the shared GeometryArena (stage C) puts every mesh in one
-    /// buffer.
+    /// @brief Submission counts from one Submit — the consumer half of the
+    /// draw-stats (the producer counts drawn/culled). Since stage E the pass builds
+    /// a CPU-side indirect command buffer and multi-draws it, so these describe the
+    /// batching the frame collapsed to: @p instances is the per-instance records
+    /// uploaded (== DrawItems drawn); @p batches is the instanced draw commands
+    /// after coalescing consecutive same-(mesh,submesh) items (the count that drops
+    /// as the scene instances better — see the "Sort Draws" A/B); @p drawCalls is
+    /// the `drawIndexedIndirect` API calls issued (one per arena buffer-group, so
+    /// ~1 while everything shares the one GeometryArena from stage C).
     struct SubmitStats
     {
-        uint32_t drawCalls    = 0;
-        uint32_t materialBinds = 0;
-        uint32_t meshBinds     = 0;
+        uint32_t instances = 0;
+        uint32_t batches   = 0;
+        uint32_t drawCalls = 0;
     };
 
-    /// @brief Records `items` into `frame` in order — one drawIndexed per DrawItem.
+    /// @brief Records `items` into `frame` as CPU-built indirect draws (stage E).
     /// Uploads all per-object data (world matrix + material id) into the instance
-    /// buffer first, then draws each item with a distinct startInstanceLocation so
-    /// the vertex shader reads its record via gl_InstanceIndex; the world matrix
-    /// and material id never leave the GPU. The caller sorts the span by
-    /// DrawItem::sortKey (material/mesh-major) for early-Z and future instancing;
-    /// with one binding set the sort no longer affects bind counts. Items must
-    /// reference live resources (valid until the frame is submitted).
+    /// buffer first — one contiguous record per item, indexed in the shader by
+    /// gl_InstanceIndex — then coalesces consecutive items that share geometry
+    /// (same mesh + submesh) into instanced `DrawIndexedIndirectArguments`: a run
+    /// of N such items becomes one command with instanceCount = N and
+    /// startInstanceLocation at the run's first record. Because the material id is
+    /// per-instance (read from that record), a batch may mix materials — only the
+    /// geometry range must match. The command buffer is multi-drawn with one
+    /// `drawIndexedIndirect` per arena buffer-group (~1, since stage C shares one
+    /// GeometryArena). The caller sorts the span by DrawItem::sortKey
+    /// (material/mesh-major): that ordering places identical same-material meshes
+    /// adjacent, so they coalesce — the sort now drives instancing, not binds.
+    /// Items must reference live resources (valid until the frame is submitted).
     /// @param frame  The frame's command list + framebuffer + viewport size.
     /// @pre IsValid() — call Initialize() first, and UpdateFrameConstants() this frame.
     [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, std::span<const DrawItem> items) const;
@@ -140,6 +148,12 @@ class MeshPass
     /// table, and the per-instance buffer. Rebuilt when the instance buffer grows
     /// (its handle changes) or after InvalidateBindingSets().
     nvrhi::IBindingSet *GetOrCreateGlobalBindingSet() const;
+
+    /// @brief Ensures the indirect-args buffer holds at least @p commandCount
+    /// DrawIndexedIndirectArguments, reallocating with geometric growth when not.
+    /// Unlike the instance buffer this handle is never referenced by a binding set
+    /// (it binds via GraphicsState::indirectParams), so a growth needs no set rebuild.
+    void EnsureIndirectCapacity(uint32_t commandCount) const;
 
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
@@ -172,5 +186,13 @@ class MeshPass
     // The instance-buffer handle _globalBindingSet was built against; a mismatch
     // means the buffer grew and the set must be rebuilt.
     mutable const nvrhi::IBuffer        *_globalSetInstanceBuffer = nullptr;
+
+    // CPU-built indirect draw-command buffer (stage E): one
+    // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn
+    // each frame. Grown geometrically like the instance buffer; not a plain
+    // Render::Buffer since it is an indirect-args buffer (isDrawIndirectArgs), not
+    // a structured SRV. Owned by the pass.
+    mutable nvrhi::BufferHandle          _indirectBuffer;
+    mutable uint32_t                     _indirectCapacity = 0; // in commands
 };
 } /* namespace Assisi::Render */

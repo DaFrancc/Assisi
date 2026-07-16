@@ -572,7 +572,7 @@ numbers.
 | **B** | Per-mesh AABB in CPU cull (data exists since A1) | ✅ done (`cbc9ec4`) | GPU-driven doc stage 1 |
 | **C** | Shared geometry arena (MeshBuffer → ranges; vertex-format constraint from §1 decided here) | ✅ done | stage 2 |
 | **D** | Per-instance GPU buffer + bindless (kills the binding-set cache; MaterialConstants pad → textureIndices) | ✅ done (`c6b1f3f`, `516e6d6`, + part 2) | stage 3; descriptor-indexing spike first |
-| **E** | CPU-built indirect draws + instancing (Submit interior only) | ⬜ not started | stage 4 |
+| **E** | CPU-built indirect draws + instancing (Submit interior only) | ✅ done | stage 4 |
 | **F** | Compute cull + screen-size LOD select (replaces extract/sort) | ⬜ not started | stage 5 |
 | **G** | Two-phase HZB occlusion | ⬜ not started | stage 6 |
 

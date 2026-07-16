@@ -88,8 +88,9 @@ class SceneRenderer
     [[nodiscard]] bool FrustumCulling() const { return _frustumCulling; }
 
     /// @brief Enable/disable draw-list sorting by sort key (on by default). Off
-    /// submits in query order — the image is identical, but the material/mesh bind
-    /// counts in LastDrawStats climb, which is how the sort's payoff is measured.
+    /// submits in query order — the image is identical, but LastDrawStats().batches
+    /// climbs (identical meshes no longer land adjacent to coalesce), which is how
+    /// the sort's instancing payoff is measured.
     void SetSortDraws(bool enabled) { _sortDraws = enabled; }
     [[nodiscard]] bool SortDraws() const { return _sortDraws; }
 

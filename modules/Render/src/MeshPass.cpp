@@ -30,8 +30,15 @@ struct InstanceData
 static_assert(sizeof(InstanceData) == 80, "InstanceData must match the shader's std430 array stride.");
 
 // Starting instance-buffer capacity (records). Grows geometrically past this when
-// a frame draws more items; the first level typically fits without a growth.
+// a frame draws more items; the first level typically fits without a growth. Also
+// the starting capacity for the indirect-args buffer (batches <= instances).
 constexpr uint32_t kInitialInstanceCapacity = 1024u;
+
+// The indirect command matches Vulkan's VkDrawIndexedIndirectCommand byte-for-byte
+// (five tightly-packed 32-bit fields), so the batch vector uploads straight into
+// the indirect-args buffer with no repack.
+static_assert(sizeof(nvrhi::DrawIndexedIndirectArguments) == 20,
+              "DrawIndexedIndirectArguments must match VkDrawIndexedIndirectCommand's packed layout.");
 
 // Per-frame data (view-projection + camera + cluster-grid parameters), uploaded
 // once per frame via UpdateFrameConstants() into a constant buffer. viewProjection
@@ -218,16 +225,47 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet() const
     return _globalBindingSet;
 }
 
+void MeshPass::EnsureIndirectCapacity(uint32_t commandCount) const
+{
+    if (_indirectBuffer != nullptr && commandCount <= _indirectCapacity)
+    {
+        return;
+    }
+    const uint32_t grown = std::max(_indirectCapacity * 2u, kInitialInstanceCapacity);
+    const uint32_t capacity = std::max(grown, commandCount);
+
+    nvrhi::BufferDesc desc;
+    desc.byteSize = static_cast<uint64_t>(sizeof(nvrhi::DrawIndexedIndirectArguments)) * capacity;
+    desc.isDrawIndirectArgs = true;
+    desc.initialState = nvrhi::ResourceStates::IndirectArgument;
+    desc.keepInitialState = true;
+    desc.debugName = "MeshPass::IndirectArgs";
+    _indirectBuffer = _device->createBuffer(desc);
+    _indirectCapacity = capacity;
+}
+
 MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const DrawItem> items) const
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
     SubmitStats                stats;
 
-    // Gather per-object data for every valid item, in submit order. The draw loop
-    // below skips the same nulls in the same order, so instance record i lines up
-    // with the i-th draw's startInstanceLocation (its gl_InstanceIndex).
-    std::vector<InstanceData> instances;
+    // Build the frame's per-instance records and indirect commands in one pass over
+    // the (already sorted) items. Each valid item appends one instance record — the
+    // vertex shader reads it via gl_InstanceIndex — and either extends the current
+    // batch or opens a new one. A batch is a maximal run of consecutive items with
+    // the same geometry (mesh + submesh); its records are contiguous (instanceIndex
+    // increments per item), so one instanced draw covers them. Material differs per
+    // instance (read from the record), so it never splits a batch.
+    std::vector<InstanceData>                        instances;
+    std::vector<nvrhi::DrawIndexedIndirectArguments> commands;
+    // Parallel to `commands`: the mesh each batch draws, for the arena vertex/index
+    // buffers at record time (they bind via GraphicsState, not the indirect args).
+    std::vector<const MeshBuffer *> batchMeshes;
     instances.reserve(items.size());
+
+    const MeshBuffer *prevMesh    = nullptr;
+    uint32_t          prevSubmesh = UINT32_MAX;
+    uint32_t          instanceIndex = 0;
     for (const DrawItem &item : items)
     {
         if (item.material == nullptr || item.mesh == nullptr)
@@ -235,11 +273,37 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
             continue; // producer should have filtered these; belt and suspenders
         }
         instances.push_back(InstanceData{item.model, item.material->Id()});
+
+        if (!commands.empty() && item.mesh == prevMesh && item.submeshIndex == prevSubmesh)
+        {
+            ++commands.back().instanceCount; // same geometry as the run — coalesce
+        }
+        else
+        {
+            // Arena addressing: index values stay mesh-local, so baseVertexLocation
+            // shifts them into this mesh's vertex range and startIndexLocation picks
+            // its slice of the shared index buffer. startInstanceLocation makes the
+            // batch's first gl_InstanceIndex select its first record.
+            const Geometry::SubMesh &subMesh = item.mesh->SubMeshes()[item.submeshIndex];
+            nvrhi::DrawIndexedIndirectArguments cmd;
+            cmd.indexCount            = subMesh.IndexCount;
+            cmd.instanceCount         = 1;
+            cmd.startIndexLocation    = item.mesh->IndexBase() + subMesh.IndexOffset;
+            cmd.baseVertexLocation    = static_cast<int32_t>(item.mesh->VertexBase());
+            cmd.startInstanceLocation = instanceIndex;
+            commands.push_back(cmd);
+            batchMeshes.push_back(item.mesh);
+            prevMesh    = item.mesh;
+            prevSubmesh = item.submeshIndex;
+        }
+        ++instanceIndex;
     }
-    if (instances.empty())
+    if (commands.empty())
     {
-        return stats; // nothing to draw — leave the instance buffer/set untouched
+        return stats; // nothing to draw — leave the instance/indirect buffers untouched
     }
+    stats.instances = static_cast<uint32_t>(instances.size());
+    stats.batches   = static_cast<uint32_t>(commands.size());
 
     // Grow the instance buffer to hold this frame's records if needed. A growth
     // swaps the buffer handle, so the cached global set (which references it) must
@@ -251,43 +315,33 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
         _instanceBuffer.Create(_device, sizeof(InstanceData), std::max(grown, needed), /*allowUnorderedAccess=*/false,
                                "MeshPass::Instances");
     }
-    // Upload before recording draws: the copy lands in this command list ahead of
-    // the draws that read it, so the ordering is correct within the frame.
+    EnsureIndirectCapacity(static_cast<uint32_t>(commands.size()));
+
+    // Upload both buffers before recording draws: the copies land in this command
+    // list ahead of the draws that read them, so the ordering is correct in-frame.
     _instanceBuffer.Upload(commandList, instances.data(), static_cast<uint32_t>(instances.size()));
+    commandList->writeBuffer(_indirectBuffer, commands.data(),
+                             commands.size() * sizeof(nvrhi::DrawIndexedIndirectArguments));
 
     nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet();
 
-    // Distinct material-id / vertex-buffer runs the sort produced — batching
-    // diagnostics now that binds are frame-global (see SubmitStats). UINT32_MAX /
-    // nullptr never match a real id/pointer, so the first item counts as both.
-    uint32_t              prevMaterialId   = UINT32_MAX;
-    const nvrhi::IBuffer *prevVertexBuffer = nullptr;
-
-    uint32_t instanceIndex = 0;
-    for (const DrawItem &item : items)
+    // Multi-draw each maximal run of batches that share the same arena vertex/index
+    // buffers with one drawIndexedIndirect. Stage C keeps every mesh in one arena,
+    // so this is a single call spanning all batches; the per-buffer grouping stays
+    // correct if a second arena (divergent vertex format) is ever added.
+    const uint32_t commandCount = static_cast<uint32_t>(commands.size());
+    uint32_t       runStart     = 0;
+    while (runStart < commandCount)
     {
-        if (item.material == nullptr || item.mesh == nullptr)
+        nvrhi::IBuffer *const vertexBuffer = batchMeshes[runStart]->VertexBuffer();
+        nvrhi::IBuffer *const indexBuffer  = batchMeshes[runStart]->IndexBuffer();
+        uint32_t              runEnd       = runStart + 1;
+        while (runEnd < commandCount && batchMeshes[runEnd]->VertexBuffer() == vertexBuffer &&
+               batchMeshes[runEnd]->IndexBuffer() == indexBuffer)
         {
-            continue; // same filter as the gather loop, so instanceIndex stays aligned
+            ++runEnd;
         }
 
-        if (item.material->Id() != prevMaterialId)
-        {
-            ++stats.materialBinds;
-            prevMaterialId = item.material->Id();
-        }
-        if (item.mesh->VertexBuffer() != prevVertexBuffer)
-        {
-            ++stats.meshBinds;
-            prevVertexBuffer = item.mesh->VertexBuffer();
-        }
-
-        const Geometry::SubMesh &subMesh = item.mesh->SubMeshes()[item.submeshIndex];
-
-        // GraphicsState is a cheap value; rebuild it each item rather than mutate
-        // its static_vectors. NVRHI compares it against the cached state and only
-        // re-binds what actually changed since the previous item — with one global
-        // set that's just the vertex/index buffers (already identical via the arena).
         nvrhi::GraphicsState state;
         state.pipeline = _pipeline;
         state.framebuffer = frame.framebuffer;
@@ -295,22 +349,15 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
         state.addBindingSet(_bindlessTable);   // set 1: bindless textures
         state.viewport.addViewportAndScissorRect(
             nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
-        state.addVertexBuffer(nvrhi::VertexBufferBinding{item.mesh->VertexBuffer(), 0, 0});
-        state.indexBuffer = nvrhi::IndexBufferBinding{item.mesh->IndexBuffer(), nvrhi::Format::R32_UINT, 0};
+        state.addVertexBuffer(nvrhi::VertexBufferBinding{vertexBuffer, 0, 0});
+        state.indexBuffer = nvrhi::IndexBufferBinding{indexBuffer, nvrhi::Format::R32_UINT, 0};
+        state.indirectParams = _indirectBuffer;
         commandList->setGraphicsState(state);
 
-        // Arena addressing: index values stay mesh-local, so baseVertex
-        // (startVertexLocation) shifts them into this mesh's vertex range, and
-        // startIndexLocation picks the mesh's slice of the shared index buffer.
-        // startInstanceLocation makes gl_InstanceIndex select this item's record.
-        nvrhi::DrawArguments drawArgs;
-        drawArgs.vertexCount = subMesh.IndexCount; // for drawIndexed this is the index count
-        drawArgs.startIndexLocation = item.mesh->IndexBase() + subMesh.IndexOffset;
-        drawArgs.startVertexLocation = item.mesh->VertexBase();
-        drawArgs.startInstanceLocation = instanceIndex;
-        commandList->drawIndexed(drawArgs);
+        commandList->drawIndexedIndirect(runStart * sizeof(nvrhi::DrawIndexedIndirectArguments), runEnd - runStart);
         ++stats.drawCalls;
-        ++instanceIndex;
+
+        runStart = runEnd;
     }
 
     return stats;

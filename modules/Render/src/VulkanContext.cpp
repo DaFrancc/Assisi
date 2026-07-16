@@ -218,6 +218,23 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
         return false;
     }
 
+    // Multi-draw indirect (GPU-driven stage E). The mesh pass issues the whole
+    // frame as one vkCmdDrawIndexedIndirect over a CPU-built command buffer whose
+    // batches carry a non-zero firstInstance (each instanced draw starts partway
+    // into the shared instance buffer) — so both the multi-draw feature and the
+    // firstInstance-in-indirect feature are required. Both are Vulkan 1.0 *core*
+    // but optional bits (VkPhysicalDeviceFeatures), near-universal on desktop.
+    // Checked here so unsupported hardware fails at selection, not mid-frame; must
+    // stay in lock-step with the enables in CreateLogicalDevice.
+    if (features2.features.multiDrawIndirect != VK_TRUE || features2.features.drawIndirectFirstInstance != VK_TRUE)
+    {
+        Core::Log::Info("  rejected: missing indirect-draw support (multiDrawIndirect={}, "
+                        "drawIndirectFirstInstance={})",
+                        features2.features.multiDrawIndirect == VK_TRUE,
+                        features2.features.drawIndirectFirstInstance == VK_TRUE);
+        return false;
+    }
+
     return true;
 }
 
@@ -336,6 +353,11 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     // Create()); requesting an unsupported feature fails vkCreateDevice outright.
     VkPhysicalDeviceFeatures coreFeatures{};
     coreFeatures.samplerAnisotropy = enableAnisotropy ? VK_TRUE : VK_FALSE;
+    // Indirect draws (GPU-driven stage E): the mesh pass submits the frame as a
+    // single multi-draw over a CPU-built command buffer whose batches use a
+    // non-zero firstInstance. DeviceMeetsRequirements already verified both bits.
+    coreFeatures.multiDrawIndirect = VK_TRUE;
+    coreFeatures.drawIndirectFirstInstance = VK_TRUE;
 
     VkDeviceCreateInfo deviceCreateInfo{};
     deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
