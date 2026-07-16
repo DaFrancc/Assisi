@@ -5,10 +5,11 @@ is the reference architecture, ready to implement stage by stage.** This defines
 identifies, relates, and resolves assets: stable GUID references, per-asset
 `.aast` sidecar files, an editor-time import pass, and a GUID→location database.
 It builds directly on the mesh/material system (`mesh-material-architecture.md`,
-stages A3–A4, already implemented) and the streaming roadmap
+A-foundation implemented through A5) and the streaming roadmap
 (`asset-streaming-design-notes.md`).
 
-**Nothing below is built yet.** The point of this doc is the same as the mesh doc:
+**Stages S1–S4 are built; S5 (cooker + `PakProvider`) is deferred until first
+ship (§6).** The point of this doc is the same as the mesh doc:
 choose identity, sidecar, and database shapes now that survive renames, sub-asset
 explosion, team/VCS use, and a shipped-build bake — without rewriting every
 reference site later.
@@ -79,21 +80,32 @@ This is the simplification that makes pure-GUID clean here: the only "asset" the
 database ever resolves is a file, and the only thing a reference ever holds is one
 GUID.
 
-## Current state (2026-07-14)
+## Current state (2026-07-16)
 
-- References are `Core::AssetPath` (`TrivialString<127>`) strings. `AssetCache`
-  resolves them: `ResolveMesh`/`ResolveTexture`/`ResolveMaterial`, deduped by
-  path, with `prim://` primitives short-circuited in `ResolvePrimitive` /
-  `_texturePrimitives`.
-- `AssetSystem` reads raw bytes by virtual path (`ReadText`/`ReadBinary`/
-  `Resolve`), asset-root read-only + user-root read-write.
-- glTF import (Geometry module) fills `MeshData::Materials`; `AssetCache::
-  MeshDefaultMaterial(meshPath, slot)` builds the default material live from that
-  table at load. `.amat` files are hand-authored (one exists: `checker.amat`).
-- Reflection codegen (`reflectgen`) knows `AssetPath` and `AssetPathVector`
-  field types (JSON strings); `.amat` is an `AASSET` serialized via
-  `AssetTypeRegistry`.
-- Committed levels (`Test.alvl`, `Lights.alvl`, `Materials.alvl`) store paths.
+Stages **S1–S4 are built**; **S5** (cooker + `PakProvider`) is deferred until
+first ship (§6). What's landed, by stage (commits in `asset-upgrade`):
+
+- **S1** — GUID identity core: `AssetId`, `.aast` sidecars, and the
+  `AssetDatabase` (GUID→path), with the reconcile import pass wired into the
+  editor and sidecar generation (`5ad92f1`, `fc56e17`).
+- **S2** — references switched from `Core::AssetPath` strings to `AssetId`
+  GUIDs, resolved through the database / provider (`6096554`).
+- **S3** — glTF material explosion: import writes `.amat` children + the
+  slot→GUID manifest; mesh→material resolution reads the manifest, retiring the
+  live `MeshDefaultMaterial` derivation (D4) (`6e7132d`).
+- **S4** — source-change detection (`sourceHash`) + conservative auto-reconcile,
+  then the field-wise reconciler with prompt-driven conflict resolution and
+  liveness scoping (D5) (`4f51a58`, `9b8d30d`).
+
+Underneath, unchanged: `AssetSystem` reads raw bytes by virtual path
+(`ReadText`/`ReadBinary`/`Resolve`, asset-root read-only + user-root
+read-write); `AssetCache` dedupes resolution with `prim://` primitives
+short-circuited; `reflectgen` knows `AssetPath`/`AssetPathVector` and `.amat` is
+an `AASSET` via `AssetTypeRegistry`.
+
+**Remaining: S5** — archive format, compression/transcode, baked GUID→location
+index, and the shipped `PakProvider`. The S1 provider interface means no loading
+code changes when it lands.
 
 ## 1. Identity — the GUID and the `AssetId` type
 
@@ -262,27 +274,28 @@ dependency that shouldn't live in Core.
 
 ## 8. Staged rollout (each stage shippable)
 
-- **S1 — provider interface + sidecars + database, refs unchanged.** The
-  `AssetProvider` interface, `LooseFileProvider`, the `.aast` format, the reconcile
-  import pass (generate missing, mint UUIDs), the `AssetDatabase` (GUID→path),
-  reserved built-in GUIDs. Loading routes through `LooseFileProvider`; paths still
-  drive resolution and the DB is built but not yet the reference key. Verifiable in
-  isolation (scan a tree, assert sidecars + map).
-- **S2 — `AssetId` type + reflectgen + reference switch.** Introduce `AssetId`,
-  add the codegen field types, switch `MeshRenderer` and the level files to GUIDs,
-  resolve through the DB / provider. Migrate the committed levels. Scenes render
-  identically.
-- **S3 — glTF material explosion + manifest.** Import pass writes `.amat` children
-  and the slot→GUID manifest; mesh→material default resolution reads the manifest
-  instead of `MeshDefaultMaterial` deriving live.
-- **S4 — Reimport UX + source-changed policy.** The manual Reimport button +
-  `sourceHash` stale detection first; then the field-wise reconciler with the
-  confidence-gated, liveness-scoped policy (D5) — auto-reconcile provably-safe
-  diffs, prompt otherwise, immediate for loaded assets. (Still all editor/loose
-  path.)
-- **S5 — cooker + `PakProvider` (shipped).** Archive format, compression/transcode,
-  baked GUID→location index, and the shipped `PakProvider` backend. Deferred until
-  first ship (§6); the interface from S1 means no loading code changes here.
+- **S1 — provider interface + sidecars + database, refs unchanged.** ✅ done
+  (`5ad92f1`, `fc56e17`). The `AssetProvider` interface, `LooseFileProvider`, the
+  `.aast` format, the reconcile import pass (generate missing, mint UUIDs), the
+  `AssetDatabase` (GUID→path), reserved built-in GUIDs. Loading routes through
+  `LooseFileProvider`; paths still drive resolution and the DB is built but not yet
+  the reference key. Verifiable in isolation (scan a tree, assert sidecars + map).
+- **S2 — `AssetId` type + reflectgen + reference switch.** ✅ done (`6096554`).
+  Introduce `AssetId`, add the codegen field types, switch `MeshRenderer` and the
+  level files to GUIDs, resolve through the DB / provider. Migrate the committed
+  levels. Scenes render identically.
+- **S3 — glTF material explosion + manifest.** ✅ done (`6e7132d`). Import pass
+  writes `.amat` children and the slot→GUID manifest; mesh→material default
+  resolution reads the manifest instead of `MeshDefaultMaterial` deriving live.
+- **S4 — Reimport UX + source-changed policy.** ✅ done (`4f51a58`, `9b8d30d`).
+  The manual Reimport button + `sourceHash` stale detection first; then the
+  field-wise reconciler with the confidence-gated, liveness-scoped policy (D5) —
+  auto-reconcile provably-safe diffs, prompt otherwise, immediate for loaded
+  assets. (Still all editor/loose path.)
+- **S5 — cooker + `PakProvider` (shipped).** ⬜ not started — deferred until first
+  ship (§6). Archive format, compression/transcode, baked GUID→location index, and
+  the shipped `PakProvider` backend. The interface from S1 means no loading code
+  changes here.
 
 ## Decisions (all resolved — D1–D7)
 

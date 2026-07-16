@@ -9,7 +9,8 @@ on. Design reviewed by two independent adversarial review passes; their findings
 (hot-reload contract, sort-key depth bits, default-deny codegen, per-submesh cull
 removal, texture-compression hook, streaming contracts) are folded in.
 
-**Nothing below is built yet** except what "Current state" names. The point of
+**Stages A1–A5 and B are built** — see "Current state"; the GPU-driven stages
+C–G remain. The point of
 this doc is that the data structures and interfaces designed today survive the
 entire roadmap — submeshes, material assets, instancing, batching, LODs, GPU
 culling, bindless, streaming — with internals swapped, never producers rewritten.
@@ -31,18 +32,38 @@ culling, bindless, streaming — with internals swapped, never producers rewritt
   and the sort key's pipeline bits (below) are where opaque/masked/blend buckets
   land.
 
-## Current state (2026-07-14)
+## Current state (2026-07-16)
 
-- glTF/glb **geometry** import via the Geometry module (fastgltf, all reads
-  through AssetSystem, primitives merged flat, materials discarded).
-- `MeshRenderer` = `{meshPath, albedoPath}`; albedo is the only material concept.
-- `MeshPass`: one pipeline, binding sets cached per raw `ITexture*` (known
-  invalidation hazard), 128-byte push constants (MVP + model), one `drawIndexed`
-  per entity. Shader hardcodes `kMetallic=0.0, kRoughness=0.6`.
-- CPU frustum culling (sphere-only) with F12 DrawStats. Clustered lighting proves
-  the compute path (`ComputeShader`, `Buffer`).
-- Reflection: `ACOMP`/`AFIELD` → reflectgen codegen → ComponentRegistry; `.alvl`
-  JSON scenes; inspector auto-renders fields; asset browser click-to-assign.
+The A-foundation (A1–A5) is complete and the first GPU-driven stage (whole-mesh
+AABB cull, **B**) has landed. What's built, by stage (commits in `asset-upgrade`):
+
+- **A1** — MeshData v2: submesh / LOD / material data model + import tests
+  (`cebe83b`, `4f97824`).
+- **A2** — reflection plumbing: `AssetPathVector` + default-deny for unknown
+  types, `AASSET` codegen backend + `AssetTypeRegistry`, `.amat` serialization
+  round-trip (`a348977`, `b504dcb`, `c75a4ad`).
+- **A3** — `Material` class, `MaterialConstants`, PBR default textures;
+  `AssetCache` resolves materials + `prim://` texture defaults (`6dee708`,
+  `2d16235`).
+- **A4** — full glTF PBR rendering in the mesh pass; `MeshRenderer` gains a
+  per-slot material list; editable material slots + `.amat` browser tiles;
+  material-channel debug view mode; `Materials.alvl` DamagedHelmet PBR test
+  level (`39ebd40`, `eb7d3de`, `10a7088`, `38e289c`, `f2f6296`).
+- **A5** — DrawItem submission layer: extract → sort → Submit (`dfb7fa8`).
+- **B** — two-level whole-mesh AABB cull refine (`cbc9ec4`).
+
+The asset-identity layer (`asset-database-architecture.md`) has landed through
+**S4**: GUID identity core with `.aast` sidecars and database, path→GUID
+reference migration, glTF material explosion into `.amat` children + manifest,
+and source-change detection with prompt-driven conflict resolution.
+
+**Remaining:** GPU-driven stages **C–G** (geometry arena, bindless,
+indirect/instancing, compute cull, HZB occlusion) and asset-DB **S5** (final
+reference migration).
+
+Still-standing foundations from before this roadmap: reflection (`ACOMP`/
+`AFIELD` → reflectgen → ComponentRegistry), `.alvl` JSON scenes, the inspector,
+and the asset browser.
 
 ---
 
@@ -514,19 +535,19 @@ Every stage ships a complete, pixel-correct renderer. A-stages are this
 system's foundation; B–G are the GPU-driven doc's stages 1–6 by their original
 numbers.
 
-| Stage | Deliverable | Verify |
-| --- | --- | --- |
-| **A1** | MeshData v2 + importer rework (buckets, LOD names, per-submesh bounds, import warnings) + Bounds move. MeshBuffer copies tables; draws still full-range → identical output | Geometry unit tests vs a committed hand-authored 2-material 2-LOD cube; degenerate primitive rule |
-| **A2** | Reflection plumbing: AssetTypeRegistry backend + AASSET, AssetPathVector, default-deny hard-error, .amat round-trip | reflectgen golden tests (both backends); round-trip unit test |
-| **A3** | Material objects: Material/CB, ResolveMaterial, (path, ColorSpace) texture keying, MeshBuffer::Id, Id-keyed binding sets. Shader still albedo-only | existing scenes pixel-identical; binding-set count == material count in overlay |
-| **A4** | Full PBR shader + MeshRenderer v2 + editor UX (live edits per mutation contract) + hand-migrate the two .alvl levels + debug view mode (roughness/metal/normal visualization via FrameConstants flag) | DamagedHelmet (unpacked) renders all channels; factors-only material matches flat defaults |
-| **A5** | DrawItem layer: extract → sort → Submit; expanded DrawStats | sort on/off A/B: identical image, different bind counts |
-| **B** | Per-mesh AABB in CPU cull (data exists since A1) | GPU-driven doc stage 1 |
-| **C** | Shared geometry arena (MeshBuffer → ranges; vertex-format constraint from §1 decided here) | stage 2 |
-| **D** | Per-instance GPU buffer + bindless (kills the binding-set cache; MaterialConstants pad → textureIndices) | stage 3; descriptor-indexing spike first |
-| **E** | CPU-built indirect draws + instancing (Submit interior only) | stage 4 |
-| **F** | Compute cull + screen-size LOD select (replaces extract/sort) | stage 5 |
-| **G** | Two-phase HZB occlusion | stage 6 |
+| Stage | Deliverable | Status | Verify |
+| --- | --- | --- | --- |
+| **A1** | MeshData v2 + importer rework (buckets, LOD names, per-submesh bounds, import warnings) + Bounds move. MeshBuffer copies tables; draws still full-range → identical output | ✅ done (`cebe83b`, `4f97824`) | Geometry unit tests vs a committed hand-authored 2-material 2-LOD cube; degenerate primitive rule |
+| **A2** | Reflection plumbing: AssetTypeRegistry backend + AASSET, AssetPathVector, default-deny hard-error, .amat round-trip | ✅ done (`a348977`, `b504dcb`, `c75a4ad`) | reflectgen golden tests (both backends); round-trip unit test |
+| **A3** | Material objects: Material/CB, ResolveMaterial, (path, ColorSpace) texture keying, MeshBuffer::Id, Id-keyed binding sets. Shader still albedo-only | ✅ done (`6dee708`, `2d16235`) | existing scenes pixel-identical; binding-set count == material count in overlay |
+| **A4** | Full PBR shader + MeshRenderer v2 + editor UX (live edits per mutation contract) + hand-migrate the two .alvl levels + debug view mode (roughness/metal/normal visualization via FrameConstants flag) | ✅ done (`39ebd40`, `eb7d3de`, `10a7088`, `38e289c`, `f2f6296`) | DamagedHelmet (unpacked) renders all channels; factors-only material matches flat defaults |
+| **A5** | DrawItem layer: extract → sort → Submit; expanded DrawStats | ✅ done (`dfb7fa8`) | sort on/off A/B: identical image, different bind counts |
+| **B** | Per-mesh AABB in CPU cull (data exists since A1) | ✅ done (`cbc9ec4`) | GPU-driven doc stage 1 |
+| **C** | Shared geometry arena (MeshBuffer → ranges; vertex-format constraint from §1 decided here) | ⬜ not started | stage 2 |
+| **D** | Per-instance GPU buffer + bindless (kills the binding-set cache; MaterialConstants pad → textureIndices) | ⬜ not started | stage 3; descriptor-indexing spike first |
+| **E** | CPU-built indirect draws + instancing (Submit interior only) | ⬜ not started | stage 4 |
+| **F** | Compute cull + screen-size LOD select (replaces extract/sort) | ⬜ not started | stage 5 |
+| **G** | Two-phase HZB occlusion | ⬜ not started | stage 6 |
 
 Streaming (async load → loading screen → chunk residency) slots in any time
 after A, on §8's contracts. Upload batching still rides the streaming loader,
