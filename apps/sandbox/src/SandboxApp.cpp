@@ -98,6 +98,21 @@ void SandboxApp::OnStart()
     SetupScene();
     ScanLevels();
 
+    // Command-line startup level (see main.cpp): open it now so `Assisi-Sandbox
+    // levels/Materials.alvl` boots straight into that scene. Resolved through the
+    // asset system like every other asset; a missing/typo'd path just warns.
+    if (!_startupLevel.empty())
+    {
+        if (!Assisi::Core::AssetSystem::Exists(_startupLevel))
+        {
+            Assisi::Core::Log::Warn("Startup level '{}' not found under the asset root; ignoring.", _startupLevel);
+        }
+        else if (!LoadLevelFromPath(_startupLevel))
+        {
+            Assisi::Core::Log::Warn("Startup level '{}' could not be loaded.", _startupLevel);
+        }
+    }
+
     // --- Systems ---
     _systems.Register(Assisi::App::SystemPhase::Update, "EntityPicking",
                       [this](Assisi::App::SystemContext &) { HandleEntityPicking(); });

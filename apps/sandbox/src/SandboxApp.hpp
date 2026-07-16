@@ -61,6 +61,11 @@ struct EntitySelectionChangedEvent
 class SandboxApp : public Assisi::App::Application
 {
   public:
+    /// @brief Virtual path (under the asset root) of a level to open once at
+    /// startup, from the command line — e.g. "levels/Materials.alvl". Empty = none.
+    /// OnStart resolves it through Core::AssetSystem and loads it. Call before Run().
+    void SetStartupLevel(std::string_view levelVirtualPath) { _startupLevel = levelVirtualPath; }
+
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
     void OnUpdate(float dt) override;
@@ -139,6 +144,10 @@ class SandboxApp : public Assisi::App::Application
     // --- Level management ---
     void ScanLevels();
     void LoadLevel(const std::string &name);
+    /// @brief Loads a level by virtual path (e.g. "levels/Materials.alvl"), doing
+    /// the cache-clear + rebind LoadLevel wraps. Returns false if the file didn't
+    /// deserialize. The shared core of LoadLevel and the command-line loader.
+    bool LoadLevelFromPath(const std::string &virtualPath);
     void SaveLevel(const std::string &name);
 
     // --- Play control (F5 run / F6 pause / F7 stop) ---
@@ -385,6 +394,7 @@ class SandboxApp : public Assisi::App::Application
     std::vector<std::string> _levelFiles;
     int                      _selectedLevel = 0;
     char                     _saveAsName[128] = {};
+    std::string              _startupLevel; // level stem to open in OnStart (CLI); empty = none.
     // A level load requested from the UI (OnImGui), applied at the next OnUpdate —
     // never mid-frame: LoadLevel frees GPU assets (incl. the bindless table) that
     // this frame's already-recorded draws still reference, which faults the GPU.

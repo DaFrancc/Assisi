@@ -127,8 +127,16 @@ void SandboxApp::SaveLevel(const std::string &name)
 
 void SandboxApp::LoadLevel(const std::string &name)
 {
-    if (!Assisi::Runtime::SceneSerializer::LoadFromFile(*_scene, "levels/" + name + ".alvl"))
-        return;
+    // The Levels UI works in bare stems (from ScanLevels); the on-disk layout is
+    // levels/<name>.alvl. LoadLevelFromPath does the real work by virtual path, so
+    // the command-line loader (which already has a vpath) shares it.
+    LoadLevelFromPath("levels/" + name + ".alvl");
+}
+
+bool SandboxApp::LoadLevelFromPath(const std::string &virtualPath)
+{
+    if (!Assisi::Runtime::SceneSerializer::LoadFromFile(*_scene, virtualPath))
+        return false;
 
     // A load also ends any in-progress play session: the snapshot describes the
     // old scene, so it must not survive into the new one.
@@ -142,4 +150,5 @@ void SandboxApp::LoadLevel(const std::string &name)
     _sceneRenderer.InvalidateAssetBindings();
 
     RebindSceneAssetsAndPhysics();
+    return true;
 }
