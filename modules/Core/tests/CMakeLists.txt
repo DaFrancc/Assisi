@@ -17,6 +17,7 @@ add_executable(Assisi-Core-Tests
   TestComponentRegistry.cpp
   TestContentHash.cpp
   TestEventQueue.cpp
+  TestJobSystem.cpp
   TestTrivialString.cpp
 )
 
