@@ -352,6 +352,10 @@ class SandboxApp : public Assisi::App::Application
     // whether it manipulates in world or the entity's local axes.
     GizmoOp _gizmoOp        = GizmoOp::Translate;
     bool    _gizmoLocalSpace = false; // false = world axes
+    // Whether the gizmo was being dragged last frame, so its release edge can be
+    // detected — the gizmo force-commits its (shared) Transform gesture there, so a
+    // gizmo drag is always its own undo entry, never merged with a later edit.
+    bool    _gizmoWasUsing = false;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-

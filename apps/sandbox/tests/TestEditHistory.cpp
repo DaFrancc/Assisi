@@ -643,6 +643,36 @@ TEST_CASE("EditHistory: RecordBefore refreshes the label of an open gesture (kee
     CHECK(scene.Get<Transform>(e)->position.x == doctest::Approx(1.f)); // before was preserved
 }
 
+TEST_CASE("EditHistory: a force-committed gesture stays separate from a following edit")
+{
+    // Models a gizmo drag (force-commit on release) followed by an inspector edit of
+    // the same Transform: two distinct undo entries, never coalesced, even though
+    // they share the (entity, Transform) gesture key.
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {0.f, 0.f, 0.f}}) != nullptr);
+    const auto tid = IdOf("Transform");
+
+    EditHistory hist(scene);
+
+    // Gizmo drag: open, move to 1, force-commit on release.
+    hist.RecordBefore(e, tid, "Edit Transform", e);
+    scene.GetMut<Transform>(e)->position = {1.f, 0.f, 0.f};
+    hist.CommitGesture(e, tid);
+    REQUIRE(hist.UndoDepth() == 1);
+
+    // Inspector edit: a fresh gesture, move to 2, committed by the sweep.
+    hist.RecordBefore(e, tid, "Edit Transform", e);
+    scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
+    hist.EndFrameSweep(/*editingActive=*/false);
+    CHECK(hist.UndoDepth() == 2); // two separate actions
+
+    hist.Undo();
+    CHECK(scene.Get<Transform>(e)->position.x == doctest::Approx(1.f)); // back to the gizmo result
+    hist.Undo();
+    CHECK(scene.Get<Transform>(e)->position.x == doctest::Approx(0.f)); // back to the start
+}
+
 TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 {
     Scene       scene;

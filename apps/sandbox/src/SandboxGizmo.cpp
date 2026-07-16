@@ -121,21 +121,26 @@ void SandboxApp::DrawTransformGizmo()
                                                             : kScaleSnap;
     const glm::vec3 snap(snapValue);
 
-    // A gizmo drag is just a Transform edit, so it rides the *same* record-before-
-    // write gesture the inspector uses — keyed by (entity, Transform), it's literally
-    // the same gesture, one commit, one "Edit Transform" label. Snapshot the pre-drag
-    // pose while not dragging (idempotent, so it freezes once the drag starts); the
-    // end-of-frame sweep commits it on release.
-    if (Sandbox::EditHistory *history = ActiveHistory(); history != nullptr && !ImGuizmo::IsUsing())
-        history->RecordBefore(_selectedEntity, Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>(),
-                              EditLabel("Edit Transform", _selectedEntity), _selectedEntity);
+    // A gizmo drag is a Transform edit, so it rides the *same* record-before-write
+    // gesture and "Edit Transform" label the inspector uses — no duplicate
+    // transaction code. But it force-commits on release (below) so a gizmo drag is
+    // always its OWN undo entry, distinct from any inspector Transform edit before
+    // or after it. Snapshot the pre-drag pose while not dragging (idempotent, so it
+    // freezes for the drag's duration).
+    const Assisi::Core::Reflect::ComponentId transformId =
+        Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
+    Sandbox::EditHistory *history = ActiveHistory();
+    if (history != nullptr && !ImGuizmo::IsUsing())
+        history->RecordBefore(_selectedEntity, transformId, EditLabel("Edit Transform", _selectedEntity),
+                              _selectedEntity);
 
     const bool manipulated = ImGuizmo::Manipulate(&view[0][0], &proj[0][0], operation, mode, &world[0][0],
                                                   nullptr, io.KeyCtrl ? &snap[0] : nullptr);
 
+    const bool nowUsing = ImGuizmo::IsUsing();
     // A held gizmo keeps the shared gesture open until release (mirrors the
     // inspector's active-widget signal).
-    if (ImGuizmo::IsUsing())
+    if (nowUsing)
         _captureEditingActive = true;
 
     if (manipulated)
@@ -162,4 +167,12 @@ void SandboxApp::DrawTransformGizmo()
             }
         }
     }
+
+    // On the drag-release edge, commit the gesture now (before == after drops a
+    // click without a drag). Committing here rather than leaving it to the sweep
+    // guarantees the gizmo drag is its own transaction — it closes the instant the
+    // drag ends, so a Transform edit that follows opens a fresh, separate one.
+    if (history != nullptr && !nowUsing && _gizmoWasUsing)
+        history->CommitGesture(_selectedEntity, transformId);
+    _gizmoWasUsing = nowUsing;
 }
