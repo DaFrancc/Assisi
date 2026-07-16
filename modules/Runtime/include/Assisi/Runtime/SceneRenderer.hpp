@@ -123,10 +123,11 @@ class SceneRenderer
     void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, ECS::Scene &scene);
 
     /// @brief Draw a world-space billboard for every entity with a Transform but no
-    /// MeshRenderer, using the camera basis from @p view to face them. No-op when
-    /// icons are hidden or the icon pass is unavailable.
+    /// MeshRenderer, using the camera basis from @p view to face them. Icons beyond
+    /// a fixed distance from @p cameraPosition are skipped (a simple render/don't
+    /// LOD). No-op when icons are hidden or the icon pass is unavailable.
     void DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::mat4 &view,
-                         ECS::Scene &scene);
+                         const glm::vec3 &cameraPosition, ECS::Scene &scene);
 
     nvrhi::IDevice     *_device = nullptr;
     LightingSystem      _lighting;

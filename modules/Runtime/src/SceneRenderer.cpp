@@ -32,6 +32,10 @@ constexpr const char *kIconVertexShader = "editor/shaders/icon_billboard.vert.sp
 constexpr const char *kIconPixelShader  = "editor/shaders/icon_billboard.frag.spv";
 constexpr const char *kEntityIconTexture = "editor/entity_icon.png";
 
+// Entity icons past this distance from the camera are not drawn — a simple
+// render/don't LOD so a large scene isn't peppered with distant icons.
+constexpr float kMaxIconDistance = 50.f;
+
 float AspectRatio(int width, int height)
 {
     return height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
@@ -166,12 +170,12 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .frustumCulling = _frustumCulling,
                                                .sortDraws      = _sortDraws});
 
-    DrawEditorIcons(frame, projection * view, view, scene);
+    DrawEditorIcons(frame, projection * view, view, cameraTransform.position, scene);
     DrawHighlightOutline(frame, projection * view, scene);
 }
 
 void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
-                                    const glm::mat4 &view, ECS::Scene &scene)
+                                    const glm::mat4 &view, const glm::vec3 &cameraPosition, ECS::Scene &scene)
 {
     if (!_editorIconsVisible || !_iconPass.IsValid())
     {
@@ -183,11 +187,18 @@ void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm:
     const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
     const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
 
-    // One icon per placement-only entity: has a Transform, has no mesh to draw.
+    // One icon per placement-only entity (has a Transform, no mesh to draw), unless
+    // it is beyond the LOD distance from the camera.
+    constexpr float maxDistanceSq = kMaxIconDistance * kMaxIconDistance;
     _iconPositions.clear();
     for (auto [entity, transform] : scene.Query<Transform>(ECS::Without<MeshRenderer>{}))
     {
-        _iconPositions.push_back(glm::vec3(transform.worldMatrix[3]));
+        const glm::vec3 position(transform.worldMatrix[3]);
+        const glm::vec3 offset = position - cameraPosition;
+        if (glm::dot(offset, offset) <= maxDistanceSq)
+        {
+            _iconPositions.push_back(position);
+        }
     }
 
     _iconPass.Draw(frame, viewProjection, cameraRight, cameraUp, _iconPositions);
