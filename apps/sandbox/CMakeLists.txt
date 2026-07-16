@@ -115,3 +115,8 @@ endforeach()
 
 add_custom_target(Assisi-Sandbox-VkShaders ALL DEPENDS ${_sandbox_shader_copies})
 add_dependencies(Assisi-Sandbox Assisi-Sandbox-VkShaders)
+
+# Editor-only unit tests (EditHistory apply engine, etc.).
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
