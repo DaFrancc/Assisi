@@ -92,6 +92,7 @@ struct Transaction
     std::vector<EditCommand> cmds;
     Assisi::ECS::Entity      selectionBefore = Assisi::ECS::NullEntity;
     Assisi::ECS::Entity      selectionAfter  = Assisi::ECS::NullEntity;
+    std::uint64_t            seq             = 0; ///< Unique sequence, assigned on Push (dirty tracking).
 };
 
 /// @brief A linear undo/redo stack over one Scene.
@@ -182,6 +183,28 @@ class EditHistory
     [[nodiscard]] const std::string &NextUndoLabel() const;
     [[nodiscard]] const std::string &NextRedoLabel() const;
 
+    /// @brief Undo-stack labels oldest→newest (index 0 = oldest retained edit; the
+    /// last entry is what the next Undo() reverts). For the history panel.
+    [[nodiscard]] std::vector<std::string> UndoLabels() const;
+    /// @brief Redo-stack labels next-to-redo→oldest-redone (index 0 = what the next
+    /// Redo() re-applies).
+    [[nodiscard]] std::vector<std::string> RedoLabels() const;
+
+    /// @brief An opaque token identifying the current position in history. Stable
+    /// across an undo→redo round-trip, distinct after any new edit. Save it at
+    /// SaveLevel and compare to detect unsaved changes (the dirty `*` marker). 0
+    /// means "at the base state" (empty undo stack).
+    [[nodiscard]] std::uint64_t CurrentStateToken() const
+    {
+        return _undo.empty() ? 0 : _undo.back().seq;
+    }
+
+    /// @brief Snapshot every serializable component of @p entity to JSON under a
+    /// raw-entity context — the per-entity payload of an entity create/delete
+    /// EntityDelta. Empty for a bare entity. Public so the create/delete edit sites
+    /// can build EntityDelta transactions.
+    [[nodiscard]] std::vector<ComponentSnapshot> CaptureEntityComponents(Assisi::ECS::Entity entity) const;
+
     /// @brief Cap on retained transactions; the oldest is dropped past this. JSON
     /// payloads are heavy, so history is bounded regardless of edit count.
     static constexpr std::size_t kMaxDepth = 256;
@@ -231,6 +254,7 @@ class EditHistory
     std::vector<Transaction> _undo;
     std::vector<Transaction> _redo;
     std::vector<OpenGesture> _open; ///< Capture gestures awaiting commit (§5).
+    std::uint64_t            _nextSeq  = 1; ///< Next transaction sequence (0 = base state).
     bool                     _applying = false;
 };
 

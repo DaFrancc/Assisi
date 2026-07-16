@@ -11,6 +11,7 @@
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+#include <optional>
 #include <utility>
 #include <vector>
 #include <Assisi/Window/InputContext.hpp>
@@ -199,8 +200,22 @@ Assisi::ECS::Entity SandboxApp::CreateEntity()
     // spatial, so a Transform is opt-in: adding one (via Add Component) places the
     // entity in front of the camera (see AddComponentToSelected). The author
     // builds the entity up from here.
-    const Assisi::ECS::Entity entity = _scene->Create();
-    _selectedEntity                  = entity;
+    const Assisi::ECS::Entity previousSelection = _selectedEntity;
+    const Assisi::ECS::Entity entity            = _scene->Create();
+    _selectedEntity                             = entity;
+
+    // Capture the creation as one undoable transaction: undo destroys the bare
+    // entity, redo revives it at this exact handle. Components added afterwards
+    // are their own transactions (so undo peels them off before removing the entity).
+    if (Sandbox::EditHistory *history = ActiveHistory())
+    {
+        Sandbox::Transaction txn;
+        txn.label           = "Create Entity";
+        txn.selectionBefore = previousSelection;
+        txn.selectionAfter  = entity;
+        txn.cmds.push_back(Sandbox::EntityDelta{entity, std::nullopt, history->CaptureEntityComponents(entity)});
+        history->Push(std::move(txn));
+    }
     return entity;
 }
 

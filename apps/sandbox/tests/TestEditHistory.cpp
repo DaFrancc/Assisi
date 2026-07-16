@@ -530,6 +530,60 @@ TEST_CASE("EditHistory: an editing undo survives a play (snapshot -> restore) cy
     CHECK(scene.Get<Transform>(a)->position.x == doctest::Approx(1.f)); // reverted to pre-edit
 }
 
+TEST_CASE("EditHistory: CaptureEntityComponents snapshots every serializable component")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {3.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(e, Camera{.fovDegrees = 12.f}) != nullptr);
+
+    EditHistory hist(scene);
+    const auto  snap = hist.CaptureEntityComponents(e);
+    CHECK(snap.size() == 2); // Transform + Camera
+
+    const Entity bare = scene.Create();
+    CHECK(hist.CaptureEntityComponents(bare).empty()); // no components
+}
+
+TEST_CASE("EditHistory: labels and the dirty-state token track the stack")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{}) != nullptr);
+    const auto tid = IdOf("Transform");
+    const auto j   = CaptureComponent(scene, e, tid);
+
+    EditHistory hist(scene);
+    const auto  push = [&](const char *label) {
+        Transaction txn;
+        txn.label = label;
+        // distinct before/after so the transaction isn't a no-op
+        auto after = j;
+        txn.cmds.push_back(ComponentDelta{e, tid, j, after});
+        hist.Push(std::move(txn));
+    };
+
+    CHECK(hist.CurrentStateToken() == 0); // base state
+    push("A");
+    push("B");
+
+    const auto labels = hist.UndoLabels();
+    REQUIRE(labels.size() == 2);
+    CHECK(labels[0] == "A"); // oldest first
+    CHECK(labels[1] == "B"); // newest last (next Undo target)
+
+    const auto savedToken = hist.CurrentStateToken();
+    CHECK(savedToken != 0);
+
+    hist.Undo(); // now at A; token differs from the B-top saved token
+    CHECK(hist.CurrentStateToken() != savedToken);
+    CHECK(hist.RedoLabels().size() == 1);
+    CHECK(hist.RedoLabels()[0] == "B");
+
+    hist.Redo(); // back to B; token returns to the saved value (undo↔redo stable)
+    CHECK(hist.CurrentStateToken() == savedToken);
+}
+
 TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 {
     Scene       scene;

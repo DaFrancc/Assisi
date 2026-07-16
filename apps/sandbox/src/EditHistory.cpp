@@ -71,6 +71,7 @@ void EditHistory::Push(Transaction txn)
     // A fresh edit invalidates the redo future: this is the linear-history
     // invariant that ReviveAt's exact-identity safety rests on (design doc §7.1).
     _redo.clear();
+    txn.seq = _nextSeq++; // unique, monotonic — the dirty-tracking state token
     _undo.push_back(std::move(txn));
 
     if (_undo.size() > kMaxDepth)
@@ -122,6 +123,40 @@ const std::string &EditHistory::NextUndoLabel() const
 const std::string &EditHistory::NextRedoLabel() const
 {
     return _redo.empty() ? kEmptyLabel : _redo.back().label;
+}
+
+std::vector<std::string> EditHistory::UndoLabels() const
+{
+    std::vector<std::string> labels;
+    labels.reserve(_undo.size());
+    for (const Transaction &txn : _undo) // oldest → newest (back = next Undo target)
+        labels.push_back(txn.label);
+    return labels;
+}
+
+std::vector<std::string> EditHistory::RedoLabels() const
+{
+    std::vector<std::string> labels;
+    labels.reserve(_redo.size());
+    // _redo.back() is the next Redo target; expose next-to-redo first.
+    for (auto it = _redo.rbegin(); it != _redo.rend(); ++it)
+        labels.push_back(it->label);
+    return labels;
+}
+
+std::vector<ComponentSnapshot> EditHistory::CaptureEntityComponents(Entity entity) const
+{
+    std::vector<ComponentSnapshot> components;
+    if (!_scene.IsAlive(entity))
+        return components;
+
+    Rt::SceneSerializer::ScopedRawEntityContext rawContext(_scene);
+    for (const Reflect::ComponentMeta *meta : Reflect::ComponentRegistry::Instance().SerializableComponents())
+    {
+        if (const void *comp = meta->getByEntity(&_scene, entity.index, entity.generation))
+            components.push_back({meta->id, meta->serialize(comp)});
+    }
+    return components;
 }
 
 // ---------------------------------------------------------------------------
