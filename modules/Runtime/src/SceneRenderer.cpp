@@ -24,6 +24,13 @@ constexpr const char *kOutlineMaskPixelShader  = "shaders/outline_mask.frag.spv"
 constexpr const char *kOutlineEdgeVertexShader = "shaders/fullscreen.vert.spv";
 constexpr const char *kOutlineEdgePixelShader  = "shaders/outline_edge.frag.spv";
 
+// Editor entity-icon billboard (see Render::IconPass). The icon image is authored
+// content dropped at this virtual path; until it exists the pass shows a magenta
+// placeholder.
+constexpr const char *kIconVertexShader = "shaders/icon_billboard.vert.spv";
+constexpr const char *kIconPixelShader  = "shaders/icon_billboard.frag.spv";
+constexpr const char *kEntityIconTexture = "textures/editor/entity_icon.png";
+
 float AspectRatio(int width, int height)
 {
     return height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
@@ -69,6 +76,13 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
         Core::Log::Warn("SceneRenderer: selection outline unavailable (outline pass failed to initialise).");
     }
 
+    // Editor entity icons are likewise a convenience overlay; a failure here just
+    // drops the icons, it must not fail the whole renderer.
+    if (!_iconPass.Initialize(device, framebufferInfo, kIconVertexShader, kIconPixelShader, kEntityIconTexture))
+    {
+        Core::Log::Warn("SceneRenderer: entity icons unavailable (icon pass failed to initialise).");
+    }
+
     return true;
 }
 
@@ -105,6 +119,10 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
     if (!_outlinePass.RebuildPipeline(framebufferInfo))
     {
         Core::Log::Warn("SceneRenderer: selection outline pipeline rebuild failed; highlight disabled.");
+    }
+    if (!_iconPass.RebuildPipeline(framebufferInfo))
+    {
+        Core::Log::Warn("SceneRenderer: entity-icon pipeline rebuild failed; icons disabled.");
     }
     return _meshPass.RebuildPipeline(framebufferInfo);
 }
@@ -147,7 +165,31 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .frustumCulling = _frustumCulling,
                                                .sortDraws      = _sortDraws});
 
+    DrawEditorIcons(frame, projection * view, view, scene);
     DrawHighlightOutline(frame, projection * view, scene);
+}
+
+void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
+                                    const glm::mat4 &view, ECS::Scene &scene)
+{
+    if (!_editorIconsVisible || !_iconPass.IsValid())
+    {
+        return;
+    }
+
+    // Camera world-space basis is the first two rows of the view matrix (the view
+    // rotation is the transpose of the camera's world rotation).
+    const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
+    const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
+
+    // One icon per placement-only entity: has a Transform, has no mesh to draw.
+    _iconPositions.clear();
+    for (auto [entity, transform] : scene.Query<Transform>(ECS::Without<MeshRenderer>{}))
+    {
+        _iconPositions.push_back(glm::vec3(transform.worldMatrix[3]));
+    }
+
+    _iconPass.Draw(frame, viewProjection, cameraRight, cameraUp, _iconPositions);
 }
 
 void SceneRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,

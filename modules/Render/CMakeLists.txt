@@ -30,6 +30,7 @@ target_sources(Assisi-Render
     "src/GpuTelemetry.cpp"
     "src/MeshPass.cpp"
     "src/OutlinePass.cpp"
+    "src/IconPass.cpp"
     "src/PostProcess.cpp"
     "src/Texture.cpp"
     "src/VulkanContext.cpp"

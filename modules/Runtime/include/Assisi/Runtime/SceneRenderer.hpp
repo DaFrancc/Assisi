@@ -23,6 +23,7 @@
 
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Render/IconPass.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/OutlinePass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
@@ -105,6 +106,13 @@ class SceneRenderer
     void SetHighlightedEntity(ECS::Entity entity) { _highlightedEntity = entity; }
     [[nodiscard]] ECS::Entity HighlightedEntity() const { return _highlightedEntity; }
 
+    /// @brief Show/hide the editor's entity icons — world-space billboards marking
+    /// entities that have a Transform but no mesh. Off by default (games don't want
+    /// them); an editor turns them on while authoring and off during play. Drawn
+    /// each Render() after the scene when enabled.
+    void SetEditorIconsVisible(bool visible) { _editorIconsVisible = visible; }
+    [[nodiscard]] bool EditorIconsVisible() const { return _editorIconsVisible; }
+
   private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int width, int height, const Camera &camera, const glm::mat4 &projection);
@@ -114,13 +122,25 @@ class SceneRenderer
     /// the outline pass is unavailable.
     void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, ECS::Scene &scene);
 
+    /// @brief Draw a world-space billboard for every entity with a Transform but no
+    /// MeshRenderer, using the camera basis from @p view to face them. No-op when
+    /// icons are hidden or the icon pass is unavailable.
+    void DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::mat4 &view,
+                         ECS::Scene &scene);
+
     nvrhi::IDevice     *_device = nullptr;
     LightingSystem      _lighting;
     Render::MeshPass    _meshPass;
     Render::OutlinePass _outlinePass;
+    Render::IconPass    _iconPass;
 
     // The entity drawn with a selection outline this frame (NullEntity = none).
     ECS::Entity _highlightedEntity = ECS::NullEntity;
+
+    bool _editorIconsVisible = false; // editor opts in; off during play and for games
+    // Reused scratch for the per-frame icon positions, so drawing icons doesn't
+    // allocate every frame.
+    std::vector<glm::vec3> _iconPositions;
 
     // Projection the froxel grid was last built against; a mismatch in Render()
     // triggers a rebuild. Identity forces one on the first frame.

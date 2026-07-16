@@ -546,6 +546,8 @@ void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
     RefreshCameraMatrix();
     // The selected entity gets an always-on-top orange selection outline.
     _sceneRenderer.SetHighlightedEntity(_selectedEntity);
+    // Editor entity icons show while authoring/paused, but not during live play.
+    _sceneRenderer.SetEditorIconsVisible(_playState != PlayState::Playing);
     _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera);
 }
 
