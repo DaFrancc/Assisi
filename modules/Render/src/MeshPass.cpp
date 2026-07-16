@@ -6,34 +6,44 @@
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <iterator>
+#include <vector>
 
 namespace Assisi::Render
 {
 
 namespace
 {
-// Per-draw data, pushed as push constants (128 bytes — the portable Vulkan
-// minimum, see cube_min.vert's matching push_constant block).
-struct DrawPushConstants
+// Per-instance data: one record per drawn submesh, uploaded to the instance
+// buffer each frame and indexed in the vertex shader by gl_InstanceIndex (each
+// draw sets startInstanceLocation to its record). Mirrors cube_min.vert's
+// `InstanceData` std430 struct — mat4 (0..63) + uint (64), padded to the 16-byte
+// array stride std430 gives the struct.
+struct InstanceData
 {
-    glm::mat4 modelViewProjection;
     glm::mat4 model;
+    uint32_t  materialIndex; // row into the material table (== Material::Id()).
+    uint32_t  _pad0 = 0, _pad1 = 0, _pad2 = 0;
 };
-static_assert(sizeof(DrawPushConstants) == 128);
+static_assert(sizeof(InstanceData) == 80, "InstanceData must match the shader's std430 array stride.");
 
-// Per-frame data (camera + cluster-grid parameters), uploaded once per frame
-// via UpdateFrameConstants() into a constant buffer rather than push
-// constants — it doesn't vary per draw, and there wasn't room left in the
-// push-constant budget alongside the two matrices above. Mirrors
-// cube_min.vert/frag's matching `uniform FrameConstants` block.
+// Starting instance-buffer capacity (records). Grows geometrically past this when
+// a frame draws more items; the first level typically fits without a growth.
+constexpr uint32_t kInitialInstanceCapacity = 1024u;
+
+// Per-frame data (view-projection + camera + cluster-grid parameters), uploaded
+// once per frame via UpdateFrameConstants() into a constant buffer. viewProjection
+// leads so the vertex shader can form clip position from each instance's world
+// matrix. Mirrors cube_min.vert/frag's matching `uniform FrameConstants` block.
 struct FrameConstants
 {
-    glm::mat4 view;
+    glm::mat4  viewProjection;
+    glm::mat4  view;
     glm::uvec4 gridDim;           // xyz used, w unused
-    glm::vec4 screenSizeNearFar;  // xy = screen size, z = nearZ, w = farZ
-    glm::uvec4 lightCounts;       // x = directional light count, yzw unused
+    glm::vec4  screenSizeNearFar; // xy = screen size, z = nearZ, w = farZ
+    glm::uvec4 lightCounts;       // x = directional light count, y = debug view, zw unused
 };
 } // namespace
 
@@ -48,6 +58,7 @@ bool MeshPass::Initialize(const InitParams &params)
     _clusterGrid = params.clusterGrid;
     _bindlessLayout = params.bindlessLayout;
     _bindlessTable = params.bindlessTable;
+    _materialTable = params.materialTable;
 
     _vertexShader = LoadSpirvShader(device, vertexShaderSpvPath, nvrhi::ShaderType::Vertex);
     _pixelShader = LoadSpirvShader(device, pixelShaderSpvPath, nvrhi::ShaderType::Pixel);
@@ -81,30 +92,27 @@ bool MeshPass::Initialize(const InitParams &params)
     };
     _inputLayout = device->createInputLayout(attributes, static_cast<uint32_t>(std::size(attributes)), _vertexShader);
 
-    // Texture_SRV/Sampler are separate descriptors in NVRHI's Vulkan backend (HLSL
-    // t-register/s-register split, not GLSL's combined sampler2D); StructuredBuffer_SRV
-    // shares the same t-register space as Texture_SRV. Slot map (see cube_min.frag
-    // for the matching `binding = N` declarations):
-    //   b0 = FrameConstants, b1 = MaterialConstants
-    //   t0 = baseColor, t1-t5 = clustered light buffers, t6-t9 = normal/MR/occlusion/emissive
+    // Set 0 — the one binding set every draw shares (stage D). Texture_SRV/Sampler
+    // are separate descriptors in NVRHI's Vulkan backend (HLSL t/s split, not
+    // GLSL's combined sampler2D); StructuredBuffer_SRV shares the t-register space
+    // with Texture_SRV. Slot map (see cube_min.vert/frag's matching `binding = N`):
+    //   b0 = FrameConstants (no more per-material CB — the factors live in t0)
+    //   t0 = material table, t1-t5 = clustered light buffers, t6 = per-instance data
     //   s0 = shared sampler
-    // The material SRVs sit past the light buffers rather than contiguous with t0
-    // on purpose — the whole set collapses into one bindless table later, so the
-    // gap is harmless; don't "tidy" them adjacent.
+    // No push constants: per-object data (world matrix + material id) is read from
+    // the instance buffer (t6) by gl_InstanceIndex, and the material's textures
+    // from the bindless table (register space 1).
     nvrhi::BindingLayoutDesc bindingLayoutDesc;
     bindingLayoutDesc.visibility = nvrhi::ShaderType::Vertex | nvrhi::ShaderType::Pixel;
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(DrawPushConstants)));
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0)); // FrameConstants
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(1)); // MaterialConstants
-    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
-    // The five material textures no longer live here — they moved to the bindless
-    // table (register space 1); the shader samples them by index (stage D). The
-    // shared sampler stays in set 0. Light buffers keep slots 1-5.
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::ConstantBuffer(0));       // FrameConstants
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));              // shared sampler
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(0)); // material table
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(1)); // pointLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(2)); // spotLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(3)); // dirLights
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(4)); // lightIndexList
     bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(5)); // lightGrid
+    bindingLayoutDesc.addItem(nvrhi::BindingLayoutItem::StructuredBuffer_SRV(6)); // per-instance data
     _bindingLayout = device->createBindingLayout(bindingLayoutDesc);
 
     nvrhi::SamplerDesc samplerDesc;
@@ -163,11 +171,12 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
     return true;
 }
 
-void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &view, uint32_t screenWidth,
-                                    uint32_t screenHeight, float nearZ, float farZ, uint32_t dirLightCount,
-                                    MaterialDebugView debugView) const
+void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &viewProjection,
+                                    const glm::mat4 &view, uint32_t screenWidth, uint32_t screenHeight, float nearZ,
+                                    float farZ, uint32_t dirLightCount, MaterialDebugView debugView) const
 {
     FrameConstants constants;
+    constants.viewProjection = viewProjection;
     constants.view = view;
     constants.gridDim = glm::uvec4(ClusterGrid::kNumX, ClusterGrid::kNumY, ClusterGrid::kNumZ, 0u);
     constants.screenSizeNearFar =
@@ -176,21 +185,23 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm:
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }
 
-nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(const Material &material) const
+nvrhi::IBindingSet *MeshPass::GetOrCreateGlobalBindingSet() const
 {
-    const auto it = _bindingSetCache.find(material.Id());
-    if (it != _bindingSetCache.end())
+    nvrhi::IBuffer *const instanceBuffer = _instanceBuffer.NativeBuffer();
+    if (_globalBindingSet != nullptr && _globalSetInstanceBuffer == instanceBuffer)
     {
-        return it->second;
+        return _globalBindingSet;
     }
 
+    // Every referenced handle but the instance buffer is stable for the pass's
+    // lifetime (frame CB / sampler owned here; the light buffers, though rebuilt
+    // on a viewport change, keep their handles; the material table is fixed
+    // capacity). So this rebuilds only on an instance-buffer growth or an explicit
+    // InvalidateBindingSets() — not per frame.
     nvrhi::BindingSetDesc bindingSetDesc;
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(DrawPushConstants)));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(0, _frameConstantsBuffer));
-    bindingSetDesc.addItem(nvrhi::BindingSetItem::ConstantBuffer(1, material.Constants()));
     bindingSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
-    // Material textures are no longer here — the shader samples them from the
-    // bindless table (set 1) by the indices in material.Constants().
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(0, _materialTable));
     bindingSetDesc.addItem(
         nvrhi::BindingSetItem::StructuredBuffer_SRV(1, _clusterGrid->PointLightBuffer().NativeBuffer()));
     bindingSetDesc.addItem(
@@ -201,34 +212,63 @@ nvrhi::IBindingSet *MeshPass::GetOrCreateBindingSet(const Material &material) co
         nvrhi::BindingSetItem::StructuredBuffer_SRV(4, _clusterGrid->LightIndexBuffer().NativeBuffer()));
     bindingSetDesc.addItem(
         nvrhi::BindingSetItem::StructuredBuffer_SRV(5, _clusterGrid->LightGridBuffer().NativeBuffer()));
-    const nvrhi::BindingSetHandle bindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
-
-    return _bindingSetCache.emplace(material.Id(), bindingSet).first->second;
+    bindingSetDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(6, instanceBuffer));
+    _globalBindingSet = _device->createBindingSet(bindingSetDesc, _bindingLayout);
+    _globalSetInstanceBuffer = instanceBuffer;
+    return _globalBindingSet;
 }
 
-MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, const glm::mat4 &viewProjection,
-                                       std::span<const DrawItem> items) const
+MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const DrawItem> items) const
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
     SubmitStats                stats;
 
-    // The previous item's material id / vertex buffer, to count the distinct
-    // binding-set / vertex-buffer runs the sort produced. NVRHI caches graphics
-    // state across setGraphicsState calls, so re-issuing an unchanged binding set
-    // or vertex buffer costs nothing on the GPU — these counters report the real
-    // state changes. Since every mesh now sub-allocates from the one shared
-    // GeometryArena (stage C), the vertex buffer is the same for all items, so
-    // meshBinds collapses to ~1 — that collapse is the point of the arena.
-    // UINT32_MAX / nullptr never match a real id/pointer, so the first item
-    // counts as both a bind.
-    uint32_t              prevMaterialId    = UINT32_MAX;
-    const nvrhi::IBuffer *prevVertexBuffer  = nullptr;
-
+    // Gather per-object data for every valid item, in submit order. The draw loop
+    // below skips the same nulls in the same order, so instance record i lines up
+    // with the i-th draw's startInstanceLocation (its gl_InstanceIndex).
+    std::vector<InstanceData> instances;
+    instances.reserve(items.size());
     for (const DrawItem &item : items)
     {
         if (item.material == nullptr || item.mesh == nullptr)
         {
             continue; // producer should have filtered these; belt and suspenders
+        }
+        instances.push_back(InstanceData{item.model, item.material->Id()});
+    }
+    if (instances.empty())
+    {
+        return stats; // nothing to draw — leave the instance buffer/set untouched
+    }
+
+    // Grow the instance buffer to hold this frame's records if needed. A growth
+    // swaps the buffer handle, so the cached global set (which references it) must
+    // be rebuilt — GetOrCreateGlobalBindingSet notices via _globalSetInstanceBuffer.
+    if (!_instanceBuffer.IsValid() || instances.size() > _instanceBuffer.CapacityElements())
+    {
+        const uint32_t needed = static_cast<uint32_t>(instances.size());
+        const uint32_t grown = std::max(_instanceBuffer.CapacityElements() * 2u, kInitialInstanceCapacity);
+        _instanceBuffer.Create(_device, sizeof(InstanceData), std::max(grown, needed), /*allowUnorderedAccess=*/false,
+                               "MeshPass::Instances");
+    }
+    // Upload before recording draws: the copy lands in this command list ahead of
+    // the draws that read it, so the ordering is correct within the frame.
+    _instanceBuffer.Upload(commandList, instances.data(), static_cast<uint32_t>(instances.size()));
+
+    nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet();
+
+    // Distinct material-id / vertex-buffer runs the sort produced — batching
+    // diagnostics now that binds are frame-global (see SubmitStats). UINT32_MAX /
+    // nullptr never match a real id/pointer, so the first item counts as both.
+    uint32_t              prevMaterialId   = UINT32_MAX;
+    const nvrhi::IBuffer *prevVertexBuffer = nullptr;
+
+    uint32_t instanceIndex = 0;
+    for (const DrawItem &item : items)
+    {
+        if (item.material == nullptr || item.mesh == nullptr)
+        {
+            continue; // same filter as the gather loop, so instanceIndex stays aligned
         }
 
         if (item.material->Id() != prevMaterialId)
@@ -246,32 +286,31 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, const glm::mat4
 
         // GraphicsState is a cheap value; rebuild it each item rather than mutate
         // its static_vectors. NVRHI compares it against the cached state and only
-        // re-binds what actually changed since the previous item.
+        // re-binds what actually changed since the previous item — with one global
+        // set that's just the vertex/index buffers (already identical via the arena).
         nvrhi::GraphicsState state;
         state.pipeline = _pipeline;
         state.framebuffer = frame.framebuffer;
-        state.addBindingSet(GetOrCreateBindingSet(*item.material)); // set 0
-        state.addBindingSet(_bindlessTable);                        // set 1: bindless textures
+        state.addBindingSet(globalBindingSet); // set 0: frame/sampler/lights/material table/instances
+        state.addBindingSet(_bindlessTable);   // set 1: bindless textures
         state.viewport.addViewportAndScissorRect(
             nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
         state.addVertexBuffer(nvrhi::VertexBufferBinding{item.mesh->VertexBuffer(), 0, 0});
         state.indexBuffer = nvrhi::IndexBufferBinding{item.mesh->IndexBuffer(), nvrhi::Format::R32_UINT, 0};
         commandList->setGraphicsState(state);
 
-        // Push constants are invalidated by setGraphicsState, so (re)set them per
-        // item — cheap, and always required before the draw.
-        const DrawPushConstants pushConstants{viewProjection * item.model, item.model};
-        commandList->setPushConstants(&pushConstants, sizeof(pushConstants));
-
         // Arena addressing: index values stay mesh-local, so baseVertex
         // (startVertexLocation) shifts them into this mesh's vertex range, and
         // startIndexLocation picks the mesh's slice of the shared index buffer.
+        // startInstanceLocation makes gl_InstanceIndex select this item's record.
         nvrhi::DrawArguments drawArgs;
         drawArgs.vertexCount = subMesh.IndexCount; // for drawIndexed this is the index count
         drawArgs.startIndexLocation = item.mesh->IndexBase() + subMesh.IndexOffset;
         drawArgs.startVertexLocation = item.mesh->VertexBase();
+        drawArgs.startInstanceLocation = instanceIndex;
         commandList->drawIndexed(drawArgs);
         ++stats.drawCalls;
+        ++instanceIndex;
     }
 
     return stats;

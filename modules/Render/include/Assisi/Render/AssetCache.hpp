@@ -34,6 +34,7 @@
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include <nvrhi/nvrhi.h>
 
@@ -41,6 +42,7 @@
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/GeometryArena.hpp>
 #include <Assisi/Render/Material.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
@@ -116,6 +118,14 @@ class AssetCache
     nvrhi::IBindingLayout *BindlessLayout() const { return _bindlessLayout; }
     nvrhi::IDescriptorTable *BindlessTable() const { return _bindlessTable; }
 
+    /// @brief The shared material table (GPU-driven stage D): a structured buffer
+    /// whose row `Material::Id()` holds that material's MaterialConstants. Each
+    /// per-instance record carries its material's id; the shader fetches the row
+    /// by that index, so no per-material binding set is needed. Fixed capacity, so
+    /// the handle is stable across Clear() (only the rows are rewritten) — the
+    /// MeshPass binds it once. Never null after Initialize().
+    nvrhi::IBuffer *MaterialTableBuffer() const { return _materialTable.NativeBuffer(); }
+
     /// @brief Drops every cached mesh, texture, and material, freeing their GPU
     /// resources, and rebuilds the fallback material. Any binding sets referencing
     /// those resources (see MeshPass) must be invalidated in the same breath.
@@ -152,8 +162,12 @@ class AssetCache
     uint32_t RegisterBindlessTexture(Texture &texture);
 
     /// @brief Populates @p material's textures + constants from @p data, assigning
-    /// it @p id.
+    /// it @p id, then writes its row into the material table.
     void BuildMaterial(Material &material, const Geometry::MaterialData &data, uint32_t id);
+
+    /// @brief Writes @p material's constants into row Material::Id() of the material
+    /// table, uploading the dense prefix. Called whenever a material is (re)built.
+    void WriteMaterialToTable(const Material &material);
 
     /// @brief (Re)build the id-0 fallback material from the engine defaults.
     void BuildFallbackMaterial();
@@ -207,6 +221,13 @@ class AssetCache
     uint32_t                     _bindlessCapacity = 0;
     uint32_t                     _nextBindlessSlot = 0;
 
+    // Material table (GPU-driven stage D): row `Material::Id()` holds a material's
+    // MaterialConstants. Fixed capacity (stable handle across Clear, so MeshPass
+    // binds it once); the CPU shadow mirrors the rows so a single build can
+    // re-upload the dense prefix without reading back from the GPU.
+    Buffer                         _materialTable;
+    std::vector<MaterialConstants> _materialTableCpu;
+
     std::unordered_map<Core::AssetPath, MeshBuffer>         _meshes;
     std::unordered_map<TextureKey, Texture, TextureKeyHash> _textures;
     std::unordered_map<Core::AssetPath, Material>           _materials; // .amat files
@@ -220,9 +241,11 @@ class AssetCache
     // unambiguous across a level reload.
     uint32_t _nextMeshId = 1;
 
-    // Monotonic, process-lifetime material id. NOT reset by Clear(), so an id is
-    // never reused — a stale binding-set entry keyed on it is dead, never wrong.
-    // Starts at 1; id 0 is reserved for the fallback material.
+    // Next material-table slot to hand out. Dense and RESET by Clear() (unlike the
+    // mesh id): a material's id is now its row in the material table, so ids must
+    // stay compact and start over with each asset set. Starts at 1; id 0 is the
+    // fallback material's row. The retired per-material binding-set cache was the
+    // only thing that needed ids to never repeat; the material table replaced it.
     uint32_t _nextMaterialId = 1;
 
     // Mesh paths that failed to load (see ResolveMesh): warn once, and don't

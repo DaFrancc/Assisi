@@ -30,6 +30,14 @@ const Core::AssetPath kFlatNormalTexture{std::string_view{"prim://flat-normal"}}
 // Starting slot count for the bindless material-texture table; it grows past this
 // on demand as more distinct textures resolve.
 constexpr uint32_t kInitialBindlessCapacity = 256u;
+
+// Material-table capacity (rows). Fixed so the buffer handle is stable across
+// Clear() and the MeshPass binds it once; generous enough for any real scene
+// (the opaque sort key allows ~1M, but a level with thousands of *distinct*
+// materials is unheard of). Rows past this are dropped with a one-time warning
+// (see Buffer::Upload) rather than resized into — keeping the handle stable
+// matters more than the ceiling.
+constexpr uint32_t kMaxMaterials = 4096u;
 } // namespace
 
 void AssetCache::Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace)
@@ -54,6 +62,13 @@ void AssetCache::Initialize(nvrhi::IDevice *device, ColorSpace textureColorSpace
     _bindlessCapacity = kInitialBindlessCapacity;
     _nextBindlessSlot = 0;
     _device->resizeDescriptorTable(_bindlessTable, _bindlessCapacity, false);
+
+    // Material table (GPU-driven stage D): one MaterialConstants row per material,
+    // indexed by Material::Id(). Fixed capacity — the handle stays put across
+    // Clear() so MeshPass binds it once; BuildFallbackMaterial fills row 0 below.
+    _materialTable.Create(_device, sizeof(MaterialConstants), kMaxMaterials, /*allowUnorderedAccess=*/false,
+                          "AssetCache::MaterialTable");
+    _materialTableCpu.clear();
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
 
@@ -230,6 +245,26 @@ void AssetCache::BuildMaterial(Material &material, const Geometry::MaterialData 
     textures.emissive = ResolveChannel(data.EmissiveTexture, ColorSpace::Srgb, kWhiteTexture);
 
     material.Create(_device, id, data, textures);
+    WriteMaterialToTable(material);
+}
+
+void AssetCache::WriteMaterialToTable(const Material &material)
+{
+    const uint32_t id = material.Id();
+    if (id >= _materialTableCpu.size())
+        _materialTableCpu.resize(id + 1);
+    _materialTableCpu[id] = material.Constants();
+
+    // Re-upload the dense prefix. Materials are built at load time (rare), not per
+    // frame, so re-sending the small prefix on each build is cheaper than tracking
+    // a partial-row write path — and Buffer::Upload already warns-and-drops rows
+    // past kMaxMaterials. Uses a throwaway command list like the other cache
+    // uploads (textures, the geometry arena).
+    nvrhi::CommandListHandle commandList = _device->createCommandList();
+    commandList->open();
+    _materialTable.Upload(commandList, _materialTableCpu.data(), static_cast<uint32_t>(_materialTableCpu.size()));
+    commandList->close();
+    _device->executeCommandList(commandList);
 }
 
 void AssetCache::BuildFallbackMaterial()
@@ -312,8 +347,14 @@ void AssetCache::Clear()
     _materials.clear();
     _missingMeshWarned.clear();
     _missingMaterialWarned.clear();
-    // _nextMaterialId is deliberately NOT reset: ids are never reused, so a stale
-    // binding-set entry keyed on an old id is dead, never wrong.
+
+    // Reset the material table to empty and hand out ids from 1 again: an id is a
+    // row in the table, so ids stay dense per asset set. Row 0 (the fallback) is
+    // repopulated by BuildFallbackMaterial below. The buffer handle is unchanged
+    // (fixed capacity), so MeshPass's bound material table stays valid. Safe to
+    // rewrite here because waitForIdle above drained any frame that read it.
+    _materialTableCpu.clear();
+    _nextMaterialId = 1;
 
     // The fallback's texture pointers dangled when _textures cleared; rebuild it
     // (and its prim:// defaults) so FallbackMaterial() stays valid immediately.

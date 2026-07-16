@@ -2,15 +2,14 @@
 #pragma once
 
 /// @file Material.hpp
-/// @brief GPU-side material: resolved PBR textures + a constants buffer.
+/// @brief GPU-side material: resolved PBR texture slots + a constants row.
 ///
-/// Built by AssetCache::ResolveMaterial from a Geometry::MaterialData. Texture
-/// pointers are non-owning (AssetCache owns the Textures); empty channels are
-/// filled with the cache's `prim://` default textures (white / flat normal) so
-/// the shader always samples a valid texture and never branches on null. The
-/// constants buffer holds the PBR
-/// factors and is laid out to become, verbatim, one row of the future bindless
-/// material table (a textureIndices field fills the reserved word then).
+/// Built by AssetCache::ResolveMaterial from a Geometry::MaterialData. Channels
+/// are bindless-table slots (empty ones resolve to the cache's `prim://` default
+/// textures — white / flat normal — so the shader always samples a valid index
+/// and never branches on null). The material no longer owns a GPU buffer: it
+/// holds its `MaterialConstants` as a plain value and AssetCache writes it into
+/// one row of the shared material table (stage D), indexed by the material's id.
 
 #include <cstdint>
 
@@ -54,30 +53,35 @@ class Material
   public:
     Material() = default;
 
-    /// @brief Build the constants buffer and store the resolved textures.
-    /// @param id  Stable, process-unique id assigned by AssetCache (never reused;
-    ///            survives Clear()). Used to key binding sets.
+    /// @brief Compute the constants row and store the resolved textures.
+    /// @param id  Dense material-table slot assigned by AssetCache (0-based, reset
+    ///            on Clear). Doubles as the opaque sort key's material field, and
+    ///            as the index every per-instance record uses to fetch this
+    ///            material's row from the GPU material table.
     void Create(nvrhi::IDevice *device, uint32_t id, const Geometry::MaterialData &source,
                 const MaterialTextures &textures);
 
     uint32_t Id() const { return _id; }
 
     /// @brief The material's per-channel bindless texture slots (indices into the
-    /// AssetCache descriptor table), as also packed into the constants buffer.
+    /// AssetCache descriptor table), as also packed into the constants row.
     const MaterialTextures &Textures() const { return _textures; }
 
-    nvrhi::IBuffer *Constants() const { return _constants; }
+    /// @brief The material's PBR constants — the exact bytes AssetCache writes
+    /// into row `Id()` of the material table. Valid once Create() has run.
+    const MaterialConstants &Constants() const { return _constants; }
 
     /// @brief The CPU material data this was built from (for the editor / re-save).
     const Geometry::MaterialData &Source() const { return _source; }
 
-    bool IsValid() const { return _constants != nullptr; }
+    bool IsValid() const { return _created; }
 
   private:
     uint32_t               _id = 0;
     Geometry::MaterialData _source;
     MaterialTextures       _textures;
-    nvrhi::BufferHandle    _constants;
+    MaterialConstants      _constants; ///< The table row; written to the GPU by AssetCache.
+    bool                   _created = false;
 };
 
 } /* namespace Assisi::Render */

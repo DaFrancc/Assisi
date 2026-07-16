@@ -107,7 +107,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
                   { return lhs.sortKey < rhs.sortKey; });
     }
 
-    const Assisi::Render::MeshPass::SubmitStats submitStats = meshPass.Submit(params.frame, viewProjection, items);
+    const Assisi::Render::MeshPass::SubmitStats submitStats = meshPass.Submit(params.frame, items);
 
     stats.drawnItems    = submitStats.drawCalls;
     stats.materialBinds = submitStats.materialBinds;

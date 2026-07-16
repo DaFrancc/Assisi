@@ -7,6 +7,7 @@ layout(location = 2) in vec2  vTexCoord;
 layout(location = 3) in float vViewZ;
 layout(location = 4) in vec3  vTangent;
 layout(location = 5) in float vTangentSign;
+layout(location = 6) in flat uint vMaterialIndex; // row into the material table
 
 layout(location = 0) out vec4 outColor;
 
@@ -26,10 +27,12 @@ vec4 sampleMaterialTex(uint slot, vec2 uv)
     return texture(sampler2D(uTextures[nonuniformEXT(slot)], uMaterialSampler), uv);
 }
 
-// ---- Per-material constants (mirrors Render::MaterialConstants, 64 bytes) ---
-// ConstantBuffer bindings are offset by +256; the per-frame block is slot 0
-// (256), this per-material block is slot 1 (257).
-layout(binding = 257) uniform MaterialConstants
+// ---- Material table (mirrors Render::MaterialConstants, 96 bytes) -----------
+// Stage D: materials no longer bind a per-draw constant buffer; every material's
+// constants live in one row of a shared structured buffer, and each instance
+// carries its row index (vMaterialIndex). This is t0 in MeshPass's layout —
+// StructuredBuffer_SRV shares the shaderResource (+0) space with Texture_SRV.
+struct MaterialRow
 {
     vec4  baseColorFactor;
     vec4  emissiveFactorNormalScale; // xyz = emissive, w = normalScale
@@ -37,11 +40,20 @@ layout(binding = 257) uniform MaterialConstants
     uvec4 flags;                     // bit0 = has normal texture; rest reserved
     uvec4 texIndices;                // bindless slots: x=baseColor y=normal z=metalRough w=occlusion
     uvec4 texIndicesEmissive;        // x = emissive bindless slot
-} uMaterial;
+};
+
+layout(std430, binding = 0) readonly buffer Materials
+{
+    MaterialRow materials[];
+};
 
 // ---- Per-frame camera + cluster-grid parameters ------------------------
+// viewProjection leads to match the vertex shader / Render::FrameConstants; the
+// fragment shader doesn't use it, but the block layout must be identical so the
+// members past it land at the same offsets.
 layout(binding = 256) uniform FrameConstants
 {
+    mat4  viewProjection;
     mat4  view;
     uvec4 gridDim;            // xyz used, w unused
     vec4  screenSizeNearFar;  // xy = screen size, z = nearZ, w = farZ
@@ -59,8 +71,9 @@ const uint kDebugOcclusion = 5u;
 const uint kDebugEmissive  = 6u;
 
 // ---- Clustered light buffers (must match Render::ClusterGrid GPU structs) --
-// StructuredBuffer_SRV shares the shaderResource (+0) space with Texture_SRV,
-// so these occupy slots 1-5 (slot 0 is baseColor) — see MeshPass.cpp.
+// StructuredBuffer_SRV shares the shaderResource (+0) space with Texture_SRV, so
+// these occupy slots 1-5 (slot 0 is the material table, slot 6 the instance
+// buffer) — see MeshPass.cpp.
 
 struct PointLight { vec4 positionRadius; vec4 colorIntensity; };
 
@@ -113,33 +126,36 @@ Surface SampleMaterial()
 {
     Surface s;
 
+    // Fetch this instance's material row; the vertex shader passed its index.
+    MaterialRow mat = materials[vMaterialIndex];
+
     // baseColor is an sRGB texture, so the sampler already returns linear values
     // (filtered/mip-blended in linear space); multiply by the linear factor.
-    vec4 base = sampleMaterialTex(uMaterial.texIndices.x, vTexCoord) * uMaterial.baseColorFactor;
+    vec4 base = sampleMaterialTex(mat.texIndices.x, vTexCoord) * mat.baseColorFactor;
     s.albedo = base.rgb;
 
     // glTF metallic-roughness packing: G = roughness, B = metallic. The texture
     // is linear data (empty channel = white = 1, leaving the factor untouched).
-    vec2 mr = sampleMaterialTex(uMaterial.texIndices.z, vTexCoord).gb;
-    s.roughness = clamp(uMaterial.metalRoughOcclusion.y * mr.x, 0.04, 1.0);
-    s.metallic  = clamp(uMaterial.metalRoughOcclusion.x * mr.y, 0.0, 1.0);
+    vec2 mr = sampleMaterialTex(mat.texIndices.z, vTexCoord).gb;
+    s.roughness = clamp(mat.metalRoughOcclusion.y * mr.x, 0.04, 1.0);
+    s.metallic  = clamp(mat.metalRoughOcclusion.x * mr.y, 0.0, 1.0);
 
     // Occlusion: R channel, lerped by strength (strength 0 = ignore the map).
-    float ao = sampleMaterialTex(uMaterial.texIndices.w, vTexCoord).r;
-    s.occlusion = 1.0 + uMaterial.metalRoughOcclusion.z * (ao - 1.0);
+    float ao = sampleMaterialTex(mat.texIndices.w, vTexCoord).r;
+    s.occlusion = 1.0 + mat.metalRoughOcclusion.z * (ao - 1.0);
 
-    s.emissive = sampleMaterialTex(uMaterial.texIndicesEmissive.x, vTexCoord).rgb *
-                 uMaterial.emissiveFactorNormalScale.xyz;
+    s.emissive = sampleMaterialTex(mat.texIndicesEmissive.x, vTexCoord).rgb *
+                 mat.emissiveFactorNormalScale.xyz;
 
     vec3 N = normalize(vNormal);
-    if (uMaterial.flags.x != 0u) // has normal texture
+    if (mat.flags.x != 0u) // has normal texture
     {
         // Re-orthonormalize the interpolated tangent against N (Gram-Schmidt),
         // then build the bitangent from the stored handedness.
         vec3 T = normalize(vTangent - dot(vTangent, N) * N);
         vec3 B = cross(N, T) * vTangentSign;
-        vec3 sampledNormal = sampleMaterialTex(uMaterial.texIndices.y, vTexCoord).xyz * 2.0 - 1.0;
-        sampledNormal.xy *= uMaterial.emissiveFactorNormalScale.w; // normalScale
+        vec3 sampledNormal = sampleMaterialTex(mat.texIndices.y, vTexCoord).xyz * 2.0 - 1.0;
+        sampledNormal.xy *= mat.emissiveFactorNormalScale.w; // normalScale
         s.normal = normalize(mat3(T, B, N) * sampledNormal);
     }
     else

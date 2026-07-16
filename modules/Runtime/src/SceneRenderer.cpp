@@ -47,7 +47,7 @@ float AspectRatio(int width, int height)
 
 bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int width,
                                int height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
-                               nvrhi::IDescriptorTable *bindlessTable)
+                               nvrhi::IDescriptorTable *bindlessTable, nvrhi::IBuffer *materialTable)
 {
     _device = device;
 
@@ -75,7 +75,8 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
                                                            .pixelShaderSpvPath = kScenePixelShader,
                                                            .clusterGrid = &_lighting.Grid(),
                                                            .bindlessLayout = bindlessLayout,
-                                                           .bindlessTable = bindlessTable}))
+                                                           .bindlessTable = bindlessTable,
+                                                           .materialTable = materialTable}))
     {
         Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
         return false;
@@ -169,8 +170,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     }
 
     _lighting.Update(frame.commandList, scene, view);
-    _meshPass.UpdateFrameConstants(frame.commandList, view, frame.width, frame.height, camera.nearZ, camera.farZ,
-                                   _lighting.DirLightCount(), _debugView);
+    _meshPass.UpdateFrameConstants(frame.commandList, projection * view, view, frame.width, frame.height, camera.nearZ,
+                                   camera.farZ, _lighting.DirLightCount(), _debugView);
     _lastDrawStats = DrawScene(DrawSceneParams{.scene          = scene,
                                                .meshPass       = _meshPass,
                                                .frame          = frame,

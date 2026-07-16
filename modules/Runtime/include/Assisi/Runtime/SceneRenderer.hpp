@@ -53,7 +53,7 @@ class SceneRenderer
     /// @return false if the lighting compute shaders or the mesh pipeline failed to build.
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int width,
                                   int height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
-                                  nvrhi::IDescriptorTable *bindlessTable);
+                                  nvrhi::IDescriptorTable *bindlessTable, nvrhi::IBuffer *materialTable);
 
     /// @brief Rebuild the cluster froxel grid for a new viewport/projection.
     /// Call from the application's resize hook. No-op until Initialize() succeeds.

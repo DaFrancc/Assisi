@@ -9,8 +9,8 @@ on. Design reviewed by two independent adversarial review passes; their findings
 (hot-reload contract, sort-key depth bits, default-deny codegen, per-submesh cull
 removal, texture-compression hook, streaming contracts) are folded in.
 
-**Stages A1–A5, B, and C are built** — see "Current state"; the GPU-driven
-stages D–G remain. The point of
+**Stages A1–A5, B, C, and D are built** — see "Current state"; the GPU-driven
+stages E–G remain. The point of
 this doc is that the data structures and interfaces designed today survive the
 entire roadmap — submeshes, material assets, instancing, batching, LODs, GPU
 culling, bindless, streaming — with internals swapped, never producers rewritten.
@@ -70,15 +70,23 @@ AABB cull, **B**) has landed. What's built, by stage (commits in `asset-upgrade`
 - **C** — shared geometry arena: per-mesh vertex/index buffers replaced by one
   `GeometryArena`; each mesh is a range, bound once and drawn by base offset
   (mesh binds collapse to ~1).
+- **D** — bindless materials + per-instance GPU data (`c6b1f3f`, `516e6d6`, and
+  this commit). Required device features (descriptor indexing, partially-bound,
+  variable count) enforced at device selection. Material textures moved to a
+  bindless descriptor table (register space 1), sampled by index. Per-object
+  data (world matrix + material id) moved into a per-frame instance structured
+  buffer read by `gl_InstanceIndex`; `MaterialConstants` moved into an
+  AssetCache material table indexed by `Material::Id()`. Push constants and the
+  per-material binding-set cache are gone — the opaque span draws against one
+  global binding set + the bindless table.
 
 The asset-identity layer (`asset-database-architecture.md`) has landed through
 **S4**: GUID identity core with `.aast` sidecars and database, path→GUID
 reference migration, glTF material explosion into `.amat` children + manifest,
 and source-change detection with prompt-driven conflict resolution.
 
-**Remaining:** GPU-driven stages **D–G** (bindless,
-indirect/instancing, compute cull, HZB occlusion) and asset-DB **S5** (final
-reference migration).
+**Remaining:** GPU-driven stages **E–G** (indirect/instancing, compute cull,
+HZB occlusion) and asset-DB **S5** (final reference migration).
 
 Still-standing foundations from before this roadmap: reflection (`ACOMP`/
 `AFIELD` → reflectgen → ComponentRegistry), `.alvl` JSON scenes, the inspector,
@@ -563,7 +571,7 @@ numbers.
 | **A5** | DrawItem layer: extract → sort → Submit; expanded DrawStats | ✅ done (`dfb7fa8`) | sort on/off A/B: identical image, different bind counts |
 | **B** | Per-mesh AABB in CPU cull (data exists since A1) | ✅ done (`cbc9ec4`) | GPU-driven doc stage 1 |
 | **C** | Shared geometry arena (MeshBuffer → ranges; vertex-format constraint from §1 decided here) | ✅ done | stage 2 |
-| **D** | Per-instance GPU buffer + bindless (kills the binding-set cache; MaterialConstants pad → textureIndices) | ⬜ not started | stage 3; descriptor-indexing spike first |
+| **D** | Per-instance GPU buffer + bindless (kills the binding-set cache; MaterialConstants pad → textureIndices) | ✅ done (`c6b1f3f`, `516e6d6`, + part 2) | stage 3; descriptor-indexing spike first |
 | **E** | CPU-built indirect draws + instancing (Submit interior only) | ⬜ not started | stage 4 |
 | **F** | Compute cull + screen-size LOD select (replaces extract/sort) | ⬜ not started | stage 5 |
 | **G** | Two-phase HZB occlusion | ⬜ not started | stage 6 |

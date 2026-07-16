@@ -497,7 +497,8 @@ void SandboxApp::SetupScene()
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo so it's already correct if options.json saved an MSAA mode.
     if (!_sceneRenderer.Initialize(device, GetSceneFramebufferInfo(), fbSize.Width, fbSize.Height, _camera,
-                                   _assetCache.BindlessLayout(), _assetCache.BindlessTable()))
+                                   _assetCache.BindlessLayout(), _assetCache.BindlessTable(),
+                                   _assetCache.MaterialTableBuffer()))
     {
         RequestClose();
         return;
