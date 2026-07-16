@@ -118,9 +118,11 @@ class SceneRenderer
     void RebuildClusterGrid(int width, int height, const Camera &camera, const glm::mat4 &projection);
 
     /// @brief Draw the selection outline for _highlightedEntity (if any) as an
-    /// always-on-top overlay after the scene. No-op when nothing is highlighted or
-    /// the outline pass is unavailable.
-    void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, ECS::Scene &scene);
+    /// always-on-top overlay after the scene: a mesh silhouette, or — for a
+    /// placement-only entity shown as an icon — its billboard quad (editor only).
+    /// No-op when nothing is highlighted or the outline pass is unavailable.
+    void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
+                              const glm::mat4 &view, ECS::Scene &scene);
 
     /// @brief Draw a world-space billboard for every entity with a Transform but no
     /// MeshRenderer, using the camera basis from @p view to face them. Icons beyond

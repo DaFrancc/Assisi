@@ -34,7 +34,7 @@ constexpr const char *kEntityIconTexture = "editor/entity_icon.png";
 
 // Entity icons past this distance from the camera are not drawn — a simple
 // render/don't LOD so a large scene isn't peppered with distant icons.
-constexpr float kMaxIconDistance = 50.f;
+constexpr float kMaxIconDistance = 100.f;
 
 float AspectRatio(int width, int height)
 {
@@ -76,7 +76,7 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
     // than failing the whole renderer.
     if (!_outlinePass.Initialize(device, framebufferInfo, static_cast<uint32_t>(width),
                                  static_cast<uint32_t>(height), kOutlineMaskVertexShader, kOutlineMaskPixelShader,
-                                 kOutlineEdgeVertexShader, kOutlineEdgePixelShader))
+                                 kOutlineEdgeVertexShader, kOutlineEdgePixelShader, kIconVertexShader))
     {
         Core::Log::Warn("SceneRenderer: selection outline unavailable (outline pass failed to initialise).");
     }
@@ -171,7 +171,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .sortDraws      = _sortDraws});
 
     DrawEditorIcons(frame, projection * view, view, cameraTransform.position, scene);
-    DrawHighlightOutline(frame, projection * view, scene);
+    DrawHighlightOutline(frame, projection * view, view, scene);
 }
 
 void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
@@ -205,21 +205,35 @@ void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm:
 }
 
 void SceneRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
-                                         ECS::Scene &scene)
+                                         const glm::mat4 &view, ECS::Scene &scene)
 {
     if (!_outlinePass.IsValid() || _highlightedEntity == ECS::NullEntity || !scene.IsAlive(_highlightedEntity))
     {
         return;
     }
 
-    const Transform    *transform = scene.Get<Transform>(_highlightedEntity);
-    const MeshRenderer *renderer  = scene.Get<MeshRenderer>(_highlightedEntity);
-    if (transform == nullptr || renderer == nullptr || renderer->meshBuffer == nullptr)
+    const Transform *transform = scene.Get<Transform>(_highlightedEntity);
+    if (transform == nullptr)
     {
-        return; // nothing to outline (no placement or no resolved mesh)
+        return; // no placement — nothing to outline
     }
+    const MeshRenderer *renderer = scene.Get<MeshRenderer>(_highlightedEntity);
 
-    _outlinePass.Draw(frame, viewProjection, *renderer->meshBuffer, transform->worldMatrix);
+    if (renderer != nullptr && renderer->meshBuffer != nullptr)
+    {
+        _outlinePass.Draw(frame, viewProjection, *renderer->meshBuffer, transform->worldMatrix);
+    }
+    else if (renderer == nullptr && _editorIconsVisible)
+    {
+        // A placement-only entity is drawn as a billboard icon; outline that quad so
+        // its selection matches a mesh's. Only while icons are shown (editor mode),
+        // since there is nothing on screen to outline otherwise.
+        const glm::vec3 center(transform->worldMatrix[3]);
+        const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
+        const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
+        _outlinePass.DrawBillboard(frame, viewProjection, center, cameraRight, cameraUp,
+                                   0.5f * Render::kEntityIconWorldSize);
+    }
 }
 
 } // namespace Assisi::Runtime

@@ -23,13 +23,24 @@ constexpr nvrhi::Format kMaskFormat = nvrhi::Format::R8_UNORM;
 // Outline thickness in screen pixels. The edge pass paints this far outside the
 // silhouette; bump it for a chunkier border.
 constexpr float kOutlineWidthPx = 2.0f;
+
+// Vertex-stage constants for the billboard mask (mirrors icon_billboard.vert):
+// the same 112-byte layout the entity-icon shader uses.
+struct BillboardMaskPush
+{
+    glm::mat4 viewProjection;
+    glm::vec4 center;    // xyz = entity world position
+    glm::vec4 rightHalf; // xyz = camera right * half world size
+    glm::vec4 upHalf;    // xyz = camera up    * half world size
+};
 } // namespace
 
 bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &sceneFramebufferInfo,
                              uint32_t width, uint32_t height, const std::string &maskVertexShaderSpvPath,
                              const std::string &maskPixelShaderSpvPath,
                              const std::string &edgeVertexShaderSpvPath,
-                             const std::string &edgePixelShaderSpvPath)
+                             const std::string &edgePixelShaderSpvPath,
+                             const std::string &billboardMaskVertexShaderSpvPath)
 {
     _device = device;
 
@@ -37,7 +48,10 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
     _maskPixelShader  = LoadSpirvShader(device, maskPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
     _edgeVertexShader = LoadSpirvShader(device, edgeVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
     _edgePixelShader  = LoadSpirvShader(device, edgePixelShaderSpvPath, nvrhi::ShaderType::Pixel);
-    if (!_maskVertexShader || !_maskPixelShader || !_edgeVertexShader || !_edgePixelShader)
+    _billboardMaskVertexShader =
+        LoadSpirvShader(device, billboardMaskVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    if (!_maskVertexShader || !_maskPixelShader || !_edgeVertexShader || !_edgePixelShader ||
+        !_billboardMaskVertexShader)
     {
         return false;
     }
@@ -102,6 +116,34 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
     if (_maskPipeline == nullptr)
     {
         Core::Log::Error("OutlinePass: failed to create the mask pipeline.");
+        return false;
+    }
+
+    // Billboard mask pipeline: same flat-coverage pixel shader and mask target, but
+    // the vertex stage builds a camera-facing quad from gl_VertexIndex (no vertex
+    // buffer) and takes the icon billboard's larger push constant.
+    nvrhi::BindingLayoutDesc billboardLayoutDesc;
+    billboardLayoutDesc.visibility = nvrhi::ShaderType::Vertex;
+    billboardLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(BillboardMaskPush)));
+    _billboardMaskBindingLayout = device->createBindingLayout(billboardLayoutDesc);
+
+    nvrhi::BindingSetDesc billboardSetDesc;
+    billboardSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(BillboardMaskPush)));
+    _billboardMaskBindingSet = device->createBindingSet(billboardSetDesc, _billboardMaskBindingLayout);
+
+    nvrhi::GraphicsPipelineDesc billboardPipelineDesc;
+    billboardPipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
+    billboardPipelineDesc.VS       = _billboardMaskVertexShader;
+    billboardPipelineDesc.PS       = _maskPixelShader;
+    billboardPipelineDesc.addBindingLayout(_billboardMaskBindingLayout);
+    billboardPipelineDesc.renderState.rasterState.cullMode               = nvrhi::RasterCullMode::None;
+    billboardPipelineDesc.renderState.depthStencilState.depthTestEnable  = false;
+    billboardPipelineDesc.renderState.depthStencilState.depthWriteEnable = false;
+    _billboardMaskPipeline =
+        device->createGraphicsPipeline(billboardPipelineDesc, _maskFramebuffer->getFramebufferInfo());
+    if (_billboardMaskPipeline == nullptr)
+    {
+        Core::Log::Error("OutlinePass: failed to create the billboard mask pipeline.");
         return false;
     }
 
@@ -237,6 +279,35 @@ void OutlinePass::RecordMaskPass(const RenderFrame &frame, const glm::mat4 &mode
     }
 }
 
+void OutlinePass::RecordBillboardMaskPass(const RenderFrame &frame, const glm::mat4 &viewProjection,
+                                          const glm::vec3 &center, const glm::vec3 &cameraRight,
+                                          const glm::vec3 &cameraUp, float halfSize)
+{
+    nvrhi::ICommandList *const commandList = frame.commandList;
+
+    // Fresh mask: clear to 0, then stamp the quad's coverage.
+    commandList->clearTextureFloat(_maskTexture, nvrhi::AllSubresources, nvrhi::Color(0.f));
+
+    nvrhi::GraphicsState state;
+    state.pipeline    = _billboardMaskPipeline;
+    state.framebuffer = _maskFramebuffer;
+    state.addBindingSet(_billboardMaskBindingSet);
+    state.viewport.addViewportAndScissorRect(
+        nvrhi::Viewport(static_cast<float>(_maskWidth), static_cast<float>(_maskHeight)));
+    commandList->setGraphicsState(state);
+
+    BillboardMaskPush push;
+    push.viewProjection = viewProjection;
+    push.center         = glm::vec4(center, 1.f);
+    push.rightHalf      = glm::vec4(cameraRight * halfSize, 0.f);
+    push.upHalf         = glm::vec4(cameraUp * halfSize, 0.f);
+    commandList->setPushConstants(&push, sizeof(push));
+
+    nvrhi::DrawArguments drawArgs;
+    drawArgs.vertexCount = 6; // two triangles
+    commandList->draw(drawArgs);
+}
+
 void OutlinePass::RecordEdgePass(const RenderFrame &frame)
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
@@ -272,6 +343,22 @@ void OutlinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection
     }
 
     RecordMaskPass(frame, viewProjection * model, mesh);
+    RecordEdgePass(frame);
+}
+
+void OutlinePass::DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
+                                const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize)
+{
+    if (!IsValid() || _billboardMaskPipeline == nullptr)
+    {
+        return;
+    }
+    if (!EnsureMask(frame.width, frame.height))
+    {
+        return;
+    }
+
+    RecordBillboardMaskPass(frame, viewProjection, center, cameraRight, cameraUp, halfSize);
     RecordEdgePass(frame);
 }
 

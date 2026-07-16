@@ -38,11 +38,16 @@ class OutlinePass
     /// @param sceneFramebufferInfo  Format/samples of the framebuffer the edge
     ///        pass composites into (the scene target).
     /// @param width,height          Initial viewport size for the coverage mask.
+    /// @param billboardMaskVertexShaderSpvPath  Vertex stage that generates a
+    ///        camera-facing quad from gl_VertexIndex (the entity-icon billboard
+    ///        shader) — used to outline a meshless entity's icon. Reuses the same
+    ///        flat-coverage mask pixel shader as the mesh path.
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &sceneFramebufferInfo,
                                   uint32_t width, uint32_t height, const std::string &maskVertexShaderSpvPath,
                                   const std::string &maskPixelShaderSpvPath,
                                   const std::string &edgeVertexShaderSpvPath,
-                                  const std::string &edgePixelShaderSpvPath);
+                                  const std::string &edgePixelShaderSpvPath,
+                                  const std::string &billboardMaskVertexShaderSpvPath);
 
     /// @brief Rebuild the edge pipeline against a new scene render-target format
     /// (e.g. an MSAA toggle). The mask pipeline/target are unaffected. No-op
@@ -58,12 +63,22 @@ class OutlinePass
     void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const MeshBuffer &mesh,
               const glm::mat4 &model);
 
+    /// @brief Outline a camera-facing billboard quad — the selection highlight for
+    /// a meshless entity drawn as an icon. The quad is centred at @p center,
+    /// spanning ±@p halfSize along the (unit) @p cameraRight / @p cameraUp axes, so
+    /// it matches the icon exactly. @p viewProjection is projection*view. No-op if
+    /// not initialised.
+    void DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
+                       const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize);
+
   private:
     [[nodiscard]] bool BuildEdgePipeline(const nvrhi::FramebufferInfo &sceneFramebufferInfo);
     /// @brief (Re)create the coverage mask target + its framebuffer and the edge
     /// pass's binding set for a new viewport size. No-op when already that size.
     [[nodiscard]] bool EnsureMask(uint32_t width, uint32_t height);
     void RecordMaskPass(const RenderFrame &frame, const glm::mat4 &modelViewProjection, const MeshBuffer &mesh);
+    void RecordBillboardMaskPass(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
+                                 const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize);
     void RecordEdgePass(const RenderFrame &frame);
 
     nvrhi::IDevice *_device = nullptr;
@@ -75,6 +90,15 @@ class OutlinePass
     nvrhi::BindingLayoutHandle    _maskBindingLayout;
     nvrhi::BindingSetHandle       _maskBindingSet; // push constants only
     nvrhi::GraphicsPipelineHandle _maskPipeline;
+
+    // Billboard mask variant: stamps a camera-facing quad (an entity icon) into the
+    // same coverage mask, so the edge pass outlines it. Shares the mask pixel
+    // shader and coverage target; only the vertex stage (quad from gl_VertexIndex)
+    // and its larger push constant differ.
+    nvrhi::ShaderHandle           _billboardMaskVertexShader;
+    nvrhi::BindingLayoutHandle    _billboardMaskBindingLayout;
+    nvrhi::BindingSetHandle       _billboardMaskBindingSet; // push constants only
+    nvrhi::GraphicsPipelineHandle _billboardMaskPipeline;
 
     // Edge pass: fullscreen edge detect that composites the orange border.
     nvrhi::ShaderHandle           _edgeVertexShader;
