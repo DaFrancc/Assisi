@@ -29,7 +29,7 @@ constexpr const char *kOutlineEdgePixelShader  = "shaders/outline_edge.frag.spv"
 // placeholder.
 constexpr const char *kIconVertexShader = "shaders/icon_billboard.vert.spv";
 constexpr const char *kIconPixelShader  = "shaders/icon_billboard.frag.spv";
-constexpr const char *kEntityIconTexture = "textures/editor/entity_icon.png";
+constexpr const char *kEntityIconTexture = "editor/entity_icon.png";
 
 float AspectRatio(int width, int height)
 {
