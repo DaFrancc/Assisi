@@ -184,12 +184,13 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
     VKD.vkGetPhysicalDeviceFeatures2(device, &features2);
 
     if (features12.timelineSemaphore != VK_TRUE || features13.synchronization2 != VK_TRUE ||
-        features13.dynamicRendering != VK_TRUE)
+        features13.dynamicRendering != VK_TRUE || features13.shaderDemoteToHelperInvocation != VK_TRUE)
     {
         Core::Log::Info("  rejected: missing a required feature (timelineSemaphore={}, "
-                        "synchronization2={}, dynamicRendering={})",
+                        "synchronization2={}, dynamicRendering={}, shaderDemoteToHelperInvocation={})",
                         features12.timelineSemaphore == VK_TRUE, features13.synchronization2 == VK_TRUE,
-                        features13.dynamicRendering == VK_TRUE);
+                        features13.dynamicRendering == VK_TRUE,
+                        features13.shaderDemoteToHelperInvocation == VK_TRUE);
         return false;
     }
 
@@ -331,6 +332,10 @@ VkDevice CreateLogicalDevice(VkPhysicalDevice physicalDevice, uint32_t graphicsQ
     features13.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES;
     features13.synchronization2 = VK_TRUE;
     features13.dynamicRendering = VK_TRUE;
+    // The scene fragment shaders compile `discard` to SPIR-V DemoteToHelperInvocation
+    // (DXC's default), whose capability requires this bit — without it the shader
+    // modules trip a validation error. Vulkan 1.3 core; the device already requires 1.3.
+    features13.shaderDemoteToHelperInvocation = VK_TRUE;
 
     VkPhysicalDeviceVulkan12Features features12{};
     features12.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES;
@@ -601,7 +606,17 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     createInfo.imageColorSpace = chosenFormat.colorSpace;
     createInfo.imageExtent = extent;
     createInfo.imageArrayLayers = 1;
+    // The scene renders into the swapchain image as a colour attachment; when no
+    // AA mode is active the frame also *clears* it directly (Application::OnRender
+    // → clearTextureFloat), which is a transfer, so the image must additionally
+    // declare TRANSFER_DST — without it that clear is a spec violation (validation
+    // fires; the driver merely tolerates it). Guarded by the surface's advertised
+    // usage, though every real presentation engine supports TRANSFER_DST.
     createInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+    if (capabilities.supportedUsageFlags & VK_IMAGE_USAGE_TRANSFER_DST_BIT)
+    {
+        createInfo.imageUsage |= VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+    }
     createInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
     createInfo.preTransform = capabilities.currentTransform;
     createInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
