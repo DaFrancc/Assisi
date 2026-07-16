@@ -55,6 +55,72 @@ Four layers, roughly in dependency order:
    the whole texture — virtual-texturing territory. Same machinery as (3) taken
    further. Noted for completeness; likely never needed at this engine's scope.
 
+## Geometry-arena residency & compaction (a layer-3 concern)
+
+The shared geometry arena (GPU-driven stage C) is a **bump allocator**: meshes
+append, `Reset()` frees everything at once. That's exactly right while the only
+free is a wholesale level unload (`AssetCache::Clear()` today). Spatial streaming
+(layer 3) breaks that assumption — the player walks into city A (a burst of mesh
+uploads), then leaves (most of them freed) — so the arena needs **per-mesh free
++ reclamation** without falling back to a fragmenting free-list. The chosen model
+is a **compacting arena** (semi-space), not in-place reuse.
+
+**Free is bookkeeping only.** `Free(range)` marks a range dead and adds its size
+to a `freedBytes` counter. No hole reuse in place — holes are reclaimed in bulk
+by compaction. So the allocator stays a bump cursor plus a dead-bytes tally and
+the live-mesh registry; no best-fit search, no coalescing.
+
+**Trigger (hysteresis).** Compact when either `freedBytes` exceeds a fraction of
+the arena **or** an absolute floor (~20 MB), **or** when an allocation can't fit
+despite enough total free space (fragmentation *blocking* an alloc is the real
+forcing function). Add a floor so a near-full live set doesn't trigger churn for
+little gain.
+
+**Mechanism — semi-space, fence-gated (NOT a lock).** The hazard in moving live
+data is that the **reader is the GPU**, executing command buffers asynchronously;
+a CPU read-write lock can't gate GPU execution (releasing it after *recording* a
+draw says nothing about when the GPU *executes* the read). So:
+
+1. Allocate a fresh arena buffer.
+2. Copy only the **live** meshes into it, densely, on the copy queue (the async
+   part). You write a buffer nobody reads and read a buffer nobody writes — the
+   race is designed out, not locked around.
+3. **Fence-gate the swap:** the new buffer becomes current only after the copy
+   completes (semaphore orders copy-queue → graphics-queue). The old buffer goes
+   on a **deferred-free queue** tagged with the swap's frame/fence value and is
+   released only once every in-flight frame that referenced it has retired.
+
+Transient cost is ~2× that arena's memory during the copy, and you copy all live
+data (not just holes) — acceptable, especially per-arena (below).
+
+**Relocation fixup.** When a mesh moves, only its `MeshBuffer` base offsets
+(`vertexBase`/`indexBase`) change, and because *nothing caches raw offsets* —
+`MeshPass` reads them through `MeshBuffer` every frame — the next frame picks up
+the new location for free. Apply the relocations + buffer swap at a **frame
+boundary** (or double-buffer the offset table and flip a pointer) so the render
+thread never sees a half-updated table; that keeps the hot path lock-free.
+
+**Interaction with stages E/F (must be co-designed).** Once per-instance data
+(E) and indirect draw commands (F) bake `baseVertex`/`firstIndex` into GPU
+buffers, those are a *second* copy of the offsets the CPU record no longer solely
+owns. A compaction must then also rebuild/patch those GPU buffers. Doable (they
+are rebuilt per-frame-ish anyway) but the compactor and the indirect-draw stage
+have to know about each other — flagged here so it isn't a surprise at F.
+
+**Per-arena compaction pairs with format-keyed arenas.** With one arena per
+vertex format, you compact one arena at a time: the big static-world arena
+(rocks/buildings/trees) churns rarely and stays compact for long stretches; a
+churny arena (NPCs entering/leaving) compacts more often but is smaller. Work is
+naturally bounded per event instead of one giant world-compaction, and you can
+spread a copy across a couple of frames (incremental) to avoid a spike.
+
+**Timing.** This is streaming-era machinery — it needs per-mesh load/unload,
+which doesn't exist yet. Stage C ships the plain growable bump arena + `Reset()`
+only. What C *does* guarantee is the seams that make this a drop-in later: the
+arena owns a **swappable buffer handle** (the same mechanism growth already uses),
+and `MeshBuffer` indirects through the arena rather than holding a raw handle, so
+growth, compaction, and multi-arena are all transparent to the draw loop.
+
 ## Prerequisites (the "systems that don't exist yet")
 
 - **Mesh-file loader.** Until real assets exist, levels stay tiny and none of

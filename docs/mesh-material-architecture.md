@@ -31,6 +31,22 @@ culling, bindless, streaming — with internals swapped, never producers rewritt
   The `.amat` schema's per-field deserialization makes adding them non-breaking,
   and the sort key's pipeline bits (below) are where opaque/masked/blend buckets
   land.
+- **Single-format geometry arena; format divergence → format-keyed arenas, never
+  a fat vertex** (resolves the §1 open decision). Stage C locks the one 48-byte
+  `Vertex` layout (position, normal, uv0, tangent) as the arena's canonical
+  format; the importer already flattens + warns on anything richer (UV1,
+  `COLOR_0`, skinning). When a feature eventually needs attributes only *some*
+  meshes carry (skinning is the usual first), the answer is a **second,
+  format-keyed arena** — skinned meshes in their own arena — **not** widening the
+  one format so every static mesh drags zeroed skinning/UV1 bytes. Rationale:
+  fat-vertex wastes memory/bandwidth on every vertex of every mesh, and mixing
+  formats in one buffer interleaves hot (position) and cold (skinning) data,
+  hurting cache; format-keyed arenas keep each stream dense. The arena is built
+  stride-parameterized and standalone so a second format is "instantiate another
+  arena," and `MeshBuffer::arenaId` selects which — the draw loop is
+  format-count-agnostic. Variable-width vertices in one arena is rejected: fixed-
+  function vertex fetch uses one stride, so it degrades to per-format draws with
+  no shared-buffer benefit.
 
 ## Current state (2026-07-16)
 
