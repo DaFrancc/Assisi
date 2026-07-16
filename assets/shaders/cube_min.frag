@@ -86,8 +86,8 @@ layout(std430, binding = 3) readonly buffer DirLights      { DirLight   dirLight
 layout(std430, binding = 4) readonly buffer LightIndexList { uint       lightIndexList[]; };
 layout(std430, binding = 5) readonly buffer LightGrids     { LightGrid  lightGrids[];    };
 
-// Must match Render::ClusterGrid::kMaxLightIndices.
-const uint kSpotIndexBase = 65536u;
+// Must match Render::ClusterGrid::kMaxLightIndices and cluster_cull.comp's MAX_LIGHT_INDICES.
+const uint kSpotIndexBase = 262144u;
 
 const float kAmbient = 0.03;
 const float PI = 3.14159265359;

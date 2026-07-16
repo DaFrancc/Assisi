@@ -71,8 +71,14 @@ class ClusterGrid
     /// Maximum light indices stored in the global list, per light type.
     /// Point indices occupy [0, kMaxLightIndices) and spot indices occupy
     /// [kMaxLightIndices, 2 * kMaxLightIndices) in the same buffer. Must match
-    /// cluster_cull.comp's MAX_LIGHT_INDICES.
-    static constexpr uint32_t kMaxLightIndices = 65536u;
+    /// cluster_cull.comp's MAX_LIGHT_INDICES and cube_min.frag's kSpotIndexBase.
+    ///
+    /// Sized generously: with the per-cluster cap removed (cluster_cull.comp
+    /// writes every intersecting light, not a fixed 64), the total across all
+    /// clusters is the only bound. A cluster whose reservation lands past the
+    /// end is clamped in the shader, so an overflow degrades gracefully (a few
+    /// distant lights drop) rather than writing out of bounds.
+    static constexpr uint32_t kMaxLightIndices = 262144u;
 
     /// Fixed light-data buffer capacities. Lights beyond these caps are
     /// silently dropped by Buffer::Upload — generous enough for any scene

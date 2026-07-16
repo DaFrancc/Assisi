@@ -8,13 +8,10 @@
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 
-// Maximum lights tracked per cluster in local scratch arrays.
-// Lights beyond this cap are silently ignored for that cluster.
-#define MAX_LIGHTS_PER_CLUSTER 64
-
-// Flat buffer offset where spot light indices start.
-// Must match Render::ClusterGrid::kMaxLightIndices.
-#define MAX_LIGHT_INDICES 65536
+// Flat buffer offset where spot light indices start, and the per-type capacity
+// of the shared index list. Must match Render::ClusterGrid::kMaxLightIndices
+// and cube_min.frag's kSpotIndexBase.
+#define MAX_LIGHT_INDICES 262144
 
 // ---- Structs (must match ClusterGrid GPU structs) ----
 
@@ -85,49 +82,66 @@ void main()
     uint pointLightCount = pc.lightCounts.x;
     uint spotLightCount  = pc.lightCounts.y;
 
+    // Two passes per light type — count intersections, atomically reserve that
+    // many slots, then re-test and write the indices straight into the shared
+    // flat list. There is deliberately NO fixed-size per-cluster scratch array:
+    // an earlier version collected into a 64-entry local array and dropped every
+    // light past the 64th, which a dense scene overflowed in its large distant /
+    // wide-FOV froxels (each such froxel's AABB overlaps far more than 64 light
+    // spheres). The dropped lights showed up as lights blinking in and out along
+    // visible froxel borders, worsening with distance and FOV. Now the only bound
+    // is the shared buffer's capacity, clamped below.
+
     // ---- Point lights ----
-    uint localPointIdx[MAX_LIGHTS_PER_CLUSTER];
     uint pointCount = 0u;
-    for (uint i = 0u; i < pointLightCount && pointCount < MAX_LIGHTS_PER_CLUSTER; i++)
+    for (uint i = 0u; i < pointLightCount; i++)
     {
-        vec3  viewPos = vec3(pc.view * vec4(pointLights[i].positionRadius.xyz, 1.0));
-        float radius  = pointLights[i].positionRadius.w;
-        if (sphereVsAABB(viewPos, radius, cMin, cMax))
-            localPointIdx[pointCount++] = i;
+        vec3 viewPos = vec3(pc.view * vec4(pointLights[i].positionRadius.xyz, 1.0));
+        if (sphereVsAABB(viewPos, pointLights[i].positionRadius.w, cMin, cMax))
+            pointCount++;
+    }
+
+    uint pointOffset = 0u;
+    if (pointCount > 0u) pointOffset = atomicAdd(globalPointCount, pointCount);
+
+    // The reservation counter is unbounded (worst case: every cluster reserves
+    // many lights, more than the flat buffer holds), so clamp this cluster's
+    // slice to its region — a reservation landing past the end stores fewer (or
+    // zero) indices instead of writing out of bounds into the other half.
+    pointOffset = min(pointOffset, MAX_LIGHT_INDICES);
+    pointCount  = min(pointCount,  MAX_LIGHT_INDICES - pointOffset);
+
+    uint pointWritten = 0u;
+    for (uint i = 0u; i < pointLightCount && pointWritten < pointCount; i++)
+    {
+        vec3 viewPos = vec3(pc.view * vec4(pointLights[i].positionRadius.xyz, 1.0));
+        if (sphereVsAABB(viewPos, pointLights[i].positionRadius.w, cMin, cMax))
+            lightIndexList[pointOffset + pointWritten++] = i;
     }
 
     // ---- Spot lights (culled by bounding sphere for simplicity) ----
-    uint localSpotIdx[MAX_LIGHTS_PER_CLUSTER];
     uint spotCount = 0u;
-    for (uint i = 0u; i < spotLightCount && spotCount < MAX_LIGHTS_PER_CLUSTER; i++)
+    for (uint i = 0u; i < spotLightCount; i++)
     {
-        vec3  viewPos = vec3(pc.view * vec4(spotLights[i].positionRadius.xyz, 1.0));
-        float radius  = spotLights[i].positionRadius.w;
-        if (sphereVsAABB(viewPos, radius, cMin, cMax))
-            localSpotIdx[spotCount++] = i;
+        vec3 viewPos = vec3(pc.view * vec4(spotLights[i].positionRadius.xyz, 1.0));
+        if (sphereVsAABB(viewPos, spotLights[i].positionRadius.w, cMin, cMax))
+            spotCount++;
     }
 
-    // ---- Atomically reserve slots in the global index list ----
-    uint pointOffset = 0u;
-    uint spotOffset  = 0u;
-    if (pointCount > 0u) pointOffset = atomicAdd(globalPointCount, pointCount);
-    if (spotCount  > 0u) spotOffset  = atomicAdd(globalSpotCount,  spotCount);
+    uint spotOffset = 0u;
+    if (spotCount > 0u) spotOffset = atomicAdd(globalSpotCount, spotCount);
 
-    // The reservation counters are unbounded (worst case: every cluster keeps
-    // MAX_LIGHTS_PER_CLUSTER lights, far more than the flat buffer holds), so
-    // clamp each half to its region: a cluster whose reservation lands past
-    // the end stores fewer (or zero) indices instead of writing out of bounds
-    // into the other half / past the buffer.
-    pointOffset = min(pointOffset, MAX_LIGHT_INDICES);
-    pointCount  = min(pointCount,  MAX_LIGHT_INDICES - pointOffset);
-    spotOffset  = min(spotOffset,  MAX_LIGHT_INDICES);
-    spotCount   = min(spotCount,   MAX_LIGHT_INDICES - spotOffset);
+    spotOffset = min(spotOffset, MAX_LIGHT_INDICES);
+    spotCount  = min(spotCount,  MAX_LIGHT_INDICES - spotOffset);
 
     // Point indices occupy [0, MAX_LIGHT_INDICES); spot indices start at MAX_LIGHT_INDICES.
-    for (uint i = 0u; i < pointCount; i++)
-        lightIndexList[pointOffset + i] = localPointIdx[i];
-    for (uint i = 0u; i < spotCount; i++)
-        lightIndexList[MAX_LIGHT_INDICES + spotOffset + i] = localSpotIdx[i];
+    uint spotWritten = 0u;
+    for (uint i = 0u; i < spotLightCount && spotWritten < spotCount; i++)
+    {
+        vec3 viewPos = vec3(pc.view * vec4(spotLights[i].positionRadius.xyz, 1.0));
+        if (sphereVsAABB(viewPos, spotLights[i].positionRadius.w, cMin, cMax))
+            lightIndexList[MAX_LIGHT_INDICES + spotOffset + spotWritten++] = i;
+    }
 
     // ---- Write light grid entry for this cluster ----
     lightGrids[clusterIdx].pointOffset = pointOffset;
