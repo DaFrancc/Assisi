@@ -17,6 +17,10 @@
 namespace Assisi::Render
 {
 
+/// @brief World-space edge length of an entity-icon billboard. Exposed so editor
+/// picking can size the clickable area to exactly the drawn quad.
+inline constexpr float kEntityIconWorldSize = 0.5f;
+
 /// @brief Draws a fixed-size world-space billboard (a camera-facing textured
 /// quad) at each supplied position — the editor's marker for entities that have
 /// a placement (Transform) but no mesh to draw, e.g. lights or empties.

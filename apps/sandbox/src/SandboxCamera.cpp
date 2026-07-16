@@ -5,6 +5,7 @@
 
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
+#include <Assisi/Render/IconPass.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
@@ -285,6 +286,32 @@ bool RayOBBIntersect(glm::vec3 origin, glm::vec3 dir, const glm::mat4 &model, fl
     return true;
 }
 
+// Ray vs. a camera-facing billboard quad centred at `center`, spanning ±half
+// along the (unit) `right` and `up` axes. Matches how IconPass draws entity
+// icons, so a meshless entity is clickable only over its drawn billboard rather
+// than a whole unit cube.
+bool RayBillboardIntersect(glm::vec3 origin, glm::vec3 dir, glm::vec3 center, glm::vec3 right, glm::vec3 up,
+                           float half, float &tOut)
+{
+    const glm::vec3 normal = glm::cross(right, up); // billboard plane faces the camera
+    const float     denom  = glm::dot(dir, normal);
+    if (std::abs(denom) < 1e-8f)
+        return false; // ray parallel to the quad
+
+    const float t = glm::dot(center - origin, normal) / denom;
+    if (t < 0.f)
+        return false;
+
+    const glm::vec3 hit    = origin + t * dir;
+    const glm::vec3 offset = hit - center;
+    if (std::abs(glm::dot(offset, right)) <= half && std::abs(glm::dot(offset, up)) <= half)
+    {
+        tOut = t;
+        return true;
+    }
+    return false;
+}
+
 } // namespace
 
 Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
@@ -309,13 +336,25 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
     const glm::vec3 rayDir    = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
     const glm::vec3 rayOrigin = _cameraTransform.position;
 
+    // Camera world basis (view rows), matching how the billboards are oriented, so
+    // a meshless entity's clickable area is exactly its icon quad.
+    const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
+    const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
+    const float     iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+
     float               closestT = std::numeric_limits<float>::max();
     Assisi::ECS::Entity result   = Assisi::ECS::NullEntity;
 
     for (auto [e, tc] : _scene->Query<Assisi::Runtime::Transform>())
     {
-        float t = 0.f;
-        if (RayOBBIntersect(rayOrigin, rayDir, tc.worldMatrix, t) && t < closestT)
+        // An entity with a mesh is picked by its (unit-cube) bounds; a placement-
+        // only entity is picked by its billboard icon alone, not a big unit cube.
+        float      t   = 0.f;
+        const bool hit = _scene->Get<Assisi::Runtime::MeshRenderer>(e) != nullptr
+                             ? RayOBBIntersect(rayOrigin, rayDir, tc.worldMatrix, t)
+                             : RayBillboardIntersect(rayOrigin, rayDir, glm::vec3(tc.worldMatrix[3]), cameraRight,
+                                                     cameraUp, iconHalf, t);
+        if (hit && t < closestT)
         {
             closestT = t;
             result   = e;

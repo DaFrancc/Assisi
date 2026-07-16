@@ -10,10 +10,6 @@ namespace Assisi::Render
 
 namespace
 {
-// Billboard size in WORLD units (full edge length). Fixed, so the icon shrinks
-// with distance under perspective like any world object.
-constexpr float kIconWorldSize = 0.5f;
-
 // Per-billboard vertex-stage constants (mirrors icon_billboard.vert). 112 bytes,
 // within the 128-byte push-constant floor.
 struct IconPushConstants
@@ -134,7 +130,7 @@ void IconPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, c
 
     // The camera basis and transform are the same for every icon; only the centre
     // changes, so set the state once and vary the push constant per billboard.
-    constexpr float   half = 0.5f * kIconWorldSize;
+    constexpr float   half = 0.5f * kEntityIconWorldSize;
     IconPushConstants pc;
     pc.viewProjection = viewProjection;
     pc.rightHalf      = glm::vec4(cameraRight * half, 0.f);
