@@ -18,17 +18,18 @@ constexpr const char *kScenePixelShader = "shaders/cube_min.frag.spv";
 
 // Selection-outline shaders (screen-space edge detect; see Render::OutlinePass):
 // a mask pass that stamps the silhouette, and a fullscreen edge pass that paints
-// the orange border. The edge pass reuses the shared fullscreen-triangle vertex shader.
-constexpr const char *kOutlineMaskVertexShader = "shaders/outline_mask.vert.spv";
-constexpr const char *kOutlineMaskPixelShader  = "shaders/outline_mask.frag.spv";
+// the orange border. Editor-only, so they live under editor/shaders/ — except the
+// edge pass's vertex stage, which reuses the shared fullscreen-triangle shader.
+constexpr const char *kOutlineMaskVertexShader = "editor/shaders/outline_mask.vert.spv";
+constexpr const char *kOutlineMaskPixelShader  = "editor/shaders/outline_mask.frag.spv";
 constexpr const char *kOutlineEdgeVertexShader = "shaders/fullscreen.vert.spv";
-constexpr const char *kOutlineEdgePixelShader  = "shaders/outline_edge.frag.spv";
+constexpr const char *kOutlineEdgePixelShader  = "editor/shaders/outline_edge.frag.spv";
 
-// Editor entity-icon billboard (see Render::IconPass). The icon image is authored
-// content dropped at this virtual path; until it exists the pass shows a magenta
-// placeholder.
-constexpr const char *kIconVertexShader = "shaders/icon_billboard.vert.spv";
-constexpr const char *kIconPixelShader  = "shaders/icon_billboard.frag.spv";
+// Editor entity-icon billboard (see Render::IconPass), editor-only. The icon image
+// is authored content dropped at this virtual path; until it exists the pass shows
+// a magenta placeholder.
+constexpr const char *kIconVertexShader = "editor/shaders/icon_billboard.vert.spv";
+constexpr const char *kIconPixelShader  = "editor/shaders/icon_billboard.frag.spv";
 constexpr const char *kEntityIconTexture = "editor/entity_icon.png";
 
 float AspectRatio(int width, int height)

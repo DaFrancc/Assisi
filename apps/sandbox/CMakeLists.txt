@@ -67,21 +67,28 @@ add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
 file(GLOB_RECURSE _sandbox_vk_shader_sources
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES false
-    "${CMAKE_SOURCE_DIR}/assets/shaders/*.vert"
-    "${CMAKE_SOURCE_DIR}/assets/shaders/*.frag"
-    "${CMAKE_SOURCE_DIR}/assets/shaders/*.comp"
+    "${CMAKE_SOURCE_DIR}/assets/*.vert"
+    "${CMAKE_SOURCE_DIR}/assets/*.frag"
+    "${CMAKE_SOURCE_DIR}/assets/*.comp"
 )
 
 set(_sandbox_shader_copies "")
 
 foreach(_shader_in ${_sandbox_vk_shader_sources})
-    get_filename_component(_shader_name "${_shader_in}" NAME)
-    set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_name}.spv")
+    # A shader keeps its path relative to assets/ (e.g. shaders/cube_min.vert or
+    # editor/shaders/outline_edge.frag) through compilation and into the copied
+    # asset root, so editor-only shaders live under assets/editor/ and still
+    # resolve by their virtual path. Intermediate names in the binary dir flatten
+    # the slashes to stay unique and path-safe.
+    file(RELATIVE_PATH _shader_rel "${CMAKE_SOURCE_DIR}/assets" "${_shader_in}")
+    get_filename_component(_shader_rel_dir "${_shader_rel}" DIRECTORY)
+    string(REPLACE "/" "_" _shader_flat "${_shader_rel}")
+    set(_shader_out "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}.spv")
     add_custom_command(
         OUTPUT "${_shader_out}"
         COMMAND $<TARGET_FILE:glslang-standalone> -V "${_shader_in}" -o "${_shader_out}"
         DEPENDS "${_shader_in}" glslang-standalone
-        COMMENT "Compiling ${_shader_name} to SPIR-V"
+        COMMENT "Compiling ${_shader_rel} to SPIR-V"
         VERBATIM
     )
 
@@ -89,18 +96,16 @@ foreach(_shader_in ${_sandbox_vk_shader_sources})
     # dependency scanner, so track completion via a stamp file in the binary
     # dir; the actual copy destination can still use TARGET_FILE_DIR since
     # that's fine inside COMMAND.
-    # Compiled .spv lands under the copied asset root (assets/shaders/), NOT a
-    # sibling shaders/ dir, so it resolves through Core::AssetSystem exactly like
-    # every other asset. The GLSL source is already mirrored there by the asset
-    # copy above; the compiled output sits alongside it.
-    set(_shader_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_shader_name}.spv.copied")
+    # Compiled .spv lands beside its GLSL source under the copied asset root, so it
+    # resolves through Core::AssetSystem exactly like every other asset.
+    set(_shader_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_shader_flat}.spv.copied")
     add_custom_command(
         OUTPUT "${_shader_stamp}"
-        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/shaders"
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_shader_out}" "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/shaders/${_shader_name}.spv"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/${_shader_rel_dir}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_shader_out}" "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets/${_shader_rel}.spv"
         COMMAND ${CMAKE_COMMAND} -E touch "${_shader_stamp}"
         DEPENDS "${_shader_out}"
-        COMMENT "Copying ${_shader_name}.spv into the Assisi-Sandbox asset root"
+        COMMENT "Copying ${_shader_rel}.spv into the Assisi-Sandbox asset root"
         VERBATIM
     )
     list(APPEND _sandbox_shader_copies "${_shader_stamp}")
