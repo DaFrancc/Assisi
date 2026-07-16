@@ -49,6 +49,10 @@ class IconPass
 
     [[nodiscard]] bool IsValid() const { return _pipeline != nullptr; }
 
+    /// @brief The icon texture, so another pass (e.g. the selection outline) can
+    /// mask against the icon's artwork. Null before Initialize().
+    [[nodiscard]] nvrhi::ITexture *IconTexture() const { return _icon.NativeTexture(); }
+
     /// @brief Draw one billboard per world position. @p viewProjection is the
     /// camera's projection*view; @p cameraRight / @p cameraUp are the camera's
     /// world-space basis (so the quads face it). No-op if not initialised or the

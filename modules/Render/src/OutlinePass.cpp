@@ -40,7 +40,8 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
                              const std::string &maskPixelShaderSpvPath,
                              const std::string &edgeVertexShaderSpvPath,
                              const std::string &edgePixelShaderSpvPath,
-                             const std::string &billboardMaskVertexShaderSpvPath)
+                             const std::string &billboardMaskVertexShaderSpvPath,
+                             const std::string &billboardMaskPixelShaderSpvPath)
 {
     _device = device;
 
@@ -50,8 +51,10 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
     _edgePixelShader  = LoadSpirvShader(device, edgePixelShaderSpvPath, nvrhi::ShaderType::Pixel);
     _billboardMaskVertexShader =
         LoadSpirvShader(device, billboardMaskVertexShaderSpvPath, nvrhi::ShaderType::Vertex);
+    _billboardMaskPixelShader =
+        LoadSpirvShader(device, billboardMaskPixelShaderSpvPath, nvrhi::ShaderType::Pixel);
     if (!_maskVertexShader || !_maskPixelShader || !_edgeVertexShader || !_edgePixelShader ||
-        !_billboardMaskVertexShader)
+        !_billboardMaskVertexShader || !_billboardMaskPixelShader)
     {
         return false;
     }
@@ -119,22 +122,27 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
         return false;
     }
 
-    // Billboard mask pipeline: same flat-coverage pixel shader and mask target, but
-    // the vertex stage builds a camera-facing quad from gl_VertexIndex (no vertex
-    // buffer) and takes the icon billboard's larger push constant.
+    // Billboard mask pipeline: the vertex stage builds a camera-facing quad from
+    // gl_VertexIndex (no vertex buffer) with the icon billboard's push constant;
+    // the pixel stage samples the icon so only its opaque artwork writes coverage.
+    // The binding set (which names the icon texture) is built lazily in
+    // EnsureBillboardBindingSet, since the texture belongs to the icon pass.
     nvrhi::BindingLayoutDesc billboardLayoutDesc;
-    billboardLayoutDesc.visibility = nvrhi::ShaderType::Vertex;
+    billboardLayoutDesc.visibility = nvrhi::ShaderType::All; // push in VS, texture/sampler in PS
     billboardLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(BillboardMaskPush)));
+    billboardLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
+    billboardLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
     _billboardMaskBindingLayout = device->createBindingLayout(billboardLayoutDesc);
 
-    nvrhi::BindingSetDesc billboardSetDesc;
-    billboardSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(BillboardMaskPush)));
-    _billboardMaskBindingSet = device->createBindingSet(billboardSetDesc, _billboardMaskBindingLayout);
+    nvrhi::SamplerDesc billboardSamplerDesc;
+    billboardSamplerDesc.setAllFilters(true); // trilinear — the icon has a mip chain
+    billboardSamplerDesc.setAllAddressModes(nvrhi::SamplerAddressMode::Clamp);
+    _billboardSampler = device->createSampler(billboardSamplerDesc);
 
     nvrhi::GraphicsPipelineDesc billboardPipelineDesc;
     billboardPipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
     billboardPipelineDesc.VS       = _billboardMaskVertexShader;
-    billboardPipelineDesc.PS       = _maskPixelShader;
+    billboardPipelineDesc.PS       = _billboardMaskPixelShader;
     billboardPipelineDesc.addBindingLayout(_billboardMaskBindingLayout);
     billboardPipelineDesc.renderState.rasterState.cullMode               = nvrhi::RasterCullMode::None;
     billboardPipelineDesc.renderState.depthStencilState.depthTestEnable  = false;
@@ -346,14 +354,35 @@ void OutlinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection
     RecordEdgePass(frame);
 }
 
+bool OutlinePass::EnsureBillboardBindingSet(nvrhi::ITexture *iconTexture)
+{
+    if (iconTexture == nullptr)
+    {
+        return false;
+    }
+    if (_billboardMaskBindingSet != nullptr && _billboardTexture == iconTexture)
+    {
+        return true; // already built for this texture
+    }
+
+    nvrhi::BindingSetDesc setDesc;
+    setDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(BillboardMaskPush)));
+    setDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, iconTexture));
+    setDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _billboardSampler));
+    _billboardMaskBindingSet = _device->createBindingSet(setDesc, _billboardMaskBindingLayout);
+    _billboardTexture        = _billboardMaskBindingSet != nullptr ? iconTexture : nullptr;
+    return _billboardMaskBindingSet != nullptr;
+}
+
 void OutlinePass::DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
-                                const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize)
+                                const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize,
+                                nvrhi::ITexture *iconTexture)
 {
     if (!IsValid() || _billboardMaskPipeline == nullptr)
     {
         return;
     }
-    if (!EnsureMask(frame.width, frame.height))
+    if (!EnsureBillboardBindingSet(iconTexture) || !EnsureMask(frame.width, frame.height))
     {
         return;
     }
