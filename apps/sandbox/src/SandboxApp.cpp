@@ -8,6 +8,7 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
+#include <Assisi/Geometry/DefaultMeshes.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Core/ShortString.hpp>
@@ -516,6 +517,14 @@ void SandboxApp::SetupScene()
     // thread its layout/table through.
     _assetCache.Initialize(device, &Jobs());
 
+    // Upload the unit collider silhouette meshes into a persistent arena (never
+    // reset, so they survive level loads). The editor scales these per collider to
+    // outline the collision volume; a capsule reuses the cylinder + sphere.
+    _colliderArena.Initialize(device, sizeof(Assisi::Geometry::Vertex));
+    _colliderBoxMesh.Upload(_colliderArena, Assisi::Geometry::CreateUnitCubeMesh());
+    _colliderSphereMesh.Upload(_colliderArena, Assisi::Geometry::CreateUnitSphereMesh());
+    _colliderCylinderMesh.Upload(_colliderArena, Assisi::Geometry::CreateUnitCylinderMesh());
+
     // The engine's default scene-render path owns lighting + the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo so it's already correct if options.json saved an MSAA mode.
@@ -576,6 +585,8 @@ void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
     _sceneRenderer.SetHighlightedEntity(_selectedEntity);
     // Editor entity icons show while authoring/paused, but not during live play.
     _sceneRenderer.SetEditorIconsVisible(_playState != PlayState::Playing);
+    // Collider wireframes (editor-only) — queued before Render() consumes them.
+    SubmitColliderWireframes();
     _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera);
 }
 

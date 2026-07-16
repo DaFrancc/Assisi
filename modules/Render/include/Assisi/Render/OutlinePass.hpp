@@ -2,9 +2,11 @@
 #pragma once
 
 /// @file OutlinePass.hpp
-/// @brief Always-on-top orange selection outline via screen-space edge detection.
+/// @brief Coloured always-on-top / depth-tested silhouette outline via
+/// screen-space edge detection.
 
 #include <cstdint>
+#include <span>
 #include <string>
 
 #include <nvrhi/nvrhi.h>
@@ -17,24 +19,33 @@ namespace Assisi::Render
 
 class MeshBuffer;
 
-/// @brief Draws a selection outline — an orange border around one mesh, rendered
-/// over everything so it stays visible even when the object is occluded.
+/// @brief Draws a selection/collider outline — a coloured border around one or
+/// more meshes, drawn over the scene via screen-space edge detection.
 ///
 /// Technique — the same screen-space edge detect Unreal uses, which (unlike a
 /// normal-extruded "hull" outline) is clean on any topology, boxes included:
-///   1. Mask pass — render the selected mesh's silhouette into a single-channel
-///      offscreen coverage mask (depth test off, so the whole silhouette is
-///      covered even through occluders).
-///   2. Edge pass — a fullscreen triangle reads that mask and paints orange on
-///      pixels just OUTSIDE the silhouette (within a few pixels of a covered
-///      texel), giving a uniform-thickness border composited over the scene.
+///   1. Mask pass — render each silhouette into a single-channel offscreen
+///      coverage mask. Depth test off ("always on top"), or tested against the
+///      scene depth so occluded parts of the silhouette drop out.
+///   2. Edge pass — a fullscreen triangle reads that mask and paints the caller's
+///      colour on pixels just OUTSIDE the covered region.
 ///
-/// The mask is an internal R8 render target sized to the viewport, recreated when
-/// the viewport changes. The mask pipeline targets that mask's format; the edge
-/// pipeline targets the scene framebuffer's format (rebuilt on an MSAA change).
+/// A batch of meshes rendered into one mask yields one merged outline of one
+/// colour (their union). Call once per outline group.
+///
+/// The outline is always drawn on top of the scene (not depth-tested) — it is a
+/// selection highlight, so it stays visible even when the object is occluded, the
+/// way editor selection outlines conventionally behave.
 class OutlinePass
 {
   public:
+    /// @brief One silhouette to stamp into the mask: a mesh at a world transform.
+    struct OutlineItem
+    {
+        const MeshBuffer *mesh;
+        glm::mat4         model;
+    };
+
     /// @param sceneFramebufferInfo  Format/samples of the framebuffer the edge
     ///        pass composites into (the scene target).
     /// @param width,height          Initial viewport size for the coverage mask.
@@ -59,35 +70,41 @@ class OutlinePass
 
     [[nodiscard]] bool IsValid() const { return _maskPipeline != nullptr && _edgePipeline != nullptr; }
 
-    /// @brief Record the outline for @p mesh placed at @p model. @p viewProjection
-    /// is the camera's projection*view. Draws LOD0 (or the whole mesh if it has no
-    /// LOD table). Resizes the mask to the frame if needed. No-op if not
-    /// initialised or the mesh has no GPU buffers.
+    /// @brief Outline @p mesh at @p model in @p color, on top of the scene.
+    /// @p viewProjection is the camera's projection*view. No-op if not initialised
+    /// or the mesh has no GPU buffers.
     void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const MeshBuffer &mesh,
-              const glm::mat4 &model);
+              const glm::mat4 &model, const glm::vec3 &color);
+
+    /// @brief Outline a batch of meshes as one merged border of @p color. Their
+    /// silhouettes union into a single mask, so overlapping meshes share one
+    /// outline. No-op if the batch is empty.
+    void DrawOutlines(const RenderFrame &frame, const glm::mat4 &viewProjection, std::span<const OutlineItem> items,
+                      const glm::vec3 &color);
 
     /// @brief Outline a meshless entity's icon — the selection highlight for an
     /// entity drawn as a billboard. The quad is centred at @p center, spanning
     /// ±@p halfSize along the (unit) @p cameraRight / @p cameraUp axes, matching the
     /// drawn icon; @p iconTexture is sampled so the outline traces the icon's
-    /// artwork. @p viewProjection is projection*view. No-op if not initialised or
+    /// artwork. Painted in @p color, always on top. No-op if not initialised or
     /// @p iconTexture is null.
     void DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
                        const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize,
-                       nvrhi::ITexture *iconTexture);
+                       nvrhi::ITexture *iconTexture, const glm::vec3 &color);
 
   private:
     [[nodiscard]] bool BuildEdgePipeline(const nvrhi::FramebufferInfo &sceneFramebufferInfo);
-    /// @brief (Re)create the coverage mask target + its framebuffer and the edge
-    /// pass's binding set for a new viewport size. No-op when already that size.
+    /// @brief (Re)create the coverage mask target + its (depth-less) framebuffer and
+    /// the edge pass's binding set for a new viewport size. No-op when already that
+    /// size.
     [[nodiscard]] bool EnsureMask(uint32_t width, uint32_t height);
-    void RecordMaskPass(const RenderFrame &frame, const glm::mat4 &modelViewProjection, const MeshBuffer &mesh);
+    void RecordSilhouette(const RenderFrame &frame, const glm::mat4 &modelViewProjection, const MeshBuffer &mesh);
     void RecordBillboardMaskPass(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
                                  const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize);
     /// @brief (Re)build the billboard mask's binding set for @p iconTexture, reusing
     /// it while the texture is unchanged. Returns false if there is no texture.
     [[nodiscard]] bool EnsureBillboardBindingSet(nvrhi::ITexture *iconTexture);
-    void RecordEdgePass(const RenderFrame &frame);
+    void RecordEdgePass(const RenderFrame &frame, const glm::vec3 &color);
 
     nvrhi::IDevice *_device = nullptr;
 
@@ -97,7 +114,7 @@ class OutlinePass
     nvrhi::InputLayoutHandle      _maskInputLayout;
     nvrhi::BindingLayoutHandle    _maskBindingLayout;
     nvrhi::BindingSetHandle       _maskBindingSet; // push constants only
-    nvrhi::GraphicsPipelineHandle _maskPipeline;
+    nvrhi::GraphicsPipelineHandle _maskPipeline;   // depth off (always on top)
 
     // Billboard mask variant: stamps a meshless entity's icon into the same
     // coverage mask (sampling the icon so only its opaque artwork counts), so the
@@ -112,7 +129,7 @@ class OutlinePass
     nvrhi::ITexture              *_billboardTexture = nullptr; // non-owning; identifies the current binding set
     nvrhi::GraphicsPipelineHandle _billboardMaskPipeline;
 
-    // Edge pass: fullscreen edge detect that composites the orange border.
+    // Edge pass: fullscreen edge detect that composites the coloured border.
     nvrhi::ShaderHandle           _edgeVertexShader;
     nvrhi::ShaderHandle           _edgePixelShader;
     nvrhi::BindingLayoutHandle    _edgeBindingLayout;

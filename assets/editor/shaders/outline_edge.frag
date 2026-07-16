@@ -18,9 +18,8 @@ layout(binding = 128) uniform sampler   uMaskSampler;
 layout(push_constant) uniform PushConstants
 {
     vec4 params; // xy = texel size (1/resolution), z = outline width in pixels, w unused
+    vec4 color;  // rgb = outline colour (a unused) — set per outline by the caller
 } pc;
-
-const vec3 kOutlineColor = vec3(1.0, 0.45, 0.0);
 
 float SampleMask(vec2 uv)
 {
@@ -62,5 +61,5 @@ void main()
         }
     }
 
-    outColor = vec4(kOutlineColor, step(0.5, inside));
+    outColor = vec4(pc.color.rgb, step(0.5, inside));
 }

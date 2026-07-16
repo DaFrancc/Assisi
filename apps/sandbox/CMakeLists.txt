@@ -12,6 +12,7 @@ target_sources(Assisi-Sandbox
     "src/SandboxLevels.cpp"
     "src/SandboxPlay.cpp"
     "src/SandboxGizmo.cpp"
+    "src/SandboxColliders.cpp"
     "src/EditHistory.cpp"
 )
 

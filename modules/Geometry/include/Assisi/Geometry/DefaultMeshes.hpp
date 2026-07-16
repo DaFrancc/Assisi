@@ -142,4 +142,97 @@ inline MeshData CreateUnitCubeMesh()
 
     return mesh;
 }
+
+/// @brief Returns a solid unit sphere (radius 1, centred at the origin) as a
+/// UV-sphere with @p slices longitudinal and @p stacks latitudinal divisions.
+///
+/// Watertight, so its silhouette is a filled disc from any angle — the editor
+/// scales it by a collider's radius to draw a clean round outline. Positions and
+/// (radial) normals are set; UVs are the sphere parameterisation. The default
+/// tessellation is high because a coarse sphere reads as a faceted polygon in a
+/// silhouette outline rather than a circle.
+inline MeshData CreateUnitSphereMesh(uint32_t slices = 48, uint32_t stacks = 24)
+{
+    constexpr float kPi = 3.14159265358979323846f;
+    MeshData        mesh;
+
+    for (uint32_t i = 0; i <= stacks; ++i)
+    {
+        const float v   = static_cast<float>(i) / static_cast<float>(stacks);
+        const float phi = v * kPi; // 0 at +Y pole, π at −Y pole
+        const float y   = std::cos(phi);
+        const float ring = std::sin(phi);
+        for (uint32_t j = 0; j <= slices; ++j)
+        {
+            const float     u     = static_cast<float>(j) / static_cast<float>(slices);
+            const float     theta = u * 2.0f * kPi;
+            const glm::vec3 p(ring * std::cos(theta), y, ring * std::sin(theta));
+            mesh.Vertices.push_back({p, p, {u, v}});
+        }
+    }
+
+    const uint32_t stride = slices + 1;
+    for (uint32_t i = 0; i < stacks; ++i)
+    {
+        for (uint32_t j = 0; j < slices; ++j)
+        {
+            const uint32_t a = i * stride + j;
+            const uint32_t b = a + stride;
+            mesh.Indices.insert(mesh.Indices.end(), {a, b, a + 1, a + 1, b, b + 1});
+        }
+    }
+    return mesh;
+}
+
+/// @brief Returns a solid unit cylinder (radius 1, spanning y ∈ [−1, 1]) with
+/// @p slices around its axis, capped at both ends so it is watertight.
+///
+/// The editor scales it by (radius, halfHeight, radius) for a cylinder collider,
+/// and reuses it (with two unit spheres at the ends) to build a capsule's
+/// silhouette. Only positions matter for the silhouette; normals/UVs are set
+/// plausibly.
+inline MeshData CreateUnitCylinderMesh(uint32_t slices = 48)
+{
+    constexpr float kPi = 3.14159265358979323846f;
+    MeshData        mesh;
+
+    // Side rim vertices, top (y=+1) then bottom (y=−1), with radial normals.
+    for (uint32_t j = 0; j <= slices; ++j)
+    {
+        const float u     = static_cast<float>(j) / static_cast<float>(slices);
+        const float theta = u * 2.0f * kPi;
+        const float x     = std::cos(theta);
+        const float z     = std::sin(theta);
+        mesh.Vertices.push_back({{x, 1.0f, z}, {x, 0.0f, z}, {u, 0.0f}});
+        mesh.Vertices.push_back({{x, -1.0f, z}, {x, 0.0f, z}, {u, 1.0f}});
+    }
+    for (uint32_t j = 0; j < slices; ++j)
+    {
+        const uint32_t top = j * 2;
+        const uint32_t bot = top + 1;
+        mesh.Indices.insert(mesh.Indices.end(), {top, bot, top + 2, top + 2, bot, bot + 2});
+    }
+
+    // Cap fans: a centre vertex for each end, fanned over its own rim ring.
+    const auto addCap = [&mesh, slices, kPi](float y, float ny) {
+        const uint32_t center = static_cast<uint32_t>(mesh.Vertices.size());
+        mesh.Vertices.push_back({{0.0f, y, 0.0f}, {0.0f, ny, 0.0f}, {0.5f, 0.5f}});
+        const uint32_t first = static_cast<uint32_t>(mesh.Vertices.size());
+        for (uint32_t j = 0; j <= slices; ++j)
+        {
+            const float theta = static_cast<float>(j) / static_cast<float>(slices) * 2.0f * kPi;
+            const float x     = std::cos(theta);
+            const float z     = std::sin(theta);
+            mesh.Vertices.push_back({{x, y, z}, {0.0f, ny, 0.0f}, {0.5f + 0.5f * x, 0.5f + 0.5f * z}});
+        }
+        for (uint32_t j = 0; j < slices; ++j)
+        {
+            mesh.Indices.insert(mesh.Indices.end(), {center, first + j, first + j + 1});
+        }
+    };
+    addCap(1.0f, 1.0f);
+    addCap(-1.0f, -1.0f);
+
+    return mesh;
+}
 } /* namespace Assisi::Geometry */

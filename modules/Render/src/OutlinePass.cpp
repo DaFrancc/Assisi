@@ -24,6 +24,14 @@ constexpr nvrhi::Format kMaskFormat = nvrhi::Format::R8_UNORM;
 // silhouette; bump it for a chunkier border.
 constexpr float kOutlineWidthPx = 2.0f;
 
+// Edge-pass push constants (mirrors outline_edge.frag): mask texel size + width,
+// then the outline colour.
+struct EdgePush
+{
+    glm::vec4 params; // xy = texel size (1/resolution), z = width px, w unused
+    glm::vec4 color;  // rgb = outline colour
+};
+
 // Vertex-stage constants for the billboard mask (mirrors icon_billboard.vert):
 // the same 112-byte layout the entity-icon shader uses.
 struct BillboardMaskPush
@@ -81,12 +89,12 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
     maskSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::mat4)));
     _maskBindingSet = device->createBindingSet(maskSetDesc, _maskBindingLayout);
 
-    // Edge pass: push constant (texel size + width) + the mask texture + a sampler.
-    // Point sampling with clamp keeps the 0/1 mask crisp and stops the kernel from
-    // reading past the edges.
+    // Edge pass: push constant (texel size + width + colour) + the mask texture +
+    // a sampler. Point sampling with clamp keeps the 0/1 mask crisp and stops the
+    // kernel from reading past the edges.
     nvrhi::BindingLayoutDesc edgeLayoutDesc;
     edgeLayoutDesc.visibility = nvrhi::ShaderType::Pixel;
-    edgeLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(glm::vec4)));
+    edgeLayoutDesc.addItem(nvrhi::BindingLayoutItem::PushConstants(0, sizeof(EdgePush)));
     edgeLayoutDesc.addItem(nvrhi::BindingLayoutItem::Texture_SRV(0));
     edgeLayoutDesc.addItem(nvrhi::BindingLayoutItem::Sampler(0));
     _edgeBindingLayout = device->createBindingLayout(edgeLayoutDesc);
@@ -102,9 +110,9 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
         return false;
     }
 
-    // Mask pipeline: no cull (silhouette is the union of all faces), depth off (so
-    // the whole silhouette is covered, even occluded), no blend — flat coverage.
-    // Built against the mask target's own format; unaffected by scene MSAA changes.
+    // Mask pipeline (always-on-top): no cull (silhouette is the union of all faces),
+    // depth off (the whole silhouette is covered, even occluded), no blend — flat
+    // coverage. Built against the mask target's own format; unaffected by scene MSAA.
     nvrhi::GraphicsPipelineDesc maskPipelineDesc;
     maskPipelineDesc.primType    = nvrhi::PrimitiveType::TriangleList;
     maskPipelineDesc.inputLayout = _maskInputLayout;
@@ -161,7 +169,7 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
 bool OutlinePass::BuildEdgePipeline(const nvrhi::FramebufferInfo &sceneFramebufferInfo)
 {
     // Fullscreen edge detect (no vertex buffer — fullscreen.vert uses gl_VertexIndex),
-    // depth off, alpha-blended so the orange border composites over the scene and
+    // depth off, alpha-blended so the coloured border composites over the scene and
     // non-edge pixels leave it untouched (they output alpha 0).
     nvrhi::GraphicsPipelineDesc edgePipelineDesc;
     edgePipelineDesc.primType = nvrhi::PrimitiveType::TriangleList;
@@ -235,7 +243,7 @@ bool OutlinePass::EnsureMask(uint32_t width, uint32_t height)
 
     // The edge pass's binding set names the (just recreated) mask texture.
     nvrhi::BindingSetDesc edgeSetDesc;
-    edgeSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(glm::vec4)));
+    edgeSetDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(EdgePush)));
     edgeSetDesc.addItem(nvrhi::BindingSetItem::Texture_SRV(0, _maskTexture));
     edgeSetDesc.addItem(nvrhi::BindingSetItem::Sampler(0, _sampler));
     _edgeBindingSet = _device->createBindingSet(edgeSetDesc, _edgeBindingLayout);
@@ -245,13 +253,10 @@ bool OutlinePass::EnsureMask(uint32_t width, uint32_t height)
     return true;
 }
 
-void OutlinePass::RecordMaskPass(const RenderFrame &frame, const glm::mat4 &modelViewProjection,
-                                 const MeshBuffer &mesh)
+void OutlinePass::RecordSilhouette(const RenderFrame &frame, const glm::mat4 &modelViewProjection,
+                                   const MeshBuffer &mesh)
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
-
-    // Fresh mask every frame — clear to 0 (not covered), then stamp the silhouette.
-    commandList->clearTextureFloat(_maskTexture, nvrhi::AllSubresources, nvrhi::Color(0.f));
 
     nvrhi::GraphicsState state;
     state.pipeline    = _maskPipeline;
@@ -273,7 +278,6 @@ void OutlinePass::RecordMaskPass(const RenderFrame &frame, const glm::mat4 &mode
         for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
         {
             const Geometry::SubMesh &subMesh = mesh.SubMeshes()[lod0.FirstSubMesh + i];
-            // Arena addressing: baseVertex + index-buffer slice (see MeshPass::Submit).
             nvrhi::DrawArguments      drawArgs;
             drawArgs.vertexCount         = subMesh.IndexCount;
             drawArgs.startIndexLocation  = mesh.IndexBase() + subMesh.IndexOffset;
@@ -320,7 +324,7 @@ void OutlinePass::RecordBillboardMaskPass(const RenderFrame &frame, const glm::m
     commandList->draw(drawArgs);
 }
 
-void OutlinePass::RecordEdgePass(const RenderFrame &frame)
+void OutlinePass::RecordEdgePass(const RenderFrame &frame, const glm::vec3 &color)
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
 
@@ -332,20 +336,21 @@ void OutlinePass::RecordEdgePass(const RenderFrame &frame)
         nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
     commandList->setGraphicsState(state);
 
-    // Mask texel size (matches the mask's own dimensions) + outline width in pixels.
-    const glm::vec4 params(1.0f / static_cast<float>(_maskWidth), 1.0f / static_cast<float>(_maskHeight),
-                           kOutlineWidthPx, 0.f);
-    commandList->setPushConstants(&params, sizeof(params));
+    EdgePush push;
+    push.params = glm::vec4(1.0f / static_cast<float>(_maskWidth), 1.0f / static_cast<float>(_maskHeight),
+                            kOutlineWidthPx, 0.f);
+    push.color  = glm::vec4(color, 1.f);
+    commandList->setPushConstants(&push, sizeof(push));
 
     nvrhi::DrawArguments drawArgs;
     drawArgs.vertexCount = 3; // fullscreen triangle
     commandList->draw(drawArgs);
 }
 
-void OutlinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const MeshBuffer &mesh,
-                       const glm::mat4 &model)
+void OutlinePass::DrawOutlines(const RenderFrame &frame, const glm::mat4 &viewProjection,
+                               std::span<const OutlineItem> items, const glm::vec3 &color)
 {
-    if (!IsValid() || mesh.VertexBuffer() == nullptr || mesh.IndexBuffer() == nullptr)
+    if (!IsValid() || items.empty())
     {
         return;
     }
@@ -354,8 +359,26 @@ void OutlinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection
         return;
     }
 
-    RecordMaskPass(frame, viewProjection * model, mesh);
-    RecordEdgePass(frame);
+    // Fresh coverage every call — clear the mask to 0, then stamp each silhouette.
+    frame.commandList->clearTextureFloat(_maskTexture, nvrhi::AllSubresources, nvrhi::Color(0.f));
+
+    for (const OutlineItem &item : items)
+    {
+        if (item.mesh == nullptr || item.mesh->VertexBuffer() == nullptr || item.mesh->IndexBuffer() == nullptr)
+        {
+            continue;
+        }
+        RecordSilhouette(frame, viewProjection * item.model, *item.mesh);
+    }
+
+    RecordEdgePass(frame, color);
+}
+
+void OutlinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const MeshBuffer &mesh,
+                       const glm::mat4 &model, const glm::vec3 &color)
+{
+    const OutlineItem item{&mesh, model};
+    DrawOutlines(frame, viewProjection, std::span<const OutlineItem>(&item, 1), color);
 }
 
 bool OutlinePass::EnsureBillboardBindingSet(nvrhi::ITexture *iconTexture)
@@ -380,7 +403,7 @@ bool OutlinePass::EnsureBillboardBindingSet(nvrhi::ITexture *iconTexture)
 
 void OutlinePass::DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &center,
                                 const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize,
-                                nvrhi::ITexture *iconTexture)
+                                nvrhi::ITexture *iconTexture, const glm::vec3 &color)
 {
     if (!IsValid() || _billboardMaskPipeline == nullptr)
     {
@@ -392,7 +415,7 @@ void OutlinePass::DrawBillboard(const RenderFrame &frame, const glm::mat4 &viewP
     }
 
     RecordBillboardMaskPass(frame, viewProjection, center, cameraRight, cameraUp, halfSize);
-    RecordEdgePass(frame);
+    RecordEdgePass(frame, color);
 }
 
 } // namespace Assisi::Render

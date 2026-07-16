@@ -26,7 +26,9 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
+#include <Assisi/Render/GeometryArena.hpp>
 #include <Assisi/Render/GpuTelemetry.hpp>
+#include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Texture.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
@@ -113,6 +115,19 @@ class SandboxApp : public Assisi::App::Application
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see SandboxPlay.cpp
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See SandboxApp.cpp
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see SandboxGizmo.cpp
+
+    // Build collider wireframes AND silhouette outlines (collider volume + entity
+    // mesh) for every RigidBodyDescriptor and hand them to the renderer (green
+    // depth-tested, orange x-ray for the selection), plus the list of collider
+    // entities so their editor billboards are suppressed. Editor-only: a no-op while
+    // the game is playing. See SandboxColliders.cpp.
+    void SubmitColliderWireframes();
+
+    // Submit the collider volume's silhouette outline for one body (a box/sphere/
+    // cylinder unit mesh scaled to the descriptor; a capsule as a cylinder + two
+    // end spheres, whose union is the capsule). See SandboxColliders.cpp.
+    void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::RigidBodyDescriptor &desc,
+                               const glm::vec3 &color);
     /// @brief True while the transform gizmo is hovered or being dragged — entity
     /// picking checks this so a click on the gizmo doesn't reselect what's behind it.
     [[nodiscard]] bool IsUsingGizmo() const;
@@ -306,6 +321,15 @@ class SandboxApp : public Assisi::App::Application
     // owns every mesh, texture, and material the scene draws (deduped by path).
     Assisi::Render::AssetCache _assetCache;
 
+    // Persistent arena + unit meshes for editor collider silhouette outlines (box,
+    // sphere, cylinder; a capsule reuses the cylinder + sphere). Uploaded once at
+    // init and never reset (unlike the asset cache's arena, which a level load
+    // clears), so the MeshBuffers stay valid across level changes.
+    Assisi::Render::GeometryArena _colliderArena;
+    Assisi::Render::MeshBuffer    _colliderBoxMesh;
+    Assisi::Render::MeshBuffer    _colliderSphereMesh;
+    Assisi::Render::MeshBuffer    _colliderCylinderMesh;
+
     // Editor-only GUID identity index (asset-database S1). ReimportAssets()
     // populates it by scanning the asset root and generating `.aast` sidecars.
     // Built but not yet the resolution key — references still resolve by path.
@@ -347,6 +371,14 @@ class SandboxApp : public Assisi::App::Application
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
     bool                _wasDragging    = false;
+
+    // Reused per-frame scratch for collider wireframes (see SubmitColliderWireframes):
+    // the depth-tested (unselected) and on-top (selected) line batches, and the list
+    // of collider entities whose editor billboards are suppressed. Members so drawing
+    // colliders doesn't allocate every frame.
+    std::vector<Assisi::Render::LineVertex> _colliderLinesDepthTested;
+    std::vector<Assisi::Render::LineVertex> _colliderLinesOnTop;
+    std::vector<Assisi::ECS::Entity>        _colliderEntities;
     // Requests the Entities list scroll to this entity's row next time it draws
     // (set when a new entity is created, so it comes into view). NullEntity = none.
     Assisi::ECS::Entity _scrollToEntity = Assisi::ECS::NullEntity;

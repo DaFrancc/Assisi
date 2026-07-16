@@ -24,6 +24,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/IconPass.hpp>
+#include <Assisi/Render/LinePass.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/OutlinePass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
@@ -32,6 +33,9 @@
 #include <Assisi/Runtime/Renderer.hpp>
 
 #include <nvrhi/nvrhi.h>
+
+#include <span>
+#include <vector>
 
 namespace Assisi::Runtime
 {
@@ -118,6 +122,33 @@ class SceneRenderer
     void SetEditorIconsVisible(bool visible) { _editorIconsVisible = visible; }
     [[nodiscard]] bool EditorIconsVisible() const { return _editorIconsVisible; }
 
+    /// @brief Queue a batch of coloured world-space line segments (a LineList —
+    /// consecutive vertex pairs) to draw over the scene this frame. @p onTop routes
+    /// them to the x-ray pipeline (visible through geometry); otherwise they are
+    /// depth-tested. Queued lines are drawn at the end of the next Render() and then
+    /// cleared, so callers re-submit each frame. This is a generic overlay facility
+    /// (the editor draws collider wireframes with it); it carries no scene meaning.
+    void SubmitOverlayLines(std::span<const Render::LineVertex> vertices, bool onTop);
+
+    /// @brief Suppress the editor billboard/icon for these entities for the next
+    /// Render() (something else already marks them in the world — e.g. an editor
+    /// collider wireframe). The list is consumed and cleared each Render(), so the
+    /// caller re-supplies it every frame; pass an empty span (or don't call) to
+    /// suppress nothing.
+    void SetIconSuppressedEntities(std::span<const ECS::Entity> entities);
+
+    /// @brief Queue one independent silhouette outline for the next Render(): the
+    /// @p items' silhouettes union into a SINGLE border of @p color (e.g. a capsule
+    /// collider is a cylinder + two spheres that must merge). Each call is its own
+    /// edge-detect pass, so separate groups never combine — a collider and the mesh
+    /// it wraps outline independently. Drawn on top of the scene (a selection
+    /// highlight). Cleared each Render(), so re-submit every frame. Editor overlay;
+    /// carries no scene meaning.
+    void SubmitOutlineGroup(std::span<const Render::OutlinePass::OutlineItem> items, const glm::vec3 &color);
+
+    /// @brief Convenience for a single-mesh outline group. See SubmitOutlineGroup.
+    void SubmitOutline(const Render::MeshBuffer *mesh, const glm::mat4 &model, const glm::vec3 &color);
+
   private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int width, int height, const Camera &camera, const glm::mat4 &projection);
@@ -136,11 +167,16 @@ class SceneRenderer
     void DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::mat4 &view,
                          const glm::vec3 &cameraPosition, ECS::Scene &scene);
 
+    /// @brief Whether @p entity's editor icon is suppressed this frame (see
+    /// SetIconSuppressedEntities) — it is marked in the world some other way.
+    [[nodiscard]] bool IsIconSuppressed(ECS::Entity entity) const;
+
     nvrhi::IDevice     *_device = nullptr;
     LightingSystem      _lighting;
     Render::MeshPass    _meshPass;
     Render::OutlinePass _outlinePass;
     Render::IconPass    _iconPass;
+    Render::LinePass    _linePass;
 
     // The entity drawn with a selection outline this frame (NullEntity = none).
     ECS::Entity _highlightedEntity = ECS::NullEntity;
@@ -149,6 +185,23 @@ class SceneRenderer
     // Reused scratch for the per-frame icon positions, so drawing icons doesn't
     // allocate every frame.
     std::vector<glm::vec3> _iconPositions;
+
+    // Overlay line segments queued this frame, split by depth mode; drawn at the
+    // end of Render() and cleared. Refilled each frame by the caller.
+    std::vector<Render::LineVertex> _overlayLinesDepthTested;
+    std::vector<Render::LineVertex> _overlayLinesOnTop;
+
+    // Independent silhouette-outline groups queued this frame; each is drawn as its
+    // own edge-detect pass (so a collider and its mesh never merge), then cleared.
+    struct OutlineGroup
+    {
+        std::vector<Render::OutlinePass::OutlineItem> items;
+        glm::vec3                                     color;
+    };
+    std::vector<OutlineGroup> _outlineGroups;
+    // Entities whose editor icon is suppressed this frame (drawn some other way).
+    // Consumed and cleared each Render().
+    std::vector<ECS::Entity> _iconSuppressed;
 
     // Projection the froxel grid was last built against; a mismatch in Render()
     // triggers a rebuild. Identity forces one on the first frame.
