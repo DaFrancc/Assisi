@@ -602,6 +602,16 @@ void SandboxApp::OnUpdate(float dt)
     // command list is open (so scene mutation is safe).
     HandleUndoRedoHotkeys();
 
+    // Delete key removes the selected entity (+ its subtree), undoably. Gated like
+    // undo: only when a history is active and no text field owns the keyboard (so
+    // Delete edits text there instead). Same safe mutation point as the undo above.
+    if (Sandbox::EditHistory *history = ActiveHistory();
+        history != nullptr && !ImGui::GetIO().WantTextInput && _selectedEntity != Assisi::ECS::NullEntity &&
+        _scene->IsAlive(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+    {
+        DeleteEntity(_selectedEntity);
+    }
+
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // SandboxLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in

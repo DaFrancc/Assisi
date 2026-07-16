@@ -584,6 +584,44 @@ TEST_CASE("EditHistory: labels and the dirty-state token track the stack")
     CHECK(hist.CurrentStateToken() == savedToken);
 }
 
+TEST_CASE("EditHistory: a subtree delete built via CaptureEntityComponents round-trips")
+{
+    // Mirrors SandboxApp::DeleteEntity: snapshot each subtree member with the public
+    // CaptureEntityComponents helper, build one delete transaction, destroy, undo.
+    Scene        scene;
+    const Entity parent = scene.Create();
+    const Entity child  = scene.Create();
+    REQUIRE(scene.Add(parent, Transform{.position = {2.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
+
+    EditHistory hist(scene);
+
+    Transaction txn;
+    txn.label           = "Delete Subtree";
+    txn.selectionBefore = parent;
+    txn.selectionAfter  = NullEntity;
+    for (Entity e : {parent, child})
+        txn.cmds.push_back(EntityDelta{e, hist.CaptureEntityComponents(e), std::nullopt});
+
+    // Perform the delete the transaction describes, then record it.
+    scene.Destroy(parent);
+    scene.Destroy(child);
+    scene.FlushDestroyed();
+    hist.Push(std::move(txn));
+
+    const auto sel = hist.Undo();
+    REQUIRE(sel.has_value());
+    CHECK(*sel == parent);
+    REQUIRE(scene.IsAlive(parent));
+    REQUIRE(scene.IsAlive(child));
+    CHECK(scene.EntityAt(parent.index) == parent);
+    CHECK(scene.Get<Transform>(parent)->position.x == doctest::Approx(2.f));
+    const Parent *pc = scene.Get<Parent>(child);
+    REQUIRE(pc != nullptr);
+    CHECK(pc->parent == parent);
+}
+
 TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 {
     Scene       scene;

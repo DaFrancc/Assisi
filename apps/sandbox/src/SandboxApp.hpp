@@ -214,6 +214,14 @@ class SandboxApp : public Assisi::App::Application
     /// editor camera (an empty object to build up via Add Component), selects it,
     /// and returns it. Used by the entity list's + button.
     Assisi::ECS::Entity CreateEntity();
+    /// @brief Deletes @p entity and its whole subtree (descendants via Parent),
+    /// tearing down each one's physics body, as one undoable transaction. Clears the
+    /// selection if it fell inside the deleted subtree. Used by the Delete key and
+    /// the entity list's delete button.
+    void DeleteEntity(Assisi::ECS::Entity entity);
+    /// @brief Collects @p root plus every entity whose Parent chain leads to it
+    /// (breadth-first over the Parent pool). Root-first order; used by DeleteEntity.
+    std::vector<Assisi::ECS::Entity> GatherSubtree(Assisi::ECS::Entity root);
     /// @brief Adds @p meta's component to the selected entity with default field
     /// values, wiring up any runtime state the component needs (mesh re-resolve,
     /// physics body). No-op if the entity already has it. Used by the inspector's

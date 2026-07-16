@@ -8,12 +8,9 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
-
-#include <optional>
-#include <utility>
-#include <vector>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -21,9 +18,14 @@
 
 #include <nlohmann/json.hpp>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <optional>
 #include <string>
+#include <utility>
+#include <vector>
 
 // ---------------------------------------------------------------------------
 // Scene rebuild helpers (shared by level load, the Stop restore, and spawning)
@@ -219,6 +221,77 @@ Assisi::ECS::Entity SandboxApp::CreateEntity()
     return entity;
 }
 
+std::vector<Assisi::ECS::Entity> SandboxApp::GatherSubtree(Assisi::ECS::Entity root)
+{
+    std::vector<Assisi::ECS::Entity> result{root};
+    if (_scene == nullptr)
+        return result;
+
+    // Breadth-first: for each collected entity, sweep the scene for entities whose
+    // Parent points at it (no child index exists, so this scans — fine at editor
+    // scale). `result` grows as we go; the index walk visits each new entry.
+    for (std::size_t i = 0; i < result.size(); ++i)
+    {
+        const Assisi::ECS::Entity current = result[i];
+        _scene->ForEachEntity(
+            [&](Assisi::ECS::Entity e)
+            {
+                const auto *parent = _scene->Get<Assisi::Runtime::Parent>(e);
+                if (parent == nullptr || parent->parent != current)
+                    return;
+                if (std::find(result.begin(), result.end(), e) == result.end())
+                    result.push_back(e);
+            });
+    }
+    return result;
+}
+
+void SandboxApp::DeleteEntity(Assisi::ECS::Entity entity)
+{
+    if (_scene == nullptr || !_scene->IsAlive(entity))
+    {
+        return;
+    }
+
+    const std::vector<Assisi::ECS::Entity> subtree = GatherSubtree(entity);
+
+    // Capture the whole subtree as one transaction *before* tearing anything down
+    // (components must still be alive to serialize). Undo revives every entity at
+    // its exact handle and restores its components (two-phase, so Parent refs
+    // resolve); redo re-deletes.
+    Sandbox::EditHistory *history = ActiveHistory();
+    Sandbox::Transaction  txn;
+    if (history != nullptr)
+    {
+        txn.label           = subtree.size() > 1 ? "Delete Subtree" : "Delete Entity";
+        txn.selectionBefore = _selectedEntity;
+        txn.selectionAfter  = Assisi::ECS::NullEntity;
+        for (const Assisi::ECS::Entity e : subtree)
+            txn.cmds.push_back(Sandbox::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
+    }
+
+    // Tear down each entity's Jolt body (RigidBody is transient — never in the
+    // snapshot; the undo rebuilds it from RigidBodyDescriptor via the rebind hook),
+    // then queue the entity for destruction. Destroy is deferred; the slots free at
+    // the frame's FlushDestroyed, ready for a later undo's ReviveAt.
+    for (const Assisi::ECS::Entity e : subtree)
+    {
+        if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(e))
+        {
+            _physics.RemoveBody(*rbc);
+            _scene->Remove<Assisi::Physics::RigidBody>(e);
+        }
+        _scene->Destroy(e);
+    }
+
+    if (history != nullptr)
+        history->Push(std::move(txn));
+
+    // Drop the selection if it was anywhere in the deleted subtree.
+    if (std::find(subtree.begin(), subtree.end(), _selectedEntity) != subtree.end())
+        _selectedEntity = Assisi::ECS::NullEntity;
+}
+
 // ---------------------------------------------------------------------------
 // Windows
 // ---------------------------------------------------------------------------
@@ -325,8 +398,23 @@ void SandboxApp::DrawEntityListWindow()
     {
         ImGui::SetTooltip("Add a new entity");
     }
+
+    // Delete removes the selected entity and its subtree (undoable). Disabled when
+    // nothing is selected. Also on the Delete key (see OnUpdate).
     ImGui::SameLine();
-    ImGui::TextDisabled("add entity");
+    const bool canDelete = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity);
+    ImGui::BeginDisabled(!canDelete);
+    if (ImGui::Button("-"))
+    {
+        DeleteEntity(_selectedEntity);
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered() && canDelete)
+    {
+        ImGui::SetTooltip("Delete the selected entity (Del)");
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("add / delete entity");
     ImGui::Separator();
 
     // Every alive entity, one selectable row. A single click selects it (the
