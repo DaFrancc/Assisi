@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <expected>
 #include <string_view>
+#include <vector>
 
 #include <nvrhi/nvrhi.h>
 
@@ -26,17 +27,46 @@ enum class ColorSpace : std::uint8_t
     Linear,
 };
 
+/// @brief A CPU-side decoded image: the full RGBA8 mip chain, ready to upload.
+/// Produced by Texture::DecodeImage (which does the file read, decode, and mip
+/// downsampling — all CPU, no device) so that work can run on a worker thread;
+/// consumed by Texture::UploadDecoded on the main thread. `mips[0]` is the base
+/// level; each entry is `width_i * height_i * 4` bytes (levels halve down to 1x1).
+struct DecodedImage
+{
+    uint32_t                                width = 0;
+    uint32_t                                height = 0;
+    ColorSpace                              colorSpace = ColorSpace::Srgb;
+    std::vector<std::vector<unsigned char>> mips;
+};
+
 /// @brief Owner of an NVRHI 2D texture, RGBA8, with a full mip chain.
 class Texture
 {
   public:
     Texture() = default;
 
+    /// @brief Decode an image from a virtual asset path into a CPU mip chain — the
+    /// worker-thread half of async texture loading. Does the AssetSystem resolve,
+    /// stb_image decode (always to 4-channel RGBA8, top-down to match Vulkan's V=0
+    /// convention), and CPU mip generation (stb's colour-space-aware resizer, so
+    /// sRGB is filtered in linear space). Touches no device and no shared state, so
+    /// it is safe to call from any thread. @p colorSpace selects the filtering
+    /// space and is carried into the result for UploadDecoded.
+    /// @return the decoded chain, or an AssetError if the file can't be resolved/read/decoded.
+    static std::expected<DecodedImage, Assisi::Core::AssetError> DecodeImage(std::string_view vpath,
+                                                                             ColorSpace colorSpace) noexcept;
+
+    /// @brief Create the GPU texture and upload a decoded mip chain — the
+    /// main-thread half (device work). Pairs with DecodeImage.
+    void UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName = nullptr);
+
     /// @brief Loads an image from a virtual asset path (via stb_image) and uploads it.
+    /// Synchronous convenience = DecodeImage + UploadDecoded on the calling thread;
+    /// the async path calls the two halves separately (worker decode, main upload).
     ///
     /// Always decoded to 4 channels (RGBA8). Loaded top-down, matching Vulkan/NVRHI's
-    /// UV convention (V=0 at the top) — unlike the OpenGL texture loader this replaces,
-    /// no vertical flip is applied. A full mip chain is generated on the CPU (with
+    /// UV convention (V=0 at the top). A full mip chain is generated on the CPU (with
     /// stb's colour-space-aware resizer) so distant surfaces don't alias; @p colorSpace
     /// selects the on-GPU format (SRGBA8 for albedo, RGBA8 for data maps) and the
     /// filtering space used to build the mips.
