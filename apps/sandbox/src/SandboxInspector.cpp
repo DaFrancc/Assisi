@@ -798,8 +798,38 @@ void SandboxApp::DrawInspector()
     ImGui::Separator();
     ImGui::TextUnformatted("Add Component");
     ImGui::SetNextItemWidth(-1.f);
-    const bool entered = ImGui::InputText("##addcomponent", _addComponentBuf, sizeof(_addComponentBuf),
-                                          ImGuiInputTextFlags_EnterReturnsTrue);
+
+    // Keyboard navigation of the suggestion list, surfaced from inside the focused
+    // input: Tab fires the Completion callback, the arrow keys fire History, and any
+    // text change fires Edit. We only record the intent here — a single-line
+    // InputText exposes these keys nowhere else — and move the highlight below, once
+    // this frame's match count is known.
+    struct SuggestionNav
+    {
+        int  move  = 0;     // -1 = up, +1 = down (Tab or arrows)
+        bool reset = false; // text edited -> snap back to the first row
+    };
+    SuggestionNav  nav;
+    const auto navCallback = [](ImGuiInputTextCallbackData *data) -> int
+    {
+        auto *n = static_cast<SuggestionNav *>(data->UserData);
+        switch (data->EventFlag)
+        {
+        case ImGuiInputTextFlags_CallbackCompletion: n->move = +1; break; // Tab
+        case ImGuiInputTextFlags_CallbackHistory:
+            n->move = data->EventKey == ImGuiKey_UpArrow ? -1 : +1; // Up / Down
+            break;
+        case ImGuiInputTextFlags_CallbackEdit: n->reset = true; break; // typed or deleted
+        default: break;
+        }
+        return 0;
+    };
+
+    const bool entered =
+        ImGui::InputText("##addcomponent", _addComponentBuf, sizeof(_addComponentBuf),
+                         ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion |
+                             ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackEdit,
+                         navCallback, &nav);
 
     const auto toLower = [](std::string text)
     {
@@ -809,7 +839,11 @@ void SandboxApp::DrawInspector()
     };
     const std::string queryLower = toLower(_addComponentBuf);
 
-    if (!queryLower.empty())
+    if (queryLower.empty())
+    {
+        _addComponentSelected = 0; // nothing to highlight until the field has text
+    }
+    else
     {
         // Rank addable components (serializable, not already on the entity) whose
         // lowercased name contains the query: earliest match position first (so a
@@ -820,8 +854,7 @@ void SandboxApp::DrawInspector()
             const ComponentMeta *meta;
             std::size_t          pos;
         };
-        std::vector<Match>   matches;
-        const ComponentMeta *exact = nullptr;
+        std::vector<Match> matches;
         for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
         {
             if (meta->name == "Name") // managed by the rename field, not added here
@@ -833,8 +866,6 @@ void SandboxApp::DrawInspector()
             if (pos == std::string::npos)
                 continue;
             matches.push_back(Match{meta, pos});
-            if (nameLower == queryLower)
-                exact = meta;
         }
         std::sort(matches.begin(), matches.end(),
                   [](const Match &a, const Match &b)
@@ -846,30 +877,49 @@ void SandboxApp::DrawInspector()
                       return a.meta->name < b.meta->name;
                   });
 
-        // Enter commits an exact (case-insensitive) name even if it isn't ranked
-        // first; otherwise the author picks a row.
-        if (entered && exact != nullptr)
+        constexpr std::size_t kMaxSuggestions = 8;
+        const std::size_t     shown           = std::min(matches.size(), kMaxSuggestions);
+
+        // Resolve this frame's navigation into the highlight index: an edit snaps it
+        // back to the top; Tab/arrows step it with wrap-around across the shown rows.
+        if (nav.reset)
+            _addComponentSelected = 0;
+        if (shown == 0)
         {
-            AddComponentToSelected(*exact);
-            _addComponentBuf[0] = '\0';
-        }
-        else if (matches.empty())
-        {
+            _addComponentSelected = 0;
             ImGui::TextDisabled("(no matching component)");
         }
         else
         {
-            constexpr std::size_t kMaxSuggestions = 8;
-            const std::size_t     shown           = std::min(matches.size(), kMaxSuggestions);
-            for (std::size_t i = 0; i < shown; ++i)
+            if (nav.move != 0)
+                _addComponentSelected =
+                    (_addComponentSelected + nav.move + static_cast<int>(shown)) % static_cast<int>(shown);
+            _addComponentSelected = std::clamp(_addComponentSelected, 0, static_cast<int>(shown) - 1);
+
+            // Enter adds the highlighted row; clicking a row adds it directly.
+            if (entered)
             {
-                ImGui::PushID(static_cast<int32_t>(i));
-                if (ImGui::Selectable(matches[i].meta->name.c_str()))
+                AddComponentToSelected(*matches[static_cast<std::size_t>(_addComponentSelected)].meta);
+                _addComponentBuf[0]   = '\0';
+                _addComponentSelected = 0;
+                // Re-focus the input (the previous widget) so the author can keep
+                // typing and add another component without re-clicking the field.
+                ImGui::SetKeyboardFocusHere(-1);
+            }
+            else
+            {
+                for (std::size_t i = 0; i < shown; ++i)
                 {
-                    AddComponentToSelected(*matches[i].meta);
-                    _addComponentBuf[0] = '\0';
+                    ImGui::PushID(static_cast<int32_t>(i));
+                    if (ImGui::Selectable(matches[i].meta->name.c_str(),
+                                          static_cast<int>(i) == _addComponentSelected))
+                    {
+                        AddComponentToSelected(*matches[i].meta);
+                        _addComponentBuf[0]   = '\0';
+                        _addComponentSelected = 0;
+                    }
+                    ImGui::PopID();
                 }
-                ImGui::PopID();
             }
         }
     }

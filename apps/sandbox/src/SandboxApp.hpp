@@ -335,6 +335,9 @@ class SandboxApp : public Assisi::App::Application
     // Inspector "Add Component" search field: the in-progress substring the user
     // is typing; matched case-insensitively against addable component names.
     char _addComponentBuf[64] = {};
+    // Keyboard highlight into the suggestion list: Tab/Down advance it, Up retreats,
+    // editing the text resets it to the first row, Enter adds the highlighted one.
+    int _addComponentSelected = 0;
 
     // NVIDIA GPU telemetry (clocks/power/util/temp) for the options overlay.
     // Lazily initialises NVML on first poll, so it costs nothing until the
