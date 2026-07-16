@@ -111,6 +111,7 @@ class SandboxApp : public Assisi::App::Application
     void DrawAssetBrowser();
     void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7); see SandboxPlay.cpp
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see SandboxPlay.cpp
+    void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See SandboxApp.cpp
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see SandboxGizmo.cpp
     /// @brief True while the transform gizmo is hovered or being dragged — entity
     /// picking checks this so a click on the gizmo doesn't reselect what's behind it.
@@ -174,6 +175,10 @@ class SandboxApp : public Assisi::App::Application
     /// nullptr (the simulation owns the scene, edits are neither captured nor
     /// undoable). This is the single switch every capture/undo site routes through.
     [[nodiscard]] Sandbox::EditHistory *ActiveHistory();
+    /// @brief True when the scene has edits not yet written to disk — the active
+    /// history's position differs from the one recorded at the last successful
+    /// SaveLevel. Drives the window-title `*` marker.
+    [[nodiscard]] bool IsSceneDirty();
 
     // --- Level management ---
     void ScanLevels();
@@ -357,6 +362,16 @@ class SandboxApp : public Assisi::App::Application
     // drag/type, or the gizmo) is still being manipulated. The end-of-OnImGui sweep
     // reads it to decide whether an open capture gesture has ended. Reset each frame.
     bool _captureEditingActive = false;
+    // The main history's state token at the last successful SaveLevel (0 = base /
+    // freshly loaded). IsSceneDirty() compares the live token against it.
+    std::uint64_t _savedStateToken = 0;
+    // Last dirty state pushed to the OS window title, so the title is only re-set
+    // when it actually flips (not every frame).
+    bool _titleDirtyShown = false;
+    // A history jump requested by clicking a History-panel row: negative = undo N
+    // steps, positive = redo N. Applied at the top of the next OnUpdate (never
+    // mid-ImGui, which would invalidate cached component pointers).
+    int _pendingHistorySteps = 0;
 
     // Per-component delete confirmation: the inspector's X button arms a two-step
     // confirm for one component at a time. Scoped to an entity so switching

@@ -122,7 +122,12 @@ void SandboxApp::SaveLevel(const std::string &name)
         Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", name);
         return;
     }
-    Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved);
+    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved) && _history)
+    {
+        // Record the history position that now matches disk — IsSceneDirty compares
+        // against this to drive the title's unsaved-changes marker.
+        _savedStateToken = _history->CurrentStateToken();
+    }
 }
 
 void SandboxApp::LoadLevel(const std::string &name)
@@ -150,6 +155,7 @@ bool SandboxApp::LoadLevelFromPath(const std::string &virtualPath)
     if (_history)
         _history->Clear();
     _pausedHistory.reset(); // a load ends any play session, scratch history included
+    _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
 
     // New asset set: drop the old cache and evict the mesh pass's binding sets
     // (they key on raw texture pointers we're about to free) before re-resolving.

@@ -664,6 +664,12 @@ Sandbox::EditHistory *SandboxApp::ActiveHistory()
     return nullptr;
 }
 
+bool SandboxApp::IsSceneDirty()
+{
+    // Dirty tracks the *editing* history (where saves happen), not a paused scratch.
+    return _history.has_value() && _history->CurrentStateToken() != _savedStateToken;
+}
+
 void SandboxApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
 {
     // Dispatch by component identity to the same transient-rebuild paths the live
@@ -723,6 +729,20 @@ void SandboxApp::HandleUndoRedoHotkeys()
     if (history == nullptr)
         return;
 
+    // Apply a History-panel jump requested last frame (deferred to this safe point).
+    // Negative = undo N steps, positive = redo N.
+    if (_pendingHistorySteps != 0)
+    {
+        std::optional<Assisi::ECS::Entity> restored;
+        for (int i = _pendingHistorySteps; i < 0; ++i)
+            restored = history->Undo();
+        for (int i = _pendingHistorySteps; i > 0; --i)
+            restored = history->Redo();
+        _pendingHistorySteps = 0;
+        if (restored.has_value())
+            _selectedEntity = *restored;
+    }
+
     const ImGuiIO &io = ImGui::GetIO();
     // Gate on WantTextInput, NOT WantCaptureKeyboard: the latter is true whenever
     // an ImGui window is merely focused (which it is right after any inspector
@@ -772,6 +792,65 @@ void SandboxApp::DrawDiagnosticsWindow()
     ImGui::End();
 }
 
+void SandboxApp::DrawHistoryWindow()
+{
+    ImGui::Begin("History");
+
+    Sandbox::EditHistory *history = ActiveHistory();
+    if (history == nullptr)
+    {
+        ImGui::TextDisabled(_playState == PlayState::Playing ? "(history is off while playing)"
+                                                             : "(no history)");
+        ImGui::End();
+        return;
+    }
+    if (_playState == PlayState::Paused)
+        ImGui::TextDisabled("Paused — scratch history (cleared on resume/stop)");
+
+    ImGui::BeginDisabled(!history->CanUndo());
+    if (ImGui::Button("Undo"))
+        _pendingHistorySteps = -1;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!history->CanRedo());
+    if (ImGui::Button("Redo"))
+        _pendingHistorySteps = +1;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu / %zu", history->UndoDepth(), history->RedoDepth());
+    ImGui::Separator();
+
+    // Photoshop-style linear view: oldest at top, the current state highlighted,
+    // undone (future) entries greyed below. Clicking any row jumps there (deferred).
+    const std::vector<std::string> undoLabels = history->UndoLabels(); // oldest -> newest
+    const std::vector<std::string> redoLabels = history->RedoLabels(); // next-redo -> older
+
+    // Base state (before any retained edit) — current when the undo stack is empty.
+    if (ImGui::Selectable("(initial state)", history->UndoDepth() == 0) && history->UndoDepth() > 0)
+        _pendingHistorySteps = -static_cast<int>(history->UndoDepth());
+
+    for (std::size_t i = 0; i < undoLabels.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(i));
+        const bool isCurrent = (i + 1 == undoLabels.size());
+        if (ImGui::Selectable(undoLabels[i].c_str(), isCurrent) && !isCurrent)
+            _pendingHistorySteps = static_cast<int>(i + 1) - static_cast<int>(undoLabels.size()); // undo down to i
+        ImGui::PopID();
+    }
+
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    for (std::size_t j = 0; j < redoLabels.size(); ++j)
+    {
+        ImGui::PushID(static_cast<int>(1000 + j));
+        if (ImGui::Selectable(redoLabels[j].c_str()))
+            _pendingHistorySteps = static_cast<int>(j + 1); // redo forward to this entry
+        ImGui::PopID();
+    }
+    ImGui::PopStyleColor();
+
+    ImGui::End();
+}
+
 void SandboxApp::OnImGui()
 {
     // Reset the per-frame "an edit widget is being held" accumulator; the gizmo and
@@ -786,6 +865,7 @@ void SandboxApp::OnImGui()
     DrawDiagnosticsWindow();
     DrawGameControlWindow();
     DrawEntityListWindow();
+    DrawHistoryWindow();
     DrawLevelsWindow();
     DrawInspector();
     DrawHelloImageWindow();
@@ -798,4 +878,12 @@ void SandboxApp::OnImGui()
     // it at one point keeps the capture model simple. Playing captures nothing.
     if (Sandbox::EditHistory *history = ActiveHistory())
         history->EndFrameSweep(_captureEditingActive);
+
+    // Reflect unsaved changes in the OS window title, but only re-set it when the
+    // dirty state actually flips (SetTitle every frame would be wasteful).
+    if (const bool dirty = IsSceneDirty(); dirty != _titleDirtyShown)
+    {
+        GetWindow().SetTitle(dirty ? "Assisi Sandbox *" : "Assisi Sandbox");
+        _titleDirtyShown = dirty;
+    }
 }
