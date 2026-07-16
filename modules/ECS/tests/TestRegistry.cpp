@@ -180,3 +180,54 @@ TEST_CASE("Registry: reset returns to a pristine state")
     CHECK(fresh.index == 0);
     CHECK(fresh.generation == 0);
 }
+
+TEST_CASE("Registry: ReviveAt restores the exact destroyed handle")
+{
+    Registry reg;
+    const Entity a = reg.Create();
+    reg.Create(); // second slot so a's isn't the only one
+    reg.Destroy(a);
+    REQUIRE_FALSE(reg.IsAlive(a));
+
+    reg.ReviveAt(a);
+
+    // Exact identity restored — same index AND same generation as before.
+    CHECK(reg.IsAlive(a));
+    CHECK(reg.EntityAt(a.index) == a);
+    CHECK(reg.AliveCount() == 2);
+}
+
+TEST_CASE("Registry: ReviveAt scrubs the free list so Create cannot alias the slot")
+{
+    Registry reg;
+    const Entity a = reg.Create();
+    reg.Destroy(a);
+    reg.ReviveAt(a);
+
+    // Without the free-list scrub the next Create() would reuse a's slot and
+    // hand out a second live handle onto it. The slot is taken, so Create must
+    // grow into a fresh index instead.
+    const Entity b = reg.Create();
+    CHECK(b.index != a.index);
+    CHECK(reg.IsAlive(a));
+    CHECK(reg.IsAlive(b));
+    CHECK(reg.AliveCount() == 2);
+}
+
+TEST_CASE("Registry: ReviveAt restores an older generation even after reuse")
+{
+    Registry reg;
+    const Entity a = reg.Create();
+    reg.Destroy(a);
+    const Entity reused = reg.Create(); // same slot, generation bumped
+    REQUIRE(reused.index == a.index);
+    REQUIRE(reused.generation != a.generation);
+
+    // Destroy the reused occupant, then revive the ORIGINAL handle: generation
+    // rewinds to a's, the sanctioned break of the monotonic-generation rule.
+    reg.Destroy(reused);
+    reg.ReviveAt(a);
+    CHECK(reg.IsAlive(a));
+    CHECK_FALSE(reg.IsAlive(reused)); // the newer handle stays dead
+    CHECK(reg.EntityAt(a.index) == a);
+}

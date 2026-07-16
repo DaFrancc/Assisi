@@ -137,6 +137,44 @@ TEST_CASE("Scene: adding a component twice is rejected, original kept")
     CHECK(scene.Get<Position>(e)->x == doctest::Approx(1.0f));
 }
 
+TEST_CASE("Scene: ReviveAt restores an exact handle and lets components be re-added")
+{
+    Scene scene;
+    const Entity a = scene.Create();
+    scene.Create(); // keep the scene non-trivial
+    REQUIRE(scene.Add<Position>(a, {7.0f}) != nullptr);
+
+    // Fully destroy a (flush applies it to the registry + clears its Position).
+    scene.Destroy(a);
+    scene.FlushDestroyed();
+    REQUIRE_FALSE(scene.IsAlive(a));
+    CHECK_FALSE(scene.Has<Position>(a));
+
+    // Revive the exact handle; it comes back with no components, ready to refill.
+    scene.ReviveAt(a);
+    CHECK(scene.IsAlive(a));
+    CHECK(scene.EntityAt(a.index) == a);
+    CHECK_FALSE(scene.Has<Position>(a)); // revived bare
+    REQUIRE(scene.Add<Position>(a, {4.0f}) != nullptr);
+    CHECK(scene.Get<Position>(a)->x == doctest::Approx(4.0f));
+}
+
+TEST_CASE("Scene: ReviveAt cancels a pending deferred Destroy")
+{
+    Scene scene;
+    const Entity a = scene.Create();
+
+    // Queue the destroy but revive before the flush runs (undo in the same frame
+    // as the delete). The pending entry must be dropped so the flush does not
+    // immediately re-kill the resurrected entity.
+    scene.Destroy(a);
+    scene.ReviveAt(a);
+    scene.FlushDestroyed();
+
+    CHECK(scene.IsAlive(a));
+    CHECK(scene.AliveCount() == 1);
+}
+
 #ifndef NDEBUG
 // Scene indexes pools by Core::Reflect::ComponentId, so a component type must be
 // registered with the reflection system (ACOMP). Adding an unreflected type is a

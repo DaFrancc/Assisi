@@ -48,6 +48,22 @@ struct Registry
     /// already dead.
     void Destroy(Entity entity);
 
+    /// @brief Restores a freed slot to an *exact* prior (index, generation).
+    ///
+    /// Unlike Create(), which allocates whatever slot/generation is next, this
+    /// resurrects a specific handle so every reference to it stays valid with no
+    /// scanning or patching. It is a neutral capability (undo of delete, redo of
+    /// create, prefab instantiation, netcode rollback), but carries a sharp
+    /// invariant: it is valid *only* when no other live handle exists for the
+    /// slot — i.e. under a strictly linear history where the slot was freed
+    /// newest-first. The generation is set exactly as given and so may *decrease*,
+    /// breaking the engine-wide monotonic-generation assumption; this is the only
+    /// context where that is allowed. Scrubs the slot from the free list (else the
+    /// next Create() would hand out a duplicate live handle) and re-flags it live.
+    /// Asserts the slot is currently free; the entity is not added to any
+    /// component pool (the caller repopulates components separately).
+    void ReviveAt(Entity entity);
+
     /// @brief Returns true if the entity handle is still valid.
     [[nodiscard]] bool IsAlive(Entity entity) const;
 

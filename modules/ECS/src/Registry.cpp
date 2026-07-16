@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/ECS/Registry.hpp>
 
 namespace Assisi::ECS
@@ -52,6 +53,27 @@ void Registry::Destroy(Entity entity)
     _freeSlots.push_back(entity.index);
 
     --_aliveCount;
+}
+
+void Registry::ReviveAt(Entity entity)
+{
+    ASSISI_ASSERT(entity.index < _generations.size(),
+                  "ReviveAt: slot index is out of range — the slot must have existed before "
+                  "(ReviveAt restores a freed handle, it does not grow the table).");
+    ASSISI_ASSERT(!_alive[entity.index],
+                  "ReviveAt: slot is already live — reviving over a live occupant would alias two "
+                  "entities onto one slot. Only a freed slot may be revived (linear-history invariant).");
+
+    /* Restore the exact generation — may decrease relative to the current value,
+       the one sanctioned break of the monotonic-generation rule. */
+    _generations[entity.index] = entity.generation;
+    _alive[entity.index]       = true;
+
+    /* Scrub the slot from the free list; without this the next Create() would
+       reuse it and hand out a second live handle sharing all components. */
+    std::erase(_freeSlots, entity.index);
+
+    ++_aliveCount;
 }
 
 void Registry::UnregisterPool(void *pool)

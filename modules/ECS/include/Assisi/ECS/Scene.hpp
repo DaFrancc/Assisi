@@ -73,6 +73,27 @@ struct Scene
         _pendingDestroy.clear();
     }
 
+    /// @brief Restores a freed entity to its *exact* prior (index, generation).
+    ///
+    /// Neutral capability (undo of delete, redo of create, prefab instantiation,
+    /// netcode rollback): resurrects a specific handle so every stored reference to
+    /// it stays valid, with no scanning. See Registry::ReviveAt for the invariant —
+    /// valid only for a currently-free slot under a strictly linear history. The
+    /// revived entity comes back with *no* components; the caller repopulates them.
+    ///
+    /// Also cancels any pending deferred Destroy() of this slot. If the entity was
+    /// queued this frame (Destroy() then ReviveAt() before the next FlushDestroyed),
+    /// it is still fully alive — the deferred destroy has not run — so dropping the
+    /// queued entry is the *entire* operation: the slot never died, and re-reviving
+    /// a live slot in the registry would trip its "slot must be free" assert. Only
+    /// when the handle is genuinely freed do we restore its exact identity.
+    void ReviveAt(Entity entity)
+    {
+        if (std::erase(_pendingDestroy, entity) != 0)
+            return; // was queued-but-alive: cancelling the destroy is all that's needed
+        _registry.ReviveAt(entity);
+    }
+
     /// @brief Returns true if the entity handle is still valid.
     bool IsAlive(Entity entity) const { return _registry.IsAlive(entity); }
 
