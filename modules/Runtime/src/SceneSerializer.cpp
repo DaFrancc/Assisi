@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -32,6 +33,12 @@ struct SerializationContext
 
 thread_local std::optional<SerializationContext> s_context;
 
+// Raw-entity (identity) context — engaged by ScopedRawEntityContext. When set,
+// EntityRef fields map through raw slot indices against this scene instead of the
+// Save/Load remap table. Mutually exclusive with s_context by construction (the
+// editor never captures/applies mid-Save/Load), and asserted non-reentrant.
+thread_local ECS::Scene *s_rawContextScene = nullptr;
+
 inline uint64_t EntityKey(uint32_t idx, uint32_t gen)
 {
     return (static_cast<uint64_t>(gen) << 32) | idx;
@@ -55,6 +62,10 @@ struct ScopedContextReset
 
 std::optional<uint32_t> SceneSerializer::EntityToIndex(ECS::Entity entity)
 {
+    // Raw-entity context wins: identity mapping, the slot index itself is the key.
+    if (s_rawContextScene != nullptr)
+        return entity.index;
+
     if (!s_context)
         return std::nullopt;
 
@@ -68,10 +79,34 @@ std::optional<uint32_t> SceneSerializer::EntityToIndex(ECS::Entity entity)
 
 ECS::Entity SceneSerializer::IndexToEntity(uint32_t index)
 {
+    // Raw-entity context wins: the "index" is a raw slot; resolve the live handle
+    // there (exact because the paired restore revived it at its original slot).
+    if (s_rawContextScene != nullptr)
+        return s_rawContextScene->EntityAt(index);
+
     if (!s_context || index >= s_context->indexToEntity.size())
         return ECS::NullEntity;
 
     return s_context->indexToEntity[index];
+}
+
+// ---------------------------------------------------------------------------
+// ScopedRawEntityContext
+// ---------------------------------------------------------------------------
+
+SceneSerializer::ScopedRawEntityContext::ScopedRawEntityContext(ECS::Scene &scene)
+{
+    // One context per thread. Nesting raw-in-raw or raw-in-Save/Load is a bug:
+    // the mappings are incompatible and the flat pointer/optional can't stack.
+    ASSISI_ASSERT(s_rawContextScene == nullptr && !s_context,
+                  "SceneSerializer: a serialization context is already active on this thread "
+                  "(raw-entity and Save/Load contexts are mutually exclusive and non-reentrant).");
+    s_rawContextScene = &scene;
+}
+
+SceneSerializer::ScopedRawEntityContext::~ScopedRawEntityContext()
+{
+    s_rawContextScene = nullptr;
 }
 
 // ---------------------------------------------------------------------------

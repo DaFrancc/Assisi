@@ -11,6 +11,7 @@
 #include <string_view>
 
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
@@ -221,4 +222,68 @@ TEST_CASE("SceneSerializer: unknown component names are skipped, not fatal")
     const auto *t = loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(t != nullptr);
     CHECK(t->position.x == doctest::Approx(7.f));
+}
+
+// ---------------------------------------------------------------------------
+// ScopedRawEntityContext — the identity mapping the editor undo/redo system uses
+// to serialize/restore a single component's EntityRef fields outside Save/Load.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SceneSerializer: raw-entity context round-trips a Parent handle outside Save/Load")
+{
+    ECS::Scene        scene;
+    const ECS::Entity a = scene.Create(); // the parent
+    const ECS::Entity b = scene.Create(); // the child, references a
+    REQUIRE(scene.Add(a, Transform{}) != nullptr);
+    REQUIRE(scene.Add(b, Parent{.parent = a}) != nullptr);
+
+    const auto *meta = Core::Reflect::ComponentRegistry::Instance().Find("Parent");
+    REQUIRE(meta != nullptr);
+
+    // Capture: serialize b's Parent to JSON under the raw context. The handle is
+    // encoded as a's raw slot index — not collapsed, not remapped.
+    nlohmann::json captured;
+    {
+        SceneSerializer::ScopedRawEntityContext raw(scene);
+        captured = meta->serialize(scene.Get<Parent>(b));
+    }
+    REQUIRE(captured.at("parent").is_number());
+    CHECK(captured.at("parent").get<uint32_t>() == a.index);
+
+    // Restore: remove then re-add from the captured JSON under the raw context.
+    // (addToScene bottoms out in Scene::Add, which no-ops if the component still
+    // exists, so the remove-first is mandatory — mirrors the apply engine.)
+    scene.RemoveById(b, meta->id);
+    REQUIRE_FALSE(scene.Has<Parent>(b));
+    {
+        SceneSerializer::ScopedRawEntityContext raw(scene);
+        meta->addToScene(&scene, b.index, b.generation, captured);
+    }
+    const Parent *restored = scene.Get<Parent>(b);
+    REQUIRE(restored != nullptr);
+    CHECK(restored->parent == a); // the whole point: NOT silently flattened to NullEntity
+}
+
+TEST_CASE("SceneSerializer: WITHOUT a context an EntityRef collapses (the bug the scope fixes)")
+{
+    ECS::Scene        scene;
+    const ECS::Entity a = scene.Create();
+    const ECS::Entity b = scene.Create();
+    REQUIRE(scene.Add(b, Parent{.parent = a}) != nullptr);
+
+    const auto *meta = Core::Reflect::ComponentRegistry::Instance().Find("Parent");
+    REQUIRE(meta != nullptr);
+
+    // No context engaged: EntityToIndex returns nullopt, so a live handle encodes
+    // as the ~0u sentinel and deserializes back to NullEntity — the silent
+    // hierarchy flattening that ScopedRawEntityContext exists to prevent.
+    const nlohmann::json flat = meta->serialize(scene.Get<Parent>(b));
+    REQUIRE(flat.at("parent").is_number());
+    CHECK(flat.at("parent").get<uint32_t>() == ~0u);
+
+    scene.RemoveById(b, meta->id);
+    meta->addToScene(&scene, b.index, b.generation, flat);
+    const Parent *restored = scene.Get<Parent>(b);
+    REQUIRE(restored != nullptr);
+    CHECK(restored->parent == ECS::NullEntity);
 }

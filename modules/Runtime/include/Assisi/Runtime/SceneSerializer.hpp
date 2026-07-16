@@ -79,6 +79,42 @@ class SceneSerializer
     /// Only valid to call from within a component's addToScene lambda.
     /// Returns NullEntity if the index is out of range or no load is in progress.
     static ECS::Entity IndexToEntity(uint32_t index);
+
+    /// @brief RAII scope that makes EntityRef fields serialize/deserialize against
+    /// *raw entity handles* instead of remapped serial indices.
+    ///
+    /// The generated serialize/deserialize for an `AFIELD() ECS::Entity` field
+    /// (e.g. `Parent.parent`) routes through EntityToIndex/IndexToEntity, which are
+    /// engaged only inside Save/Load. Called outside that (e.g. the editor
+    /// undo/redo system capturing or restoring a single component's JSON), they
+    /// return "unknown" and the field silently collapses to NullEntity — flattening
+    /// the hierarchy with no error.
+    ///
+    /// Within this scope the mapping is identity-preserving instead:
+    ///   - EntityToIndex(e) returns `e.index` (the raw slot, no remap);
+    ///   - IndexToEntity(i) returns `scene.EntityAt(i)` (the live handle at that slot).
+    /// This is exact only because the paired restore uses Scene::ReviveAt to bring
+    /// entities back at their original (index, generation) — EntityAt(index) then
+    /// resolves to the same handle that was captured.
+    ///
+    /// Asymmetry (documented on purpose): level files on disk use remapped serial
+    /// indices (dense, stable across a save/load round-trip); undo payloads use raw
+    /// handles (valid only under the ReviveAt exact-identity guarantee). Do not mix
+    /// the two — a raw-context payload is not a valid level file and vice versa.
+    ///
+    /// Non-reentrant with Save/Load and with itself: exactly one context (remap or
+    /// raw) may be active per thread at a time.
+    class ScopedRawEntityContext
+    {
+      public:
+        explicit ScopedRawEntityContext(ECS::Scene &scene);
+        ~ScopedRawEntityContext();
+
+        ScopedRawEntityContext(const ScopedRawEntityContext &)            = delete;
+        ScopedRawEntityContext &operator=(const ScopedRawEntityContext &) = delete;
+        ScopedRawEntityContext(ScopedRawEntityContext &&)                 = delete;
+        ScopedRawEntityContext &operator=(ScopedRawEntityContext &&)      = delete;
+    };
 };
 
 } // namespace Assisi::Runtime
