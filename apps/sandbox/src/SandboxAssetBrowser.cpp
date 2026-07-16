@@ -183,8 +183,8 @@ void SandboxApp::SelectAsset(std::string_view vpath)
             // off-inspector edit site the inspector's record-before-write misses).
             Sandbox::EditHistory *history = ActiveHistory();
             if (history != nullptr)
-                history->RecordBefore(_assetBrowserEntity, _assetBrowserMeta->id, "Assign asset",
-                                      _assetBrowserEntity);
+                history->RecordBefore(_assetBrowserEntity, _assetBrowserMeta->id,
+                                      EditLabel("Assign asset", _assetBrowserEntity), _assetBrowserEntity);
 
             char *fieldPtr = const_cast<char *>(static_cast<const char *>(ptr)) + _assetBrowserFieldOffset;
             // The browser picks a file path; the stored reference is a GUID, so

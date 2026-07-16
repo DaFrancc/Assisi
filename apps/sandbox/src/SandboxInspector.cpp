@@ -607,7 +607,8 @@ void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMe
     // so undo restores exactly what the author sees.
     Sandbox::EditHistory *history = ActiveHistory();
     if (history != nullptr)
-        history->RecordBefore(_selectedEntity, meta.id, "Add " + meta.name, _selectedEntity);
+        history->RecordBefore(_selectedEntity, meta.id, EditLabel("Add " + meta.name, _selectedEntity),
+                              _selectedEntity);
 
     // Default-construct it: an empty JSON object leaves every field at its default
     // via the per-field if-contains deserialization — the same path the level
@@ -659,7 +660,8 @@ void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compon
     // Capture the present-before state so undo can restore the removed component.
     Sandbox::EditHistory *history = ActiveHistory();
     if (history != nullptr)
-        history->RecordBefore(_selectedEntity, meta.id, "Remove " + meta.name, _selectedEntity);
+        history->RecordBefore(_selectedEntity, meta.id, EditLabel("Remove " + meta.name, _selectedEntity),
+                              _selectedEntity);
 
     // Tear down runtime state that lives outside the reflected fields before the
     // pool entry disappears. A RigidBodyDescriptor owns a Jolt body (via the
@@ -709,8 +711,8 @@ void SandboxApp::DrawInspector()
         // of the Name component is captured as absent -> present.
         if (Sandbox::EditHistory *history = ActiveHistory())
             history->RecordBefore(_selectedEntity,
-                                  Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Name>(), "Rename",
-                                  _selectedEntity);
+                                  Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Name>(),
+                                  EditLabel("Rename", _selectedEntity), _selectedEntity);
 
         char nameBuf[Assisi::Core::kShortStringMax + 1] = {};
         if (nameComp != nullptr)
@@ -789,9 +791,14 @@ void SandboxApp::DrawInspector()
         {
             // Record-before-write: snapshot this component's pre-edit JSON before its
             // widgets (which write in-place). Idempotent across a drag; the sweep at
-            // end of frame commits or drops it. See EditHistory.hpp §5.
-            if (Sandbox::EditHistory *history = ActiveHistory())
-                history->RecordBefore(_selectedEntity, meta->id, meta->name, _selectedEntity);
+            // end of frame commits or drops it. See EditHistory.hpp §5. Skip Transform
+            // while the gizmo is dragging it — the gizmo owns that edit (and its label),
+            // so capturing here too would double-commit and mislabel it.
+            const bool gizmoOwnsThis =
+                _gizmoManipulating && meta->id == Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Transform>();
+            if (Sandbox::EditHistory *history = ActiveHistory(); history != nullptr && !gizmoOwnsThis)
+                history->RecordBefore(_selectedEntity, meta->id, EditLabel("Edit " + meta->name, _selectedEntity),
+                                      _selectedEntity);
 
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
             // Field edits write component memory by offset, bypassing Scene::GetMut's

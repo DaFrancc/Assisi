@@ -622,6 +622,43 @@ TEST_CASE("EditHistory: a subtree delete built via CaptureEntityComponents round
     CHECK(pc->parent == parent);
 }
 
+TEST_CASE("EditHistory: RecordBefore refreshes the label of an open gesture (keeps before)")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    const auto tid = IdOf("Transform");
+
+    EditHistory hist(scene);
+    // Frame: the inspector opens the gesture as "Edit Transform" (before = pos 1)...
+    hist.RecordBefore(e, tid, "Edit Transform", e);
+    // ...then a remove-style site relabels the same gesture. `before` must be kept.
+    hist.RecordBefore(e, tid, "Remove Transform", e);
+    scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
+    hist.CommitGesture(e, tid);
+
+    REQUIRE(hist.UndoDepth() == 1);
+    CHECK(hist.NextUndoLabel() == "Remove Transform"); // last writer wins the label
+    hist.Undo();
+    CHECK(scene.Get<Transform>(e)->position.x == doctest::Approx(1.f)); // before was preserved
+}
+
+TEST_CASE("EditHistory: AbandonGesture drops an open gesture without committing")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    const auto tid = IdOf("Transform");
+
+    EditHistory hist(scene);
+    hist.RecordBefore(e, tid, "Edit Transform", e);
+    scene.GetMut<Transform>(e)->position = {5.f, 0.f, 0.f};
+
+    hist.AbandonGesture(e, tid); // another editor took over — drop it
+    hist.EndFrameSweep(false);   // nothing pending to commit
+    CHECK_FALSE(hist.CanUndo());
+}
+
 TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 {
     Scene       scene;

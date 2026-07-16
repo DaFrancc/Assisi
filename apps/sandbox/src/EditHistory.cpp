@@ -163,7 +163,7 @@ std::vector<ComponentSnapshot> EditHistory::CaptureEntityComponents(Entity entit
 // Capture (record-before-write, design doc §5)
 // ---------------------------------------------------------------------------
 
-std::optional<nlohmann::json> EditHistory::SerializeComponent(Entity entity, Reflect::ComponentId id) const
+std::optional<nlohmann::json> EditHistory::SnapshotComponent(Entity entity, Reflect::ComponentId id) const
 {
     const Reflect::ComponentMeta *meta = Reflect::ComponentRegistry::Instance().ById(id);
     if (!meta || !meta->serializable || !meta->getByEntity || !meta->serialize)
@@ -192,20 +192,23 @@ void EditHistory::RecordBefore(Entity entity, Reflect::ComponentId id, std::stri
 
     if (OpenGesture *existing = FindOpen(entity, id))
     {
-        existing->touchedThisFrame = true; // keep the original `before`; just refresh liveness
+        existing->touchedThisFrame = true;    // keep the original `before`; just refresh liveness
+        existing->label            = std::move(label); // last writer wins the label: a later
+                                                       // "Remove X" overrides the inspector's
+                                                       // per-frame "Edit X" on the same gesture
         return;
     }
     _open.push_back(OpenGesture{.entity           = entity,
                                 .id               = id,
                                 .label            = std::move(label),
-                                .before           = SerializeComponent(entity, id),
+                                .before           = SnapshotComponent(entity, id),
                                 .selection        = selection,
                                 .touchedThisFrame = true});
 }
 
 bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
 {
-    const std::optional<nlohmann::json> after = SerializeComponent(gesture.entity, gesture.id);
+    const std::optional<nlohmann::json> after = SnapshotComponent(gesture.entity, gesture.id);
     if (gesture.before == after)
         return false; // no net change — drops click-without-drag and Escape-revert
 
@@ -216,6 +219,13 @@ bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
     txn.cmds.push_back(ComponentDelta{gesture.entity, gesture.id, gesture.before, after});
     Push(std::move(txn));
     return true;
+}
+
+void EditHistory::AbandonGesture(Entity entity, Reflect::ComponentId id)
+{
+    // Drop an open gesture without committing — used when another editor takes over
+    // the same component (e.g. the gizmo grabbing a Transform the inspector had open).
+    std::erase_if(_open, [&](const OpenGesture &g) { return g.id == id && g.entity == entity; });
 }
 
 void EditHistory::CommitGesture(Entity entity, Reflect::ComponentId id)

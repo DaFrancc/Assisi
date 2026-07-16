@@ -179,6 +179,12 @@ class SandboxApp : public Assisi::App::Application
     /// history's position differs from the one recorded at the last successful
     /// SaveLevel. Drives the window-title `*` marker.
     [[nodiscard]] bool IsSceneDirty();
+    /// @brief The entity's Name (if it has a non-empty one), else "". Used to tag
+    /// undo labels with the affected entity.
+    [[nodiscard]] std::string EntityDisplayName(Assisi::ECS::Entity entity) const;
+    /// @brief Builds an undo transaction label: the action, plus " — <name>" when
+    /// the entity is named (e.g. "Edit Transform — Player", or just "Add Camera").
+    [[nodiscard]] std::string EditLabel(std::string_view action, Assisi::ECS::Entity entity) const;
 
     // --- Level management ---
     void ScanLevels();
@@ -346,6 +352,16 @@ class SandboxApp : public Assisi::App::Application
     // whether it manipulates in world or the entity's local axes.
     GizmoOp _gizmoOp        = GizmoOp::Translate;
     bool    _gizmoLocalSpace = false; // false = world axes
+
+    // The gizmo owns its Transform edits as its own transaction (kept off the shared
+    // record-before-write gesture so an inspector Transform edit isn't mislabelled
+    // with the gizmo's mode). _gizmoBeforePose is the pre-drag Transform JSON,
+    // snapshotted each idle frame; on drag release a Move/Rotate/Scale transaction
+    // is pushed. _gizmoManipulating (this frame) tells the inspector to skip its own
+    // Transform capture while the gizmo drives it.
+    std::optional<nlohmann::json> _gizmoBeforePose;
+    bool                          _gizmoManipulating    = false;
+    bool                          _gizmoWasManipulating = false;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-

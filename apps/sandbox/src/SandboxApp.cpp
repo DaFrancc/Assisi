@@ -10,9 +10,11 @@
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
+#include <Assisi/Core/ShortString.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Window/Key.hpp>
 
 #include <imgui.h>
@@ -668,6 +670,26 @@ bool SandboxApp::IsSceneDirty()
 {
     // Dirty tracks the *editing* history (where saves happen), not a paused scratch.
     return _history.has_value() && _history->CurrentStateToken() != _savedStateToken;
+}
+
+std::string SandboxApp::EntityDisplayName(Assisi::ECS::Entity entity) const
+{
+    if (_scene == nullptr || !_scene->IsAlive(entity))
+        return {};
+    const auto *name = _scene->Get<Assisi::Runtime::Name>(entity);
+    if (name == nullptr || name->value.Empty())
+        return {};
+    char buf[Assisi::Core::kShortStringMax + 1];
+    name->value.ToCStr(buf, sizeof(buf));
+    return buf;
+}
+
+std::string SandboxApp::EditLabel(std::string_view action, Assisi::ECS::Entity entity) const
+{
+    std::string label(action);
+    if (const std::string name = EntityDisplayName(entity); !name.empty())
+        label += " — " + name;
+    return label;
 }
 
 void SandboxApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)

@@ -212,7 +212,7 @@ Assisi::ECS::Entity SandboxApp::CreateEntity()
     if (Sandbox::EditHistory *history = ActiveHistory())
     {
         Sandbox::Transaction txn;
-        txn.label           = "Create Entity";
+        txn.label           = EditLabel("Create Entity", entity);
         txn.selectionBefore = previousSelection;
         txn.selectionAfter  = entity;
         txn.cmds.push_back(Sandbox::EntityDelta{entity, std::nullopt, history->CaptureEntityComponents(entity)});
@@ -263,7 +263,7 @@ void SandboxApp::DeleteEntity(Assisi::ECS::Entity entity)
     Sandbox::Transaction  txn;
     if (history != nullptr)
     {
-        txn.label           = subtree.size() > 1 ? "Delete Subtree" : "Delete Entity";
+        txn.label           = EditLabel(subtree.size() > 1 ? "Delete Subtree" : "Delete Entity", entity);
         txn.selectionBefore = _selectedEntity;
         txn.selectionAfter  = Assisi::ECS::NullEntity;
         for (const Assisi::ECS::Entity e : subtree)

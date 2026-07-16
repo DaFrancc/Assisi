@@ -59,7 +59,8 @@ void SandboxApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
     // edit site that would otherwise slip past the inspector's record-before-write).
     Sandbox::EditHistory *history = ActiveHistory();
     if (history != nullptr)
-        history->RecordBefore(_eyedropperEntity, _eyedropperMeta->id, "Assign reference", _eyedropperEntity);
+        history->RecordBefore(_eyedropperEntity, _eyedropperMeta->id,
+                              EditLabel("Assign reference", _eyedropperEntity), _eyedropperEntity);
 
     auto *field = reinterpret_cast<Assisi::ECS::Entity *>(
         const_cast<char *>(static_cast<const char *>(ptr)) + _eyedropperFieldOffset);
