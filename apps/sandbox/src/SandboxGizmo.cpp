@@ -125,12 +125,21 @@ void SandboxApp::DrawTransformGizmo()
     // gesture and "Edit Transform" label the inspector uses — no duplicate
     // transaction code. But it force-commits on release (below) so a gizmo drag is
     // always its OWN undo entry, distinct from any inspector Transform edit before
-    // or after it. Snapshot the pre-drag pose while not dragging (idempotent, so it
-    // freezes for the drag's duration).
+    // or after it.
+    //
+    // Call RecordBefore every frame the gizmo is drawn, INCLUDING mid-drag: it is
+    // idempotent for an already-open gesture (keeps the original pre-drag `before`,
+    // just refreshes liveness), so the pre-drag pose still freezes for the drag's
+    // duration. Refreshing every frame keeps the gesture alive on its own — the gizmo
+    // must not rely on the inspector's per-frame RecordBefore, which runs only while
+    // the Transform CollapsingHeader is expanded. Without this, collapsing that header
+    // let EndFrameSweep commit-and-drop the (still zero-delta) gesture a frame into the
+    // drag, and the `!IsUsing()` guard then blocked a new one — so the drag recorded
+    // nothing in the undo history.
     const Assisi::Core::Reflect::ComponentId transformId =
         Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
     Sandbox::EditHistory *history = ActiveHistory();
-    if (history != nullptr && !ImGuizmo::IsUsing())
+    if (history != nullptr)
         history->RecordBefore(_selectedEntity, transformId, EditLabel("Edit Transform", _selectedEntity),
                               _selectedEntity);
 

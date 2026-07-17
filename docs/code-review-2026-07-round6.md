@@ -187,7 +187,7 @@ decision; the rest have no clean unit seam and are deferred with the app.
   cleared), no clipper so all tiles resolve per frame → >256 images blows the
   `kMaxDebugTextures` badge pool. Fix: decode/downscale on the job system with a
   placeholder; clipper/visibility gate; LRU cap or clear on directory change.
-- [ ] **M10 — Gizmo drag mis-commits when Transform header / Inspector collapsed.**
+- [x] **M10 — Gizmo drag mis-commits when Transform header / Inspector collapsed.** (fixed; manually reproduced + verified — no unit seam)
   `SandboxGizmo.cpp:132-135` + `EditHistory.cpp:253-265` — the gesture's liveness is
   owned by the inspector's per-frame `RecordBefore` inside a `CollapsingHeader`;
   collapse it and the sweep commits mid-drag, losing the rest of the gesture. Fix:
