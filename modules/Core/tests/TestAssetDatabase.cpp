@@ -223,6 +223,88 @@ TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMateria
         CHECK_FALSE(id.IsReserved());
 }
 
+// --- Malformed-sidecar robustness (round-6 review C1/C2) --------------------
+// The contract is "skip a malformed sidecar with a warning, never crash." These
+// exercise wrong-typed JSON fields (which nlohmann's value() throws on) and a
+// hostile manifest slot (which the database resizes a vector to).
+
+TEST_CASE("DeserializeSidecar returns an error, never throws, on a wrong-typed 'type'")
+{
+    // "type" present but a number: value("type", std::string{}) throws
+    // json::type_error rather than substituting the default.
+    std::expected<AssetSidecar, AssetSidecarError> result;
+    CHECK_NOTHROW(result = DeserializeSidecar(R"({"version":1,"type":123})"));
+    CHECK_FALSE(result.has_value());
+}
+
+TEST_CASE("DeserializeSidecar returns an error, never throws, on a wrong-typed 'guid'")
+{
+    std::expected<AssetSidecar, AssetSidecarError> result;
+    CHECK_NOTHROW(result = DeserializeSidecar(R"({"version":1,"type":"AssetSidecar","guid":42})"));
+    CHECK_FALSE(result.has_value());
+}
+
+TEST_CASE("DeserializeSidecar skips (does not throw on) a wrong-typed manifest 'material'")
+{
+    const std::string json = R"({"version":1,"type":"AssetSidecar",)"
+                             R"("guid":"11111111-2222-4333-8444-555555555555",)"
+                             R"("subAssets":[{"slot":0,"material":99}]})";
+    std::expected<AssetSidecar, AssetSidecarError> result;
+    CHECK_NOTHROW(result = DeserializeSidecar(json));
+    REQUIRE(result.has_value()); // identity valid; the bad entry is dropped
+    CHECK(result->subAssets.empty());
+}
+
+TEST_CASE("DeserializeSidecar sanitizes a negative manifest slot (no ~0u wrap)")
+{
+    const std::string json = R"({"version":1,"type":"AssetSidecar",)"
+                             R"("guid":"11111111-2222-4333-8444-555555555555",)"
+                             R"("subAssets":[{"slot":-1,"material":"aaaaaaaa-0000-4000-8000-000000000001"}]})";
+    std::expected<AssetSidecar, AssetSidecarError> parsed;
+    CHECK_NOTHROW(parsed = DeserializeSidecar(json));
+    REQUIRE(parsed.has_value());
+    // Rejected, or a sane slot — never ~0u, which wraps slot+1 to 0 in Rebuild.
+    if (!parsed->subAssets.empty())
+        CHECK(parsed->subAssets[0].slot < (1u << 20));
+}
+
+TEST_CASE("Rebuild survives a sidecar with an out-of-range manifest slot")
+{
+    // A huge but syntactically valid unsigned slot: Rebuild resizes the slot
+    // vector to ~4 billion entries (a multi-GB reservation / OOM risk). The
+    // database must reject the entry instead.
+    const fs::path    root = MakeTree();
+    const std::string json = R"({"version":1,"type":"AssetSidecar",)"
+                            R"("guid":"11111111-2222-4333-8444-555555555555",)"
+                            R"("subAssets":[{"slot":4294967294,"material":"aaaaaaaa-0000-4000-8000-000000000001"}]})";
+    WriteFile(root / "materials" / "checker.amat.aast", json);
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    CHECK_NOTHROW(db.Rebuild());
+    CHECK(db.IdFor("materials/checker.amat").has_value());
+    CHECK_FALSE(db.HasManifest(*AssetId::Parse("11111111-2222-4333-8444-555555555555")));
+}
+
+TEST_CASE("Rebuild survives a sidecar with a wrapping (negative) manifest slot")
+{
+    // slot -1 deserializes to 0xFFFFFFFF; Rebuild's `resize(slot + 1)` then wraps
+    // to resize(0) and writes slots[0xFFFFFFFF] — an out-of-bounds heap write
+    // (segfault). The database must reject the entry instead.
+    const fs::path    root = MakeTree();
+    const std::string json = R"({"version":1,"type":"AssetSidecar",)"
+                            R"("guid":"11111111-2222-4333-8444-555555555555",)"
+                            R"("subAssets":[{"slot":-1,"material":"aaaaaaaa-0000-4000-8000-000000000001"}]})";
+    WriteFile(root / "materials" / "checker.amat.aast", json);
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    CHECK_NOTHROW(db.Rebuild());
+    // checker.amat still registers; the bogus manifest slot is dropped.
+    CHECK(db.IdFor("materials/checker.amat").has_value());
+    CHECK_FALSE(db.HasManifest(*AssetId::Parse("11111111-2222-4333-8444-555555555555")));
+}
+
 TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
 {
     const fs::path root = MakeTree();

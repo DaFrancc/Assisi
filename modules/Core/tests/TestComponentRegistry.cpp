@@ -29,6 +29,21 @@ struct RegHidden
 {
 };
 
+// Round-6 review M4 fixtures. Distinctive names/types so the assertions hold
+// regardless of what else is linked into this binary's shared registry.
+struct ZzzM4Late
+{
+};
+struct AaaM4Early
+{
+};
+struct M4DupA
+{
+};
+struct M4DupB
+{
+};
+
 ComponentMeta Meta(const char *name, std::type_index type, bool serializable = true)
 {
     // Every member listed so -Wmissing-field-initializers stays quiet; the
@@ -141,4 +156,51 @@ TEST_CASE("ComponentRegistry assigns dense alphabetical ids")
         CHECK_FALSE(hiddenInSerializable);
         CHECK(sawAlpha); // a normal component still comes through
     }
+}
+
+// Round-6 review M4 (a): the registry is documented as immutable after startup, but a
+// Register that arrives AFTER a query clears _finalized and re-sorts + RENUMBERS on
+// the next query. An id handed out once must stay stable — ComponentIdOf<T> caches
+// its id in a function-local static computed exactly once, so any renumbering
+// silently mis-maps every cached id and stored ComponentId. Registering an
+// alphabetically-earlier name after an id has been observed shifts that id.
+//
+// DEFERRED (should_fail): confirmed-real bug kept as a live reproduction. The fix is
+// an open design decision — assert !_finalized in Register (abort late registration),
+// an explicit Freeze(), or decouple id assignment from sort order so ids never move.
+// Remove the should_fail decorator when that decision is made. See
+// docs/code-review-2026-07-round6.md.
+TEST_CASE("ComponentRegistry: a late Register must not renumber an already-issued id" *
+          doctest::should_fail())
+{
+    auto &registry = ComponentRegistry::Instance();
+
+    registry.Register(Meta("ZzzM4_Late", typeid(ZzzM4Late)));
+    const ComponentId id1 = registry.IdOf(std::type_index(typeid(ZzzM4Late))); // finalizes now
+    REQUIRE(id1 != kInvalidComponentId);
+    REQUIRE(registry.ById(id1)->name == "ZzzM4_Late"); // id1 maps to Zzz right now
+
+    // A later Register of an alphabetically-earlier name re-sorts and renumbers.
+    registry.Register(Meta("AaaM4_Early", typeid(AaaM4Early)));
+    const ComponentId id2 = registry.IdOf(std::type_index(typeid(ZzzM4Late)));
+
+    CHECK(id1 == id2); // stability contract: "AaaM4_Early" sorting first shifts Zzz's id up
+}
+
+// Round-6 review M4: Register performs no name-uniqueness check, so two metas with
+// the same name (different types) both survive into All() and every save/Find path.
+// A correct registry rejects or dedups the duplicate.
+TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both kept")
+{
+    auto &registry = ComponentRegistry::Instance();
+
+    registry.Register(Meta("M4_DupName", typeid(M4DupA)));
+    registry.Register(Meta("M4_DupName", typeid(M4DupB)));
+
+    size_t count = 0;
+    for (const auto &meta : registry.All()) // finalizes
+        if (meta.name == "M4_DupName")
+            ++count;
+
+    CHECK(count == 1); // no uniqueness check → both duplicates persist
 }

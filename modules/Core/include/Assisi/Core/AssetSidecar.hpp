@@ -85,6 +85,14 @@ inline constexpr std::string_view kAssetSidecarType = "AssetSidecar";
 /// @brief The current `.aast` file format version.
 inline constexpr std::int32_t kAssetSidecarVersion = 1;
 
+/// @brief Upper bound on a manifest entry's material-slot index. A `subAssets`
+///        entry at or above this is rejected at deserialize — no real mesh has
+///        this many material slots, and it caps the dense slot vector the
+///        database allocates, so a corrupt or hostile `slot` (including a
+///        negative literal that would wrap to ~0u) can't drive a huge allocation
+///        or an out-of-bounds resize.
+inline constexpr std::uint32_t kMaxMaterialSlots = 4096;
+
 /// @brief Serialize a sidecar to `.aast` JSON text (envelope + fields).
 ///        Editor-only in spirit (only the reconcile pass writes sidecars).
 [[nodiscard]] std::string SerializeSidecar(const AssetSidecar &sidecar);

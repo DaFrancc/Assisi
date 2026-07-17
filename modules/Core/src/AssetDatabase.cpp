@@ -176,11 +176,15 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild()
                 std::vector<AssetId> slots;
                 for (const AssetSubAsset &entry : sidecar->subAssets)
                 {
-                    if (entry.slot >= slots.size())
+                    // size_t arithmetic (not slot+1 in uint32) so a large slot
+                    // can't wrap the grow target; DeserializeSidecar already caps
+                    // slot below kMaxMaterialSlots — this is defense in depth.
+                    const std::size_t slotIndex = entry.slot;
+                    if (slotIndex >= slots.size())
                     {
-                        slots.resize(entry.slot + 1);
+                        slots.resize(slotIndex + 1);
                     }
-                    slots[entry.slot] = entry.material;
+                    slots[slotIndex] = entry.material;
                 }
                 _manifests.insert_or_assign(id, std::move(slots));
             }

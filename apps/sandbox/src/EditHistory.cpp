@@ -288,18 +288,28 @@ void EditHistory::RestoreComponent(Entity entity, Reflect::ComponentId id,
         return;
     }
 
-    // The component should be present with `target`. A transient (non-serializable)
-    // component has no addToScene hook and was never in the payload — skip it; its
-    // state is rebuilt by the rebind hook off a sibling durable component instead.
+    // The component should be present with `target`. Add it, then rebind (a single
+    // component edit has no sibling ordering concern).
+    if (AddComponentForRestore(entity, id, *target))
+        _rebind(entity, id, /*present=*/true);
+}
+
+bool EditHistory::AddComponentForRestore(Entity entity, Reflect::ComponentId id, const nlohmann::json &data)
+{
+    const Reflect::ComponentMeta *meta = Reflect::ComponentRegistry::Instance().ById(id);
+
+    // A transient (non-serializable) component has no addToScene hook and was never
+    // in the payload — skip it; its state is rebuilt by the rebind hook off a
+    // sibling durable component instead.
     if (!meta || !meta->serializable || !meta->addToScene)
-        return;
+        return false;
 
     // Remove-first-then-add: Scene::Add (which addToScene bottoms out in) silently
     // rejects an already-present component, so a value edit must clear the old one
     // first (design doc §6/§8.8).
     _scene.RemoveById(entity, id);
-    meta->addToScene(&_scene, entity.index, entity.generation, *target);
-    _rebind(entity, id, /*present=*/true);
+    meta->addToScene(&_scene, entity.index, entity.generation, data);
+    return true;
 }
 
 void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
@@ -338,8 +348,24 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
             const auto &ed    = std::get<EntityDelta>(cmd);
             const auto &state  = undo ? ed.before : ed.after;
             if (state.has_value())
+            {
+                // Add the whole component set first, THEN rebind each — so a
+                // component's rebind hook (e.g. the physics-body rebuild keyed off
+                // RigidBodyDescriptor) sees every sibling already restored, not just
+                // the ones that happen to sort before it. Firing the hook per
+                // component mid-restore dropped the Jolt body on undo-of-delete.
                 for (const ComponentSnapshot &snap : *state)
-                    RestoreComponent(ed.handle, snap.id, snap.data);
+                    AddComponentForRestore(ed.handle, snap.id, snap.data);
+                for (const ComponentSnapshot &snap : *state)
+                {
+                    // Rebind exactly the components that were added (serializable
+                    // with an addToScene hook) — the same set AddComponentForRestore
+                    // acted on — now that every sibling is present.
+                    const auto *meta = Reflect::ComponentRegistry::Instance().ById(snap.id);
+                    if (meta && meta->serializable && meta->addToScene)
+                        _rebind(ed.handle, snap.id, /*present=*/true);
+                }
+            }
         });
 
         // Phase 3 — destroy entities that must NOT exist on this side. Tear down

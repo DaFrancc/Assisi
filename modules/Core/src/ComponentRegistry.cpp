@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
+#include <Assisi/Core/Logger.hpp>
+
 #include <algorithm>
 #include <utility>
 
@@ -29,6 +31,26 @@ void ComponentRegistry::EnsureFinalized() const
 
     std::sort(_metas.begin(), _metas.end(),
               [](const ComponentMeta &a, const ComponentMeta &b) { return a.name < b.name; });
+
+    // Reject duplicate component names. Two components sharing a name collide in
+    // saved files (Load's Find picks one) and produce type-confused pool casts, so
+    // keep the first of each name and drop the rest — loudly, since a duplicate is a
+    // build-time mistake (usually the same ACOMP struct reflected twice). Dropping
+    // here (after the sort groups equal names) keeps ids dense over the survivors.
+    const auto lastUnique = std::unique(
+        _metas.begin(), _metas.end(),
+        [](const ComponentMeta &kept, const ComponentMeta &dup)
+        {
+            if (kept.name == dup.name)
+            {
+                Core::Log::Error("ComponentRegistry: duplicate component name '{}' - keeping the first "
+                                 "registration and dropping the duplicate.",
+                                 dup.name);
+                return true;
+            }
+            return false;
+        });
+    _metas.erase(lastUnique, _metas.end());
 
     _idByType.clear();
     _idByType.reserve(_metas.size());

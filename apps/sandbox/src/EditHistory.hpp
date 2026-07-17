@@ -249,6 +249,15 @@ class EditHistory
     void RestoreComponent(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id,
                           const std::optional<nlohmann::json> &target);
 
+    /// @brief Adds (remove-first-then-add) component `id` from `data` **without**
+    /// firing the rebind hook. Returns true if it was added (a serializable
+    /// component with an addToScene hook), false if skipped. Used to restore an
+    /// entire entity's component set before any rebind runs, so a component's
+    /// rebind hook sees all its siblings (e.g. the physics rebind needs the
+    /// entity's Transform present — which sorts *after* RigidBodyDescriptor).
+    bool AddComponentForRestore(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id,
+                                const nlohmann::json &data);
+
     Assisi::ECS::Scene      &_scene;
     RebindHook               _rebind;
     std::vector<Transaction> _undo;

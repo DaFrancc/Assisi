@@ -340,3 +340,147 @@ TEST_CASE("ImportMesh: a _LOD<n> node-name suffix splits geometry into LODs")
 
     fs::remove_all(root);
 }
+
+namespace
+{
+// Round-6 review C6: LOD0's node has a mesh whose only primitive lacks POSITION
+// (non-drawable), while LOD1's node is drawable. The importer skips LOD0's empty
+// bucket without pushing a LodRange, then pushes LOD1's — but increments
+// Lods[lod=1] on a size-1 vector, an out-of-bounds write.
+constexpr std::string_view kLodOobGltf = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0, 1 ] } ],
+  "nodes": [
+    { "mesh": 0, "name": "Cube_LOD0" },
+    { "mesh": 1, "name": "Cube_LOD1" }
+  ],
+  "meshes": [
+    { "primitives": [ { "attributes": { "NORMAL": 2 }, "indices": 1 } ] },
+    { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1 } ] }
+  ],
+  "buffers": [ { "uri": "lodoob.bin", "byteLength": 80 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 },
+    { "buffer": 0, "byteOffset": 44, "byteLength": 36, "target": 34962 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" },
+    { "bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3" }
+  ]
+})";
+
+fs::path WriteLodOobAssets()
+{
+    const fs::path root = fs::temp_directory_path() / "assisi_geometry_test_lodoob";
+    fs::remove_all(root);
+    fs::create_directories(root);
+    {
+        std::ofstream gltf(root / "lodoob.gltf", std::ios::binary);
+        gltf.write(kLodOobGltf.data(), static_cast<std::streamsize>(kLodOobGltf.size()));
+    }
+    {
+        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const uint16_t indices[3]   = {0, 1, 2};
+        const uint16_t pad          = 0;
+        const float    normals[9]   = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+        std::ofstream  bin(root / "lodoob.bin", std::ios::binary);
+        bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
+        bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
+        bin.write(reinterpret_cast<const char *>(&pad), sizeof(pad));
+        bin.write(reinterpret_cast<const char *>(normals), sizeof(normals));
+    }
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    return root;
+}
+} // namespace
+
+TEST_CASE("ImportMesh: a non-drawable LOD bucket does not corrupt the LOD table (round-6 C6)")
+{
+    const fs::path root = WriteLodOobAssets();
+
+    // Must not out-of-bounds-write the LOD table (crash) while densifying LODs.
+    std::expected<MeshData, MeshImportError> result;
+    CHECK_NOTHROW(result = ImportMesh("lodoob.gltf"));
+    if (result.has_value())
+    {
+        // If it imported, the LOD table must be internally consistent: every
+        // LodRange range lies within SubMeshes.
+        for (const Assisi::Geometry::LodRange &lod : result->Lods)
+        {
+            CHECK(lod.FirstSubMesh + lod.SubMeshCount <= result->SubMeshes.size());
+        }
+    }
+
+    fs::remove_all(root);
+}
+
+namespace
+{
+// Round-6 review M7: one triangle under a node with a NEGATIVE scale on one axis.
+// The node transform has negative determinant, so baking it into the vertex
+// positions mirrors the triangle and reverses its screen-space winding.
+constexpr std::string_view kMirroredGltf = R"({
+  "asset": { "version": "2.0" },
+  "scene": 0,
+  "scenes": [ { "nodes": [ 0 ] } ],
+  "nodes": [ { "mesh": 0, "scale": [-1.0, 1.0, 1.0] } ],
+  "meshes": [ { "primitives": [ { "attributes": { "POSITION": 0 }, "indices": 1 } ] } ],
+  "buffers": [ { "uri": "mirror.bin", "byteLength": 42 } ],
+  "bufferViews": [
+    { "buffer": 0, "byteOffset": 0,  "byteLength": 36, "target": 34962 },
+    { "buffer": 0, "byteOffset": 36, "byteLength": 6,  "target": 34963 }
+  ],
+  "accessors": [
+    { "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+      "min": [0.0, 0.0, 0.0], "max": [1.0, 1.0, 0.0] },
+    { "bufferView": 1, "componentType": 5123, "count": 3, "type": "SCALAR" }
+  ]
+})";
+
+fs::path WriteMirroredAssets()
+{
+    const fs::path root = fs::temp_directory_path() / "assisi_geometry_test_mirror";
+    fs::remove_all(root);
+    fs::create_directories(root);
+
+    {
+        std::ofstream gltf(root / "mirror.gltf", std::ios::binary);
+        gltf.write(kMirroredGltf.data(), static_cast<std::streamsize>(kMirroredGltf.size()));
+    }
+    {
+        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const uint16_t indices[3]   = {0, 1, 2};
+        std::ofstream  bin(root / "mirror.bin", std::ios::binary);
+        bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
+        bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
+    }
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    return root;
+}
+} // namespace
+
+TEST_CASE("ImportMesh: a mirrored (negative-scale) node flips winding back to CCW (round-6 M7)")
+{
+    const fs::path root = WriteMirroredAssets();
+
+    const std::expected<MeshData, MeshImportError> result = ImportMesh("mirror.gltf");
+    REQUIRE(result.has_value());
+    REQUIRE(result->Indices.size() == 3);
+
+    // Confirm the negative scale actually baked in: vertex 1's x mirrored to -1.
+    REQUIRE(result->Vertices[1].Position.x == doctest::Approx(-1.0f));
+
+    // The node's negative determinant reverses the triangle's winding when baked.
+    // Under back-face culling with a CCW front face, the importer must swap two
+    // indices per triangle to restore CCW-front in world space -> {0, 2, 1}.
+    CHECK(result->Indices[0] == 0);
+    CHECK(result->Indices[1] == 2); // importer leaves the reversed winding {0,1,2}
+    CHECK(result->Indices[2] == 1);
+
+    fs::remove_all(root);
+}

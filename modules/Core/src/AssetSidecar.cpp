@@ -64,13 +64,23 @@ std::expected<AssetSidecar, AssetSidecarError> DeserializeSidecar(std::string_vi
         return std::unexpected(AssetSidecarError::ParseFailed);
     }
 
-    if (document.value("type", std::string{}) != kAssetSidecarType)
+    // Field access is by is_*()-guarded find() rather than value(): nlohmann's
+    // value(key, default) only substitutes the default when the key is *absent*
+    // and throws json::type_error when it is present with the wrong type. Since
+    // this returns std::expected (and the parse used allow_exceptions=false), a
+    // wrong-typed field must map to an error, never escape as an exception.
+    const auto typeIt = document.find("type");
+    if (typeIt == document.end() || !typeIt->is_string() || typeIt->get<std::string>() != kAssetSidecarType)
     {
         return std::unexpected(AssetSidecarError::WrongType);
     }
 
-    const std::string guidText = document.value("guid", std::string{});
-    const std::optional<AssetId> guid = AssetId::Parse(guidText);
+    const auto guidIt = document.find("guid");
+    if (guidIt == document.end() || !guidIt->is_string())
+    {
+        return std::unexpected(AssetSidecarError::MissingGuid);
+    }
+    const std::optional<AssetId> guid = AssetId::Parse(guidIt->get<std::string>());
     if (!guid.has_value())
     {
         return std::unexpected(AssetSidecarError::MissingGuid);
@@ -89,13 +99,34 @@ std::expected<AssetSidecar, AssetSidecarError> DeserializeSidecar(std::string_vi
             {
                 continue;
             }
-            const std::optional<AssetId> material = AssetId::Parse(entry.value("material", std::string{}));
+            const auto materialIt = entry.find("material");
+            if (materialIt == entry.end() || !materialIt->is_string())
+            {
+                continue;
+            }
+            const std::optional<AssetId> material = AssetId::Parse(materialIt->get<std::string>());
             if (!material.has_value())
             {
                 continue;
             }
-            sidecar.subAssets.push_back(
-                AssetSubAsset{.slot = entry.value("slot", std::uint32_t{0}), .material = *material});
+            // Slot must be a non-negative integer under the slot cap: read as u64
+            // so a value near UINT32_MAX can't wrap, and reject anything absurd (a
+            // negative literal is is_number_unsigned()==false, so it is skipped).
+            std::uint32_t slot = 0;
+            if (const auto slotIt = entry.find("slot"); slotIt != entry.end())
+            {
+                if (!slotIt->is_number_unsigned())
+                {
+                    continue;
+                }
+                const std::uint64_t rawSlot = slotIt->get<std::uint64_t>();
+                if (rawSlot >= kMaxMaterialSlots)
+                {
+                    continue;
+                }
+                slot = static_cast<std::uint32_t>(rawSlot);
+            }
+            sidecar.subAssets.push_back(AssetSubAsset{.slot = slot, .material = *material});
         }
     }
 

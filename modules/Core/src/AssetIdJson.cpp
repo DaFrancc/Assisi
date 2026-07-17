@@ -37,10 +37,16 @@ AssetId DeserializeAssetId(const nlohmann::json &value)
 {
     // Object form { "guid", "path"? } — read the guid, ignore the hint. A bare
     // guid string is tolerated for hand-authored / hint-less references.
+    // Guard the field type: value("guid", default) throws json::type_error if
+    // "guid" is present but not a string, and this path runs over hand-editable
+    // level files. A wrong-typed or absent guid degrades to the nil id.
     std::string guidText;
     if (value.is_object())
     {
-        guidText = value.value("guid", std::string{});
+        if (const auto guidIt = value.find("guid"); guidIt != value.end() && guidIt->is_string())
+        {
+            guidText = guidIt->get<std::string>();
+        }
     }
     else if (value.is_string())
     {

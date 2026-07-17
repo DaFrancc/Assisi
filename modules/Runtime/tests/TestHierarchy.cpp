@@ -241,3 +241,53 @@ TEST_CASE("PropagateTransforms: moving a parent recomputes an unchanged child")
 
     CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(101.f)); // 100 + 1
 }
+
+// Round-6 review M3: attaching a Parent after the first propagation must dirty the
+// child. Parent is NOT a tracked component and Scene::Add does not stamp the
+// child's Transform change tick, so nothing marks the child dirty — yet its world
+// transform must now compose the parent's. The dirty-skip in PropagateTransforms
+// keys only on the Transform change tick, so this reparent is silently missed.
+TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the child")
+{
+    ECS::Scene        scene;
+    const ECS::Entity parent = scene.Create();
+    const ECS::Entity child  = scene.Create();
+    REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+
+    const uint64_t tick = PropagateTransforms(scene, 0);
+    REQUIRE(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(1.f)); // still a root
+
+    // Attach the child to the parent AFTER the first pass, without touching its
+    // Transform. The next propagation must recompose the child against the parent.
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
+    PropagateTransforms(scene, tick);
+
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(11.f)); // 10 + 1
+}
+
+// Round-6 review M3: reparenting an already-parented child to a different parent —
+// through the stamping GetMut<Parent>, the way a real reparent must — has to follow
+// the new parent. The child's own Transform is never touched, so before the fix
+// (Parent untracked + PropagateTransforms keying only on the Transform tick) the
+// child stayed composed against its OLD parent.
+TEST_CASE("PropagateTransforms: reparenting a child to a different parent follows the new parent")
+{
+    ECS::Scene        scene;
+    const ECS::Entity p1    = scene.Create();
+    const ECS::Entity p2    = scene.Create();
+    const ECS::Entity child = scene.Create();
+    REQUIRE(scene.Add(p1, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(p2, Transform{.position = {20.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = p1}) != nullptr);
+
+    const uint64_t tick = PropagateTransforms(scene, 0);
+    REQUIRE(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(11.f)); // 10 + 1
+
+    // Reparent to p2 through GetMut<Parent>, which stamps the Parent change tick.
+    scene.GetMut<Parent>(child)->parent = p2;
+    PropagateTransforms(scene, tick);
+
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(21.f)); // 20 + 1
+}

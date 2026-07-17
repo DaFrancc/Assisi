@@ -8,6 +8,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <string_view>
 
 #include <Assisi/Core/AssetSystem.hpp>
@@ -286,4 +287,77 @@ TEST_CASE("SceneSerializer: WITHOUT a context an EntityRef collapses (the bug th
     const Parent *restored = scene.Get<Parent>(b);
     REQUIRE(restored != nullptr);
     CHECK(restored->parent == ECS::NullEntity);
+}
+
+// Round-6 review M11: under ScopedRawEntityContext, EntityToIndex(e) drops the
+// generation (returns the bare slot index) and IndexToEntity(i) returns the slot's
+// CURRENT occupant regardless of generation. A raw ref captured to an entity that
+// is later destroyed therefore resolves to whatever new entity reuses that slot,
+// instead of staying dead. (Only one raw context per thread — non-reentrant — so
+// each phase is scoped in its own block.)
+//
+// DEFERRED (should_fail): confirmed-real bug kept as a live reproduction. The fix is
+// an open design decision — carry the generation through the raw context (a change to
+// what EntityToIndex encodes and how the EntityRef codegen serializes it) or reject
+// refs failing IsAlive. Remove the should_fail decorator when that decision is made.
+// See docs/code-review-2026-07-round6.md.
+TEST_CASE("SceneSerializer: raw-entity context resolves a dead slot to its new occupant (round-6 M11)" *
+          doctest::should_fail())
+{
+    ECS::Scene        scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(e.generation == 0);
+
+    // Capture: under the raw context the handle encodes as its bare slot index.
+    {
+        SceneSerializer::ScopedRawEntityContext raw(scene);
+        REQUIRE(SceneSerializer::EntityToIndex(e) == e.index);
+    }
+
+    // Destroy e, then create a fresh entity that reuses the SAME slot with a bumped
+    // generation — the classic dangling-handle setup.
+    scene.Destroy(e);
+    scene.FlushDestroyed();
+    const ECS::Entity e2 = scene.Create();
+    REQUIRE(e2.index == e.index);           // slot reused
+    REQUIRE(e2.generation != e.generation); // but a new generation
+
+    // Resolving the captured raw ref (e's slot) must NOT silently redirect onto the
+    // unrelated live e2. IndexToEntity ignores the stored generation.
+    {
+        SceneSerializer::ScopedRawEntityContext raw(scene);
+        const ECS::Entity resolved = SceneSerializer::IndexToEntity(e.index);
+        CHECK(resolved.generation == e.generation); // it returns e2's bumped generation instead
+    }
+}
+
+// Round-6 review C7: a single non-finite float must not make the whole level
+// file unloadable. Save writes NaN as JSON null; on load get<float>() on null
+// throws, LoadFromFile catches and Clear()s -> the entire scene loads empty.
+// (Only reproduces through the file path: in-memory Load carries NaN as a
+// number. This mirrors the real autosave-then-reload scenario.)
+TEST_CASE("SceneSerializer: one non-finite float does not brick the whole level file")
+{
+    namespace fs = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "assisi_serializer_nan_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root);
+    REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
+
+    ECS::Scene scene;
+    const ECS::Entity good = scene.Create(); // {0,0}
+    REQUIRE(scene.Add(good, Transform{.position = {1.f, 2.f, 3.f}}) != nullptr);
+    const ECS::Entity bad = scene.Create(); // {1,0}
+    REQUIRE(scene.Add(bad, Transform{.position = {std::numeric_limits<float>::quiet_NaN(), 0.f, 0.f}}) != nullptr);
+
+    REQUIRE(SceneSerializer::SaveToFile(scene, root / "nan.alvl"));
+
+    ECS::Scene  loaded;
+    const bool  ok = SceneSerializer::LoadFromFile(loaded, "nan.alvl");
+    CHECK(ok); // the load must not fail wholesale
+    // The well-formed entity must survive — one bad float can't empty the scene.
+    CHECK(loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0}) != nullptr);
+
+    fs::remove_all(root, ec);
 }

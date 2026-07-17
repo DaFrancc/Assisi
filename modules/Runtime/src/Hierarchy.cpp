@@ -72,7 +72,13 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
         slot(e.index).passId    = pass;
         slot(e.index).resolving = true; // on the resolve stack, for cycle detection
 
-        const bool localChanged = scene.Changed<Transform>(e, lastTick);
+        // Recompute when the local TRS changed OR the parent link changed (attach /
+        // reparent). Parent is ACOMP(tracked) precisely so this second case is caught;
+        // without it, attaching a parent after a pass leaves a stale worldMatrix until
+        // something else moves the child. (Detach via Remove<Parent> doesn't stamp, so
+        // a site that detaches should stamp the child's Transform — no such site today.)
+        const bool localChanged =
+            scene.Changed<Transform>(e, lastTick) || scene.Changed<Parent>(e, lastTick);
 
         bool             parentChanged = false;
         const glm::mat4 *parentWorld   = nullptr;

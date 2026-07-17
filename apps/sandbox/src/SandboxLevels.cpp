@@ -64,11 +64,22 @@ void SandboxApp::DrawLevelsWindow()
         }
         ImGui::EndDisabled();
         ImGui::SameLine();
+        // Save is only allowed while editing: during Play/Pause `*_scene` is the
+        // *simulated* scene (settled physics, spawned/deleted entities), so saving
+        // then would overwrite the level file with simulation state — and corrupt
+        // dirty tracking after Stop restores the pre-play scene.
+        const bool canSave = (_playState == PlayState::Editing);
+        ImGui::BeginDisabled(!canSave);
         if (ImGui::Button("Save", ImVec2(-1.0f, 0.0f)))
             SaveLevel(_levelFiles[_selectedLevel]);
+        ImGui::EndDisabled();
+        if (!canSave && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Stop play mode to save (avoids overwriting the level with simulation state).");
     }
 
     ImGui::Separator();
+    const bool canSaveAs = (_playState == PlayState::Editing);
+    ImGui::BeginDisabled(!canSaveAs);
     ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Save As").x - ImGui::GetStyle().ItemSpacing.x
                             - ImGui::GetStyle().FramePadding.x * 2.0f);
     ImGui::InputText("##saveas", _saveAsName, sizeof(_saveAsName));
@@ -82,6 +93,9 @@ void SandboxApp::DrawLevelsWindow()
         if (it != _levelFiles.end())
             _selectedLevel = static_cast<int>(std::distance(_levelFiles.begin(), it));
     }
+    ImGui::EndDisabled();
+    if (!canSaveAs && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Stop play mode to save.");
 
     ImGui::End();
 }

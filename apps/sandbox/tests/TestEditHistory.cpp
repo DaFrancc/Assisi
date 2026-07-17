@@ -686,3 +686,47 @@ TEST_CASE("EditHistory: empty history and no-op transactions are safe")
     hist.Push(Transaction{}); // no commands — dropped
     CHECK_FALSE(hist.CanUndo());
 }
+
+// Round-6 review C4: on undo of an entity delete, EditHistory restores each
+// component and fires the rebind hook immediately — in registry (alphabetical)
+// order. A component that sorts before Transform (Camera here; RigidBodyDescriptor
+// in the app) is therefore rebound while Transform is still absent. The app's
+// physics rebind reads Transform at that moment and, finding none, silently skips
+// creating the Jolt body. The invariant: when any component is rebound during a
+// revive, its siblings from the same snapshot are already present.
+TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component is rebound")
+{
+    Scene        scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Camera{}) != nullptr); // sorts before "Transform"
+    REQUIRE(scene.Add(e, Transform{.position = {5.f, 0.f, 0.f}}) != nullptr);
+
+    const auto cameraId = IdOf("Camera");
+
+    bool sawCameraRebind               = false;
+    bool transformPresentAtCameraRebind = false;
+    EditHistory::RebindHook hook = [&](Entity ent, Core::Reflect::ComponentId id, bool present)
+    {
+        if (present && id == cameraId)
+        {
+            sawCameraRebind                = true;
+            transformPresentAtCameraRebind = (scene.Get<Transform>(ent) != nullptr);
+        }
+    };
+
+    const auto snap = SnapshotEntity(scene, e); // [Camera, Transform]
+    scene.Destroy(e);
+    scene.FlushDestroyed();
+    REQUIRE_FALSE(scene.IsAlive(e));
+
+    EditHistory hist(scene, hook);
+    Transaction txn;
+    txn.label = "Delete Entity";
+    txn.cmds.push_back(EntityDelta{e, snap, std::nullopt});
+    hist.Push(std::move(txn));
+
+    hist.Undo(); // revive + restore components, firing the hook per component
+    REQUIRE(scene.IsAlive(e));
+    REQUIRE(sawCameraRebind);
+    CHECK(transformPresentAtCameraRebind); // false today: hook fires before Transform is restored
+}

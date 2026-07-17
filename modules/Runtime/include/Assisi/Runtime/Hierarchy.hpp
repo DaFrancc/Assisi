@@ -25,7 +25,12 @@ namespace Assisi::Runtime
 ///
 /// The parent entity must have a Transform. Entities without this
 /// component are treated as roots (worldMatrix == local TRS matrix).
-ACOMP()
+///
+/// ACOMP(tracked): PropagateTransforms's dirty-skip must recompute a child when its
+/// *parent link* changes (attach or reparent), not only when its Transform changes.
+/// Tracking Parent lets Add/GetMut stamp a change tick the propagation can observe;
+/// mutate the link through GetMut<Parent> (not the non-stamping Get) for it to take.
+ACOMP(tracked)
 struct Parent
 {
     AFIELD() ECS::Entity parent = ECS::NullEntity;

@@ -346,6 +346,13 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
     const fastgltf::Accessor &posAccessor  = asset.accessors[positionAttr->accessorIndex];
     out.Vertices.resize(baseVertex + posAccessor.count);
 
+    // A node with a negative-determinant transform (mirror / negative scale) maps a
+    // CCW triangle to CW once its positions are baked through `model`. With fixed
+    // back-face culling and CCW-front, those faces would be culled and the mesh would
+    // render inside-out. Flag it so the index winding is swapped back to CCW and the
+    // tangent handedness (w) is negated to match the mirrored basis below.
+    const bool mirrored = glm::determinant(glm::mat3(model)) < 0.0f;
+
     fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
         asset, posAccessor, [&](fastgltf::math::fvec3 position, size_t index)
         {
@@ -387,7 +394,10 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
             {
                 const glm::vec3 direction =
                     glm::normalize(tangentMatrix * glm::vec3(tangent[0], tangent[1], tangent[2]));
-                out.Vertices[baseVertex + index].Tangent = glm::vec4(direction, tangent[3]);
+                // A mirrored node flips tangent-space handedness; negate w to keep the
+                // TBN basis consistent with the winding swap below.
+                out.Vertices[baseVertex + index].Tangent =
+                    glm::vec4(direction, mirrored ? -tangent[3] : tangent[3]);
             });
     }
     else
@@ -398,12 +408,21 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
     if (primitive.indicesAccessor.has_value())
     {
         const fastgltf::Accessor &indexAccessor = asset.accessors[*primitive.indicesAccessor];
-        out.Indices.reserve(out.Indices.size() + indexAccessor.count);
+        const size_t              firstIndex    = out.Indices.size();
+        out.Indices.reserve(firstIndex + indexAccessor.count);
         fastgltf::iterateAccessor<std::uint32_t>(
             asset, indexAccessor, [&](std::uint32_t index)
             {
                 out.Indices.push_back(static_cast<unsigned int>(baseVertex) + index);
             });
+        if (mirrored)
+        {
+            // Swap the 2nd/3rd index of every triangle we just appended to restore CCW
+            // winding in world space. glTF primitives imported here are triangle lists,
+            // so the appended range is a whole number of triangles.
+            for (size_t i = firstIndex; i + 2 < out.Indices.size(); i += 3)
+                std::swap(out.Indices[i + 1], out.Indices[i + 2]);
+        }
     }
 }
 
@@ -559,6 +578,12 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
     bool           allHaveTangents = true;
     bool           allHaveUv       = true;
 
+    // One LodRange per dense LOD level, indexed directly by the (dense) lod value.
+    // Pre-sizing — rather than push_back as drawable buckets appear — is what keeps
+    // a LOD whose buckets are all non-drawable (skipped below) from desynchronizing
+    // Lods.size() from the lod index and writing out of bounds.
+    merged.Lods.assign(distinctLods.size(), LodRange{});
+
     for (size_t i = 0; i < records.size();)
     {
         const uint32_t lod = records[i].lodIndex;
@@ -588,12 +613,14 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
         subMesh.LocalAabb = ComputeAabb(merged, indexOffset, indexCount);
         merged.SubMeshes.push_back(subMesh);
 
-        if (merged.Lods.size() <= lod)
+        // `lod` is a dense index into merged.Lods (pre-sized above). The first
+        // drawable submesh of a level fixes its FirstSubMesh; the rest just count.
+        LodRange &range = merged.Lods[lod];
+        if (range.SubMeshCount == 0)
         {
-            merged.Lods.push_back(
-                LodRange{.FirstSubMesh = static_cast<uint32_t>(merged.SubMeshes.size()) - 1, .SubMeshCount = 0});
+            range.FirstSubMesh = static_cast<uint32_t>(merged.SubMeshes.size()) - 1;
         }
-        ++merged.Lods[lod].SubMeshCount;
+        ++range.SubMeshCount;
     }
 
     if (merged.Vertices.empty() || merged.Indices.empty())

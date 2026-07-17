@@ -6,6 +6,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
+#include <cmath>
 #include <fstream>
 #include <map>
 #include <optional>
@@ -113,6 +114,34 @@ SceneSerializer::ScopedRawEntityContext::~ScopedRawEntityContext()
 // Save
 // ---------------------------------------------------------------------------
 
+namespace
+{
+// nlohmann dumps a non-finite float (NaN/Inf — e.g. from a physics blow-up) as
+// the JSON literal `null`, which then throws on reload (get<float>() on null) and
+// would void the entire level. Replace non-finite numbers with 0 in the tree
+// before it is dumped, so every file we write stays loadable — no load-side
+// exceptions, no whole-scene loss from one bad value. Returns the number of
+// values it had to fix up so the caller can warn (a non-finite value in a save is
+// always a symptom of a bug upstream, not something to silently paper over).
+[[nodiscard]] size_t SanitizeNonFinite(nlohmann::json &value)
+{
+    size_t fixed = 0;
+    if (value.is_object() || value.is_array())
+    {
+        for (auto &child : value)
+        {
+            fixed += SanitizeNonFinite(child);
+        }
+    }
+    else if (value.is_number_float() && !std::isfinite(value.get<double>()))
+    {
+        value = 0.0;
+        ++fixed;
+    }
+    return fixed;
+}
+} // namespace
+
 nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
 {
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
@@ -155,6 +184,14 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
     for (auto &[key, entityJson] : entityMap)
         result["entities"].push_back(std::move(entityJson));
 
+    // Never persist NaN/Inf: it dumps as null and won't reload. Warn if we had to
+    // fix any up — it means a component held a non-finite value (a bug upstream).
+    if (const size_t fixed = SanitizeNonFinite(result); fixed > 0)
+    {
+        Core::Log::Warn("SceneSerializer: replaced {} non-finite float value(s) with 0 while saving "
+                        "(NaN/Inf cannot be persisted; a component held a bad value).",
+                        fixed);
+    }
     return result;
 }
 

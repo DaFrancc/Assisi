@@ -46,10 +46,16 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     _spotLights.clear();
     _dirLights.clear();
 
+    // World position lives in the propagated worldMatrix, not the local
+    // transform.position: a parented light's local position is relative to its
+    // parent, so reading it directly placed the light at the wrong spot. For a root
+    // (no parent) worldMatrix[3] equals position, so unparented lights are unchanged.
+    // (Spot *direction* is still taken from light.direction as-is — whether it should
+    // rotate with the parent is a separate open decision; see the round-6 review M2.)
     for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
     {
         _pointLights.push_back({
-            .positionRadius = {transform.position, light.radius},
+            .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
             .colorIntensity = {light.color, light.intensity},
         });
     }
@@ -59,7 +65,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
         const float innerCos = glm::cos(glm::radians(light.innerAngle));
         const float outerCos = glm::cos(glm::radians(light.outerAngle));
         _spotLights.push_back({
-            .positionRadius = {transform.position, light.radius},
+            .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
             .directionInner = {SafeDirection(light.direction), innerCos},
             .colorIntensity = {light.color, light.intensity},
             .outerCutoff    = outerCos,
