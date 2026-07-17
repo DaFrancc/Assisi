@@ -44,6 +44,7 @@ enum class MeshImportError
     ParseFailed,        ///< The bytes are not a valid glTF document.
     ExternalDataFailed, ///< A referenced external buffer could not be read.
     NoGeometry,         ///< Parsed successfully but produced no triangles.
+    Cancelled,          ///< Superseded before the import ran (a newer load epoch); no work done.
 };
 
 /// @brief A short human-readable name for a MeshImportError (for logs).

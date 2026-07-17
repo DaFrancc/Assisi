@@ -29,6 +29,7 @@
 /// so a device rebuild regenerates them uniformly. Material paths resolve `.amat`
 /// files (empty/failed -> a neutral fallback material).
 
+#include <atomic>
 #include <cstdint>
 #include <functional>
 #include <string_view>
@@ -281,8 +282,11 @@ class AssetCache
     // Bumped by Clear(). Every load captures the epoch at kick time; a publish
     // whose epoch no longer matches is dropped — that cancels in-flight loads from
     // a level that has since been unloaded (their decoded data is discarded and no
-    // GPU resource is created).
-    uint64_t _loadEpoch = 0;
+    // GPU resource is created). Atomic because the *worker* also reads it, to bail
+    // before doing the expensive import when its epoch has already been superseded
+    // (a queued-but-not-started stale load, common when the Load button is spammed);
+    // the authoritative drop still happens in the main-thread continuation.
+    std::atomic<uint64_t> _loadEpoch = 0;
 
     // Paths with a load job in flight — so a re-resolve while loading returns the
     // placeholder (null mesh / fallback material) without re-kicking, and

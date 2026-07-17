@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstddef>
 #include <optional>
 #include <string>
@@ -197,15 +198,31 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
         return nullptr;
 
     _meshLoading.insert(path);
-    const uint64_t   epoch = _loadEpoch;
-    Core::AssetPath  loadPath = path;
-    PathToIdFn       pathToId = _pathToId; // copy: the worker must not touch cache state
+    const uint64_t               epoch    = _loadEpoch.load(std::memory_order_relaxed);
+    const std::atomic<uint64_t> *loadEpoch = &_loadEpoch; // worker reads it to bail early (read-only)
+    Core::AssetPath              loadPath = path;
+    PathToIdFn                   pathToId = _pathToId; // copy: the worker must not touch cache state
 
     _jobs->Run(Core::Pool::Worker,
-               [loadPath, pathToId] { return Geometry::ImportMesh(loadPath.View(), pathToId); })
+               [loadPath, pathToId, epoch, loadEpoch]() -> std::expected<Geometry::MeshData, Geometry::MeshImportError>
+               {
+                   // Cancel a stale load before doing any import work: if a newer Clear() has already
+                   // superseded this epoch (e.g. the Load button was spammed), skip the expensive
+                   // parse. The main-thread continuation drops it either way; this just avoids the
+                   // wasted CPU for a load nobody is waiting for anymore.
+                   if (loadEpoch->load(std::memory_order_relaxed) != epoch)
+                   {
+                       // Superseded by a newer level load before the import ran; skip the work (the
+                       // continuation drops it anyway). Logged because a cancellation means loads were
+                       // issued faster than they finish — e.g. the Load button being spammed.
+                       Core::Log::Warn("AssetCache: cancelled superseded mesh load for '{}'.", loadPath.View());
+                       return std::unexpected(Geometry::MeshImportError::Cancelled);
+                   }
+                   return Geometry::ImportMesh(loadPath.View(), pathToId);
+               })
         .Then(Core::Pool::Main,
               [this, loadPath, epoch](std::expected<Geometry::MeshData, Geometry::MeshImportError> imported) {
-                  if (epoch != _loadEpoch)
+                  if (epoch != _loadEpoch.load(std::memory_order_relaxed))
                       return; // Stale: the level that asked for this mesh has since unloaded. Return
                               // WITHOUT erasing the loading marker — Clear() already dropped ours, and
                               // a current-epoch job for the same path may own the marker now. Erasing
@@ -407,14 +424,23 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
         channelPaths[ch] = PathForId(ChannelId(*data, ch));
 
     _materialLoading.insert(path);
-    const uint64_t         epoch = _loadEpoch;
-    Core::AssetPath        loadPath = path;
-    Geometry::MaterialData materialData = std::move(*data);
-    Core::JobSystem       *jobs = _jobs; // captured by value; the worker must not touch cache state
+    const uint64_t               epoch     = _loadEpoch.load(std::memory_order_relaxed);
+    const std::atomic<uint64_t> *loadEpoch = &_loadEpoch; // worker reads it to bail early (read-only)
+    Core::AssetPath              loadPath = path;
+    Geometry::MaterialData       materialData = std::move(*data);
+    Core::JobSystem             *jobs = _jobs; // captured by value; the worker must not touch cache state
 
     _jobs
         ->Run(Core::Pool::Worker,
-              [jobs, materialData, channelPaths]() -> MaterialLoadBundle {
+              [jobs, materialData, channelPaths, epoch, loadEpoch, loadPath]() -> MaterialLoadBundle {
+                  // Cancel a stale load before decoding anything: if a newer Clear() already
+                  // superseded this epoch (Load spammed), skip the channel decodes. The
+                  // continuation drops it regardless; this just avoids the wasted work.
+                  if (loadEpoch->load(std::memory_order_relaxed) != epoch)
+                  {
+                      Core::Log::Warn("AssetCache: cancelled superseded material load for '{}'.", loadPath.View());
+                      return MaterialLoadBundle{};
+                  }
                   // Worker: decode every channel image, in parallel across the
                   // channels — a texture-heavy material (e.g. a full glTF PBR set)
                   // then costs max(channel) rather than sum(channel). Pure CPU over
@@ -440,7 +466,7 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
                   return bundle;
               })
         .Then(Core::Pool::Main, [this, loadPath, epoch](MaterialLoadBundle bundle) {
-            if (epoch != _loadEpoch)
+            if (epoch != _loadEpoch.load(std::memory_order_relaxed))
                 return; // Stale (see ResolveMesh's twin): return before erasing so a stale completion
                         // can't drop a current-epoch job's loading marker and trigger a duplicate load.
             _materialLoading.erase(loadPath);

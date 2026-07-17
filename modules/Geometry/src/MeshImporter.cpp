@@ -455,6 +455,8 @@ std::string_view ToString(MeshImportError error) noexcept
         return "external buffer read failed";
     case MeshImportError::NoGeometry:
         return "no geometry";
+    case MeshImportError::Cancelled:
+        return "cancelled (superseded)";
     }
     return "unknown error";
 }
