@@ -152,6 +152,63 @@ TEST_CASE("Geometry with no LOD0 submeshes is a no-op")
     CHECK(builder.Tables().meshDescs.empty());
 }
 
+TEST_CASE("Finalize builds one draw template per batch with reserved instance bases")
+{
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 2> submeshes{
+        GpuSubMesh{/*indexOffset=*/0, /*indexCount=*/6, 0, 0},
+        GpuSubMesh{/*indexOffset=*/6, /*indexCount=*/12, 1, 0},
+    };
+    const std::array<uint32_t, 2> materials{10u, 20u};
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, /*vertexBase=*/100, /*indexBase=*/200), glm::mat4(1.f),
+                           materials);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.batchTemplates.size() == 2);
+    REQUIRE(tables.BatchCount() == 2);
+
+    // Batch 0: geometry from submesh 0, arena-absolute firstIndex, instanceCount 0.
+    const auto &b0 = tables.batchTemplates[0];
+    CHECK(b0.indexCount == 6);
+    CHECK(b0.firstIndex == 200);      // indexBase 200 + indexOffset 0
+    CHECK(b0.vertexOffset == 100);    // vertexBase
+    CHECK(b0.instanceCount == 0);
+    CHECK(b0.firstInstance == 0);
+
+    // Batch 1: firstIndex offset by the submesh, base advanced by mesh's object
+    // count (1) — each batch reserves objectCount instance slots.
+    const auto &b1 = tables.batchTemplates[1];
+    CHECK(b1.firstIndex == 206);      // 200 + 6
+    CHECK(b1.firstInstance == 1);
+}
+
+TEST_CASE("Finalize reserves per-mesh instance regions and advances bases across meshes")
+{
+    CullTableBuilder builder;
+    const std::array<GpuSubMesh, 2> a{GpuSubMesh{0, 6, 0, 0}, GpuSubMesh{6, 6, 0, 0}};
+    const std::array<GpuSubMesh, 1> b{GpuSubMesh{0, 9, 0, 0}};
+    const std::array<uint32_t, 1>   mat{0u};
+
+    // Mesh A drawn by two objects (deduped), mesh B by one.
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(a, 0, 0), glm::mat4(1.f), mat);
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(a, 0, 0), glm::mat4(1.f), mat);
+    builder.AddInstanceRaw(&kMeshB, MakeGeometry(b, 50, 60), glm::mat4(1.f), mat);
+    builder.Finalize();
+
+    const CullTables &tables = builder.Tables();
+    REQUIRE(tables.batchTemplates.size() == 3);
+    // Mesh A (2 objects): submesh 0 base 0, submesh 1 base 2 (each reserves 2 slots).
+    CHECK(tables.batchTemplates[0].firstInstance == 0);
+    CHECK(tables.batchTemplates[1].firstInstance == 2);
+    // Mesh B (1 object) follows mesh A's 4 reserved slots.
+    CHECK(tables.batchTemplates[2].firstInstance == 4);
+    CHECK(tables.batchTemplates[2].firstIndex == 60);
+    CHECK(tables.batchTemplates[2].vertexOffset == 50);
+    // Total reserved == drawCapacity (2×2 + 1×1).
+    CHECK(tables.drawCapacity == 5);
+}
+
 TEST_CASE("Reset clears the tables and the mesh dedup map")
 {
     CullTableBuilder builder;

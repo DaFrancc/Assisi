@@ -86,18 +86,43 @@ static_assert(sizeof(GpuSubMesh) == 16, "GpuSubMesh must match mesh_cull.comp's 
 /// mesh_cull.comp's NO_MATERIAL.
 inline constexpr uint32_t kNoMaterial = 0xFFFFFFFFu;
 
-/// @brief The four flat host arrays the culler uploads, plus the draw upper
-/// bound. Built once per frame in F1; F2 dirty-tracks them.
+/// @brief One indirect draw command == VkDrawIndexedIndirectCommand /
+/// nvrhi::DrawIndexedIndirectArguments (five packed 32-bit fields). The CPU builds
+/// one per distinct (mesh, submesh) batch as a template (instanceCount 0,
+/// firstInstance = the batch's reserved instance base); the cull shader grows
+/// instanceCount and scatters records into [firstInstance, firstInstance+count).
+struct GpuDrawArgs
+{
+    uint32_t indexCount    = 0;
+    uint32_t instanceCount = 0;
+    uint32_t firstIndex    = 0;
+    int32_t  vertexOffset  = 0;
+    uint32_t firstInstance = 0;
+};
+static_assert(sizeof(GpuDrawArgs) == 20, "GpuDrawArgs must match VkDrawIndexedIndirectCommand's packed layout.");
+
+/// @brief The flat host arrays the culler uploads. Built once per frame in F1/F2a;
+/// F2c dirty-tracks them. After Finalize(): one @ref batchTemplates entry per
+/// distinct (mesh, submesh) — i.e. per @ref submeshes entry — sizes the indirect
+/// buffer, and @ref drawCapacity (the reserved instance total) sizes the instance
+/// buffer.
 struct CullTables
 {
     std::vector<GpuObject>   objects;
     std::vector<GpuMeshDesc> meshDescs;
     std::vector<GpuSubMesh>  submeshes;
     std::vector<uint32_t>    objectMaterials;
-    /// Sum of every object's LOD0 submesh count — the maximum draws the cull pass
-    /// can emit, so the output instance/indirect buffers and the
-    /// drawIndexedIndirectCount cap size to it.
+    /// One draw-command template per submeshes[] entry (== per batch), filled by
+    /// Finalize. The indirect buffer is uploaded from this each frame; the cull
+    /// pass grows each template's instanceCount and the CPU draws all of them.
+    std::vector<GpuDrawArgs> batchTemplates;
+    /// Sum of every object's LOD0 submesh count — the total instance records the
+    /// batches reserve (batch g reserves its mesh's object count), so it sizes the
+    /// instance buffer.
     uint32_t drawCapacity = 0;
+
+    /// @brief Number of batches (draw commands) == distinct (mesh, submesh) pairs.
+    [[nodiscard]] uint32_t BatchCount() const { return static_cast<uint32_t>(submeshes.size()); }
 
     bool Empty() const { return objects.empty(); }
     void Clear();
@@ -143,11 +168,21 @@ class CullTableBuilder
     void AddInstance(const MeshBuffer *mesh, const glm::mat4 &model,
                      std::span<const Material *const> slotMaterials);
 
+    /// @brief Builds the per-batch draw-command templates from the gathered
+    /// tables. Must be called once after all AddInstance* calls and before the
+    /// tables are uploaded: each distinct (mesh, submesh) becomes one template with
+    /// instanceCount 0 and a reserved contiguous instance region sized to that
+    /// mesh's object count, so the cull pass can atomically pack instances into it.
+    void Finalize();
+
     [[nodiscard]] const CullTables &Tables() const { return _tables; }
 
   private:
     CullTables                                _tables;
     std::unordered_map<const void *, uint32_t> _meshIndex;
+    // Object count per mesh descriptor (parallel to _tables.meshDescs), for
+    // Finalize's per-batch instance-region sizing.
+    std::vector<uint32_t> _meshObjectCount;
 
     // Reused scratch so the MeshBuffer overload doesn't allocate per instance:
     // the extracted LOD0 submeshes and material ids fed to AddInstanceRaw.
@@ -178,18 +213,26 @@ class MeshCuller
     /// @brief The instance-data buffer the cull pass wrote (UAV) and the mesh pass
     /// reads by gl_InstanceIndex (SRV). Handle stable unless a growth swapped it.
     [[nodiscard]] nvrhi::IBuffer *InstanceBuffer() const { return _instanceBuffer.NativeBuffer(); }
-    /// @brief The GPU-built DrawIndexedIndirectArguments buffer.
+    /// @brief The indirect-command buffer: one DrawIndexedIndirectArguments per
+    /// batch, uploaded as templates each frame and grown (instanceCount) by the
+    /// cull pass. Drawn with a plain drawIndexedIndirect over IndirectCommandCount().
     [[nodiscard]] nvrhi::IBuffer *IndirectBuffer() const { return _indirectBuffer; }
-    /// @brief The single-uint draw-count buffer (drawIndexedIndirectCount's count).
-    [[nodiscard]] nvrhi::IBuffer *CountBuffer() const { return _countBuffer; }
-    /// @brief The maxDrawCount cap for the last Cull (== tables.drawCapacity).
-    [[nodiscard]] uint32_t MaxDrawCount() const { return _lastMaxDraws; }
+    /// @brief Number of indirect commands to draw (== batch count == distinct
+    /// (mesh, submesh)); empty batches draw 0 instances. CPU-known, so no count buffer.
+    [[nodiscard]] uint32_t IndirectCommandCount() const { return _lastBatchCount; }
 
-    /// @brief The number of draws the cull pass actually emitted (survivors),
-    /// read back from the GPU count buffer with a few frames' latency — so culling
-    /// is observable in the overlay (it falls below MaxDrawCount as geometry is
-    /// culled). Reports MaxDrawCount until the readback ring is primed.
-    [[nodiscard]] uint32_t SurvivorDrawCount() const;
+    /// @brief Instances the cull pass actually emitted (survivors), read back from
+    /// the GPU stats buffer with a few frames' latency — so culling is observable
+    /// (falls below the candidate count as geometry is culled). Reports the
+    /// candidate total until the readback ring is primed.
+    [[nodiscard]] uint32_t SurvivorInstanceCount() const;
+    /// @brief Live batches the cull pass emitted (distinct (mesh, submesh) with ≥1
+    /// surviving instance), read back alongside the instance count. This is the
+    /// coalesced draw count — stage E's batch win, now GPU-side.
+    [[nodiscard]] uint32_t SurvivorBatchCount() const;
+    /// @brief The candidate instance total for the last Cull (== tables.drawCapacity),
+    /// the pre-cull upper bound the survivor count is measured against.
+    [[nodiscard]] uint32_t CandidateInstanceCount() const { return _lastMaxDraws; }
 
     [[nodiscard]] bool IsValid() const { return _cullShader.IsValid(); }
 
@@ -199,8 +242,9 @@ class MeshCuller
     void EnsureInput(Buffer &buffer, uint32_t stride, uint32_t neededElements, const char *debugName);
     /// @brief Grows the output instance buffer (UAV) to @p neededElements records.
     void EnsureInstanceCapacity(uint32_t neededElements);
-    /// @brief Grows the indirect + count buffers to hold @p neededDraws commands.
-    void EnsureIndirectCapacity(uint32_t neededDraws);
+    /// @brief Grows the indirect buffer to hold @p neededCommands batch commands,
+    /// and creates the stats + readback buffers on first call.
+    void EnsureIndirectCapacity(uint32_t neededCommands);
     /// @brief (Re)builds the cull binding set from the current buffer handles.
     void RebuildBindingSet();
 
@@ -214,29 +258,34 @@ class MeshCuller
     Buffer _objectMaterialBuffer;
 
     // Output buffers. The instance buffer is a structured UAV (compute) + SRV
-    // (mesh pass). The indirect + count buffers are structured UAVs (compute
-    // atomic append) that are also drawIndirectArgs, auto-state-tracked so NVRHI
-    // transitions them UAV→IndirectArgument for the draw.
+    // (mesh pass). The indirect buffer is a structured UAV that is also
+    // drawIndirectArgs: uploaded with the CPU-built templates each frame, its
+    // instanceCount grown atomically by the cull pass, then read as indirect args.
+    // The stats buffer (2 uints: survivor instances, live batches) is a UAV cleared
+    // and grown by the pass, read back for the overlay. All keepInitialState-seeded
+    // so NVRHI tracks + barriers UAV↔IndirectArgument (and UAV↔CopyDest on upload).
     Buffer              _instanceBuffer;
     nvrhi::BufferHandle _indirectBuffer;
-    nvrhi::BufferHandle _countBuffer;
+    nvrhi::BufferHandle _statsBuffer;
     uint32_t            _indirectCapacity = 0; // in commands
 
     nvrhi::BindingSetHandle _cullBindingSet;
     bool                    _bindingSetDirty = true;
 
-    uint32_t _lastMaxDraws = 0;
+    uint32_t _lastMaxDraws   = 0; // candidate instance total (drawCapacity) of the last Cull
+    uint32_t _lastBatchCount = 0; // indirect command count (batch count) of the last Cull
 
-    // GPU→CPU readback of the survivor draw count, for the overlay. A small ring
-    // of CPU-readable buffers: each frame copies _countBuffer into the current
-    // slot and maps the slot from kReadbackFrames ago (safely retired) — so the
-    // count is a few frames stale but never stalls the GPU. Ring depth ≥ the
-    // frames the swapchain keeps in flight.
+    // GPU→CPU readback of the survivor stats {instances, batches}, for the overlay.
+    // A small ring of CPU-readable 2-uint buffers: each frame copies _statsBuffer
+    // into the current slot and maps the slot from kReadbackFrames ago (safely
+    // retired) — a few frames stale but never stalls the GPU. Ring depth ≥ frames
+    // the swapchain keeps in flight.
     static constexpr uint32_t kReadbackFrames = 3;
-    nvrhi::BufferHandle       _countReadback[kReadbackFrames];
-    uint32_t                  _readbackCursor    = 0;
-    uint32_t                  _readbackPrimed    = 0; // writes so far; < kReadbackFrames = ring not yet safe to read
-    uint32_t                  _lastSurvivorCount = 0;
+    nvrhi::BufferHandle       _statsReadback[kReadbackFrames];
+    uint32_t                  _readbackCursor        = 0;
+    uint32_t                  _readbackPrimed        = 0; // writes so far; < kReadbackFrames = not yet safe to read
+    uint32_t                  _lastSurvivorInstances = 0;
+    uint32_t                  _lastSurvivorBatches   = 0;
 };
 
 } // namespace Assisi::Render

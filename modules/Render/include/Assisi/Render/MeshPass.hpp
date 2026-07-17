@@ -142,13 +142,13 @@ class MeshPass
         /// shader via gl_InstanceIndex (== each command's firstInstance). Bound at
         /// t6 in place of the CPU path's own instance buffer.
         nvrhi::IBuffer *instanceBuffer = nullptr;
-        /// DrawIndexedIndirectArguments the cull pass wrote, one per surviving submesh.
+        /// The batch draw commands (one DrawIndexedIndirectArguments per distinct
+        /// (mesh, submesh)); the cull pass grew each one's instanceCount. Empty
+        /// batches carry instanceCount 0 and draw nothing.
         nvrhi::IBuffer *indirectBuffer = nullptr;
-        /// Single-uint count the cull pass wrote (survivor draw count).
-        nvrhi::IBuffer *countBuffer = nullptr;
-        /// Upper bound on commands (== the cull pass's output capacity); caps
-        /// drawIndexedIndirectCount so it never reads past what was allocated.
-        uint32_t maxDrawCount = 0;
+        /// Number of batch commands to draw (CPU-known — every batch has a command,
+        /// so this is the count for a plain drawIndexedIndirect; no count buffer).
+        uint32_t commandCount = 0;
         /// The shared GeometryArena's vertex/index buffers every draw addresses.
         /// F1 assumes a single arena (as stage E does — one drawIndexedIndirect
         /// group); a second arena would need per-arena count buffers.
@@ -157,10 +157,10 @@ class MeshPass
     };
 
     /// @brief Draws a GPU-culled frame: binds the global set against @p in's
-    /// instance buffer, points the pipeline at the cull pass's indirect + count
-    /// buffers, and issues one `drawIndexedIndirectCount`. Reports the API call in
-    /// `drawCalls`; the caller reports the true survivor tally from
-    /// MeshCuller::SurvivorDrawCount (this method only sees the capacity cap).
+    /// instance buffer, points the pipeline at the cull pass's batch-command
+    /// buffer, and issues one `drawIndexedIndirect` over @p in.commandCount
+    /// commands (empty batches draw 0 instances). Reports the API call in
+    /// `drawCalls`; the caller reports the survivor/batch tallies from the culler.
     /// @pre IsValid(), UpdateFrameConstants() this frame, and a MeshCuller::Cull
     ///      recorded into the same command list ahead of this call.
     [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const;

@@ -9,8 +9,8 @@ on. Design reviewed by two independent adversarial review passes; their findings
 (hot-reload contract, sort-key depth bits, default-deny codegen, per-submesh cull
 removal, texture-compression hook, streaming contracts) are folded in.
 
-**Stages A1–A5, B–E and F1 are built** — see "Current state"; the GPU-driven
-stages F2–G remain. The point of
+**Stages A1–A5, B–E, F1 and F2a are built** — see "Current state"; the GPU-driven
+stages F2b/F2c–G remain. The point of
 this doc is that the data structures and interfaces designed today survive the
 entire roadmap — submeshes, material assets, instancing, batching, LODs, GPU
 culling, bindless, streaming — with internals swapped, never producers rewritten.
@@ -85,11 +85,12 @@ The asset-identity layer (`asset-database-architecture.md`) has landed through
 reference migration, glTF material explosion into `.amat` children + manifest,
 and source-change detection with prompt-driven conflict resolution.
 
-**Remaining:** GPU-driven stages **F2–G** — **F1** landed (GPU frustum cull +
-indirect count, LOD0, one command per submesh, behind a "GPU Cull" A/B toggle,
-with a draw-count readback for the overlay); **F2** (deferred: GPU instance
-coalescing, screen-size LOD, dirty-tracked object mirror) and **G** (HZB
-occlusion) remain — plus asset-DB **S5** (final reference migration).
+**Remaining:** GPU-driven stages **F2b/F2c–G** — **F1** landed (GPU frustum cull +
+indirect draws, LOD0, behind a "GPU Cull" A/B toggle, with a draw-count readback
+for the overlay) and **F2a** landed (GPU instance coalescing — batches collapse
+like stage E, GPU-side); **F2b** (screen-size LOD), **F2c** (dirty-tracked object
+mirror) and **G** (HZB occlusion) remain — plus asset-DB **S5** (final reference
+migration).
 
 Still-standing foundations from before this roadmap: reflection (`ACOMP`/
 `AFIELD` → reflectgen → ComponentRegistry), `.alvl` JSON scenes, the inspector,
@@ -577,7 +578,8 @@ numbers.
 | **D** | Per-instance GPU buffer + bindless (kills the binding-set cache; MaterialConstants pad → textureIndices) | ✅ done (`c6b1f3f`, `516e6d6`, + part 2) | stage 3; descriptor-indexing spike first |
 | **E** | CPU-built indirect draws + instancing (Submit interior only) | ✅ done | stage 4 |
 | **F1** | GPU compute **frustum** cull + GPU-built indirect commands, **LOD0 only**, **one command per surviving submesh** (no GPU coalescing), behind a **"GPU Cull" A/B toggle** — the CPU extract/sort path (A5–E) stays as the pixel-exact reference. Includes a GPU→CPU draw-count readback so the overlay shows real survivor/culled counts | ✅ done (GPU-verified) | stage 5 (first half) |
-| **F2** | Deferred, built once F1 is established: GPU-side **instance coalescing** (restores E's batch collapse), **projected-screen-size LOD selection**, and a **dirty-tracked ECS→GPU object mirror** (removes the per-frame CPU gather) | ⬜ deferred | stage 5 (advanced) |
+| **F2a** | GPU-side **instance coalescing** — identical (mesh, submesh) instances collapse into one instanced indirect draw (restores E's batch collapse F1 gave up). Single pass: CPU pre-builds one draw template per batch with a reserved instance region; the cull shader atomic-packs survivors into it. Plain drawIndexedIndirect over all batches | ✅ done (GPU-verified) | stage 5 (advanced) |
+| **F2b / F2c** | Deferred: **projected-screen-size LOD selection** (F2b; needs a LOD policy + multi-LOD test scene) and a **dirty-tracked ECS→GPU object mirror** (F2c; removes the per-frame CPU gather — the real "CPU per-object cost gone") | ⬜ deferred | stage 5 (advanced) |
 | **G** | Two-phase HZB occlusion | ⬜ not started | stage 6 |
 
 **Stage F split rationale.** Stage F is the first stage where "individual draws stop

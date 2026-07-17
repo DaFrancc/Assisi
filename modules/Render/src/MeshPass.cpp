@@ -365,8 +365,8 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
 MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const
 {
     SubmitStats stats;
-    if (in.indirectBuffer == nullptr || in.countBuffer == nullptr || in.instanceBuffer == nullptr ||
-        in.vertexBuffer == nullptr || in.indexBuffer == nullptr || in.maxDrawCount == 0)
+    if (in.indirectBuffer == nullptr || in.instanceBuffer == nullptr || in.vertexBuffer == nullptr ||
+        in.indexBuffer == nullptr || in.commandCount == 0)
     {
         return stats; // nothing culled this frame (or the culler is unavailable)
     }
@@ -377,10 +377,9 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
     // records it wrote are read by gl_InstanceIndex just like the CPU path's.
     nvrhi::IBindingSet *const globalBindingSet = GetOrCreateGlobalBindingSet(in.instanceBuffer);
 
-    // One multi-draw over the whole GPU-built command buffer. The count buffer
-    // (written by the cull pass) caps the real draw count; maxDrawCount caps it to
-    // what was allocated. Single arena → a single group of commands (stage C/E),
-    // so one call covers them all.
+    // One multi-draw over every batch command. Single arena → all batches share the
+    // arena's vertex/index buffers (stage C/E), so one drawIndexedIndirect covers
+    // them; empty batches carry instanceCount 0 and draw nothing.
     nvrhi::GraphicsState state;
     state.pipeline     = _pipeline;
     state.framebuffer  = frame.framebuffer;
@@ -389,17 +388,13 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
     state.viewport.addViewportAndScissorRect(
         nvrhi::Viewport(static_cast<float>(frame.width), static_cast<float>(frame.height)));
     state.addVertexBuffer(nvrhi::VertexBufferBinding{in.vertexBuffer, 0, 0});
-    state.indexBuffer         = nvrhi::IndexBufferBinding{in.indexBuffer, nvrhi::Format::R32_UINT, 0};
-    state.indirectParams      = in.indirectBuffer;
-    state.indirectCountBuffer = in.countBuffer;
+    state.indexBuffer    = nvrhi::IndexBufferBinding{in.indexBuffer, nvrhi::Format::R32_UINT, 0};
+    state.indirectParams = in.indirectBuffer;
     commandList->setGraphicsState(state);
 
-    commandList->drawIndexedIndirectCount(/*paramOffsetBytes=*/0, /*countOffsetBytes=*/0, in.maxDrawCount);
+    commandList->drawIndexedIndirect(/*offsetBytes=*/0, in.commandCount);
 
-    // The true survivor count lives in the GPU count buffer (not read back in F1),
-    // so report the capacity as the instance/batch tally and the one API call.
-    stats.instances = in.maxDrawCount;
-    stats.batches   = in.maxDrawCount;
+    // Survivor/batch tallies come from the culler's readback; report the one call.
     stats.drawCalls = 1;
     return stats;
 }

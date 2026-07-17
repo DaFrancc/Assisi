@@ -18,7 +18,7 @@ namespace
 struct CullPushConstants
 {
     glm::vec4  planes[6];
-    glm::uvec4 counts; // x = object count, y = max draw capacity, z = cull enabled, w unused
+    glm::uvec4 counts; // x = object count, y = cull enabled (0/1), zw unused
 };
 static_assert(sizeof(CullPushConstants) == 112, "CullPushConstants must match mesh_cull.comp's push_constant block.");
 
@@ -49,6 +49,7 @@ void CullTables::Clear()
     meshDescs.clear();
     submeshes.clear();
     objectMaterials.clear();
+    batchTemplates.clear();
     drawCapacity = 0;
 }
 
@@ -56,6 +57,7 @@ void CullTableBuilder::Reset()
 {
     _tables.Clear();
     _meshIndex.clear();
+    _meshObjectCount.clear();
 }
 
 void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &geometry, const glm::mat4 &model,
@@ -88,8 +90,10 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
 
         meshDescIndex = static_cast<uint32_t>(_tables.meshDescs.size());
         _tables.meshDescs.push_back(desc);
+        _meshObjectCount.push_back(0u); // parallel to meshDescs; bumped per instance below
         _meshIndex.emplace(meshKey, meshDescIndex);
     }
+    ++_meshObjectCount[meshDescIndex];
 
     GpuObject obj;
     obj.model         = model;
@@ -103,6 +107,34 @@ void CullTableBuilder::AddInstanceRaw(const void *meshKey, const MeshGeometry &g
 
     _tables.objects.push_back(obj);
     _tables.drawCapacity += lod0Count;
+}
+
+void CullTableBuilder::Finalize()
+{
+    // One draw-command template per batch (== per submeshes[] entry). Each mesh's
+    // submeshes get contiguous instance regions sized to that mesh's object count,
+    // laid out end to end — so the whole instance buffer is partitioned into
+    // per-batch regions the cull pass packs survivors into. The running offset ends
+    // at drawCapacity (Σ mesh objectCount × submeshCount == Σ object submeshCount).
+    _tables.batchTemplates.assign(_tables.submeshes.size(), GpuDrawArgs{});
+    uint32_t instanceOffset = 0;
+    for (size_t m = 0; m < _tables.meshDescs.size(); ++m)
+    {
+        const GpuMeshDesc &desc        = _tables.meshDescs[m];
+        const uint32_t     objectCount = _meshObjectCount[m];
+        for (uint32_t s = 0; s < desc.submeshCount; ++s)
+        {
+            const uint32_t     g  = desc.firstSubmesh + s;
+            const GpuSubMesh  &sm = _tables.submeshes[g];
+            GpuDrawArgs       &t  = _tables.batchTemplates[g];
+            t.indexCount    = sm.indexCount;
+            t.instanceCount = 0u; // grown atomically by the cull pass
+            t.firstIndex    = desc.indexBase + sm.indexOffset;
+            t.vertexOffset  = static_cast<int32_t>(desc.vertexBase);
+            t.firstInstance = instanceOffset; // this batch's reserved instance base
+            instanceOffset += objectCount;    // reserve one slot per object of this mesh
+        }
+    }
 }
 
 void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &model,
@@ -209,46 +241,47 @@ void MeshCuller::EnsureInstanceCapacity(uint32_t neededElements)
     _bindingSetDirty = true;
 }
 
-void MeshCuller::EnsureIndirectCapacity(uint32_t neededDraws)
+void MeshCuller::EnsureIndirectCapacity(uint32_t neededCommands)
 {
-    if (_countBuffer == nullptr)
+    if (_statsBuffer == nullptr)
     {
-        // Single-uint counter, written by the shader (UAV) and read by
-        // drawIndexedIndirectCount (indirect). keepInitialState seeds the tracked
-        // state to UnorderedAccess (the compute-write state) — NVRHI then tracks
-        // the buffer and inserts the UAV→IndirectArgument barrier for the draw
-        // (and back to UAV for next frame's clear). Not permanent state: NVRHI's
-        // keepInitialState seeds the tracker, it doesn't pin the buffer.
-        nvrhi::BufferDesc countDesc;
-        countDesc.byteSize           = sizeof(uint32_t);
-        countDesc.structStride       = sizeof(uint32_t);
-        countDesc.canHaveUAVs        = true;
-        countDesc.isDrawIndirectArgs = true;
-        countDesc.initialState       = nvrhi::ResourceStates::UnorderedAccess;
-        countDesc.keepInitialState   = true;
-        countDesc.debugName          = "MeshCuller::DrawCount";
-        _countBuffer                 = _device->createBuffer(countDesc);
-        _bindingSetDirty             = true;
+        // Two-uint stats {survivor instances, live batches}, cleared each frame and
+        // grown by the shader (UAV), copied to the readback ring for the overlay.
+        // keepInitialState seeds the tracked state to UnorderedAccess so NVRHI
+        // tracks the buffer and barriers it (UAV↔CopySource for the readback copy).
+        nvrhi::BufferDesc statsDesc;
+        statsDesc.byteSize          = 2u * sizeof(uint32_t);
+        statsDesc.structStride      = sizeof(uint32_t);
+        statsDesc.canHaveUAVs       = true;
+        statsDesc.initialState      = nvrhi::ResourceStates::UnorderedAccess;
+        statsDesc.keepInitialState  = true;
+        statsDesc.debugName         = "MeshCuller::Stats";
+        _statsBuffer                = _device->createBuffer(statsDesc);
+        _bindingSetDirty            = true;
 
-        // CPU-readable ring for the survivor-count readback (overlay only). Fixed
-        // 4-byte buffers, never grow; cpuAccess=Read makes them host-visible copy
-        // targets that don't participate in state tracking.
-        for (nvrhi::BufferHandle &readback : _countReadback)
+        // CPU-readable ring for the stats readback (overlay only). Fixed 8-byte
+        // buffers, never grow; cpuAccess=Read makes them host-visible copy targets
+        // that don't participate in state tracking.
+        for (nvrhi::BufferHandle &readback : _statsReadback)
         {
             nvrhi::BufferDesc readbackDesc;
-            readbackDesc.byteSize  = sizeof(uint32_t);
+            readbackDesc.byteSize  = 2u * sizeof(uint32_t);
             readbackDesc.cpuAccess = nvrhi::CpuAccessMode::Read;
-            readbackDesc.debugName = "MeshCuller::DrawCountReadback";
+            readbackDesc.debugName = "MeshCuller::StatsReadback";
             readback               = _device->createBuffer(readbackDesc);
         }
     }
 
-    if (_indirectBuffer != nullptr && neededDraws <= _indirectCapacity)
+    if (_indirectBuffer != nullptr && neededCommands <= _indirectCapacity)
     {
         return;
     }
-    const uint32_t capacity = std::max(std::max(_indirectCapacity * 2u, neededDraws), kInitialDraws);
+    const uint32_t capacity = std::max(std::max(_indirectCapacity * 2u, neededCommands), kInitialDraws);
 
+    // One command per batch: uploaded with the CPU templates each frame (which
+    // resets instanceCount to 0), grown atomically by the cull pass, then read as
+    // indirect args. keepInitialState-seeded UnorderedAccess so NVRHI tracks and
+    // barriers it CopyDest (template upload) → UnorderedAccess (pass) → IndirectArgument (draw).
     nvrhi::BufferDesc desc;
     desc.byteSize           = static_cast<uint64_t>(kIndirectStride) * capacity;
     desc.structStride       = kIndirectStride;
@@ -271,7 +304,7 @@ void MeshCuller::RebuildBindingSet()
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_SRV(3, _objectMaterialBuffer.NativeBuffer()));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(0, _instanceBuffer.NativeBuffer()));
     setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(1, _indirectBuffer));
-    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, _countBuffer));
+    setDesc.addItem(nvrhi::BindingSetItem::StructuredBuffer_UAV(2, _statsBuffer));
     setDesc.addItem(nvrhi::BindingSetItem::PushConstants(0, sizeof(CullPushConstants)));
     _cullBindingSet  = _device->createBindingSet(setDesc, _cullShader.BindingLayout());
     _bindingSetDirty = false;
@@ -280,24 +313,26 @@ void MeshCuller::RebuildBindingSet()
 void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::vec4, 6> &frustumPlanes,
                       const CullTables &tables, bool frustumCull)
 {
-    if (!IsValid() || tables.Empty())
+    if (!IsValid() || tables.Empty() || tables.batchTemplates.size() != tables.submeshes.size())
     {
-        _lastMaxDraws = 0;
-        return;
+        _lastMaxDraws   = 0;
+        _lastBatchCount = 0;
+        return; // empty, or Finalize() wasn't called — nothing to draw
     }
+
+    const uint32_t batchCount = tables.BatchCount();
 
     // A buffer that binds must have at least one element even when its table is
     // empty (an object with zero material slots leaves objectMaterials empty).
     EnsureInput(_objectBuffer, sizeof(GpuObject), static_cast<uint32_t>(tables.objects.size()), "MeshCuller::Objects");
     EnsureInput(_meshDescBuffer, sizeof(GpuMeshDesc), static_cast<uint32_t>(tables.meshDescs.size()),
                 "MeshCuller::MeshDescs");
-    EnsureInput(_submeshBuffer, sizeof(GpuSubMesh),
-                std::max<uint32_t>(1u, static_cast<uint32_t>(tables.submeshes.size())), "MeshCuller::SubMeshes");
+    EnsureInput(_submeshBuffer, sizeof(GpuSubMesh), std::max<uint32_t>(1u, batchCount), "MeshCuller::SubMeshes");
     EnsureInput(_objectMaterialBuffer, sizeof(uint32_t),
                 std::max<uint32_t>(1u, static_cast<uint32_t>(tables.objectMaterials.size())),
                 "MeshCuller::ObjectMaterials");
     EnsureInstanceCapacity(std::max<uint32_t>(1u, tables.drawCapacity));
-    EnsureIndirectCapacity(std::max<uint32_t>(1u, tables.drawCapacity));
+    EnsureIndirectCapacity(std::max<uint32_t>(1u, batchCount));
     if (_bindingSetDirty)
     {
         RebuildBindingSet();
@@ -305,41 +340,47 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
 
     _objectBuffer.Upload(commandList, tables.objects.data(), static_cast<uint32_t>(tables.objects.size()));
     _meshDescBuffer.Upload(commandList, tables.meshDescs.data(), static_cast<uint32_t>(tables.meshDescs.size()));
-    if (!tables.submeshes.empty())
-    {
-        _submeshBuffer.Upload(commandList, tables.submeshes.data(), static_cast<uint32_t>(tables.submeshes.size()));
-    }
+    _submeshBuffer.Upload(commandList, tables.submeshes.data(), batchCount);
     if (!tables.objectMaterials.empty())
     {
         _objectMaterialBuffer.Upload(commandList, tables.objectMaterials.data(),
                                      static_cast<uint32_t>(tables.objectMaterials.size()));
     }
 
-    // Read back the survivor count written kReadbackFrames ago (the slot about to
-    // be overwritten — safely retired), before this frame's copy clobbers it.
+    // Upload the per-batch draw-command templates. This both sets each batch's
+    // geometry range + reserved instance base AND resets instanceCount to 0 (the
+    // cull pass grows it), so no separate clear of the indirect buffer is needed.
+    commandList->writeBuffer(_indirectBuffer, tables.batchTemplates.data(),
+                             static_cast<size_t>(batchCount) * kIndirectStride);
+
+    // Read back the stats {instances, batches} written kReadbackFrames ago (the
+    // slot about to be overwritten — safely retired), before this frame's copy.
     if (_readbackPrimed >= kReadbackFrames)
     {
-        if (void *mapped = _device->mapBuffer(_countReadback[_readbackCursor], nvrhi::CpuAccessMode::Read))
+        if (void *mapped = _device->mapBuffer(_statsReadback[_readbackCursor], nvrhi::CpuAccessMode::Read))
         {
-            _lastSurvivorCount = *static_cast<const uint32_t *>(mapped);
-            _device->unmapBuffer(_countReadback[_readbackCursor]);
+            const uint32_t *stats  = static_cast<const uint32_t *>(mapped);
+            _lastSurvivorInstances = stats[0];
+            _lastSurvivorBatches   = stats[1];
+            _device->unmapBuffer(_statsReadback[_readbackCursor]);
         }
     }
 
-    // Reset the atomic draw counter before the pass appends to it.
-    commandList->clearBufferUInt(_countBuffer, 0u);
+    // Reset the stats counters before the pass grows them.
+    commandList->clearBufferUInt(_statsBuffer, 0u);
 
-    _lastMaxDraws = tables.drawCapacity;
+    _lastMaxDraws   = tables.drawCapacity;
+    _lastBatchCount = batchCount;
 
     CullPushConstants pc;
     std::copy(frustumPlanes.begin(), frustumPlanes.end(), pc.planes);
-    pc.counts = glm::uvec4(static_cast<uint32_t>(tables.objects.size()), tables.drawCapacity, frustumCull ? 1u : 0u, 0u);
+    pc.counts = glm::uvec4(static_cast<uint32_t>(tables.objects.size()), frustumCull ? 1u : 0u, 0u, 0u);
 
     const uint32_t groups = (static_cast<uint32_t>(tables.objects.size()) + 63u) / 64u;
     _cullShader.Dispatch(commandList, _cullBindingSet, groups, 1u, 1u, &pc, sizeof(pc));
 
-    // Snapshot this frame's count into the ring for a later frame to read back.
-    commandList->copyBuffer(_countReadback[_readbackCursor], 0, _countBuffer, 0, sizeof(uint32_t));
+    // Snapshot this frame's stats into the ring for a later frame to read back.
+    commandList->copyBuffer(_statsReadback[_readbackCursor], 0, _statsBuffer, 0, 2u * sizeof(uint32_t));
     _readbackCursor = (_readbackCursor + 1u) % kReadbackFrames;
     if (_readbackPrimed < kReadbackFrames)
     {
@@ -347,11 +388,18 @@ void MeshCuller::Cull(nvrhi::ICommandList *commandList, const std::array<glm::ve
     }
 }
 
-uint32_t MeshCuller::SurvivorDrawCount() const
+uint32_t MeshCuller::SurvivorInstanceCount() const
 {
     // Until the ring is primed the readback slots hold garbage, so report the
-    // capacity (assume everything survives) rather than flash a bogus count.
-    return _readbackPrimed >= kReadbackFrames ? _lastSurvivorCount : _lastMaxDraws;
+    // candidate total (assume everything survives) rather than flash a bogus count.
+    return _readbackPrimed >= kReadbackFrames ? _lastSurvivorInstances : _lastMaxDraws;
+}
+
+uint32_t MeshCuller::SurvivorBatchCount() const
+{
+    // Before priming, the live-batch count is unknown; report the total batch
+    // count (all potentially non-empty) as the stand-in.
+    return _readbackPrimed >= kReadbackFrames ? _lastSurvivorBatches : _lastBatchCount;
 }
 
 } // namespace Assisi::Render

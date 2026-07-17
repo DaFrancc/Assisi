@@ -29,11 +29,12 @@ namespace Assisi::Runtime
 /// toward the count of distinct meshes; with sorting off (A/B toggle) it climbs
 /// toward drawnItems (every item its own batch).
 ///
-/// On the GPU-cull path (stage F1) the cull runs on the GPU and its survivor draw
-/// count is read back (a few frames stale): `drawnItems`/`batches` are the
-/// survivors, `culledMeshes` is the culled submesh-draws (candidates − survivors),
-/// and `drawCalls` is the single drawIndexedIndirectCount. F1 emits one command
-/// per surviving submesh, so `batches` == `drawnItems` (GPU coalescing is F2).
+/// On the GPU-cull path (stages F1/F2a) the cull runs on the GPU and its survivor
+/// tallies are read back (a few frames stale): `drawnItems` is the surviving
+/// instances, `batches` is the coalesced instanced draws (F2a collapses identical
+/// (mesh,submesh) instances, so `batches` << `drawnItems`), `culledMeshes` is the
+/// culled instances (candidates − survivors), and `drawCalls` is the single
+/// drawIndexedIndirect over all batch commands.
 struct DrawStats
 {
     uint32_t drawnItems   = 0; ///< DrawItems (visible submeshes) submitted == instances.

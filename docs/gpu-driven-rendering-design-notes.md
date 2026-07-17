@@ -184,13 +184,22 @@ briefly:
   UAV→IndirectArgument; `false` leaves the state Unknown and crashes in
   `requireBufferState`), and the overlay must report the readback survivor count,
   not the capacity, or culling looks inert.
-- **F2 (deferred, once F1 is established):** GPU-side **instance coalescing**
-  (restores stage-4's batch collapse, which F1 gives up — so `batches` == drawn on
-  the F1 path today), **projected-screen-size LOD selection** (the "LOD selection
-  rides along" half), and a **dirty-tracked ECS→GPU object mirror** so the
-  per-frame CPU gather disappears too — the point at which "CPU per-object cost
-  gone" is fully true.
+- **F2a (done, GPU-verified):** GPU-side **instance coalescing** — restores
+  stage-4's batch collapse that F1 gave up. A single pass, no GPU sort: every
+  distinct (mesh, submesh) is a batch (the deduped submesh table, all CPU-known),
+  so the CPU pre-builds one indirect command per batch with `instanceCount=0` and
+  a reserved contiguous instance region, and the cull shader does
+  `slot = firstInstance + atomicAdd(cmd.instanceCount, 1)` per survivor — identical
+  instances collapse into one instanced draw (materials stay per-instance). One
+  plain `drawIndexedIndirect` over all batch commands; empty batches draw nothing.
+  A 2-uint stats buffer (survivor instances, live batches) replaces the count
+  buffer for the overlay readback.
+- **F2b (deferred):** **projected-screen-size LOD selection** (the "LOD selection
+  rides along" half) — needs a LOD policy and a multi-LOD test scene.
+- **F2c (deferred):** a **dirty-tracked ECS→GPU object mirror** so the per-frame
+  CPU gather disappears too — the point at which "CPU per-object cost gone" is
+  fully true.
 - **G:** two-phase HZB occlusion.
 
-Revisit F2/G when instance counts approach the point where the CPU per-object
-extract loop becomes the bottleneck.
+Revisit F2b/F2c/G when instance counts approach the point where the CPU
+per-object extract loop becomes the bottleneck.

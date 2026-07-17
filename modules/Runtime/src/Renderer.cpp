@@ -44,6 +44,8 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
                                                                             meshRenderer.materials.size()));
     }
 
+    builder.Finalize(); // build the per-batch draw templates from the gathered tables
+
     const Assisi::Render::CullTables &tables = builder.Tables();
     if (tables.Empty() || anyMesh == nullptr)
     {
@@ -55,23 +57,21 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
     Assisi::Render::MeshPass::IndirectDrawInputs inputs;
     inputs.instanceBuffer = params.culler->InstanceBuffer();
     inputs.indirectBuffer = params.culler->IndirectBuffer();
-    inputs.countBuffer    = params.culler->CountBuffer();
-    inputs.maxDrawCount   = params.culler->MaxDrawCount();
+    inputs.commandCount   = params.culler->IndirectCommandCount();
     inputs.vertexBuffer   = anyMesh->VertexBuffer();
     inputs.indexBuffer    = anyMesh->IndexBuffer();
 
     const Assisi::Render::MeshPass::SubmitStats submitStats = params.meshPass.SubmitIndirect(params.frame, inputs);
 
-    // Survivor draw count read back from the GPU (a few frames stale); the
-    // difference from the candidate capacity is what the cull removed — so the
-    // overlay shows culling working. F1 emits one command per surviving submesh,
-    // so batches == drawnItems (GPU coalescing is F2). culledMeshes counts culled
-    // submesh-draws, not whole meshes, on this path.
-    const uint32_t survivors = params.culler->SurvivorDrawCount();
-    const uint32_t candidates = tables.drawCapacity;
+    // Survivor tallies read back from the GPU (a few frames stale). F2a coalesces
+    // identical (mesh,submesh) instances into one instanced draw, so `batches` is
+    // the live batch count (falls well below drawnItems) — stage E's win, GPU-side.
+    // culledMeshes counts culled submesh-instances (candidates − survivors).
+    const uint32_t survivors  = params.culler->SurvivorInstanceCount();
+    const uint32_t candidates = params.culler->CandidateInstanceCount();
     stats.drawnItems   = survivors;
     stats.culledMeshes = candidates > survivors ? candidates - survivors : 0;
-    stats.batches      = survivors;
+    stats.batches      = params.culler->SurvivorBatchCount();
     stats.drawCalls    = submitStats.drawCalls;
     return stats;
 }
