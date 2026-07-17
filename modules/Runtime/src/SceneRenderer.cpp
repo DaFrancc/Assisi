@@ -94,6 +94,13 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
         return false;
     }
 
+    // GPU-driven cull (stage F1). Non-fatal: if the compute pipeline fails to
+    // build, the "GPU Cull" toggle stays a no-op and the CPU draw path runs.
+    if (!_meshCuller.Initialize(device))
+    {
+        Core::Log::Warn("SceneRenderer: GPU cull unavailable (mesh_cull compute pipeline failed to build).");
+    }
+
     // The selection outline is an editor/gameplay convenience, not core to drawing
     // a scene — if its pipelines fail to build, log and carry on without it rather
     // than failing the whole renderer.
@@ -203,7 +210,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .nearZ          = camera.nearZ,
                                                .farZ           = camera.farZ,
                                                .frustumCulling = _frustumCulling,
-                                               .sortDraws      = _sortDraws});
+                                               .sortDraws      = _sortDraws,
+                                               .gpuCulling     = _gpuCulling,
+                                               .culler         = &_meshCuller,
+                                               .cullBuilder    = &_cullBuilder});
 
     DrawEditorIcons(frame, projection * view, view, cameraTransform.position, scene);
 

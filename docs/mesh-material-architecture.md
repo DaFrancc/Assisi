@@ -9,8 +9,8 @@ on. Design reviewed by two independent adversarial review passes; their findings
 (hot-reload contract, sort-key depth bits, default-deny codegen, per-submesh cull
 removal, texture-compression hook, streaming contracts) are folded in.
 
-**Stages A1–A5, B, C, and D are built** — see "Current state"; the GPU-driven
-stages E–G remain. The point of
+**Stages A1–A5, B–E and F1 are built** — see "Current state"; the GPU-driven
+stages F2–G remain. The point of
 this doc is that the data structures and interfaces designed today survive the
 entire roadmap — submeshes, material assets, instancing, batching, LODs, GPU
 culling, bindless, streaming — with internals swapped, never producers rewritten.
@@ -85,8 +85,11 @@ The asset-identity layer (`asset-database-architecture.md`) has landed through
 reference migration, glTF material explosion into `.amat` children + manifest,
 and source-change detection with prompt-driven conflict resolution.
 
-**Remaining:** GPU-driven stages **E–G** (indirect/instancing, compute cull,
-HZB occlusion) and asset-DB **S5** (final reference migration).
+**Remaining:** GPU-driven stages **F2–G** — **F1** landed (GPU frustum cull +
+indirect count, LOD0, one command per submesh, behind a "GPU Cull" A/B toggle,
+with a draw-count readback for the overlay); **F2** (deferred: GPU instance
+coalescing, screen-size LOD, dirty-tracked object mirror) and **G** (HZB
+occlusion) remain — plus asset-DB **S5** (final reference migration).
 
 Still-standing foundations from before this roadmap: reflection (`ACOMP`/
 `AFIELD` → reflectgen → ComponentRegistry), `.alvl` JSON scenes, the inspector,
@@ -573,8 +576,21 @@ numbers.
 | **C** | Shared geometry arena (MeshBuffer → ranges; vertex-format constraint from §1 decided here) | ✅ done | stage 2 |
 | **D** | Per-instance GPU buffer + bindless (kills the binding-set cache; MaterialConstants pad → textureIndices) | ✅ done (`c6b1f3f`, `516e6d6`, + part 2) | stage 3; descriptor-indexing spike first |
 | **E** | CPU-built indirect draws + instancing (Submit interior only) | ✅ done | stage 4 |
-| **F** | Compute cull + screen-size LOD select (replaces extract/sort) | ⬜ not started | stage 5 |
+| **F1** | GPU compute **frustum** cull + GPU-built indirect commands, **LOD0 only**, **one command per surviving submesh** (no GPU coalescing), behind a **"GPU Cull" A/B toggle** — the CPU extract/sort path (A5–E) stays as the pixel-exact reference. Includes a GPU→CPU draw-count readback so the overlay shows real survivor/culled counts | ✅ done (GPU-verified) | stage 5 (first half) |
+| **F2** | Deferred, built once F1 is established: GPU-side **instance coalescing** (restores E's batch collapse), **projected-screen-size LOD selection**, and a **dirty-tracked ECS→GPU object mirror** (removes the per-frame CPU gather) | ⬜ deferred | stage 5 (advanced) |
 | **G** | Two-phase HZB occlusion | ⬜ not started | stage 6 |
+
+**Stage F split rationale.** Stage F is the first stage where "individual draws stop
+being visible" (they vanish into GPU-built buffers), so the GPU-driven doc's caveat —
+*the indirect/bindless plumbing must be rock-solid before that happens* — governs the
+split. **F1** proves the compute-cull → indirect-count plumbing at its simplest: frustum
+only, LOD0 only, one command per submesh, and — crucially — **the stage-E CPU path is kept
+behind an A/B toggle** so the GPU path is validated by "same image, same pixels" against a
+trusted reference before anything depends on it. **F2** then layers the harder wins
+(GPU-side instance coalescing, screen-size LOD, a dirty-tracked object mirror that finally
+removes the per-frame CPU gather) onto proven plumbing. This mirrors how B–E each shipped a
+pixel-correct renderer; F1/F2 keep that invariant across the point where draws go
+GPU-resident.
 
 Streaming (async load → loading screen → chunk residency) slots in any time
 after A, on §8's contracts. Upload batching still rides the streaming loader,

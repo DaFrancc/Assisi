@@ -1,16 +1,81 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <algorithm>
+#include <span>
 #include <vector>
 
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Render/DrawItem.hpp>
 #include <Assisi/Render/Frustum.hpp>
+#include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
 
 namespace Assisi::Runtime
 {
+namespace
+{
+// GPU-driven cull path (stage F1). Instead of culling + emitting + sorting draws
+// on the CPU, gather every mesh entity into the culler's host tables (deduping
+// meshes into a descriptor table), let the compute pass frustum-cull and build the
+// indirect commands + per-instance records on the GPU, then issue one
+// drawIndexedIndirectCount. The CPU still iterates the ECS to build the tables
+// (the cull *math* is what moved to the GPU); a dirty-tracked ECS→GPU mirror that
+// removes this gather too is stage F2. @p frustum's planes drive the GPU test.
+DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frustum &frustum)
+{
+    Assisi::ECS::Scene              &scene   = params.scene;
+    Assisi::Render::CullTableBuilder &builder = *params.cullBuilder;
+
+    DrawStats stats;
+
+    builder.Reset();
+    const Assisi::Render::MeshBuffer *anyMesh = nullptr;
+    for (auto [entity, transform, meshRenderer] : scene.Query<Transform, MeshRenderer>())
+    {
+        const Assisi::Render::MeshBuffer *mesh = meshRenderer.meshBuffer;
+        if (mesh == nullptr)
+        {
+            continue;
+        }
+        anyMesh = mesh; // any mesh identifies the shared arena's vertex/index buffers (single arena, F1)
+        builder.AddInstance(mesh, transform.worldMatrix,
+                            std::span<const Assisi::Render::Material *const>(meshRenderer.materials.data(),
+                                                                            meshRenderer.materials.size()));
+    }
+
+    const Assisi::Render::CullTables &tables = builder.Tables();
+    if (tables.Empty() || anyMesh == nullptr)
+    {
+        return stats; // nothing to draw
+    }
+
+    params.culler->Cull(params.frame.commandList, frustum.Planes(), tables, params.frustumCulling);
+
+    Assisi::Render::MeshPass::IndirectDrawInputs inputs;
+    inputs.instanceBuffer = params.culler->InstanceBuffer();
+    inputs.indirectBuffer = params.culler->IndirectBuffer();
+    inputs.countBuffer    = params.culler->CountBuffer();
+    inputs.maxDrawCount   = params.culler->MaxDrawCount();
+    inputs.vertexBuffer   = anyMesh->VertexBuffer();
+    inputs.indexBuffer    = anyMesh->IndexBuffer();
+
+    const Assisi::Render::MeshPass::SubmitStats submitStats = params.meshPass.SubmitIndirect(params.frame, inputs);
+
+    // Survivor draw count read back from the GPU (a few frames stale); the
+    // difference from the candidate capacity is what the cull removed — so the
+    // overlay shows culling working. F1 emits one command per surviving submesh,
+    // so batches == drawnItems (GPU coalescing is F2). culledMeshes counts culled
+    // submesh-draws, not whole meshes, on this path.
+    const uint32_t survivors = params.culler->SurvivorDrawCount();
+    const uint32_t candidates = tables.drawCapacity;
+    stats.drawnItems   = survivors;
+    stats.culledMeshes = candidates > survivors ? candidates - survivors : 0;
+    stats.batches      = survivors;
+    stats.drawCalls    = submitStats.drawCalls;
+    return stats;
+}
+} // namespace
 
 DrawStats DrawScene(const DrawSceneParams &params)
 {
@@ -24,6 +89,13 @@ DrawStats DrawScene(const DrawSceneParams &params)
     // emitting its submeshes, so off-screen geometry costs a matrix-times-point and
     // six dot products instead of any draw work.
     const Assisi::Render::Frustum frustum = Assisi::Render::Frustum::FromViewProjection(viewProjection);
+
+    // GPU-driven path (stage F1): the compute cull replaces this CPU extract/sort.
+    // Falls back to the CPU path if the culler/builder aren't wired or ready.
+    if (params.gpuCulling && params.culler != nullptr && params.cullBuilder != nullptr && params.culler->IsValid())
+    {
+        return DrawSceneGpu(params, frustum);
+    }
 
     DrawStats                          stats;
     std::vector<Assisi::Render::DrawItem> items;

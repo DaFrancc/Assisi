@@ -13,6 +13,12 @@
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 
+namespace Assisi::Render
+{
+class MeshCuller;
+class CullTableBuilder;
+} // namespace Assisi::Render
+
 namespace Assisi::Runtime
 {
 
@@ -22,12 +28,18 @@ namespace Assisi::Runtime
 /// identical same-material meshes adjacent so they coalesce, so `batches` falls
 /// toward the count of distinct meshes; with sorting off (A/B toggle) it climbs
 /// toward drawnItems (every item its own batch).
+///
+/// On the GPU-cull path (stage F1) the cull runs on the GPU and its survivor draw
+/// count is read back (a few frames stale): `drawnItems`/`batches` are the
+/// survivors, `culledMeshes` is the culled submesh-draws (candidates − survivors),
+/// and `drawCalls` is the single drawIndexedIndirectCount. F1 emits one command
+/// per surviving submesh, so `batches` == `drawnItems` (GPU coalescing is F2).
 struct DrawStats
 {
     uint32_t drawnItems   = 0; ///< DrawItems (visible submeshes) submitted == instances.
     uint32_t culledMeshes = 0; ///< Whole mesh entities skipped by frustum culling.
     uint32_t batches      = 0; ///< Instanced draw commands after coalescing same-geometry runs.
-    uint32_t drawCalls    = 0; ///< drawIndexedIndirect API calls issued (~1 with one arena).
+    uint32_t drawCalls    = 0; ///< drawIndexedIndirect(Count) API calls issued (~1 with one arena).
 };
 
 /// @brief Everything one DrawScene call needs, grouped so the call site reads as
@@ -47,6 +59,19 @@ struct DrawSceneParams
 
     bool frustumCulling = true; ///< Skip meshes outside the view frustum.
     bool sortDraws      = true; ///< Sort the draw list by sort key before submitting.
+
+    /// @brief Take the GPU-driven cull path (stage F1) instead of the CPU
+    /// extract/sort path. Requires @ref culler and @ref cullBuilder; falls back to
+    /// the CPU path when either is null or the culler isn't initialized. An A/B
+    /// toggle against the CPU path (the opaque image is identical). `sortDraws` is
+    /// ignored on this path (the GPU appends draws in atomic order); `frustumCulling`
+    /// still gates the GPU frustum test.
+    bool gpuCulling = false;
+    /// GPU cull pass; must outlive the call when @ref gpuCulling is set.
+    Assisi::Render::MeshCuller *culler = nullptr;
+    /// Reused per-frame table builder for the GPU path (avoids re-allocating the
+    /// host-side tables each frame); must outlive the call when @ref gpuCulling is set.
+    Assisi::Render::CullTableBuilder *cullBuilder = nullptr;
 };
 
 /// @brief Extract, sort, and submit a draw list for every Transform+MeshRenderer

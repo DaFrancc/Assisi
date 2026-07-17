@@ -65,6 +65,11 @@ class Frustum
         });
     }
 
+    /// @brief The six planes, `vec4(nx, ny, nz, d)` with inward normals (see the
+    /// class comment). Uploaded to the GPU cull pass (mesh_cull.comp), which runs
+    /// the same sphere/AABB tests as IntersectsSphere/IntersectsAabb.
+    [[nodiscard]] const std::array<glm::vec4, 6> &Planes() const { return _planes; }
+
   private:
     std::array<glm::vec4, 6> _planes{};
 };

@@ -289,6 +289,20 @@ void SandboxApp::DrawOptionsWindow()
             _sceneRenderer.SetSortDraws(sortDraws);
         }
 
+        // A/B toggle for the GPU-driven cull path (stage F1): a compute pass
+        // frustum-culls every object and builds the indirect draw commands on the
+        // GPU, so the CPU issues one drawIndexedIndirectCount instead of
+        // extracting/sorting a draw list. The opaque image is identical to the CPU
+        // path — this is the verification hook. On this path the item/batch tallies
+        // below report the candidate draw capacity (the true GPU survivor count
+        // isn't read back yet — stage F2), and "Sort Draws" has no effect.
+        // Runtime-only — not persisted to options.json.
+        bool gpuCulling = _sceneRenderer.GpuCulling();
+        if (ImGui::Checkbox("GPU Cull", &gpuCulling))
+        {
+            _sceneRenderer.SetGpuCulling(gpuCulling);
+        }
+
         const Assisi::Runtime::DrawStats draw = _sceneRenderer.LastDrawStats();
         ImGui::Text("Items: %u drawn / %u meshes culled", draw.drawnItems, draw.culledMeshes);
         ImGui::Text("Draws: %u batches / %u indirect calls", draw.batches, draw.drawCalls);

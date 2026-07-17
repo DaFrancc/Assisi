@@ -132,6 +132,39 @@ class MeshPass
     /// @pre IsValid() — call Initialize() first, and UpdateFrameConstants() this frame.
     [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, std::span<const DrawItem> items) const;
 
+    /// @brief The GPU-built draw list a MeshCuller produced this frame (stage F1):
+    /// the compute pass wrote the per-instance records + indirect commands + the
+    /// draw count itself, so SubmitIndirect binds them and issues one
+    /// drawIndexedIndirectCount rather than recording draws on the CPU.
+    struct IndirectDrawInputs
+    {
+        /// Per-instance records (world matrix + material id), read by the vertex
+        /// shader via gl_InstanceIndex (== each command's firstInstance). Bound at
+        /// t6 in place of the CPU path's own instance buffer.
+        nvrhi::IBuffer *instanceBuffer = nullptr;
+        /// DrawIndexedIndirectArguments the cull pass wrote, one per surviving submesh.
+        nvrhi::IBuffer *indirectBuffer = nullptr;
+        /// Single-uint count the cull pass wrote (survivor draw count).
+        nvrhi::IBuffer *countBuffer = nullptr;
+        /// Upper bound on commands (== the cull pass's output capacity); caps
+        /// drawIndexedIndirectCount so it never reads past what was allocated.
+        uint32_t maxDrawCount = 0;
+        /// The shared GeometryArena's vertex/index buffers every draw addresses.
+        /// F1 assumes a single arena (as stage E does — one drawIndexedIndirect
+        /// group); a second arena would need per-arena count buffers.
+        nvrhi::IBuffer *vertexBuffer = nullptr;
+        nvrhi::IBuffer *indexBuffer  = nullptr;
+    };
+
+    /// @brief Draws a GPU-culled frame: binds the global set against @p in's
+    /// instance buffer, points the pipeline at the cull pass's indirect + count
+    /// buffers, and issues one `drawIndexedIndirectCount`. Reports the API call in
+    /// `drawCalls`; the caller reports the true survivor tally from
+    /// MeshCuller::SurvivorDrawCount (this method only sees the capacity cap).
+    /// @pre IsValid(), UpdateFrameConstants() this frame, and a MeshCuller::Cull
+    ///      recorded into the same command list ahead of this call.
+    [[nodiscard]] SubmitStats SubmitIndirect(const RenderFrame &frame, const IndirectDrawInputs &in) const;
+
     bool IsValid() const { return _pipeline != nullptr; }
 
     /// @brief Drops the cached global binding set so the next Submit rebuilds it.
@@ -145,9 +178,11 @@ class MeshPass
   private:
     /// @brief Builds (once, then caches) the pass's single binding set: frame
     /// constants, the shared sampler, the clustered-light buffers, the material
-    /// table, and the per-instance buffer. Rebuilt when the instance buffer grows
-    /// (its handle changes) or after InvalidateBindingSets().
-    nvrhi::IBindingSet *GetOrCreateGlobalBindingSet() const;
+    /// table, and the per-instance buffer at t6 — @p instanceBuffer, which is the
+    /// pass's own (CPU path) or the MeshCuller's (GPU path). Rebuilt when that
+    /// buffer handle changes (a growth, or a switch between paths) or after
+    /// InvalidateBindingSets().
+    nvrhi::IBindingSet *GetOrCreateGlobalBindingSet(nvrhi::IBuffer *instanceBuffer) const;
 
     /// @brief Ensures the indirect-args buffer holds at least @p commandCount
     /// DrawIndexedIndirectArguments, reallocating with geometric growth when not.

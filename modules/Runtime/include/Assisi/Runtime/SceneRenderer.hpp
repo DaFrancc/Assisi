@@ -25,6 +25,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Render/IconPass.hpp>
 #include <Assisi/Render/LinePass.hpp>
+#include <Assisi/Render/MeshCuller.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Render/OutlinePass.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
@@ -97,6 +98,16 @@ class SceneRenderer
     /// the sort's instancing payoff is measured.
     void SetSortDraws(bool enabled) { _sortDraws = enabled; }
     [[nodiscard]] bool SortDraws() const { return _sortDraws; }
+
+    /// @brief Take the GPU-driven cull path (stage F1) instead of the CPU
+    /// extract/sort path (off by default). A compute pass frustum-culls every
+    /// object and builds the indirect draw commands on the GPU; the CPU issues one
+    /// drawIndexedIndirectCount. An A/B toggle against the CPU path — the opaque
+    /// image is identical. No-op if the culler failed to initialize (falls back to
+    /// the CPU path). `SortDraws` doesn't affect this path; `FrustumCulling` gates
+    /// the GPU frustum test.
+    void SetGpuCulling(bool enabled) { _gpuCulling = enabled; }
+    [[nodiscard]] bool GpuCulling() const { return _gpuCulling; }
 
     /// @brief Select a material-channel debug view (None = normal lit render).
     /// The mesh pass short-circuits its shader to that channel — for inspecting
@@ -174,6 +185,11 @@ class SceneRenderer
     nvrhi::IDevice     *_device = nullptr;
     LightingSystem      _lighting;
     Render::MeshPass    _meshPass;
+    // GPU-driven cull (stage F1): the compute cull pass + the reused host-side
+    // table builder it uploads from. Initialized alongside the mesh pass; the draw
+    // path uses them only when _gpuCulling is on (else the CPU path runs).
+    Render::MeshCuller       _meshCuller;
+    Render::CullTableBuilder _cullBuilder;
     Render::OutlinePass _outlinePass;
     Render::IconPass    _iconPass;
     Render::LinePass    _linePass;
@@ -209,6 +225,7 @@ class SceneRenderer
 
     bool      _frustumCulling = true; // default draw path culls off-screen meshes
     bool      _sortDraws      = true; // default draw path sorts by sort key before submit
+    bool      _gpuCulling     = false; // GPU-driven cull path (stage F1); CPU path is the default reference
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 

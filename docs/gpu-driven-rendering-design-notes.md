@@ -169,7 +169,28 @@ briefly:
   `multiDrawIndirect` + `drawIndirectFirstInstance`. Overlay shows
   instances→batches→indirect-calls; the "Sort Draws" A/B now measures instancing.
 
-**Stages 5–6 (F–G) are unbuilt:** move frustum cull + LOD select to a compute
-pass feeding an indirect count buffer (F), then two-phase HZB occlusion (G).
-Revisit when instance counts approach the point where the CPU per-object extract
-loop becomes the bottleneck.
+**Stage 5 (F) is being built in two steps; stage 6 (G) is unbuilt:**
+
+- **F1 (done, GPU-verified):** GPU compute *frustum* cull feeding an indirect-count
+  buffer, **LOD0 only**, **one indirect command per surviving submesh** (no
+  cross-object coalescing), behind a **"GPU Cull" A/B toggle** that keeps the
+  stage-4 (E) CPU path as the pixel-exact reference. Proved the "draws are built
+  on the GPU and vanish into buffers" plumbing against a trusted image before
+  anything relies on it. A GPU→CPU draw-count readback (a small CPU-readable ring,
+  a few frames stale) surfaces the survivor count in the overlay — without it
+  culling is invisible and unverifiable, so it belongs in F1, not F2. Two bring-up
+  lessons: GPU-written indirect/count buffers need `keepInitialState=true` +
+  `initialState=UnorderedAccess` (that *seeds* NVRHI's tracked state so it barriers
+  UAV→IndirectArgument; `false` leaves the state Unknown and crashes in
+  `requireBufferState`), and the overlay must report the readback survivor count,
+  not the capacity, or culling looks inert.
+- **F2 (deferred, once F1 is established):** GPU-side **instance coalescing**
+  (restores stage-4's batch collapse, which F1 gives up — so `batches` == drawn on
+  the F1 path today), **projected-screen-size LOD selection** (the "LOD selection
+  rides along" half), and a **dirty-tracked ECS→GPU object mirror** so the
+  per-frame CPU gather disappears too — the point at which "CPU per-object cost
+  gone" is fully true.
+- **G:** two-phase HZB occlusion.
+
+Revisit F2/G when instance counts approach the point where the CPU per-object
+extract loop becomes the bottleneck.
