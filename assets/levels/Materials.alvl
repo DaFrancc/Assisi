@@ -173,6 +173,35 @@
           "radius": 12.0
         }
       }
+    },
+    {
+      "components": {
+        "Transform": {
+          "position": [
+            6.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        },
+        "MeshRenderer": {
+          "mesh": {
+            "guid": "ca562793-5aa4-4475-a784-1c1c6e5957ee",
+            "path": "models/car_lod/car_lod.gltf"
+          },
+          "materialOverrides": []
+        }
+      }
     }
   ]
 }
