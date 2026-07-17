@@ -162,11 +162,17 @@ decision; the rest have no clean unit seam and are deferred with the app.
   Also duplicate component names are accepted and silently overwrite in saves. Fix:
   `ASSISI_ASSERT(!_finalized)` in `Register` (or an explicit `Freeze()`), and
   hard-assert unique names in `EnsureFinalized`.
-- [ ] **M5 — Swapchain never recreated on same-size `OUT_OF_DATE`.**
-  `VulkanContext.cpp:858-863,920-927` — recovery lives only in the resize callback,
-  so a display-mode change / monitor hot-plug / compositor restart freezes rendering
-  forever. Fix: `_swapchainStale` flag on OUT_OF_DATE from acquire or present;
-  rebuild at the top of the next `BeginFrame` at current framebuffer size.
+- [x] **M5 — Swapchain never recreated on same-size `OUT_OF_DATE`.** (fixed defensively; could not reproduce on this Wayland session — see note)
+  `VulkanContext.cpp:858-863,920-927` — recovery lived only in the resize callback,
+  so a display-mode change / monitor hot-plug / compositor restart would freeze
+  rendering forever. Fix applied: `_swapchainStale` flag set on OUT_OF_DATE from
+  acquire or present; the top of the next `BeginFrame` rebuilds at the current
+  surface extent (kept set until a rebuild succeeds, so a mid-minimize failure
+  retries). Falsification note: on Wayland the swapchain binds to the `wl_surface`,
+  not the display mode, so mode change / TTY switch never produced a same-size
+  OUT_OF_DATE here — the freeze could not be reproduced on this platform. The
+  missing recovery path is real in code and matters on X11/Windows/other drivers,
+  so the fix is defensive rather than repro-verified.
 - [ ] **M6 — Surface-format fallback can pick an unmappable format (boot abort) or
   double-gamma.** `VulkanContext.cpp:576-584` + `ToNvrhiFormat:384-392` — `formats[0]`
   fallback lands in `Format::UNKNOWN` → app refuses to launch even when a mappable

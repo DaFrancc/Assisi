@@ -816,6 +816,25 @@ void VulkanContext::SetVSync(bool enabled)
 
 std::optional<RenderFrame> VulkanContext::BeginFrame()
 {
+    // A same-size OUT_OF_DATE (display-mode change, monitor hot-plug, compositor
+    // restart) doesn't change the framebuffer dimensions, so the window resize
+    // callback never fires and Resize() is never called — without this, rendering
+    // would freeze forever. Rebuild here at the current surface extent
+    // (CreateSwapchainResources re-queries capabilities.currentExtent, so the
+    // passed extent is only the Wayland/no-currentExtent fallback). Keep the flag
+    // set until a rebuild actually succeeds, so a transient failure (e.g. a frame
+    // caught mid-minimize with a zero extent) simply retries next frame instead of
+    // leaving us wedged with a stale swapchain.
+    if (_swapchainStale && _device != VK_NULL_HANDLE)
+    {
+        VKD.vkDeviceWaitIdle(_device);
+        (void)CreateSwapchainResources(_swapchainExtent.width, _swapchainExtent.height);
+        if (_swapchain != VK_NULL_HANDLE)
+        {
+            _swapchainStale = false;
+        }
+    }
+
     if (_swapchain == VK_NULL_HANDLE)
     {
         return std::nullopt; // minimized; Resize() hasn't (re)created anything yet
@@ -857,8 +876,10 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - acquireStart).count();
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
     {
-        // Swapchain is stale; the next explicit Resize() (from the window resize
-        // callback) will recreate it. Skip rendering this frame.
+        // Swapchain is stale. A resize would recreate it via the window callback,
+        // but a same-size stale event won't — so flag it and let the top of the
+        // next BeginFrame rebuild unconditionally. Skip rendering this frame.
+        _swapchainStale = true;
         return std::nullopt;
     }
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
@@ -917,10 +938,16 @@ void VulkanContext::EndFrame()
     const VkResult presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentWaitStart).count();
-    // OUT_OF_DATE/SUBOPTIMAL are expected on resize; the window resize callback
-    // recreates the swapchain, so they're not errors here. Anything else is.
-    if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR &&
-        presentResult != VK_ERROR_OUT_OF_DATE_KHR)
+    // OUT_OF_DATE/SUBOPTIMAL are expected on resize; they're not errors here.
+    // OUT_OF_DATE means the swapchain must be rebuilt — flag it so the next
+    // BeginFrame does so even when no resize callback follows (same-size event).
+    // SUBOPTIMAL still presents correctly, so we leave it be to avoid a rebuild
+    // loop on drivers that report it persistently. Anything else is a real error.
+    if (presentResult == VK_ERROR_OUT_OF_DATE_KHR)
+    {
+        _swapchainStale = true;
+    }
+    else if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR)
     {
         Core::Log::Error("VulkanContext: vkQueuePresentKHR failed with VkResult {}",
                          static_cast<int>(presentResult));

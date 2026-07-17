@@ -148,6 +148,13 @@ class VulkanContext
     VkFormat              _swapchainFormat = VK_FORMAT_UNDEFINED;
     VkFormat              _depthFormat = VK_FORMAT_UNDEFINED;
     bool                  _vsyncEnabled = true; // FIFO by default; see ChoosePresentMode()
+    // Set when acquire/present reports VK_ERROR_OUT_OF_DATE_KHR. The window resize
+    // callback only fires on a dimension change, so a *same-size* stale event
+    // (display-mode / refresh-rate change, monitor hot-plug, compositor restart)
+    // would otherwise never rebuild the swapchain and rendering would freeze
+    // forever. BeginFrame() rebuilds at the top of the next frame when this is set.
+    // Touched only on the render thread (BeginFrame/EndFrame), so a plain bool.
+    bool                  _swapchainStale = false;
     float                 _maxAnisotropy = 1.0f; // >1 once anisotropic filtering is enabled; see GetMaxAnisotropy()
 
     VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;
