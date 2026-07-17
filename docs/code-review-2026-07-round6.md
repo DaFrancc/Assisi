@@ -140,7 +140,7 @@ decision; the rest have no clean unit seam and are deferred with the app.
 
 ## Major
 
-- [ ] **M1 — Async publish erases the loading marker before the epoch check.**
+- [x] **M1 — Async publish erases the loading marker before the epoch check.** (fixed; reproduced live via widened race window + fingerprint logs, then verified clean)
   `AssetCache.cpp:208-210` (mesh) + `:439-441` (material) — a stale worker's publish
   deletes the *new* job's `_meshLoading` marker, then drops on the epoch check.
   `HasPendingLoads()` lies (placeholders stick), and a later resolve kicks a

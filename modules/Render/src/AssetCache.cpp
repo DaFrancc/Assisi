@@ -205,9 +205,13 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
                [loadPath, pathToId] { return Geometry::ImportMesh(loadPath.View(), pathToId); })
         .Then(Core::Pool::Main,
               [this, loadPath, epoch](std::expected<Geometry::MeshData, Geometry::MeshImportError> imported) {
-                  _meshLoading.erase(loadPath);
                   if (epoch != _loadEpoch)
-                      return; // the level that asked for this mesh has since unloaded — drop it
+                      return; // Stale: the level that asked for this mesh has since unloaded. Return
+                              // WITHOUT erasing the loading marker — Clear() already dropped ours, and
+                              // a current-epoch job for the same path may own the marker now. Erasing
+                              // it would make HasPendingLoads() lie and let a duplicate import double-
+                              // upload the same entry (leaked arena range, wasted id).
+                  _meshLoading.erase(loadPath);
                   if (!imported)
                   {
                       _missingMeshWarned.insert(loadPath);
@@ -436,9 +440,10 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
                   return bundle;
               })
         .Then(Core::Pool::Main, [this, loadPath, epoch](MaterialLoadBundle bundle) {
-            _materialLoading.erase(loadPath);
             if (epoch != _loadEpoch)
-                return; // the level that asked for this material has since unloaded — drop it
+                return; // Stale (see ResolveMesh's twin): return before erasing so a stale completion
+                        // can't drop a current-epoch job's loading marker and trigger a duplicate load.
+            _materialLoading.erase(loadPath);
 
             // Publish (main thread): resolve each channel to a bindless slot, then
             // build the material and write its table row. Every slot/row written
