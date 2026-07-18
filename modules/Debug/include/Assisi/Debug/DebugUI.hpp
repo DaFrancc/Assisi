@@ -74,6 +74,27 @@ class DebugUI
     /// @return A valid id, or ImTextureID_Invalid if @p texture is null or exposes
     ///         no VkImageView.
     static ImTextureID GetOrCreateTextureId(nvrhi::ITexture *texture);
+
+    /// @brief Drops the cached ImGui registration for @p texture, if any, and frees
+    /// its descriptor set now instead of waiting for the deferred sweep. Call this
+    /// right before freeing a texture you have shown, so a different texture later
+    /// allocated at the same address can't collide with a stale id (the hazard
+    /// GetOrCreateTextureId warns about). No-op if the texture was never registered.
+    ///
+    /// @warning Frees the descriptor set immediately, so the caller must guarantee
+    /// no in-flight frame still references it — call it only after a
+    /// device waitForIdle (as AssetCache::ClearThumbnails does), or once the texture
+    /// has gone unrequested long enough for the deferred sweep to have run.
+    static void ReleaseTexture(nvrhi::ITexture *texture);
+
+    /// @brief The editor's loading-spinner font, or null if none was shipped. A
+    /// dedicated face whose consecutive glyphs are the frames of an animated
+    /// loading icon: the caller advances one glyph per tick and loops, so drawing a
+    /// frame costs a single textured quad. Kept apart from the text font so its
+    /// frame glyphs never collide with real characters. Loaded from
+    /// `editor/loading/LoadingSpinner.ttf` at startup; absent asset -> null, and
+    /// callers fall back to a plain placeholder.
+    static ImFont *LoadingFont();
 };
 
 } // namespace Assisi::Debug

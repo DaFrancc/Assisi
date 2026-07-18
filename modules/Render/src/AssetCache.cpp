@@ -285,6 +285,90 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, ColorSpac
     return &texture;
 }
 
+const Texture *AssetCache::ResolveThumbnail(const Core::AssetPath &path)
+{
+    if (path.Empty())
+        return nullptr;
+
+    // Resident already: a valid entry is ready to show; an invalid one records a
+    // decode that failed, so we don't re-kick a broken file every frame.
+    if (std::unordered_map<Core::AssetPath, Texture>::iterator it = _thumbnails.find(path);
+        it != _thumbnails.end())
+        return it->second.IsValid() ? &it->second : nullptr;
+
+    // A decode for this path is already in flight — show the placeholder until it
+    // publishes, without kicking a duplicate.
+    if (_thumbnailLoading.find(path) != _thumbnailLoading.end())
+        return nullptr;
+
+    // No job system (e.g. a headless test): degrade to a synchronous load rather
+    // than a thumbnail that never resolves.
+    if (_jobs == nullptr)
+    {
+        Texture &texture = _thumbnails[path];
+        if (std::expected<void, Core::AssetError> loaded =
+                texture.LoadFromAssets(_device, path.View(), ColorSpace::Linear);
+            !loaded)
+            return nullptr; // keep the invalid entry so a broken file isn't retried
+        return &texture;
+    }
+
+    _thumbnailLoading.insert(path);
+    const uint64_t               epoch      = _thumbnailEpoch.load(std::memory_order_relaxed);
+    const std::atomic<uint64_t> *thumbEpoch = &_thumbnailEpoch; // worker reads it to bail early (read-only)
+    const std::string            vpath(path.View());
+
+    _jobs
+        ->Run(Core::Pool::Worker,
+              [vpath, epoch, thumbEpoch]() -> std::expected<DecodedImage, Core::AssetError> {
+                  // Skip the decode if a directory change already superseded this
+                  // thumbnail (the main-thread publish drops it regardless; this just
+                  // avoids the wasted work when browsing folders quickly). The error
+                  // value is never inspected — the continuation returns on the epoch
+                  // mismatch before it looks at the result.
+                  if (thumbEpoch->load(std::memory_order_relaxed) != epoch)
+                      return std::unexpected(Core::AssetError::FileReadFailed);
+                  return Texture::DecodeImage(vpath, ColorSpace::Linear);
+              })
+        .Then(Core::Pool::Main, [this, path, epoch](std::expected<DecodedImage, Core::AssetError> decoded) {
+            if (epoch != _thumbnailEpoch.load(std::memory_order_relaxed))
+                return; // superseded (see the mesh path's twin): return before erasing so a stale
+                        // completion can't drop a live epoch's loading marker and re-kick a load.
+            _thumbnailLoading.erase(path);
+            if (!decoded)
+            {
+                // Remember the failure (a default-constructed, invalid entry) so a
+                // broken file isn't re-kicked every frame.
+                (void)_thumbnails[path];
+                return;
+            }
+            Texture &texture = _thumbnails[path];
+            texture.UploadDecoded(_device, *decoded, std::string(path.View()).c_str());
+        });
+
+    return nullptr; // loading — the browser shows a placeholder tile this frame
+}
+
+void AssetCache::ClearThumbnails(const ThumbnailReleaseFn &onRelease)
+{
+    // Drain the GPU before freeing: a thumbnail texture may still be sampled by an
+    // in-flight frame's ImGui draw. Navigation is a user action, not a per-frame
+    // path, so this stall is fine (unlike an LRU cap, which would need deferred
+    // frees). With the GPU idle, onRelease can safely drop each texture's ImGui
+    // descriptor-set binding before we destroy it.
+    _device->waitForIdle();
+    if (onRelease)
+        for (std::pair<const Core::AssetPath, Texture> &entry : _thumbnails)
+            if (entry.second.IsValid())
+                onRelease(entry.second.NativeTexture());
+
+    // Cancel in-flight decodes (their publishes see the bumped epoch and no-op),
+    // then drop every resident thumbnail.
+    ++_thumbnailEpoch;
+    _thumbnailLoading.clear();
+    _thumbnails.clear();
+}
+
 uint32_t AssetCache::RegisterBindlessTexture(Texture &texture)
 {
     if (texture.BindlessIndex() != Texture::kInvalidBindlessIndex)
@@ -551,6 +635,14 @@ void AssetCache::Clear()
     _materials.clear();
     _missingMeshWarned.clear();
     _missingMaterialWarned.clear();
+
+    // Cancel any in-flight thumbnail decodes and drop resident thumbnails too, so a
+    // full reset leaves nothing behind. The editor's thumbnail cache is a separate
+    // AssetCache instance and evicts through ClearThumbnails (which releases the
+    // ImGui bindings); on the scene cache these are simply empty. See ResolveThumbnail.
+    ++_thumbnailEpoch;
+    _thumbnailLoading.clear();
+    _thumbnails.clear();
 
     // Hand out ids from 1 again: an id is a row in the table, so ids stay dense per
     // asset set. Row 0 (the fallback) is repopulated by BuildFallbackMaterial below,

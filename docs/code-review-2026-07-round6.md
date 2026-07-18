@@ -188,11 +188,17 @@ decision; the rest have no clean unit seam and are deferred with the app.
   `Wait()` (`:219-228`) on a chain ending in `Pool::Main` from the main thread
   livelocks (HelpUntil only runs worker tasks). Fix: assert single continuation;
   drain main tasks in `HelpUntil` when on the main thread, or assert/doc loudly.
-- [ ] **M9 — Editor thumbnail pipeline.** `SandboxAssetBrowser.cpp:399-427` —
-  synchronous full-res decode+upload on the UI thread, unbounded VRAM cache (never
-  cleared), no clipper so all tiles resolve per frame → >256 images blows the
-  `kMaxDebugTextures` badge pool. Fix: decode/downscale on the job system with a
-  placeholder; clipper/visibility gate; LRU cap or clear on directory change.
+- [x] **M9 — Editor thumbnail pipeline.** (fixed) `SandboxAssetBrowser.cpp:399-427` —
+  was a synchronous full-res decode+upload on the UI thread, an unbounded VRAM cache
+  (never cleared), and no clipper so all tiles resolved per frame → >256 images blew
+  the `kMaxDebugTextures` badge pool. Fix applied: a dedicated async thumbnail path
+  (`AssetCache::ResolveThumbnail` — worker `DecodeImage`, main-thread upload, returns
+  null/placeholder while loading; kept out of the bindless table); an
+  `ImGui::IsRectVisible` gate so off-screen tiles neither decode nor grab a
+  descriptor set (caps the 256-set pool); and `AssetCache::ClearThumbnails` on
+  directory change (waits for idle, releases each ImGui binding via a new
+  `DebugUI::ReleaseTexture`, then frees) to bound VRAM. Loading tiles show an
+  animated spinner from a dedicated frame-glyph font (`DebugUI::LoadingFont`).
 - [x] **M10 — Gizmo drag mis-commits when Transform header / Inspector collapsed.** (fixed; manually reproduced + verified — no unit seam)
   `SandboxGizmo.cpp:132-135` + `EditHistory.cpp:253-265` — the gesture's liveness is
   owned by the inspector's per-frame `RecordBefore` inside a `CollapsingHeader`;

@@ -11,9 +11,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cfloat>
 #include <filesystem>
 #include <string>
 #include <string_view>
+
+namespace
+{
+// Defined below in this file's anonymous namespace; forward-declared so the hello
+// window (above that block) can play the spinner too.
+void DrawLoadingFrame(const ImVec2 &origin, float size);
+} // namespace
 
 void SandboxApp::DrawHelloImageWindow()
 {
@@ -23,6 +31,16 @@ void SandboxApp::DrawHelloImageWindow()
         {
             const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(_helloTexture.NativeTexture());
             ImGui::Image(id, ImVec2(256.f, 256.f));
+
+            // Play the loading spinner below the image, centred to its width.
+            if (Assisi::Debug::DebugUI::LoadingFont() != nullptr)
+            {
+                constexpr float kSpin  = 128.f;
+                const ImVec2    cursor = ImGui::GetCursorScreenPos();
+                const ImVec2    origin(cursor.x + (256.f - kSpin) * 0.5f, cursor.y);
+                ImGui::Dummy(ImVec2(256.f, kSpin)); // reserve the row
+                DrawLoadingFrame(origin, kSpin);
+            }
         }
         else
         {
@@ -128,6 +146,57 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
     drawList->AddCircleFilled(center, radius, IM_COL32(150, 120, 96, 255), 32);
     drawList->AddCircleFilled(ImVec2(center.x - radius * 0.30f, center.y - radius * 0.30f), radius * 0.55f,
                               IM_COL32(214, 188, 150, 255), 32);
+}
+
+// Thumbnail loading spinner: the editor's loading-spinner font (DebugUI::LoadingFont)
+// stores the animation frames as consecutive glyphs. Advance one frame per tick and
+// loop. To match a re-authored font, set kLoadingFrameCount to the number of frames
+// and kLoadingFirstFrame to the first frame's codepoint ('a' for an a..z sequence,
+// or a Private-Use codepoint like 0xE000); kLoadingFps sets the playback speed.
+constexpr unsigned int kLoadingFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F02F
+constexpr int          kLoadingFrameCount = 48;     // one full trip of the pulse around the 12-dot ring
+constexpr float        kLoadingFps        = 36.0f;  // 1 s per revolution
+
+/// @brief Draws the current loading-spinner frame centred in a @p size square at
+/// @p origin, over a thumbnail tile still decoding on a worker thread. Cheap: one
+/// glyph (a single textured quad) picked by a time-driven counter. No-op if no
+/// spinner font is loaded (the caller then leaves a plain placeholder).
+void DrawLoadingFrame(const ImVec2 &origin, float size)
+{
+    ImFont *font = Assisi::Debug::DebugUI::LoadingFont();
+    if (font == nullptr)
+        return;
+
+    const int          frame = static_cast<int>(ImGui::GetTime() * kLoadingFps) % kLoadingFrameCount;
+    const unsigned int cp    = kLoadingFirstFrame + static_cast<unsigned int>(frame);
+
+    // Encode the frame codepoint as UTF-8 (covers ASCII 'a'.. and BMP Private-Use
+    // up to U+FFFF — the two mappings a spinner font is likely to use).
+    char utf8[4] = {0, 0, 0, 0};
+    if (cp < 0x80)
+    {
+        utf8[0] = static_cast<char>(cp);
+    }
+    else if (cp < 0x800)
+    {
+        utf8[0] = static_cast<char>(0xC0 | (cp >> 6));
+        utf8[1] = static_cast<char>(0x80 | (cp & 0x3F));
+    }
+    else
+    {
+        utf8[0] = static_cast<char>(0xE0 | (cp >> 12));
+        utf8[1] = static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+        utf8[2] = static_cast<char>(0x80 | (cp & 0x3F));
+    }
+
+    ImDrawList *drawList  = ImGui::GetWindowDrawList();
+    const float glyphSize = size * 0.85f;
+    const ImU32 color     = IM_COL32(226, 222, 210, 255);
+
+    // Centre the glyph in the tile using its measured extent at the scaled size.
+    const ImVec2 extent = font->CalcTextSizeA(glyphSize, FLT_MAX, 0.0f, utf8);
+    const ImVec2 pos(origin.x + (size - extent.x) * 0.5f, origin.y + (size - extent.y) * 0.5f);
+    drawList->AddText(font, glyphSize, pos, color, utf8);
 }
 
 /// @brief Paints a small amber "!" badge in the top-right corner of a @p size
@@ -250,6 +319,12 @@ void SandboxApp::ResolveMeshRendererAssets(Assisi::Runtime::MeshRenderer &mrc)
 
 void SandboxApp::RescanAssetBrowser()
 {
+    // Leaving this directory: drop its thumbnails so browsing many folders doesn't
+    // grow VRAM without bound. ClearThumbnails waits for the GPU to idle, so it's
+    // safe to release each texture's ImGui binding here before it's freed.
+    _thumbnailCache.ClearThumbnails(
+        [](nvrhi::ITexture *texture) { Assisi::Debug::DebugUI::ReleaseTexture(texture); });
+
     _assetBrowserDirs.clear();
     _assetBrowserImages.clear();
     _assetBrowserMeshes.clear();
@@ -399,16 +474,33 @@ void SandboxApp::DrawAssetBrowser()
     for (const std::string &img : _assetBrowserImages)
     {
         const std::string vpath = _assetBrowserDir.empty() ? img : _assetBrowserDir + "/" + img;
-        const Assisi::Render::Texture *tex =
-            _thumbnailCache.ResolveTexture(Assisi::Core::AssetPath{std::string_view{vpath}});
 
         ImGui::PushID(img.c_str());
         ImGui::BeginGroup();
         bool clicked = false;
+        // Only resolve tiles actually on screen: an off-screen row draws a plain
+        // placeholder button, so a folder of hundreds of images neither kicks
+        // hundreds of decodes nor exhausts the 256-set ImGui descriptor pool in one
+        // frame. Visible tiles decode asynchronously (ResolveThumbnail returns null
+        // while loading), so entering a texture-heavy folder no longer hitches.
+        const bool visible = ImGui::IsRectVisible(ImVec2(thumb, thumb));
+        const Assisi::Render::Texture *tex =
+            visible ? _thumbnailCache.ResolveThumbnail(Assisi::Core::AssetPath{std::string_view{vpath}}) : nullptr;
         if (tex != nullptr && tex->IsValid())
         {
             const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(tex->NativeTexture());
             clicked = ImGui::ImageButton("thumb", id, ImVec2(thumb, thumb));
+        }
+        else if (visible &&
+                 _thumbnailCache.IsThumbnailLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
+                 Assisi::Debug::DebugUI::LoadingFont() != nullptr)
+        {
+            // Still decoding on a worker: a blank tile with the animated loading
+            // spinner over it (the filename still shows below). Reads as "loading"
+            // rather than a dead text button.
+            const ImVec2 tile = ImGui::GetCursorScreenPos();
+            clicked           = ImGui::Button("##loading", ImVec2(thumb, thumb));
+            DrawLoadingFrame(tile, thumb);
         }
         else
         {

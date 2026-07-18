@@ -106,6 +106,43 @@ class AssetCache
     /// colour space. A successful pointer stays valid until Clear().
     const Texture *ResolveTexture(const Core::AssetPath &path, ColorSpace colorSpace);
 
+    /// @brief Resolves a texture path to an editor thumbnail, decoded on a worker
+    /// thread. Unlike ResolveTexture (synchronous, and bindless-registered for the
+    /// scene's materials), thumbnails live in their own cache: the first resolve
+    /// kicks a worker decode and returns **nullptr** ("still loading" — the browser
+    /// shows a placeholder tile); once decoded and uploaded on the main thread a
+    /// later resolve returns the Texture. A path that fails to decode returns null
+    /// permanently (the failure is remembered, not retried every frame). Thumbnails
+    /// are never bindless-registered (they display through ImGui, they aren't
+    /// sampled by materials). Always Linear colour space. Falls back to a synchronous
+    /// load when no job system is bound (e.g. a headless test).
+    const Texture *ResolveThumbnail(const Core::AssetPath &path);
+
+    /// @brief Whether a thumbnail decode for @p path is currently in flight. A tile
+    /// that ResolveThumbnail returned null for is either still decoding (true) or
+    /// failed to decode (false) — the browser uses this to show a loading indicator
+    /// only while the decode is actually pending.
+    bool IsThumbnailLoading(const Core::AssetPath &path) const
+    {
+        return _thumbnailLoading.find(path) != _thumbnailLoading.end();
+    }
+
+    /// @brief Invoked once per resident thumbnail about to be freed (see
+    /// ClearThumbnails), with the texture still valid, so the caller can drop any
+    /// external reference to it — chiefly the ImGui descriptor-set binding the
+    /// editor made via DebugUI::GetOrCreateTextureId. Without this, a freed
+    /// `nvrhi::ITexture` whose address a later texture reuses would alias a stale
+    /// ImGui binding.
+    using ThumbnailReleaseFn = std::function<void(nvrhi::ITexture *)>;
+
+    /// @brief Drop every resident thumbnail and cancel in-flight thumbnail decodes
+    /// (their publishes become no-ops). Call on asset-browser directory change /
+    /// refresh so browsing many folders doesn't grow VRAM without bound. Waits for
+    /// the GPU to idle before freeing (a navigation-time stall, not per frame), and
+    /// invokes @p onRelease for each texture first so the caller can release its
+    /// ImGui binding. Leaves the scene/material texture cache (_textures) untouched.
+    void ClearThumbnails(const ThumbnailReleaseFn &onRelease = {});
+
     /// @brief Resolves a `.amat` material id to a cached Material. The `.amat` is
     /// parsed on the main thread; its **images decode on a worker thread**, so the
     /// first resolve kicks the load and returns the neutral **fallback** material
@@ -248,6 +285,18 @@ class AssetCache
     std::unordered_map<Core::AssetPath, MeshBuffer>         _meshes;
     std::unordered_map<TextureKey, Texture, TextureKeyHash> _textures;
     std::unordered_map<Core::AssetPath, Material>           _materials; // .amat files
+
+    // Editor asset-browser thumbnails, decoded asynchronously (see ResolveThumbnail).
+    // Kept apart from _textures so they never take a bindless slot (they display
+    // through ImGui, not the material path). Path-keyed: thumbnails are always
+    // Linear, so no colour-space dimension. A default-constructed (invalid) entry
+    // marks a decode that failed, so a broken file isn't re-kicked every frame.
+    std::unordered_map<Core::AssetPath, Texture> _thumbnails;
+    std::unordered_set<Core::AssetPath>          _thumbnailLoading;
+    // Bumped when the thumbnail set is invalidated; an in-flight decode whose
+    // captured epoch no longer matches is dropped on publish. Atomic because the
+    // worker reads it (to bail early); the authoritative drop is on the main thread.
+    std::atomic<uint64_t> _thumbnailEpoch = 0;
 
     // The id-0 fallback; rebuilt on Clear (its texture pointers would dangle).
     Material _fallbackMaterial;

@@ -155,6 +155,39 @@ void LoadEditorFont()
     }
     io.Fonts->AddFontDefault();
 }
+
+// The editor's optional loading-spinner font (see DebugUI::LoadingFont): a
+// dedicated face whose consecutive glyphs are the frames of an animated loading
+// icon. Null until LoadLoadingSpinnerFont runs (and stays null if the asset isn't
+// shipped). A raw ImFont* owned by the shared atlas, valid until Shutdown.
+ImFont *s_loadingFont = nullptr;
+
+// Load the loading-spinner font into the atlas, if present. Must run before the
+// Vulkan backend builds the font texture (same as LoadEditorFont). A missing asset
+// is not an error — the asset browser falls back to a plain placeholder.
+void LoadLoadingSpinnerFont()
+{
+    // Cover both an ASCII frame mapping ('a'.., easy to author) and a Private-Use
+    // mapping, so the font can key its frames either way. Static: the atlas keeps
+    // the pointer until it is built.
+    static const ImWchar kRanges[] = {
+        0x0020, 0x00FF, // ASCII + Latin-1 ('a'..'z' frame glyphs)
+        0xE000, 0xF8FF, // ...or a Private-Use-Area mapping
+        0,
+    };
+    constexpr const char *kFontVPath = "editor/loading/Spinner.ttf";
+    constexpr float        kFontSize = 128.0f; // rasterised big so the spinner stays crisp when drawn large
+
+    const std::expected<std::filesystem::path, Core::AssetError> resolved =
+        Core::AssetSystem::Resolve(kFontVPath);
+    if (!resolved.has_value())
+        return; // no spinner font shipped yet — browser degrades to a plain placeholder
+
+    const std::string path = resolved->string();
+    s_loadingFont = ImGui::GetIO().Fonts->AddFontFromFileTTF(path.c_str(), kFontSize, nullptr, kRanges);
+    if (s_loadingFont == nullptr)
+        Core::Log::Warn("DebugUI: failed to load loading-spinner font '{}'.", kFontVPath);
+}
 } // namespace
 
 void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::VulkanContext &vulkanContext)
@@ -174,8 +207,10 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     io.ConfigDragClickToInputText = true;
 
     // Load the editor Nerd Font before the Vulkan backend builds the atlas (so the
-    // UI gets Unicode punctuation + icon glyphs, not ProggyClean's ASCII-only set).
+    // UI gets Unicode punctuation + icon glyphs, not ProggyClean's ASCII-only set),
+    // plus the optional loading-spinner font (frames as consecutive glyphs).
     LoadEditorFont();
+    LoadLoadingSpinnerFont();
 
     ImGui::StyleColorsDark();
 
@@ -314,6 +349,27 @@ ImTextureID DebugUI::GetOrCreateTextureId(nvrhi::ITexture *texture)
         ImGui_ImplVulkan_AddTexture(imageView, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
     s_textureIds.emplace(texture, RegisteredTexture{set, s_frameIndex});
     return static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(set));
+}
+
+void DebugUI::ReleaseTexture(nvrhi::ITexture *texture)
+{
+    if (texture == nullptr)
+        return;
+
+    // Erase the entry immediately so a future texture reusing this address rebinds
+    // fresh (rather than finding this stale id), and free the descriptor set now —
+    // the caller guarantees it is no longer referenced by an in-flight frame (see
+    // the header warning; ClearThumbnails waits for idle first).
+    if (TextureIdMap::iterator it = s_textureIds.find(texture); it != s_textureIds.end())
+    {
+        ImGui_ImplVulkan_RemoveTexture(it->second.set);
+        s_textureIds.erase(it);
+    }
+}
+
+ImFont *DebugUI::LoadingFont()
+{
+    return s_loadingFont;
 }
 
 void DebugUI::EndFrame(Render::RenderFrame &frame)
