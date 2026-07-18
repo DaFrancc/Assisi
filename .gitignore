@@ -60,3 +60,6 @@ CLAUDE.md
 
 # Art
 logo/
+
+# Model assets — heavy binary art (glTF .bin + textures), kept local only.
+assets/models/
