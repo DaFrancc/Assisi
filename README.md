@@ -1,5 +1,9 @@
 # Assisi Engine
 
+<p align="center">
+  <img src="atom-frames/atom-spinner-white.webp" alt="Assisi atom spinner" width="120">
+</p>
+
 Assisi is a modern C++ game engine for Windows and Linux focused on building performant, modular systems for
 real-time games. This project is primarily for my own education and for my own
 needs first. Suggestions, PRs, forks, and bug reports are welcome. Use of this
