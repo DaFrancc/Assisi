@@ -353,6 +353,33 @@ FetchContent_Declare(imgui
 )
 FetchContent_MakeAvailable(imgui)
 
+# --- FreeType (font rasterizer backing IMGUI_ENABLE_FREETYPE)
+# Fetched rather than find_package'd: this project is fully self-contained via
+# FetchContent (no vcpkg/Conan), so there is no system FreeType to find on a
+# clean Windows tree. Disable every optional external dependency so FreeType
+# builds standalone and never picks up a stray system zlib/png or collides with
+# assimp's bundled zlib target. FreeType's own CMake defines the
+# Freetype::Freetype alias when built as a subproject.
+set(FT_DISABLE_ZLIB     ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BZIP2    ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_PNG      ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_HARFBUZZ ON CACHE BOOL "" FORCE)
+set(FT_DISABLE_BROTLI   ON CACHE BOOL "" FORCE)
+FetchContent_Declare(freetype
+    GIT_REPOSITORY https://github.com/freetype/freetype.git
+    GIT_TAG        VER-2-13-3
+    GIT_SHALLOW    TRUE
+    SYSTEM
+)
+FetchContent_MakeAvailable(freetype)
+# FreeType's in-tree build defines the target "freetype"; the namespaced
+# Freetype::Freetype alias only comes from its installed find_package config.
+# Provide the alias ourselves so downstream links are backend-agnostic (same
+# pattern as assimp above).
+if (NOT TARGET Freetype::Freetype)
+    add_library(Freetype::Freetype ALIAS freetype)
+endif()
+
 add_library(Assisi-ImGui STATIC
     "${imgui_SOURCE_DIR}/imgui.cpp"
     "${imgui_SOURCE_DIR}/imgui_draw.cpp"
@@ -366,7 +393,7 @@ add_library(Assisi-ImGui STATIC
 target_include_directories(Assisi-ImGui SYSTEM PUBLIC "${imgui_SOURCE_DIR}")
 # IMGUI_ENABLE_FREETYPE makes ImGui build its font atlas through FreeType by
 # default (PUBLIC so any TU that includes imgui.h sees the FreeType-gated APIs).
-find_package(Freetype REQUIRED)
+# Freetype::Freetype comes from the FetchContent block above, not find_package.
 target_compile_definitions(Assisi-ImGui PUBLIC IMGUI_ENABLE_FREETYPE)
 target_link_libraries(Assisi-ImGui PUBLIC Freetype::Freetype)
 # ImGui doesn't use our strict warning flags, so don't apply Assisi defaults
@@ -382,8 +409,12 @@ set(ASSISI_IMGUI_ROOT "${imgui_SOURCE_DIR}")
 FetchContent_Declare(implot
     GIT_REPOSITORY https://github.com/epezent/implot.git
     GIT_TAG        d65a2bef53d32502407de3a4be80f191e2f412d7
-    GIT_SHALLOW    TRUE
-    DOWNLOAD_ONLY  YES
+    # Bare commit pin, so NO GIT_SHALLOW: a depth-1 fetch only grabs the branch
+    # tip and can't reach an arbitrary older commit (see the ImGui note above).
+    # No DOWNLOAD_ONLY: it is not a FetchContent_Declare keyword — it leaks into
+    # the underlying ExternalProject_Add git-clone args and corrupts them, which
+    # silently skips the clone (see the stb/ImGui notes above). ImPlot ships no
+    # root CMakeLists, so MakeAvailable just populates it (no add_subdirectory).
 )
 FetchContent_MakeAvailable(implot)
 
@@ -407,7 +438,8 @@ add_library(implot::implot ALIAS Assisi-ImPlot)
 FetchContent_Declare(imguizmo
     GIT_REPOSITORY https://github.com/CedricGuillemet/ImGuizmo.git
     GIT_TAG        fd138a7ce089cfcbfee16da8e8692f37a0e9481e
-    GIT_SHALLOW    TRUE
+    # Bare commit pin, so NO GIT_SHALLOW: a depth-1 fetch only grabs the branch
+    # tip and can't reach this older commit (see the ImGui note above).
     SOURCE_SUBDIR  do-not-configure-imguizmo
 )
 FetchContent_MakeAvailable(imguizmo)
