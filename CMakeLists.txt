@@ -246,6 +246,32 @@ add_library(stb-headers INTERFACE)
 target_include_directories(stb-headers SYSTEM INTERFACE "${stb_SOURCE_DIR}")
 add_library(stb::stb ALIAS stb-headers)
 
+# --- libwebp (WebP decode, incl. animated frames via the demux/AnimDecoder API)
+# stb_image can't read WebP, so the loading-spinner's animated .webp is decoded
+# here instead. We only need to *decode*, so disable every encoder/tool/mux and
+# the JS/extras targets — libwebp still builds the `webp` + `webpdemux` static
+# libs that WebPAnimDecoder lives in. Marked SYSTEM so its headers don't trip our
+# strict warnings. libwebp ships a proper root CMakeLists, so MakeAvailable
+# add_subdirectory()s it and the targets below become linkable.
+set(WEBP_BUILD_ANIM_UTILS OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_CWEBP      OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_DWEBP      OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_GIF2WEBP   OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_IMG2WEBP   OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_VWEBP      OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_WEBPINFO   OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_WEBPMUX    OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_EXTRAS     OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_WEBP_JS    OFF CACHE BOOL "" FORCE)
+set(WEBP_BUILD_FUZZTEST   OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(libwebp
+    GIT_REPOSITORY https://github.com/webmproject/libwebp.git
+    GIT_TAG        v1.4.0
+    GIT_SHALLOW    TRUE
+    SYSTEM
+)
+FetchContent_MakeAvailable(libwebp)
+
 # --- Assimp (deferred catch-all import backend; off by default, see ASSISI_ENABLE_ASSIMP)
 if (ASSISI_ENABLE_ASSIMP)
     # Vendor zlib+minizip rather than picking up a system minizip. On distros that

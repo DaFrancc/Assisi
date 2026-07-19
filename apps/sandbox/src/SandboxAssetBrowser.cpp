@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cfloat>
+#include <cstddef>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -21,6 +22,7 @@ namespace
 // Defined below in this file's anonymous namespace; forward-declared so the hello
 // window (above that block) can play the spinner too.
 void DrawLoadingFrame(const ImVec2 &origin, float size);
+bool LoadingSpinnerAvailable();
 } // namespace
 
 void SandboxApp::DrawHelloImageWindow()
@@ -33,9 +35,9 @@ void SandboxApp::DrawHelloImageWindow()
             ImGui::Image(id, ImVec2(256.f, 256.f));
 
             // Play the loading spinner below the image, centred to its width.
-            if (Assisi::Debug::DebugUI::LoadingFont() != nullptr)
+            if (LoadingSpinnerAvailable())
             {
-                constexpr float kSpin  = 128.f;
+                constexpr float kSpin  = 224.f; // nearly fills the 256-wide image column
                 const ImVec2    cursor = ImGui::GetCursorScreenPos();
                 const ImVec2    origin(cursor.x + (256.f - kSpin) * 0.5f, cursor.y);
                 ImGui::Dummy(ImVec2(256.f, kSpin)); // reserve the row
@@ -148,27 +150,55 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
                               IM_COL32(214, 188, 150, 255), 32);
 }
 
-// Thumbnail loading spinner: the editor's loading-spinner font (DebugUI::LoadingFont)
-// stores the animation frames as consecutive glyphs. Advance one frame per tick and
-// loop. To match a re-authored font, set kLoadingFrameCount to the number of frames
-// and kLoadingFirstFrame to the first frame's codepoint ('a' for an a..z sequence,
-// or a Private-Use codepoint like 0xE000); kLoadingFps sets the playback speed.
-constexpr unsigned int kLoadingFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F02F
-constexpr int          kLoadingFrameCount = 48;     // one full trip of the pulse around the 12-dot ring
-constexpr float        kLoadingFps        = 36.0f;  // 1 s per revolution
+// Thumbnail loading spinner. Two interchangeable backends, chosen at compile time by
+// DebugUI::kUseWebpSpinner (flip that one bool and rebuild):
+//   * WebP — an animated .webp decoded to one texture per frame (DebugUI::LoadingWebpFrame).
+//   * TTF  — a font whose consecutive glyphs are the frames (DebugUI::LoadingFont),
+//            advanced one glyph per tick and looped.
+// Either path advances a time-driven counter at kLoadingFps and loops; the frame
+// count comes from the active backend (the WebP's decoded frames, or the TTF glyph
+// range below). To match a re-authored TTF, set kTtfFrameCount to the number of
+// frames and kTtfFirstFrame to the first frame's codepoint ('a' for an a..z
+// sequence, or a Private-Use codepoint like 0xE000).
+constexpr unsigned int kTtfFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F03F
+constexpr int          kTtfFrameCount = 64;     // one full v2 atom-spin loop (must match the font)
+constexpr float        kLoadingFps    = 32.0f;  // 64 frames / 32fps = 2 s per loop (matches the design)
 
-/// @brief Draws the current loading-spinner frame centred in a @p size square at
-/// @p origin, over a thumbnail tile still decoding on a worker thread. Cheap: one
-/// glyph (a single textured quad) picked by a time-driven counter. No-op if no
-/// spinner font is loaded (the caller then leaves a plain placeholder).
-void DrawLoadingFrame(const ImVec2 &origin, float size)
+/// @brief True when a loading spinner (in whichever backend kUseWebpSpinner selects)
+/// is loaded and can be drawn. Callers gate on this before reserving a spinner row.
+bool LoadingSpinnerAvailable()
+{
+    return Assisi::Debug::DebugUI::kUseWebpSpinner ? Assisi::Debug::DebugUI::LoadingWebpFrameCount() > 0
+                                                   : Assisi::Debug::DebugUI::LoadingFont() != nullptr;
+}
+
+/// @brief Draws the current WebP spinner frame as a textured quad, centred and inset
+/// (to 85%, matching the TTF glyph) in a @p size square at @p origin. Assumes frames
+/// are loaded (LoadingSpinnerAvailable() was true).
+void DrawWebpLoadingFrame(const ImVec2 &origin, float size)
+{
+    const std::size_t frameCount = Assisi::Debug::DebugUI::LoadingWebpFrameCount();
+    const std::size_t frame      = static_cast<std::size_t>(ImGui::GetTime() * kLoadingFps) % frameCount;
+    const ImTextureID id         = Assisi::Debug::DebugUI::LoadingWebpFrame(frame);
+    if (id == ImTextureID_Invalid)
+        return;
+
+    const float  quad = size * 0.85f;
+    const ImVec2 pos(origin.x + (size - quad) * 0.5f, origin.y + (size - quad) * 0.5f);
+    ImGui::GetWindowDrawList()->AddImage(id, pos, ImVec2(pos.x + quad, pos.y + quad));
+}
+
+/// @brief Draws the current TTF spinner glyph centred in a @p size square at
+/// @p origin. Cheap: one glyph (a single textured quad) picked by a time-driven
+/// counter. Assumes the spinner font is loaded.
+void DrawTtfLoadingFrame(const ImVec2 &origin, float size)
 {
     ImFont *font = Assisi::Debug::DebugUI::LoadingFont();
     if (font == nullptr)
         return;
 
-    const int          frame = static_cast<int>(ImGui::GetTime() * kLoadingFps) % kLoadingFrameCount;
-    const unsigned int cp    = kLoadingFirstFrame + static_cast<unsigned int>(frame);
+    const int          frame = static_cast<int>(ImGui::GetTime() * kLoadingFps) % kTtfFrameCount;
+    const unsigned int cp    = kTtfFirstFrame + static_cast<unsigned int>(frame);
 
     // Encode the frame codepoint as UTF-8 (covers ASCII 'a'.. and BMP Private-Use
     // up to U+FFFF — the two mappings a spinner font is likely to use).
@@ -197,6 +227,18 @@ void DrawLoadingFrame(const ImVec2 &origin, float size)
     const ImVec2 extent = font->CalcTextSizeA(glyphSize, FLT_MAX, 0.0f, utf8);
     const ImVec2 pos(origin.x + (size - extent.x) * 0.5f, origin.y + (size - extent.y) * 0.5f);
     drawList->AddText(font, glyphSize, pos, color, utf8);
+}
+
+/// @brief Draws the current loading-spinner frame centred in a @p size square at
+/// @p origin, over a thumbnail tile still decoding on a worker thread. Dispatches to
+/// whichever backend kUseWebpSpinner selects. No-op if no spinner is loaded (the
+/// caller then leaves a plain placeholder).
+void DrawLoadingFrame(const ImVec2 &origin, float size)
+{
+    if (Assisi::Debug::DebugUI::kUseWebpSpinner)
+        DrawWebpLoadingFrame(origin, size);
+    else
+        DrawTtfLoadingFrame(origin, size);
 }
 
 /// @brief Paints a small amber "!" badge in the top-right corner of a @p size
@@ -493,7 +535,7 @@ void SandboxApp::DrawAssetBrowser()
         }
         else if (visible &&
                  _thumbnailCache.IsThumbnailLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
-                 Assisi::Debug::DebugUI::LoadingFont() != nullptr)
+                 LoadingSpinnerAvailable())
         {
             // Still decoding on a worker: a blank tile with the animated loading
             // spinner over it (the filename still shows below). Reads as "loading"

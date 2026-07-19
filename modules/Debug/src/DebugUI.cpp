@@ -20,6 +20,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
+#include <Assisi/Render/Texture.hpp>
 
 #include <algorithm>
 #include <array>
@@ -188,6 +189,42 @@ void LoadLoadingSpinnerFont()
     if (s_loadingFont == nullptr)
         Core::Log::Warn("DebugUI: failed to load loading-spinner font '{}'.", kFontVPath);
 }
+
+// The editor's optional WebP loading spinner (see DebugUI::LoadingWebpFrame): one
+// GPU texture per animation frame, decoded from an animated .webp. Empty until
+// LoadLoadingSpinnerWebp runs (and stays empty if the asset isn't shipped, decoding
+// fails, or kUseWebpSpinner is false). Owns the nvrhi textures; freed in Shutdown.
+std::vector<Render::Texture> s_spinnerWebpFrames;
+
+// Decode the animated WebP loading spinner into per-frame textures, if present.
+// Unlike the font this needs no atlas timing — it only needs the device — so it can
+// run any time after the device exists. A missing asset is not an error (the asset
+// browser falls back to a plain placeholder), and it is skipped entirely unless
+// kUseWebpSpinner is set, so the decode/upload cost is only paid when the WebP
+// backend is actually selected.
+void LoadLoadingSpinnerWebp(nvrhi::IDevice *device)
+{
+    if (!DebugUI::kUseWebpSpinner || device == nullptr)
+        return;
+
+    constexpr const char *kWebpVPath = "editor/loading/Spinner.webp";
+
+    // Skip quietly if no WebP was shipped — the TTF (or a plain placeholder) covers it.
+    if (!Core::AssetSystem::Resolve(kWebpVPath).has_value())
+        return;
+
+    const std::expected<std::vector<Render::DecodedImage>, Core::AssetError> frames =
+        Render::Texture::DecodeAnimatedWebp(kWebpVPath, Render::ColorSpace::Srgb);
+    if (!frames.has_value())
+    {
+        Core::Log::Warn("DebugUI: failed to decode WebP loading spinner '{}'.", kWebpVPath);
+        return;
+    }
+
+    s_spinnerWebpFrames.resize(frames->size());
+    for (std::size_t i = 0; i < frames->size(); ++i)
+        s_spinnerWebpFrames[i].UploadDecoded(device, (*frames)[i], "spinner-webp-frame");
+}
 } // namespace
 
 void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::VulkanContext &vulkanContext)
@@ -279,6 +316,10 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     {
         Assisi::Core::Log::Error("DebugUI: failed to build the opener pipeline — ImGui may not render.");
     }
+
+    // Decode the WebP loading spinner now that the device exists (no atlas-timing
+    // constraint, unlike the font above). No-op unless kUseWebpSpinner is set.
+    LoadLoadingSpinnerWebp(device);
 }
 
 void DebugUI::Shutdown()
@@ -298,6 +339,10 @@ void DebugUI::Shutdown()
         VKD.vkDestroyDescriptorPool(s_vkDevice, s_descriptorPool, nullptr);
         s_descriptorPool = VK_NULL_HANDLE;
     }
+
+    // Release the WebP spinner's per-frame textures (their ImGui descriptor sets
+    // went with the pool above). The device still outlives us here.
+    s_spinnerWebpFrames.clear();
 }
 
 void DebugUI::BeginFrame(Render::RenderFrame &frame)
@@ -370,6 +415,21 @@ void DebugUI::ReleaseTexture(nvrhi::ITexture *texture)
 ImFont *DebugUI::LoadingFont()
 {
     return s_loadingFont;
+}
+
+std::size_t DebugUI::LoadingWebpFrameCount()
+{
+    return s_spinnerWebpFrames.size();
+}
+
+ImTextureID DebugUI::LoadingWebpFrame(std::size_t index)
+{
+    if (s_spinnerWebpFrames.empty())
+        return ImTextureID_Invalid;
+
+    // Wrap so any free-running frame counter maps to a valid frame.
+    Render::Texture &frame = s_spinnerWebpFrames[index % s_spinnerWebpFrames.size()];
+    return GetOrCreateTextureId(frame.NativeTexture());
 }
 
 void DebugUI::EndFrame(Render::RenderFrame &frame)

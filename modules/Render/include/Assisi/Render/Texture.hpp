@@ -57,6 +57,18 @@ class Texture
     static std::expected<DecodedImage, Assisi::Core::AssetError> DecodeImage(std::string_view vpath,
                                                                              ColorSpace colorSpace) noexcept;
 
+    /// @brief Decode every frame of an animated WebP into a list of CPU images —
+    /// one DecodedImage per frame, in playback order. stb_image can't read WebP, so
+    /// this goes through libwebp's demux/AnimDecoder (which composites disposal and
+    /// blending for us, yielding full-canvas RGBA frames). Each frame is a single
+    /// mip level (no chain: the spinner is drawn at roughly its native size), tagged
+    /// @p colorSpace. A still (single-frame) WebP decodes to a one-element list.
+    /// Touches no device, so it is safe on a worker thread.
+    /// @return the frames in order, or an AssetError if the file can't be
+    ///         resolved/read/decoded.
+    static std::expected<std::vector<DecodedImage>, Assisi::Core::AssetError>
+    DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace = ColorSpace::Srgb) noexcept;
+
     /// @brief Create the GPU texture and upload a decoded mip chain — the
     /// main-thread half (device work). Pairs with DecodeImage.
     void UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName = nullptr);

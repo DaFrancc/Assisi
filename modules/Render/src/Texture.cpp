@@ -9,9 +9,14 @@
 
 #include <Assisi/Render/Texture.hpp>
 
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 
+#include <webp/decode.h>
+#include <webp/demux.h>
+
 #include <algorithm>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -112,6 +117,78 @@ std::expected<DecodedImage, Assisi::Core::AssetError> Texture::DecodeImage(std::
 
     stbi_image_free(data);
     return image;
+}
+
+std::expected<std::vector<DecodedImage>, Assisi::Core::AssetError>
+Texture::DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace) noexcept
+{
+    const std::expected<std::vector<std::byte>, Assisi::Core::AssetError> bytes =
+        Assisi::Core::AssetSystem::ReadBinary(vpath);
+    if (!bytes)
+    {
+        return std::unexpected(bytes.error());
+    }
+
+    WebPData webpData;
+    webpData.bytes = reinterpret_cast<const uint8_t *>(bytes->data());
+    webpData.size  = bytes->size();
+
+    // AnimDecoder composites frame disposal/blending for us and hands back full
+    // 256x256-ish RGBA canvases — exactly what we upload. MODE_RGBA matches our
+    // top-down RGBA8 convention (WebP rows are top-down like Vulkan's V=0).
+    WebPAnimDecoderOptions options;
+    if (!WebPAnimDecoderOptionsInit(&options))
+    {
+        Assisi::Core::Log::Error("Texture: WebPAnimDecoderOptionsInit failed for '{}'", vpath);
+        return std::unexpected(Assisi::Core::AssetError::FileReadFailed);
+    }
+    options.color_mode  = MODE_RGBA;
+    options.use_threads = 0;
+
+    WebPAnimDecoder *decoder = WebPAnimDecoderNew(&webpData, &options);
+    if (decoder == nullptr)
+    {
+        Assisi::Core::Log::Error("Texture: WebPAnimDecoderNew failed for '{}' (not a valid WebP?)", vpath);
+        return std::unexpected(Assisi::Core::AssetError::FileReadFailed);
+    }
+
+    WebPAnimInfo info;
+    if (!WebPAnimDecoderGetInfo(decoder, &info))
+    {
+        Assisi::Core::Log::Error("Texture: WebPAnimDecoderGetInfo failed for '{}'", vpath);
+        WebPAnimDecoderDelete(decoder);
+        return std::unexpected(Assisi::Core::AssetError::FileReadFailed);
+    }
+
+    std::vector<DecodedImage> frames;
+    frames.reserve(info.frame_count);
+    while (WebPAnimDecoderHasMoreFrames(decoder))
+    {
+        uint8_t *frameRgba = nullptr; // owned by the decoder; valid only until the next call
+        int      timestamp = 0;       // milliseconds (unused: playback speed is set by the caller)
+        if (!WebPAnimDecoderGetNext(decoder, &frameRgba, &timestamp))
+        {
+            Assisi::Core::Log::Warn("Texture: WebPAnimDecoderGetNext failed at frame {} of '{}'", frames.size(), vpath);
+            break; // keep whatever decoded cleanly rather than dropping the whole animation
+        }
+
+        DecodedImage image;
+        image.width      = info.canvas_width;
+        image.height     = info.canvas_height;
+        image.colorSpace = colorSpace;
+        // No mip chain: the spinner is drawn near its native size, and a chain per
+        // frame would multiply the (already many) uploads for no visible gain.
+        BuildMipChain(image, frameRgba, /*generateMips=*/false);
+        frames.push_back(std::move(image));
+    }
+    WebPAnimDecoderDelete(decoder);
+
+    if (frames.empty())
+    {
+        Assisi::Core::Log::Error("Texture: decoded no frames from WebP '{}'", vpath);
+        return std::unexpected(Assisi::Core::AssetError::FileReadFailed);
+    }
+    return frames;
 }
 
 void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName)

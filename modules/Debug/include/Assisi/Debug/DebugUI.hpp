@@ -28,6 +28,8 @@
 #include <imgui.h>
 #include <nvrhi/nvrhi.h>
 
+#include <cstddef>
+
 namespace Assisi::Debug
 {
 
@@ -87,14 +89,35 @@ class DebugUI
     /// has gone unrequested long enough for the deferred sweep to have run.
     static void ReleaseTexture(nvrhi::ITexture *texture);
 
+    /// @brief Selects which backend the loading spinner plays. `true` → the
+    /// animated WebP (editor/loading/Spinner.webp, decoded to per-frame textures);
+    /// `false` → the TTF whose consecutive glyphs are the frames. This is the single
+    /// switch the header comment in the asset browser refers to: flip it and rebuild.
+    /// Both assets load independently at startup and either may be absent (the
+    /// browser then falls back to a plain placeholder), so flipping never crashes
+    /// even if only one asset is shipped.
+    static constexpr bool kUseWebpSpinner = false;
+
     /// @brief The editor's loading-spinner font, or null if none was shipped. A
     /// dedicated face whose consecutive glyphs are the frames of an animated
     /// loading icon: the caller advances one glyph per tick and loops, so drawing a
     /// frame costs a single textured quad. Kept apart from the text font so its
     /// frame glyphs never collide with real characters. Loaded from
-    /// `editor/loading/LoadingSpinner.ttf` at startup; absent asset -> null, and
-    /// callers fall back to a plain placeholder.
+    /// `editor/loading/Spinner.ttf` at startup; absent asset -> null, and
+    /// callers fall back to a plain placeholder. Used only when kUseWebpSpinner is false.
     static ImFont *LoadingFont();
+
+    /// @brief Number of decoded frames in the WebP loading spinner, or 0 if none is
+    /// loaded (kUseWebpSpinner is false, the asset is absent, or decoding failed).
+    /// The caller advances one frame per tick and loops.
+    static std::size_t LoadingWebpFrameCount();
+
+    /// @brief ImGui texture id for WebP spinner frame @p index (taken modulo the
+    /// frame count, so any counter loops safely). Draw it with ImGui::Image /
+    /// ImDrawList::AddImage. Returns ImTextureID_Invalid if no WebP spinner is loaded.
+    /// Registers the frame's texture on demand, exactly like GetOrCreateTextureId
+    /// (so it participates in the same per-frame reclamation).
+    static ImTextureID LoadingWebpFrame(std::size_t index);
 };
 
 } // namespace Assisi::Debug

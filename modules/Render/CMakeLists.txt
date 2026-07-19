@@ -62,6 +62,9 @@ target_link_libraries(Assisi-Render
     # GpuTelemetry dlopen()s NVML at runtime; dl is needed on Linux (no-op alias
     # on platforms that fold it into libc).
     ${CMAKE_DL_LIBS}
+    # WebP decode (Texture::DecodeAnimatedWebp). webpdemux pulls in the base
+    # `webp` decoder it depends on, so listing it alone is enough.
+    webpdemux
 )
 
 add_library(Assisi::Render ALIAS Assisi-Render)
