@@ -160,9 +160,9 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
 // range below). To match a re-authored TTF, set kTtfFrameCount to the number of
 // frames and kTtfFirstFrame to the first frame's codepoint ('a' for an a..z
 // sequence, or a Private-Use codepoint like 0xE000).
-constexpr unsigned int kTtfFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F03F
-constexpr int          kTtfFrameCount = 64;     // one full v2 atom-spin loop (must match the font)
-constexpr float        kLoadingFps    = 32.0f;  // 64 frames / 32fps = 2 s per loop (matches the design)
+constexpr unsigned int kTtfFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F077
+constexpr int          kTtfFrameCount = 120;    // one full v3 atom-spin loop (must match the font)
+constexpr float        kLoadingFps    = 60.0f;  // 120 frames / 60fps = 2 s per loop (matches the design)
 
 /// @brief True when a loading spinner (in whichever backend kUseWebpSpinner selects)
 /// is loaded and can be drawn. Callers gate on this before reserving a spinner row.
