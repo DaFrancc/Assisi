@@ -75,7 +75,19 @@ void MirrorSidecarToAuthoringRoot(std::string_view virtualPath, std::string_view
     }
 
     std::error_code ec;
-    const fs::path  target = authoringRoot / fs::path(virtualPath).concat(kSidecarExtension);
+
+    // Only mirror when the ASSET itself lives in the durable tree. Build outputs
+    // staged into the read root (compiled .spv) have no source counterpart, so a
+    // sidecar for one would be an orphan describing a file no clone has — and it
+    // would show up as an untracked source-tree change after every editor run.
+    // Their ids are regenerated with the artifact, which is correct for a
+    // derived file.
+    if (!fs::exists(authoringRoot / virtualPath, ec))
+    {
+        return;
+    }
+
+    const fs::path target = authoringRoot / fs::path(virtualPath).concat(kSidecarExtension);
     if (fs::exists(target, ec))
     {
         return; // the durable tree already has an id for this asset; never clobber it

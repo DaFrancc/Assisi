@@ -371,7 +371,11 @@ TEST_CASE("Minted sidecars are mirrored into the authoring root")
     const fs::path authoring = fs::temp_directory_path() / "assisi_assetdb_authoring";
     std::error_code ec;
     fs::remove_all(authoring, ec);
-    fs::create_directories(authoring / "textures", ec);
+    // The durable tree holds the assets themselves; the read root above is the
+    // staged copy the app actually loads from. Only assets present here get a
+    // mirrored sidecar (see the partial-tree case below).
+    WriteFile(authoring / "textures" / "crate.png", "PNG-BYTES");
+    WriteFile(authoring / "materials" / "checker.amat", "{\"type\":\"MaterialData\"}");
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
     AssetSystem::SetAuthoringRoot(authoring);
@@ -393,4 +397,30 @@ TEST_CASE("Minted sidecars are mirrored into the authoring root")
     CHECK(ReadFile(mirrored) == before);
 
     AssetSystem::SetAuthoringRoot({}); // don't leak the setting into other cases
+}
+
+TEST_CASE("A sidecar is not mirrored for an asset absent from the authoring root")
+{
+    const fs::path root = MakeTree();
+    const fs::path authoring = fs::temp_directory_path() / "assisi_assetdb_authoring_partial";
+    std::error_code ec;
+    fs::remove_all(authoring, ec);
+
+    // The durable tree has the texture but not the material — the shape a build
+    // output takes: staged next to the executable, with no source counterpart.
+    fs::create_directories(authoring / "textures", ec);
+    WriteFile(authoring / "textures" / "crate.png", "PNG-BYTES");
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetSystem::SetAuthoringRoot(authoring);
+
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+
+    CHECK(fs::exists(authoring / "textures" / "crate.png.aast"));
+    // Mirroring this one would strand a sidecar describing a file the durable
+    // tree does not contain, and show up as an untracked source-tree change.
+    CHECK_FALSE(fs::exists(authoring / "materials" / "checker.amat.aast"));
+
+    AssetSystem::SetAuthoringRoot({});
 }
