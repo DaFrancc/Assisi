@@ -81,9 +81,16 @@ void BuildMipChain(DecodedImage &image, const unsigned char *base, bool generate
                                             outStride, STBIR_RGBA);
         if (ok == nullptr)
         {
-            Assisi::Core::Log::Warn("Texture: mip level {} downsample failed; skipping it", level);
-            image.mips[level].clear(); // an empty level is skipped by UploadDecoded
-            continue;
+            // Don't leave a hole: UploadDecoded skips empty levels, but the GPU
+            // texture is still created with that many mips and createTexture does
+            // not zero its memory, so an unwritten level samples whatever the
+            // driver had there. Truncate the chain instead — the texture then has
+            // only the levels we actually wrote, and sampling falls back to the
+            // coarsest real one.
+            Assisi::Core::Log::Warn("Texture: mip level {} downsample failed; truncating the chain to {} level(s)",
+                                    level, level);
+            image.mips.resize(level);
+            return;
         }
         image.mips[level] = std::move(mip);
     }

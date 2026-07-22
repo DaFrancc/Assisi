@@ -151,8 +151,14 @@ Surface SampleMaterial()
     if (mat.flags.x != 0u) // has normal texture
     {
         // Re-orthonormalize the interpolated tangent against N (Gram-Schmidt),
-        // then build the bitangent from the stored handedness.
-        vec3 T = normalize(vTangent - dot(vTangent, N) * N);
+        // then build the bitangent from the stored handedness. The projection
+        // collapses to zero when the tangent is parallel to N — which the
+        // default tangent (1,0,0,1) is on any +/-X face — so fall back to an
+        // arbitrary perpendicular rather than normalize(0) = NaN.
+        vec3 Traw = vTangent - dot(vTangent, N) * N;
+        vec3 T    = dot(Traw, Traw) > 1e-8 ? normalize(Traw)
+                                           : normalize(abs(N.y) < 0.99 ? cross(N, vec3(0.0, 1.0, 0.0))
+                                                                       : cross(N, vec3(1.0, 0.0, 0.0)));
         vec3 B = cross(N, T) * vTangentSign;
         vec3 sampledNormal = sampleMaterialTex(mat.texIndices.y, vTexCoord).xyz * 2.0 - 1.0;
         sampledNormal.xy *= mat.emissiveFactorNormalScale.w; // normalScale
@@ -233,9 +239,12 @@ uint ClusterIndex()
     uint ix = clamp(uint(gl_FragCoord.x / screenSize.x * float(gridDim.x)), 0u, gridDim.x - 1u);
     uint iy = clamp(uint(gl_FragCoord.y / screenSize.y * float(gridDim.y)), 0u, gridDim.y - 1u);
 
-    // Logarithmic depth slice (abs because vViewZ is negative for visible geometry)
+    // Logarithmic depth slice (abs because vViewZ is negative for visible geometry).
+    // Fragments nearer than nearZ make the log ratio negative, and converting a
+    // negative float to uint is undefined in GLSL — clamp before the cast, not after.
     float viewDepth = abs(vViewZ);
-    uint  iz = clamp(uint(log(viewDepth / nearZ) / log(farZ / nearZ) * float(gridDim.z)), 0u, gridDim.z - 1u);
+    float slice     = max(log(viewDepth / nearZ) / log(farZ / nearZ), 0.0) * float(gridDim.z);
+    uint  iz        = clamp(uint(slice), 0u, gridDim.z - 1u);
 
     return ix + iy * gridDim.x + iz * gridDim.x * gridDim.y;
 }
@@ -307,7 +316,7 @@ void main()
         float lInt = pointLights[li].colorIntensity.w;
 
         vec3  toLight  = lPos - vWorldPos;
-        float dist     = length(toLight);
+        float dist     = max(length(toLight), 1e-4); // fragment exactly at the light => toLight/0
         vec3  L        = toLight / dist;
         vec3  radiance = lCol * lInt * Attenuation(dist, r);
 
@@ -326,11 +335,12 @@ void main()
         float outer  = spotLights[li].outerCutoff;
 
         vec3  toLight = lPos - vWorldPos;
-        float dist    = length(toLight);
+        float dist    = max(length(toLight), 1e-4); // fragment exactly at the light => toLight/0
         vec3  L       = toLight / dist;
 
         float theta = dot(L, normalize(-lDir));
-        float cone  = smoothstep(outer, inner, theta);
+        // A cone authored with inner == outer makes smoothstep divide by zero.
+        float cone  = smoothstep(outer, max(inner, outer + 1e-4), theta);
         vec3  radiance = lCol * lInt * Attenuation(dist, r) * cone;
 
         Lo += CookTorrance(N, V, L, radiance, albedo, F0, roughness, metallic);

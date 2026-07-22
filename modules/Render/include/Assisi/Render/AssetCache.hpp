@@ -180,6 +180,11 @@ class AssetCache
     /// MeshPass binds it once. Never null after Initialize().
     nvrhi::IBuffer *MaterialTableBuffer() const { return _materialTable.NativeBuffer(); }
 
+    /// @brief Row count of the material table. A material id IS its row, and the
+    /// shaders use it as an unchecked index into an SSBO runtime array, so every
+    /// id handed to a draw must be < this. See MintMaterialId.
+    static constexpr uint32_t kMaxMaterials = 4096u;
+
     /// @brief Drops every cached mesh, texture, and material, freeing their GPU
     /// resources, and rebuilds the fallback material. Any binding sets referencing
     /// those resources (see MeshPass) must be invalidated in the same breath.
@@ -218,6 +223,12 @@ class AssetCache
     /// @brief Populates @p material's textures + constants from @p data, assigning
     /// it @p id, then writes its row into the material table.
     void BuildMaterial(Material &material, const Geometry::MaterialData &data, uint32_t id);
+
+    /// @brief Hands out the next material-table row, saturating at row 0 (the
+    /// fallback) once the table is full. Ids are used as bindless indices by the
+    /// shaders, so an id past the table would be an out-of-bounds GPU read, not a
+    /// dropped row — never mint one by incrementing _nextMaterialId directly.
+    uint32_t MintMaterialId();
 
     /// @brief Writes @p material's constants into row Material::Id() of the material
     /// table, uploading the dense prefix. Called whenever a material is (re)built.
@@ -272,8 +283,11 @@ class AssetCache
     // resets and the default textures re-register), so MeshPass binds them once.
     nvrhi::BindingLayoutHandle   _bindlessLayout;
     nvrhi::DescriptorTableHandle _bindlessTable;
-    uint32_t                     _bindlessCapacity = 0;
     uint32_t                     _nextBindlessSlot = 0;
+
+    // Latches when the table fills so RegisterBindlessTexture warns once rather
+    // than per texture. Reset by Clear() alongside _nextBindlessSlot.
+    bool _bindlessTableFull = false;
 
     // Material table (GPU-driven stage D): row `Material::Id()` holds a material's
     // MaterialConstants. Fixed capacity (stable handle across Clear, so MeshPass
@@ -313,6 +327,10 @@ class AssetCache
     // fallback material's row. The retired per-material binding-set cache was the
     // only thing that needed ids to never repeat; the material table replaced it.
     uint32_t _nextMaterialId = 1;
+
+    // Latches once the table fills so MintMaterialId warns a single time instead
+    // of every subsequent material. Reset by Clear() alongside _nextMaterialId.
+    bool _materialTableFull = false;
 
     // Mesh paths that failed to load (see ResolveMesh): warn once, and don't
     // re-parse a broken path every frame. Reset by Clear().

@@ -34,15 +34,22 @@ const Core::AssetPath kFlatNormalTexture{std::string_view{"prim://flat-normal"}}
 
 // Starting slot count for the bindless material-texture table; it grows past this
 // on demand as more distinct textures resolve.
-constexpr uint32_t kInitialBindlessCapacity = 256u;
+// Bindless texture-table capacity (slots). Fixed at table creation: nvrhi's
+// Vulkan backend implements resizeDescriptorTable as an assert-only no-op, so
+// the descriptor table's real capacity is whatever the layout was built with and
+// can never change. Slots past this saturate onto slot 0 with a one-time warning.
+constexpr uint32_t kBindlessCapacity = 16384u;
 
 // Material-table capacity (rows). Fixed so the buffer handle is stable across
 // Clear() and the MeshPass binds it once; generous enough for any real scene
 // (the opaque sort key allows ~1M, but a level with thousands of *distinct*
-// materials is unheard of). Rows past this are dropped with a one-time warning
-// (see Buffer::Upload) rather than resized into — keeping the handle stable
-// matters more than the ceiling.
-constexpr uint32_t kMaxMaterials = 4096u;
+// materials is unheard of). Materials past this saturate onto the fallback row
+// (see MintMaterialId) rather than resizing the buffer — keeping the handle
+// stable matters more than the ceiling, and at 96 B/row raising the ceiling is
+// cheap (the whole table is 384 KB) if a scene ever needs it.
+// Declared on AssetCache so MeshPass can assert against it; aliased here so the
+// existing unqualified uses below keep reading cleanly.
+constexpr uint32_t kMaxMaterials = AssetCache::kMaxMaterials;
 
 // The five PBR texture channels, in MaterialTextures order (base, normal,
 // metallic-roughness, occlusion, emissive). Each pairs the colour space the
@@ -105,18 +112,17 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Color
 
     // Bindless material-texture table (GPU-driven stage D): a Pixel-visible
     // Texture_SRV array in its own register space. Every resolved texture takes a
-    // slot; materials reference channels by index. Sized on demand as textures
-    // resolve (see RegisterBindlessTexture); starts at kInitialBindlessCapacity.
+    // slot; materials reference channels by index. Capacity is fixed here at
+    // creation — nvrhi's Vulkan resizeDescriptorTable is an assert-only no-op, so
+    // the table can never actually grow (see RegisterBindlessTexture).
     nvrhi::BindlessLayoutDesc bindlessDesc;
     bindlessDesc.visibility = nvrhi::ShaderType::Pixel;
     bindlessDesc.firstSlot = 0;
-    bindlessDesc.maxCapacity = 16384;
+    bindlessDesc.maxCapacity = kBindlessCapacity;
     bindlessDesc.addRegisterSpace(nvrhi::BindingLayoutItem::Texture_SRV(0));
     _bindlessLayout = _device->createBindlessLayout(bindlessDesc);
     _bindlessTable = _device->createDescriptorTable(_bindlessLayout);
-    _bindlessCapacity = kInitialBindlessCapacity;
     _nextBindlessSlot = 0;
-    _device->resizeDescriptorTable(_bindlessTable, _bindlessCapacity, false);
 
     // Material table (GPU-driven stage D): one MaterialConstants row per material,
     // indexed by Material::Id(). Fixed capacity — the handle stays put across
@@ -374,14 +380,37 @@ uint32_t AssetCache::RegisterBindlessTexture(Texture &texture)
     if (texture.BindlessIndex() != Texture::kInvalidBindlessIndex)
         return texture.BindlessIndex();
 
-    const uint32_t slot = _nextBindlessSlot++;
-    if (slot >= _bindlessCapacity)
+    // The table's real capacity is fixed at creation to the layout's maxCapacity;
+    // nvrhi's Vulkan resizeDescriptorTable is an assert-only no-op, so there is no
+    // growing to do — the ceiling below IS the table.
+    if (_nextBindlessSlot >= kBindlessCapacity)
     {
-        _bindlessCapacity = std::max(_bindlessCapacity * 2u, slot + 1u);
-        _device->resizeDescriptorTable(_bindlessTable, _bindlessCapacity, true);
+        if (!_bindlessTableFull)
+        {
+            _bindlessTableFull = true;
+            Core::Log::Warn("AssetCache: bindless texture table full ({} slots); further textures fall back to "
+                            "slot 0 and will render with the wrong texture.",
+                            kBindlessCapacity);
+        }
+        // Slot 0 is always written (the first texture resolved is a default), so
+        // this is wrong-looking but defined — unlike recording a slot that was
+        // never written, which samples undefined descriptor memory.
+        texture.SetBindlessIndex(0u);
+        return 0u;
     }
-    _device->writeDescriptorTable(_bindlessTable,
-                                  nvrhi::BindingSetItem::Texture_SRV(slot, texture.NativeTexture()));
+
+    const uint32_t slot = _nextBindlessSlot;
+    if (!_device->writeDescriptorTable(_bindlessTable,
+                                       nvrhi::BindingSetItem::Texture_SRV(slot, texture.NativeTexture())))
+    {
+        // Refused by the backend (capacity exceeded). Do NOT record the slot: the
+        // descriptor at that index was never written, so sampling it is undefined.
+        Core::Log::Error("AssetCache: writeDescriptorTable rejected slot {}; texture left unbound.", slot);
+        texture.SetBindlessIndex(0u);
+        return 0u;
+    }
+
+    ++_nextBindlessSlot;
     texture.SetBindlessIndex(slot);
     return slot;
 }
@@ -421,14 +450,36 @@ void AssetCache::BuildMaterial(Material &material, const Geometry::MaterialData 
     WriteMaterialToTable(material);
 }
 
+uint32_t AssetCache::MintMaterialId()
+{
+    // Ids index the bindless material table directly (the vertex shader passes
+    // the id straight through to `materials[vMaterialIndex]`, an unbounded GLSL
+    // runtime array), so an id past the table is not a dropped row — it is an
+    // out-of-bounds GPU read. Saturate onto row 0, the fallback material, so
+    // overflow degrades to "wrong but defined" instead of undefined behavior.
+    if (_nextMaterialId >= kMaxMaterials)
+    {
+        if (!_materialTableFull)
+        {
+            _materialTableFull = true;
+            Core::Log::Warn("AssetCache: material table full ({} rows); further materials render with the "
+                            "fallback material.",
+                            kMaxMaterials);
+        }
+        return 0u;
+    }
+    return _nextMaterialId++;
+}
+
 void AssetCache::WriteMaterialToTable(const Material &material)
 {
     const uint32_t id = material.Id();
     if (id >= kMaxMaterials)
     {
-        Core::Log::Warn("AssetCache: material id {} exceeds the material table capacity ({}); it will render "
-                        "with a stale/garbage row.",
-                        id, kMaxMaterials);
+        // MintMaterialId saturates, so this is unreachable via the normal path;
+        // it stays as a guard for ids arriving from anywhere else.
+        Core::Log::Warn("AssetCache: material id {} exceeds the material table capacity ({}); row dropped.", id,
+                        kMaxMaterials);
         return;
     }
 
@@ -592,7 +643,7 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
             }
 
             Material &material = _materials[loadPath];
-            material.Create(_device, _nextMaterialId++, bundle.data, textures);
+            material.Create(_device, MintMaterialId(), bundle.data, textures);
             WriteMaterialToTable(material);
         });
 
@@ -623,13 +674,13 @@ void AssetCache::Clear()
     _meshes.clear();
     _arena.Reset(); // wholesale free — the MeshBuffers that held ranges are gone.
 
-    // Drop every bindless table entry (releasing the textures they referenced),
-    // then re-reserve. The handle is unchanged, so MeshPass's bound table stays
-    // valid; the default textures re-register via BuildFallbackMaterial below.
-    _device->resizeDescriptorTable(_bindlessTable, 0, false);
-    _bindlessCapacity = kInitialBindlessCapacity;
-    _nextBindlessSlot = 0;
-    _device->resizeDescriptorTable(_bindlessTable, _bindlessCapacity, false);
+    // Hand out slots from 0 again; the default textures re-register via
+    // BuildFallbackMaterial below and overwrite the low slots in place. Stale
+    // descriptors above them are simply never referenced again (no material
+    // points at them), so there is nothing to release explicitly — and nothing
+    // to resize: the table's capacity is fixed at creation.
+    _nextBindlessSlot  = 0;
+    _bindlessTableFull = false;
 
     _textures.clear();
     _materials.clear();

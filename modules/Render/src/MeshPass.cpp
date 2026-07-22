@@ -2,7 +2,9 @@
 
 #include <Assisi/Render/MeshPass.hpp>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/ShaderModule.hpp>
 
@@ -271,6 +273,13 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
         {
             continue; // producer should have filtered these; belt and suspenders
         }
+        // The shader indexes `materials[]` (an unbounded SSBO runtime array) with
+        // this id, so the GPU cannot bounds-check it — an id past the table reads
+        // whatever memory follows. AssetCache::MintMaterialId saturates to keep
+        // that from happening; catch a violation here, in debug, before it ships
+        // to the GPU where it would be silent.
+        ASSISI_ASSERT(item.material->Id() < AssetCache::kMaxMaterials,
+                      "material id indexes past the material table — the shader read would be out of bounds");
         instances.push_back(InstanceData{item.model, item.material->Id()});
 
         if (!commands.empty() && item.mesh == prevMesh && item.submeshIndex == prevSubmesh)
