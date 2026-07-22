@@ -72,13 +72,13 @@ class SceneSerializer
     ///
     /// Only valid to call from within a component's serialize lambda.
     /// Returns nullopt if the entity is unknown or no save is in progress.
-    static std::optional<uint32_t> EntityToIndex(ECS::Entity entity);
+    static std::optional<uint64_t> EntityToIndex(ECS::Entity entity);
 
     /// @brief Map a serial index to the live entity created during the current Load.
     ///
     /// Only valid to call from within a component's addToScene lambda.
     /// Returns NullEntity if the index is out of range or no load is in progress.
-    static ECS::Entity IndexToEntity(uint32_t index);
+    static ECS::Entity IndexToEntity(uint64_t index);
 
     /// @brief RAII scope that makes EntityRef fields serialize/deserialize against
     /// *raw entity handles* instead of remapped serial indices.
@@ -91,8 +91,10 @@ class SceneSerializer
     /// the hierarchy with no error.
     ///
     /// Within this scope the mapping is identity-preserving instead:
-    ///   - EntityToIndex(e) returns `e.index` (the raw slot, no remap);
-    ///   - IndexToEntity(i) returns `scene.EntityAt(i)` (the live handle at that slot).
+    ///   - EntityToIndex(e) returns a packed (slot, generation) key, no remap;
+    ///   - IndexToEntity(k) returns the live handle at that slot, but only when its
+///     generation still matches the one packed into `k` — a recycled slot
+///     resolves to NullEntity rather than to its new occupant.
     /// This is exact only because the paired restore uses Scene::ReviveAt to bring
     /// entities back at their original (index, generation) — EntityAt(index) then
     /// resolves to the same handle that was captured.

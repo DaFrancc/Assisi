@@ -8,7 +8,9 @@
 
 #include <filesystem>
 #include <fstream>
+#include <cstdint>
 #include <limits>
+#include <optional>
 #include <string_view>
 
 #include <Assisi/Core/AssetSystem.hpp>
@@ -293,29 +295,28 @@ TEST_CASE("SceneSerializer: WITHOUT a context an EntityRef collapses (the bug th
     CHECK(restored->parent == ECS::NullEntity);
 }
 
-// Round-6 review M11: under ScopedRawEntityContext, EntityToIndex(e) drops the
-// generation (returns the bare slot index) and IndexToEntity(i) returns the slot's
-// CURRENT occupant regardless of generation. A raw ref captured to an entity that
-// is later destroyed therefore resolves to whatever new entity reuses that slot,
-// instead of staying dead. (Only one raw context per thread — non-reentrant — so
-// each phase is scoped in its own block.)
-//
-// DEFERRED (should_fail): confirmed-real bug kept as a live reproduction. The fix is
-// an open design decision — carry the generation through the raw context (a change to
-// what EntityToIndex encodes and how the EntityRef codegen serializes it) or reject
-// refs failing IsAlive. Remove the should_fail decorator when that decision is made.
-// See docs/code-review-2026-07-round6.md.
-TEST_CASE("SceneSerializer: raw-entity context resolves a dead slot to its new occupant (round-6 M11)" *
-          doctest::should_fail())
+// Round-6 review M11, FIXED: under ScopedRawEntityContext, EntityToIndex now
+// packs (slot, generation) instead of returning the bare slot, and IndexToEntity
+// only resolves when the slot's current occupant still carries that generation.
+// A ref captured to an entity that is later destroyed used to resolve to whatever
+// new entity reused the slot — and no liveness check could catch it, because the
+// recycled slot is perfectly alive. It now resolves to NullEntity.
+// (Only one raw context per thread — non-reentrant — so each phase is scoped.)
+TEST_CASE("SceneSerializer: a raw ref to a recycled slot resolves to null, not its new occupant")
 {
     ECS::Scene        scene;
     const ECS::Entity e = scene.Create();
     REQUIRE(e.generation == 0);
 
-    // Capture: under the raw context the handle encodes as its bare slot index.
+    // Capture: the raw context encodes slot + generation.
+    uint64_t captured = 0;
     {
         SceneSerializer::ScopedRawEntityContext raw(scene);
-        REQUIRE(SceneSerializer::EntityToIndex(e) == e.index);
+        const std::optional<uint64_t>           key = SceneSerializer::EntityToIndex(e);
+        REQUIRE(key.has_value());
+        captured = *key;
+        // Round-trips to the same entity while it is still alive.
+        CHECK(SceneSerializer::IndexToEntity(captured) == e);
     }
 
     // Destroy e, then create a fresh entity that reuses the SAME slot with a bumped
@@ -326,12 +327,16 @@ TEST_CASE("SceneSerializer: raw-entity context resolves a dead slot to its new o
     REQUIRE(e2.index == e.index);           // slot reused
     REQUIRE(e2.generation != e.generation); // but a new generation
 
-    // Resolving the captured raw ref (e's slot) must NOT silently redirect onto the
-    // unrelated live e2. IndexToEntity ignores the stored generation.
     {
         SceneSerializer::ScopedRawEntityContext raw(scene);
-        const ECS::Entity resolved = SceneSerializer::IndexToEntity(e.index);
-        CHECK(resolved.generation == e.generation); // it returns e2's bumped generation instead
+        const ECS::Entity resolved = SceneSerializer::IndexToEntity(captured);
+        CHECK(resolved == ECS::NullEntity); // NOT silently redirected onto e2
+        CHECK(resolved != e2);
+
+        // A ref captured to the new occupant still resolves normally.
+        const std::optional<uint64_t> freshKey = SceneSerializer::EntityToIndex(e2);
+        REQUIRE(freshKey.has_value());
+        CHECK(SceneSerializer::IndexToEntity(*freshKey) == e2);
     }
 }
 

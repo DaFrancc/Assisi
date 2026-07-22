@@ -62,11 +62,17 @@ struct ScopedContextReset
 // Public context accessors (called from component serialize/addToScene lambdas)
 // ---------------------------------------------------------------------------
 
-std::optional<uint32_t> SceneSerializer::EntityToIndex(ECS::Entity entity)
+std::optional<uint64_t> SceneSerializer::EntityToIndex(ECS::Entity entity)
 {
-    // Raw-entity context wins: identity mapping, the slot index itself is the key.
+    // Raw-entity context wins: identity mapping, keyed by slot AND generation.
+    //
+    // Round-6 M11: this used to return the bare slot index, dropping the
+    // generation. A ref captured to an entity that was later destroyed then
+    // resolved to whatever new entity reused the slot — silently, because the
+    // reused slot is perfectly alive, so no liveness check can catch it. Packing
+    // the generation in lets IndexToEntity below reject the stale ref instead.
     if (s_rawContextScene != nullptr)
-        return entity.index;
+        return EntityKey(entity.index, entity.generation);
 
     if (!s_context)
         return std::nullopt;
@@ -79,17 +85,25 @@ std::optional<uint32_t> SceneSerializer::EntityToIndex(ECS::Entity entity)
     return it->second;
 }
 
-ECS::Entity SceneSerializer::IndexToEntity(uint32_t index)
+ECS::Entity SceneSerializer::IndexToEntity(uint64_t index)
 {
-    // Raw-entity context wins: the "index" is a raw slot; resolve the live handle
-    // there (exact because the paired restore revived it at its original slot).
+    // Raw-entity context wins: `index` is a packed (slot, generation) key. The
+    // paired restore revives entities at their original handle, so in the intended
+    // flow the generation matches exactly. When it does not, the slot has been
+    // recycled by an unrelated entity and the ref is stale — resolve to null
+    // rather than silently redirecting onto whoever moved in (round-6 M11).
     if (s_rawContextScene != nullptr)
-        return s_rawContextScene->EntityAt(index);
+    {
+        const auto        slot    = static_cast<uint32_t>(index & 0xFFFFFFFFull);
+        const auto        wantGen = static_cast<uint32_t>(index >> 32);
+        const ECS::Entity live    = s_rawContextScene->EntityAt(slot);
+        return live.generation == wantGen ? live : ECS::NullEntity;
+    }
 
     if (!s_context || index >= s_context->indexToEntity.size())
         return ECS::NullEntity;
 
-    return s_context->indexToEntity[index];
+    return s_context->indexToEntity[static_cast<std::size_t>(index)];
 }
 
 // ---------------------------------------------------------------------------

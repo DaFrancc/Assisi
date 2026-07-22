@@ -105,12 +105,12 @@ TYPES: dict[str, TypeCodegen] = {
     # Accepts both qualified and unqualified names.
     'ECS::Entity': TypeCodegen(
         'EntityRef',
-        '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0u)) : nlohmann::json(nullptr))',
-        '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint32_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+        '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0ull)) : nlohmann::json(nullptr))',
+        '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint64_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
     'Assisi::ECS::Entity': TypeCodegen(
         'EntityRef',
-        '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0u)) : nlohmann::json(nullptr))',
-        '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint32_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+        '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0ull)) : nlohmann::json(nullptr))',
+        '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint64_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
     # Core::ShortString — a small fixed-capacity inline string (e.g. an entity
     # Name). Serialized as a JSON string of its view; Assign() re-imposes the
     # capacity on load. Same codegen as AssetPath but a distinct FieldType so the

@@ -1,9 +1,12 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <doctest/doctest.h>
 
+#include <string_view>
 #include <typeindex>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 using Assisi::Core::Reflect::ComponentId;
 using Assisi::Core::Reflect::ComponentIdOf;
@@ -52,24 +55,33 @@ ComponentMeta Meta(const char *name, std::type_index type, bool serializable = t
         .name = name, .typeIndex = type, .fields = {}, .serialize = {}, .addToScene = {},
         .iterateEntities = {}, .getByEntity = {}, .serializable = serializable, .id = kInvalidComponentId};
 }
+
+// Registered from a static initializer, before main and therefore before any
+// test can query (and finalize) the registry — exactly how generated component
+// registrations behave. Registering lazily inside a TEST_CASE only worked while
+// a late Register silently renumbered; it is now refused (round-6 M4a), and the
+// order these arrive in is deliberately not alphabetical so the id-assignment
+// tests still prove the sort.
+const bool s_fixturesRegistered = []
+{
+    auto &registry = ComponentRegistry::Instance();
+    registry.Register(Meta("RegZeta", typeid(RegZeta)));
+    registry.Register(Meta("RegAlpha", typeid(RegAlpha)));
+    registry.Register(Meta("RegMu", typeid(RegMu)));
+    registry.Register(Meta("RegHidden", typeid(RegHidden), /*serializable=*/false));
+    registry.Register(Meta("ZzzM4_Late", typeid(ZzzM4Late)));
+    registry.Register(Meta("M4_DupName", typeid(M4DupA)));
+    registry.Register(Meta("M4_DupName", typeid(M4DupB))); // duplicate on purpose
+    return true;
+}();
 } // namespace
 
 TEST_CASE("ComponentRegistry assigns dense alphabetical ids")
 {
     auto &registry = ComponentRegistry::Instance();
 
-    // doctest re-runs this body once per SUBCASE, but the registry is a process
-    // singleton — register the fixtures exactly once (out of alphabetical order
-    // on purpose) via a function-local static, or duplicate metas accumulate.
-    static const bool registered = [&registry]()
-    {
-        registry.Register(Meta("RegZeta", typeid(RegZeta)));
-        registry.Register(Meta("RegAlpha", typeid(RegAlpha)));
-        registry.Register(Meta("RegMu", typeid(RegMu)));
-        registry.Register(Meta("RegHidden", typeid(RegHidden), /*serializable=*/false));
-        return true;
-    }();
-    (void)registered;
+    // Fixtures are registered at static-init time (see s_fixturesRegistered);
+    // this only queries, which is all a test may do once the registry is live.
 
     const ComponentId alpha = registry.IdOf(std::type_index(typeid(RegAlpha)));
     const ComponentId mu    = registry.IdOf(std::type_index(typeid(RegMu)));
@@ -158,33 +170,39 @@ TEST_CASE("ComponentRegistry assigns dense alphabetical ids")
     }
 }
 
-// Round-6 review M4 (a): the registry is documented as immutable after startup, but a
-// Register that arrives AFTER a query clears _finalized and re-sorts + RENUMBERS on
-// the next query. An id handed out once must stay stable — ComponentIdOf<T> caches
-// its id in a function-local static computed exactly once, so any renumbering
-// silently mis-maps every cached id and stored ComponentId. Registering an
-// alphabetically-earlier name after an id has been observed shifts that id.
-//
-// DEFERRED (should_fail): confirmed-real bug kept as a live reproduction. The fix is
-// an open design decision — assert !_finalized in Register (abort late registration),
-// an explicit Freeze(), or decouple id assignment from sort order so ids never move.
-// Remove the should_fail decorator when that decision is made. See
-// docs/code-review-2026-07-round6.md.
-TEST_CASE("ComponentRegistry: a late Register must not renumber an already-issued id" *
-          doctest::should_fail())
+// Round-6 review M4 (a), FIXED: the registry is immutable once an id has been
+// issued. Ids are positions in the name-sorted list (the property that makes them
+// reproducible across builds), so honouring a late Register would renumber ids
+// that ComponentIdOf<T> has already memoised and that saved scenes already store
+// — and would reallocate _metas, dangling every pointer ById()/All() handed out.
+// Register therefore refuses: it asserts in debug and drops the component with an
+// error in release. Both are better than silent renumbering.
+TEST_CASE("ComponentRegistry: a late Register is refused and leaves issued ids stable")
 {
     auto &registry = ComponentRegistry::Instance();
 
-    registry.Register(Meta("ZzzM4_Late", typeid(ZzzM4Late)));
-    const ComponentId id1 = registry.IdOf(std::type_index(typeid(ZzzM4Late))); // finalizes now
+    const ComponentId id1 = registry.IdOf(std::type_index(typeid(ZzzM4Late))); // finalizes if not already
     REQUIRE(id1 != kInvalidComponentId);
-    REQUIRE(registry.ById(id1)->name == "ZzzM4_Late"); // id1 maps to Zzz right now
+    REQUIRE(registry.ById(id1)->name == "ZzzM4_Late");
 
-    // A later Register of an alphabetically-earlier name re-sorts and renumbers.
-    registry.Register(Meta("AaaM4_Early", typeid(AaaM4Early)));
+#ifndef NDEBUG
+    {
+        // The contract has teeth: registering now is a programming error, not a
+        // silently-tolerated one.
+        Assisi::Testing::ThrowOnContractViolation guard;
+        CHECK_THROWS_AS(registry.Register(Meta("AaaM4_Early", typeid(AaaM4Early))),
+                        Assisi::Core::ContractViolation);
+    }
+#else
+    registry.Register(Meta("AaaM4_Early", typeid(AaaM4Early))); // logged and dropped
+#endif
+
+    // The whole point: an alphabetically-earlier late arrival must not shift it.
     const ComponentId id2 = registry.IdOf(std::type_index(typeid(ZzzM4Late)));
-
-    CHECK(id1 == id2); // stability contract: "AaaM4_Early" sorting first shifts Zzz's id up
+    CHECK(id1 == id2);
+    CHECK(registry.ById(id1)->name == "ZzzM4_Late");
+    // ...and the refused component is genuinely absent rather than half-registered.
+    CHECK(registry.IdOf(std::string_view{"AaaM4_Early"}) == kInvalidComponentId);
 }
 
 // Round-6 review M4: Register performs no name-uniqueness check, so two metas with
@@ -194,8 +212,6 @@ TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both k
 {
     auto &registry = ComponentRegistry::Instance();
 
-    registry.Register(Meta("M4_DupName", typeid(M4DupA)));
-    registry.Register(Meta("M4_DupName", typeid(M4DupB)));
 
     size_t count = 0;
     for (const auto &meta : registry.All()) // finalizes
