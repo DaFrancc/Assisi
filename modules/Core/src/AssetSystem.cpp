@@ -25,6 +25,11 @@ using VoidResult = std::expected<void, AssetError>;
 
 /* Read-only asset root, cached after Initialize()/SetRoot(). */
 static fs::path gAssetRoot;
+
+/* Durable mirror destination for newly minted sidecars; empty = mirroring off
+   (the default, and the right setting for a shipped build). See
+   AssetSystem::SetAuthoringRoot. */
+static fs::path gAuthoringRoot;
 static bool gInitialized = false;
 
 /* Writable user-data root, cached on first use (lazy; see EnsureUserRoot). */
@@ -201,6 +206,28 @@ const fs::path &AssetSystem::GetRoot() noexcept
 {
     /* Preconditions: AssetSystem is initialized. */
     return gAssetRoot;
+}
+
+void AssetSystem::SetAuthoringRoot(const fs::path &root) noexcept
+{
+    try
+    {
+        gAuthoringRoot = root.empty() ? fs::path{} : fs::weakly_canonical(root);
+        if (!gAuthoringRoot.empty() && gAuthoringRoot == gAssetRoot)
+        {
+            /* Same tree — mirroring would be a self-copy. */
+            gAuthoringRoot.clear();
+        }
+    }
+    catch (const std::exception &)
+    {
+        gAuthoringRoot.clear();
+    }
+}
+
+const fs::path &AssetSystem::GetAuthoringRoot() noexcept
+{
+    return gAuthoringRoot;
 }
 
 PathResult AssetSystem::ResolveUnder(const fs::path &root, std::string_view vpath) noexcept

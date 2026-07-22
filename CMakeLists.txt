@@ -157,6 +157,14 @@ if (ASSISI_ENABLE_FAST_MATH)
   endif()
 endif()
 
+# ---- Dev-only: the source asset tree, so a running editor can mirror newly
+# minted asset-id sidecars back out of the disposable staged copy it reads from
+# (see AssetSystem::SetAuthoringRoot). Deliberately absent in Release: a shipped
+# build has no source tree, and its staged assets are the durable copy.
+target_compile_definitions(Assisi-Options INTERFACE
+  $<$<NOT:$<CONFIG:Release>>:ASSISI_SOURCE_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets">
+)
+
 # ---- Sanitizers: enabled only when ASSISI_ENABLE_SANITIZERS=ON (via presets)
 if (ASSISI_ENABLE_SANITIZERS)
   if (MSVC)

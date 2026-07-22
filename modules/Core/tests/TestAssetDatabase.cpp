@@ -5,6 +5,7 @@
 #include <expected>
 #include <filesystem>
 #include <fstream>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <utility>
@@ -329,4 +330,67 @@ TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
     auto missing = provider.Open(MintAssetId());
     REQUIRE_FALSE(missing.has_value());
     CHECK(missing.error() == AssetError::UnknownAssetId);
+}
+
+TEST_CASE("A duplicate asset id is re-minted rather than left unaddressable")
+{
+    const fs::path root = MakeTree();
+
+    // Two distinct assets carrying the SAME sidecar id — what copying an asset
+    // together with its sidecar produces.
+    const AssetId shared = *AssetId::Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
+    WriteFile(root / "textures" / "copy_a.png", "A");
+    WriteFile(root / "textures" / "copy_b.png", "B");
+    WriteFile(root / "textures" / "copy_a.png.aast", SerializeSidecar(AssetSidecar{.guid = shared}));
+    WriteFile(root / "textures" / "copy_b.png.aast", SerializeSidecar(AssetSidecar{.guid = shared}));
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+
+    // First writer keeps the shared id; the loser is re-minted, NOT dropped —
+    // being dropped was permanent, since its sidecar parses fine and so the
+    // mint-on-missing path would never fire for it on any later Rebuild.
+    const std::optional<AssetId> idA = db.IdFor("textures/copy_a.png");
+    const std::optional<AssetId> idB = db.IdFor("textures/copy_b.png");
+    REQUIRE(idA.has_value());
+    REQUIRE(idB.has_value());
+    CHECK(*idA != *idB);
+    CHECK((*idA == shared || *idB == shared)); // exactly one kept the original
+
+    // The re-mint was persisted, so it is stable across a rebuild.
+    AssetDatabase second;
+    REQUIRE(second.Rebuild().has_value());
+    CHECK(second.IdFor("textures/copy_a.png") == idA);
+    CHECK(second.IdFor("textures/copy_b.png") == idB);
+}
+
+TEST_CASE("Minted sidecars are mirrored into the authoring root")
+{
+    const fs::path root = MakeTree();
+    const fs::path authoring = fs::temp_directory_path() / "assisi_assetdb_authoring";
+    std::error_code ec;
+    fs::remove_all(authoring, ec);
+    fs::create_directories(authoring / "textures", ec);
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetSystem::SetAuthoringRoot(authoring);
+
+    AssetDatabase db;
+    REQUIRE(db.Rebuild().has_value());
+
+    // The read root is a disposable staged copy in a dev build; the id must also
+    // land in the durable tree or it is regenerated differently after a clean
+    // build, breaking every by-GUID reference to that asset.
+    const fs::path mirrored = authoring / "textures" / "crate.png.aast";
+    REQUIRE(fs::exists(mirrored));
+    CHECK(ReadFile(mirrored) == ReadFile(root / "textures" / "crate.png.aast"));
+
+    // An id already present in the durable tree is never clobbered.
+    const std::string before = ReadFile(mirrored);
+    AssetDatabase again;
+    REQUIRE(again.Rebuild().has_value());
+    CHECK(ReadFile(mirrored) == before);
+
+    AssetSystem::SetAuthoringRoot({}); // don't leak the setting into other cases
 }

@@ -85,6 +85,32 @@ class AssetSystem
     static const std::filesystem::path &GetRoot() noexcept;
 
     /**
+     * @brief Sets the *authoring* root — the durable copy of the asset tree that
+     *        newly minted sidecars must also be written to.
+     *
+     * A dev build runs against a staged copy of the assets sitting next to the
+     * executable, because generated files (compiled `.spv`) only exist there. That
+     * copy is disposable: anything minted into it (an asset's `.aast` GUID) is lost
+     * on the next clean build and regenerated with a *different* GUID, so any
+     * reference stored by GUID silently stops resolving. Pointing this at the
+     * source asset tree makes minted sidecars durable and version-controllable.
+     *
+     * @param root Path to the durable asset tree, or empty to disable mirroring.
+     *
+     * @note Read paths are unaffected — Resolve/Read* always use GetRoot(). This
+     *       only adds a second destination when a sidecar is created.
+     * @note Leave unset for shipped builds, where the staged copy IS the durable
+     *       tree and there is no source tree to mirror into.
+     */
+    static void SetAuthoringRoot(const std::filesystem::path &root) noexcept;
+
+    /**
+     * @brief The authoring root set by SetAuthoringRoot, or an empty path if
+     *        sidecar mirroring is disabled (the default).
+     */
+    static const std::filesystem::path &GetAuthoringRoot() noexcept;
+
+    /**
      * @brief Resolves a virtual asset path to an absolute filesystem path under the asset root.
      *
      * Virtual paths are normalized (separator normalization, lexical normalization, and component

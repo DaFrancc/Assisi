@@ -158,6 +158,17 @@ bool Application::Initialize()
         return false;
     }
 
+#ifdef ASSISI_SOURCE_ASSET_ROOT
+    // Dev build: assets are read from the staged copy next to the executable
+    // (generated .spv files exist only there), but that copy is disposable, so
+    // any asset id minted into it alone is regenerated differently after a clean
+    // build and every by-GUID reference to that asset silently stops resolving.
+    // Mirror minted sidecars back into the source tree, which is the durable,
+    // version-controlled copy. Not defined for Release — a shipped build has no
+    // source tree, and its staged copy IS the durable one.
+    Core::AssetSystem::SetAuthoringRoot(ASSISI_SOURCE_ASSET_ROOT);
+#endif
+
     _config = AppConfig::LoadFromJson();
 
     Window::WindowConfiguration winCfg;
