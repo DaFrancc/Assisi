@@ -144,7 +144,10 @@ void SandboxApp::StopPlay()
     // stay valid and the pre-play edits remain undoable.
     _pausedHistory.reset();
 
-    if (!_playSnapshot.empty())
+    // Runs unconditionally, including for an empty snapshot: entering Play on an
+    // empty scene captures nothing, so gating the teardown on a non-empty snapshot
+    // used to let every entity spawned during Play survive into Editing. The revive
+    // loops below are already no-ops for an empty snapshot.
     {
         // Tear down the current (play-state) scene, then rebuild the snapshot at
         // EXACT identity. Destroy+flush (not Scene::Clear) keeps the registry's slot

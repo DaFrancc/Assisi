@@ -668,7 +668,12 @@ void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compon
     // transient RigidBody handle); drop both so the collider stops simulating.
     // MeshRenderer's transient pointers are non-owning (the AssetCache owns the
     // GPU resources), so removing it needs no extra cleanup.
-    if (meta.name == "RigidBodyDescriptor")
+    // Transform is included: a body's pose is driven from it, so removing the
+    // Transform while a RigidBodyDescriptor remains would leave a live Jolt body
+    // simulating with nothing to sync it — an orphan that only a level reload
+    // clears. The descriptor itself survives, matching what removing the
+    // descriptor does to the transient handle.
+    if (meta.name == "RigidBodyDescriptor" || meta.name == "Transform")
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
         {

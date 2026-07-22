@@ -163,6 +163,18 @@ bool SandboxApp::LoadLevelFromPath(const std::string &virtualPath)
     _playSnapshot.clear();
     _selectedEntity = Assisi::ECS::NullEntity;
 
+    // Same aliasing hazard as the history below, and the same reason: an armed
+    // eyedropper or an open asset-browser dialog holds an entity handle from the
+    // OLD scene, which after the dense rebuild can resolve to a live but entirely
+    // different entity — and pass IsAlive — so the pick would silently write into
+    // the wrong entity's field. Disarm both.
+    _eyedropperArmed  = false;
+    _eyedropperEntity = Assisi::ECS::NullEntity;
+    _eyedropperMeta   = nullptr;
+    _assetBrowserOpen   = false;
+    _assetBrowserEntity = Assisi::ECS::NullEntity;
+    _assetBrowserMeta   = nullptr;
+
     // A fresh scene rebuilds entity identity densely from {0,0}: every handle the
     // undo stacks hold now dangles (and could alias a different entity), so wipe
     // the history. (Load's Scene::Clear already reset the registry.)

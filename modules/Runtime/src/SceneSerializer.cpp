@@ -292,13 +292,18 @@ bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath
         Load(scene, nlohmann::json::parse(*text));
         return true;
     }
-    catch (const nlohmann::json::exception &ex)
+    catch (const std::exception &ex)
     {
         // A parse error leaves the scene untouched; a throw partway through
         // Load (a malformed component field) leaves it half-populated. Clear
         // it either way so a failed load yields an empty scene, never a
         // corrupt one. (ScopedContextReset in Load already freed s_context.)
-        Core::Log::Error("SceneSerializer: JSON error in '{}': {}", assetPath, ex.what());
+        //
+        // Catches std::exception, not just json::exception: Load runs arbitrary
+        // component addToScene hooks, and one throwing anything else (bad_alloc,
+        // out_of_range from a hook's own container) would otherwise escape and
+        // leave the half-populated scene behind.
+        Core::Log::Error("SceneSerializer: failed to load '{}': {}", assetPath, ex.what());
         scene.Clear();
         return false;
     }
