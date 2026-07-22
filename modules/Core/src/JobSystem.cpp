@@ -99,6 +99,22 @@ bool JobSystem::TryRunOneWorkerTask()
     return true;
 }
 
+bool JobSystem::TryRunOneMainTask()
+{
+    std::function<void()> task;
+    {
+        std::lock_guard<std::mutex> lock(_mainMutex);
+        if (_mainQueue.empty())
+        {
+            return false;
+        }
+        task = std::move(_mainQueue.front());
+        _mainQueue.erase(_mainQueue.begin());
+    }
+    task();
+    return true;
+}
+
 void JobSystem::ParallelFor(uint32_t count, uint32_t grain,
                             const std::function<void(uint32_t begin, uint32_t end)> &body)
 {

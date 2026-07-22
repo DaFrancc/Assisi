@@ -22,14 +22,20 @@
 ///
 /// Waiting (`ParallelFor`'s internal wait, `Task::Wait`) is *help-waiting*: the
 /// waiting thread runs queued worker tasks itself instead of sleeping, so a wait
-/// issued from a worker can't deadlock the pool. Call the blocking entry points
-/// (`Wait`, `ParallelFor`, `DrainMain`) from the main thread or a worker — never
-/// from a thread that must not run arbitrary tasks.
+/// issued from a worker can't deadlock the pool. A `Task::Wait` on the main
+/// thread additionally runs queued *main* tasks, so waiting on a chain that ends
+/// in `Pool::Main` completes instead of livelocking (any other pending main
+/// tasks queued ahead of it run too — a blocking main-thread Wait is a drain
+/// point by necessity). Call the blocking entry points (`Wait`, `ParallelFor`,
+/// `DrainMain`) from the main thread or a worker — never from a thread that must
+/// not run arbitrary tasks.
 ///
 /// Not yet built (later stages in the design notes): a dedicated I/O pool /
 /// `Pool::IO`, work-stealing per-worker deques, cancellation tokens, and the
 /// coroutine surface. The public API is shaped so those drop in without changing
 /// call sites.
+
+#include <Assisi/Core/Assert.hpp>
 
 #include <atomic>
 #include <condition_variable>
@@ -69,6 +75,7 @@ struct TaskState
 
     std::mutex            mutex;
     bool                  done = false;
+    bool                  continuationClaimed = false; ///< A Then() was chained (stays true after it fires).
     Stored                value{};
     std::function<void()> continuation; ///< Fires once, on completion (already targets its pool).
 };
@@ -116,7 +123,11 @@ class Task
 
     /// @brief Chain a continuation that runs on @p pool once this task completes,
     /// receiving this task's result (or no argument if T is void). Returns a Task
-    /// for the continuation's own result, so chains compose.
+    /// for the continuation's own result, so chains compose. At most one Then()
+    /// per task (asserted): the continuation slot is one-shot and the result is
+    /// *moved* into the continuation, so a second chain would silently orphan the
+    /// first (its Wait() then livelocks). Fan-out belongs at the fn level — chain
+    /// one continuation that dispatches.
     template <class F>
     auto Then(Pool pool, F fn) -> Task<typename detail::ThenResult<F, T>::type>;
 
@@ -215,15 +226,29 @@ class JobSystem
     /// @brief Spin running queued worker tasks until @p done() is true. The
     /// waiting thread makes progress itself rather than sleeping, so a wait from a
     /// worker can't deadlock the pool.
+    ///
+    /// When @p helpMain is true and the caller is the main thread (the thread
+    /// that constructed the JobSystem), queued main-thread tasks are run too.
+    /// Task::Wait needs this: a chain ending in Pool::Main can only complete via
+    /// the main queue, so a main-thread Wait() that never drained it would
+    /// livelock. ParallelFor keeps it false — its chunks are all worker tasks,
+    /// and main tasks should otherwise only run at the frame's DrainMain safe
+    /// point, not mid-dispatch.
     template <class Predicate>
-    void HelpUntil(Predicate done)
+    void HelpUntil(Predicate done, bool helpMain = false)
     {
+        const bool onMainThread = helpMain && std::this_thread::get_id() == _mainThreadId;
         while (!done())
         {
-            if (!TryRunOneWorkerTask())
+            if (TryRunOneWorkerTask())
             {
-                std::this_thread::yield();
+                continue;
             }
+            if (onMainThread && TryRunOneMainTask())
+            {
+                continue;
+            }
+            std::this_thread::yield();
         }
     }
 
@@ -233,6 +258,10 @@ class JobSystem
     /// @brief Pop and run one worker task if any is queued. @return whether one ran.
     bool TryRunOneWorkerTask();
 
+    /// @brief Pop and run the oldest main-queue task if any is queued. Main
+    /// thread only (help-waiting). @return whether one ran.
+    bool TryRunOneMainTask();
+
     std::vector<std::thread>          _workers;
     std::deque<std::function<void()>> _workerQueue;
     std::mutex                        _mutex; ///< Guards _workerQueue.
@@ -241,6 +270,11 @@ class JobSystem
 
     std::vector<std::function<void()>> _mainQueue;
     std::mutex                         _mainMutex; ///< Guards _mainQueue.
+
+    /// The thread that constructed the JobSystem — treated as the main thread
+    /// for HelpUntil's main-queue help (matches Application, which owns the
+    /// JobSystem on the main thread).
+    std::thread::id _mainThreadId = std::this_thread::get_id();
 };
 
 // --- Task<T> out-of-line template members (need the full JobSystem) -----------
@@ -248,10 +282,12 @@ class JobSystem
 template <class T>
 void Task<T>::Wait()
 {
-    _jobs->HelpUntil([this] {
-        std::lock_guard<std::mutex> lock(_state->mutex);
-        return _state->done;
-    });
+    _jobs->HelpUntil(
+        [this] {
+            std::lock_guard<std::mutex> lock(_state->mutex);
+            return _state->done;
+        },
+        /*helpMain=*/true);
 }
 
 template <class T>
@@ -300,6 +336,10 @@ auto Task<T>::Then(Pool pool, F fn) -> Task<typename detail::ThenResult<F, T>::t
     bool alreadyDone = false;
     {
         std::lock_guard<std::mutex> lock(antecedent->mutex);
+        ASSISI_ASSERT(!antecedent->continuationClaimed,
+                      "Then() called twice on the same task — the continuation slot is one-shot, so the "
+                      "first chain would be silently orphaned and its Wait() would livelock");
+        antecedent->continuationClaimed = true;
         if (antecedent->done)
         {
             alreadyDone = true;

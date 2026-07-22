@@ -3,11 +3,14 @@
 #include <doctest/doctest.h>
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <thread>
 #include <vector>
 
+#include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 using Assisi::Core::JobSystem;
 using Assisi::Core::Pool;
@@ -204,6 +207,93 @@ TEST_CASE("Then on an already-complete task still runs")
     chained.Wait();
     CHECK(chained.Get() == 6);
 }
+
+TEST_CASE("HelpUntil with helpMain runs main-queue tasks on the main thread")
+{
+    JobSystem jobs(2u);
+
+    // Bounded regression check for the Wait-on-Pool::Main livelock: the
+    // predicate gives up after a generous spin count, so a reintroduced bug
+    // fails the CHECK instead of hanging the runner.
+    std::atomic<bool> completed{false};
+    jobs.Run(Pool::Worker, [] { return 3; }).Then(Pool::Main, [&completed](int) { completed.store(true); });
+
+    uint32_t spins = 0;
+    jobs.HelpUntil([&completed, &spins] { return completed.load() || ++spins > 50'000'000u; },
+                   /*helpMain=*/true);
+    CHECK(completed.load());
+}
+
+TEST_CASE("HelpUntil with helpMain never runs main tasks off the main thread")
+{
+    JobSystem jobs(2u);
+
+    std::atomic<bool> mainTaskRan{false};
+    jobs.RunOnMain([&mainTaskRan] { mainTaskRan.store(true); });
+
+    // helpMain only engages on the thread that constructed the JobSystem; from
+    // any other thread the main queue must stay untouched (its tasks may assume
+    // main-thread affinity, e.g. GPU submit).
+    std::thread other([&jobs] {
+        uint32_t spins = 0;
+        jobs.HelpUntil([&spins] { return ++spins > 100'000u; }, /*helpMain=*/true);
+    });
+    other.join();
+
+    CHECK_FALSE(mainTaskRan.load());
+    CHECK(jobs.DrainMain() == 1u); // still queued for the real drain point
+    CHECK(mainTaskRan.load());
+}
+
+TEST_CASE("Wait on the main thread completes a chain ending in Pool::Main")
+{
+    JobSystem jobs(2u);
+
+    // The M8 trap: before the HelpUntil main-drain fix this livelocked — the
+    // final stage sat in the main queue and Wait() only ran worker tasks. The
+    // bounded HelpUntil test above catches the mechanism regressing; this one
+    // pins Wait() itself to the help-main path.
+    std::atomic<bool> sawMainStage{false};
+    Task<int> task = jobs.Run(Pool::Worker, [] { return 20; })
+                         .Then(Pool::Main,
+                               [&sawMainStage](int value) {
+                                   sawMainStage.store(true);
+                                   return value + 1;
+                               })
+                         .Then(Pool::Worker, [](int value) { return value * 2; });
+
+    task.Wait();
+    CHECK(sawMainStage.load());
+    CHECK(task.Get() == 42);
+}
+
+#ifndef NDEBUG
+TEST_CASE("A second Then on the same task fires the contract guard")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    JobSystem                                 jobs(2u);
+
+    // Pending antecedent: the second Then would silently overwrite the first
+    // continuation (orphaning it — its Wait() would livelock), so it asserts.
+    Task<int> pending = jobs.Run(Pool::Worker, [] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        return 1;
+    });
+    Task<int> chained = pending.Then(Pool::Worker, [](int value) { return value + 1; });
+    CHECK_THROWS_AS((void)pending.Then(Pool::Worker, [](int value) { return value; }),
+                    Assisi::Core::ContractViolation);
+    chained.Wait();
+    CHECK(chained.Get() == 2);
+
+    // Completed antecedent: still one-shot — a second Then would move from the
+    // already-moved result slot.
+    Task<int> done = jobs.Run(Pool::Worker, [] { return 5; });
+    done.Wait();
+    (void)done.Then(Pool::Worker, [](int value) { return value; }).Wait();
+    CHECK_THROWS_AS((void)done.Then(Pool::Worker, [](int value) { return value; }),
+                    Assisi::Core::ContractViolation);
+}
+#endif // !NDEBUG
 
 TEST_CASE("Many concurrent tasks all complete with the right results")
 {
