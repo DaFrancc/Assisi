@@ -154,6 +154,49 @@
         "CMAKE_C_COMPILER": "clang",
         "CMAKE_CXX_COMPILER": "clang++"
       }
+    },
+
+    {
+      "name": "msvc-asan",
+      "inherits": "msvc-debug",
+      "description": "Windows + MSVC + Debug + AddressSanitizer (MSVC supports ASan only)",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "gcc-asan",
+      "inherits": "gcc-debug",
+      "description": "Linux + GCC + Debug + Address/UndefinedBehaviorSanitizer",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "gcc-tsan",
+      "inherits": "gcc-debug",
+      "description": "Linux + GCC + Debug + ThreadSanitizer (mutually exclusive with ASan)",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON",
+        "ASSISI_SANITIZER_SET": "thread"
+      }
+    },
+    {
+      "name": "clang-asan",
+      "inherits": "clang-debug",
+      "description": "Linux + Clang + Debug + Address/UndefinedBehaviorSanitizer",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "clang-tsan",
+      "inherits": "clang-debug",
+      "description": "Linux + Clang + Debug + ThreadSanitizer (mutually exclusive with ASan)",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON",
+        "ASSISI_SANITIZER_SET": "thread"
+      }
     }
   ],
   "buildPresets": [
@@ -167,7 +210,13 @@
 
     { "name": "clang-debug", "configurePreset": "clang-debug" },
     { "name": "clang-dev",   "configurePreset": "clang-dev"   },
-    { "name": "clang-ship",  "configurePreset": "clang-ship"  }
+    { "name": "clang-ship",  "configurePreset": "clang-ship"  },
+
+    { "name": "msvc-asan",   "configurePreset": "msvc-asan"   },
+    { "name": "gcc-asan",    "configurePreset": "gcc-asan"    },
+    { "name": "gcc-tsan",    "configurePreset": "gcc-tsan"    },
+    { "name": "clang-asan",  "configurePreset": "clang-asan"  },
+    { "name": "clang-tsan",  "configurePreset": "clang-tsan"  }
   ],
   "testPresets": [
     {
@@ -187,6 +236,12 @@
 
     { "name": "clang-debug", "inherits": "test-base", "configurePreset": "clang-debug" },
     { "name": "clang-dev",   "inherits": "test-base", "configurePreset": "clang-dev"   },
-    { "name": "clang-ship",  "inherits": "test-base", "configurePreset": "clang-ship"  }
+    { "name": "clang-ship",  "inherits": "test-base", "configurePreset": "clang-ship"  },
+
+    { "name": "msvc-asan",   "inherits": "test-base", "configurePreset": "msvc-asan"   },
+    { "name": "gcc-asan",    "inherits": "test-base", "configurePreset": "gcc-asan"    },
+    { "name": "gcc-tsan",    "inherits": "test-base", "configurePreset": "gcc-tsan"    },
+    { "name": "clang-asan",  "inherits": "test-base", "configurePreset": "clang-asan"  },
+    { "name": "clang-tsan",  "inherits": "test-base", "configurePreset": "clang-tsan"  }
   ]
 }
