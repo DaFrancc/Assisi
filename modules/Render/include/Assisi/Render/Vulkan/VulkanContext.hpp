@@ -114,6 +114,16 @@ class VulkanContext
     [[nodiscard]] VkFormat GetDepthFormat() const { return _depthFormat; }
     ///@}
 
+    /// @brief Highest MSAA sample count this device supports for *both* colour and
+    /// depth render targets (their masks intersected), so a caller can clamp a
+    /// requested count to one that will actually create. Always at least 1.
+    ///
+    /// nvrhi exposes no sample-count capability query, so this reads
+    /// VkPhysicalDeviceLimits directly. A requested count must be clamped against
+    /// it before createTexture, which otherwise fails on a device that cannot do
+    /// the requested count — and msaaSamples comes from user-editable JSON.
+    [[nodiscard]] uint32_t GetMaxUsableSampleCount() const;
+
   private:
     VulkanContext() = default;
 

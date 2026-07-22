@@ -549,6 +549,31 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     return context;
 }
 
+uint32_t VulkanContext::GetMaxUsableSampleCount() const
+{
+    if (_physicalDevice == VK_NULL_HANDLE)
+    {
+        return 1u;
+    }
+
+    VkPhysicalDeviceProperties props{};
+    VKD.vkGetPhysicalDeviceProperties(_physicalDevice, &props);
+
+    // A render target needs BOTH its colour and depth attachments at the sample
+    // count, so intersect the two masks — a device can advertise more colour
+    // sample counts than depth ones.
+    const VkSampleCountFlags counts =
+        props.limits.framebufferColorSampleCounts & props.limits.framebufferDepthSampleCounts;
+
+    if (counts & VK_SAMPLE_COUNT_64_BIT) return 64u;
+    if (counts & VK_SAMPLE_COUNT_32_BIT) return 32u;
+    if (counts & VK_SAMPLE_COUNT_16_BIT) return 16u;
+    if (counts & VK_SAMPLE_COUNT_8_BIT)  return 8u;
+    if (counts & VK_SAMPLE_COUNT_4_BIT)  return 4u;
+    if (counts & VK_SAMPLE_COUNT_2_BIT)  return 2u;
+    return 1u;
+}
+
 bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
 {
     if (width == 0 || height == 0)

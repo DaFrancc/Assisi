@@ -478,9 +478,23 @@ void Application::ConfigurePostProcess()
         return;
     }
 
+    // msaaSamples comes from user-editable JSON, which only whitelists {2,4,8} —
+    // it says nothing about what this GPU can actually do. Requesting an
+    // unsupported count fails texture creation, so clamp to the device limit.
+    const auto *vulkanContext = Render::RenderSystem::GetVulkanContext();
+    const uint32_t requestedSamples = static_cast<uint32_t>(_options.msaaSamples);
+    const uint32_t maxSamples = vulkanContext != nullptr ? vulkanContext->GetMaxUsableSampleCount() : 1u;
+    const uint32_t msaaSamples = std::min(requestedSamples, maxSamples);
+    if (msaaSamples != requestedSamples)
+    {
+        Core::Log::Warn("MSAA: {}x requested but this device supports at most {}x for colour+depth targets; "
+                        "using {}x.",
+                        requestedSamples, maxSamples, msaaSamples);
+    }
+
     const nvrhi::FramebufferInfo before = _postProcess.SceneFramebufferInfo();
     _postProcess.Configure(static_cast<uint32_t>(fb.Width), static_cast<uint32_t>(fb.Height), _options.aaMode,
-                           static_cast<uint32_t>(_options.msaaSamples));
+                           msaaSamples);
     const nvrhi::FramebufferInfo after = _postProcess.SceneFramebufferInfo();
 
     // Only fires for an actual sample-count change (F11 toggling into/out of
