@@ -598,15 +598,64 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
     VKD.vkGetPhysicalDeviceSurfaceFormatsKHR(_physicalDevice, _surface, &formatCount, formats.data());
 
-    VkSurfaceFormatKHR chosenFormat = formats[0];
+    // Round-6 M6. This used to default to formats[0] and only override it on an
+    // exact match, which could leave two silently-wrong outcomes on a device that
+    // does not advertise the preferred format:
+    //   - an unmappable format (ToNvrhiFormat -> UNKNOWN), failing swapchain
+    //     creation far below with a message about NVRHI rather than about the
+    //     surface; or
+    //   - an _SRGB format, which maps fine but makes the hardware apply the sRGB
+    //     transfer function to values the fragment shader has *already* gamma
+    //     encoded (cube_min.frag's pow(1/2.2)) — a washed-out image and no error
+    //     anywhere. Lighting stage L2 moves that encode into a tonemap pass, at
+    //     which point an sRGB surface becomes the correct choice; until then a
+    //     linear (UNORM) surface is the only correct one.
+    // So: take the ideal pair, else any mappable non-sRGB format, else a mappable
+    // sRGB one with a warning that names the symptom, else fail while saying why.
+    const auto isSrgb = [](VkFormat f) { return f == VK_FORMAT_B8G8R8A8_SRGB; };
+
+    const VkSurfaceFormatKHR *ideal = nullptr;
+    const VkSurfaceFormatKHR *linearFallback = nullptr;
+    const VkSurfaceFormatKHR *srgbFallback = nullptr;
     for (const auto &f : formats)
     {
+        if (ToNvrhiFormat(f.format) == nvrhi::Format::UNKNOWN)
+        {
+            continue; // nothing downstream can bind it
+        }
         if (f.format == VK_FORMAT_B8G8R8A8_UNORM && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
         {
-            chosenFormat = f;
+            ideal = &f;
             break;
         }
+        if (!isSrgb(f.format))
+        {
+            if (linearFallback == nullptr)
+                linearFallback = &f;
+        }
+        else if (srgbFallback == nullptr)
+        {
+            srgbFallback = &f;
+        }
     }
+
+    const VkSurfaceFormatKHR *pick = ideal != nullptr ? ideal
+                                     : linearFallback != nullptr ? linearFallback
+                                                                 : srgbFallback;
+    if (pick == nullptr)
+    {
+        Core::Log::Error("VulkanContext: the surface advertises {} format(s), none of which NVRHI can map "
+                         "(only B8G8R8A8 UNORM/SRGB are supported). Cannot create a swapchain.",
+                         formats.size());
+        return false;
+    }
+    if (pick == srgbFallback)
+    {
+        Core::Log::Warn("VulkanContext: no linear (UNORM) surface format available; falling back to an sRGB "
+                        "one. The shader also gamma-encodes, so the image will look washed out until the "
+                        "tonemap pass (lighting stage L2) takes over that encode.");
+    }
+    const VkSurfaceFormatKHR chosenFormat = *pick;
 
     VkExtent2D extent = capabilities.currentExtent;
     if (extent.width == 0xFFFFFFFF)

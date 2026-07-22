@@ -40,6 +40,11 @@ void LightingSystem::Resize(nvrhi::ICommandList *commandList, int32_t width, int
     _grid.BuildClusters(commandList, width, height, nearZ, farZ, glm::inverse(projection));
 }
 
+glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const glm::vec3 &localDirection)
+{
+    return SafeDirection(glm::mat3(worldMatrix) * localDirection);
+}
+
 void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
     // Reuse the staging buffers' capacity across frames; clear() keeps storage.
@@ -51,8 +56,17 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     // transform.position: a parented light's local position is relative to its
     // parent, so reading it directly placed the light at the wrong spot. For a root
     // (no parent) worldMatrix[3] equals position, so unparented lights are unchanged.
-    // (Spot *direction* is still taken from light.direction as-is — whether it should
-    // rotate with the parent is a separate open decision; see the round-6 review M2.)
+    //
+    // Round-6 M2 follow-on, decided 2026-07-22: a spot light's `direction` is
+    // LOCAL, and is rotated into world space by the same matrix. A spot mounted on
+    // a vehicle's headlight or held by a character has to aim where its parent
+    // faces; having position follow the parent while direction stayed world-fixed
+    // was the inconsistency. Note this also means an *unparented* light's own
+    // rotation now aims it — previously `direction` was effectively world-space and
+    // the entity's rotation was ignored, which surprised in the opposite direction.
+    // A direction is a vector, not a normal, so the plain upper-left 3x3 is the
+    // correct transform (no inverse-transpose needed); SafeDirection then
+    // renormalises, which also absorbs any scale in that matrix.
     for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
     {
         _pointLights.push_back({
@@ -67,7 +81,7 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
         const float outerCos = glm::cos(glm::radians(light.outerAngle));
         _spotLights.push_back({
             .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
-            .directionInner = {SafeDirection(light.direction), innerCos},
+            .directionInner = {WorldSpotDirection(transform.worldMatrix, light.direction), innerCos},
             .colorIntensity = {light.color, light.intensity},
             .outerCutoff    = outerCos,
         });

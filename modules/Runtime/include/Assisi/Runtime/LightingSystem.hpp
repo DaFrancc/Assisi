@@ -44,6 +44,20 @@ class LightingSystem
     /// @brief Collect lights from the scene, upload to GPU, and run the cull pass.
     void Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view);
 
+    /// @brief A spot light's aim in world space: its LOCAL direction rotated by the
+    /// entity's propagated world matrix, normalized.
+    ///
+    /// Split out of Update so the rule is testable without a device — Update needs a
+    /// command list, which is why nothing here was covered before. See the round-6
+    /// M2 follow-on: a spot mounted on a parent (a vehicle headlight, a held torch)
+    /// must aim where the parent faces, and its position already did.
+    ///
+    /// A direction is a vector rather than a normal, so the upper-left 3x3 is the
+    /// right transform — no inverse-transpose. Normalizing afterwards absorbs any
+    /// scale, and falls back to a fixed axis for a degenerate (zero) direction
+    /// instead of producing NaN.
+    [[nodiscard]] static glm::vec3 WorldSpotDirection(const glm::mat4 &worldMatrix, const glm::vec3 &localDirection);
+
     /// @brief Number of directional lights found in the last Update() call.
     uint32_t DirLightCount() const { return _dirLightCount; }
 

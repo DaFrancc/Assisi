@@ -6,6 +6,7 @@ add_executable(Assisi-Runtime-Tests
   TestSceneSerializer.cpp
   TestHierarchy.cpp
   TestLifecycle.cpp
+  TestLightingSystem.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Runtime-Tests)
