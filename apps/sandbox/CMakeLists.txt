@@ -37,12 +37,21 @@ set(_assets_stamp "${CMAKE_CURRENT_BINARY_DIR}/assets.stamp")
 
 add_custom_command(
     OUTPUT "${_assets_stamp}"
+    # copy_directory only adds and overwrites, so prune first: a deleted or
+    # renamed source asset would otherwise linger in the staged tree forever and
+    # still resolve through AssetSystem. Compiled .spv files are exempt (they are
+    # build outputs with no source counterpart) — see the script for why this is
+    # a targeted prune rather than a wipe-and-recopy.
+    COMMAND ${CMAKE_COMMAND}
+        -DSRC_DIR=${CMAKE_SOURCE_DIR}/assets
+        -DDST_DIR=$<TARGET_FILE_DIR:Assisi-Sandbox>/assets
+        -P "${CMAKE_SOURCE_DIR}/cmake/AssisiPruneStagedAssets.cmake"
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets"
         "$<TARGET_FILE_DIR:Assisi-Sandbox>/assets"
     COMMAND ${CMAKE_COMMAND} -E touch "${_assets_stamp}"
-    DEPENDS ${_assisi_assets}
-    COMMENT "Copying assets to build directory"
+    DEPENDS ${_assisi_assets} "${CMAKE_SOURCE_DIR}/cmake/AssisiPruneStagedAssets.cmake"
+    COMMENT "Staging assets to the build directory (pruning stale files first)"
     VERBATIM
 )
 

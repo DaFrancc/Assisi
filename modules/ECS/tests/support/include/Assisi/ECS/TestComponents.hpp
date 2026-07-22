@@ -38,7 +38,7 @@ struct Tag
 ACOMP(tracked)
 struct Tracked
 {
-    AFIELD() int value = 0;
+    AFIELD() int32_t value = 0;
 };
 
 } // namespace Assisi::ECS

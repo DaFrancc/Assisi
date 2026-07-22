@@ -114,6 +114,23 @@ class MeshPass
         uint32_t drawCalls = 0;
     };
 
+    /// @brief One per-object record: uploaded into the instance buffer each frame
+    /// and indexed in the vertex shader by gl_InstanceIndex (each draw sets its
+    /// startInstanceLocation). Mirrors cube_min.vert's `InstanceData` std430
+    /// struct — mat4 (0..63) + uint (64), padded to the 16-byte array stride
+    /// std430 gives the struct.
+    ///
+    /// Lives here rather than in the .cpp only so the pass can keep a reusable
+    /// scratch vector of these across frames; it is not part of the caller-facing
+    /// API and no other translation unit builds one.
+    struct InstanceData
+    {
+        glm::mat4 model;
+        uint32_t  materialIndex; // row into the material table (== Material::Id()).
+        uint32_t  _pad0 = 0, _pad1 = 0, _pad2 = 0;
+    };
+    static_assert(sizeof(InstanceData) == 80, "InstanceData must match the shader's std430 array stride.");
+
     /// @brief Records `items` into `frame` as CPU-built indirect draws (stage E).
     /// Uploads all per-object data (world matrix + material id) into the instance
     /// buffer first — one contiguous record per item, indexed in the shader by
@@ -229,5 +246,12 @@ class MeshPass
     // a structured SRV. Owned by the pass.
     mutable nvrhi::BufferHandle          _indirectBuffer;
     mutable uint32_t                     _indirectCapacity = 0; // in commands
+
+    // Per-frame scratch for Submit, kept across frames so the steady state costs
+    // no allocations: clear() preserves capacity, whereas the locals these replaced
+    // heap-allocated (and grew) on every single frame.
+    mutable std::vector<InstanceData>                        _scratchInstances;
+    mutable std::vector<nvrhi::DrawIndexedIndirectArguments> _scratchCommands;
+    mutable std::vector<const MeshBuffer *>                  _scratchBatchMeshes;
 };
 } /* namespace Assisi::Render */

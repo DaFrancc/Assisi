@@ -23,13 +23,9 @@ namespace
 // draw sets startInstanceLocation to its record). Mirrors cube_min.vert's
 // `InstanceData` std430 struct — mat4 (0..63) + uint (64), padded to the 16-byte
 // array stride std430 gives the struct.
-struct InstanceData
-{
-    glm::mat4 model;
-    uint32_t  materialIndex; // row into the material table (== Material::Id()).
-    uint32_t  _pad0 = 0, _pad1 = 0, _pad2 = 0;
-};
-static_assert(sizeof(InstanceData) == 80, "InstanceData must match the shader's std430 array stride.");
+// (Declared as MeshPass::InstanceData in the header so the pass can hold a
+// reusable scratch vector of them across frames.)
+using InstanceData = MeshPass::InstanceData;
 
 // Starting instance-buffer capacity (records). Grows geometrically past this when
 // a frame draws more items; the first level typically fits without a growth. Also
@@ -257,11 +253,19 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     // the same geometry (mesh + submesh); its records are contiguous (instanceIndex
     // increments per item), so one instanced draw covers them. Material differs per
     // instance (read from the record), so it never splits a batch.
-    std::vector<InstanceData>                        instances;
-    std::vector<nvrhi::DrawIndexedIndirectArguments> commands;
+    //
+    // These are reused members, not locals: Submit runs every frame, and fresh
+    // vectors meant three heap allocations (and their growth reallocs) per frame,
+    // every frame. clear() keeps the capacity, so a steady-state scene settles
+    // into zero allocations here.
+    std::vector<InstanceData>                        &instances   = _scratchInstances;
+    std::vector<nvrhi::DrawIndexedIndirectArguments> &commands    = _scratchCommands;
     // Parallel to `commands`: the mesh each batch draws, for the arena vertex/index
     // buffers at record time (they bind via GraphicsState, not the indirect args).
-    std::vector<const MeshBuffer *> batchMeshes;
+    std::vector<const MeshBuffer *>                  &batchMeshes = _scratchBatchMeshes;
+    instances.clear();
+    commands.clear();
+    batchMeshes.clear();
     instances.reserve(items.size());
 
     const MeshBuffer *prevMesh    = nullptr;

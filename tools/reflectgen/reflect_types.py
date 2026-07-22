@@ -58,10 +58,6 @@ TYPES: dict[str, TypeCodegen] = {
         'Double',
         '{a}',
         'if (j.contains("{f}")) {a} = j.at("{f}").get<double>();'),
-    'int':       TypeCodegen(
-        'Int',
-        '{a}',
-        'if (j.contains("{f}")) {a} = j.at("{f}").get<int>();'),
     'int32_t':   TypeCodegen(
         'Int32',
         '{a}',
@@ -70,6 +66,14 @@ TYPES: dict[str, TypeCodegen] = {
         'UInt32',
         '{a}',
         'if (j.contains("{f}")) {a} = j.at("{f}").get<uint32_t>();'),
+    'int64_t':   TypeCodegen(
+        'Int64',
+        '{a}',
+        'if (j.contains("{f}")) {a} = j.at("{f}").get<int64_t>();'),
+    'uint64_t':  TypeCodegen(
+        'UInt64',
+        '{a}',
+        'if (j.contains("{f}")) {a} = j.at("{f}").get<uint64_t>();'),
     'bool':      TypeCodegen(
         'Bool',
         '{a}',
@@ -184,4 +188,19 @@ _ENTITY_REF_TYPES = {'ECS::Entity', 'Assisi::ECS::Entity'}
 # mapped to a human reason ("no string codegen yet") produces a better message
 # than the generic default. Fields listed here fail exactly like any other
 # unknown type — the entry only improves the diagnostic.
-UNSUPPORTED_TYPES: dict[str, str] = {}
+UNSUPPORTED_TYPES: dict[str, str] = {
+    # The engine requires explicit-width integer types everywhere, so the
+    # implementation-defined spellings are rejected by name rather than silently
+    # reflected. Previously `int` was a supported type while int64_t/uint64_t were
+    # hard build errors — exactly backwards from the project's own rule.
+    'int':                'use int32_t (or int64_t) — bare int has an implementation-defined width',
+    'unsigned':           'use uint32_t (or uint64_t) — bare unsigned has an implementation-defined width',
+    'unsigned int':       'use uint32_t (or uint64_t) — bare unsigned int has an implementation-defined width',
+    'long':               'use int64_t — long is 32-bit on Windows and 64-bit elsewhere',
+    'unsigned long':      'use uint64_t — unsigned long is 32-bit on Windows and 64-bit elsewhere',
+    'long long':          'use int64_t',
+    'unsigned long long': 'use uint64_t',
+    'short':              'use int16_t',
+    'unsigned short':     'use uint16_t',
+    'char':               'use int8_t/uint8_t for a number, or Core::ShortString for text',
+}

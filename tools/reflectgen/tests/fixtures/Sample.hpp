@@ -22,7 +22,7 @@
 // regresses, the generated output sprouts a phantom GhostComponent and the
 // golden comparison fails loudly.
 // ACOMP()
-// struct GhostComponent { AFIELD() int ghost = 0; };
+// struct GhostComponent { AFIELD() int32_t ghost = 0; };
 
 namespace Assisi::Runtime
 {
@@ -46,9 +46,10 @@ struct SampleAllTypes
 {
     AFIELD() float f = 1.0f;
     AFIELD() double d = 2.0;
-    AFIELD() int i = 3;
     AFIELD() int32_t i32 = 4;
     AFIELD() uint32_t u32 = 5;
+    AFIELD() int64_t i64 = 6;
+    AFIELD() uint64_t u64 = 7;
     AFIELD() bool flag = true;
     AFIELD() SampleShape shape = SampleShape::Sphere;
     AFIELD() glm::vec2 v2 = {1.0f, 2.0f};
@@ -82,7 +83,7 @@ struct SampleEmpty
 ACOMP(transient)
 struct SampleTransient
 {
-    AFIELD() int ignored = 0;
+    AFIELD() int32_t ignored = 0;
 };
 
 // Radio: declarative editor visibility. `mode` is a broadcaster

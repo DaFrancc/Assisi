@@ -16,9 +16,10 @@ enum class FieldType
 {
     Float,
     Double,
-    Int,
     Int32,
     UInt32,
+    Int64,
+    UInt64,
     Bool,
     Vec2,
     Vec3,

@@ -164,7 +164,7 @@ class CodegenTest(unittest.TestCase):
 
     def test_no_asset_id_include_without_asset_id_fields(self):
         comps = _parse_source(
-            "namespace N {\nACOMP()\nstruct Plain { AFIELD() int x = 0; };\n}\n"
+            "namespace N {\nACOMP()\nstruct Plain { AFIELD() int32_t x = 0; };\n}\n"
         )
         self.assertNotIn("AssetIdJson", reflectgen.generate_cpp(comps, "N/Plain.hpp"))
 
@@ -188,7 +188,7 @@ class CodegenTest(unittest.TestCase):
         )
 
         without_ref = _parse_source(
-            "namespace N {\nACOMP()\nstruct Plain { AFIELD() int x = 0; };\n}\n"
+            "namespace N {\nACOMP()\nstruct Plain { AFIELD() int32_t x = 0; };\n}\n"
         )
         self.assertNotIn(
             "SceneSerializer",
@@ -269,7 +269,7 @@ class ParserEdgeCaseTest(unittest.TestCase):
             "namespace Outer {\n"
             "namespace Inner {\n"
             "ACOMP()\n"
-            "struct C { AFIELD() int a = 0; };\n"
+            "struct C { AFIELD() int32_t a = 0; };\n"
             "}\n"
             "}\n"
         )
@@ -282,10 +282,10 @@ class ParserEdgeCaseTest(unittest.TestCase):
         components = _parse_source(
             "namespace N {\n"
             "ACOMP()\n"
-            "struct First { AFIELD() int a = 0; };\n"
+            "struct First { AFIELD() int32_t a = 0; };\n"
             "struct Plain { int untracked = 0; };\n"
             "ACOMP()\n"
-            "struct Second { AFIELD() int b = 0; };\n"
+            "struct Second { AFIELD() int32_t b = 0; };\n"
             "}\n"
         )
         self.assertEqual([c.name for c in components], ["First", "Second"])
@@ -299,7 +299,7 @@ class ParserEdgeCaseTest(unittest.TestCase):
             "ACOMP()\n"
             "struct Outer {\n"
             "    struct Inner { int z = 0; } nested;\n"
-            "    AFIELD() int a = 1;\n"
+            "    AFIELD() int32_t a = 1;\n"
             "};\n"
             "}\n"
         )
@@ -311,7 +311,7 @@ class ParserEdgeCaseTest(unittest.TestCase):
         components = _parse_source(
             "namespace N {\n"
             "ACOMP()\n"
-            "struct C { AFIELD(transient) Foo* cache = nullptr; AFIELD() int a = 0; };\n"
+            "struct C { AFIELD(transient) Foo* cache = nullptr; AFIELD() int32_t a = 0; };\n"
             "}\n"
         )
         cache = next(f for f in components[0].fields if f.name == "cache")
@@ -341,7 +341,7 @@ class ParserEdgeCaseTest(unittest.TestCase):
         # Transient fields are never serialized, so an unknown type is fine.
         components = _parse_source(
             "namespace N {\nACOMP()\n"
-            "struct C { AFIELD(transient) SomeType data = {}; AFIELD() int a = 0; };\n}\n"
+            "struct C { AFIELD(transient) SomeType data = {}; AFIELD() int32_t a = 0; };\n}\n"
         )
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")  # must not raise
         self.assertIn("Assisi::Core::Reflect::FieldType::Unknown", cpp)  # in the meta table
@@ -393,7 +393,7 @@ class AssetTypeTest(unittest.TestCase):
         "    AFIELD() float MetallicFactor = 1.f;\n"
         "    AFIELD() Assisi::Core::AssetPath BaseColorTexture;\n"
         "    AFIELD() std::vector<Assisi::Core::AssetPath> layers;\n"
-        "    AFIELD(transient) int cache = 0;\n"
+        "    AFIELD(transient) int32_t cache = 0;\n"
         "};\n}\n"
     )
 
@@ -415,7 +415,7 @@ class AssetTypeTest(unittest.TestCase):
         self.assertIn("auto& a = *static_cast<T*>(out_ptr)", cpp)
         self.assertIn("a.MetallicFactor = j.at(\"MetallicFactor\")", cpp)
         # Transient field is in the meta table but never (de)serialized.
-        self.assertIn('"cache", Assisi::Core::Reflect::FieldType::Int', cpp)
+        self.assertIn('"cache", Assisi::Core::Reflect::FieldType::Int32', cpp)
         self.assertNotIn("a.cache", cpp)
         self.assertNotIn("c.cache", cpp)
 
@@ -431,7 +431,7 @@ class AssetTypeTest(unittest.TestCase):
         src = (
             "#include <Assisi/Core/AssetPath.hpp>\n"
             "namespace N {\n"
-            "ACOMP()\nstruct C { AFIELD() int a = 0; };\n"
+            "ACOMP()\nstruct C { AFIELD() int32_t a = 0; };\n"
             "AASSET()\nstruct A { AFIELD() float b = 0.f; };\n"
             "}\n"
         )
@@ -445,7 +445,7 @@ class EnumTest(unittest.TestCase):
         "#include <cstdint>\n"
         "namespace N {\n"
         "AENUM()\nenum class Shape : uint32_t { Box, Sphere, Capsule = 5, Cylinder };\n"
-        "ACOMP()\nstruct Body { AFIELD() Shape shape = Shape::Sphere; AFIELD() int n = 0; };\n"
+        "ACOMP()\nstruct Body { AFIELD() Shape shape = Shape::Sphere; AFIELD() int32_t n = 0; };\n"
         "}\n"
     )
 

@@ -230,7 +230,6 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             }
             break;
         }
-        case FieldType::Int:
         case FieldType::Int32:
         {
             // reflectgen guarantees integer-field bounds are integral and in
@@ -246,6 +245,27 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
             const uint32_t minBound = field.hasMin ? static_cast<uint32_t>(field.minValue) : 0u;
             const uint32_t maxBound = field.hasMax ? static_cast<uint32_t>(field.maxValue) : UINT32_MAX;
             edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U32, fp, 1.f, &minBound, &maxBound,
+                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
+            break;
+        }
+        case FieldType::Int64:
+        {
+            // Bounds arrive as double, which holds integers exactly only to 2^53;
+            // past that a bound would silently round, so clamp to the exactly
+            // representable range rather than pretend to honour it.
+            constexpr int64_t kExact   = 1LL << 53;
+            const int64_t     minBound = field.hasMin ? static_cast<int64_t>(field.minValue) : -kExact;
+            const int64_t     maxBound = field.hasMax ? static_cast<int64_t>(field.maxValue) : kExact;
+            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound,
+                                       nullptr, ImGuiSliderFlags_AlwaysClamp);
+            break;
+        }
+        case FieldType::UInt64:
+        {
+            constexpr uint64_t kExact   = 1ULL << 53;
+            const uint64_t     minBound = field.hasMin ? static_cast<uint64_t>(field.minValue) : 0u;
+            const uint64_t     maxBound = field.hasMax ? static_cast<uint64_t>(field.maxValue) : kExact;
+            edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound,
                                        nullptr, ImGuiSliderFlags_AlwaysClamp);
             break;
         }
