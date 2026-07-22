@@ -164,13 +164,25 @@ if (ASSISI_ENABLE_SANITIZERS)
     target_link_options(Assisi-Sanitize INTERFACE /fsanitize=address)
   else()
     string(REPLACE ";" "," _assisi_san_list "${ASSISI_SANITIZER_SET}")
+    set(_assisi_san_extra "")
+    if (ASSISI_SANITIZER_SET MATCHES "undefined|vptr")
+      # UBSan's vptr check needs typeinfo for every polymorphic type it sees,
+      # but Jolt builds itself with -fno-rtti (its Build/CMakeLists.txt), so
+      # anything touching JPH:: classes fails to link with "undefined
+      # reference to typeinfo for JPH::Shape". Dropping vptr is the documented
+      # remedy for linking against non-RTTI code; the rest of UBSan still
+      # applies. Revisit only if Jolt gains an RTTI build option we want.
+      list(APPEND _assisi_san_extra -fno-sanitize=vptr)
+    endif()
     target_compile_options(Assisi-Sanitize INTERFACE
       -fsanitize=${_assisi_san_list}
+      ${_assisi_san_extra}
       -fno-omit-frame-pointer
       -g
     )
     target_link_options(Assisi-Sanitize INTERFACE
       -fsanitize=${_assisi_san_list}
+      ${_assisi_san_extra}
     )
   endif()
 endif()
