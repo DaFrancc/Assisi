@@ -139,18 +139,15 @@ cat > "$USER_PRESETS_PATH" <<EOF
   "configurePresets": [
     {
       "name": "${COMPILER}-debug-user",
-      "inherits": "${COMPILER}-debug",
-      "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
+      "inherits": "${COMPILER}-debug"
     },
     {
       "name": "${COMPILER}-dev-user",
-      "inherits": "${COMPILER}-dev",
-      "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
+      "inherits": "${COMPILER}-dev"
     },
     {
       "name": "${COMPILER}-ship-user",
-      "inherits": "${COMPILER}-ship",
-      "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
+      "inherits": "${COMPILER}-ship"
     }
   ],
   "buildPresets": [
@@ -161,7 +158,7 @@ cat > "$USER_PRESETS_PATH" <<EOF
 }
 EOF
 
-ok "Wrote CMakeUserPresets.json (compiler=$COMPILER, ASSISI_APP=$GAME_NAME)"
+ok "Wrote CMakeUserPresets.json (compiler=$COMPILER, app=$GAME_NAME)"
 
 # -----------------------
 # Done
