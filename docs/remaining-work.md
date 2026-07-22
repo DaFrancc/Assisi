@@ -237,11 +237,12 @@ These were real and unrecorded — the docs assumed some of them existed.
   tree has warnings today (sign-conversion in the sandbox; reflectgen's
   generated aggregates omit trailing `FieldMeta` members). Until those are
   cleared the option is decoration, and nothing enforces it either way.
-- **`levels/Materials.alvl` is tracked but references assets under gitignored
-  `assets/models/`.** A fresh clone gets a level whose car cannot resolve. The
-  sidecar GUIDs are durable now, but the *asset* is not in the repo. Decide:
-  commit the model, swap the level to a committed asset, or mark the level as
-  local-only.
+- **Tracked levels may reference assets that are not in the repo — accepted
+  2026-07-22, do not "fix".** `levels/Materials.alvl` references models under
+  gitignored `assets/models/`, so a fresh clone cannot resolve them. This is
+  fine by design: an unresolvable reference degrades to the fallback material
+  and a warn-once (`AssetCache::_missingMeshWarned`), not a crash or a corrupt
+  load. Large binary test assets stay out of git deliberately.
 - **Threading coverage is bounded by unit tests that run in 0.26 s.** TSan only
   finds races on paths that execute, and there is no soak or stress test for the
   job system or async asset streaming under load. Networking adds a third thread
