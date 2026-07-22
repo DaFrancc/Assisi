@@ -126,12 +126,15 @@ below remains:**
     the atomic light-index reservation that the review singled out as correct,
     and nothing has profiled it as a bottleneck. Wants a measurement first —
     naturally paired with the lighting or light-culling work.
-  - **The wide explicit-width sweep** (~65 bare `unsigned` and ~196 bare `int`
-    occurrences across 19+ files). The public header and the codegen that
-    *institutionalized* the violation are fixed, so new code is now pushed the
-    right way; the rest is mechanical churn with a large diff and high conflict
-    risk against the networking/lighting branches. Do it as its own commit
-    during a quiet period, not stacked under feature work.
+  - ~~**The wide explicit-width sweep.**~~ **Done 2026-07-22** (`4e144a7`) —
+    deferred for conflict risk, then done immediately since no feature branch
+    was in flight to conflict with. Files containing a bare integer type: 75 →
+    40. The 40 that remain are contracts rather than choices, and should stay:
+    NVML's ABI mirror (`GpuTelemetry.cpp`, zero diff), stb_image/libwebp buffer
+    types, GLFW callback signatures and write-through locals, Jolt overrides,
+    ImGui `int*` out-parameters, `int main`/`%.*s`, Win32/POSIX interop, and
+    `char`-as-text. Verified behaviour-neutral: `-Wsign-conversion` unchanged at
+    28, all categories matching, ASan + TSan clean.
   - **`DrawScene`'s per-frame `std::vector<DrawItem>`** (`Runtime/Renderer.cpp`).
     Unlike `MeshPass::Submit` this is a free function with no object to hang
     scratch off, so reuse means threading a caller-owned buffer through
