@@ -284,6 +284,15 @@ a real game needs.
 
 ## Transparency & volumetrics
 
+- **Prerequisite (added 2026-07-22): the material system has no `alphaMode`/
+  `alphaCutoff`.** Both bullets below assume it does. L3's alpha-test depth
+  variant cannot be written without those fields, and the transparent forward
+  pass needs the blend bucket in the sort key — neither exists today
+  (`mesh-material-architecture.md` §2 had them parked as out of scope). The
+  cheap half — the fields, the material table entry, and the masked pipeline
+  bit — is small and non-breaking, and is what unblocks L3; the blended pass
+  can follow. Land that before L3, or L3 ships foliage casting solid
+  rectangular shadows.
 - Transparent receivers: the transparent forward pass samples the same
   cluster lists, atlas, and probes as opaque (clustered forward's
   advantage); lands with L3/L4 as shader-variant work. OIT out of scope.

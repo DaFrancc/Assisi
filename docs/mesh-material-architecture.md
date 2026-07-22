@@ -26,11 +26,28 @@ culling, bindless, streaming — with internals swapped, never producers rewritt
   into the shader (replacing the hardcoded `kMetallic/kRoughness`).
 - The GPU-driven doc's stance holds: no Nanite/meshlets, no LOD autogen,
   instance-count is the scaling axis, well-authored assets assumed.
-- Opaque-only pipeline for now. `alphaMode`/`alphaCutoff`/`doubleSided` are
-  deliberately out of scope — named here so it isn't mistaken for an oversight.
-  The `.amat` schema's per-field deserialization makes adding them non-breaking,
-  and the sort key's pipeline bits (below) are where opaque/masked/blend buckets
-  land.
+- Opaque-only pipeline for now. `alphaMode`/`alphaCutoff`/`doubleSided` are out
+  of scope *for the stages below* — named here so it isn't mistaken for an
+  oversight. The `.amat` schema's per-field deserialization makes adding them
+  non-breaking, and the sort key's pipeline bits (below) are where
+  opaque/masked/blend buckets land.
+  - **Status changed 2026-07-22: transparency is wanted, not indefinitely
+    parked.** Two things forced it. It is a *prerequisite of lighting stage L3*,
+    which specifies alpha-tested shadow casters — without `alphaMode`/
+    `alphaCutoff` on the material, foliage and fences cast solid rectangular
+    shadows, which is exactly the artifact the lighting plan's "modern look"
+    goal cannot ship with. And `lighting-design-notes.md`'s transparency section
+    already assumes a transparent forward pass exists ("lands with L3/L4 as
+    shader-variant work"). The dependency was undocumented in both directions
+    until now.
+  - Suggested split, so L3 isn't blocked on the whole feature: **(a) data +
+    masked bucket first** — `alphaMode`/`alphaCutoff` through the `.amat`
+    schema, the material table, and the pipeline bits, giving alpha-test/cutout
+    and unblocking L3's depth-only alpha-test variant; **(b) the blended
+    transparent pass second**, using the separate depth-major key (§ sort key).
+    (a) is small and non-breaking; (b) is the real work. OIT stays out of scope.
+  - `doubleSided` stays deferred independently: it is per-material rasterizer
+    state with no downstream consumer waiting on it.
 - **Single-format geometry arena; format divergence → format-keyed arenas, never
   a fat vertex** (resolves the §1 open decision). Stage C locks the one 48-byte
   `Vertex` layout (position, normal, uv0, tangent) as the arena's canonical
@@ -614,7 +631,9 @@ Khronos model (slots + overrides in the editor), both unpacked via
 - Multi-UV / vertex color / skinning are vertex-format evolution items gated on
   the arena decision (§1).
 - Texture compression deferred with hook (§2).
-- Alpha modes / double-sided deferred with the pipeline-bits seam named (§2).
+- Double-sided deferred with the pipeline-bits seam named (§2). Alpha modes are
+  no longer an open-ended deferral — they gate lighting L3's alpha-tested
+  casters; see the status note in §2.
 - Vulkan descriptor-indexing spike before stage D — and **make the device
   selector rigid early**: the engine already requires Vulkan 1.3, but
   descriptor indexing is *optional feature bits* even there (they live in

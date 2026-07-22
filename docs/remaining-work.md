@@ -188,6 +188,28 @@ ray backend (don't build speculatively), explicit ray tracing, SDFGI/VXGI/
 radiance cascades/screen-space GI, virtual shadow maps, moment/variance
 shadow formats, lightmaps.
 
+## 4b. Transparency / alpha modes — new, and a prerequisite of L3
+
+Added 2026-07-22. Previously parked as "out of scope" in
+`mesh-material-architecture.md` §2, which hid a dependency: **lighting L3
+specifies alpha-tested shadow casters, and the material system has no
+`alphaMode`/`alphaCutoff` for the depth-only alpha-test variant to read.**
+`lighting-design-notes.md`'s transparency section likewise assumes a transparent
+forward pass. Neither doc referenced the other; both now do.
+
+- **(a) Data + masked bucket — do before L3.** `alphaMode`/`alphaCutoff` through
+  the `.amat` schema (per-field deserialization makes it non-breaking), the
+  material table, and the sort key's pipeline bits. Yields alpha-test/cutout and
+  unblocks L3. Small.
+- **(b) Blended transparent pass — the real work.** Separate depth-major sort
+  key (already designed, `mesh-material-architecture.md` §2 "the two-key split
+  is the transparency seam"), transparent forward pass sampling the same cluster
+  lists/atlas/probes. OIT stays out of scope.
+- `doubleSided` stays deferred separately — per-material rasterizer state, no
+  consumer waiting.
+- The importer already warns on both (`MeshImporter`: "has a non-opaque material
+  … importing as opaque"), so affected content is discoverable today.
+
 ## 5. Decisions waiting on the user (unblock further work; zero code until decided)
 
 Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
