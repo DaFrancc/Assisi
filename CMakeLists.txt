@@ -83,14 +83,21 @@ if (MSVC)
 else()
   target_compile_options(Assisi-Options INTERFACE
     -fno-omit-frame-pointer
-    # Jolt Physics is compiled with AVX2/F16C/FMA/LZCNT/TZCNT; MSVC enables
-    # these implicitly on x64, but GCC/Clang require explicit -m flags.
-    -mavx2
-    -mf16c
-    -mfma
-    -mlzcnt
-    -mbmi   # provides TZCNT
   )
+  # Jolt Physics is compiled with AVX2/F16C/FMA/LZCNT/TZCNT; MSVC enables
+  # these implicitly on x64, but GCC/Clang require explicit -m flags. x86-only
+  # flags — on other architectures (aarch64: NEON via Jolt's own detection)
+  # they don't exist and would fail the configure. This sets the engine's x86
+  # CPU baseline to Haswell (2013): older CPUs get SIGILL, by design.
+  if (CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64|AMD64|i[3-6]86)$")
+    target_compile_options(Assisi-Options INTERFACE
+      -mavx2
+      -mf16c
+      -mfma
+      -mlzcnt
+      -mbmi   # provides TZCNT
+    )
+  endif()
 endif()
 
 # ---- Warnings (always ON; warnings-as-errors is a separate switch)
@@ -125,15 +132,27 @@ else()
   endif()
 endif()
 
-# ---- Perf knobs: enabled for Release via generator expressions
+# ---- Perf knobs: enabled for optimized configs via generator expressions.
+# Fast-math applies to dev (RelWithDebInfo) AND ship (Release) so both have
+# the same FP semantics — a Release-only flag meant NaN bugs reproduced in dev
+# but not ship and vice versa. Debug stays strict FP (it's also the sanitizer
+# config). -fno-finite-math-only comes after -ffast-math (last flag wins) to
+# opt back out of the NaN/Inf-never-happen assumption: the engine's non-finite
+# guards (save-file validation, LightingSystem::SafeDirection) rely on
+# isnan/isfinite, which finite-math-only folds to constant false — the guards
+# would be dead code exactly in the configs that need them. The networking
+# design assumes fast-math stays on (a reason lockstep was rejected), so the
+# flag must not be dropped silently.
 if (ASSISI_ENABLE_FAST_MATH)
   if (MSVC)
+    # /fp:fast does not license MSVC to fold isnan/isfinite to false, so no
+    # finite-math opt-out is needed.
     target_compile_options(Assisi-Perf INTERFACE
-      $<$<CONFIG:Release>:/fp:fast>
+      $<$<CONFIG:Release,RelWithDebInfo>:/fp:fast>
     )
   else()
     target_compile_options(Assisi-Perf INTERFACE
-      $<$<CONFIG:Release>:-ffast-math>
+      $<$<CONFIG:Release,RelWithDebInfo>:-ffast-math;-fno-finite-math-only>
     )
   endif()
 endif()
