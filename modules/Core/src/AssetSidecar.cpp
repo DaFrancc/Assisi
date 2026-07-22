@@ -86,7 +86,7 @@ std::expected<AssetSidecar, AssetSidecarError> DeserializeSidecar(std::string_vi
         return std::unexpected(AssetSidecarError::MissingGuid);
     }
 
-    AssetSidecar sidecar{.guid = *guid};
+    AssetSidecar sidecar = AssetSidecar::Leaf(*guid);
 
     // Composite manifest (optional). A malformed entry is skipped rather than
     // failing the whole sidecar: identity (the guid) already validated, and the

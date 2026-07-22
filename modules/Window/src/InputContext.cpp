@@ -32,13 +32,13 @@ void InputContext::Poll()
     // low entries stay false.
     for (int k = static_cast<int>(Key::Space); k < kKeyCount; ++k)
     {
-        _currKeys[k] = glfwGetKey(_window, k) == GLFW_PRESS;
+        _currKeys[static_cast<std::size_t>(k)] = glfwGetKey(_window, k) == GLFW_PRESS;
     }
 
     _prevButtons = _currButtons;
     for (int b = 0; b < kButtonCount; ++b)
     {
-        _currButtons[b] = glfwGetMouseButton(_window, b) == GLFW_PRESS;
+        _currButtons[static_cast<std::size_t>(b)] = glfwGetMouseButton(_window, b) == GLFW_PRESS;
     }
 
     _prevMousePos = _currMousePos;
@@ -55,37 +55,37 @@ void InputContext::Poll()
 bool InputContext::IsKeyDown(Key key) const
 {
     const int32_t idx = static_cast<int32_t>(key);
-    return idx >= 0 && idx < kKeyCount && _currKeys[idx];
+    return idx >= 0 && idx < kKeyCount && _currKeys[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsKeyPressed(Key key) const
 {
     const int32_t idx = static_cast<int32_t>(key);
-    return idx >= 0 && idx < kKeyCount && _currKeys[idx] && !_prevKeys[idx];
+    return idx >= 0 && idx < kKeyCount && _currKeys[static_cast<std::size_t>(idx)] && !_prevKeys[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsKeyReleased(Key key) const
 {
     const int32_t idx = static_cast<int32_t>(key);
-    return idx >= 0 && idx < kKeyCount && !_currKeys[idx] && _prevKeys[idx];
+    return idx >= 0 && idx < kKeyCount && !_currKeys[static_cast<std::size_t>(idx)] && _prevKeys[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsMouseButtonDown(MouseButton button) const
 {
     const int32_t idx = static_cast<int32_t>(button);
-    return idx >= 0 && idx < kButtonCount && _currButtons[idx];
+    return idx >= 0 && idx < kButtonCount && _currButtons[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsMouseButtonPressed(MouseButton button) const
 {
     const int32_t idx = static_cast<int32_t>(button);
-    return idx >= 0 && idx < kButtonCount && _currButtons[idx] && !_prevButtons[idx];
+    return idx >= 0 && idx < kButtonCount && _currButtons[static_cast<std::size_t>(idx)] && !_prevButtons[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsMouseButtonReleased(MouseButton button) const
 {
     const int32_t idx = static_cast<int32_t>(button);
-    return idx >= 0 && idx < kButtonCount && !_currButtons[idx] && _prevButtons[idx];
+    return idx >= 0 && idx < kButtonCount && !_currButtons[static_cast<std::size_t>(idx)] && _prevButtons[static_cast<std::size_t>(idx)];
 }
 
 glm::vec2 InputContext::MousePosition() const

@@ -195,7 +195,7 @@ fs::path WriteMaterialAssets(AssetId gltfId)
     }
     {
         std::ofstream aast(root / "model.gltf.aast", std::ios::binary);
-        const std::string text = SerializeSidecar(AssetSidecar{.guid = gltfId});
+        const std::string text = SerializeSidecar(AssetSidecar::Leaf(gltfId));
         aast.write(text.data(), static_cast<std::streamsize>(text.size()));
     }
 

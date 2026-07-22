@@ -84,6 +84,25 @@ function(assisi_reflect)
     # links them PUBLIC via Assisi_apply_defaults).
     target_link_libraries("${_obj_target}" PRIVATE "${_ARG_TARGET}")
 
+    # FieldMeta initializers are emitted positionally and stop at the last member
+    # a field actually needs; everything after that is left to FieldMeta's default
+    # member initializers, which is deliberate and correct. GCC/Clang still flag it
+    # under -Wextra, once per omitted member per field — ~125 warnings across the
+    # generated sources, none of them actionable. Suppressed narrowly (not -w) so
+    # every other warning still applies to generated code, which is exactly where a
+    # codegen bug would surface.
+    #
+    # Applied per-source, not via target_compile_options: the warning flags arrive
+    # through Assisi::Warnings as INTERFACE options, which land *after* a target's
+    # own options on the command line, so a target-level -Wno- would be re-enabled
+    # by the later -Wextra (clang does exactly that; gcc happened not to). Source
+    # file properties are appended last, so they win.
+    if (NOT MSVC)
+        set_source_files_properties(${_generated_sources}
+            TARGET_DIRECTORY "${_obj_target}"
+            PROPERTIES COMPILE_OPTIONS -Wno-missing-field-initializers)
+    endif()
+
     # Register this OBJECT library globally so assisi_link_reflections()
     # can gather all of them.
     set_property(GLOBAL APPEND PROPERTY ASSISI_REFLECT_OBJECT_TARGETS "${_obj_target}")

@@ -21,6 +21,7 @@
 #include <implot.h>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cstdint>
 #include <vector>
 
@@ -74,7 +75,11 @@ void SandboxApp::DrawOptionsWindow()
             else
                 ImGui::Text("Power: %.0f W    Temp: %u C", gpu.powerWatts, gpu.temperatureC);
             if (gpu.memTotalBytes > 0)
-                ImGui::Text("VRAM:  %llu / %llu MiB", gpu.memUsedBytes >> 20, gpu.memTotalBytes >> 20);
+                // PRIu64, not %llu: these are uint64_t, which is `unsigned long` on Linux
+                // and `unsigned long long` on Windows — a fixed literal is wrong on one
+                // of them.
+                ImGui::Text("VRAM:  %" PRIu64 " / %" PRIu64 " MiB", gpu.memUsedBytes >> 20,
+                            gpu.memTotalBytes >> 20);
 
             // Push one point per fresh NVML reading (Poll() is throttled, so the
             // sequence only bumps ~5x/s) into the ring buffers, so the graphs span
@@ -82,9 +87,9 @@ void SandboxApp::DrawOptionsWindow()
             if (gpu.sequence != _lastGpuSequence)
             {
                 _lastGpuSequence = gpu.sequence;
-                _gpuClockHistory[_gpuTelemetryOffset] = static_cast<float>(gpu.coreClockMhz);
-                _gpuUtilHistory[_gpuTelemetryOffset]  = static_cast<float>(gpu.gpuUtilPct);
-                _gpuPowerHistory[_gpuTelemetryOffset] = static_cast<float>(gpu.powerWatts);
+                _gpuClockHistory[static_cast<std::size_t>(_gpuTelemetryOffset)] = static_cast<float>(gpu.coreClockMhz);
+                _gpuUtilHistory[static_cast<std::size_t>(_gpuTelemetryOffset)]  = static_cast<float>(gpu.gpuUtilPct);
+                _gpuPowerHistory[static_cast<std::size_t>(_gpuTelemetryOffset)] = static_cast<float>(gpu.powerWatts);
                 _gpuTelemetryOffset = (_gpuTelemetryOffset + 1) % kGpuHistory;
                 if (_gpuTelemetryCount < kGpuHistory)
                 {
@@ -103,7 +108,7 @@ void SandboxApp::DrawOptionsWindow()
                     float m = 0.0f;
                     for (int32_t i = 0; i < plotCount; ++i)
                     {
-                        m = std::max(m, buf[i]);
+                        m = std::max(m, buf[static_cast<std::size_t>(i)]);
                     }
                     return m;
                 };
@@ -133,7 +138,7 @@ void SandboxApp::DrawOptionsWindow()
                         ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
                                           ImPlotAxisFlags_NoHighlight);
                         ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, plotCount - 1, ImPlotCond_Always);
-                        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, ymax, ImPlotCond_Always);
+                        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, static_cast<double>(ymax), ImPlotCond_Always);
                         ImPlot::PlotShaded(title, buf.data(), plotCount, 0.0, 1.0, 0.0, spec);
                         ImPlot::PlotLine(title, buf.data(), plotCount, 1.0, 0.0, spec);
                         ImPlot::EndPlot();
@@ -194,7 +199,8 @@ void SandboxApp::DrawOptionsWindow()
         float plotMax = 4.0f;
         for (int32_t i = 0; i < frameHistory; ++i)
         {
-            plotMax = std::max({plotMax, stats.cpuMs[i], stats.gpuMs[i]});
+            plotMax = std::max({plotMax, stats.cpuMs[static_cast<std::size_t>(i)],
+                                 stats.gpuMs[static_cast<std::size_t>(i)]});
         }
         plotMax *= 1.1f; // headroom so the peak isn't pinned to the top edge
 
@@ -221,7 +227,7 @@ void SandboxApp::DrawOptionsWindow()
             ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
                               ImPlotAxisFlags_NoHighlight);
             ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, frameHistory - 1, ImPlotCond_Always);
-            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, plotMax, ImPlotCond_Always);
+            ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, static_cast<double>(plotMax), ImPlotCond_Always);
             ImPlot::SetupLegend(ImPlotLocation_NorthWest, ImPlotLegendFlags_Horizontal);
 
             ImPlot::PlotShaded("CPU", stats.cpuMs.data(), frameHistory, 0.0, 1.0, 0.0, cpuSpec);
@@ -243,18 +249,18 @@ void SandboxApp::DrawOptionsWindow()
             double sum = 0.0;
             for (float ms : sorted)
             {
-                sum += ms;
+                sum += static_cast<double>(ms);
             }
-            const double avgMs = sum / sorted.size();
+            const double avgMs = static_cast<double>(sum) / static_cast<double>(sorted.size());
 
             // Average the slowest 1% (at least one frame) from the tail.
             const int32_t worstCount = std::max<int32_t>(1, static_cast<int32_t>(sorted.size()) / 100);
             double        worstSum   = 0.0;
             for (int32_t i = static_cast<int32_t>(sorted.size()) - worstCount; i < static_cast<int32_t>(sorted.size()); ++i)
             {
-                worstSum += sorted[i];
+                worstSum += static_cast<double>(sorted[static_cast<std::size_t>(i)]);
             }
-            const double onePctLowMs = worstSum / worstCount;
+            const double onePctLowMs = worstSum / static_cast<double>(worstCount);
 
             const float minMs = sorted.front();
             const float maxMs = sorted.back();
@@ -262,7 +268,7 @@ void SandboxApp::DrawOptionsWindow()
             const auto toFps = [](double ms) { return ms > 0.0 ? static_cast<int32_t>(1000.0 / ms) : 0; };
             ImGui::Text("Avg:     %6.2f ms  (%d FPS)", avgMs, toFps(avgMs));
             ImGui::Text("1%% low:  %6.2f ms  (%d FPS)", onePctLowMs, toFps(onePctLowMs));
-            ImGui::Text("Min/Max: %6.2f / %6.2f ms", minMs, maxMs);
+            ImGui::Text("Min/Max: %6.2f / %6.2f ms", static_cast<double>(minMs), static_cast<double>(maxMs));
         }
         ImGui::Separator();
         ImGui::TextUnformatted("Rendering");

@@ -122,7 +122,7 @@ TEST_CASE("PropagateTransforms: a deep chain composes correctly at every level")
         const ECS::Entity e = scene.Create();
         REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
         if (i > 0)
-            REQUIRE(scene.Add(e, Parent{.parent = chain[i - 1]}) != nullptr);
+            REQUIRE(scene.Add(e, Parent{.parent = chain[static_cast<std::size_t>(i - 1)]}) != nullptr);
         chain.push_back(e);
     }
 
@@ -130,7 +130,7 @@ TEST_CASE("PropagateTransforms: a deep chain composes correctly at every level")
 
     // Each link adds 1 on x, so node i sits at cumulative world x = i + 1.
     for (int32_t i = 0; i < kDepth; ++i)
-        CHECK(scene.Get<Transform>(chain[i])->worldMatrix[3][0] ==
+        CHECK(scene.Get<Transform>(chain[static_cast<std::size_t>(i)])->worldMatrix[3][0] ==
               doctest::Approx(static_cast<float>(i + 1)));
 }
 

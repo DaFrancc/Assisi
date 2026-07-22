@@ -47,9 +47,9 @@ constexpr uint32_t kBindlessCapacity = 16384u;
 // (see MintMaterialId) rather than resizing the buffer — keeping the handle
 // stable matters more than the ceiling, and at 96 B/row raising the ceiling is
 // cheap (the whole table is 384 KB) if a scene ever needs it.
-// Declared on AssetCache so MeshPass can assert against it; aliased here so the
-// existing unqualified uses below keep reading cleanly.
-constexpr uint32_t kMaxMaterials = AssetCache::kMaxMaterials;
+// (The capacity constant lives on AssetCache so MeshPass can assert against it.
+// No file-local alias: inside AssetCache's own member functions, unqualified
+// kMaxMaterials already resolves to the class member.)
 
 // The five PBR texture channels, in MaterialTextures order (base, normal,
 // metallic-roughness, occlusion, emissive). Each pairs the colour space the

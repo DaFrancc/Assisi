@@ -163,7 +163,8 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
 // sequence, or a Private-Use codepoint like 0xE000).
 constexpr uint32_t     kTtfFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F12B
 constexpr int32_t      kTtfFrameCount = 300;    // one full v4-30 atom-spin loop (must match the font)
-constexpr float        kLoadingFps    = 30.0f;  // 300 frames / 30fps = 10 s per loop (matches the design).
+constexpr double       kLoadingFps    = 30.0;   // 300 frames / 30fps = 10 s per loop (matches the design).
+                                                // double: its only use multiplies ImGui::GetTime(), which is double.
                                                 // NOTE: this drives BOTH backends -- the WebP path ignores
                                                 // the durations baked into the file -- so it must match
                                                 // whichever v4 variant is shipped as the asset.

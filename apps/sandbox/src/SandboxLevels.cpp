@@ -33,12 +33,12 @@ void SandboxApp::DrawLevelsWindow()
     else
     {
         ImGui::SetNextItemWidth(-1.0f);
-        if (ImGui::BeginCombo("##level", _levelFiles[_selectedLevel].c_str()))
+        if (ImGui::BeginCombo("##level", _levelFiles[static_cast<std::size_t>(_selectedLevel)].c_str()))
         {
             for (int32_t i = 0; i < static_cast<int32_t>(_levelFiles.size()); ++i)
             {
                 const bool selected = (i == _selectedLevel);
-                if (ImGui::Selectable(_levelFiles[i].c_str(), selected))
+                if (ImGui::Selectable(_levelFiles[static_cast<std::size_t>(i)].c_str(), selected))
                     _selectedLevel = i;
                 if (selected)
                     ImGui::SetItemDefaultFocus();
@@ -57,7 +57,7 @@ void SandboxApp::DrawLevelsWindow()
         ImGui::BeginDisabled(_pendingLevelLoad.has_value());
         if (ImGui::Button("Load", ImVec2(halfW, 0.0f)))
         {
-            _pendingLevelLoad = _levelFiles[_selectedLevel];
+            _pendingLevelLoad = _levelFiles[static_cast<std::size_t>(_selectedLevel)];
             Jobs().RunOnMain([this, name = *_pendingLevelLoad] {
                 LoadLevel(name);
                 _pendingLevelLoad.reset();
@@ -72,7 +72,7 @@ void SandboxApp::DrawLevelsWindow()
         const bool canSave = (_playState == PlayState::Editing);
         ImGui::BeginDisabled(!canSave);
         if (ImGui::Button("Save", ImVec2(-1.0f, 0.0f)))
-            SaveLevel(_levelFiles[_selectedLevel]);
+            SaveLevel(_levelFiles[static_cast<std::size_t>(_selectedLevel)]);
         ImGui::EndDisabled();
         if (!canSave && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             ImGui::SetTooltip("Stop play mode to save (avoids overwriting the level with simulation state).");

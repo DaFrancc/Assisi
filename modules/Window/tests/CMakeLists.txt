@@ -3,7 +3,7 @@ add_executable(Assisi-Window-Tests
   TestActionMap.cpp
 )
 
-Assisi_apply_defaults(Assisi-Window-Tests)
+Assisi_apply_test_defaults(Assisi-Window-Tests)
 
 target_include_directories(Assisi-Window-Tests SYSTEM PRIVATE
   "${doctest_SOURCE_DIR}"

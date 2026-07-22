@@ -3,7 +3,7 @@ add_executable(Assisi-App-Tests
   TestSystemRegistry.cpp
 )
 
-Assisi_apply_defaults(Assisi-App-Tests)
+Assisi_apply_test_defaults(Assisi-App-Tests)
 
 target_include_directories(Assisi-App-Tests SYSTEM PRIVATE
   "${doctest_SOURCE_DIR}"

@@ -215,7 +215,7 @@ inline MeshData CreateUnitCylinderMesh(uint32_t slices = 48)
     }
 
     // Cap fans: a centre vertex for each end, fanned over its own rim ring.
-    const auto addCap = [&mesh, slices, kPi](float y, float ny) {
+    const auto addCap = [&mesh, slices](float y, float ny) { // kPi is constexpr — no capture needed
         const uint32_t center = static_cast<uint32_t>(mesh.Vertices.size());
         mesh.Vertices.push_back({{0.0f, y, 0.0f}, {0.0f, ny, 0.0f}, {0.5f, 0.5f}});
         const uint32_t first = static_cast<uint32_t>(mesh.Vertices.size());

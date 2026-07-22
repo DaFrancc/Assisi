@@ -19,6 +19,18 @@ target_include_directories(Assisi-Debug
     "${ASSISI_IMGUI_ROOT}/backends"
 )
 
+# The ImGui backends above are vendored third-party sources that happen to be
+# compiled into one of our targets, so they inherit Assisi::Warnings and emit
+# ~55 conversion warnings we cannot fix without patching upstream. Silence them
+# per-source rather than weakening the warning set for DebugUI.cpp, which is
+# ours and should stay strict.
+set_source_files_properties(
+  "${ASSISI_IMGUI_ROOT}/backends/imgui_impl_glfw.cpp"
+  "${ASSISI_IMGUI_ROOT}/backends/imgui_impl_vulkan.cpp"
+  TARGET_DIRECTORY Assisi-Debug
+  PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
+)
+
 target_link_libraries(Assisi-Debug
   PUBLIC
     imgui::imgui

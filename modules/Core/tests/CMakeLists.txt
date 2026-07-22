@@ -21,7 +21,7 @@ add_executable(Assisi-Core-Tests
   TestTrivialString.cpp
 )
 
-Assisi_apply_defaults(Assisi-Core-Tests)
+Assisi_apply_test_defaults(Assisi-Core-Tests)
 
 target_include_directories(Assisi-Core-Tests SYSTEM PRIVATE
   "${doctest_SOURCE_DIR}"

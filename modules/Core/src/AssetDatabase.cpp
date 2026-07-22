@@ -252,7 +252,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild()
         {
             // Missing sidecar: mint an id and write one.
             id                        = MintAssetId();
-            const std::string content = SerializeSidecar(AssetSidecar{.guid = id});
+            const std::string content = SerializeSidecar(AssetSidecar::Leaf(id));
             if (!WriteWholeFile(sidecarPath, content))
             {
                 Log::Warn("AssetDatabase: failed to write sidecar '{}', skipping.", sidecarPath.generic_string());
@@ -272,7 +272,7 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild()
         {
             const AssetId  previous = id;
             const AssetId  reminted = MintAssetId();
-            const std::string content = SerializeSidecar(AssetSidecar{.guid = reminted});
+            const std::string content = SerializeSidecar(AssetSidecar::Leaf(reminted));
             if (!WriteWholeFile(sidecarPath, content))
             {
                 Log::Warn("AssetDatabase: id {} is already taken by '{}' and re-minting for '{}' failed; it stays "

@@ -294,7 +294,7 @@ void Application::Run()
     TimerResolutionScope timerResolution;
 #endif
 
-    using Clock   = std::chrono::steady_clock;
+    // Clock is already aliased at file scope; only Seconds is local.
     using Seconds = std::chrono::duration<double>;
 
     const double physicsStep = 1.0 / _config.physicsHz;
@@ -379,15 +379,15 @@ void Application::Run()
         const double gpuWaitMs = vulkanContext ? vulkanContext->GetLastGpuWaitMs() : 0.0;
         const double cpuMs =
             std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - sleepMs - gpuWaitMs);
-        const double gpuMs = vulkanContext ? vulkanContext->GetLastGpuFrameTimeMs() : 0.0;
+        const double gpuMs = vulkanContext ? static_cast<double>(vulkanContext->GetLastGpuFrameTimeMs()) : 0.0;
 
         // Record raw (un-averaged) per-frame samples for the plots so spikes stay
         // visible; the numeric readout uses the smoothed averages below. The full
         // frame delta (rawDt, including any vsync/pacing wait) drives the 1%-low
         // and min/max stats — that's the pacing the player actually feels.
-        _cpuHistory[_frameHistoryOffset]       = static_cast<float>(cpuMs);
-        _gpuHistory[_frameHistoryOffset]       = static_cast<float>(gpuMs);
-        _frameTimeHistory[_frameHistoryOffset] = static_cast<float>(rawDt * 1000.0);
+        _cpuHistory[static_cast<std::size_t>(_frameHistoryOffset)]       = static_cast<float>(cpuMs);
+        _gpuHistory[static_cast<std::size_t>(_frameHistoryOffset)]       = static_cast<float>(gpuMs);
+        _frameTimeHistory[static_cast<std::size_t>(_frameHistoryOffset)] = static_cast<float>(rawDt * 1000.0);
         _frameHistoryOffset = (_frameHistoryOffset + 1) % kFrameHistory;
         if (_frameSampleCount < kFrameHistory)
         {

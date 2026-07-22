@@ -7,7 +7,20 @@ add_executable(Assisi-Sandbox-Tests
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
 )
 
-Assisi_apply_defaults(Assisi-Sandbox-Tests)
+Assisi_apply_test_defaults(Assisi-Sandbox-Tests)
+
+# GCC-only, optimized builds only: constructing a ComponentDelta (which holds two
+# std::optional<nlohmann::json>) and moving it into the command variant makes GCC
+# report a maybe-uninitialized read *inside nlohmann's move constructor*. Every
+# member is explicitly initialized at the call site and restructuring the call
+# does not shift it — it is a known false positive from inlining optional<json>
+# through a variant. Scoped to this one file so the rest of the suite keeps the
+# check.
+if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  set_source_files_properties(TestEditHistory.cpp
+    TARGET_DIRECTORY Assisi-Sandbox-Tests
+    PROPERTIES COMPILE_OPTIONS -Wno-maybe-uninitialized)
+endif()
 
 # doctest is header-only; pull it in as SYSTEM headers so its macros don't trip
 # our strict warning set.

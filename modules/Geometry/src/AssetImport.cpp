@@ -113,7 +113,7 @@ Core::AssetId WriteMaterialFile(const fs::path &amatAbs, const MaterialData &mat
 
     const Core::AssetId id = Core::MintAssetId();
     if (!WriteWholeFile(amatAbs, *amatText) ||
-        !WriteWholeFile(amatSidecar, Core::SerializeSidecar(Core::AssetSidecar{.guid = id})))
+        !WriteWholeFile(amatSidecar, Core::SerializeSidecar(Core::AssetSidecar::Leaf(id))))
     {
         Core::Log::Warn("AssetImport: failed to write '{}'.", amatAbs.generic_string());
         return {};
@@ -213,7 +213,7 @@ Core::AssetId OverwriteMaterialFile(const fs::path &amatAbs, const MaterialData 
         return ExistingSidecarId(amatSidecar);
     }
     const Core::AssetId id = Core::MintAssetId();
-    if (!WriteWholeFile(amatSidecar, Core::SerializeSidecar(Core::AssetSidecar{.guid = id})))
+    if (!WriteWholeFile(amatSidecar, Core::SerializeSidecar(Core::AssetSidecar::Leaf(id))))
     {
         Core::Log::Warn("AssetImport: failed to write sidecar for '{}'.", amatAbs.generic_string());
         return {};

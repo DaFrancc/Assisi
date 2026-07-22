@@ -23,7 +23,7 @@ add_executable(Assisi-ECS-Tests
   TestChangeDetection.cpp
 )
 
-Assisi_apply_defaults(Assisi-ECS-Tests)
+Assisi_apply_test_defaults(Assisi-ECS-Tests)
 
 # doctest is header-only (DOWNLOAD_ONLY); pull it in as SYSTEM headers so its
 # macros don't trip our strict warning set.

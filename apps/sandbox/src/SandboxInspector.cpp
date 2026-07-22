@@ -848,11 +848,13 @@ void SandboxApp::DrawInspector()
         if (ImGui::CollapsingHeader("RigidBody (runtime)", ImGuiTreeNodeFlags_DefaultOpen))
         {
             const auto [linearVelocity, angularVelocity] = _physics.GetBodyVelocity(*rbc);
-            ImGui::Text("Linear  (m/s):   %.3f, %.3f, %.3f", linearVelocity.x, linearVelocity.y,
-                        linearVelocity.z);
-            ImGui::Text("Angular (rad/s): %.3f, %.3f, %.3f", angularVelocity.x, angularVelocity.y,
-                        angularVelocity.z);
-            ImGui::Text("Speed:  %.3f m/s", glm::length(linearVelocity));
+            // %f takes a double through varargs, so each float is promoted anyway —
+            // the casts just make the promotion explicit rather than implicit.
+            ImGui::Text("Linear  (m/s):   %.3f, %.3f, %.3f", static_cast<double>(linearVelocity.x),
+                        static_cast<double>(linearVelocity.y), static_cast<double>(linearVelocity.z));
+            ImGui::Text("Angular (rad/s): %.3f, %.3f, %.3f", static_cast<double>(angularVelocity.x),
+                        static_cast<double>(angularVelocity.y), static_cast<double>(angularVelocity.z));
+            ImGui::Text("Speed:  %.3f m/s", static_cast<double>(glm::length(linearVelocity)));
             ImGui::Text("CCD:    %s", _physics.IsBodyCCDEnabled(*rbc) ? "LinearCast (on)" : "Discrete (off)");
         }
     }

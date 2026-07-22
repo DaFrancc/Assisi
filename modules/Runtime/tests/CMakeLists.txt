@@ -8,7 +8,7 @@ add_executable(Assisi-Runtime-Tests
   TestLifecycle.cpp
 )
 
-Assisi_apply_defaults(Assisi-Runtime-Tests)
+Assisi_apply_test_defaults(Assisi-Runtime-Tests)
 
 # doctest is header-only (DOWNLOAD_ONLY); pull it in as SYSTEM headers so its
 # macros don't trip our strict warning set.

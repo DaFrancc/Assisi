@@ -59,6 +59,21 @@ struct AssetSidecar
     ///        asset, and on a composite sidecar written before S4. A mismatch
     ///        against the current source marks the composite stale.
     std::optional<std::uint64_t> sourceHash;
+
+    /// @brief A leaf asset's sidecar: identity only, no manifest and no source
+    /// hash — which is exactly what the two fields above document as "empty" and
+    /// "absent" for a leaf.
+    ///
+    /// Every caller that mints a sidecar wants this, and spelling it
+    /// `AssetSidecar{.guid = id}` left the other two members to their defaults,
+    /// which is correct but draws -Wmissing-field-initializers at each site.
+    /// Naming the case says what is meant instead of listing what is omitted.
+    [[nodiscard]] static AssetSidecar Leaf(AssetId id)
+    {
+        AssetSidecar sidecar;
+        sidecar.guid = id;
+        return sidecar;
+    }
 };
 
 /// @brief Mint a fresh random UUIDv4. Editor-only (asset authoring). The version

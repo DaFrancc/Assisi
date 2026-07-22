@@ -38,7 +38,8 @@ namespace Layers
 {
 static constexpr JPH::ObjectLayer kStatic = 0;
 static constexpr JPH::ObjectLayer kDynamic = 1;
-static constexpr JPH::ObjectLayer kCount = 2;
+// (no kCount here: the broad-phase layer count is BPLayers::kCount, which Jolt
+// actually queries; an object-layer count had no reader.)
 } // namespace Layers
 
 namespace BPLayers

@@ -99,7 +99,7 @@ TEST_CASE("AssetDatabase leaves an existing sidecar untouched (reconcile-not-clo
     // Pre-write a sidecar with a known id for crate.png.
     const AssetId knownId = *AssetId::Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
     const fs::path sidecar = root / "textures" / "crate.png.aast";
-    const std::string original = SerializeSidecar(AssetSidecar{.guid = knownId});
+    const std::string original = SerializeSidecar(AssetSidecar::Leaf(knownId));
     WriteFile(sidecar, original);
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
@@ -157,7 +157,7 @@ TEST_CASE("AssetSidecar round-trips a composite manifest")
     const AssetId matA   = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
     const AssetId matB   = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000002");
 
-    AssetSidecar sidecar{.guid = meshId};
+    AssetSidecar sidecar = AssetSidecar::Leaf(meshId);
     sidecar.subAssets.push_back(AssetSubAsset{.slot = 0, .material = matA});
     sidecar.subAssets.push_back(AssetSubAsset{.slot = 1, .material = matB});
 
@@ -172,7 +172,7 @@ TEST_CASE("AssetSidecar round-trips a composite manifest")
 
     // A leaf sidecar (no manifest) stays that way, and is byte-identical to S1.
     const std::expected<AssetSidecar, AssetSidecarError> leaf =
-        DeserializeSidecar(SerializeSidecar(AssetSidecar{.guid = meshId}));
+        DeserializeSidecar(SerializeSidecar(AssetSidecar::Leaf(meshId)));
     REQUIRE(leaf.has_value());
     CHECK(leaf->subAssets.empty());
     CHECK_FALSE(leaf->sourceHash.has_value());
@@ -182,7 +182,7 @@ TEST_CASE("AssetSidecar round-trips a source hash")
 {
     const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
 
-    AssetSidecar sidecar{.guid = meshId};
+    AssetSidecar sidecar = AssetSidecar::Leaf(meshId);
     sidecar.subAssets.push_back(AssetSubAsset{.slot = 0, .material = meshId});
     sidecar.sourceHash = 0xdeadbeefcafef00dULL;
 
@@ -200,7 +200,7 @@ TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMateria
     // crate.png (any file can carry one; the DB does not care about the type).
     const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
     const AssetId matId  = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000009");
-    AssetSidecar  sidecar{.guid = meshId};
+    AssetSidecar  sidecar = AssetSidecar::Leaf(meshId);
     sidecar.subAssets.push_back(AssetSubAsset{.slot = 2, .material = matId});
     WriteFile(root / "textures" / "crate.png.aast", SerializeSidecar(sidecar));
 
@@ -282,7 +282,7 @@ TEST_CASE("Rebuild survives a sidecar with an out-of-range manifest slot")
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
     AssetDatabase db;
-    CHECK_NOTHROW(db.Rebuild());
+    CHECK_NOTHROW((void)db.Rebuild()); // nodiscard: this case only asserts it does not throw
     CHECK(db.IdFor("materials/checker.amat").has_value());
     CHECK_FALSE(db.HasManifest(*AssetId::Parse("11111111-2222-4333-8444-555555555555")));
 }
@@ -300,7 +300,7 @@ TEST_CASE("Rebuild survives a sidecar with a wrapping (negative) manifest slot")
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
     AssetDatabase db;
-    CHECK_NOTHROW(db.Rebuild());
+    CHECK_NOTHROW((void)db.Rebuild()); // nodiscard: this case only asserts it does not throw
     // checker.amat still registers; the bogus manifest slot is dropped.
     CHECK(db.IdFor("materials/checker.amat").has_value());
     CHECK_FALSE(db.HasManifest(*AssetId::Parse("11111111-2222-4333-8444-555555555555")));
@@ -341,8 +341,8 @@ TEST_CASE("A duplicate asset id is re-minted rather than left unaddressable")
     const AssetId shared = *AssetId::Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee");
     WriteFile(root / "textures" / "copy_a.png", "A");
     WriteFile(root / "textures" / "copy_b.png", "B");
-    WriteFile(root / "textures" / "copy_a.png.aast", SerializeSidecar(AssetSidecar{.guid = shared}));
-    WriteFile(root / "textures" / "copy_b.png.aast", SerializeSidecar(AssetSidecar{.guid = shared}));
+    WriteFile(root / "textures" / "copy_a.png.aast", SerializeSidecar(AssetSidecar::Leaf(shared)));
+    WriteFile(root / "textures" / "copy_b.png.aast", SerializeSidecar(AssetSidecar::Leaf(shared)));
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
     AssetDatabase db;

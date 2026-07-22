@@ -116,10 +116,14 @@ TEST_CASE("SceneSerializer: MeshRenderer asset ids round-trip; GPU handles don't
 
     ECS::Scene        scene;
     const ECS::Entity e = scene.Create();
-    REQUIRE(scene.Add(e, MeshRenderer{
-                             .mesh              = cubeId,
-                             .materialOverrides = {materialId},
-                         }) != nullptr);
+    // Built field-by-field rather than as an aggregate: MeshRenderer's two
+    // transient members (meshBuffer, materials) are runtime caches this test has
+    // no business naming, and omitting them from a braced initializer draws
+    // -Wmissing-field-initializers.
+    MeshRenderer renderer;
+    renderer.mesh              = cubeId;
+    renderer.materialOverrides = {materialId};
+    REQUIRE(scene.Add(e, renderer) != nullptr);
 
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, SceneSerializer::Save(scene));

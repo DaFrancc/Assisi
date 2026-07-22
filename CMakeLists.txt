@@ -66,6 +66,34 @@ function(Assisi_apply_defaults target_name)
   )
 endfunction()
 
+# Same as Assisi_apply_defaults, plus the handful of warnings that only doctest's
+# macros produce. Use it for test executables instead of the plain version.
+#
+# Two diagnostics fire on essentially every assertion we write, from inside
+# doctest rather than from our logic: TEST_CASE expands __COUNTER__ (a C2y
+# extension under clang), doctest::Approx takes a double so comparing a float
+# against Approx(1.f) promotes, and doctest pulls in <ciso646>, which libstdc++
+# 16 #warns is non-standard since C++20. Marking doctest's headers SYSTEM does not
+# help — the diagnostic is attributed to the expansion site, i.e. our .cpp.
+#
+# Applied per-source rather than to the target: Assisi::Warnings arrives as
+# INTERFACE options, which land after a target's own options, so a target-level
+# -Wno- would be re-enabled by the later -Wextra / -Wdouble-promotion.
+function(Assisi_apply_test_defaults target_name)
+  Assisi_apply_defaults("${target_name}")
+
+  # Clang-only: gcc does not diagnose either case, so it needs no opt-out and
+  # would only warn about an unrecognized option.
+  if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    get_target_property(_test_sources "${target_name}" SOURCES)
+    if (_test_sources)
+      set_source_files_properties(${_test_sources}
+        TARGET_DIRECTORY "${target_name}"
+        PROPERTIES COMPILE_OPTIONS "-Wno-c2y-extensions;-Wno-double-promotion;-Wno-#warnings")
+    endif()
+  endif()
+endfunction()
+
 
 # ---- Baseline compile behavior (applies to targets only when Options are linked)
 if (MSVC)
@@ -544,6 +572,21 @@ FetchContent_Declare(glslang
     SYSTEM
 )
 FetchContent_MakeAvailable(glslang)
+
+# glslang's own sources emit array-bounds and maybe-uninitialized warnings under
+# GCC at -O2/-O3 (they do not appear in Debug). They are upstream's code, not
+# ours, and nothing here can act on them — so silence the dependency's targets
+# rather than let a ship build report a dozen warnings that no one will ever fix.
+# Only the targets glslang actually defines; guarded so a version bump that drops
+# one does not fail the configure.
+foreach(_glslang_target
+        glslang SPIRV MachineIndependent GenericCodeGen OSDependent
+        glslang-default-resource-limits glslang-standalone)
+    if (TARGET "${_glslang_target}")
+        target_compile_options("${_glslang_target}" PRIVATE
+            "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>")
+    endif()
+endforeach()
 
 # End of third-party dependencies — restore normal message verbosity and the
 # deprecation-warning / policy state so our own configuration output (modules,
