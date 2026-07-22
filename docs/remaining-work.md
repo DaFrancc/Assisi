@@ -48,31 +48,40 @@ Suggested order (from the 2026-07-21 review of the docs): Stage 2 → Stage 0 �
 ## 2. Code-review round 6 — unfixed, undeferred remainder
 
 C1–C7 and most majors are fixed (`code-review-2026-07-round6.md` has the
-disposition per item). Still open with no deferral rationale:
+disposition per item). Still open with no deferral rationale — **M8 and M12
+were cleared on 2026-07-22 (branch `hygiene/round6`); only the minors triage
+below remains:**
 
-- **M8 — JobSystem API traps** (`modules/Core/include/Assisi/Core/JobSystem.hpp`).
-  Verified still present: `HelpUntil` runs *worker* tasks only, so `Wait()` on a
-  chain ending in `Pool::Main`, called from the main thread, livelocks; and a
-  second `.Then()` on the same task silently discards the first continuation
-  (orphaned task → a later `Wait()` livelocks). Fix: drain main-queue tasks in
-  `HelpUntil` when on the main thread; assert single continuation. Small, and
-  directly under the networking work — do it before more async lands on top.
-- **M12 remainder — build-system hygiene** (partially fixed; `GIT_SHALLOW` on
-  bare-commit pins was resolved in `63a292a`). Verified still open:
-  - **Sanitizer presets deleted.** The `ASSISI_ENABLE_SANITIZERS` machinery
-    survives in `CMakeLists.txt` but no `*-asan`/`*-tsan` preset exists in
-    `CMakePresets.json` to turn it on. Restore them — they were deleted in the
-    same branch that added the JobSystem + async streaming they exist to check,
-    and networking adds another thread (GNS's service thread) on top.
-  - **`-ffast-math` on Release only** (`CMakeLists.txt` perf-knobs block): dev
-    (RelWithDebInfo) and ship binaries have different FP semantics, so the C7
-    non-finite save guards and `LightingSystem::SafeDirection` can be dead code
-    exactly in ship. Apply consistently or add `-fno-finite-math-only`. Note
-    the networking design *assumes* fast-math stays (it's a reason lockstep was
-    rejected) — resolve the split, don't silently drop the flag.
-  - **`-mavx2/-mf16c/-mfma/-mlzcnt/-mbmi` unguarded by architecture**
-    (Assisi-Options block): aarch64 won't configure; pre-Haswell x86 gets
-    SIGILL with no CPU check. Gate on `CMAKE_SYSTEM_PROCESSOR`.
+- ~~**M8 — JobSystem API traps**~~ **Fixed 2026-07-22** (`7ded872`, branch
+  `hygiene/round6`). `HelpUntil` gained a `helpMain` flag (passed by
+  `Task::Wait`) that also drains main-queue tasks when the caller is the
+  thread that constructed the JobSystem, so a chain ending in `Pool::Main` no
+  longer livelocks; `ParallelFor` keeps worker-only helping so main tasks still
+  run only at the `DrainMain` safe point. A second `.Then()` now fires
+  `ASSISI_ASSERT` (`TaskState::continuationClaimed`) instead of orphaning the
+  first continuation. Four regression tests added, all bounded so a
+  reintroduced bug fails rather than hangs. Clean under TSan.
+- ~~**M12 remainder — build-system hygiene**~~ **Fixed 2026-07-22** (`GIT_SHALLOW`
+  was already resolved in `63a292a`; the rest on `hygiene/round6`):
+  - **Sanitizer presets** restored in `37aac31`: `gcc-asan`, `gcc-tsan`,
+    `clang-asan`, `clang-tsan`, `msvc-asan` (MSVC supports ASan only), each
+    inheriting its `-debug` preset, with matching build/test presets and
+    `make gcc-asan` / `make test-gcc-tsan` targets. Deps don't link
+    `Assisi::Sanitize`, so third-party code stays uninstrumented.
+  - **`-ffast-math` split** resolved in `5da431a`: now applies to Release *and*
+    RelWithDebInfo, with `-fno-finite-math-only` appended so the non-finite
+    guards stay live (verified empirically — under plain `-ffast-math` an
+    `isfinite` guard accepts both NaN and Inf). Debug stays strict FP. The flag
+    stays on, as the networking design assumes.
+  - **SIMD flags gated** in `5da431a` on an x86 `CMAKE_SYSTEM_PROCESSOR` match,
+    so aarch64 can configure; the Haswell x86 baseline is now explicit and
+    intentional (pre-Haswell x86 still gets SIGILL by design — a runtime CPU
+    check was not added).
+  - **New, found by the restored presets** (`b738452`): UBSan's `vptr` check
+    could not link, because Jolt builds itself `-fno-rtti` and vptr needs
+    typeinfo for every polymorphic type. `-fno-sanitize=vptr` is now applied
+    whenever the sanitizer set includes `undefined`. Exactly the kind of latent
+    breakage the presets exist to surface.
 - **Round-6 minors — undispositioned backlog.** The "Minor (selected)" list in
   the round-6 doc was never triaged item-by-item (some were fixed in passing,
   e.g. the thumbnail pipeline; most were not). Worth one pass to sort into
