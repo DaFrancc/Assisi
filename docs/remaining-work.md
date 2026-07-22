@@ -1,6 +1,9 @@
 # Remaining work — the non-deferred backlog
 
-Captured 2026-07-21. This is the inverse of the deferred lists scattered across
+Captured 2026-07-21; **updated 2026-07-22** — §2 fully cleared (branch
+`hygiene/round6`: the JobSystem API traps, the build-system hygiene items, and
+the whole round-6 minors list), and §4b/§4c added for gaps that turned out to be
+undocumented. This is the inverse of the deferred lists scattered across
 the other docs: everything still open that is **not** consciously parked. If an
 item is here, it is actionable now — nothing below is waiting on scale,
 first-ship, or a future subsystem. Verified against source at capture time, not
@@ -209,6 +212,35 @@ forward pass. Neither doc referenced the other; both now do.
   consumer waiting.
 - The importer already warns on both (`MeshImporter`: "has a non-opaque material
   … importing as opaque"), so affected content is discoverable today.
+
+## 4c. Infrastructure gaps (found 2026-07-22; previously undocumented)
+
+These were real and unrecorded — the docs assumed some of them existed.
+
+- ~~**No CI.**~~ **Added** (`cdb5aa8`): Linux gcc+clang build/test, plus an
+  asan/tsan job on PRs and manual dispatch. Verified the suites pass headless.
+- **Windows and macOS are unverified.** MSVC presets exist and have never been
+  built. This matters more since the explicit-width sweep: `long` is 32-bit on
+  Windows and 64-bit here. Not in CI, because an unverified leg would land red —
+  bring MSVC up locally first, then add the matrix entry.
+- **`-Werror` is off everywhere.** `ASSISI_WARNINGS_AS_ERRORS` exists and the
+  docs call it "recommended for CI", but the tree has warnings today
+  (sign-conversion in the sandbox; reflectgen's generated aggregates omit
+  trailing `FieldMeta` members). Clear those two classes, then enable it in CI —
+  otherwise the option is decoration.
+- **`levels/Materials.alvl` is tracked but references assets under gitignored
+  `assets/models/`.** A fresh clone gets a level whose car cannot resolve. The
+  sidecar GUIDs are durable now, but the *asset* is not in the repo. Decide:
+  commit the model, swap the level to a committed asset, or mark the level as
+  local-only.
+- **Threading coverage is bounded by unit tests that run in 0.26 s.** TSan only
+  finds races on paths that execute, and there is no soak or stress test for the
+  job system or async asset streaming under load. Networking adds a third thread
+  (GNS's service thread) on top of that blind spot. A long-running randomized
+  load test would be worth more than another unit case.
+- **Uninitialized reads are uncovered.** Neither ASan nor TSan detects them; that
+  is MemorySanitizer, which needs the whole dependency tree instrumented.
+  Accepted for now — recorded so the coverage boundary is explicit.
 
 ## 5. Decisions waiting on the user (unblock further work; zero code until decided)
 
