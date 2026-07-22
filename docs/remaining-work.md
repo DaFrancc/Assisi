@@ -22,12 +22,14 @@ production infra) is explicitly deferred and excluded here.
 - **Stage 0 — GNS build integration.** protobuf(+abseil) + crypto backend + GNS
   via FetchContent, static, warnings-clean, both platforms. The designated risk
   stage; timeboxed, with a four-step escalation ladder in the doc. Done =
-  loopback echo test in `modules/Net/tests` passing in CI.
+  loopback echo test in `modules/Net/tests` passing locally on both compilers
+  (there is no CI — see §4c).
 - **Stage 2 — headless Application.** Split `Initialize()` into
   `InitializeCore()` / `InitializePresentation()`; `AppConfig::headless` +
   `--server`; loop paced by `SleepUntil` against `_closeRequested` instead of
   window/vsync; `OnRender` gets a default no-op body. Independently valuable
-  (headless CI sim tests) and independent of Stage 0 — either can land first.
+  (headless sim tests, runnable locally) and independent of Stage 0 — either can
+  land first.
 - **Stage 1 — `Assisi::Net` transport wrapper.** Pimpl over GNS, dense
   `ConnectionId`, lanes, `Poll()` on the main thread, `CreateLoopbackPair` for
   the listen server. Needs Stage 0.
@@ -217,17 +219,24 @@ forward pass. Neither doc referenced the other; both now do.
 
 These were real and unrecorded — the docs assumed some of them existed.
 
-- ~~**No CI.**~~ **Added** (`cdb5aa8`): Linux gcc+clang build/test, plus an
-  asan/tsan job on PRs and manual dispatch. Verified the suites pass headless.
+- **No CI, by choice (2026-07-22).** A GitHub Actions workflow was written and
+  then dropped at the user's direction; it is recoverable from the
+  `backup/ci-workflow-removed` branch if that ever changes. The consequence to
+  keep in mind: **other docs are written as though CI exists** — networking
+  stage 0's definition of done is "loopback echo test passing in CI", and
+  `ASSISI_WARNINGS_AS_ERRORS` is described as "recommended for CI". Those
+  acceptance criteria need rewording against a local command
+  (`make gcc-debug && ctest --preset gcc-debug`), or they are unmeetable as
+  written. Verification is manual: run the presets, and `scripts/run-sanitized.sh`
+  for the sanitizer builds.
 - **Windows and macOS are unverified.** MSVC presets exist and have never been
   built. This matters more since the explicit-width sweep: `long` is 32-bit on
-  Windows and 64-bit here. Not in CI, because an unverified leg would land red —
-  bring MSVC up locally first, then add the matrix entry.
-- **`-Werror` is off everywhere.** `ASSISI_WARNINGS_AS_ERRORS` exists and the
-  docs call it "recommended for CI", but the tree has warnings today
-  (sign-conversion in the sandbox; reflectgen's generated aggregates omit
-  trailing `FieldMeta` members). Clear those two classes, then enable it in CI —
-  otherwise the option is decoration.
+  Windows and 64-bit here, so a width mistake would only show up there. With no
+  CI, this can only be caught by building MSVC by hand.
+- **`-Werror` is off everywhere.** `ASSISI_WARNINGS_AS_ERRORS` exists but the
+  tree has warnings today (sign-conversion in the sandbox; reflectgen's
+  generated aggregates omit trailing `FieldMeta` members). Until those are
+  cleared the option is decoration, and nothing enforces it either way.
 - **`levels/Materials.alvl` is tracked but references assets under gitignored
   `assets/models/`.** A fresh clone gets a level whose car cannot resolve. The
   sidecar GUIDs are durable now, but the *asset* is not in the repo. Decide:

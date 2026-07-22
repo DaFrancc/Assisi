@@ -112,7 +112,10 @@ via `ExternalProject` into `out/deps/install` and `find_package` from there;
 
 **Definition of done:** a `modules/Net/tests` doctest spins up a GNS listen
 socket + client on loopback, echoes one reliable and one unreliable message,
-and passes in CI on both platforms.
+and passes on both platforms. (There is no CI — see `remaining-work.md` §4c —
+so "both platforms" means built and run by hand on each; the Windows side has
+never been built at all, which makes this stage the first thing that would
+surface it.)
 
 ## Stage 1 — `Assisi::Net`: the transport wrapper
 
@@ -203,7 +206,7 @@ InputContext → PostProcess, the loop condition is `_window->ShouldClose()`, an
   that simulates nothing-connected, and by the normal windowed build still
   working identically.
 
-This refactor is independently valuable (headless CI sim tests) and lands
+This refactor is independently valuable (headless sim tests) and lands
 before any protocol work so it never blocks on Stage 0's build wrangling.
 
 ## Stage 3 — sim tick & input commands
