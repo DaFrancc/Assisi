@@ -30,12 +30,17 @@ file(GLOB_RECURSE _staged LIST_DIRECTORIES false RELATIVE "${DST_DIR}" "${DST_DI
 
 set(_removed 0)
 foreach(_rel IN LISTS _staged)
-    # Build outputs staged alongside the assets; not mirrored from the source tree.
+    # A compiled shader has no source-tree counterpart of its own, so it cannot be
+    # compared directly — but it is stale exactly when the GLSL it was built from
+    # is gone. Compare against that instead of exempting .spv outright: renaming or
+    # moving a shader is the case that strands an old .spv next to the new one,
+    # where it still resolves through AssetSystem and can be loaded instead.
+    set(_probe "${_rel}")
     if (_rel MATCHES "\\.spv$")
-        continue()
+        string(REGEX REPLACE "\\.spv$" "" _probe "${_rel}")
     endif()
 
-    if (NOT EXISTS "${SRC_DIR}/${_rel}")
+    if (NOT EXISTS "${SRC_DIR}/${_probe}")
         file(REMOVE "${DST_DIR}/${_rel}")
         math(EXPR _removed "${_removed} + 1")
         message(STATUS "Pruned stale staged asset: ${_rel}")
