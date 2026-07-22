@@ -50,12 +50,12 @@ production infra) is explicitly deferred and excluded here.
 Suggested order (from the 2026-07-21 review of the docs): Stage 2 → Stage 0 →
 1 → 3/4 → 5 → 6, with §2 below as a short preface.
 
-## 2. Code-review round 6 — unfixed, undeferred remainder
+## 2. Code-review round 6 — cleared
 
-C1–C7 and most majors are fixed (`code-review-2026-07-round6.md` has the
-disposition per item). Still open with no deferral rationale — **M8 and M12
-were cleared on 2026-07-22 (branch `hygiene/round6`); only the minors triage
-below remains:**
+C1–C7 and every major are fixed (`code-review-2026-07-round6.md` has the
+disposition per item). **This section is now clear** — M8, M12, and the whole
+minors list were resolved on 2026-07-22 (branch `hygiene/round6`), and the four
+round-6 items that had been waiting on a decision are resolved in §5.
 
 - ~~**M8 — JobSystem API traps**~~ **Fixed 2026-07-22** (`7ded872`, branch
   `hygiene/round6`). `HelpUntil` gained a `helpMain` flag (passed by
@@ -254,21 +254,36 @@ These were real and unrecorded — the docs assumed some of them existed.
 
 ## 5. Decisions waiting on the user (unblock further work; zero code until decided)
 
+**Only two remain** — the four round-6 items below were decided and fixed on
+2026-07-22 (branch `hygiene/round6`); they are kept with their rationale so the
+reasoning is not lost.
+
 Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
 
 - **Template Phase 3:** preserve the editor tooling as a separate `apps/editor`
   (the plan's recommendation) or shelve it in git history. Gates Phase 2.
-- **M4a:** `ComponentRegistry` late-`Register` renumbering — assert
-  `!_finalized`, explicit `Freeze()`, or decouple id from sort order. A live
-  `should_fail` test documents the bug.
-- **M11:** raw-entity undo context resolves dead slots to their new occupant —
-  carry generation through the raw context, or reject non-`IsAlive` refs.
-  Also a live `should_fail` test.
-- **M2 follow-on:** should a parented spot light's *direction* rotate with its
-  parent? (Position was fixed; direction was left as-is pending this call.)
-- **M6:** surface-format fallback can pick an unmappable or double-gamma
-  format. Device-dependent, previously left to the user; fix is a
-  scan-for-first-mappable-format loop if/when wanted.
+- ~~**M4a**~~ **Fixed 2026-07-22** (`4bc09e2`): `Register` now refuses once an id
+  has been issued — error naming the component, then an assert. Decoupling id
+  from sort order would have traded the bug for non-determinism (the name sort is
+  what makes ids reproducible across builds), and appending a fresh id would
+  dangle the pointers `ById()`/`All()`/`_serializable` hold into `_metas`. The
+  Core tests now register fixtures from a static initializer, as generated
+  registrations do.
+- ~~**M11**~~ **Fixed 2026-07-22** (`4bc09e2`): the raw-entity context packs
+  (slot, generation) and resolves only on an exact generation match, so a ref to
+  a recycled slot yields `NullEntity` instead of its new occupant. Rejecting
+  non-`IsAlive` refs — the other option on file — would not have worked: a
+  recycled slot is perfectly alive. `EntityRef` codegen widened to 64-bit.
+- ~~**M2 follow-on**~~ **Decided and fixed 2026-07-22** (`83b68b9`): yes, a
+  parented spot light's direction rotates with its parent — `direction` is local
+  and is rotated by the propagated world matrix, matching what position already
+  did. Consequence worth knowing: an *unparented* light's own rotation now aims
+  it too. Covered by `LightingSystem::WorldSpotDirection` tests.
+- ~~**M6**~~ **Fixed 2026-07-22** (`83b68b9`): explicit priority scan — ideal
+  pair, else any mappable linear format, else a mappable sRGB one with a warning,
+  else fail with the reason. An sRGB surface double-encodes gamma against
+  `cube_min.frag`'s own `pow`, so it stays a last resort until L2 moves that
+  encode into the tonemap pass.
 - **Milestone order: networking stages vs. lighting stages.** Both are now
   fully designed with nothing built; §1 and §4 don't depend on each other.
   Pick which thread runs first (or interleave — L2 is small enough to slot in
