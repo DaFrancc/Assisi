@@ -83,13 +83,61 @@ below remains:**
     whenever the sanitizer set includes `undefined`. Exactly the kind of latent
     breakage the presets exist to surface.
 - **Round-6 minors — undispositioned backlog.** The "Minor (selected)" list in
-  the round-6 doc was never triaged item-by-item (some were fixed in passing,
-  e.g. the thumbnail pipeline; most were not). Worth one pass to sort into
-  fix-now / defer-with-reason. Highest-value candidates: material-table
-  overflow past `kMaxMaterials` → bindless UB; uninitialized GPU mip on failed
-  downsample; `resizeDescriptorTable` no-op + unchecked `writeDescriptorTable`
-  return; sidecars minted into the build-tree asset copy (GUID-stability
-  hazard); per-frame heap allocs in both draw paths.
+  ~~the round-6 doc was never triaged item-by-item.~~ **Triaged and largely
+  cleared 2026-07-22** on branch `hygiene/round6`. Dispositions below.
+
+  **Fixed:**
+  - Material-table overflow → bindless UB, and the unchecked
+    `writeDescriptorTable` return (`984e361`). Ids are bindless indices the GPU
+    cannot bounds-check, so `MintMaterialId` saturates onto the fallback row and
+    MeshPass asserts the invariant in debug. The `resizeDescriptorTable`
+    grow/shrink bookkeeping was dead (Vulkan implements it as an assert-only
+    no-op) and is deleted rather than left looking load-bearing.
+  - Uninitialized GPU mip on failed downsample (`984e361`) — the chain is now
+    truncated instead of leaving an unwritten level for the sampler to read.
+  - All four shader NaN/UB sources (`984e361`): degenerate tangent, fragment at
+    a light's position (point and spot), `inner == outer` cone, and
+    `uint(negative)` in `ClusterIndex`.
+  - `SceneSerializer::LoadFromFile` catching only `json::exception`, stale
+    eyedropper/asset-browser targets across level load, `StopPlay` leaking
+    play-created entities when the snapshot was empty, and removing a Transform
+    orphaning a live Jolt body (`080a6e4`).
+  - Sidecars minted into the build-tree copy (`da038dd`) — see §2's M12 notes;
+    also the duplicate-GUID collision that never self-healed, the unreachable
+    directory-walk error check, and `MintAssetId`'s unsynchronized RNG.
+  - Stale staged assets never pruned, and dead `profiles/` + `ASSISI_APP`
+    (`6853bb3`).
+  - Explicit-width ints in the public `GpuTelemetry.hpp`, plus reflectgen's
+    backwards type table — bare `int` is now rejected by the default-deny with a
+    message naming the fix, and `int64_t`/`uint64_t` are supported
+    (`370917a`). Per-frame draw-path allocations in `MeshPass::Submit` reused as
+    members in the same commit.
+  - `msaaSamples` never validated against device caps (`334cdec`).
+
+  **Deferred, with reason:**
+  - **MSAA resolve + alpha blending in gamma space.** Superseded by lighting
+    stage L2, which replaces the very lines the fix would touch: the scene
+    target becomes RGBA16F (not the SBGRA8 the review suggested) and gamma
+    encoding moves out of `cube_min.frag` into a dedicated tonemap pass. Fixing
+    it now would be rewritten by L2. Fold it into L2 instead.
+  - **`cluster_cull.comp` dispatch shape** (3456 single-thread workgroups, ~3%
+    occupancy; lights re-transformed per cluster). A real optimization and
+    genuinely orthogonal to both design docs, but it is a perf rewrite touching
+    the atomic light-index reservation that the review singled out as correct,
+    and nothing has profiled it as a bottleneck. Wants a measurement first —
+    naturally paired with the lighting or light-culling work.
+  - **The wide explicit-width sweep** (~65 bare `unsigned` and ~196 bare `int`
+    occurrences across 19+ files). The public header and the codegen that
+    *institutionalized* the violation are fixed, so new code is now pushed the
+    right way; the rest is mechanical churn with a large diff and high conflict
+    risk against the networking/lighting branches. Do it as its own commit
+    during a quiet period, not stacked under feature work.
+  - **`DrawScene`'s per-frame `std::vector<DrawItem>`** (`Runtime/Renderer.cpp`).
+    Unlike `MeshPass::Submit` this is a free function with no object to hang
+    scratch off, so reuse means threading a caller-owned buffer through
+    `DrawSceneParams` and its call sites. It is also the CPU fallback path, not
+    the GPU-driven one. Worth doing with the F2b/G work that touches the same
+    extract loop.
 
 ## 3. Engine-as-template conversion (`template-conversion-plan.md`)
 
