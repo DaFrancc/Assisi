@@ -98,7 +98,37 @@ deferred:
   decision (you can't strip the sandbox down before deciding where the editor
   tooling goes).
 
-## 4. Decisions waiting on the user (unblock further work; zero code until decided)
+## 4. Lighting — stages L1–L5 (`lighting-design-notes.md`)
+
+Decided 2026-07-21; v2 2026-07-22 (evidence sweep, 12 verification checks);
+**v3 2026-07-22** (two adversarial design reviews + blind adjudication —
+budgets, mobility-flag prerequisite, transparency/volumetrics scoping, leak
+gates, and honest cost models added); **nothing built.** Goal: modern look,
+pay-for-what-you-place cost, no ray-tracing requirement, point shadows
+first-class, correctness by default. Full staging, budgets, and definitions
+of done are in the doc; new prerequisites: mobility flag, GPU timestamp
+queries, HDR internal asset serialization.
+
+- **L1 — directional cascaded shadow maps** (stable/snapped, PCF; supersedes
+  the shadows entry in the excluded list below).
+- **L2 — HDR pipeline:** RGBA16F scene target, filmic tonemap replacing
+  Reinhard, bloom, manual exposure. Biggest look-per-effort item in the plan.
+- **L3 — local-light shadow atlas** (spot + point, cached static/dynamic
+  split, importance-based tile budgeting, per-light `castsShadows` flag —
+  the DOOM/Godot/Flax pattern; point shadows are no longer deferred).
+- **L4 — DDGI-style baked probe grid** (octahedral irradiance + depth,
+  Chebyshev visibility — not plain SH9, which provably leaks); replaces the
+  `kAmbient` constant; baked with the engine's own forward pass.
+- **L5 — reflection probes / prefiltered specular IBL**, cluster-indexed.
+- **L6 — runtime probe refresh**, opt-in, N-probes-per-frame budget (N=0 =
+  baked mode, the default).
+
+Excluded by design (evidence in the doc's rejected-techniques section): L7
+ray backend (don't build speculatively), explicit ray tracing, SDFGI/VXGI/
+radiance cascades/screen-space GI, virtual shadow maps, moment/variance
+shadow formats, lightmaps.
+
+## 5. Decisions waiting on the user (unblock further work; zero code until decided)
 
 Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
 
@@ -115,6 +145,10 @@ Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
 - **M6:** surface-format fallback can pick an unmappable or double-gamma
   format. Device-dependent, previously left to the user; fix is a
   scan-for-first-mappable-format loop if/when wanted.
+- **Milestone order: networking stages vs. lighting stages.** Both are now
+  fully designed with nothing built; §1 and §4 don't depend on each other.
+  Pick which thread runs first (or interleave — L2 is small enough to slot in
+  anywhere).
 
 ## Excluded — deferred by design (do not resurrect without cause)
 
@@ -126,9 +160,10 @@ Listed so their absence above is legible; each has its rationale in its own doc:
 - **Asset DB S5** (cooker + `PakProvider`) — until first ship.
 - **Streaming layers 2–4** (loading screen, chunk residency, mip streaming) —
   streaming-era; layer 1 (async load) is built.
-- **Light culling ladder** (frustum pre-cull, depth pre-pass, world chunks) and
-  **shadows** — per `light-culling-design-notes.md`; lights through walls is
-  expected, not a bug.
+- **Light culling ladder** (frustum pre-cull, depth pre-pass, world chunks) —
+  per `light-culling-design-notes.md`. (Shadows were listed here until
+  2026-07-21; they are now stage L1 of the lighting plan, §4. Lights through
+  walls stays expected behavior only until L1 lands.)
 - **Frame profiler** — parked until planned properly (Tracy-vs-custom is the
   first question).
 - **Job system stages 3–6** (Jolt-pool adapter, coroutine surface,
