@@ -4,6 +4,7 @@
 #include "Assisi/Core/Logger.hpp"
 
 #include <array>
+#include <cstdint>
 #include <cstdlib>
 #include <fstream>
 #include <optional>
@@ -443,7 +444,7 @@ PathResult AssetSystem::DiscoverRoot() noexcept
            Lambda type is unnameable, so this is the one place auto stays. */
         auto walkUp = [](fs::path dir) -> std::optional<fs::path>
         {
-            for (int i = 0; i < 10; ++i)
+            for (int32_t i = 0; i < 10; ++i)
             {
                 const fs::path candidate = dir / "assets";
                 if (fs::is_directory(candidate))

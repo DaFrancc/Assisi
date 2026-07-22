@@ -95,7 +95,7 @@ class ClusterGrid
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device);
 
     /// @brief Rebuild cluster AABBs. Call once on init and again on viewport/projection change.
-    void BuildClusters(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,
+    void BuildClusters(nvrhi::ICommandList *commandList, int32_t width, int32_t height, float nearZ, float farZ,
                        const glm::mat4 &invProjection);
 
     /// @brief Upload lights to buffers and run the culling compute pass.
@@ -105,8 +105,8 @@ class ClusterGrid
 
     float NearZ() const { return _nearZ; }
     float FarZ()  const { return _farZ; }
-    int   Width() const { return _width; }
-    int   Height() const { return _height; }
+    int32_t Width() const { return _width; }
+    int32_t Height() const { return _height; }
 
     /// @brief Buffers the mesh fragment shader binds as SRVs each frame.
     ///@{
@@ -136,8 +136,8 @@ class ClusterGrid
 
     float _nearZ  = 0.1f;
     float _farZ   = 200.f;
-    int   _width  = 0;
-    int   _height = 0;
+    int32_t _width  = 0;
+    int32_t _height = 0;
 };
 
 } // namespace Assisi::Render

@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <string>
 
 namespace Assisi::App
@@ -56,7 +57,7 @@ OptionsConfig OptionsConfig::LoadFromJson()
             }
             if (aa.contains("msaaSamples"))
             {
-                const int samples = aa.at("msaaSamples").get<int>();
+                const int32_t samples = aa.at("msaaSamples").get<int32_t>();
                 if (samples == 2 || samples == 4 || samples == 8)
                 {
                     cfg.msaaSamples = samples;
@@ -76,7 +77,7 @@ OptionsConfig OptionsConfig::LoadFromJson()
             {
                 // Accept only the -1 (unlimited) sentinel or a positive cap that
                 // fits an int16 — reject 0 and out-of-range junk, keeping the default.
-                const int limit = fs.at("fpsLimit").get<int>();
+                const int32_t limit = fs.at("fpsLimit").get<int32_t>();
                 if (limit == -1 || (limit > 0 && limit <= INT16_MAX))
                 {
                     cfg.fpsLimit = static_cast<std::int16_t>(limit);
@@ -103,7 +104,7 @@ void OptionsConfig::SaveToJson() const
     const std::expected<void, Core::AssetError> result = Core::AssetSystem::WriteText("options.json", json.dump(4));
     if (!result)
     {
-        Core::Log::Warn("Could not write options.json (asset error {}).", static_cast<int>(result.error()));
+        Core::Log::Warn("Could not write options.json (asset error {}).", static_cast<int32_t>(result.error()));
     }
 }
 

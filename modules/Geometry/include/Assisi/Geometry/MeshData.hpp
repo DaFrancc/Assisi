@@ -65,7 +65,7 @@ struct LodRange
 struct MeshData
 {
     std::vector<Vertex> Vertices;
-    std::vector<unsigned int> Indices; ///< Triangle list; every 3 indices form one triangle.
+    std::vector<uint32_t>     Indices; ///< Triangle list; every 3 indices form one triangle.
     std::vector<SubMesh>      SubMeshes; ///< May be empty — see degenerate rule above.
     std::vector<LodRange>     Lods;      ///< [0] = LOD0. May be empty alongside SubMeshes.
     std::vector<MaterialData> Materials; ///< Material slot table (import defaults).

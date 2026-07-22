@@ -18,8 +18,8 @@ namespace
 {
 // A distinct dedup key per mesh — AddInstanceRaw only uses it for identity, so a
 // plain address works. Two arbitrary stand-ins for "mesh A" and "mesh B".
-const int kMeshA = 0;
-const int kMeshB = 0;
+const int32_t kMeshA = 0;
+const int32_t kMeshB = 0;
 
 // Builds a MeshGeometry over caller-owned submesh storage (the span is only read
 // during AddInstanceRaw). vertexBase/indexBase distinguish arena placement.

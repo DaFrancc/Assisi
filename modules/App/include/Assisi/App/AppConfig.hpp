@@ -6,6 +6,7 @@
 
 #include <Assisi/Math/GLM.hpp>
 
+#include <cstdint>
 #include <string>
 
 namespace Assisi::App
@@ -14,8 +15,8 @@ namespace Assisi::App
 struct AppConfig
 {
     std::string title      = "Assisi Game";
-    int         width      = 1280;
-    int         height     = 720;
+    int32_t     width      = 1280;
+    int32_t     height     = 720;
     glm::vec4   clearColor = {0.15f, 0.15f, 0.18f, 1.f};
     double      physicsHz  = 60.0;
 

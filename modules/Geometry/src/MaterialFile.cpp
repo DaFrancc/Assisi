@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Geometry/MaterialFile.hpp>
 
+#include <cstdint>
 #include <typeindex>
 
 #include <nlohmann/json.hpp>
@@ -11,7 +12,7 @@ namespace Assisi::Geometry
 {
 namespace
 {
-constexpr int kMaterialFileVersion = 1;
+constexpr int32_t kMaterialFileVersion = 1;
 
 /// The registered asset meta for MaterialData, or nullptr if the generated
 /// reflection object was not linked into this binary.

@@ -114,9 +114,9 @@ template <> struct std::hash<Assisi::Core::AssetId>
         constexpr std::uint64_t kGamma      = 0x9e3779b97f4a7c15ULL; // 2^64 / golden ratio.
         constexpr std::uint64_t kMixMul1    = 0xbf58476d1ce4e5b9ULL; // splitmix64 finalizer multipliers,
         constexpr std::uint64_t kMixMul2    = 0x94d049bb133111ebULL; // searched for good bit avalanche.
-        constexpr unsigned      kMixShift1  = 30;
-        constexpr unsigned      kMixShift2  = 27;
-        constexpr unsigned      kMixShift3  = 31;
+        constexpr std::uint32_t kMixShift1  = 30;
+        constexpr std::uint32_t kMixShift2  = 27;
+        constexpr std::uint32_t kMixShift3  = 31;
 
         auto load = [&](std::size_t offset) noexcept
         {

@@ -56,7 +56,7 @@ template <std::size_t Capacity = kDefaultTrivialStringCapacity> class TrivialStr
         // up off any trailing continuation bytes (0b10xxxxxx) so View() stays
         // valid UTF-8. text[count] is in range here because count < text.size().
         if (truncated)
-            while (count > 0 && (static_cast<unsigned char>(text[count]) & 0xC0) == 0x80)
+            while (count > 0 && (static_cast<std::uint8_t>(text[count]) & 0xC0) == 0x80)
                 --count;
 
         std::copy_n(text.data(), count, _data.data());

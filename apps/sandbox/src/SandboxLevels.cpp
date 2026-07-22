@@ -11,6 +11,7 @@
 #include <imgui.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 
@@ -34,7 +35,7 @@ void SandboxApp::DrawLevelsWindow()
         ImGui::SetNextItemWidth(-1.0f);
         if (ImGui::BeginCombo("##level", _levelFiles[_selectedLevel].c_str()))
         {
-            for (int i = 0; i < static_cast<int>(_levelFiles.size()); ++i)
+            for (int32_t i = 0; i < static_cast<int32_t>(_levelFiles.size()); ++i)
             {
                 const bool selected = (i == _selectedLevel);
                 if (ImGui::Selectable(_levelFiles[i].c_str(), selected))
@@ -91,7 +92,7 @@ void SandboxApp::DrawLevelsWindow()
         const std::string newName(_saveAsName);
         const auto        it = std::find(_levelFiles.begin(), _levelFiles.end(), newName);
         if (it != _levelFiles.end())
-            _selectedLevel = static_cast<int>(std::distance(_levelFiles.begin(), it));
+            _selectedLevel = static_cast<int32_t>(std::distance(_levelFiles.begin(), it));
     }
     ImGui::EndDisabled();
     if (!canSaveAs && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))

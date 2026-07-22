@@ -16,6 +16,7 @@
 #include <Assisi/Window/WindowContext.hpp>
 
 #include <array>
+#include <cstdint>
 #include <memory>
 #include <span>
 
@@ -37,7 +38,7 @@ namespace Assisi::App
 /// Optional overrides (no-ops by default):
 ///   - OnImGui()                 — called after OnRender(), inside the same
 ///     ImGui frame DebugUI opens; build ImGui:: windows here
-///   - OnResize(int, int)        — called when the framebuffer is resized
+///   - OnResize(int32_t, int32_t) — called when the framebuffer is resized
 ///   - OnRenderTargetsChanged(const nvrhi::FramebufferInfo&) — called whenever
 ///     the FramebufferInfo that OnRender()'s `frame` is compatible with changes
 ///     (e.g. its sample count) — rebuild any graphics pipelines built against
@@ -76,7 +77,7 @@ class Application
     virtual void OnImGui()                  {}
     virtual void OnShutdown()               {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
-    virtual void OnResize(int /*width*/, int /*height*/) {}
+    virtual void OnResize(int32_t /*width*/, int32_t /*height*/) {}
     /// @brief Called after the anti-aliasing mode/MSAA sample count changes
     /// (F11 options window), before the next OnRender(). Only fires when the
     /// new FramebufferInfo actually differs from the previous one — resizing
@@ -114,7 +115,7 @@ class Application
     Core::JobSystem &Jobs() { return _jobs; }
 
     void      RequestClose();
-    int       GetFps()             const { return _fps; }
+    int32_t   GetFps()             const { return _fps; }
 
     /// @brief Averaged CPU main-thread work per frame, in milliseconds —
     /// excluding the FPS-limit pacing sleep and time spent blocked on the GPU.
@@ -153,17 +154,17 @@ class Application
         std::span<const float> cpuMs;
         std::span<const float> gpuMs;
         std::span<const float> frameDeltaMs;
-        int                    offset;
-        int                    sampleCount;
+        int32_t                offset;
+        int32_t                sampleCount;
     };
     FrameStatsView GetFrameStats() const
     {
         return {_cpuHistory, _gpuHistory, _frameTimeHistory, _frameHistoryOffset, _frameSampleCount};
     }
-    static constexpr int FrameHistory() { return kFrameHistory; }
+    static constexpr int32_t FrameHistory() { return kFrameHistory; }
 
   private:
-    void HandleFramebufferResize(int width, int height);
+    void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
 
@@ -183,9 +184,9 @@ class Application
     Core::EventQueue    _events;
     bool                _initialized = false;
 
-    int    _fps = 0;
-    double _cpuFrameMs = 0.0;
-    double _gpuFrameMs = 0.0;
+    int32_t _fps = 0;
+    double  _cpuFrameMs = 0.0;
+    double  _gpuFrameMs = 0.0;
 
     // Leftover accumulator as a fraction of a physics step, in [0, 1). Set once
     // per frame after the fixed-update loop; read by OnRender via
@@ -197,12 +198,12 @@ class Application
     // slot to overwrite, which is also the oldest sample — the values_offset
     // ImGui::PlotLines() wants. _frameSampleCount saturates at kFrameHistory so
     // the stats ignore the zero-filled slots before the buffer first fills.
-    static constexpr int              kFrameHistory = 360;
+    static constexpr int32_t          kFrameHistory = 360;
     std::array<float, kFrameHistory>  _cpuHistory{};
     std::array<float, kFrameHistory>  _gpuHistory{};
     std::array<float, kFrameHistory>  _frameTimeHistory{}; // full frame delta, for 1%-low etc.
-    int                               _frameHistoryOffset = 0;
-    int                               _frameSampleCount = 0;
+    int32_t                           _frameHistoryOffset = 0;
+    int32_t                           _frameSampleCount = 0;
 };
 
 } // namespace Assisi::App

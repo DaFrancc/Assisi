@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 
 namespace Assisi::Core
 {
@@ -11,7 +12,7 @@ namespace
 constexpr char kHexDigits[] = "0123456789abcdef";
 
 /// @brief Hex value of one ASCII character, or -1 if it is not a hex digit.
-constexpr int HexValue(char character) noexcept
+constexpr int32_t HexValue(char character) noexcept
 {
     if (character >= '0' && character <= '9')
     {
@@ -72,7 +73,7 @@ std::optional<AssetId> AssetId::Parse(std::string_view text) noexcept
         {
             continue;
         }
-        const int value = HexValue(character);
+        const int32_t value = HexValue(character);
         if (value < 0 || nibbleCount >= 32)
         {
             return std::nullopt;

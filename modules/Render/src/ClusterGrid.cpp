@@ -102,8 +102,8 @@ bool ClusterGrid::Initialize(nvrhi::IDevice *device)
     return true;
 }
 
-void ClusterGrid::BuildClusters(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,
-                                const glm::mat4 &invProjection)
+void ClusterGrid::BuildClusters(nvrhi::ICommandList *commandList, int32_t width, int32_t height, float nearZ,
+                                float farZ, const glm::mat4 &invProjection)
 {
     _nearZ  = nearZ;
     _farZ   = farZ;

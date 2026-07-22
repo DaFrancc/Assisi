@@ -5,6 +5,8 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 
+#include <cstdint>
+
 namespace Assisi::Render
 {
 
@@ -16,7 +18,7 @@ nvrhi::ShaderHandle LoadSpirvShader(nvrhi::IDevice *device, const std::string &p
     if (!spirv)
     {
         Core::Log::Error("ShaderModule: failed to load shader '{}' (asset error {}).", path,
-                         static_cast<int>(spirv.error()));
+                         static_cast<int32_t>(spirv.error()));
         return nullptr;
     }
 

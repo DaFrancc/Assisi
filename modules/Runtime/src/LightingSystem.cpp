@@ -5,6 +5,7 @@
 #include <Assisi/Runtime/Components.hpp>
 
 #include <algorithm>
+#include <cstdint>
 
 namespace Assisi::Runtime
 {
@@ -23,8 +24,8 @@ glm::vec3 SafeDirection(const glm::vec3 &direction)
 }
 } // namespace
 
-bool LightingSystem::Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *commandList, int width, int height,
-                                float nearZ, float farZ, const glm::mat4 &projection)
+bool LightingSystem::Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *commandList, int32_t width,
+                                int32_t height, float nearZ, float farZ, const glm::mat4 &projection)
 {
     if (!_grid.Initialize(device))
         return false;
@@ -33,7 +34,7 @@ bool LightingSystem::Initialize(nvrhi::IDevice *device, nvrhi::ICommandList *com
     return true;
 }
 
-void LightingSystem::Resize(nvrhi::ICommandList *commandList, int width, int height, float nearZ, float farZ,
+void LightingSystem::Resize(nvrhi::ICommandList *commandList, int32_t width, int32_t height, float nearZ, float farZ,
                             const glm::mat4 &projection)
 {
     _grid.BuildClusters(commandList, width, height, nearZ, farZ, glm::inverse(projection));

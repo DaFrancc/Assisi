@@ -25,6 +25,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <expected>
 #include <fstream>
@@ -548,7 +549,7 @@ void SandboxApp::SetupScene()
     }
 }
 
-void SandboxApp::OnResize(int width, int height)
+void SandboxApp::OnResize(int32_t width, int32_t height)
 {
     _sceneRenderer.Resize(width, height, _camera);
 }
@@ -783,9 +784,9 @@ void SandboxApp::HandleUndoRedoHotkeys()
     if (_pendingHistorySteps != 0)
     {
         std::optional<Assisi::ECS::Entity> restored;
-        for (int i = _pendingHistorySteps; i < 0; ++i)
+        for (int32_t i = _pendingHistorySteps; i < 0; ++i)
             restored = history->Undo();
-        for (int i = _pendingHistorySteps; i > 0; --i)
+        for (int32_t i = _pendingHistorySteps; i > 0; --i)
             restored = history->Redo();
         _pendingHistorySteps = 0;
         if (restored.has_value())
@@ -876,14 +877,14 @@ void SandboxApp::DrawHistoryWindow()
 
     // Base state (before any retained edit) — current when the undo stack is empty.
     if (ImGui::Selectable("(initial state)", history->UndoDepth() == 0) && history->UndoDepth() > 0)
-        _pendingHistorySteps = -static_cast<int>(history->UndoDepth());
+        _pendingHistorySteps = -static_cast<int32_t>(history->UndoDepth());
 
     for (std::size_t i = 0; i < undoLabels.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(i));
         const bool isCurrent = (i + 1 == undoLabels.size());
         if (ImGui::Selectable(undoLabels[i].c_str(), isCurrent) && !isCurrent)
-            _pendingHistorySteps = static_cast<int>(i + 1) - static_cast<int>(undoLabels.size()); // undo down to i
+            _pendingHistorySteps = static_cast<int32_t>(i + 1) - static_cast<int32_t>(undoLabels.size()); // undo down to i
         ImGui::PopID();
     }
 
@@ -892,7 +893,7 @@ void SandboxApp::DrawHistoryWindow()
     {
         ImGui::PushID(static_cast<int>(1000 + j));
         if (ImGui::Selectable(redoLabels[j].c_str()))
-            _pendingHistorySteps = static_cast<int>(j + 1); // redo forward to this entry
+            _pendingHistorySteps = static_cast<int32_t>(j + 1); // redo forward to this entry
         ImGui::PopID();
     }
     ImGui::PopStyleColor();

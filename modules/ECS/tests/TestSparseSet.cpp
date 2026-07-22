@@ -2,19 +2,21 @@
 
 #include <doctest/doctest.h>
 
+#include <cstdint>
+
 #include <Assisi/ECS/SparseSet.hpp>
 
 using namespace Assisi::ECS;
 
 TEST_CASE("SparseSet: add / get / has round-trip")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity e{.index = 3, .generation = 0};
 
     CHECK_FALSE(set.Has(e));
     CHECK(set.Get(e) == nullptr);
 
-    int *added = set.Add(e, 42);
+    int32_t *added = set.Add(e, 42);
     REQUIRE(added != nullptr);
     CHECK(*added == 42);
 
@@ -26,7 +28,7 @@ TEST_CASE("SparseSet: add / get / has round-trip")
 
 TEST_CASE("SparseSet: duplicate add is rejected")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity e{.index = 1, .generation = 0};
 
     REQUIRE(set.Add(e, 1) != nullptr);
@@ -36,7 +38,7 @@ TEST_CASE("SparseSet: duplicate add is rejected")
 
 TEST_CASE("SparseSet: remove keeps the dense array packed (swap-and-pop)")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity a{.index = 0, .generation = 0};
     const Entity b{.index = 1, .generation = 0};
     const Entity c{.index = 2, .generation = 0};
@@ -61,7 +63,7 @@ TEST_CASE("SparseSet: remove keeps the dense array packed (swap-and-pop)")
 // occupant's component.
 TEST_CASE("SparseSet: stale handle does not alias a reused slot")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity oldE{.index = 5, .generation = 0};
     const Entity newE{.index = 5, .generation = 1}; // same slot, next generation
 
@@ -85,7 +87,7 @@ TEST_CASE("SparseSet: stale handle does not alias a reused slot")
 // otherwise it overwrites the live occupant's mapping and orphans a dense slot.
 TEST_CASE("SparseSet: adding a stale handle over a live slot is rejected")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity live{.index = 5, .generation = 1};  // current occupant of slot 5
     const Entity stale{.index = 5, .generation = 0}; // destroyed predecessor
 
@@ -103,7 +105,7 @@ TEST_CASE("SparseSet: adding a stale handle over a live slot is rejected")
 
 TEST_CASE("SparseSet: removing a stale handle is a no-op")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity oldE{.index = 2, .generation = 0};
     const Entity newE{.index = 2, .generation = 1};
 
@@ -119,7 +121,7 @@ TEST_CASE("SparseSet: removing a stale handle is a no-op")
 
 TEST_CASE("SparseSet: removing the last dense element takes the no-swap path")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity a{.index = 0, .generation = 0};
     const Entity b{.index = 1, .generation = 0};
 
@@ -135,7 +137,7 @@ TEST_CASE("SparseSet: removing the last dense element takes the no-swap path")
 
 TEST_CASE("SparseSet: the packed entity array parallels the dense array")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity a{.index = 4, .generation = 1};
     const Entity b{.index = 9, .generation = 0};
 
@@ -155,11 +157,11 @@ TEST_CASE("SparseSet: the packed entity array parallels the dense array")
 
 TEST_CASE("SparseSet: const Get resolves a present component")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity e{.index = 2, .generation = 0};
     REQUIRE(set.Add(e, 77) != nullptr);
 
-    const SparseSet<int> &constSet = set;
+    const SparseSet<int32_t> &constSet = set;
     REQUIRE(constSet.Get(e) != nullptr);
     CHECK(*constSet.Get(e) == 77);
     CHECK(constSet.Get(Entity{.index = 3, .generation = 0}) == nullptr);
@@ -167,7 +169,7 @@ TEST_CASE("SparseSet: const Get resolves a present component")
 
 TEST_CASE("SparseSet: a high index then a low index both resolve")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity high{.index = 100, .generation = 0};
     const Entity low{.index = 2, .generation = 0};
 
@@ -181,7 +183,7 @@ TEST_CASE("SparseSet: a high index then a low index both resolve")
 
 TEST_CASE("SparseSet: clear empties the set")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     REQUIRE(set.Add(Entity{.index = 0, .generation = 0}, 1) != nullptr);
     REQUIRE(set.Add(Entity{.index = 1, .generation = 0}, 2) != nullptr);
 
@@ -193,7 +195,7 @@ TEST_CASE("SparseSet: clear empties the set")
 
 TEST_CASE("SparseSet: adding the null/sentinel index is rejected, not UB")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     // NullEntity's index is UINT32_MAX; index + 1 would overflow to 0 and
     // resize the sparse array to empty, corrupting it. Add must reject instead.
     CHECK(set.Add(NullEntity, 7) == nullptr);
@@ -209,7 +211,7 @@ TEST_CASE("SparseSet: adding the null/sentinel index is rejected, not UB")
 #ifndef NDEBUG
 TEST_CASE("SparseSet: StructureVersion increments on exactly the structural changes")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity    a{.index = 0, .generation = 0};
     const Entity    b{.index = 1, .generation = 0};
 
@@ -234,7 +236,7 @@ TEST_CASE("SparseSet: StructureVersion increments on exactly the structural chan
 
 TEST_CASE("SparseSet: read-only operations never bump StructureVersion")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity    a{.index = 0, .generation = 0};
     const Entity    b{.index = 1, .generation = 0};
     REQUIRE(set.Add(a, 10) != nullptr);
@@ -248,7 +250,7 @@ TEST_CASE("SparseSet: read-only operations never bump StructureVersion")
     (void)set.Size();
     (void)set.Empty();
     (void)set.Entities();
-    for (int value : set)
+    for (int32_t value : set)
         (void)value;
 
     CHECK(set.StructureVersion() == before);
@@ -256,7 +258,7 @@ TEST_CASE("SparseSet: read-only operations never bump StructureVersion")
 
 TEST_CASE("SparseSet: rejected/no-op mutations do not bump StructureVersion")
 {
-    SparseSet<int> set;
+    SparseSet<int32_t> set;
     const Entity    a{.index = 0, .generation = 0};
     const Entity    absent{.index = 7, .generation = 0};
     REQUIRE(set.Add(a, 10) != nullptr);

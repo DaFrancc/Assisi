@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <fstream>
 
 namespace Assisi::App
@@ -38,8 +39,8 @@ AppConfig AppConfig::LoadFromJson()
         {
             const auto &w = json.at("window");
             if (w.contains("title"))  cfg.title  = w.at("title").get<std::string>();
-            if (w.contains("width"))  cfg.width  = w.at("width").get<int>();
-            if (w.contains("height")) cfg.height = w.at("height").get<int>();
+            if (w.contains("width"))  cfg.width  = w.at("width").get<int32_t>();
+            if (w.contains("height")) cfg.height = w.at("height").get<int32_t>();
         }
 
         if (json.contains("render"))

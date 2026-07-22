@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cstdint>
 #include <vector>
 
 #include <Assisi/Core/Assert.hpp>
@@ -46,7 +47,7 @@ TEST_CASE("Query: a single-component query yields every holder")
     REQUIRE(scene.Add<Velocity>(c, {3.0f}) != nullptr); // c has no Position
 
     float sum = 0.0f;
-    int count = 0;
+    int32_t count = 0;
     for (auto [e, pos] : scene.Query<Position>())
     {
         (void)e;
@@ -85,7 +86,7 @@ TEST_CASE("Query: empty when a requested pool has never been created")
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
 
-    int count = 0;
+    int32_t count = 0;
     for (auto [ent, pos, vel] : scene.Query<Position, Velocity>())
     {
         (void)ent;
@@ -124,7 +125,7 @@ TEST_CASE("Query: Without a never-created pool excludes nobody")
     REQUIRE(scene.Add<Position>(b, {2.0f}) != nullptr);
     // The Velocity pool was never created; excluding it must reject no one.
 
-    int count = 0;
+    int32_t count = 0;
     for (auto [e, pos] : scene.Query<Position>(Without<Velocity>{}))
     {
         (void)e;
@@ -171,7 +172,7 @@ TEST_CASE("Query: a destroyed entity is skipped even if the slot is reused")
     CHECK(b.index == a.index);
     REQUIRE(scene.Add<Position>(b, {9.0f}) != nullptr);
 
-    int count = 0;
+    int32_t count = 0;
     for (auto [e, pos, vel] : scene.Query<Position, Velocity>())
     {
         (void)e;
@@ -189,14 +190,14 @@ TEST_CASE("Query: a destroyed entity is skipped even if the slot is reused")
 TEST_CASE("Query: Destroy during iteration is deferred and does not invalidate")
 {
     Scene scene;
-    constexpr int kCount = 128;
-    for (int i = 0; i < kCount; ++i)
+    constexpr int32_t kCount = 128;
+    for (int32_t i = 0; i < kCount; ++i)
     {
         const Entity e = scene.Create();
         REQUIRE(scene.Add<Position>(e, {static_cast<float>(i)}) != nullptr);
     }
 
-    int visited = 0;
+    int32_t visited = 0;
     for (auto [e, pos] : scene.Query<Position>())
     {
         (void)pos;
@@ -210,7 +211,7 @@ TEST_CASE("Query: Destroy during iteration is deferred and does not invalidate")
     scene.FlushDestroyed();
     CHECK(scene.AliveCount() == 0); // now all applied
 
-    int survivors = 0;
+    int32_t survivors = 0;
     for (auto [e, pos] : scene.Query<Position>())
     {
         (void)e;
@@ -228,9 +229,9 @@ TEST_CASE("Query: Destroy during iteration is deferred and does not invalidate")
 namespace
 {
 // Scene is non-movable, so fill by reference rather than return by value.
-void FillWithPositions(Scene &scene, int count)
+void FillWithPositions(Scene &scene, int32_t count)
 {
-    for (int i = 0; i < count; ++i)
+    for (int32_t i = 0; i < count; ++i)
     {
         const Entity e = scene.Create();
         REQUIRE(scene.Add<Position>(e, {static_cast<float>(i)}) != nullptr);
@@ -280,7 +281,7 @@ TEST_CASE("Query guard: mutating a non-queried pool mid-iteration is allowed")
     Scene                    scene;
     FillWithPositions(scene, 8);
 
-    int seen = 0;
+    int32_t seen = 0;
     // Adding Velocity is not a change to the Position pool being iterated, so it
     // must not trip the guard.
     CHECK_NOTHROW(([&]
@@ -306,7 +307,7 @@ TEST_CASE("Query guard: mutating an excluded pool mid-iteration is allowed")
     const Entity tagOnly = scene.Create();
     REQUIRE(scene.Add<Tag>(tagOnly, {}) != nullptr);
 
-    int seen = 0;
+    int32_t seen = 0;
     // Query<Position>(Without<Tag>): the excluded Tag pool is re-probed each step
     // through its stable address, so growing it mid-iteration is safe. This is a
     // regression guard — the check once summed excluded pools and would abort here.
@@ -328,7 +329,7 @@ TEST_CASE("Query guard: destroying entities mid-iteration is allowed (deferred)"
     Scene                    scene;
     FillWithPositions(scene, 64);
 
-    int seen = 0;
+    int32_t seen = 0;
     // Destroy is deferred, so it never touches the pool mid-loop — must not trip.
     CHECK_NOTHROW(([&]
                    {

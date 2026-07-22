@@ -7,6 +7,7 @@
 #include <Assisi/Geometry/MeshData.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 namespace Assisi::Geometry
@@ -28,9 +29,9 @@ inline void ComputeTangents(MeshData &mesh)
 
     for (size_t i = 0; i < mesh.Indices.size(); i += 3)
     {
-        const unsigned int i0 = mesh.Indices[i];
-        const unsigned int i1 = mesh.Indices[i + 1];
-        const unsigned int i2 = mesh.Indices[i + 2];
+        const uint32_t i0 = mesh.Indices[i];
+        const uint32_t i1 = mesh.Indices[i + 1];
+        const uint32_t i2 = mesh.Indices[i + 2];
 
         const glm::vec3 &p0 = mesh.Vertices[i0].Position;
         const glm::vec3 &p1 = mesh.Vertices[i1].Position;

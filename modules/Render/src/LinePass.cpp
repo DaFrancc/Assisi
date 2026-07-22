@@ -117,7 +117,7 @@ bool LinePass::RebuildPipeline(const nvrhi::FramebufferInfo &sceneFramebufferInf
     return BuildPipelines(sceneFramebufferInfo);
 }
 
-bool LinePass::EnsureVertexCapacity(int slot, uint32_t vertexCount)
+bool LinePass::EnsureVertexCapacity(int32_t slot, uint32_t vertexCount)
 {
     if (vertexCount <= _vertexCapacities[slot] && _vertexBuffers[slot] != nullptr)
     {
@@ -158,7 +158,7 @@ void LinePass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, s
     {
         return;
     }
-    const int slot = onTop ? 1 : 0;
+    const int32_t slot = onTop ? 1 : 0;
     if (!EnsureVertexCapacity(slot, vertexCount))
     {
         return;

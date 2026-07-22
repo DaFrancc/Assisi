@@ -46,12 +46,12 @@ void SandboxApp::DrawOptionsWindow()
     if (ImGui::Begin("Options", &_showOptions))
     {
         const Application::FrameStatsView stats = GetFrameStats();
-        const int                         frameHistory = static_cast<int>(stats.cpuMs.size());
+        const int32_t                     frameHistory = static_cast<int32_t>(stats.cpuMs.size());
 
         // CPU vs GPU frame time: if CPU >> GPU we're CPU-bound, and vice versa.
         // The numbers are averaged over the same ~0.5s window as the FPS counter;
         // the plots below show raw per-frame samples so spikes stay visible.
-        const int fps = GetFps();
+        const int32_t fps = GetFps();
         ImGui::Text("CPU: %5.2f ms    GPU: %5.2f ms", GetCpuFrameMs(), GetGpuFrameMs());
         ImGui::Text("Frame: %5.2f ms (%d FPS)", fps > 0 ? 1000.0 / fps : 0.0, fps);
 
@@ -96,12 +96,12 @@ void SandboxApp::DrawOptionsWindow()
             {
                 // Before the ring wraps, samples sit in [0, count) in order, so
                 // plot from 0; once full, ImPlot's Offset marks the oldest sample.
-                const int   plotCount  = _gpuTelemetryCount;
-                const int   plotOffset = _gpuTelemetryCount < kGpuHistory ? 0 : _gpuTelemetryOffset;
-                const auto  bufMax     = [plotCount](const std::array<float, kGpuHistory> &buf)
+                const int32_t plotCount  = _gpuTelemetryCount;
+                const int32_t plotOffset = _gpuTelemetryCount < kGpuHistory ? 0 : _gpuTelemetryOffset;
+                const auto    bufMax     = [plotCount](const std::array<float, kGpuHistory> &buf)
                 {
                     float m = 0.0f;
-                    for (int i = 0; i < plotCount; ++i)
+                    for (int32_t i = 0; i < plotCount; ++i)
                     {
                         m = std::max(m, buf[i]);
                     }
@@ -192,7 +192,7 @@ void SandboxApp::DrawOptionsWindow()
         // toggles each series. Both series read the ring buffers directly via
         // ImPlot's offset argument, which marks the chronological start.
         float plotMax = 4.0f;
-        for (int i = 0; i < frameHistory; ++i)
+        for (int32_t i = 0; i < frameHistory; ++i)
         {
             plotMax = std::max({plotMax, stats.cpuMs[i], stats.gpuMs[i]});
         }
@@ -248,9 +248,9 @@ void SandboxApp::DrawOptionsWindow()
             const double avgMs = sum / sorted.size();
 
             // Average the slowest 1% (at least one frame) from the tail.
-            const int    worstCount = std::max<int>(1, static_cast<int>(sorted.size()) / 100);
-            double       worstSum   = 0.0;
-            for (int i = static_cast<int>(sorted.size()) - worstCount; i < static_cast<int>(sorted.size()); ++i)
+            const int32_t worstCount = std::max<int32_t>(1, static_cast<int32_t>(sorted.size()) / 100);
+            double        worstSum   = 0.0;
+            for (int32_t i = static_cast<int32_t>(sorted.size()) - worstCount; i < static_cast<int32_t>(sorted.size()); ++i)
             {
                 worstSum += sorted[i];
             }
@@ -259,7 +259,7 @@ void SandboxApp::DrawOptionsWindow()
             const float minMs = sorted.front();
             const float maxMs = sorted.back();
 
-            const auto toFps = [](double ms) { return ms > 0.0 ? static_cast<int>(1000.0 / ms) : 0; };
+            const auto toFps = [](double ms) { return ms > 0.0 ? static_cast<int32_t>(1000.0 / ms) : 0; };
             ImGui::Text("Avg:     %6.2f ms  (%d FPS)", avgMs, toFps(avgMs));
             ImGui::Text("1%% low:  %6.2f ms  (%d FPS)", onePctLowMs, toFps(onePctLowMs));
             ImGui::Text("Min/Max: %6.2f / %6.2f ms", minMs, maxMs);
@@ -338,10 +338,10 @@ void SandboxApp::DrawOptionsWindow()
             ImGui::BeginDisabled();
         }
 
-        static const char *kSampleNames[]  = {"2x", "4x", "8x"};
-        static const int   kSampleValues[] = {2, 4, 8};
-        int                sampleIndex     = 1;
-        for (int i = 0; i < 3; ++i)
+        static const char *   kSampleNames[]  = {"2x", "4x", "8x"};
+        static const int32_t  kSampleValues[] = {2, 4, 8};
+        int                   sampleIndex     = 1;
+        for (int32_t i = 0; i < 3; ++i)
         {
             if (kSampleValues[i] == options.msaaSamples)
             {

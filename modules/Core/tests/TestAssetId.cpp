@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cstdint>
 #include <string>
 #include <unordered_set>
 
@@ -67,7 +68,7 @@ TEST_CASE("AssetId::Parse accepts dashless and uppercase, rejects malformed")
 TEST_CASE("MintAssetId yields unique, non-reserved, version-4 ids")
 {
     std::unordered_set<AssetId> seen;
-    for (int i = 0; i < 1000; ++i)
+    for (int32_t i = 0; i < 1000; ++i)
     {
         const AssetId id = MintAssetId();
         CHECK_FALSE(id.IsReserved());

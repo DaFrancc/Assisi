@@ -3,6 +3,7 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <algorithm>
+#include <cstdint>
 #include <utility>
 
 #include <Assisi/Core/Logger.hpp>
@@ -51,14 +52,14 @@ constexpr float kMaxIconDistance = 100.f;
 // entity's mesh/icon). Matches the "selected" collider colour the editor uses.
 constexpr glm::vec3 kSelectionOutlineColor{1.0f, 0.45f, 0.0f};
 
-float AspectRatio(int width, int height)
+float AspectRatio(int32_t width, int32_t height)
 {
     return height > 0 ? static_cast<float>(width) / static_cast<float>(height) : 1.f;
 }
 } // namespace
 
-bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int width,
-                               int height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
+bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int32_t width,
+                               int32_t height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
                                nvrhi::IDescriptorTable *bindlessTable, nvrhi::IBuffer *materialTable)
 {
     _device = device;
@@ -129,7 +130,7 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
     return true;
 }
 
-void SceneRenderer::RebuildClusterGrid(int width, int height, const Camera &camera,
+void SceneRenderer::RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera,
                                        const glm::mat4 &projection)
 {
     if (_device == nullptr || !_meshPass.IsValid())
@@ -146,7 +147,7 @@ void SceneRenderer::RebuildClusterGrid(int width, int height, const Camera &came
     _clusterProjection = projection;
 }
 
-void SceneRenderer::Resize(int width, int height, const Camera &camera)
+void SceneRenderer::Resize(int32_t width, int32_t height, const Camera &camera)
 {
     RebuildClusterGrid(width, height, camera, ProjectionMatrix(camera, AspectRatio(width, height)));
 }
@@ -187,8 +188,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // bookmark carries that across frames.
     _lastPropagationTick = PropagateTransforms(scene, _lastPropagationTick);
 
-    const glm::mat4 projection = ProjectionMatrix(camera, AspectRatio(static_cast<int>(frame.width),
-                                                                      static_cast<int>(frame.height)));
+    const glm::mat4 projection = ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width),
+                                                                      static_cast<int32_t>(frame.height)));
     const glm::mat4 view = ViewMatrix(cameraTransform);
 
     // Keep the froxel grid aligned with the render projection; a drift (window
@@ -196,7 +197,7 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // it and shows rectangular lighting artifacts.
     if (projection != _clusterProjection)
     {
-        RebuildClusterGrid(static_cast<int>(frame.width), static_cast<int>(frame.height), camera, projection);
+        RebuildClusterGrid(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height), camera, projection);
     }
 
     _lighting.Update(frame.commandList, scene, view);

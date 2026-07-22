@@ -17,6 +17,7 @@
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
+#include <cstdint>
 #include <memory>
 #include <utility>
 
@@ -72,10 +73,10 @@ class PhysicsWorld
     /// count effectively eliminates — the impact penetration that reads as a
     /// body sinking into a surface and popping back out. Cost is roughly linear:
     /// N substeps ≈ N× the collision work per step. Clamped to [1, 16].
-    void SetCollisionSteps(int steps);
+    void SetCollisionSteps(int32_t steps);
 
     /// @brief Current collision-substep count (see SetCollisionSteps).
-    int GetCollisionSteps() const;
+    int32_t GetCollisionSteps() const;
 
     /// @brief Snapshots each dynamic body's pose for render interpolation.
     ///

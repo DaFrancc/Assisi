@@ -23,6 +23,7 @@
 /// @endcode
 
 #include <array>
+#include <cstdint>
 
 #include <glm/glm.hpp>
 
@@ -101,9 +102,9 @@ class InputContext
 
   private:
     /* GLFW_KEY_LAST = 348; one slot per key code index. */
-    static constexpr int kKeyCount = 349;
+    static constexpr int32_t kKeyCount = 349;
     /* GLFW_MOUSE_BUTTON_LAST = 7; one slot per button index. */
-    static constexpr int kButtonCount = 8;
+    static constexpr int32_t kButtonCount = 8;
 
     NativeWindowHandle *_window = nullptr;
 

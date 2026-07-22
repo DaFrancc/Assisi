@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -113,16 +114,16 @@ namespace Assisi::Physics
 
 struct PhysicsWorld::Impl
 {
-    static constexpr unsigned int kMaxBodies = 1024;
-    static constexpr unsigned int kMaxBodyPairs = 65536;
-    static constexpr unsigned int kMaxContactConstraints = 10240;
+    static constexpr uint32_t kMaxBodies = 1024;
+    static constexpr uint32_t kMaxBodyPairs = 65536;
+    static constexpr uint32_t kMaxContactConstraints = 10240;
 
     // Collision substeps per Update(); runtime-adjustable via SetCollisionSteps.
     // Defaults to 1 (a single solve, like Unity/Unreal at their fixed rate);
     // raise it to trade CPU for shallower impact penetration.
-    static constexpr int kDefaultCollisionSteps = 1;
-    static constexpr int kMaxCollisionSteps     = 16;
-    int collisionSteps = kDefaultCollisionSteps;
+    static constexpr int32_t kDefaultCollisionSteps = 1;
+    static constexpr int32_t kMaxCollisionSteps     = 16;
+    int32_t collisionSteps = kDefaultCollisionSteps;
 
     BPLayerInterface bpLayerInterface;
     ObjVsBPFilter objVsBPFilter;
@@ -163,7 +164,7 @@ namespace
    single init/teardown instead of leaking the factory or tearing it out from
    under a sibling instance. Atomic so worlds constructed/destroyed on
    different threads can't lose a count and double-free the factory. */
-std::atomic<int> gJoltRefCount{0};
+std::atomic<int32_t> gJoltRefCount{0};
 
 void AcquireJoltGlobals()
 {
@@ -348,12 +349,12 @@ void PhysicsWorld::Update(float deltaTime)
     _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jobSystem);
 }
 
-void PhysicsWorld::SetCollisionSteps(int steps)
+void PhysicsWorld::SetCollisionSteps(int32_t steps)
 {
     _impl->collisionSteps = std::clamp(steps, 1, Impl::kMaxCollisionSteps);
 }
 
-int PhysicsWorld::GetCollisionSteps() const
+int32_t PhysicsWorld::GetCollisionSteps() const
 {
     return _impl->collisionSteps;
 }

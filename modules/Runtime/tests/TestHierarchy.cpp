@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <cmath>
+#include <cstdint>
 #include <vector>
 
 #include <Assisi/ECS/Scene.hpp>
@@ -113,10 +114,10 @@ TEST_CASE("PropagateTransforms: an explicit NullEntity parent is treated as a ro
 TEST_CASE("PropagateTransforms: a deep chain composes correctly at every level")
 {
     ECS::Scene scene;
-    constexpr int kDepth = 64;
+    constexpr int32_t kDepth = 64;
     std::vector<ECS::Entity> chain;
     chain.reserve(kDepth);
-    for (int i = 0; i < kDepth; ++i)
+    for (int32_t i = 0; i < kDepth; ++i)
     {
         const ECS::Entity e = scene.Create();
         REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
@@ -128,7 +129,7 @@ TEST_CASE("PropagateTransforms: a deep chain composes correctly at every level")
     PropagateTransforms(scene, 0);
 
     // Each link adds 1 on x, so node i sits at cumulative world x = i + 1.
-    for (int i = 0; i < kDepth; ++i)
+    for (int32_t i = 0; i < kDepth; ++i)
         CHECK(scene.Get<Transform>(chain[i])->worldMatrix[3][0] ==
               doctest::Approx(static_cast<float>(i + 1)));
 }

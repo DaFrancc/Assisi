@@ -6,6 +6,7 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
+#include <cstdint>
 #include <vector>
 
 using namespace Assisi::Core;
@@ -14,11 +15,11 @@ namespace
 {
 struct Damage
 {
-    int amount = 0;
+    int32_t amount = 0;
 };
 struct Healed
 {
-    int amount = 0;
+    int32_t amount = 0;
 };
 
 } // namespace
@@ -51,7 +52,7 @@ TEST_CASE("EventQueue: the read view is range-iterable in push order")
     queue.Push(Damage{3});
     queue.Push(Damage{8});
 
-    std::vector<int> seen;
+    std::vector<int32_t> seen;
     for (const Damage &d : queue.Read<Damage>())
         seen.push_back(d.amount);
 
@@ -98,12 +99,12 @@ TEST_CASE("EventQueue guard: pushing the same type while reading is caught")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
     EventQueue                                queue;
-    for (int i = 0; i < 4; ++i)
+    for (int32_t i = 0; i < 4; ++i)
         queue.Push(Damage{i});
 
     CHECK_THROWS_AS(([&]
                      {
-                         int safety = 0;
+                         int32_t safety = 0;
                          for (const Damage &damage : queue.Read<Damage>())
                          {
                              (void)damage;
@@ -130,10 +131,10 @@ TEST_CASE("EventQueue guard: pushing a different type while reading is allowed")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
     EventQueue                                queue;
-    for (int i = 0; i < 4; ++i)
+    for (int32_t i = 0; i < 4; ++i)
         queue.Push(Damage{i});
 
-    int seen = 0;
+    int32_t seen = 0;
     // Healed lives in a different vector than the Damage view, so pushing it is
     // safe and must not trip the guard.
     CHECK_NOTHROW(([&]
@@ -152,10 +153,10 @@ TEST_CASE("EventQueue guard: copying out then pushing after the loop is allowed"
 {
     Assisi::Testing::ThrowOnContractViolation guard;
     EventQueue                                queue;
-    for (int i = 0; i < 4; ++i)
+    for (int32_t i = 0; i < 4; ++i)
         queue.Push(Damage{i});
 
-    std::vector<int> collected;
+    std::vector<int32_t> collected;
     CHECK_NOTHROW(([&]
                    {
                        for (const Damage &damage : queue.Read<Damage>())

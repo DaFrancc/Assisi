@@ -869,8 +869,8 @@ void SandboxApp::DrawInspector()
     // this frame's match count is known.
     struct SuggestionNav
     {
-        int  move  = 0;     // -1 = up, +1 = down (Tab or arrows)
-        bool reset = false; // text edited -> snap back to the first row
+        int32_t move  = 0;     // -1 = up, +1 = down (Tab or arrows)
+        bool    reset = false; // text edited -> snap back to the first row
     };
     SuggestionNav  nav;
     const auto navCallback = [](ImGuiInputTextCallbackData *data) -> int
@@ -956,8 +956,8 @@ void SandboxApp::DrawInspector()
         {
             if (nav.move != 0)
                 _addComponentSelected =
-                    (_addComponentSelected + nav.move + static_cast<int>(shown)) % static_cast<int>(shown);
-            _addComponentSelected = std::clamp(_addComponentSelected, 0, static_cast<int>(shown) - 1);
+                    (_addComponentSelected + nav.move + static_cast<int32_t>(shown)) % static_cast<int32_t>(shown);
+            _addComponentSelected = std::clamp(_addComponentSelected, 0, static_cast<int32_t>(shown) - 1);
 
             // Enter adds the highlighted row; clicking a row adds it directly.
             if (entered)
@@ -975,7 +975,7 @@ void SandboxApp::DrawInspector()
                 {
                     ImGui::PushID(static_cast<int32_t>(i));
                     if (ImGui::Selectable(matches[i].meta->name.c_str(),
-                                          static_cast<int>(i) == _addComponentSelected))
+                                          static_cast<int32_t>(i) == _addComponentSelected))
                     {
                         AddComponentToSelected(*matches[i].meta);
                         _addComponentBuf[0]   = '\0';

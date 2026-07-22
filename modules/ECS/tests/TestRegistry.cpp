@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <type_traits>
 #include <vector>
 
@@ -67,7 +68,7 @@ TEST_CASE("Registry: NullEntity and out-of-range handles are never alive")
 TEST_CASE("Registry: destroy removes the entity from registered pools")
 {
     Registry reg;
-    SparseSet<int> pool;
+    SparseSet<int32_t> pool;
     reg.RegisterPool(&pool);
 
     const Entity a = reg.Create();
@@ -81,7 +82,7 @@ TEST_CASE("Registry: destroy removes the entity from registered pools")
 TEST_CASE("Registry: destroy removes the entity from every registered pool")
 {
     Registry reg;
-    SparseSet<int> a;
+    SparseSet<int32_t> a;
     SparseSet<float> b;
     reg.RegisterPool(&a);
     reg.RegisterPool(&b);
@@ -98,7 +99,7 @@ TEST_CASE("Registry: destroy removes the entity from every registered pool")
 TEST_CASE("Registry: an unregistered pool is no longer touched by destroy")
 {
     Registry reg;
-    SparseSet<int> pool;
+    SparseSet<int32_t> pool;
     reg.RegisterPool(&pool);
 
     const Entity e = reg.Create();

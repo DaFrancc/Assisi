@@ -35,6 +35,7 @@
 
 #include <nvrhi/nvrhi.h>
 
+#include <cstdint>
 #include <span>
 #include <vector>
 
@@ -56,13 +57,13 @@ class SceneRenderer
     ///        material-texture table + layout, threaded into the mesh pipeline
     ///        (stage D). Must outlive the renderer.
     /// @return false if the lighting compute shaders or the mesh pipeline failed to build.
-    [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int width,
-                                  int height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
+    [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int32_t width,
+                                  int32_t height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
                                   nvrhi::IDescriptorTable *bindlessTable, nvrhi::IBuffer *materialTable);
 
     /// @brief Rebuild the cluster froxel grid for a new viewport/projection.
     /// Call from the application's resize hook. No-op until Initialize() succeeds.
-    void Resize(int width, int height, const Camera &camera);
+    void Resize(int32_t width, int32_t height, const Camera &camera);
 
     /// @brief Rebuild just the graphics pipeline after the render-target format
     /// changes (e.g. an MSAA toggle); binding sets and shaders are reused.
@@ -162,7 +163,7 @@ class SceneRenderer
 
   private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
-    void RebuildClusterGrid(int width, int height, const Camera &camera, const glm::mat4 &projection);
+    void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
 
     /// @brief Draw the selection outline for _highlightedEntity (if any) as an
     /// always-on-top overlay after the scene: a mesh silhouette, or — for a

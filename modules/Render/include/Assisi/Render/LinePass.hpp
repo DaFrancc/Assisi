@@ -65,7 +65,7 @@ class LinePass
     /// it while it is already large enough. Returns false on a failed allocation.
     /// Each depth mode owns a slot so a frame's two Draw() calls never write the
     /// same buffer (which would be a write-after-read hazard on one command list).
-    [[nodiscard]] bool EnsureVertexCapacity(int slot, uint32_t vertexCount);
+    [[nodiscard]] bool EnsureVertexCapacity(int32_t slot, uint32_t vertexCount);
 
     nvrhi::IDevice *_device = nullptr;
 

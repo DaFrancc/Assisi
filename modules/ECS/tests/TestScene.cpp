@@ -2,6 +2,7 @@
 
 #include <doctest/doctest.h>
 
+#include <cstdint>
 #include <type_traits>
 
 #include <Assisi/ECS/Scene.hpp>
@@ -183,7 +184,7 @@ namespace
 {
 struct Unreflected
 {
-    int v = 0;
+    int32_t v = 0;
 };
 } // namespace
 

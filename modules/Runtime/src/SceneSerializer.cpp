@@ -7,6 +7,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
 #include <cmath>
+#include <cstdint>
 #include <fstream>
 #include <map>
 #include <optional>
@@ -201,7 +202,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
 
 void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
 {
-    const int version = j.value("version", 0);
+    const int32_t version = j.value("version", 0);
     if (version != 1)
     {
         Core::Log::Error("SceneSerializer: unsupported level file version {}", version);

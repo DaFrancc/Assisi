@@ -4,6 +4,7 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/Logger.hpp>
 
+#include <cstdint>
 #include <set>
 #include <unordered_map>
 
@@ -35,7 +36,7 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
     // Build adjacency list and in-degree counts.
     // Edge from→to: 'from' executes before 'to'.
     std::vector<std::vector<std::size_t>> adj(n);
-    std::vector<int>                      inDegree(n, 0);
+    std::vector<int32_t>                  inDegree(n, 0);
 
     // Deduplicate edges so A.Before("B") + B.After("A") doesn't double-count.
     std::set<std::pair<std::size_t, std::size_t>> seen;

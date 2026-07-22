@@ -4,6 +4,8 @@
 
 #include <GLFW/glfw3.h>
 
+#include <cstdint>
+
 namespace Assisi::Window
 {
 
@@ -52,37 +54,37 @@ void InputContext::Poll()
 
 bool InputContext::IsKeyDown(Key key) const
 {
-    const int idx = static_cast<int>(key);
+    const int32_t idx = static_cast<int32_t>(key);
     return idx >= 0 && idx < kKeyCount && _currKeys[idx];
 }
 
 bool InputContext::IsKeyPressed(Key key) const
 {
-    const int idx = static_cast<int>(key);
+    const int32_t idx = static_cast<int32_t>(key);
     return idx >= 0 && idx < kKeyCount && _currKeys[idx] && !_prevKeys[idx];
 }
 
 bool InputContext::IsKeyReleased(Key key) const
 {
-    const int idx = static_cast<int>(key);
+    const int32_t idx = static_cast<int32_t>(key);
     return idx >= 0 && idx < kKeyCount && !_currKeys[idx] && _prevKeys[idx];
 }
 
 bool InputContext::IsMouseButtonDown(MouseButton button) const
 {
-    const int idx = static_cast<int>(button);
+    const int32_t idx = static_cast<int32_t>(button);
     return idx >= 0 && idx < kButtonCount && _currButtons[idx];
 }
 
 bool InputContext::IsMouseButtonPressed(MouseButton button) const
 {
-    const int idx = static_cast<int>(button);
+    const int32_t idx = static_cast<int32_t>(button);
     return idx >= 0 && idx < kButtonCount && _currButtons[idx] && !_prevButtons[idx];
 }
 
 bool InputContext::IsMouseButtonReleased(MouseButton button) const
 {
-    const int idx = static_cast<int>(button);
+    const int32_t idx = static_cast<int32_t>(button);
     return idx >= 0 && idx < kButtonCount && !_currButtons[idx] && _prevButtons[idx];
 }
 

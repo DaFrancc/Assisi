@@ -64,9 +64,9 @@ std::string ParentDir(std::string_view vpath)
 glm::mat4 ToGlm(fastgltf::math::fmat4x4 matrix) noexcept
 {
     glm::mat4 result(1.0f);
-    for (int col = 0; col < 4; ++col)
+    for (int32_t col = 0; col < 4; ++col)
     {
-        for (int row = 0; row < 4; ++row)
+        for (int32_t row = 0; row < 4; ++row)
         {
             result[col][row] = matrix[static_cast<size_t>(col)][static_cast<size_t>(row)];
         }
@@ -413,7 +413,7 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
         fastgltf::iterateAccessor<std::uint32_t>(
             asset, indexAccessor, [&](std::uint32_t index)
             {
-                out.Indices.push_back(static_cast<unsigned int>(baseVertex) + index);
+                out.Indices.push_back(static_cast<uint32_t>(baseVertex) + index);
             });
         if (mirrored)
         {

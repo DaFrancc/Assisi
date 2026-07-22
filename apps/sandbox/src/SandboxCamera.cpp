@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 
 // ---------------------------------------------------------------------------
@@ -271,7 +272,7 @@ bool RayOBBIntersect(glm::vec3 origin, glm::vec3 dir, const glm::mat4 &model, fl
     float tMin = -std::numeric_limits<float>::max();
     float tMax =  std::numeric_limits<float>::max();
 
-    for (int i = 0; i < 3; ++i)
+    for (int32_t i = 0; i < 3; ++i)
     {
         if (std::abs(lDir[i]) < 1e-8f)
         {

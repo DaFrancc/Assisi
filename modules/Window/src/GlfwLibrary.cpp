@@ -5,6 +5,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Window/GlfwLibrary.hpp>
 
+#include <cstdint>
 #include <memory>
 
 namespace Assisi::Window
@@ -13,7 +14,7 @@ namespace
 {
 void GlfwErrorCallback(int code, const char *description)
 {
-    Assisi::Core::Log::Error("GLFW error 0x{:08X}: {}", static_cast<unsigned int>(code),
+    Assisi::Core::Log::Error("GLFW error 0x{:08X}: {}", static_cast<uint32_t>(code),
                              description != nullptr ? description : "(no description)");
 }
 } // namespace

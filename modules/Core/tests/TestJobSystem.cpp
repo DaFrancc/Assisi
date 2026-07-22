@@ -114,7 +114,7 @@ TEST_CASE("Run returns a Task whose result Wait/Get delivers")
 {
     JobSystem jobs(4u);
 
-    Task<int> task = jobs.Run(Pool::Worker, [] { return 21; });
+    Task<int32_t> task = jobs.Run(Pool::Worker, [] { return 21; });
     task.Wait();
     CHECK(task.IsComplete());
     CHECK(task.Get() == 42 / 2);
@@ -124,7 +124,7 @@ TEST_CASE("Then chains a value across worker stages")
 {
     JobSystem jobs(4u);
 
-    Task<int> task = jobs.Run(Pool::Worker, [] { return 21; }).Then(Pool::Worker, [](int value) { return value * 2; });
+    Task<int32_t> task = jobs.Run(Pool::Worker, [] { return 21; }).Then(Pool::Worker, [](int32_t value) { return value * 2; });
     task.Wait();
     CHECK(task.Get() == 42);
 }
@@ -133,18 +133,18 @@ TEST_CASE("Then works with a void antecedent and a void result")
 {
     JobSystem jobs(4u);
 
-    std::atomic<int> effect{0};
+    std::atomic<int32_t> effect{0};
 
     // void -> value: the continuation takes no argument.
-    Task<int> valued =
+    Task<int32_t> valued =
         jobs.Run(Pool::Worker, [&effect] { effect.store(1); }).Then(Pool::Worker, [&effect] { return effect.load() + 41; });
     valued.Wait();
     CHECK(valued.Get() == 42);
 
     // value -> void: the continuation returns nothing.
-    std::atomic<int> seen{0};
+    std::atomic<int32_t> seen{0};
     Task<void> voided =
-        jobs.Run(Pool::Worker, [] { return 7; }).Then(Pool::Worker, [&seen](int value) { seen.store(value); });
+        jobs.Run(Pool::Worker, [] { return 7; }).Then(Pool::Worker, [&seen](int32_t value) { seen.store(value); });
     voided.Wait();
     CHECK(seen.load() == 7);
 }
@@ -157,7 +157,7 @@ TEST_CASE("Then(Main) marshals the continuation onto the DrainMain thread")
     std::atomic<bool>     ranOnMain{false};
     std::atomic<bool>     completed{false};
 
-    jobs.Run(Pool::Worker, [] { return 7; }).Then(Pool::Main, [&](int value) {
+    jobs.Run(Pool::Worker, [] { return 7; }).Then(Pool::Main, [&](int32_t value) {
         ranOnMain.store(std::this_thread::get_id() == mainThread && value == 7);
         completed.store(true);
     });
@@ -170,7 +170,7 @@ TEST_CASE("RunOnMain queues work that only DrainMain runs")
 {
     JobSystem jobs(4u);
 
-    std::atomic<int> counter{0};
+    std::atomic<int32_t> counter{0};
     jobs.RunOnMain([&counter] { counter.fetch_add(1); });
     jobs.RunOnMain([&counter] { counter.fetch_add(1); });
 
@@ -183,8 +183,8 @@ TEST_CASE("DrainMain honours the maxTasks cap")
 {
     JobSystem jobs(4u);
 
-    std::atomic<int> counter{0};
-    for (int i = 0; i < 3; ++i)
+    std::atomic<int32_t> counter{0};
+    for (int32_t i = 0; i < 3; ++i)
     {
         jobs.RunOnMain([&counter] { counter.fetch_add(1); });
     }
@@ -199,11 +199,11 @@ TEST_CASE("Then on an already-complete task still runs")
 {
     JobSystem jobs(4u);
 
-    Task<int> antecedent = jobs.Run(Pool::Worker, [] { return 5; });
+    Task<int32_t> antecedent = jobs.Run(Pool::Worker, [] { return 5; });
     antecedent.Wait(); // force completion before chaining
     REQUIRE(antecedent.IsComplete());
 
-    Task<int> chained = antecedent.Then(Pool::Worker, [](int value) { return value + 1; });
+    Task<int32_t> chained = antecedent.Then(Pool::Worker, [](int32_t value) { return value + 1; });
     chained.Wait();
     CHECK(chained.Get() == 6);
 }
@@ -216,7 +216,7 @@ TEST_CASE("HelpUntil with helpMain runs main-queue tasks on the main thread")
     // predicate gives up after a generous spin count, so a reintroduced bug
     // fails the CHECK instead of hanging the runner.
     std::atomic<bool> completed{false};
-    jobs.Run(Pool::Worker, [] { return 3; }).Then(Pool::Main, [&completed](int) { completed.store(true); });
+    jobs.Run(Pool::Worker, [] { return 3; }).Then(Pool::Main, [&completed](int32_t) { completed.store(true); });
 
     uint32_t spins = 0;
     jobs.HelpUntil([&completed, &spins] { return completed.load() || ++spins > 50'000'000u; },
@@ -254,13 +254,13 @@ TEST_CASE("Wait on the main thread completes a chain ending in Pool::Main")
     // bounded HelpUntil test above catches the mechanism regressing; this one
     // pins Wait() itself to the help-main path.
     std::atomic<bool> sawMainStage{false};
-    Task<int> task = jobs.Run(Pool::Worker, [] { return 20; })
+    Task<int32_t> task = jobs.Run(Pool::Worker, [] { return 20; })
                          .Then(Pool::Main,
-                               [&sawMainStage](int value) {
+                               [&sawMainStage](int32_t value) {
                                    sawMainStage.store(true);
                                    return value + 1;
                                })
-                         .Then(Pool::Worker, [](int value) { return value * 2; });
+                         .Then(Pool::Worker, [](int32_t value) { return value * 2; });
 
     task.Wait();
     CHECK(sawMainStage.load());
@@ -275,22 +275,22 @@ TEST_CASE("A second Then on the same task fires the contract guard")
 
     // Pending antecedent: the second Then would silently overwrite the first
     // continuation (orphaning it — its Wait() would livelock), so it asserts.
-    Task<int> pending = jobs.Run(Pool::Worker, [] {
+    Task<int32_t> pending = jobs.Run(Pool::Worker, [] {
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
         return 1;
     });
-    Task<int> chained = pending.Then(Pool::Worker, [](int value) { return value + 1; });
-    CHECK_THROWS_AS((void)pending.Then(Pool::Worker, [](int value) { return value; }),
+    Task<int32_t> chained = pending.Then(Pool::Worker, [](int32_t value) { return value + 1; });
+    CHECK_THROWS_AS((void)pending.Then(Pool::Worker, [](int32_t value) { return value; }),
                     Assisi::Core::ContractViolation);
     chained.Wait();
     CHECK(chained.Get() == 2);
 
     // Completed antecedent: still one-shot — a second Then would move from the
     // already-moved result slot.
-    Task<int> done = jobs.Run(Pool::Worker, [] { return 5; });
+    Task<int32_t> done = jobs.Run(Pool::Worker, [] { return 5; });
     done.Wait();
-    (void)done.Then(Pool::Worker, [](int value) { return value; }).Wait();
-    CHECK_THROWS_AS((void)done.Then(Pool::Worker, [](int value) { return value; }),
+    (void)done.Then(Pool::Worker, [](int32_t value) { return value; }).Wait();
+    CHECK_THROWS_AS((void)done.Then(Pool::Worker, [](int32_t value) { return value; }),
                     Assisi::Core::ContractViolation);
 }
 #endif // !NDEBUG

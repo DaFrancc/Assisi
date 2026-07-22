@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <chrono>
 #include <csignal>
+#include <cstdint>
 #include <cstdlib>
 #include <thread>
 
@@ -68,7 +69,7 @@ static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
     default:                            break;
     }
 
-    Assisi::Core::Log::Fatal("Crash: unhandled exception 0x{:08X} ({})", static_cast<unsigned int>(code), name);
+    Assisi::Core::Log::Fatal("Crash: unhandled exception 0x{:08X} ({})", static_cast<uint32_t>(code), name);
     if (dumpWritten)
     {
         Assisi::Core::Log::Fatal("Crash: minidump written to {}", dumpPath);
@@ -87,7 +88,7 @@ static void AbortHandler(int)
 namespace Assisi::App
 {
 
-void Application::HandleFramebufferResize(int width, int height)
+void Application::HandleFramebufferResize(int32_t width, int32_t height)
 {
     // GLFW can fire this during window creation/show (e.g. a DPI-driven WM_SIZE
     // on Windows). Bail on a zero-size (minimized) framebuffer, and no-op safely
@@ -187,7 +188,7 @@ bool Application::Initialize()
     // than registering GLFW callbacks directly. WindowContext installed its
     // callbacks in its constructor, so ImGui (initialized below with
     // install_callbacks=true) chains to them instead of clobbering them.
-    _window->OnFramebufferSize([this](int width, int height) { HandleFramebufferResize(width, height); });
+    _window->OnFramebufferSize([this](int32_t width, int32_t height) { HandleFramebufferResize(width, height); });
     _window->OnWindowRefresh([this]() { RenderFrame(); });
 
     if (!Render::RenderSystem::Initialize(*_window))
@@ -304,10 +305,10 @@ void Application::Run()
     Clock::time_point nextRenderTime = Clock::now();
     double            accumulator    = 0.0;
 
-    double fpsAccum       = 0.0;
-    int    fpsFrameCount  = 0;
-    double cpuMsAccum     = 0.0;
-    double gpuMsAccum     = 0.0;
+    double  fpsAccum       = 0.0;
+    int32_t fpsFrameCount  = 0;
+    double  cpuMsAccum     = 0.0;
+    double  gpuMsAccum     = 0.0;
 
     while (!_window->ShouldClose())
     {
@@ -399,7 +400,7 @@ void Application::Run()
         ++fpsFrameCount;
         if (fpsAccum >= 0.5)
         {
-            _fps          = static_cast<int>(static_cast<double>(fpsFrameCount) / fpsAccum);
+            _fps          = static_cast<int32_t>(static_cast<double>(fpsFrameCount) / fpsAccum);
             _cpuFrameMs   = cpuMsAccum / fpsFrameCount;
             _gpuFrameMs   = gpuMsAccum / fpsFrameCount;
             fpsAccum      = 0.0;

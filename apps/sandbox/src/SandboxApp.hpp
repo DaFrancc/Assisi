@@ -84,7 +84,7 @@ class SandboxApp : public Assisi::App::Application
     void OnUpdate(float dt) override;
     void OnRender(Assisi::Render::RenderFrame &frame) override;
     void OnImGui() override;
-    void OnResize(int width, int height) override;
+    void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
 
@@ -416,7 +416,7 @@ class SandboxApp : public Assisi::App::Application
     // A history jump requested by clicking a History-panel row: negative = undo N
     // steps, positive = redo N. Applied at the top of the next OnUpdate (never
     // mid-ImGui, which would invalidate cached component pointers).
-    int _pendingHistorySteps = 0;
+    int32_t _pendingHistorySteps = 0;
 
     // Per-component delete confirmation: the inspector's X button arms a two-step
     // confirm for one component at a time. Scoped to an entity so switching
@@ -473,7 +473,7 @@ class SandboxApp : public Assisi::App::Application
     char _addComponentBuf[64] = {};
     // Keyboard highlight into the suggestion list: Tab/Down advance it, Up retreats,
     // editing the text resets it to the first row, Enter adds the highlighted one.
-    int _addComponentSelected = 0;
+    int32_t _addComponentSelected = 0;
 
     // NVIDIA GPU telemetry (clocks/power/util/temp) for the options overlay.
     // Lazily initialises NVML on first poll, so it costs nothing until the
@@ -485,13 +485,13 @@ class SandboxApp : public Assisi::App::Application
     // so the buffers span ~30s regardless of frame rate. _gpuTelemetryOffset is
     // the next write slot / chronological start (ImPlot Offset), _gpuTelemetryCount
     // saturates at the capacity. Only advance while the overlay is open.
-    static constexpr int                        kGpuHistory = 150; // ~30s at 5Hz
+    static constexpr int32_t                    kGpuHistory = 150; // ~30s at 5Hz
     std::array<float, kGpuHistory>              _gpuClockHistory{};
     std::array<float, kGpuHistory>              _gpuUtilHistory{};
     std::array<float, kGpuHistory>              _gpuPowerHistory{};
-    int                                         _gpuTelemetryOffset = 0;
-    int                                         _gpuTelemetryCount  = 0;
-    unsigned long long                          _lastGpuSequence    = 0;
+    int32_t                                     _gpuTelemetryOffset = 0;
+    int32_t                                     _gpuTelemetryCount  = 0;
+    uint64_t                                    _lastGpuSequence    = 0;
 
     // Eyedropper: while armed, the next scene entity-pick is written into the
     // captured EntityRef field instead of changing the selection. The target is
@@ -531,7 +531,7 @@ class SandboxApp : public Assisi::App::Application
     Assisi::Render::AssetCache _thumbnailCache;
 
     std::vector<std::string> _levelFiles;
-    int                      _selectedLevel = 0;
+    int32_t                  _selectedLevel = 0;
     char                     _saveAsName[128] = {};
     std::string              _startupLevel; // level stem to open in OnStart (CLI); empty = none.
     // A level load requested from the UI (OnImGui), applied at the next OnUpdate —

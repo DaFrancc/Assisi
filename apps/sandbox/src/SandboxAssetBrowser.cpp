@@ -13,6 +13,7 @@
 #include <cctype>
 #include <cfloat>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -160,8 +161,8 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
 // range below). To match a re-authored TTF, set kTtfFrameCount to the number of
 // frames and kTtfFirstFrame to the first frame's codepoint ('a' for an a..z
 // sequence, or a Private-Use codepoint like 0xE000).
-constexpr unsigned int kTtfFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F12B
-constexpr int          kTtfFrameCount = 300;    // one full v4-30 atom-spin loop (must match the font)
+constexpr uint32_t     kTtfFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F12B
+constexpr int32_t      kTtfFrameCount = 300;    // one full v4-30 atom-spin loop (must match the font)
 constexpr float        kLoadingFps    = 30.0f;  // 300 frames / 30fps = 10 s per loop (matches the design).
                                                 // NOTE: this drives BOTH backends -- the WebP path ignores
                                                 // the durations baked into the file -- so it must match
@@ -200,8 +201,8 @@ void DrawTtfLoadingFrame(const ImVec2 &origin, float size)
     if (font == nullptr)
         return;
 
-    const int          frame = static_cast<int>(ImGui::GetTime() * kLoadingFps) % kTtfFrameCount;
-    const unsigned int cp    = kTtfFirstFrame + static_cast<unsigned int>(frame);
+    const int32_t  frame = static_cast<int32_t>(ImGui::GetTime() * kLoadingFps) % kTtfFrameCount;
+    const uint32_t cp    = kTtfFirstFrame + static_cast<uint32_t>(frame);
 
     // Encode the frame codepoint as UTF-8 (covers ASCII 'a'.. and BMP Private-Use
     // up to U+FFFF — the two mappings a spinner font is likely to use).
@@ -481,8 +482,8 @@ void SandboxApp::DrawAssetBrowser()
     ImGui::BeginChild("browser_entries");
 
     const float cell = thumb + ImGui::GetStyle().ItemSpacing.x;
-    const int   cols = std::max(1, static_cast<int>(ImGui::GetContentRegionAvail().x / cell));
-    int         col  = 0;
+    const int32_t cols = std::max(1, static_cast<int32_t>(ImGui::GetContentRegionAvail().x / cell));
+    int32_t       col  = 0;
 
     // Folders first, as icon tiles in the same grid as the assets. Clicking one
     // navigates into it (marks the listing dirty so it re-reads next frame).

@@ -699,7 +699,7 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     if (colorFormat == nvrhi::Format::UNKNOWN)
     {
         Core::Log::Error("VulkanContext: swapchain format {} has no NVRHI mapping.",
-                         static_cast<int>(_swapchainFormat));
+                         static_cast<int32_t>(_swapchainFormat));
         ResetToNoSwapchain();
         return false;
     }
@@ -910,7 +910,7 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
     {
         Core::Log::Error("VulkanContext: vkAcquireNextImageKHR failed with VkResult {}",
-                          static_cast<int>(acquireResult));
+                          static_cast<int32_t>(acquireResult));
         return std::nullopt;
     }
 
@@ -975,7 +975,7 @@ void VulkanContext::EndFrame()
     else if (presentResult != VK_SUCCESS && presentResult != VK_SUBOPTIMAL_KHR)
     {
         Core::Log::Error("VulkanContext: vkQueuePresentKHR failed with VkResult {}",
-                         static_cast<int>(presentResult));
+                         static_cast<int32_t>(presentResult));
     }
 
     _nvrhiDevice->runGarbageCollection();

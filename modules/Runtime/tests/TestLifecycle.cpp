@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <doctest/doctest.h>
 
+#include <cstdint>
+
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Lifecycle.hpp>
 
@@ -24,7 +26,7 @@ TEST_CASE("Lifecycle: DestroyTag can be added, queried, and drives DestroyMarked
         CHECK(scene.Has<Runtime::DestroyTag>(doomed));
         CHECK_FALSE(scene.Has<Runtime::DestroyTag>(keep));
 
-        int seen = 0;
+        int32_t seen = 0;
         for (auto [e, tag] : scene.Query<Runtime::DestroyTag>())
         {
             (void)tag;

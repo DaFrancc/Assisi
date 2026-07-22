@@ -29,6 +29,8 @@
 /// function therefore turns the test handler's throw into std::terminate — such
 /// a check still fails fast, but it cannot be exercised with CHECK_THROWS_AS.
 
+#include <cstdint>
+
 namespace Assisi::Core
 {
 
@@ -42,7 +44,7 @@ struct ContractViolation
     const char *condition; ///< Stringized failing expression.
     const char *message;   ///< Human-readable detail passed to the macro.
     const char *file;      ///< __FILE__ of the check.
-    int         line;      ///< __LINE__ of the check.
+    int32_t     line;      ///< __LINE__ of the check.
 };
 
 /// @brief Handler invoked when an ASSISI_ASSERT fails. Must not return normally
