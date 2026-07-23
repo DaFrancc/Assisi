@@ -140,6 +140,11 @@ class Application
     /// picked up by Run() on the next iteration with no extra call.
     OptionsConfig &GetOptions() { return _options; }
 
+    /// @brief The engine config loaded at Initialize() (game.json): window
+    /// title/size, physics rate. Read-only — it reflects bring-up, and editing
+    /// it after the fact would change nothing.
+    const AppConfig &GetConfig() const { return _config; }
+
     /// @brief Rebuilds the post-process render targets from the current
     /// _options.aaMode / msaaSamples (and fires OnRenderTargetsChanged if the
     /// FramebufferInfo actually changed). Call after editing those options.

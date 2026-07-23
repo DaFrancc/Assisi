@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include "SandboxApp.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -16,11 +16,14 @@
 #include <filesystem>
 #include <string>
 
+namespace Assisi::Editor
+{
+
 // ---------------------------------------------------------------------------
 // Levels window
 // ---------------------------------------------------------------------------
 
-void SandboxApp::DrawLevelsWindow()
+void EditorApp::DrawLevelsWindow()
 {
     ImGui::Begin("Levels");
 
@@ -106,7 +109,7 @@ void SandboxApp::DrawLevelsWindow()
 // Level management
 // ---------------------------------------------------------------------------
 
-void SandboxApp::ScanLevels()
+void EditorApp::ScanLevels()
 {
     _levelFiles.clear();
     const auto resolved = Assisi::Core::AssetSystem::Resolve("levels");
@@ -130,7 +133,7 @@ void SandboxApp::ScanLevels()
     _selectedLevel = 0;
 }
 
-void SandboxApp::SaveLevel(const std::string &name)
+void EditorApp::SaveLevel(const std::string &name)
 {
     const auto resolved = Assisi::Core::AssetSystem::Resolve("levels/" + name + ".alvl");
     if (!resolved)
@@ -146,7 +149,7 @@ void SandboxApp::SaveLevel(const std::string &name)
     }
 }
 
-void SandboxApp::LoadLevel(const std::string &name)
+void EditorApp::LoadLevel(const std::string &name)
 {
     // The Levels UI works in bare stems (from ScanLevels); the on-disk layout is
     // levels/<name>.alvl. LoadLevelFromPath does the real work by virtual path, so
@@ -154,7 +157,7 @@ void SandboxApp::LoadLevel(const std::string &name)
     LoadLevelFromPath("levels/" + name + ".alvl");
 }
 
-bool SandboxApp::LoadLevelFromPath(const std::string &virtualPath)
+bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
 {
     // The engine does the whole load: deserialize, drop the old asset set, evict
     // the renderer's cached bindings, re-resolve assets and rebuild physics. What
@@ -192,3 +195,5 @@ bool SandboxApp::LoadLevelFromPath(const std::string &virtualPath)
 
     return true;
 }
+
+} // namespace Assisi::Editor

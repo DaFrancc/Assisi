@@ -451,7 +451,7 @@ TEST_CASE("EditHistory: capture is suppressed while applying")
 // (Scene::ReviveAt) rather than renumbering them via Save/Load — which is what
 // keeps a pre-play editing history's stored handles valid. This test mimics that
 // snapshot/restore and proves an undo recorded before "play" still applies after
-// "stop". (The real StartPlay/StopPlay live in SandboxPlay.cpp; the mechanism is
+// "stop". (The real StartPlay/StopPlay live in EditorPlay.cpp; the mechanism is
 // what's exercised here.)
 // ---------------------------------------------------------------------------
 
@@ -586,7 +586,7 @@ TEST_CASE("EditHistory: labels and the dirty-state token track the stack")
 
 TEST_CASE("EditHistory: a subtree delete built via CaptureEntityComponents round-trips")
 {
-    // Mirrors SandboxApp::DeleteEntity: snapshot each subtree member with the public
+    // Mirrors EditorApp::DeleteEntity: snapshot each subtree member with the public
     // CaptureEntityComponents helper, build one delete transaction, destroy, undo.
     Scene        scene;
     const Entity parent = scene.Create();

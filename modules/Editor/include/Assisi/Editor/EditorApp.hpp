@@ -1,15 +1,18 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
-/// @file SandboxApp.hpp
-/// @brief Assisi Sandbox — level viewer built on the Application layer.
+/// @file EditorApp.hpp
+/// @brief The Assisi editor application, built on the Application layer.
 ///
-/// The implementation is split across several translation units by concern:
-///   - SandboxApp.cpp        lifecycle/setup + diagnostics + OnImGui dispatch
-///   - SandboxCamera.cpp     fly camera, entity picking, eyedropper
-///   - SandboxInspector.cpp  reflected component field editing
-///   - SandboxAssetBrowser.cpp  asset browser + thumbnails
-///   - SandboxLevels.cpp     level scan/save/load + the Levels window
+/// The one public class of the editor library (docs/editor-extraction-plan.md):
+/// an editor executable constructs an EditorApp with an EditorConfig carrying
+/// the game's hooks and calls Initialize()/Run(). The implementation is split
+/// across several translation units by concern (all private to the library):
+///   - EditorApp.cpp        lifecycle/setup + diagnostics + OnImGui dispatch
+///   - EditorCamera.cpp     fly camera, entity picking, eyedropper
+///   - EditorInspector.cpp  reflected component field editing
+///   - EditorAssetBrowser.cpp  asset browser + thumbnails
+///   - EditorLevels.cpp     level scan/save/load + the Levels window
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
@@ -40,11 +43,16 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 #include <vector>
+
+namespace Assisi::Editor
+{
 
 // ---------------------------------------------------------------------------
 // Events
@@ -59,25 +67,49 @@ struct EntitySelectionChangedEvent
 };
 
 // ---------------------------------------------------------------------------
-// SandboxApp
+// EditorApp
 // ---------------------------------------------------------------------------
 
-class SandboxApp : public Assisi::App::Application
+/// @brief The game side's hooks into the editor, supplied at construction.
+///
+/// Seam contract (editor-extraction plan E2):
+///  - Systems the game registers tick ONLY while the editor is Playing (F5) —
+///    never while Editing or Paused. The editor runs the game registry's
+///    PreUpdate/Update/PostUpdate phases (in that order, after the editor's
+///    own systems) from OnUpdate, and its FixedUpdate phase from
+///    OnFixedUpdate just before the physics step.
+///  - Render systems (RegisterRender) do not run in-editor at this stage —
+///    the editor owns rendering. OnStart warns if any are registered.
+///  - After()/Before() ordering resolves within one registry only: game
+///    systems cannot order against editor systems (by design).
+///  - There is no play-start/stop notification yet; a game system holding
+///    entity handles across a play session has no reset hook (the Phase 2
+///    template work adds the game-side lifecycle surface).
+struct EditorConfig
+{
+    /// Called once at startup with the game's system registry. May be null
+    /// (an editor with no game logic — pure level editing).
+    std::function<void(App::SystemRegistry &)> registerGameSystems;
+
+    /// Virtual path (under the asset root) of a level to open once at
+    /// startup, e.g. "levels/Materials.alvl". Empty = none. Resolved through
+    /// Core::AssetSystem; a missing/typo'd path warns and starts empty.
+    std::string startupLevel;
+};
+
+class EditorApp : public Assisi::App::Application
 {
   public:
+    explicit EditorApp(EditorConfig config = {}) : _editorConfig(std::move(config)) {}
+
     /// @brief Transform-gizmo handle set. Public so the free helpers in
-    /// SandboxGizmo.cpp can map it to ImGuizmo's operation enum.
+    /// EditorGizmo.cpp can map it to ImGuizmo's operation enum.
     enum class GizmoOp
     {
         Translate,
         Rotate,
         Scale
     };
-
-    /// @brief Virtual path (under the asset root) of a level to open once at
-    /// startup, from the command line — e.g. "levels/Materials.alvl". Empty = none.
-    /// OnStart resolves it through Core::AssetSystem and loads it. Call before Run().
-    void SetStartupLevel(std::string_view levelVirtualPath) { _startupLevel = levelVirtualPath; }
 
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
@@ -105,27 +137,27 @@ class SandboxApp : public Assisi::App::Application
     void SyncYawPitchFromRotation();
 
     // --- ImGui panels ---
-    void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F11); see SandboxOptions.cpp
+    void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F11); see EditorOptions.cpp
     void DrawDiagnosticsWindow();
     void DrawLevelsWindow();
     void DrawInspector();
     void DrawHelloImageWindow(); // ImGui-texture-display smoke test
     void DrawAssetBrowser();
-    void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7); see SandboxPlay.cpp
-    void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see SandboxPlay.cpp
-    void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See SandboxApp.cpp
-    void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see SandboxGizmo.cpp
+    void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7); see EditorPlay.cpp
+    void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see EditorPlay.cpp
+    void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See EditorApp.cpp
+    void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
 
     // Build collider wireframes AND silhouette outlines (collider volume + entity
     // mesh) for every RigidBodyDescriptor and hand them to the renderer (green
     // depth-tested, orange x-ray for the selection), plus the list of collider
     // entities so their editor billboards are suppressed. Editor-only: a no-op while
-    // the game is playing. See SandboxColliders.cpp.
+    // the game is playing. See EditorColliders.cpp.
     void SubmitColliderWireframes();
 
     // Submit the collider volume's silhouette outline for one body (a box/sphere/
     // cylinder unit mesh scaled to the descriptor; a capsule as a cylinder + two
-    // end spheres, whose union is the capsule). See SandboxColliders.cpp.
+    // end spheres, whose union is the capsule). See EditorColliders.cpp.
     void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::RigidBodyDescriptor &desc,
                                const glm::vec3 &color);
     /// @brief True while the transform gizmo is hovered or being dragged — entity
@@ -296,6 +328,12 @@ class SandboxApp : public Assisi::App::Application
     Assisi::App::SystemRegistry _systems;
     Assisi::Window::ActionMap   _actions;
 
+    // The game's hooks (see EditorConfig). Game systems live in their OWN
+    // registry, run only while Playing — never mixed into _systems, whose
+    // editor systems (picking, camera, selection) run in every state.
+    EditorConfig                _editorConfig;
+    Assisi::App::SystemRegistry _gameSystems;
+
     // --- State ---
     Assisi::ECS::SceneRegistry         _scenes;
     Assisi::ECS::Scene                *_scene = nullptr;
@@ -372,7 +410,7 @@ class SandboxApp : public Assisi::App::Application
     // (set when a new entity is created, so it comes into view). NullEntity = none.
     Assisi::ECS::Entity _scrollToEntity = Assisi::ECS::NullEntity;
 
-    // Transform-gizmo state (see SandboxGizmo.cpp): which handle set is shown, and
+    // Transform-gizmo state (see EditorGizmo.cpp): which handle set is shown, and
     // whether it manipulates in world or the entity's local axes.
     GizmoOp _gizmoOp        = GizmoOp::Translate;
     bool    _gizmoLocalSpace = false; // false = world axes
@@ -415,10 +453,10 @@ class SandboxApp : public Assisi::App::Application
     Assisi::ECS::Entity _pendingDeleteEntity = Assisi::ECS::NullEntity;
 
     // Options overlay (frame graph + display/pacing settings), toggled with F11.
-    // Owned by the app, not the engine — see DrawOptionsWindow in SandboxOptions.cpp.
+    // Owned by the app, not the engine — see DrawOptionsWindow in EditorOptions.cpp.
     bool _showOptions = false;
 
-    // --- Play control (game-control window, F5/F6/F7; see SandboxPlay.cpp) ---
+    // --- Play control (game-control window, F5/F6/F7; see EditorPlay.cpp) ---
     // Physics and any game-logic systems tick only while Playing; the editor
     // camera and picking stay live in every state so the scene is always
     // navigable. Run snapshots the scene so Stop can restore it, Pause freezes
@@ -522,7 +560,6 @@ class SandboxApp : public Assisi::App::Application
     std::vector<std::string> _levelFiles;
     int32_t                  _selectedLevel = 0;
     char                     _saveAsName[128] = {};
-    std::string              _startupLevel; // level stem to open in OnStart (CLI); empty = none.
     // A level load requested from the UI (OnImGui), applied at the next OnUpdate —
     // never mid-frame: LoadLevel frees GPU assets (incl. the bindless table) that
     // this frame's already-recorded draws still reference, which faults the GPU.
@@ -533,3 +570,5 @@ class SandboxApp : public Assisi::App::Application
     // OnUpdate that upgrades MeshRenderers as assets stream in. See ResolveMesh.
     bool _assetsWereLoading = false;
 };
+
+} // namespace Assisi::Editor

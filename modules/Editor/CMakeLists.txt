@@ -10,8 +10,19 @@ Assisi_apply_defaults(Assisi-Editor)
 target_sources(Assisi-Editor
   PUBLIC
     "include/Assisi/Editor/EditHistory.hpp"
+    "include/Assisi/Editor/EditorApp.hpp"
   PRIVATE
     "src/EditHistory.cpp"
+    "src/EditorApp.cpp"
+    "src/EditorAssetBrowser.cpp"
+    "src/EditorCamera.cpp"
+    "src/EditorColliders.cpp"
+    "src/EditorGizmo.cpp"
+    "src/EditorInspector.cpp"
+    "src/EditorLevels.cpp"
+    "src/EditorOptions.cpp"
+    "src/EditorPlay.cpp"
+    "src/ImGuiQueries.hpp"
 )
 
 target_include_directories(Assisi-Editor
@@ -21,10 +32,16 @@ target_include_directories(Assisi-Editor
 
 target_link_libraries(Assisi-Editor
   PUBLIC
-    # EditHistory's real dependencies. E2 (EditorApp + panels) grows this to
-    # Assisi::App, imguizmo, implot.
+    # EditorApp derives from App::Application (its header needs App), and App
+    # publicly brings the rest of what the panels touch: Debug (imgui/implot),
+    # Render, Physics, Window, ECS, Core. Runtime is also a direct dependency
+    # of EditHistory, kept explicit.
+    Assisi::App
     Assisi::Runtime
     nlohmann_json::nlohmann_json
+  PRIVATE
+    # The transform gizmo (EditorGizmo.cpp) only; not part of the public API.
+    imguizmo::imguizmo
 )
 
 add_library(Assisi::Editor ALIAS Assisi-Editor)

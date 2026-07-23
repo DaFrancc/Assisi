@@ -186,7 +186,14 @@ Smallest piece, proves the module + test wiring before the big move:
   the GCC `-Wno-maybe-uninitialized` scoping. CTest name stays distinct.
 - `apps/sandbox/tests/` is deleted once empty.
 
-### E2 — move the application: `SandboxApp` → `Editor::EditorApp`
+### E2 — move the application: `SandboxApp` → `Editor::EditorApp` — **DONE 2026-07-22**
+
+Landed as planned, plus two small engine additions the seam needed:
+`Application::GetConfig()` (protected — the dirty-title marker now uses the
+game.json title instead of a hardcoded "Assisi Sandbox") and
+`SystemRegistry::HasRenderSystems()` (so OnStart can warn about game render
+systems instead of silently never running them). `apps/sandbox` is main.cpp +
+CMake only. Pending: a manual run (full editor loop).
 
 The bulk move. `apps/sandbox/src/*` → `modules/Editor/src/` with renames
 (`SandboxApp.*` → `EditorApp.*`, `SandboxInspector.cpp` →

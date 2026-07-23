@@ -1,12 +1,18 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file main.cpp
-/// @brief Assisi Sandbox entry point. The app itself lives in SandboxApp.* —
-/// see SandboxApp.hpp for the translation-unit split.
+/// @brief Assisi Sandbox entry point — a thin consumer of the editor library.
+///
+/// The editor itself lives in modules/Editor (Assisi::Editor::EditorApp); this
+/// executable just parses arguments, builds an EditorConfig, and runs it. The
+/// sandbox registers no game systems — it is pure level editing. (The Phase 2
+/// template splits this into Game/GameEditor targets over a shared GameLib;
+/// see docs/editor-extraction-plan.md.)
 
-#include "SandboxApp.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 #include <string_view>
 
 namespace
@@ -64,11 +70,7 @@ int main(int argc, char **argv)
         return EXIT_SUCCESS;
     }
 
-    SandboxApp app;
-    if (!startupLevel.empty())
-    {
-        app.SetStartupLevel(startupLevel);
-    }
+    Assisi::Editor::EditorApp app({.registerGameSystems = nullptr, .startupLevel = std::string(startupLevel)});
     if (!app.Initialize())
     {
         return EXIT_FAILURE;

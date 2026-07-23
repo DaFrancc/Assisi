@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include "SandboxApp.hpp"
-#include "SandboxImGui.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
+#include "ImGuiQueries.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -34,11 +34,14 @@
 #include <string>
 #include <string_view>
 
+namespace Assisi::Editor
+{
+
 // ---------------------------------------------------------------------------
 // Setup helpers
 // ---------------------------------------------------------------------------
 
-void SandboxApp::SetupCamera()
+void EditorApp::SetupCamera()
 {
     const glm::vec3 camPos{5.f, 5.f, 10.f};
     const glm::vec3 forward = glm::normalize(-camPos);
@@ -59,7 +62,7 @@ void SandboxApp::SetupCamera()
 // Lifecycle
 // ---------------------------------------------------------------------------
 
-void SandboxApp::OnStart()
+void EditorApp::OnStart()
 {
     // Load action bindings from game.json
     {
@@ -109,18 +112,18 @@ void SandboxApp::OnStart()
     SetupScene();
     ScanLevels();
 
-    // Command-line startup level (see main.cpp): open it now so `Assisi-Sandbox
+    // Startup level from EditorConfig: open it now so `<editor-exe>
     // levels/Materials.alvl` boots straight into that scene. Resolved through the
     // asset system like every other asset; a missing/typo'd path just warns.
-    if (!_startupLevel.empty())
+    if (!_editorConfig.startupLevel.empty())
     {
-        if (!Assisi::Core::AssetSystem::Exists(_startupLevel))
+        if (!Assisi::Core::AssetSystem::Exists(_editorConfig.startupLevel))
         {
-            Assisi::Core::Log::Warn("Startup level '{}' not found under the asset root; ignoring.", _startupLevel);
+            Assisi::Core::Log::Warn("Startup level '{}' not found under the asset root; ignoring.", _editorConfig.startupLevel);
         }
-        else if (!LoadLevelFromPath(_startupLevel))
+        else if (!LoadLevelFromPath(_editorConfig.startupLevel))
         {
-            Assisi::Core::Log::Warn("Startup level '{}' could not be loaded.", _startupLevel);
+            Assisi::Core::Log::Warn("Startup level '{}' could not be loaded.", _editorConfig.startupLevel);
         }
     }
 
@@ -140,9 +143,23 @@ void SandboxApp::OnStart()
                               _selectedEntity = e.entity;
                           }
                       });
+
+    // The game's systems go into their own registry, ticked only while Playing
+    // (see the EditorConfig seam contract). Registered once here, gated at the
+    // run sites in OnUpdate/OnFixedUpdate.
+    if (_editorConfig.registerGameSystems)
+    {
+        _editorConfig.registerGameSystems(_gameSystems);
+        if (_gameSystems.HasRenderSystems())
+        {
+            Assisi::Core::Log::Warn(
+                "EditorApp: the game registered render system(s), which do not run in-editor — "
+                "the editor owns rendering. They will run in the standalone game build only.");
+        }
+    }
 }
 
-void SandboxApp::ReimportAssets()
+void EditorApp::ReimportAssets()
 {
     const std::expected<std::size_t, Assisi::Core::AssetError> result = _assetDatabase.Rebuild();
     if (!result)
@@ -199,7 +216,7 @@ void SandboxApp::ReimportAssets()
     _assetBrowserDirty = true;
 }
 
-bool SandboxApp::ReconcileMeshMaterials()
+bool EditorApp::ReconcileMeshMaterials()
 {
     // Case-insensitive glTF-extension test on the virtual path.
     const auto isGltf = [](std::string_view path)
@@ -286,7 +303,7 @@ bool SandboxApp::ReconcileMeshMaterials()
     return changed;
 }
 
-bool SandboxApp::IsAssetStale(std::string_view vpath) const
+bool EditorApp::IsAssetStale(std::string_view vpath) const
 {
     return _staleMeshes.find(std::string{vpath}) != _staleMeshes.end();
 }
@@ -305,7 +322,7 @@ std::string ResolveMaterialPathWith(const Assisi::Core::AssetDatabase &db, const
 }
 } // namespace
 
-void SandboxApp::OpenStaleResolution(const std::string &vpath)
+void EditorApp::OpenStaleResolution(const std::string &vpath)
 {
     _staleResolveTarget = vpath;
     _staleResolveDiff   = Assisi::Geometry::DiffGltfMaterials(
@@ -314,7 +331,7 @@ void SandboxApp::OpenStaleResolution(const std::string &vpath)
     _staleResolveRequestOpen = true;
 }
 
-void SandboxApp::AdvanceStaleQueue()
+void EditorApp::AdvanceStaleQueue()
 {
     // Skip any queued mesh that is no longer stale (already resolved this session).
     while (!_staleResolveQueue.empty())
@@ -330,7 +347,7 @@ void SandboxApp::AdvanceStaleQueue()
     _staleResolveTarget.clear(); // queue drained — modal stays closed
 }
 
-void SandboxApp::ApplyStaleResolution(bool regenerate)
+void EditorApp::ApplyStaleResolution(bool regenerate)
 {
     const std::string target = _staleResolveTarget;
     if (target.empty())
@@ -392,7 +409,7 @@ void SandboxApp::ApplyStaleResolution(bool regenerate)
     AdvanceStaleQueue(); // open the next live-stale mesh, or close the modal
 }
 
-void SandboxApp::DrawStaleResolutionModal()
+void EditorApp::DrawStaleResolutionModal()
 {
     static constexpr const char *kPopupId = "Resolve material conflict";
     if (_staleResolveRequestOpen)
@@ -487,7 +504,7 @@ void SandboxApp::DrawStaleResolutionModal()
     ImGui::EndPopup();
 }
 
-void SandboxApp::SetupScene()
+void EditorApp::SetupScene()
 {
     auto *vulkanContext = Assisi::Render::RenderSystem::GetVulkanContext();
     if (!vulkanContext)
@@ -535,12 +552,12 @@ void SandboxApp::SetupScene()
     }
 }
 
-void SandboxApp::OnResize(int32_t width, int32_t height)
+void EditorApp::OnResize(int32_t width, int32_t height)
 {
     _sceneRenderer.Resize(width, height, _camera);
 }
 
-void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
+void EditorApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo)
 {
     if (!_sceneRenderer.OnRenderTargetsChanged(framebufferInfo))
     {
@@ -548,7 +565,7 @@ void SandboxApp::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebuffe
     }
 }
 
-void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
+void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
 {
     if (!_sceneRenderer.IsValid() || !_scene)
     {
@@ -577,19 +594,22 @@ void SandboxApp::OnRender(Assisi::Render::RenderFrame &frame)
     _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera);
 }
 
-void SandboxApp::OnFixedUpdate(float dt)
+void EditorApp::OnFixedUpdate(float dt)
 {
     // Simulation ticks only while the game is running (Run, not Pause/Stop). When
     // it isn't, physics is frozen so the scene only renders — the editor camera
     // and picking still run from OnUpdate, which is not gated here.
     if (!_scene || !IsSimulating())
         return;
+    // Game FixedUpdate systems run before the physics step (the Unity/Unreal
+    // convention: apply forces this tick, then simulate them).
+    _gameSystems.Run(Assisi::App::SystemPhase::FixedUpdate, {*_scene, dt, GetInput(), _actions, GetEvents()});
     _physics.Update(dt);
     // Snapshot the new poses for render interpolation; OnRender blends them.
     _physics.CaptureState();
 }
 
-void SandboxApp::OnUpdate(float dt)
+void EditorApp::OnUpdate(float dt)
 {
     auto &input = GetInput();
     if (input.IsKeyPressed(Assisi::Window::Key::Escape) && !ImGuiWantsKeyboard())
@@ -614,16 +634,25 @@ void SandboxApp::OnUpdate(float dt)
     }
 
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
-    // SandboxLevels) and applied in Application::Run's DrainMain, which runs just
+    // EditorLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in
     // asynchronously. Upgrade placeholders in place while loads are in flight.
     Assisi::App::UpgradeStreamingAssets(*_scene, _assetCache, _assetDatabase, _assetsWereLoading);
 
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
+
+    // Game logic ticks only while Playing — after the editor's own systems, in
+    // the game registry's own phase order (see the EditorConfig seam contract).
+    if (IsSimulating())
+    {
+        _gameSystems.Run(Assisi::App::SystemPhase::PreUpdate,  {*_scene, dt, input, _actions, GetEvents()});
+        _gameSystems.Run(Assisi::App::SystemPhase::Update,     {*_scene, dt, input, _actions, GetEvents()});
+        _gameSystems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
+    }
 }
 
-void SandboxApp::FlushDeferred()
+void EditorApp::FlushDeferred()
 {
     // End-of-frame: apply entities queued by Scene::Destroy() this frame. Runs
     // after RenderFrame, so a destroyed entity lives out its final frame before
@@ -636,13 +665,13 @@ void SandboxApp::FlushDeferred()
 // Undo/redo (editor-only)
 // ---------------------------------------------------------------------------
 
-Assisi::Editor::EditHistory::RebindHook SandboxApp::MakeEditRebindHook()
+Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
     { ApplyEditRebind(entity, id, present); };
 }
 
-Assisi::Editor::EditHistory *SandboxApp::ActiveHistory()
+Assisi::Editor::EditHistory *EditorApp::ActiveHistory()
 {
     switch (_playState)
     {
@@ -656,13 +685,13 @@ Assisi::Editor::EditHistory *SandboxApp::ActiveHistory()
     return nullptr;
 }
 
-bool SandboxApp::IsSceneDirty()
+bool EditorApp::IsSceneDirty()
 {
     // Dirty tracks the *editing* history (where saves happen), not a paused scratch.
     return _history.has_value() && _history->CurrentStateToken() != _savedStateToken;
 }
 
-std::string SandboxApp::EntityDisplayName(Assisi::ECS::Entity entity) const
+std::string EditorApp::EntityDisplayName(Assisi::ECS::Entity entity) const
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))
         return {};
@@ -674,7 +703,7 @@ std::string SandboxApp::EntityDisplayName(Assisi::ECS::Entity entity) const
     return buf;
 }
 
-std::string SandboxApp::EditLabel(std::string_view action, Assisi::ECS::Entity entity) const
+std::string EditorApp::EditLabel(std::string_view action, Assisi::ECS::Entity entity) const
 {
     std::string label(action);
     if (_scene == nullptr || !_scene->IsAlive(entity))
@@ -697,7 +726,7 @@ std::string SandboxApp::EditLabel(std::string_view action, Assisi::ECS::Entity e
     return label;
 }
 
-void SandboxApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
+void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
 {
     // Dispatch by component identity to the same transient-rebuild paths the live
     // edits use. Ids resolve once (function-local statics in ComponentIdOf).
@@ -747,7 +776,7 @@ void SandboxApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Refle
     }
 }
 
-void SandboxApp::HandleUndoRedoHotkeys()
+void EditorApp::HandleUndoRedoHotkeys()
 {
     // Route to whichever history is live now — the main one while editing, the
     // scratch one while paused, none while playing (physics owns Transforms then).
@@ -798,7 +827,7 @@ void SandboxApp::HandleUndoRedoHotkeys()
 // ImGui panels
 // ---------------------------------------------------------------------------
 
-void SandboxApp::DrawDiagnosticsWindow()
+void EditorApp::DrawDiagnosticsWindow()
 {
     ImGui::Begin("Diagnostics");
     ImGui::Text("FPS: %d", GetFps());
@@ -819,7 +848,7 @@ void SandboxApp::DrawDiagnosticsWindow()
     ImGui::End();
 }
 
-void SandboxApp::DrawHistoryWindow()
+void EditorApp::DrawHistoryWindow()
 {
     ImGui::Begin("History");
 
@@ -878,7 +907,7 @@ void SandboxApp::DrawHistoryWindow()
     ImGui::End();
 }
 
-void SandboxApp::OnImGui()
+void EditorApp::OnImGui()
 {
     // Reset the per-frame "an edit widget is being held" accumulator; the gizmo and
     // inspector raise it below, and the end-of-frame capture sweep reads it.
@@ -907,10 +936,13 @@ void SandboxApp::OnImGui()
         history->EndFrameSweep(_captureEditingActive);
 
     // Reflect unsaved changes in the OS window title, but only re-set it when the
-    // dirty state actually flips (SetTitle every frame would be wasteful).
+    // dirty state actually flips (SetTitle every frame would be wasteful). The
+    // base title is the game's own (game.json), not an editor hardcode.
     if (const bool dirty = IsSceneDirty(); dirty != _titleDirtyShown)
     {
-        GetWindow().SetTitle(dirty ? "Assisi Sandbox *" : "Assisi Sandbox");
+        GetWindow().SetTitle(dirty ? GetConfig().title + " *" : GetConfig().title);
         _titleDirtyShown = dirty;
     }
 }
+
+} // namespace Assisi::Editor

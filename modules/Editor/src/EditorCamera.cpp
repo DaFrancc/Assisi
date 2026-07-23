@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include "SandboxApp.hpp"
-#include "SandboxImGui.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
+#include "ImGuiQueries.hpp"
 
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
@@ -14,11 +14,14 @@
 #include <cstdint>
 #include <limits>
 
+namespace Assisi::Editor
+{
+
 // ---------------------------------------------------------------------------
 // Entity picking + eyedropper
 // ---------------------------------------------------------------------------
 
-void SandboxApp::HandleEntityPicking()
+void EditorApp::HandleEntityPicking()
 {
     auto &input = GetInput();
     // Skip picking when the click is meant for the transform gizmo (hovered or being
@@ -43,7 +46,7 @@ void SandboxApp::HandleEntityPicking()
     }
 }
 
-void SandboxApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
+void EditorApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
 {
     if (!_eyedropperMeta || !_scene || !_scene->IsAlive(_eyedropperEntity))
         return;
@@ -75,7 +78,7 @@ void SandboxApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
 // Fly camera
 // ---------------------------------------------------------------------------
 
-void SandboxApp::UpdateCamera(float dt)
+void EditorApp::UpdateCamera(float dt)
 {
     auto      &input          = GetInput();
     const bool imguiWantsMouse = ImGuiWantsMouse();
@@ -150,7 +153,7 @@ void SandboxApp::UpdateCamera(float dt)
     }
 }
 
-void SandboxApp::RefreshCameraMatrix()
+void EditorApp::RefreshCameraMatrix()
 {
     // The editor camera has no parent, so its world matrix is just its local TRS.
     _cameraTransform.worldMatrix = glm::translate(glm::mat4(1.f), _cameraTransform.position) *
@@ -158,7 +161,7 @@ void SandboxApp::RefreshCameraMatrix()
                                    glm::scale(glm::mat4(1.f), _cameraTransform.scale);
 }
 
-void SandboxApp::SyncYawPitchFromRotation()
+void EditorApp::SyncYawPitchFromRotation()
 {
     // Invert the fly controller's forward-from-(yaw,pitch) mapping so it resumes
     // from wherever a focus animation left the camera without snapping back.
@@ -192,7 +195,7 @@ glm::quat LookRotation(glm::vec3 forwardWanted)
 }
 } // namespace
 
-void SandboxApp::FocusCameraOn(Assisi::ECS::Entity entity)
+void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))
     {
@@ -327,7 +330,7 @@ bool RayBillboardIntersect(glm::vec3 origin, glm::vec3 dir, glm::vec3 center, gl
 
 } // namespace
 
-Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
+Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos)
 {
     if (!_scene)
         return Assisi::ECS::NullEntity;
@@ -376,3 +379,5 @@ Assisi::ECS::Entity SandboxApp::PickEntity(glm::vec2 mousePos)
 
     return result;
 }
+
+} // namespace Assisi::Editor

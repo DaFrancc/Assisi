@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include "SandboxApp.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
@@ -23,6 +23,9 @@
 #include <optional>
 #include <string>
 #include <vector>
+
+namespace Assisi::Editor
+{
 
 namespace
 {
@@ -168,7 +171,7 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
 
 } // namespace
 
-bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
+bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     using namespace Assisi::Core::Reflect;
 
@@ -476,7 +479,7 @@ bool SandboxApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Com
     return anyFieldEdited;
 }
 
-bool SandboxApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
+bool EditorApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
                                    const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
 {
     ImGui::TextUnformatted("materialOverrides");
@@ -532,7 +535,7 @@ bool SandboxApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
     return edited;
 }
 
-bool SandboxApp::AssetIdPathField(const char *inputId, Assisi::Core::AssetId &id)
+bool EditorApp::AssetIdPathField(const char *inputId, Assisi::Core::AssetId &id)
 {
     // Display an id as its current virtual path; typing a path re-resolves the id
     // through the database (nil when the path is unknown). The caller lays out the
@@ -551,7 +554,7 @@ bool SandboxApp::AssetIdPathField(const char *inputId, Assisi::Core::AssetId &id
     return false;
 }
 
-void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
+void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
 {
     if (anyFieldEdited)
     {
@@ -609,7 +612,7 @@ void SandboxApp::HandlePhysicsEditing(bool anyFieldEdited)
     _wasDragging = nowDragging;
 }
 
-void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
+void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     if (_selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
     {
@@ -670,7 +673,7 @@ void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMe
         history->CommitGesture(_selectedEntity, meta.id);
 }
 
-void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
+void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
 {
     if (_selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
     {
@@ -708,7 +711,7 @@ void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compon
         history->CommitGesture(_selectedEntity, meta.id);
 }
 
-void SandboxApp::DrawInspector()
+void EditorApp::DrawInspector()
 {
     using namespace Assisi::Core::Reflect;
 
@@ -1000,3 +1003,5 @@ void SandboxApp::DrawInspector()
     HandlePhysicsEditing(anyFieldEdited);
     ImGui::End();
 }
+
+} // namespace Assisi::Editor

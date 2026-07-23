@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
-/// @file SandboxImGui.hpp
+/// @file ImGuiQueries.hpp
 /// @brief Small shared ImGui helpers used across the sandbox's translation units.
 
 #include <imgui.h>

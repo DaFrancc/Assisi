@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include "SandboxApp.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/Math/GLM.hpp> // pulls GLMConfig (GLM_ENABLE_EXPERIMENTAL) before the gtx header below
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -12,6 +12,9 @@
 
 #include <imgui.h> // must precede ImGuizmo.h — it uses ImVec2/ImDrawList/ImU32 unguarded
 #include <ImGuizmo.h>
+
+namespace Assisi::Editor
+{
 
 // ---------------------------------------------------------------------------
 // Transform gizmo
@@ -37,26 +40,26 @@ constexpr float kTranslateSnap = 0.5f;
 constexpr float kRotateSnap    = 15.f;
 constexpr float kScaleSnap     = 0.1f;
 
-ImGuizmo::OPERATION ToOperation(SandboxApp::GizmoOp op)
+ImGuizmo::OPERATION ToOperation(EditorApp::GizmoOp op)
 {
     switch (op)
     {
-    case SandboxApp::GizmoOp::Rotate: return ImGuizmo::ROTATE;
-    case SandboxApp::GizmoOp::Scale:  return ImGuizmo::SCALE;
-    case SandboxApp::GizmoOp::Translate:
+    case EditorApp::GizmoOp::Rotate: return ImGuizmo::ROTATE;
+    case EditorApp::GizmoOp::Scale:  return ImGuizmo::SCALE;
+    case EditorApp::GizmoOp::Translate:
     default:                          return ImGuizmo::TRANSLATE;
     }
 }
 } // namespace
 
-bool SandboxApp::IsUsingGizmo() const
+bool EditorApp::IsUsingGizmo() const
 {
     // ImGuizmo tracks the active drag (IsUsing) and hover (IsOver) globally; the
     // picking code checks this to avoid re-selecting when a click lands on the gizmo.
     return ImGuizmo::IsUsing() || ImGuizmo::IsOver();
 }
 
-void SandboxApp::DrawTransformGizmo()
+void EditorApp::DrawTransformGizmo()
 {
     // Reset ImGuizmo's per-frame state every frame, even with nothing selected, so
     // IsUsing/IsOver read false when the gizmo isn't shown.
@@ -185,3 +188,5 @@ void SandboxApp::DrawTransformGizmo()
         history->CommitGesture(_selectedEntity, transformId);
     _gizmoWasUsing = nowUsing;
 }
+
+} // namespace Assisi::Editor

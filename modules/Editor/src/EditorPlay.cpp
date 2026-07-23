@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include "SandboxApp.hpp"
-#include "SandboxImGui.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
+#include "ImGuiQueries.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -28,11 +28,14 @@
 #include <utility>
 #include <vector>
 
+namespace Assisi::Editor
+{
+
 // ---------------------------------------------------------------------------
 // Play state (Run / Pause / Stop)
 // ---------------------------------------------------------------------------
 
-void SandboxApp::StartPlay()
+void EditorApp::StartPlay()
 {
     if (_playState != PlayState::Editing || _scene == nullptr)
     {
@@ -66,7 +69,7 @@ void SandboxApp::StartPlay()
     Assisi::Core::Log::Info("Play: started (scene snapshotted, {} entities).", _playSnapshot.size());
 }
 
-void SandboxApp::ResumePlay()
+void EditorApp::ResumePlay()
 {
     if (_playState != PlayState::Paused)
     {
@@ -79,7 +82,7 @@ void SandboxApp::ResumePlay()
     _playState = PlayState::Playing;
 }
 
-void SandboxApp::PausePlay()
+void EditorApp::PausePlay()
 {
     if (_playState != PlayState::Playing)
     {
@@ -92,7 +95,7 @@ void SandboxApp::PausePlay()
     _playState = PlayState::Paused;
 }
 
-void SandboxApp::StopPlay()
+void EditorApp::StopPlay()
 {
     if (_playState == PlayState::Editing || _scene == nullptr)
     {
@@ -155,7 +158,7 @@ void SandboxApp::StopPlay()
 // Entity creation
 // ---------------------------------------------------------------------------
 
-Assisi::ECS::Entity SandboxApp::CreateEntity()
+Assisi::ECS::Entity EditorApp::CreateEntity()
 {
     if (_scene == nullptr)
     {
@@ -185,7 +188,7 @@ Assisi::ECS::Entity SandboxApp::CreateEntity()
     return entity;
 }
 
-std::vector<Assisi::ECS::Entity> SandboxApp::GatherSubtree(Assisi::ECS::Entity root)
+std::vector<Assisi::ECS::Entity> EditorApp::GatherSubtree(Assisi::ECS::Entity root)
 {
     std::vector<Assisi::ECS::Entity> result{root};
     if (_scene == nullptr)
@@ -210,7 +213,7 @@ std::vector<Assisi::ECS::Entity> SandboxApp::GatherSubtree(Assisi::ECS::Entity r
     return result;
 }
 
-void SandboxApp::DeleteEntity(Assisi::ECS::Entity entity)
+void EditorApp::DeleteEntity(Assisi::ECS::Entity entity)
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))
     {
@@ -260,7 +263,7 @@ void SandboxApp::DeleteEntity(Assisi::ECS::Entity entity)
 // Windows
 // ---------------------------------------------------------------------------
 
-void SandboxApp::DrawGameControlWindow()
+void EditorApp::DrawGameControlWindow()
 {
     // F5 run/resume, F6 pause, F7 stop — handled here so the keys live with the
     // window that owns them (same pattern as F11 in DrawOptionsWindow). Each
@@ -349,7 +352,7 @@ void SandboxApp::DrawGameControlWindow()
     ImGui::End();
 }
 
-void SandboxApp::DrawEntityListWindow()
+void EditorApp::DrawEntityListWindow()
 {
     ImGui::Begin("Entities");
 
@@ -428,3 +431,5 @@ void SandboxApp::DrawEntityListWindow()
 
     ImGui::End();
 }
+
+} // namespace Assisi::Editor

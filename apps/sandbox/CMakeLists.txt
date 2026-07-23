@@ -1,26 +1,17 @@
 add_executable(Assisi-Sandbox)
 Assisi_apply_defaults(Assisi-Sandbox)
 
+# A thin consumer of the editor library: main.cpp builds an EditorConfig and
+# runs Assisi::Editor::EditorApp. The exe target still owns what must be
+# per-binary: reflection linking (below) and asset staging.
 target_sources(Assisi-Sandbox
   PRIVATE
     "src/main.cpp"
-    "src/SandboxApp.cpp"
-    "src/SandboxOptions.cpp"
-    "src/SandboxCamera.cpp"
-    "src/SandboxInspector.cpp"
-    "src/SandboxAssetBrowser.cpp"
-    "src/SandboxLevels.cpp"
-    "src/SandboxPlay.cpp"
-    "src/SandboxGizmo.cpp"
-    "src/SandboxColliders.cpp"
 )
 
 target_link_libraries(Assisi-Sandbox
   PRIVATE
-    Assisi::App
     Assisi::Editor
-    imguizmo::imguizmo
-    nlohmann_json::nlohmann_json
 )
 
 assisi_link_reflections(Assisi-Sandbox)

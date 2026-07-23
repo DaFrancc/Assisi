@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-/// @file SandboxOptions.cpp
+/// @file EditorOptions.cpp
 /// @brief The F11 options overlay: a CPU/GPU frame graph, percentile frame-time
 /// stats, and the anti-aliasing / frame-sync controls.
 ///
@@ -10,7 +10,7 @@
 /// drop the overlay without editing the engine (see the round-3 review item
 /// "Application is a framework and a debug tool at once").
 
-#include "SandboxApp.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/Render/PostProcess.hpp>
@@ -25,11 +25,14 @@
 #include <cstdint>
 #include <vector>
 
+namespace Assisi::Editor
+{
+
 using Assisi::App::Application;
 using Assisi::App::FrameSyncMode;
 using Assisi::App::OptionsConfig;
 
-void SandboxApp::DrawOptionsWindow()
+void EditorApp::DrawOptionsWindow()
 {
     // F11 toggles the overlay. Handled here, in the app, so the engine no longer
     // reserves the key — a game can rebind or remove this freely.
@@ -435,3 +438,5 @@ void SandboxApp::DrawOptionsWindow()
     }
     ImGui::End();
 }
+
+} // namespace Assisi::Editor

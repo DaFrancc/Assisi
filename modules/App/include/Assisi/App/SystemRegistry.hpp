@@ -127,6 +127,11 @@ class SystemRegistry
     /// @brief Run all render systems in dependency order.
     void RunRender(RenderContext ctx);
 
+    /// @brief Whether any render system has been registered. Lets a host that
+    /// never calls RunRender (the editor owns rendering) warn instead of
+    /// silently dropping them.
+    [[nodiscard]] bool HasRenderSystems() const { return !_renderPhase.entries.empty(); }
+
   private:
     /// @brief One phase's worth of systems taking context type @p Ctx, plus its
     /// cached execution order.  Game and render phases are the same machinery

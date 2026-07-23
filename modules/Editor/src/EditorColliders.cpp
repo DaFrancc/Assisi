@@ -1,9 +1,9 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-/// @file SandboxColliders.cpp
+/// @file EditorColliders.cpp
 /// @brief Editor collider wireframes: outline every RigidBodyDescriptor's shape in
 /// the world while authoring, so invisible collision geometry is visible and
-/// selectable. Built here (Sandbox knows Physics) and drawn through the renderer's
+/// selectable. Built here (the editor knows Physics) and drawn through the renderer's
 /// generic overlay-line facility (Render::LinePass), which stays Physics-free.
 ///
 /// The wireframe traces the collider's actual edges (a box's 12 edges, a sphere's
@@ -12,7 +12,7 @@
 /// the selected collider draws yellow-orange and on-top (x-ray), so it is never
 /// lost behind a wall. Hidden entirely while the game is playing.
 
-#include "SandboxApp.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -23,6 +23,9 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Render/LinePass.hpp>
 #include <Assisi/Runtime/Components.hpp>
+
+namespace Assisi::Editor
+{
 
 namespace
 {
@@ -152,7 +155,7 @@ void AppendColliderWireframe(std::vector<LineVertex> &out, const glm::mat4 &mode
 }
 } // namespace
 
-void SandboxApp::SubmitColliderWireframes()
+void EditorApp::SubmitColliderWireframes()
 {
     _colliderLinesDepthTested.clear();
     _colliderLinesOnTop.clear();
@@ -222,7 +225,7 @@ void SandboxApp::SubmitColliderWireframes()
     }
 }
 
-void SandboxApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
+void EditorApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
                                        const Assisi::Physics::RigidBodyDescriptor &desc, const glm::vec3 &color)
 {
     using Assisi::Physics::ColliderShape;
@@ -258,3 +261,5 @@ void SandboxApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
     }
     _sceneRenderer.SubmitOutlineGroup(items, color);
 }
+
+} // namespace Assisi::Editor

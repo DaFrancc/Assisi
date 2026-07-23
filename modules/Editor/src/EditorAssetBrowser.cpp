@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include "SandboxApp.hpp"
+#include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -19,6 +19,9 @@
 #include <string>
 #include <string_view>
 
+namespace Assisi::Editor
+{
+
 namespace
 {
 // Defined below in this file's anonymous namespace; forward-declared so the hello
@@ -27,7 +30,7 @@ void DrawLoadingFrame(const ImVec2 &origin, float size);
 bool LoadingSpinnerAvailable();
 } // namespace
 
-void SandboxApp::DrawHelloImageWindow()
+void EditorApp::DrawHelloImageWindow()
 {
     if (ImGui::Begin("hello.png"))
     {
@@ -268,7 +271,7 @@ void DrawStaleBadge(const ImVec2 &origin, float size)
 }
 } // namespace
 
-void SandboxApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
+void EditorApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
 {
     _assetBrowserOpen        = true;
     _assetBrowserEntity      = _selectedEntity;
@@ -279,14 +282,14 @@ void SandboxApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta 
     _assetBrowserDirty = true; // re-read on open
 }
 
-void SandboxApp::OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
+void EditorApp::OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
                                          int32_t slot)
 {
     OpenAssetBrowserFor(meta, fieldOffset);
     _assetBrowserVectorSlot = slot; // element [slot] of an AssetPathVector
 }
 
-void SandboxApp::SelectAsset(std::string_view vpath)
+void EditorApp::SelectAsset(std::string_view vpath)
 {
     // Re-resolve the target from (entity, meta, offset) at write time — the
     // component pool may have moved since the browser was opened (see eyedropper).
@@ -331,7 +334,7 @@ void SandboxApp::SelectAsset(std::string_view vpath)
     _assetBrowserMeta = nullptr;
 }
 
-void SandboxApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
+void EditorApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))
         return;
@@ -341,7 +344,7 @@ void SandboxApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
     Assisi::Runtime::ResolveMeshRendererAssets(*mrc, _assetCache, _assetDatabase);
 }
 
-void SandboxApp::RescanAssetBrowser()
+void EditorApp::RescanAssetBrowser()
 {
     // Leaving this directory: drop its thumbnails so browsing many folders doesn't
     // grow VRAM without bound. ClearThumbnails waits for the GPU to idle, so it's
@@ -384,7 +387,7 @@ void SandboxApp::RescanAssetBrowser()
     std::sort(_assetBrowserMaterials.begin(), _assetBrowserMaterials.end());
 }
 
-void SandboxApp::DrawAssetBrowser()
+void EditorApp::DrawAssetBrowser()
 {
     if (!_assetBrowserOpen)
         return;
@@ -610,3 +613,5 @@ void SandboxApp::DrawAssetBrowser()
     ImGui::EndChild();
     ImGui::End();
 }
+
+} // namespace Assisi::Editor
