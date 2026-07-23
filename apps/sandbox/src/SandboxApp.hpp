@@ -144,11 +144,9 @@ class SandboxApp : public Assisi::App::Application
     void SelectAsset(std::string_view vpath);
     /// @brief Re-resolves a MeshRenderer entity's mesh/texture from its current
     /// paths, so an inspector/browser edit takes effect without a level reload.
+    /// (The resolve itself is engine code — Runtime::ResolveMeshRendererAssets;
+    /// this adds the alive/has-component checks over the selected entity.)
     void ReresolveEntityAssets(Assisi::ECS::Entity entity);
-    /// @brief Resolves one MeshRenderer's transient GPU pointers (mesh and one
-    /// Material per mesh slot) from its durable paths. Shared by level load and
-    /// single-entity re-resolve.
-    void ResolveMeshRendererAssets(Assisi::Runtime::MeshRenderer &mrc);
     /// @brief Reads _assetBrowserDir into the cached dirs/images lists. Called
     /// only when the listing may have changed, not every frame.
     void RescanAssetBrowser();
@@ -227,15 +225,6 @@ class SandboxApp : public Assisi::App::Application
     /// stay live regardless, so the scene is always navigable.
     [[nodiscard]] bool IsSimulating() const { return _playState == PlayState::Playing; }
 
-    /// @brief Re-resolves every MeshRenderer's transient GPU pointers and rebuilds
-    /// the physics bodies from their descriptors. Shared by the snapshot restore
-    /// (StopPlay) and level load — both replace the scene's entities wholesale, so
-    /// the transient state has to be rebuilt from the durable components.
-    void RebindSceneAssetsAndPhysics();
-    /// @brief Creates a Jolt body for @p entity from @p desc at @p tc's pose and
-    /// attaches a RigidBody. Shared by the scene rebuild and live component-add.
-    void AddPhysicsBody(Assisi::ECS::Entity entity, const Assisi::ECS::Transform &tc,
-                        const Assisi::Physics::RigidBodyDescriptor &desc);
     /// @brief Creates a fresh entity with a Transform a few units in front of the
     /// editor camera (an empty object to build up via Add Component), selects it,
     /// and returns it. Used by the entity list's + button.

@@ -310,6 +310,28 @@ RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const Co
     return RigidBody{bodyId};
 }
 
+RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
+                                              const RigidBodyDescriptor &descriptor)
+{
+    const BodyMotion motion = descriptor.isStatic ? BodyMotion::Static : BodyMotion::Dynamic;
+    const ColliderShapeDesc shape{.shape       = descriptor.shape,
+                                  .halfExtents = descriptor.halfExtents,
+                                  .radius      = descriptor.radius,
+                                  .halfHeight  = descriptor.halfHeight};
+    const RigidBody body = AddBody(transform.position, transform.rotation, shape, motion);
+    if (descriptor.enableCCD)
+        SetBodyCCD(body, true);
+    (void)scene.Add<RigidBody>(entity, body);
+    return body;
+}
+
+void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene)
+{
+    Clear();
+    for (auto [entity, transform, descriptor] : scene.Query<ECS::Transform, RigidBodyDescriptor>())
+        AddBodyFromDescriptor(scene, entity, transform, descriptor);
+}
+
 void PhysicsWorld::Clear()
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();

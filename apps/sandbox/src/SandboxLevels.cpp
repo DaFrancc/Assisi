@@ -2,6 +2,7 @@
 
 #include "SandboxApp.hpp"
 
+#include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -155,7 +156,12 @@ void SandboxApp::LoadLevel(const std::string &name)
 
 bool SandboxApp::LoadLevelFromPath(const std::string &virtualPath)
 {
-    if (!Assisi::Runtime::SceneSerializer::LoadFromFile(*_scene, virtualPath))
+    // The engine does the whole load: deserialize, drop the old asset set, evict
+    // the renderer's cached bindings, re-resolve assets and rebuild physics. What
+    // remains below is purely editor bookkeeping about the OLD scene. (We are at a
+    // safe point — level loads are marshalled to the main-thread drain, never run
+    // from OnImGui; see the Load button in DrawLevelsWindow.)
+    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, _physics, _sceneRenderer))
         return false;
 
     // A load also ends any in-progress play session: the snapshot describes the
@@ -184,11 +190,5 @@ bool SandboxApp::LoadLevelFromPath(const std::string &virtualPath)
     _pausedHistory.reset(); // a load ends any play session, scratch history included
     _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
 
-    // New asset set: drop the old cache and evict the mesh pass's binding sets
-    // (they key on raw texture pointers we're about to free) before re-resolving.
-    _assetCache.Clear();
-    _sceneRenderer.InvalidateAssetBindings();
-
-    RebindSceneAssetsAndPhysics();
     return true;
 }

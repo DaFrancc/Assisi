@@ -662,7 +662,7 @@ void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMe
         if (tc != nullptr && desc != nullptr &&
             _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) == nullptr)
         {
-            AddPhysicsBody(_selectedEntity, *tc, *desc);
+            _physics.AddBodyFromDescriptor(*_scene, _selectedEntity, *tc, *desc);
         }
     }
 

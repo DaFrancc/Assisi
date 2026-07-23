@@ -14,6 +14,7 @@
 #include <Jolt/Jolt.h>
 
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
@@ -62,6 +63,25 @@ class PhysicsWorld
     /// @param shape      Collider primitive and its dimensions.
     /// @param motion     Static bodies never move; dynamic bodies fall under gravity.
     RigidBody AddBody(glm::vec3 position, glm::quat rotation, const ColliderShapeDesc &shape, BodyMotion motion);
+
+    /// @brief Creates a Jolt body for @p entity from its authored descriptor at
+    /// @p transform's pose, and attaches the transient RigidBody component.
+    ///
+    /// The durable RigidBodyDescriptor is what a level stores; this is the one
+    /// place that turns it into live simulation state (motion type from
+    /// `isStatic`, collider from the shape fields, CCD flag). Used by level
+    /// load, play/stop scene restores, and live component-add in the editor.
+    RigidBody AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
+                                    const RigidBodyDescriptor &descriptor);
+
+    /// @brief Rebuilds every body from the scene's descriptors: Clear(), then
+    /// AddBodyFromDescriptor for each entity with a Transform + RigidBodyDescriptor.
+    ///
+    /// For use when the scene's entities were replaced wholesale (level load, a
+    /// play-session restore) and every live body is stale. Entities are expected
+    /// not to carry a RigidBody component yet — it is transient and never
+    /// serialized, so a freshly loaded/restored scene never has one.
+    void RebuildSceneBodies(ECS::Scene &scene);
 
     /// @brief Advances the simulation by `deltaTime` seconds.
     void Update(float deltaTime);

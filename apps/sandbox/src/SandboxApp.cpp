@@ -3,7 +3,7 @@
 #include "SandboxApp.hpp"
 #include "SandboxImGui.hpp"
 
-#include <Assisi/Core/AssetIdJson.hpp>
+#include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -12,6 +12,7 @@
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Core/ShortString.hpp>
+#include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
@@ -151,23 +152,11 @@ void SandboxApp::ReimportAssets()
     }
     Assisi::Core::Log::Info("Asset reimport: {} assets indexed (GUID sidecars reconciled).", *result);
 
-    // Wire the (rebuilt) database into the two places that translate ids:
-    //   - serialization's path hint (D2): saved GUID references carry a readable
-    //     last-known path regenerated from the database.
-    //   - the asset cache: id↔path so mesh/material/texture resolution and glTF
-    //     import speak GUIDs. Reserved built-ins resolve without the database.
-    // The lambdas capture `this`, so re-running reimport reuses the same (now
-    // freshly rebuilt) database — no need to reinstall, but harmless if we do.
-    Assisi::Core::SetAssetIdHintResolver([this](const Assisi::Core::AssetId &id)
-                                         { return _assetDatabase.PathFor(id).value_or(std::string{}); });
-    _assetCache.SetAssetResolvers(
-        [this](const Assisi::Core::AssetId &id) -> Assisi::Core::AssetPath
-        {
-            const std::optional<std::string> path = _assetDatabase.PathFor(id);
-            return path ? Assisi::Core::AssetPath{std::string_view{*path}} : Assisi::Core::AssetPath{};
-        },
-        [this](std::string_view vpath) -> Assisi::Core::AssetId
-        { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); });
+    // Wire the (rebuilt) database into serialization's path hint and the asset
+    // cache's id↔path translation. The resolvers capture the database by
+    // reference, so re-running reimport reuses the same (now freshly rebuilt)
+    // database — no need to reinstall, but harmless if we do.
+    Assisi::App::InstallAssetResolvers(_assetCache, _assetDatabase);
 
     // S3/S4: bring glTF materials up to date — explode new meshes, reconcile
     // already-exploded ones against their current source. Any write means new/
@@ -394,10 +383,7 @@ void SandboxApp::ApplyStaleResolution(bool regenerate)
             }
             if (_scene != nullptr)
             {
-                for (auto [entity, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
-                {
-                    ResolveMeshRendererAssets(mrc);
-                }
+                Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
             }
             _assetBrowserDirty = true;
         }
@@ -630,17 +616,8 @@ void SandboxApp::OnUpdate(float dt)
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // SandboxLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in
-    // asynchronously. While loads are in flight (and for one frame after the last
-    // finishes, to pick up the final result), re-resolve every MeshRenderer so its
-    // transient pointers upgrade in place: a null meshBuffer (billboard placeholder)
-    // becomes the mesh, and the fallback material becomes the real one.
-    const bool loadsPending = _assetCache.HasPendingLoads();
-    if (loadsPending || _assetsWereLoading)
-    {
-        for (auto [entity, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
-            ResolveMeshRendererAssets(mrc);
-        _assetsWereLoading = loadsPending;
-    }
+    // asynchronously. Upgrade placeholders in place while loads are in flight.
+    Assisi::App::UpgradeStreamingAssets(*_scene, _assetCache, _assetDatabase, _assetsWereLoading);
 
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
@@ -751,7 +728,7 @@ void SandboxApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Refle
             const auto *tc   = _scene->Get<Runtime::Transform>(entity);
             const auto *desc = _scene->Get<Physics::RigidBodyDescriptor>(entity);
             if (tc && desc && _scene->Get<Physics::RigidBody>(entity) == nullptr)
-                AddPhysicsBody(entity, *tc, *desc);
+                _physics.AddBodyFromDescriptor(*_scene, entity, *tc, *desc);
         }
         else
         {

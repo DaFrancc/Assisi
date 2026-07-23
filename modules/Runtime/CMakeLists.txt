@@ -3,6 +3,7 @@ Assisi_apply_defaults(Assisi-Runtime)
 
 target_sources(Assisi-Runtime
   PUBLIC
+    "include/Assisi/Runtime/AssetResolve.hpp"
     "include/Assisi/Runtime/Camera.hpp"
     "include/Assisi/Runtime/Components.hpp"
     "include/Assisi/Runtime/Hierarchy.hpp"
@@ -13,6 +14,7 @@ target_sources(Assisi-Runtime
     "include/Assisi/Runtime/SceneRenderer.hpp"
     "include/Assisi/Runtime/SceneSerializer.hpp"
   PRIVATE
+    "src/AssetResolve.cpp"
     "src/Camera.cpp"
     "src/Hierarchy.cpp"
     "src/LightingSystem.cpp"

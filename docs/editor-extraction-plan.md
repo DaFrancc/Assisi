@@ -107,7 +107,13 @@ That's nearly nothing — confirming the sandbox *is* the editor today.
 Each stage is one commit (or a few), `Assisi-Sandbox` builds warning-free and
 runs identically after each, `ctest` green throughout.
 
-### E0 — extract the runtime that must ship (no editor involvement)
+### E0 — extract the runtime that must ship (no editor involvement) — **DONE 2026-07-22**
+
+Landed as planned: `PhysicsWorld::AddBodyFromDescriptor`/`RebuildSceneBodies`,
+`Runtime::AssetResolve.{hpp,cpp}`, `App::LevelRuntime.{hpp,cpp}` (including
+`InstallAssetResolvers` and the safe-point contract on `LoadLevel`), sandbox
+switched over, local copies deleted. gcc+clang 0 warnings, 8/8 suites.
+Pending: a manual sandbox run (level load, play/stop, streaming pop-in).
 
 New engine API, then the sandbox becomes its first caller:
 

@@ -3,6 +3,7 @@
 #include "SandboxApp.hpp"
 #include "SandboxImGui.hpp"
 
+#include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -26,46 +27,6 @@
 #include <string>
 #include <utility>
 #include <vector>
-
-// ---------------------------------------------------------------------------
-// Scene rebuild helpers (shared by level load, the Stop restore, and spawning)
-// ---------------------------------------------------------------------------
-
-void SandboxApp::AddPhysicsBody(Assisi::ECS::Entity entity, const Assisi::ECS::Transform &tc,
-                                const Assisi::Physics::RigidBodyDescriptor &desc)
-{
-    const auto motion = desc.isStatic ? Assisi::Physics::BodyMotion::Static
-                                      : Assisi::Physics::BodyMotion::Dynamic;
-    const Assisi::Physics::PhysicsWorld::ColliderShapeDesc shape{.shape       = desc.shape,
-                                                                 .halfExtents = desc.halfExtents,
-                                                                 .radius      = desc.radius,
-                                                                 .halfHeight  = desc.halfHeight};
-    const Assisi::Physics::RigidBody rbc = _physics.AddBody(tc.position, tc.rotation, shape, motion);
-    if (desc.enableCCD)
-    {
-        _physics.SetBodyCCD(rbc, true);
-    }
-    (void)_scene->Add<Assisi::Physics::RigidBody>(entity, rbc);
-}
-
-void SandboxApp::RebindSceneAssetsAndPhysics()
-{
-    // The scene's entities were replaced wholesale (level load or Stop restore),
-    // so every transient pointer and physics body is stale. Rebuild physics from
-    // scratch and re-resolve each MeshRenderer's GPU resources from its GUIDs.
-    _physics.Clear();
-
-    for (auto [entity, mrc] : _scene->Query<Assisi::Runtime::MeshRenderer>())
-    {
-        ResolveMeshRendererAssets(mrc);
-    }
-
-    for (auto [entity, tc, desc] :
-         _scene->Query<Assisi::Runtime::Transform, Assisi::Physics::RigidBodyDescriptor>())
-    {
-        AddPhysicsBody(entity, tc, desc);
-    }
-}
 
 // ---------------------------------------------------------------------------
 // Play state (Run / Pause / Stop)
@@ -152,8 +113,8 @@ void SandboxApp::StopPlay()
         // Tear down the current (play-state) scene, then rebuild the snapshot at
         // EXACT identity. Destroy+flush (not Scene::Clear) keeps the registry's slot
         // table intact so ReviveAt can restore each entity's original handle; the
-        // physics world is wiped and rebuilt wholesale by RebindSceneAssetsAndPhysics,
-        // so the play-state Jolt bodies need no per-entity teardown here.
+        // physics world is wiped and rebuilt wholesale by the rebind below, so the
+        // play-state Jolt bodies need no per-entity teardown here.
         std::vector<Assisi::ECS::Entity> live;
         _scene->ForEachEntity([&](Assisi::ECS::Entity entity) { live.push_back(entity); });
         for (const Assisi::ECS::Entity entity : live)
@@ -181,7 +142,7 @@ void SandboxApp::StopPlay()
         }
 
         _selectedEntity = Assisi::ECS::NullEntity;
-        RebindSceneAssetsAndPhysics();
+        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, _physics);
     }
 
     _playState = PlayState::Editing;
