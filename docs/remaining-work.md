@@ -15,70 +15,58 @@ as "everything else is done."
 ## 1. Networking — stages 0–6 (`networking-design-notes.md`)
 
 Design settled 2026-07-20, review-hardened 2026-07-22 (v2) by a multi-agent
-research pass (cited reports in `docs/research/networking/`). **Stages 0-5 are
-built and green; Stage 6 is half done.** Stage 7 (prediction, lag compensation,
+research pass (cited reports in `docs/research/networking/`). **Stages 0–6 are
+built, tested and green on Linux.** Stage 7 (prediction, lag compensation,
 interest management, NAT-traversal production infra) remains deferred and is
 excluded here.
 
 ### Built
 
-- **Stage 0 — GNS build integration.** Done. protobuf v35.1 (+ force-fetched
-  abseil) and GameNetworkingSockets pinned to `master` @ `f4525e39` (2026-06-06)
-  behind `ASSISI_ENABLE_NETWORKING`. `OVERRIDE_FIND_PACKAGE` redirects GNS's own
+- **N0 — GNS build integration.** protobuf v35.1 (+ force-fetched abseil) and
+  GameNetworkingSockets pinned to `master` @ `f4525e39` (2026-06-06) behind
+  `ASSISI_ENABLE_NETWORKING`. `OVERRIDE_FIND_PACKAGE` redirects GNS's own
   `find_package(Protobuf)` to the tree we build; `protobuf_generate_cpp` is
-  shimmed onto `protobuf_generate`. Linux only so far — **Windows has never been
-  built** (see the gap list below).
-- **Stage 1 — `Assisi::Net`.** Done. Pimpl over GNS, dense `ConnectionId`, three
-  lanes, `Poll()` on the calling thread, `CreateLoopbackPair` in both modes.
-  4 test cases / 166 assertions, including 40 reliable messages arriving in
-  order through 5% loss and 50 ms of simulated latency.
-- **Stage 2 — headless Application.** Done. `InitializeCore()` /
-  `InitializePresentation()`, `AppConfig::headless` + `--server`, tick-paced
-  loop against `_closeRequested`, `OnRender` defaulted, `LoadLevelSim` as the
-  render-free level load. The no-GPU DoD holds on Linux: with `DISPLAY` and
-  `WAYLAND_DISPLAY` unset the server loads six shared libraries, none of them
-  Vulkan/GL/X11/Wayland/DRM.
-- **Stage 3 — sim tick, input commands, clock.** Done. `Application::_simTick`
-  in the fixed-step loop and on `SystemContext` (whose input/actions are now
-  nullable pointers, so `SystemRegistry.hpp` no longer includes Window);
-  `InputCommand` with the reserved sub-tick byte, redundant send buffer,
-  server-side jitter queue, `ClampInputCommand`, and `NetClock`.
-- **Stage 3½ — `QueryMut`.** Done, plus the call-site migration.
-- **Stage 4 — binary codec.** Done. Bit-level `BitWriter`/`BitReader`,
-  reflection-driven component blocks, protocol hash including quantization
-  params and a codec version, fuzz-hardened reader.
-- **Stage 5 — replication core.** Done. `ReplicationServer`/`ReplicationClient`,
-  NetId map, delta replication off change ticks, spawn/despawn from set
-  comparison, budgeted priority-shaped send loop, input hardening, deferred
-  EntityRef resolve. 32 cases / 260 assertions including a soak through 150 ms
-  RTT and 5% loss.
-- **Stage 6 — partial.** `--host` / `--connect` run the protocol between two
-  processes over real UDP.
+  shimmed onto `protobuf_generate`.
+- **N1 — `Assisi::Net`.** Pimpl over GNS, dense `ConnectionId`, three lanes,
+  `Poll()` on the calling thread, `CreateLoopbackPair` in both modes.
+- **N2 — headless `Application`.** `InitializeCore()`/`InitializePresentation()`,
+  `AppConfig::headless` + `--server`, tick-paced loop, `LoadLevelSim`. The
+  no-GPU DoD holds: with `DISPLAY`/`WAYLAND_DISPLAY` unset the server loads six
+  shared libraries, none of them Vulkan/GL/X11/Wayland/DRM.
+- **N3 — sim tick, input commands, clock.** `simTick` on `SystemContext`,
+  `InputCommand` (with the reserved sub-tick byte), redundant send, server-side
+  jitter queue, `ClampInputCommand`, `NetClock`.
+- **N3½ — `QueryMut`** + the call-site migration.
+- **N4 — binary codec.** Bit-level `BitWriter`/`BitReader`, reflection-driven
+  component blocks, protocol hash, fuzz-hardened reader.
+- **N5 — replication core.** Delta snapshots off change ticks, spawn/despawn
+  and **component removal** from set comparison, budgeted send loop, input
+  hardening, deferred EntityRef resolve, `worldComplete` join signalling,
+  client-side snapshot interpolation.
+- **N6 — session layer and UI.** `NetSession` (host/join/disconnect + stats),
+  the editor's Network panel, and `Assisi-Sandbox --server --host/--connect`.
+  Hosting from a windowed process *is* the listen server.
+
+Suites: NetSync 45 cases / 375 assertions, Net 4 / 166, plus a 5 s soak through
+150 ms RTT and 5% loss. All 11 ctest targets green.
 
 ### Remaining in this milestone
 
-- **Stage 6 — the rest.** The windowed client that *renders* what it receives;
-  snapshot interpolation on the client (hold 2-3 snapshots, render at
-  `serverTime - interpDelay`); the listen server itself (one process, both
-  halves through `CreateLoopbackPair` — every piece exists and is tested, it is
-  not wired up); sandbox Host/Join UI and the net-stats overlay. Reconnect stays
-  "rejoin" in v1.
-- **Component removal is invisible to change detection.** `Scene::Remove<T>` /
-  `RemoveById` never stamp, so a removed component is not replicated away — the
-  client keeps a stale one. An ECS-level gap, surfaced by the QueryMut
-  migration; needs an answer `Changed<T>` cannot give.
-- **Two reflectgen hooks are missing**, and `Replication.cpp` stands in for
-  them: a type-erased *construct in place* (the client currently creates a
-  component via `addToScene` with an empty JSON object) and a *get mutable*
-  (currently a `const_cast` on `getByEntity`). Both are contained in one
-  function so adding the hooks changes only that.
-- **Windows build of the GNS dependency chain.** Untested; Stage 0's
-  `USE_CRYPTO=BCrypt` path has never run.
-- **Paginated late-join over the Bulk lane.** The byte budget already spreads a
-  large initial world over several snapshots and the tests cover it, but the
-  design's explicit Bulk-lane pagination is not implemented.
+- **Windows.** The GNS dependency chain has never been built there, and the
+  `USE_CRYPTO=BCrypt` path has never run. One landmine spotted while reading
+  upstream, not yet acted on: protobuf's `protobuf_MSVC_STATIC_RUNTIME`
+  defaults **ON** and forces `CMAKE_MSVC_RUNTIME_LIBRARY` to the static CRT for
+  itself *and* abseil, which will not match this tree's default dynamic CRT —
+  expect to force it OFF.
+- **Snapshot quantization.** `BitWriter` is bit-capable and
+  `WriteFloatQuantized` exists with a round-trip test, but no field encoder uses
+  it: v1 sends whole-value floats. This is the lever if 32-player listen servers
+  on home upload ever matter (see the bandwidth envelope in the design notes).
+- **Sub-tick evaluation.** `InputCommand::subTickFraction` is on the wire and
+  ignored, by design.
 - **`ScopedRawEntityContext` relocation** out of Runtime (open decision 3) —
-  not yet needed, since NetSync uses the codec's own remap hooks.
+  still not needed, since NetSync uses the codec's own remap hooks.
+- Everything else in the milestone is Stage 7, which stays deferred.
 
 ## 2. Code-review round 6 — cleared
 

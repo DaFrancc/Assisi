@@ -5,14 +5,13 @@ review (4 independent researchers — engine case studies, transport-library
 survey, replication theory, codebase fit/ops — cross-checked by 2 adversarial
 reviewers, then synthesized; full cited reports in `docs/research/networking/`).
 
-**Implementation status (2026-07-22): stages 0-5 are built, tested and
-committed; stage 6 is half done** (headless `--host`/`--connect` work between
-two processes over UDP; the windowed client, client-side interpolation, the
-listen server, and the Host/Join UI are not wired up). The plan below is left
-as written — it is the design record, and the stage text is what the code was
-built against. Where the implementation diverged, the divergence is noted
-inline. See `remaining-work.md` §1 for the current gap list, which is the
-authoritative status.
+**Implementation status (2026-07-22): stages 0-6 are built, tested and
+committed on Linux.** The plan below is left as written — it is the design
+record, and the stage text is what the code was built against. Where the
+implementation diverged, the divergence is noted inline. Two divergences worth
+finding here rather than in the code: the **listen server** is simply a host in
+a windowed process (Stage 6), and **Bulk-lane baseline pagination** was not
+built (Stage 5). See `remaining-work.md` §1 for the authoritative gap list.
 
 The review's headline: **the architecture survives scrutiny unchanged** —
 server-authoritative delta-snapshot replication over a two-module
@@ -537,10 +536,18 @@ engine is deliberately non-deterministic.
   two**: the host's scene *is* the server scene; the host client renders it
   directly and skips self-interpolation (it is at server time by definition).
   Remote clients connect to the same `ReplicationServer` over UDP.
+  **As built:** the two halves of that sentence turned out to be in tension, and
+  "one scene" won. `NetSession::Host()` from a windowed process *is* the listen
+  server — there is no local loopback client, because with one scene the only
+  thing one could do is copy state onto itself and add interpolation delay to
+  the single player who needs none. `CreateLoopbackPair` keeps its other job:
+  running both halves in one process for the tests and the lag/loss soak.
 - Sandbox UI: Host / Join (address field) / Disconnect in the existing ImGui
   chrome; net stats overlay (RTT, loss, snapshot size, input-buffer depth from
   Stage 3's telemetry) from transport stats — feeds the existing debug-UI
-  habits.
+  habits. **As built:** the editor's "Network" panel, backed by `NetSession`.
+  Loading a level ends the session — a load replaces every entity in the scene
+  being replicated, which is not something the protocol should have to express.
 - Play-mode interplay: hosting implies play mode (`IsSimulating()`); editor
   undo/history stays host-local and out of scope for replication.
 - **Reconnect = rejoin** in v1: a dropped client tears down its replicated
