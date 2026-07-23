@@ -341,6 +341,8 @@ static const bool {var_name} = []() -> bool
         nullptr,   // addToScene
         nullptr,   // iterateEntities
         nullptr,   // getByEntity
+        nullptr,   // construct
+        nullptr,   // getMutable
         {serial_no}
     }});
     return true;
@@ -382,6 +384,26 @@ static const bool {var_name} = []() -> bool
         {{
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{{entity_index, entity_gen}});
+        }},
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {{
+            // Scene::Add rejects a duplicate rather than replacing it, so an
+            // entity that already has this component is reset in place. Both
+            // paths stamp the change tick for a tracked type.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{{entity_index, entity_gen}};
+            if (T* existing = scene.GetMut<T>(e))
+            {{
+                *existing = T{{}};
+                return existing;
+            }}
+            return scene.Add<T>(e, T{{}});
+        }},
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {{
+            // GetMut, not Get: this is the writing accessor, so it stamps.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.GetMut<T>(Assisi::ECS::Entity{{entity_index, entity_gen}});
         }},
         {serial_yes}
     }});

@@ -62,12 +62,34 @@ struct ComponentMeta
     std::function<const void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)>
         getByEntity;
 
+    /// @brief Default-construct this component on an entity and return a
+    /// writable pointer to it, replacing any existing one.
+    ///
+    /// The type-erased counterpart of `Scene::Add<T>` — and it goes through
+    /// exactly that, so it **stamps the change tick** for an ACOMP(tracked)
+    /// type. This is what a binary consumer (the replication client) uses to
+    /// materialize a component before filling it in; without it the only
+    /// generic way to create one is `addToScene` with hand-made JSON, which
+    /// routes a binary path through the JSON codec for no reason.
+    ///
+    /// Type-erased for the same reason as addToScene.
+    std::function<void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)> construct;
+
+    /// @brief Mutable counterpart of getByEntity: the entity's component, or
+    /// nullptr if it does not have one.
+    ///
+    /// Goes through `Scene::GetMut<T>`, so — unlike getByEntity — it **stamps
+    /// the change tick** for an ACOMP(tracked) type. Reach for getByEntity when
+    /// reading; reach for this when writing, and expect the write to be
+    /// observable through `Changed<T>`.
+    std::function<void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)> getMutable;
+
     /// @brief Whether this component participates in serialization/introspection.
     ///
     /// True for normal ACOMP components. False for ACOMP(transient) components,
     /// which register only to receive a stable ComponentId (so a Scene can store
-    /// them) but carry no serialize/addToScene/iterateEntities/getByEntity hooks
-    /// — those are all null. This is the explicit gate consumers must check
+    /// them) but carry no serialize/addToScene/iterateEntities/getByEntity/
+    /// construct/getMutable hooks — those are all null. This is the explicit gate consumers must check
     /// before invoking a hook; do not probe the hooks for null yourself.
     /// Examples: Physics::RigidBody (wraps a live Jolt handle that must never be
     /// saved), Runtime::DestroyTag (a transient per-frame lifecycle marker).

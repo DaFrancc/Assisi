@@ -91,6 +91,26 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
         },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // Scene::Add rejects a duplicate rather than replacing it, so an
+            // entity that already has this component is reset in place. Both
+            // paths stamp the change tick for a tracked type.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            if (T* existing = scene.GetMut<T>(e))
+            {
+                *existing = T{};
+                return existing;
+            }
+            return scene.Add<T>(e, T{});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // GetMut, not Get: this is the writing accessor, so it stamps.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.GetMut<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
         true,      // serializable
         true       // tracksChanges
     });
@@ -133,6 +153,26 @@ static const bool _reflectgen_SampleRef = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
         },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // Scene::Add rejects a duplicate rather than replacing it, so an
+            // entity that already has this component is reset in place. Both
+            // paths stamp the change tick for a tracked type.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            if (T* existing = scene.GetMut<T>(e))
+            {
+                *existing = T{};
+                return existing;
+            }
+            return scene.Add<T>(e, T{});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // GetMut, not Get: this is the writing accessor, so it stamps.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.GetMut<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
         true       // serializable
     });
     return true;
@@ -172,6 +212,26 @@ static const bool _reflectgen_SampleEmpty = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
         },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // Scene::Add rejects a duplicate rather than replacing it, so an
+            // entity that already has this component is reset in place. Both
+            // paths stamp the change tick for a tracked type.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            if (T* existing = scene.GetMut<T>(e))
+            {
+                *existing = T{};
+                return existing;
+            }
+            return scene.Add<T>(e, T{});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // GetMut, not Get: this is the writing accessor, so it stamps.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.GetMut<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
         true       // serializable
     });
     return true;
@@ -190,6 +250,8 @@ static const bool _reflectgen_SampleTransient = []() -> bool
         nullptr,   // addToScene
         nullptr,   // iterateEntities
         nullptr,   // getByEntity
+        nullptr,   // construct
+        nullptr,   // getMutable
         false      // serializable
     });
     return true;
@@ -239,6 +301,26 @@ static const bool _reflectgen_SampleRadio = []() -> bool
         {
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // Scene::Add rejects a duplicate rather than replacing it, so an
+            // entity that already has this component is reset in place. Both
+            // paths stamp the change tick for a tracked type.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            if (T* existing = scene.GetMut<T>(e))
+            {
+                *existing = T{};
+                return existing;
+            }
+            return scene.Add<T>(e, T{});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // GetMut, not Get: this is the writing accessor, so it stamps.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.GetMut<T>(Assisi::ECS::Entity{entity_index, entity_gen});
         },
         true       // serializable
     });

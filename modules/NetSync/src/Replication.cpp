@@ -7,8 +7,6 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 
-#include <nlohmann/json.hpp>
-
 #include <algorithm>
 #include <utility>
 
@@ -33,26 +31,14 @@ ECS::Entity UnpackEntity(std::uint64_t packed)
 /// Ensure @p entity has the component @p meta describes, and hand back a
 /// writable pointer to it.
 ///
-/// The reflection layer has no type-erased "construct in place" hook — the only
-/// generic way to create a component is addToScene(), which takes JSON. An empty
-/// JSON object works because every generated deserializer guards each field with
-/// contains(), so it yields a default-constructed component; the binary payload
-/// then overwrites the fields the snapshot actually carries.
-///
-/// The const_cast is on a pointer to a genuinely non-const component living in a
-/// mutable pool — getByEntity() is const only by signature. Both of these are
-/// shims for a missing pair of ComponentMeta hooks (construct / getMutable) that
-/// belong in reflectgen; they are contained here so adding those hooks later
-/// changes this function and nothing else.
+/// Both hooks stamp the change tick, which is what a client applying a snapshot
+/// wants: its own systems watch change ticks too, and an applied snapshot is a
+/// change by any definition.
 void *EnsureComponent(ECS::Scene &scene, ECS::Entity entity, const Core::Reflect::ComponentMeta &meta)
 {
-    const void *existing = meta.getByEntity(&scene, entity.index, entity.generation);
-    if (existing == nullptr)
-    {
-        meta.addToScene(&scene, entity.index, entity.generation, nlohmann::json::object());
-        existing = meta.getByEntity(&scene, entity.index, entity.generation);
-    }
-    return const_cast<void *>(existing);
+    if (void *existing = meta.getMutable(&scene, entity.index, entity.generation))
+        return existing;
+    return meta.construct(&scene, entity.index, entity.generation);
 }
 
 } // namespace
@@ -657,10 +643,6 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             void *component = EnsureComponent(_scene, entity, *meta);
             if (component == nullptr || !Core::Reflect::ReadComponent(*meta, component, reader, nullptr, &context))
                 return false;
-
-            // Stamp it: a client-side system may itself be watching change
-            // ticks, and an applied snapshot is a change by any definition.
-            _scene.MarkChanged(entity, componentId);
 
             // Pair the recorded references with the component's EntityRef
             // fields, in the same order the codec visited them.

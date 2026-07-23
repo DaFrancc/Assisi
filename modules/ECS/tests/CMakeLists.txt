@@ -22,6 +22,7 @@ add_executable(Assisi-ECS-Tests
   TestQueryMut.cpp
   TestScene.cpp
   TestChangeDetection.cpp
+  TestReflectHooks.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-ECS-Tests)
