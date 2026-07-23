@@ -92,7 +92,7 @@ Rationale, in one line each:
 - **Not** `Camera` (local concern), **not** `RigidBodyDescriptor` (mirrors are
   visual; the server owns physics — replicating the descriptor would tempt the
   client into simulating a body it doesn't own), **not** `Parent` — deferred,
-  see §6. Note the honest reason: EntityRef remapping on the wire **already
+  see §7. Note the honest reason: EntityRef remapping on the wire **already
   works end-to-end** (CodecContext entityToWire/FromWire, server remap,
   client `_pendingRefs` deferred patching, all tested). Parent is deferred for
   *hierarchy semantics* — a mirrored child of an unreplicated local parent,
@@ -336,7 +336,40 @@ crash cannot leak windows.
 New small utility: `App::ChildProcess` (spawn argv / terminate with grace /
 reap; POSIX now, interface portable for the Windows pass).
 
-## 5. Milestones — each with a user-visible definition of done
+## 5. Connection providers (how peers find and reach each other)
+
+Transport backend + addressing scheme = a **provider**, and the preferred one
+must be easy to choose. The seam goes in now, while the session API is still
+being shaped, so Steam later slots in instead of being retrofitted:
+
+- **`NetProvider` interface** (small, string-endpoint shaped): a name, an
+  endpoint format ("what goes in the join box"), host/listen, connect, and a
+  UI hint (label + placeholder for the panel's join field). Everything above
+  the transport — NetSync, replication, sessions, the editor — already deals
+  in `ConnectionId`s and messages, so it never learns which provider carried
+  them.
+- **Providers**: `direct` (v1, exists today — GNS over UDP, `addr:port`).
+  `steam` (planned next — the Steamworks SDK build of the *same*
+  `ISteamNetworkingSockets` API: connect by SteamID, NAT traversal + SDR relay
+  fallback, authenticated identities; requires an AppID and Steam running).
+  The seam leaves room for EOS or a custom relay later — a provider is a name
+  plus an endpoint string, nothing more leaks out.
+- **Choosing the preferred provider**: a `networking.preferredProvider` entry
+  in the project config (game.json) sets the default for both the game and the
+  editor; the network panel shows a provider dropdown listing the compiled-in
+  providers (just "Direct IP" until Steam lands) with the join field's
+  label/placeholder driven by the selection. Per-call override stays possible
+  in code (`NetSession::Join(provider, endpoint)`).
+- **PIE always uses `direct` loopback** regardless of the preference — spawned
+  local processes never need Steam or a relay.
+
+The interface + the `direct` provider + the config default + the panel
+dropdown land in M2 (where the session plumbing is already being touched); the
+Steam provider itself is a post-plan milestone (§7) — its real new surface is
+CMake for the Steamworks SDK, ConnectionId↔SteamID identity plumbing, and a
+lobby/friend-join UI for picking the target.
+
+## 6. Milestones — each with a user-visible definition of done
 
 **M1 — Wire gating** (reflectgen `replicated`/`norep`, ComponentMeta/FieldMeta
 flags, ProtocolHash/Summary, replication filters, mark Transform/MeshRenderer/
@@ -351,8 +384,9 @@ automatable in one suite). Full suite green.
 **M2 — The join that works** (level bookkeeping + ServerHello path/hash,
 deferred ClientHello gate, always-load-from-disk + strip + map invalidation,
 save/play disabled while joined, host sessions Play-bound + torn down by Stop,
-disconnect reload, structure-dirty resolve in OnUpdate,
-no-physics-for-mirrors). The existing panel Host button is the hosting UI for
+disconnect reload, structure-dirty resolve in OnUpdate, no-physics-for-mirrors,
+the `NetProvider` seam + `direct` provider + config default + panel dropdown,
+§5). The existing panel Host button is the hosting UI for
 this milestone — gated to Play state as scaffolding; M3's dropdown replaces
 it.
 *DoD*: editor A hosts `Materials.alvl` with one entity marked Replicated
@@ -404,13 +438,20 @@ milestones are decoration). M2 retires the "it doesn't actually work"
 complaint; M1 exists because M2 without it replicates every serializable
 component again.
 
-## 6. Explicitly deferred (with the honest reason)
+## 7. Explicitly deferred (with the honest reason)
 
 - **Client→server gameplay changes** (ownership, client edits traveling,
   prediction): the system stays one-way server-authoritative. The read-only
   mirror UX makes that visible instead of surprising.
 - **RPCs**: own milestone after this plan; validation is security-critical and
   deserves design attention, not a rider.
+- **The `steam` connection provider**: own milestone after this plan. The
+  transport API is already the Steamworks one by design (GNS is its OSS
+  build), so the work is not the networking — it is CMake integration of the
+  Steamworks SDK behind a build option, ConnectionId↔SteamID identity
+  plumbing, and the target-picking UI (lobby / friend join), which is
+  genuinely new surface. EOS or other providers ride the same §5 seam if ever
+  wanted.
 - **Parent / hierarchy replication**: deferred for hierarchy *semantics*
   (mirrored children of local parents, strip interaction, transform spaces) —
   the EntityRef wire machinery itself already exists and stays tested. Mirrors
