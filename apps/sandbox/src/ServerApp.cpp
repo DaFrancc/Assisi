@@ -75,20 +75,17 @@ void ServerApp::OnStart()
         return;
     }
 
-    _transport = std::make_unique<Net::NetTransport>();
+    NetSync::ReplicationConfig config;
+    config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
+    _session          = std::make_unique<NetSync::NetSession>(_scene, config);
 
     if (_options.role == ServerRole::Host)
     {
-        if (!_transport->Listen(_options.port))
+        if (!_session->Host(_options.port))
         {
-            Log::Error("Server: could not listen on port {}: {}", _options.port, _transport->LastError());
             RequestClose();
             return;
         }
-
-        NetSync::ReplicationConfig config;
-        config.tickRateHz  = static_cast<std::uint32_t>(GetConfig().physicsHz);
-        _replicationServer = std::make_unique<NetSync::ReplicationServer>(*_transport, _scene, config);
 
         // A demo world that actually moves. Delta replication is only
         // interesting against change; a static level converges once and then
@@ -103,71 +100,11 @@ void ServerApp::OnStart()
             _moving.push_back(entity);
         }
 
-        Log::Info("Server: listening on port {} ({} replicated entities, snapshots at {} Hz).", _options.port,
-                  _moving.size(), _replicationServer->Config().snapshotHz);
+        Log::Info("Server: listening on port {} ({} replicated entities).", _options.port, _moving.size());
     }
-    else
+    else if (!_session->Join(_options.address, _options.port))
     {
-        _serverConnection = _transport->Connect(_options.address, _options.port);
-        if (_serverConnection == Net::InvalidConnection)
-        {
-            Log::Error("Server: could not connect to {}:{}: {}", _options.address, _options.port,
-                       _transport->LastError());
-            RequestClose();
-            return;
-        }
-        _replicationClient =
-            std::make_unique<NetSync::ReplicationClient>(*_transport, _scene, _serverConnection);
-        _clock = std::make_unique<NetSync::NetClock>(GetConfig().physicsHz);
-        Log::Info("Server: connecting to {}:{}...", _options.address, _options.port);
-    }
-}
-
-void ServerApp::PumpNetwork()
-{
-    if (!_transport)
-        return;
-
-    _transport->Poll(_events);
-    for (const Net::NetEvent &event : _events)
-    {
-        switch (event.type)
-        {
-        case Net::NetEvent::Type::Connected:
-            if (_replicationServer)
-            {
-                _clients.push_back(event.connection);
-                _replicationServer->AddConnection(event.connection);
-                Log::Info("Server: client {} connected ({} total).", event.connection, _clients.size());
-            }
-            else
-            {
-                Log::Info("Server: connected to host.");
-            }
-            break;
-
-        case Net::NetEvent::Type::Disconnected:
-            if (_replicationServer)
-            {
-                _replicationServer->RemoveConnection(event.connection);
-                std::erase(_clients, event.connection);
-                Log::Info("Server: client {} disconnected: {} ({} left).", event.connection, event.closeDebug,
-                          _clients.size());
-            }
-            else
-            {
-                Log::Warn("Server: lost the host connection: {}", event.closeDebug);
-                RequestClose();
-            }
-            break;
-
-        case Net::NetEvent::Type::Message:
-            if (_replicationServer)
-                _replicationServer->HandleMessage(event.connection, event.payload);
-            else if (_replicationClient)
-                _replicationClient->HandleMessage(event.payload);
-            break;
-        }
+        RequestClose();
     }
 }
 
@@ -175,7 +112,8 @@ void ServerApp::OnFixedUpdate(float dt)
 {
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
-    PumpNetwork();
+    if (_session)
+        _session->Poll();
 
     _physics.Update(dt);
 
@@ -189,31 +127,27 @@ void ServerApp::OnFixedUpdate(float dt)
             transform->position.y = std::sin(phase + static_cast<float>(i));
     }
 
-    if (_replicationServer)
-    {
-        // After the simulation: a snapshot describes the world at the end of the
-        // tick it is stamped with.
-        _replicationServer->Tick(GetSimTick());
-    }
-    else if (_replicationClient && _replicationClient->IsSynchronized())
-    {
-        _clock->Tick();
-        _clock->OnSnapshot(_replicationClient->Feedback(), 0);
-
-        // A headless client has no devices to sample, so this is an empty
-        // command targeting the right tick — enough to exercise the input path
-        // and give the server something to measure its buffer depth against.
-        NetSync::InputCommand command;
-        command.tick = _clock->CommandTick();
-        _inputBuffer.Push(command);
-        _replicationClient->SendInput(_inputBuffer);
-    }
+    // After the simulation: a snapshot describes the world at the end of the
+    // tick it is stamped with. A headless client has no devices to sample, so
+    // it sends an empty command — enough to exercise the input path and give
+    // the server something to measure its buffer depth against.
+    if (_session)
+        _session->Tick(GetSimTick());
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
         RequestClose();
 }
 
-void ServerApp::OnUpdate(float /*dt*/) { ReportStatus(); }
+void ServerApp::OnUpdate(float /*dt*/)
+{
+    // Smooth remote entities for rendering. A headless client renders nothing,
+    // but running it here keeps this loop the same shape as a windowed one —
+    // and it is the only place a bug in it would show up in a soak.
+    if (_session)
+        _session->Interpolate();
+
+    ReportStatus();
+}
 
 void ServerApp::ReportStatus()
 {
@@ -229,31 +163,23 @@ void ServerApp::ReportStatus()
     _lastReportSeconds           = now;
     _lastReportTick              = tick;
 
-    if (_replicationServer)
+    if (!_session || !_session->IsActive())
     {
-        std::uint64_t snapshots = 0;
-        std::uint64_t bytes     = 0;
-        for (const Net::ConnectionId client : _clients)
-        {
-            if (const NetSync::ConnectionDiagnostics *diagnostics = _replicationServer->Diagnostics(client))
-            {
-                snapshots += diagnostics->snapshotsSent;
-                bytes += diagnostics->bytesSent;
-            }
-        }
-        Log::Info("Server: tick {} ({:.1f} Hz), {} client(s), {} snapshots, {} bytes sent", tick, tickRate,
-                  _clients.size(), snapshots, bytes);
+        Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
+        return;
     }
-    else if (_replicationClient)
+
+    const NetSync::SessionStats stats = _session->Stats();
+    if (_session->IsHost())
     {
-        Log::Info("Client: tick {} ({:.1f} Hz), {}, {} entities, {} snapshots applied, {} rejected, server tick {}",
-                  tick, tickRate, _replicationClient->IsSynchronized() ? "synchronized" : "not synchronized",
-                  _replicationClient->ReplicatedEntityCount(), _replicationClient->SnapshotsApplied(),
-                  _replicationClient->SnapshotsRejected(), _replicationClient->LastAppliedTick());
+        Log::Info("Server: tick {} ({:.1f} Hz), {} client(s), {} snapshots, {} bytes sent", tick, tickRate,
+                  stats.clientCount, stats.snapshotsSent, stats.bytesSent);
     }
     else
     {
-        Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
+        Log::Info("Client: tick {} ({:.1f} Hz), {}, {} entities, {} applied, {} rejected, server tick {}", tick,
+                  tickRate, _session->StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
+                  stats.snapshotsRejected, stats.serverTick);
     }
 }
 
@@ -267,22 +193,19 @@ void ServerApp::FlushDeferred()
 
 void ServerApp::OnShutdown()
 {
-    if (_replicationClient)
+    if (_session && _session->IsClient())
     {
+        const NetSync::SessionStats stats = _session->Stats();
         Log::Info("Client: stopped after {} ticks — {} snapshots applied, {} rejected, {} entities mirrored.",
-                  GetSimTick(), _replicationClient->SnapshotsApplied(), _replicationClient->SnapshotsRejected(),
-                  _replicationClient->ReplicatedEntityCount());
+                  GetSimTick(), stats.snapshotsApplied, stats.snapshotsRejected, stats.replicatedEntities);
     }
     else
     {
         Log::Info("Server: stopped after {} ticks.", GetSimTick());
     }
 
-    // Order matters: the replication objects hold a reference to the transport,
-    // so they have to go first.
-    _replicationClient.reset();
-    _replicationServer.reset();
-    _transport.reset();
+    // Before the scene and physics world it holds a reference to.
+    _session.reset();
 }
 
 } // namespace Sandbox

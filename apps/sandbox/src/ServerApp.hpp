@@ -18,10 +18,7 @@
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/Net/NetTransport.hpp>
-#include <Assisi/NetSync/InputCommand.hpp>
-#include <Assisi/NetSync/NetClock.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
 #include <cstdint>
@@ -70,7 +67,6 @@ class ServerApp final : public Assisi::App::Application
     void FlushDeferred() override;
 
   private:
-    void PumpNetwork();
     void ReportStatus();
 
     ServerOptions _options;
@@ -80,20 +76,11 @@ class ServerApp final : public Assisi::App::Application
 
     /// Constructed only in a networked role, so the offline mode never
     /// initializes GameNetworkingSockets at all.
-    std::unique_ptr<Assisi::Net::NetTransport>          _transport;
-    std::unique_ptr<Assisi::NetSync::ReplicationServer> _replicationServer;
-    std::unique_ptr<Assisi::NetSync::ReplicationClient> _replicationClient;
-    std::unique_ptr<Assisi::NetSync::NetClock>          _clock;
-
-    Assisi::Net::ConnectionId              _serverConnection = Assisi::Net::InvalidConnection;
-    std::vector<Assisi::Net::ConnectionId> _clients;
-    std::vector<Assisi::Net::NetEvent>     _events;
+    std::unique_ptr<Assisi::NetSync::NetSession> _session;
 
     /// Host only: the entities it moves each tick, so the demo world is
     /// actually in motion.
     std::vector<Assisi::ECS::Entity> _moving;
-
-    Assisi::NetSync::InputCommandBuffer _inputBuffer;
 
     double        _lastReportSeconds = 0.0;
     std::uint64_t _lastReportTick    = 0;

@@ -669,6 +669,10 @@ void EditorApp::OnFixedUpdate(float dt)
     if (!IsSimulating())
         return;
 
+    // Network first: a command that arrived for this tick should be applied on
+    // this tick, not the next one.
+    PollNetSession();
+
     // Every simulated world steps, and each runs its OWN FixedUpdate systems
     // immediately before its own physics — the Unity/Unreal convention (apply
     // forces this tick, then simulate them), now held per world rather than only
@@ -703,6 +707,10 @@ void EditorApp::OnFixedUpdate(float dt)
                 world.physics.CaptureState();
             }
         });
+
+    // Last: a snapshot describes the world at the *end* of the tick it is
+    // stamped with, so it has to be built after everything that moves it.
+    TickNetSession();
 }
 
 void EditorApp::OnUpdate(float dt)
@@ -808,6 +816,10 @@ void EditorApp::OnUpdate(float dt)
                         Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
                                                             world.streamingPending);
                     });
+
+    // Smooth mirrored entities into the scene before anything reads transforms
+    // this frame. A no-op unless this editor is a connected client.
+    InterpolateNetSession();
 
     // Worlds that simulate but are not drawn get neither the pose write-back nor
     // the transform propagation the render path does for the world it draws. Give
@@ -1186,6 +1198,7 @@ void EditorApp::OnImGui()
     { ASSISI_PROFILE_SCOPE("panel/diagnostics");  DrawDiagnosticsWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/chiara");       DrawChiaraWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/game-control"); DrawGameControlWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/network");      DrawNetworkWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/entity-list");  DrawEntityListWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/history");      DrawHistoryWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/levels");       DrawLevelsWindow(); }

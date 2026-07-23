@@ -1,0 +1,264 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+#include <Assisi/NetSync/NetSession.hpp>
+
+#include <Assisi/Core/Logger.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
+
+#include <format>
+
+namespace Assisi::NetSync
+{
+
+NetSession::NetSession(ECS::Scene &scene, ReplicationConfig config) : _scene(scene), _config(config) {}
+
+NetSession::~NetSession() { Disconnect(); }
+
+void NetSession::EnsureTransport()
+{
+    if (!_transport)
+        _transport = std::make_unique<Net::NetTransport>();
+}
+
+bool NetSession::Host(std::uint16_t port)
+{
+    Disconnect();
+    EnsureTransport();
+
+    if (!_transport->Listen(port))
+    {
+        _lastError = std::format("could not listen on port {}: {}", port, _transport->LastError());
+        Core::Log::Error("NetSession: {}", _lastError);
+        _transport.reset();
+        return false;
+    }
+
+    _server = std::make_unique<ReplicationServer>(*_transport, _scene, _config);
+    _role   = SessionRole::Host;
+    _lastError.clear();
+    Core::Log::Info("NetSession: hosting on port {} (snapshots at {} Hz).", port, _server->Config().snapshotHz);
+    return true;
+}
+
+bool NetSession::Join(std::string_view address, std::uint16_t port)
+{
+    Disconnect();
+    EnsureTransport();
+
+    _connection = _transport->Connect(address, port);
+    if (_connection == Net::InvalidConnection)
+    {
+        _lastError = std::format("could not connect to {}:{}: {}", address, port, _transport->LastError());
+        Core::Log::Error("NetSession: {}", _lastError);
+        _transport.reset();
+        return false;
+    }
+
+    _client = std::make_unique<ReplicationClient>(*_transport, _scene, _connection);
+    _clock  = std::make_unique<NetClock>(_config.tickRateHz);
+    _role   = SessionRole::Client;
+    _lastError.clear();
+    Core::Log::Info("NetSession: connecting to {}:{}...", address, port);
+    return true;
+}
+
+void NetSession::Disconnect()
+{
+    if (_client)
+    {
+        // A client's mirrored entities belong to the session, not the scene:
+        // leaving them behind would strand a frozen copy of someone else's
+        // world in a scene the player is still looking at.
+        _client->Reset();
+        _scene.FlushDestroyed();
+    }
+
+    // Order matters — both halves hold a reference to the transport.
+    _client.reset();
+    _server.reset();
+    _clock.reset();
+    _transport.reset();
+
+    _clients.clear();
+    _connection = Net::InvalidConnection;
+    _role       = SessionRole::Offline;
+    _inputBuffer.Clear();
+}
+
+void NetSession::Poll()
+{
+    if (!_transport)
+        return;
+
+    _transport->Poll(_events);
+    for (const Net::NetEvent &event : _events)
+    {
+        switch (event.type)
+        {
+        case Net::NetEvent::Type::Connected:
+            if (_server)
+            {
+                _clients.push_back(event.connection);
+                _server->AddConnection(event.connection);
+                Core::Log::Info("NetSession: client {} connected ({} total).", event.connection, _clients.size());
+            }
+            break;
+
+        case Net::NetEvent::Type::Disconnected:
+            if (_server)
+            {
+                _server->RemoveConnection(event.connection);
+                std::erase(_clients, event.connection);
+                Core::Log::Info("NetSession: client {} disconnected: {} ({} left).", event.connection,
+                                event.closeDebug, _clients.size());
+            }
+            else if (_client && event.connection == _connection)
+            {
+                _lastError = event.closeDebug.empty() ? "connection closed by the host" : event.closeDebug;
+                Core::Log::Warn("NetSession: lost the host connection: {}", _lastError);
+                // Tear down rather than sit in a half-dead state. v1's reconnect
+                // is a full rejoin, so there is nothing here worth preserving.
+                Disconnect();
+                return;
+            }
+            break;
+
+        case Net::NetEvent::Type::Message:
+            if (_server)
+                _server->HandleMessage(event.connection, event.payload);
+            else if (_client)
+                _client->HandleMessage(event.payload);
+            break;
+        }
+    }
+}
+
+void NetSession::Tick(std::uint64_t simTick, const InputCommand *localInput)
+{
+    _simTick = simTick;
+
+    if (_server)
+    {
+        _server->Tick(simTick);
+        return;
+    }
+
+    if (!_client || !_client->IsSynchronized())
+        return;
+
+    _clock->Tick();
+
+    Net::ConnectionStats transportStats;
+    const std::int32_t   pingMs =
+        _transport->GetConnectionStats(_connection, transportStats) ? transportStats.pingMs : 0;
+    _clock->OnSnapshot(_client->Feedback(), pingMs);
+
+    // Input is stamped with the *clock's* tick, not the local sim tick: the
+    // whole job of the clock is to run far enough ahead that this command lands
+    // just before the server simulates that tick.
+    InputCommand command = localInput != nullptr ? *localInput : InputCommand{};
+    command.tick         = _clock->CommandTick();
+    _inputBuffer.Push(command);
+    _client->SendInput(_inputBuffer);
+}
+
+void NetSession::Interpolate()
+{
+    // A host is at server time by definition — it *is* the server — so there is
+    // nothing to smooth and nothing to delay.
+    if (!_client || !_client->IsSynchronized() || !_clock)
+        return;
+
+    _client->Interpolate(_client->RenderTimeFor(static_cast<double>(_clock->EstimatedServerTick())));
+}
+
+const InputCommand *NetSession::ConsumeInput(Net::ConnectionId client, std::uint64_t tick)
+{
+    return _server ? _server->ConsumeInput(client, tick) : nullptr;
+}
+
+std::string NetSession::StatusText() const
+{
+    switch (_role)
+    {
+    case SessionRole::Offline:
+        return _lastError.empty() ? "Offline" : std::format("Offline — {}", _lastError);
+
+    case SessionRole::Host:
+        return std::format("Hosting — {} client{}", _clients.size(), _clients.size() == 1 ? "" : "s");
+
+    case SessionRole::Client:
+        if (!_client->RejectMessage().empty())
+            return std::format("Rejected — {}", _client->RejectMessage());
+        if (!_client->IsSynchronized())
+            return "Connecting...";
+        if (!_client->IsWorldComplete())
+            return std::format("Joining — {} entities so far", _client->ReplicatedEntityCount());
+        return std::format("Connected — {} entities", _client->ReplicatedEntityCount());
+    }
+    return "Offline";
+}
+
+SessionStats NetSession::Stats() const
+{
+    SessionStats stats;
+    stats.role = _role;
+
+    if (_server)
+    {
+        stats.clientCount = _clients.size();
+        for (const Net::ConnectionId client : _clients)
+        {
+            if (const ConnectionDiagnostics *diagnostics = _server->Diagnostics(client))
+            {
+                stats.snapshotsSent += diagnostics->snapshotsSent;
+                stats.bytesSent += diagnostics->bytesSent;
+            }
+            Net::ConnectionStats transportStats;
+            if (_transport->GetConnectionStats(client, transportStats))
+            {
+                // Worst case across clients, not an average: a mean hides the
+                // one player having a bad time, which is the only one worth
+                // knowing about.
+                stats.pingMs = std::max(stats.pingMs, transportStats.pingMs);
+                stats.outBytesPerSec += transportStats.outBytesPerSec;
+                stats.inBytesPerSec += transportStats.inBytesPerSec;
+            }
+        }
+
+        for (auto [entity, replicated] : const_cast<ECS::Scene &>(_scene).Query<Replicated>())
+        {
+            (void)entity;
+            (void)replicated;
+            ++stats.replicatedEntities;
+        }
+    }
+    else if (_client)
+    {
+        stats.synchronized      = _client->IsSynchronized();
+        stats.worldComplete     = _client->IsWorldComplete();
+        stats.snapshotsApplied  = _client->SnapshotsApplied();
+        stats.snapshotsRejected = _client->SnapshotsRejected();
+        stats.serverTick        = _client->LastAppliedTick();
+        stats.inputBufferDepth  = _client->Feedback().inputBufferDepth;
+        stats.replicatedEntities = _client->ReplicatedEntityCount();
+        if (_clock)
+        {
+            stats.clockCorrections = _clock->CorrectionCount();
+            stats.clockLead        = _clock->Lead();
+        }
+
+        Net::ConnectionStats transportStats;
+        if (_transport->GetConnectionStats(_connection, transportStats))
+        {
+            stats.pingMs           = transportStats.pingMs;
+            stats.connectionQuality = transportStats.connectionQualityLocal;
+            stats.inBytesPerSec    = transportStats.inBytesPerSec;
+            stats.outBytesPerSec   = transportStats.outBytesPerSec;
+        }
+    }
+
+    return stats;
+}
+
+} // namespace Assisi::NetSync

@@ -27,6 +27,7 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/GeometryArena.hpp>
@@ -172,6 +173,11 @@ class EditorApp : public Assisi::App::Application
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see EditorPlay.cpp
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See EditorApp.cpp
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
+    void DrawNetworkWindow();     // Host/Join/Disconnect + live net stats; see EditorNet.cpp
+    void ShutdownNetSession();    // tear down and forget; safe to call with no session
+    void PollNetSession();        // top of the fixed step: connection events + messages
+    void TickNetSession();        // end of the fixed step: snapshots (host) or input (client)
+    void InterpolateNetSession(); // once per frame: smooth mirrored entities
 
     /// @brief Diagnostic (end of OnImGui): warns with full ImGui internal state
     /// when a widget holds ActiveId for seconds with no mouse button down and no
@@ -446,6 +452,16 @@ class EditorApp : public Assisi::App::Application
     Assisi::App::World                *_world   = nullptr; ///< The active world.
     Assisi::ECS::Scene                *_scene   = nullptr; ///< == &_world->scene.
     Assisi::Physics::PhysicsWorld     *_physics = nullptr; ///< == &_world->physics.
+
+    /// The networked session, when there is one. Created on Host/Join and
+    /// destroyed on Disconnect (and before any level load), because it holds a
+    /// reference to the scene it replicates and a level load replaces that
+    /// scene wholesale.
+    std::unique_ptr<Assisi::NetSync::NetSession> _netSession;
+    /// UI state for the network panel, kept here rather than in statics so two
+    /// editors in one process would not share it.
+    std::array<char, 64> _netAddress{"127.0.0.1"};
+    int32_t              _netPort = 27015;
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;

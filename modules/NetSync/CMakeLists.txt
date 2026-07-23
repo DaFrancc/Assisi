@@ -7,11 +7,13 @@ target_sources(Assisi-NetSync
     "include/Assisi/NetSync/NetClock.hpp"
     "include/Assisi/NetSync/NetComponents.hpp"
     "include/Assisi/NetSync/NetProtocol.hpp"
+    "include/Assisi/NetSync/NetSession.hpp"
     "include/Assisi/NetSync/Replication.hpp"
   PRIVATE
     "src/InputCommand.cpp"
     "src/NetClock.cpp"
     "src/NetProtocol.cpp"
+    "src/NetSession.cpp"
     "src/Replication.cpp"
 )
 
