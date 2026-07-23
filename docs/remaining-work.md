@@ -262,9 +262,10 @@ These were real and unrecorded — the docs assumed some of them existed.
 
 ## 5. Decisions waiting on the user (unblock further work; zero code until decided)
 
-**Only one remains** — the four round-6 items below were decided and fixed on
-2026-07-22 (branch `hygiene/round6`), and Template Phase 3 was decided and
-executed the same day (branch `extract-editor`); they are kept with their
+**None remain open** — the four round-6 items below were decided and fixed on
+2026-07-22 (branch `hygiene/round6`), Template Phase 3 was decided and
+executed the same day (branch `extract-editor`), and the milestone order fell
+last (networking first, branch `networking`). All are kept with their
 rationale so the reasoning is not lost.
 
 Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
@@ -300,10 +301,11 @@ Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
   else fail with the reason. An sRGB surface double-encodes gamma against
   `cube_min.frag`'s own `pow`, so it stays a last resort until L2 moves that
   encode into the tonemap pass.
-- **Milestone order: networking stages vs. lighting stages.** Both are now
-  fully designed with nothing built; §1 and §4 don't depend on each other.
-  Pick which thread runs first (or interleave — L2 is small enough to slot in
-  anywhere).
+- ~~**Milestone order: networking stages vs. lighting stages.**~~ **Decided
+  2026-07-22: networking first** (branch `networking`, staged plan in
+  `networking-design-notes.md` N0–N7). Lighting L1–L6 follows; the option to
+  slot L2 (HDR pipeline) in between remains open since it's small and
+  independent. With this, §5 has **zero** open decisions.
 
 ## Excluded — deferred by design (do not resurrect without cause)
 
