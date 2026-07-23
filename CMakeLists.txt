@@ -821,6 +821,11 @@ if (ASSISI_ENABLE_NETWORKING)
   add_subdirectory(modules/Net)
 endif()
 add_subdirectory(modules/ECS)
+# NetSync sits above ECS (it replicates entities) and above Net (it sends over
+# it), and — like Physics — links neither Render nor Runtime.
+if (ASSISI_ENABLE_NETWORKING)
+  add_subdirectory(modules/NetSync)
+endif()
 add_subdirectory(modules/Runtime)
 add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
