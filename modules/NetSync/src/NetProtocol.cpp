@@ -88,6 +88,7 @@ void WriteSnapshotHeader(const SnapshotHeader &header, Core::BitWriter &writer)
     writer.WriteVarUInt64(header.baselineTick);
     writer.WriteVarUInt32(header.inputBufferDepth);
     writer.WriteVarUInt32(header.starvedTicks);
+    writer.WriteBool(header.worldComplete);
 }
 
 bool ReadSnapshotHeader(Core::BitReader &reader, SnapshotHeader &outHeader)
@@ -97,6 +98,7 @@ bool ReadSnapshotHeader(Core::BitReader &reader, SnapshotHeader &outHeader)
     header.baselineTick     = reader.ReadVarUInt64();
     header.inputBufferDepth = reader.ReadVarUInt32();
     header.starvedTicks     = reader.ReadVarUInt32();
+    header.worldComplete    = reader.ReadBool();
 
     // A baseline in the future describes a snapshot we cannot have sent.
     if (!reader.Ok() || header.baselineTick > header.serverTick)

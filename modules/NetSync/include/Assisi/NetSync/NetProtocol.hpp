@@ -101,6 +101,16 @@ struct SnapshotHeader
     /// How many recent ticks found that buffer empty. Together with the depth,
     /// this is everything NetClock needs to steer the client's lead.
     std::uint32_t starvedTicks = 0;
+
+    /// True once the client has acknowledged every entity the server currently
+    /// has — i.e. its initial download is complete and it is watching a live
+    /// world rather than still receiving one.
+    ///
+    /// A joining client's baseline is spread across however many snapshots the
+    /// byte budget needs, so "am I done joining?" is not a question it can
+    /// answer locally: it cannot tell a small world from the first page of a
+    /// large one. Only the server knows.
+    bool worldComplete = false;
 };
 
 void        WriteMessageType(MessageType type, Core::BitWriter &writer);

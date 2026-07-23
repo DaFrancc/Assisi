@@ -23,6 +23,21 @@ std::uint64_t PackEntity(ECS::Entity entity)
     return (static_cast<std::uint64_t>(entity.index) << 32) | static_cast<std::uint64_t>(entity.generation);
 }
 
+/// `(netId, componentId)` as one sortable integer. The component-set diff that
+/// finds removals is a set_difference over these, so they must order by entity
+/// first and component second — which the shift gives for free.
+std::uint64_t PackComponentRef(NetId netId, Core::Reflect::ComponentId componentId)
+{
+    return (static_cast<std::uint64_t>(netId) << 32) | static_cast<std::uint64_t>(componentId);
+}
+
+NetId NetIdOfRef(std::uint64_t packed) { return static_cast<NetId>(packed >> 32); }
+
+Core::Reflect::ComponentId ComponentIdOfRef(std::uint64_t packed)
+{
+    return static_cast<Core::Reflect::ComponentId>(packed & 0xFFFFFFFFull);
+}
+
 ECS::Entity UnpackEntity(std::uint64_t packed)
 {
     return ECS::Entity{static_cast<std::uint32_t>(packed >> 32), static_cast<std::uint32_t>(packed & 0xFFFFFFFFull)};
@@ -203,6 +218,7 @@ void ReplicationServer::HandleAck(Connection &connection, Core::BitReader &reade
         return; // acking something we never sent, or evicted long ago
 
     connection.acked           = std::move(record->netIds);
+    connection.ackedComponents = std::move(record->components);
     connection.ackedTick       = record->serverTick;
     connection.ackedChangeTick = record->sceneChangeTick;
     ++connection.diagnostics.acksReceived;
@@ -293,8 +309,9 @@ void ReplicationServer::ReconcileNetIds()
     }
 }
 
-std::uint32_t ReplicationServer::WriteEntityComponents(ECS::Entity entity, std::uint64_t sinceChangeTick,
-                                                       Core::BitWriter &writer)
+void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, std::uint64_t sinceChangeTick,
+                                              const Connection &connection, Core::BitWriter &writer,
+                                              std::vector<std::uint64_t> &outComponents)
 {
     Core::Reflect::CodecContext context;
     context.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
@@ -302,13 +319,45 @@ std::uint32_t ReplicationServer::WriteEntityComponents(ECS::Entity entity, std::
         // Entity references cross the wire as NetIds. A reference to something
         // that does not replicate resolves to zero rather than to a local handle
         // the peer would misread as one of its own.
-        const NetId netId = NetIdOf(UnpackEntity(packed));
-        return static_cast<std::uint64_t>(netId);
+        const NetId referenced = NetIdOf(UnpackEntity(packed));
+        return static_cast<std::uint64_t>(referenced);
     };
 
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    std::uint32_t written = 0;
+    // What this entity has right now, in the same packed, sorted form as the
+    // acked baseline — _replicatedComponents is registry order, which is
+    // ascending by id, so this comes out sorted without a sort.
+    const std::size_t componentsBegin = outComponents.size();
+    for (const Core::Reflect::ComponentId id : _replicatedComponents)
+    {
+        const Core::Reflect::ComponentMeta *meta = registry.ById(id);
+        if (meta != nullptr && meta->getByEntity(&_scene, entity.index, entity.generation) != nullptr)
+            outComponents.push_back(PackComponentRef(netId, id));
+    }
+
+    // Removals. Change detection stamps writes, not removals — there is no tick
+    // to consult for "this component is gone" — so it is found by diffing this
+    // entity's slice of the acked baseline against what it has now. Exactly the
+    // shape of the despawn comparison, one level down.
+    const auto ackedLow  = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
+                                            PackComponentRef(netId, 0));
+    const auto ackedHigh = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
+                                            PackComponentRef(netId + 1, 0));
+
+    std::vector<Core::Reflect::ComponentId> removed;
+    for (auto it = ackedLow; it != ackedHigh; ++it)
+    {
+        const bool stillPresent = std::binary_search(outComponents.begin() + static_cast<std::ptrdiff_t>(componentsBegin),
+                                                     outComponents.end(), *it);
+        if (!stillPresent)
+            removed.push_back(ComponentIdOfRef(*it));
+    }
+
+    writer.WriteVarUInt32(static_cast<std::uint32_t>(removed.size()));
+    for (const Core::Reflect::ComponentId id : removed)
+        writer.WriteVarUInt32(id);
+
     for (const Core::Reflect::ComponentId id : _replicatedComponents)
     {
         const Core::Reflect::ComponentMeta *meta = registry.ById(id);
@@ -327,10 +376,8 @@ std::uint32_t ReplicationServer::WriteEntityComponents(ECS::Entity entity, std::
 
         writer.WriteBool(true);
         Core::Reflect::WriteComponent(*meta, component, writer, Core::Reflect::kAllFields, &context);
-        ++written;
     }
     writer.WriteBool(false);
-    return written;
 }
 
 void ReplicationServer::SendSnapshot(Connection &connection)
@@ -343,6 +390,11 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     header.baselineTick     = connection.ackedTick;
     header.inputBufferDepth = static_cast<std::uint32_t>(connection.input.Depth());
     header.starvedTicks     = static_cast<std::uint32_t>(connection.input.StarvedTicks());
+    // Complete when the acked set already covers every live entity. Computed
+    // against the *previous* ack rather than this snapshot, because that is the
+    // only thing the client has actually confirmed receiving.
+    header.worldComplete = std::includes(connection.acked.begin(), connection.acked.end(), _liveNetIds.begin(),
+                                         _liveNetIds.end());
     WriteSnapshotHeader(header, writer);
 
     // Despawns: everything the client is known to have that no longer exists.
@@ -379,7 +431,17 @@ void ReplicationServer::SendSnapshot(Connection &connection)
             // it does not have must be left out of the record entirely, so the
             // next snapshot still treats it as a spawn.
             if (known)
+            {
                 record.netIds.push_back(netId);
+                // Carry its component baseline forward untouched: we told the
+                // client nothing about this entity, so nothing about it changed
+                // from the client's point of view.
+                const auto low  = std::lower_bound(connection.ackedComponents.begin(),
+                                                   connection.ackedComponents.end(), PackComponentRef(netId, 0));
+                const auto high = std::lower_bound(connection.ackedComponents.begin(),
+                                                   connection.ackedComponents.end(), PackComponentRef(netId + 1, 0));
+                record.components.insert(record.components.end(), low, high);
+            }
             continue;
         }
 
@@ -387,14 +449,16 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         writer.WriteVarUInt32(netId);
         writer.WriteBool(!known); // isSpawn
 
-        WriteEntityComponents(entity, known ? connection.ackedChangeTick : 0, writer);
+        WriteEntityComponents(netId, entity, known ? connection.ackedChangeTick : 0, connection, writer,
+                              record.components);
         record.netIds.push_back(netId);
     }
     writer.WriteBool(false);
 
-    // record.netIds is built in _liveNetIds order, which is sorted — keep that
-    // invariant explicit, since the ack path binary-searches it.
+    // Both baselines are built in _liveNetIds order, which is sorted — keep the
+    // invariant explicit, since the ack path binary-searches them.
     std::sort(record.netIds.begin(), record.netIds.end());
+    std::sort(record.components.begin(), record.components.end());
 
     connection.inFlight.push_back(std::move(record));
     while (connection.inFlight.size() > _config.maxInFlightSnapshots)
@@ -624,6 +688,23 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
         const ECS::Entity entity = it->second;
 
+        // Removals come first: a component the server has dropped must go
+        // before whatever else this block says about the entity, so a component
+        // both removed and re-added in one snapshot ends up added.
+        const std::uint32_t removedCount = reader.ReadVarUInt32();
+        if (!reader.Ok() || removedCount > 4096u)
+        {
+            reader.Invalidate();
+            return false;
+        }
+        for (std::uint32_t i = 0; i < removedCount; ++i)
+        {
+            const auto componentId = static_cast<Core::Reflect::ComponentId>(reader.ReadVarUInt32());
+            if (!reader.Ok())
+                return false;
+            _scene.RemoveById(entity, componentId);
+        }
+
         while (reader.Ok() && reader.ReadBool())
         {
             const Core::Reflect::ComponentId componentId = Core::Reflect::ReadComponentId(reader);
@@ -670,7 +751,8 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
     _lastAppliedTick = header.serverTick;
     ++_snapshotsApplied;
-    _feedback = ClockFeedback{header.serverTick, header.inputBufferDepth, header.starvedTicks};
+    _worldComplete = header.worldComplete;
+    _feedback      = ClockFeedback{header.serverTick, header.inputBufferDepth, header.starvedTicks};
 
     SendAck(header.serverTick);
     return true;
@@ -730,6 +812,7 @@ void ReplicationClient::Reset()
     _snapshotsApplied  = 0;
     _snapshotsRejected = 0;
     _synchronized      = false;
+    _worldComplete     = false;
     _rejectMessage.clear();
 }
 

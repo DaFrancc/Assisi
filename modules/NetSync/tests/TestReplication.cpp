@@ -21,6 +21,7 @@
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/TestNetComponents.hpp>
 
 #include <chrono>
 #include <cstdint>
@@ -371,6 +372,109 @@ TEST_CASE("the snapshot rate is clamped to a divisor of the tick rate")
     CHECK(harness.server.IsSnapshotTick(0));
     CHECK(harness.server.IsSnapshotTick(2));
     CHECK_FALSE(harness.server.IsSnapshotTick(3));
+}
+
+TEST_CASE("a component removed on the server is removed on the client")
+{
+    Harness harness;
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{42});
+    harness.Step(12);
+
+    const NetId       netId  = harness.server.NetIdOf(entity);
+    const ECS::Entity mirror = harness.client.EntityOf(netId);
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 42);
+
+    // Change detection has nothing to say about this: removal stamps no tick,
+    // so the server finds it by diffing the acked component set — the same way
+    // it finds despawns, one level down.
+    harness.serverScene.Remove<Test::Health>(entity);
+    harness.Step(12);
+
+    CHECK(harness.clientScene.Get<Test::Health>(mirror) == nullptr);
+    // The entity itself is untouched; only the component went away.
+    CHECK(harness.clientScene.IsAlive(mirror));
+    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) != nullptr);
+    CHECK(harness.client.SnapshotsRejected() == 0);
+}
+
+TEST_CASE("a component removed and re-added ends up present")
+{
+    Harness harness;
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {0.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{7});
+    harness.Step(12);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+
+    // Both happen between two snapshots, so one snapshot carries the removal
+    // *and* the re-add. Removals are applied first for exactly this reason.
+    harness.serverScene.Remove<Test::Health>(entity);
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{99});
+    harness.Step(12);
+
+    REQUIRE(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 99);
+}
+
+TEST_CASE("removals are not re-sent once acknowledged")
+{
+    Harness harness;
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {0.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{1});
+    harness.Step(12);
+    harness.serverScene.Remove<Test::Health>(entity);
+    harness.Step(12);
+
+    // Once the client has acked a snapshot without the component, the component
+    // is no longer in its baseline, so there is nothing left to diff against —
+    // an idle snapshot must go back to costing almost nothing.
+    const ConnectionDiagnostics *before = harness.server.Diagnostics(harness.serverSide());
+    REQUIRE(before != nullptr);
+    const std::uint64_t bytesBefore     = before->bytesSent;
+    const std::uint64_t snapshotsBefore = before->snapshotsSent;
+
+    harness.Step(30);
+
+    const ConnectionDiagnostics *after = harness.server.Diagnostics(harness.serverSide());
+    REQUIRE(after != nullptr);
+    const std::uint64_t idleSnapshots = after->snapshotsSent - snapshotsBefore;
+    REQUIRE(idleSnapshots > 0);
+    CHECK((after->bytesSent - bytesBefore) / idleSnapshots < 24);
+}
+
+TEST_CASE("the client is told when its initial world is complete")
+{
+    // A budget small enough that the world takes several snapshots to arrive.
+    ReplicationConfig config;
+    config.maxSnapshotBytes = 120;
+    Harness harness(config);
+    harness.Step(4);
+
+    for (int i = 0; i < 40; ++i)
+        SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f});
+
+    // Mid-download: synchronized, but the world is demonstrably not all here.
+    harness.Step(6);
+    CHECK(harness.client.IsSynchronized());
+    CHECK(harness.client.IsJoining());
+    CHECK_FALSE(harness.client.IsWorldComplete());
+    CHECK(harness.client.ReplicatedEntityCount() < 40);
+
+    harness.Step(150);
+
+    CHECK(harness.client.IsWorldComplete());
+    CHECK_FALSE(harness.client.IsJoining());
+    CHECK(harness.client.ReplicatedEntityCount() == 40);
 }
 
 TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")

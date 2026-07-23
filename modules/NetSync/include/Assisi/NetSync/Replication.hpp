@@ -144,6 +144,17 @@ class ReplicationServer
         std::uint64_t      serverTick      = 0;
         std::uint64_t      sceneChangeTick = 0;
         std::vector<NetId> netIds; ///< Sorted ascending.
+
+        /// Which components each of those entities had, as sorted
+        /// `(netId << 32) | componentId` pairs.
+        ///
+        /// Change detection stamps writes, not removals — nothing in the ECS
+        /// reports "this component is gone". So component removal is found the
+        /// same way entity despawn is: by comparing what the client is known to
+        /// have against what exists now. One packed integer per component per
+        /// entity, which is small and, unlike a fixed bitmask, has no ceiling on
+        /// how many component types the game may register.
+        std::vector<std::uint64_t> components;
     };
 
     struct Connection
@@ -152,11 +163,13 @@ class ReplicationServer
         bool                  ready = false; ///< Handshake completed.
         std::deque<SentSnapshot> inFlight;
 
-        /// The acked baseline: the entity set the client is known to have, and
-        /// the scene change tick it corresponds to.
-        std::vector<NetId> acked;
-        std::uint64_t      ackedTick       = 0;
-        std::uint64_t      ackedChangeTick = 0;
+        /// The acked baseline: the entity set the client is known to have, the
+        /// components those entities had, and the scene change tick it all
+        /// corresponds to.
+        std::vector<NetId>         acked;
+        std::vector<std::uint64_t> ackedComponents;
+        std::uint64_t              ackedTick       = 0;
+        std::uint64_t              ackedChangeTick = 0;
 
         InputCommandQueue     input;
         ConnectionDiagnostics diagnostics;
@@ -178,11 +191,14 @@ class ReplicationServer
     /// connection sees the same world.
     void ReconcileNetIds();
 
-    /// Write one entity's component blocks. @p sinceChangeTick of 0 means "send
-    /// everything" — the empty-baseline case that spawn and late-join share with
-    /// an ordinary delta.
-    /// @return the number of component blocks written.
-    std::uint32_t WriteEntityComponents(ECS::Entity entity, std::uint64_t sinceChangeTick, Core::BitWriter &writer);
+    /// Write one entity's removed-component list and then its changed-component
+    /// blocks. @p sinceChangeTick of 0 means "send everything" — the
+    /// empty-baseline case that spawn and late-join share with an ordinary
+    /// delta. Appends this entity's current `(netId, componentId)` pairs to
+    /// @p outComponents, which becomes the next baseline.
+    void WriteEntityComponents(NetId netId, ECS::Entity entity, std::uint64_t sinceChangeTick,
+                               const Connection &connection, Core::BitWriter &writer,
+                               std::vector<std::uint64_t> &outComponents);
 
     Net::NetTransport &_transport;
     ECS::Scene        &_scene;
@@ -222,6 +238,18 @@ class ReplicationClient
 
     /// @brief Whether the handshake succeeded and snapshots are being applied.
     [[nodiscard]] bool IsSynchronized() const { return _synchronized; }
+
+    /// @brief True once the server has confirmed we hold its whole world.
+    ///
+    /// Distinct from IsSynchronized(), which only means the handshake worked.
+    /// A joining client's initial world arrives over as many snapshots as the
+    /// byte budget needs, and it cannot tell a small world from the first page
+    /// of a large one — so this comes from the server. Use it to hold a loading
+    /// screen, or to decide when a mirrored scene is safe to render.
+    [[nodiscard]] bool IsWorldComplete() const { return _worldComplete; }
+
+    /// @brief Still receiving the initial world: synchronized but not complete.
+    [[nodiscard]] bool IsJoining() const { return _synchronized && !_worldComplete; }
 
     /// @brief Set when the server refused the connection, so a UI can say why.
     [[nodiscard]] const std::string &RejectMessage() const { return _rejectMessage; }
@@ -287,6 +315,7 @@ class ReplicationClient
     std::uint32_t _tickRateHz        = 60;
     std::uint32_t _snapshotHz        = 20;
     bool          _synchronized      = false;
+    bool          _worldComplete     = false;
 };
 
 } // namespace Assisi::NetSync

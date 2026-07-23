@@ -1,3 +1,18 @@
+# Scene indexes pools by ComponentId, so a component the replication tests store
+# must be reflected. Reflecting this INTERFACE lib (rather than the executable)
+# lets the generated OBJECT library inherit the include dir and ECS dependency
+# the registration code needs — the same shape modules/ECS/tests uses.
+add_library(Assisi-NetSync-TestComponents INTERFACE)
+target_include_directories(Assisi-NetSync-TestComponents INTERFACE
+  "${CMAKE_CURRENT_SOURCE_DIR}/support/include"
+)
+target_link_libraries(Assisi-NetSync-TestComponents INTERFACE Assisi::ECS)
+assisi_reflect(
+  TARGET Assisi-NetSync-TestComponents
+  HEADERS
+    support/include/Assisi/NetSync/TestNetComponents.hpp
+)
+
 add_executable(Assisi-NetSync-Tests
   main.cpp
   TestInputCommand.cpp
@@ -18,6 +33,7 @@ target_link_libraries(Assisi-NetSync-Tests
     Assisi::NetSync
     Assisi::TestSupport
     Assisi::Math
+    Assisi-NetSync-TestComponents
 )
 
 # The replication tests exercise real reflected components (ECS::Transform, and
@@ -28,6 +44,7 @@ target_link_libraries(Assisi-NetSync-Tests
 target_sources(Assisi-NetSync-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-NetSync-Generated>
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
+  $<TARGET_OBJECTS:Assisi-NetSync-TestComponents-Generated>
 )
 
 add_test(NAME NetSync COMMAND Assisi-NetSync-Tests)
