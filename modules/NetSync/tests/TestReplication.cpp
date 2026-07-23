@@ -24,6 +24,7 @@
 #include <Assisi/NetSync/TestNetComponents.hpp>
 
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <thread>
 #include <vector>
@@ -475,6 +476,105 @@ TEST_CASE("the client is told when its initial world is complete")
     CHECK(harness.client.IsWorldComplete());
     CHECK_FALSE(harness.client.IsJoining());
     CHECK(harness.client.ReplicatedEntityCount() == 40);
+}
+
+TEST_CASE("interpolation renders between snapshots rather than stepping at the snapshot rate")
+{
+    // Snapshot every tick, so "the two most recently applied snapshots" are
+    // unambiguously adjacent in the client's buffer. At the default 20 Hz a
+    // step can straddle a snapshot boundary or not, and the test would be
+    // asserting against timing it does not control.
+    ReplicationConfig config;
+    config.tickRateHz = 60;
+    config.snapshotHz = 60;
+    Harness harness(config);
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {0.f, 0.f, 0.f});
+    harness.Step(6);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+
+    // Move it in a straight line and record what actually arrived, rather than
+    // predicting it: the pipeline delay between "server sends" and "client
+    // applies" is not something this test should be encoding.
+    std::vector<std::pair<std::uint64_t, float>> samples;
+    for (int i = 1; i <= 6; ++i)
+    {
+        ECS::Transform *transform = harness.serverScene.GetMut<ECS::Transform>(entity);
+        REQUIRE(transform != nullptr);
+        transform->position.x = static_cast<float>(i);
+        harness.Step(1);
+
+        const std::uint64_t applied = harness.client.LastAppliedTick();
+        const float         shown   = harness.clientScene.Get<ECS::Transform>(mirror)->position.x;
+        if (samples.empty() || samples.back().first != applied)
+            samples.emplace_back(applied, shown);
+    }
+    REQUIRE(samples.size() >= 2);
+
+    const auto [previousTick, previousX] = samples[samples.size() - 2];
+    const auto [lastTick, lastX]         = samples.back();
+    REQUIRE(lastTick > previousTick);
+    REQUIRE(lastX != previousX);
+
+    SUBCASE("halfway between two snapshots is halfway between two positions")
+    {
+        const double midpoint = (static_cast<double>(previousTick) + static_cast<double>(lastTick)) / 2.0;
+        harness.client.Interpolate(midpoint);
+        CHECK(harness.clientScene.Get<ECS::Transform>(mirror)->position.x ==
+              doctest::Approx((previousX + lastX) / 2.f).epsilon(1e-3));
+    }
+
+    SUBCASE("exactly on a snapshot is exactly that snapshot")
+    {
+        harness.client.Interpolate(static_cast<double>(lastTick));
+        CHECK(harness.clientScene.Get<ECS::Transform>(mirror)->position.x == doctest::Approx(lastX));
+
+        harness.client.Interpolate(static_cast<double>(previousTick));
+        CHECK(harness.clientScene.Get<ECS::Transform>(mirror)->position.x == doctest::Approx(previousX));
+    }
+
+    SUBCASE("past the newest sample holds still rather than extrapolating")
+    {
+        // A guess that turns out wrong has to be corrected with a visible snap.
+        harness.client.Interpolate(static_cast<double>(lastTick) + 100.0);
+        CHECK(harness.clientScene.Get<ECS::Transform>(mirror)->position.x == doctest::Approx(lastX));
+    }
+
+    SUBCASE("before the oldest sample shows the oldest, not garbage")
+    {
+        harness.client.Interpolate(0.0);
+        const float shown = harness.clientScene.Get<ECS::Transform>(mirror)->position.x;
+        CHECK(shown <= lastX);
+        CHECK(std::isfinite(shown));
+    }
+}
+
+TEST_CASE("the interpolation delay is two snapshot intervals of the server's rate")
+{
+    ReplicationConfig config;
+    config.tickRateHz = 60;
+    config.snapshotHz = 20;
+    Harness harness(config);
+    harness.Step(4);
+
+    REQUIRE(harness.client.IsSynchronized());
+    // 60/20 = 3 ticks per snapshot, so two intervals is 6 ticks.
+    CHECK(harness.client.InterpolationDelayTicks() == doctest::Approx(6.0));
+    CHECK(harness.client.RenderTimeFor(100.0) == doctest::Approx(94.0));
+}
+
+TEST_CASE("interpolating an entity with no history at all is harmless")
+{
+    Harness harness;
+    harness.Step(4);
+    // Nothing replicated, nothing buffered — this must be a no-op rather than
+    // a walk off the end of an empty deque.
+    harness.client.Interpolate(0.0);
+    harness.client.Interpolate(1e9);
+    CHECK(harness.client.ReplicatedEntityCount() == 0);
 }
 
 TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")

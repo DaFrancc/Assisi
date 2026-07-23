@@ -16,6 +16,7 @@
 
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Math/GLM.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/NetClock.hpp>
@@ -276,6 +277,36 @@ class ReplicationClient
     [[nodiscard]] std::uint32_t ServerTickRateHz() const { return _tickRateHz; }
     [[nodiscard]] std::uint32_t ServerSnapshotHz() const { return _snapshotHz; }
 
+    /// @brief Write interpolated transforms into the scene for the render
+    /// moment @p serverTimeTicks (fractional server ticks).
+    ///
+    /// Snapshots arrive at 20-30 Hz while frames render at whatever the display
+    /// does, so showing the latest snapshot directly would step remote entities
+    /// at the snapshot rate — visible as stutter no amount of frame rate fixes.
+    /// Instead the client renders slightly in the *past*, between the two
+    /// snapshots straddling `serverTime - interpolationDelay`, which is smooth
+    /// as long as the buffer holds. The cost is exactly that delay in remote
+    /// positions, which is why it is kept to about two snapshot intervals
+    /// rather than made generous.
+    ///
+    /// Call once per frame, after applying whatever arrived. Extrapolation is
+    /// deliberately not attempted: when the buffer runs dry the last known pose
+    /// is held, because a guess that turns out wrong has to be corrected with a
+    /// visible snap, and holding still reads better than snapping.
+    void Interpolate(double serverTimeTicks);
+
+    /// @brief How far behind server time to render, in ticks. Defaults to two
+    /// snapshot intervals, set from the server's advertised rate at handshake.
+    [[nodiscard]] double InterpolationDelayTicks() const { return _interpolationDelayTicks; }
+    void                 SetInterpolationDelayTicks(double ticks) { _interpolationDelayTicks = ticks; }
+
+    /// @brief The render time to pass to Interpolate(), given an estimate of
+    /// current server time: simply that estimate minus the delay.
+    [[nodiscard]] double RenderTimeFor(double estimatedServerTick) const
+    {
+        return estimatedServerTick - _interpolationDelayTicks;
+    }
+
     /// @brief Drop every replicated entity and forget the session. v1's
     /// reconnect is a full rejoin, which starts here.
     void Reset();
@@ -299,12 +330,37 @@ class ReplicationClient
 
     void ResolvePendingRefs();
 
+    /// One entity's pose at one server tick. Only the transform is buffered:
+    /// it is the only component whose value between two snapshots is
+    /// meaningfully *interpolatable* — a health value or a state enum has no
+    /// halfway point worth showing.
+    struct TransformSample
+    {
+        std::uint64_t serverTick = 0;
+        glm::vec3     position{};
+        glm::quat     rotation{1.f, 0.f, 0.f, 0.f};
+        glm::vec3     scale{1.f, 1.f, 1.f};
+    };
+
+    /// Capture the current pose of every mirrored entity at @p serverTick.
+    /// Taken after a snapshot is applied and before Interpolate() has had a
+    /// chance to overwrite anything, so the buffer only ever holds
+    /// authoritative poses rather than previously interpolated ones.
+    void CaptureTransforms(std::uint64_t serverTick);
+
     Net::NetTransport &_transport;
     ECS::Scene        &_scene;
     Net::ConnectionId  _connection;
 
-    std::unordered_map<NetId, ECS::Entity> _entityByNetId;
-    std::vector<PendingRef>                _pendingRefs;
+    std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
+    std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
+    std::vector<PendingRef>                              _pendingRefs;
+
+    /// Samples kept per entity. Three is enough to straddle the render time
+    /// with one spare for a late snapshot; more only delays noticing a stall.
+    static constexpr std::size_t kMaxSamples = 3;
+
+    double _interpolationDelayTicks = 6.0; ///< Replaced at handshake from snapshotHz.
 
     ClockFeedback _feedback;
     std::string   _rejectMessage;

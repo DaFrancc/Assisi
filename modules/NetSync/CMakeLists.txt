@@ -27,6 +27,7 @@ target_link_libraries(Assisi-NetSync
   PUBLIC
     Assisi::Core
     Assisi::ECS
+    Assisi::Math
     Assisi::Net
 )
 

@@ -5,7 +5,10 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
+
+#include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
 #include <utility>
@@ -556,6 +559,11 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
 
         _tickRateHz = hello.tickRateHz;
         _snapshotHz = hello.snapshotHz;
+        // Two snapshot intervals: enough that one lost or late snapshot does
+        // not empty the buffer, and no more, since every tick of this is
+        // latency the player sees on everyone else's position.
+        _interpolationDelayTicks =
+            hello.snapshotHz > 0 ? 2.0 * static_cast<double>(hello.tickRateHz) / hello.snapshotHz : 6.0;
         if (hello.protocolHash != Core::Reflect::ProtocolHash())
         {
             // Say so locally too. The server also refuses, but a client that
@@ -749,6 +757,8 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
     ResolvePendingRefs();
 
+    CaptureTransforms(header.serverTick);
+
     _lastAppliedTick = header.serverTick;
     ++_snapshotsApplied;
     _worldComplete = header.worldComplete;
@@ -792,6 +802,95 @@ void ReplicationClient::ResolvePendingRefs()
                   });
 }
 
+void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
+{
+    for (const auto &[netId, entity] : _entityByNetId)
+    {
+        const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
+        if (transform == nullptr)
+            continue;
+
+        std::deque<TransformSample> &history = _transformHistory[netId];
+        // A repeat of the tick we already hold means a snapshot was applied
+        // twice; overwrite rather than append, so the buffer never holds two
+        // samples the interpolator would divide by zero between.
+        if (!history.empty() && history.back().serverTick == serverTick)
+            history.pop_back();
+
+        history.push_back(TransformSample{serverTick, transform->position, transform->rotation, transform->scale});
+        while (history.size() > kMaxSamples)
+            history.pop_front();
+    }
+
+    // Entities that went away take their history with them.
+    std::erase_if(_transformHistory,
+                  [this](const auto &entry) { return !_entityByNetId.contains(entry.first); });
+}
+
+void ReplicationClient::Interpolate(double serverTimeTicks)
+{
+    for (const auto &[netId, history] : _transformHistory)
+    {
+        if (history.empty())
+            continue;
+
+        const auto entity = _entityByNetId.find(netId);
+        if (entity == _entityByNetId.end() || !_scene.IsAlive(entity->second))
+            continue;
+
+        ECS::Transform *transform = _scene.GetMut<ECS::Transform>(entity->second);
+        if (transform == nullptr)
+            continue;
+
+        // Past the newest sample: hold the last known pose rather than
+        // extrapolate. A guess that turns out wrong costs a visible snap when
+        // the real value arrives, and standing still reads better than that.
+        if (serverTimeTicks >= static_cast<double>(history.back().serverTick) || history.size() == 1)
+        {
+            transform->position = history.back().position;
+            transform->rotation = history.back().rotation;
+            transform->scale    = history.back().scale;
+            continue;
+        }
+
+        // Before the oldest: the buffer does not reach back that far (a client
+        // that just joined, or a delay someone widened at runtime). Same
+        // answer — show what we have.
+        if (serverTimeTicks <= static_cast<double>(history.front().serverTick))
+        {
+            transform->position = history.front().position;
+            transform->rotation = history.front().rotation;
+            transform->scale    = history.front().scale;
+            continue;
+        }
+
+        // Find the straddling pair. The buffer is three deep, so a scan is
+        // both simpler and faster than anything cleverer.
+        const TransformSample *before = &history.front();
+        const TransformSample *after  = &history.back();
+        for (std::size_t i = 1; i < history.size(); ++i)
+        {
+            if (static_cast<double>(history[i].serverTick) >= serverTimeTicks)
+            {
+                before = &history[i - 1];
+                after  = &history[i];
+                break;
+            }
+        }
+
+        const double span = static_cast<double>(after->serverTick) - static_cast<double>(before->serverTick);
+        const float  t    = span > 0.0
+                                ? static_cast<float>((serverTimeTicks - static_cast<double>(before->serverTick)) / span)
+                                : 1.f;
+
+        transform->position = glm::mix(before->position, after->position, t);
+        transform->scale    = glm::mix(before->scale, after->scale, t);
+        // slerp, not mix: a linear blend of quaternions is not a rotation, and
+        // the error is worst exactly where rotation is fastest.
+        transform->rotation = glm::slerp(before->rotation, after->rotation, t);
+    }
+}
+
 ECS::Entity ReplicationClient::EntityOf(NetId netId) const
 {
     const auto it = _entityByNetId.find(netId);
@@ -806,6 +905,7 @@ void ReplicationClient::Reset()
             _scene.Destroy(entity);
     }
     _entityByNetId.clear();
+    _transformHistory.clear();
     _pendingRefs.clear();
     _feedback          = ClockFeedback{};
     _lastAppliedTick   = 0;
