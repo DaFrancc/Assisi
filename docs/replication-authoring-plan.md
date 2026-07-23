@@ -187,10 +187,10 @@ mirrors into the play snapshot, roll their fields back on Stop to values the
 server will never re-stamp (deltas resend only on server-side change), lose
 the transient `Mirrored` tag across the revive, and simulate local physics
 against a server-fed world. v1 answer: the Play button disables on a joined
-client with a tooltip. Host-side Play/Stop while hosting is supported and was
-verified safe: `ReviveAt` preserves handles so the server's NetId maps stay
-coherent, `Add` restamps change ticks so clients receive the restored values,
-and play-spawned entities despawn via the `IsAlive` sweep.
+client with a tooltip. On the host side there is no Play-vs-session
+interaction to reason about at all: sessions are Play-bound (§3), and
+`StopPlay` tears the session down *before* the scene restore, so the restore
+never runs under a live `ReplicationServer`.
 
 **Disconnect reloads from disk.** After the strip, the mirrors are the
 client's *only* copies of level-authored replicated entities; disconnect
@@ -205,11 +205,12 @@ from disk. The scene is whole, clean, and truthfully matches the file.
 
 **Host with unsaved edits.** The handshake replicates a file, not the host's
 memory: unmarked entities with unsaved host edits will silently differ on
-clients. v1 accepts this with a loud amber warning in the host's network panel
-whenever hosting (or accepting a join) with a dirty scene — "clients load the
-last saved version; save to sync static scenery." PIE avoids the problem
-structurally (§4, temp snapshot). Blocking or auto-saving manual hosts is
-deferred until cross-machine use is real.
+clients. Hosting through the Play control (§3) means this only arises when
+entering Play with a dirty scene; v1 accepts it with a loud amber warning in
+the host's network panel — "clients load the last saved version; save to sync
+static scenery." PIE avoids the problem structurally (§4, temp snapshot).
+Blocking or auto-saving manual hosts is deferred until cross-machine use is
+real.
 
 **Making mirrors draw.** `ReplicationClient` sets a dirty flag whenever it
 creates an entity, adds a component, or writes a durable `AssetId` field.
@@ -256,22 +257,32 @@ teardown on user-initiated level load, host keeps running when a client drops.
   undo). Note the rationale: this is not cosmetic — the server only resends
   fields it re-stamps, so a client edit to a static field would diverge
   *permanently*, not snap back.
-- **Network panel**: when hosting with zero replicated entities, an amber
-  warning with the fix in it ("no entities are marked Replicated — check
-  'Replicated' in the inspector"). Show the negotiated level path on both
-  sides, the dirty-host warning (§2), and the pending-join confirm (§2).
-  Existing stats stay.
-- **Semantics note** (documented in the panel tooltip + design notes): hosting
-  works in Editing *and* Play states — the net pump deliberately runs outside
-  the `IsSimulating()` gate. Editing-while-hosting is a live one-way preview of
-  *replicated* entities only; edits to unmarked scenery do not travel (that is
-  what the dirty-host warning is about).
+- **Network panel**: the Host button leaves the panel — hosting lives in the
+  Play control (below). The panel keeps Join, Disconnect, the stats, the
+  pending-join confirm (§2), the dirty-host warning (§2), the negotiated level
+  path on both sides, and the zero-replicated-entities amber warning with the
+  fix in it ("no entities are marked Replicated — check 'Replicated' in the
+  inspector").
+- **Sessions are Play-bound on the host.** Networking is a feature of the
+  *game*, so the editor tests it the way the game runs it: hosting starts by
+  entering Play (via the net dropdown, §4) and `StopPlay` always tears the
+  session down — connections do not outlive the level. There is no
+  editing-while-hosting preview state; that idea was considered and dropped —
+  it reintroduced a collaborative-editing-shaped mode this design deliberately
+  avoids, plus session-ownership rules for nothing. Joining is the one
+  exception to Play-binding: a *client* editor joins from Editing state and
+  becomes the read-only session viewer of §2 (it never simulates; its Play
+  stays disabled). The net pump still runs outside the `IsSimulating()` gate —
+  a joined viewer needs it while not simulating — but a host session can only
+  exist while playing.
 
 ## 4. PIE-style multi-process testing (the Unreal route)
 
 The toolbar Play control gains a small net dropdown: **Standalone** (default,
 today's behavior, and the default every run — the selection is not sticky) /
-**Host + 1 client**. Host + 2/3 are deferred (§6): each PIE client is a full
+**Host** (play and listen for joins, no spawned client) / **Host + 1 client**
+(PIE). This dropdown is the *only* way to host — see §3, sessions are
+Play-bound. Host + 2/3 are deferred (§6): each PIE client is a full
 editor process with its own Vulkan device, swapchain, and level asset set —
 "host + 3" on one GPU makes the "moving smoothly" DoD unjudgeable under
 contention. Host + 1 is the workhorse; a headless client can be added by hand
@@ -285,10 +296,11 @@ On `StartPlay()` in host mode:
    `ServerHello` carries this file's absolute path + hash — PIE clients are
    same-machine by construction, so an absolute path is fine there and never
    used for manual joins.
-2. Host the session on the first free port in 27015–27039 (session flagged
-   `ownedByPlay`). Play-with-clients requires no session to be active; the
-   dropdown's host modes disable while a manual session exists (one session
-   per editor, no coexistence rules to invent).
+2. Host the session on the first free port in 27015–27039. Every host session
+   is play-owned by construction now, so there is no manual-vs-PIE coexistence
+   to rule on — one session per editor, created by Play, destroyed by Stop.
+   (Plain **Host** mode does step 2 without step 1's temp snapshot — manual
+   joins use the §2 disk-path handshake — and without step 3.)
 3. Spawn 1 child process of the same executable (`/proc/self/exe`) with
    `--pie-client 127.0.0.1:<port>`: an editor instance that auto-joins on
    startup (level arrives via the §2 handshake), titled "PIE Client".
@@ -309,7 +321,9 @@ On `StartPlay()` in host mode:
   caused the original collaborative-editing confusion). Possession/game-client
   windows are Phase-2 template work (Game/GameEditor targets), not this plan.
 
-On `StopPlay()`: disconnect the play-owned session, SIGTERM the children,
+On `StopPlay()`: disconnect the session (always — connections do not outlive
+the level; joined clients see a clean session-end and reload per §2), SIGTERM
+the children,
 SIGKILL any survivor after a grace period, reap, delete the temp level file.
 Children set `PR_SET_PDEATHSIG` first thing under `--pie-client`, so an editor
 crash cannot leak windows.
@@ -331,8 +345,11 @@ automatable in one suite). Full suite green.
 
 **M2 — The join that works** (level bookkeeping + ServerHello path/hash,
 deferred ClientHello gate, always-load-from-disk + strip + map invalidation,
-save/play disabled while joined, disconnect reload, structure-dirty resolve in
-OnUpdate, no-physics-for-mirrors).
+save/play disabled while joined, host sessions Play-bound + torn down by Stop,
+disconnect reload, structure-dirty resolve in OnUpdate,
+no-physics-for-mirrors). The existing panel Host button is the hosting UI for
+this milestone — gated to Play state as scaffolding; M3's dropdown replaces
+it.
 *DoD*: editor A hosts `Materials.alvl` with one entity marked Replicated
 (hand-edited into the .alvl — the checkbox arrives in M4) and moving in Play;
 editor B joins **twice, from both starting states** — with no level open, and
@@ -340,8 +357,9 @@ with the *same* level already open — and both times the level appears, the
 entity is visible and moving smoothly, and nothing is duplicated; while
 joined, B's Save and Play buttons are disabled; B disconnects → mirrors
 vanish and the level reloads whole (the stripped entities are back, scene
-clean). I run this end-to-end myself (windowed + headless variants) before
-handing it over.
+clean); separately, A pressing Stop ends B's session the same way (B reloads,
+scene clean, A's session gone). I run this end-to-end myself (windowed +
+headless variants) before handing it over.
 
 **M3 — PIE processes** (net dropdown, temp scene snapshot, ChildProcess,
 `--pie-client` restrictions, StopPlay teardown).
