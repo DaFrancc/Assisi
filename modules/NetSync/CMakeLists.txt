@@ -5,9 +5,14 @@ target_sources(Assisi-NetSync
   PUBLIC
     "include/Assisi/NetSync/InputCommand.hpp"
     "include/Assisi/NetSync/NetClock.hpp"
+    "include/Assisi/NetSync/NetComponents.hpp"
+    "include/Assisi/NetSync/NetProtocol.hpp"
+    "include/Assisi/NetSync/Replication.hpp"
   PRIVATE
     "src/InputCommand.cpp"
     "src/NetClock.cpp"
+    "src/NetProtocol.cpp"
+    "src/Replication.cpp"
 )
 
 target_include_directories(Assisi-NetSync
@@ -23,6 +28,12 @@ target_link_libraries(Assisi-NetSync
     Assisi::Core
     Assisi::ECS
     Assisi::Net
+)
+
+assisi_reflect(
+  TARGET Assisi-NetSync
+  HEADERS
+    include/Assisi/NetSync/NetComponents.hpp
 )
 
 add_library(Assisi::NetSync ALIAS Assisi-NetSync)

@@ -237,6 +237,29 @@ struct Scene
         return _pools[id].size(_pools[id].pool);
     }
 
+    /// @brief The last-written tick of the entity's component identified by
+    /// ComponentId rather than static type — the generic counterpart of
+    /// ChangeTick<T>.
+    ///
+    /// For reflected walkers that hold a ComponentMeta and no compile-time T:
+    /// the replication codec decides what to put in a delta snapshot by asking
+    /// this for every component it might send. Returns 0 for an untracked
+    /// component, a pool this scene has never created, or an entity that does
+    /// not have that component — all of which read as "not changed since", which
+    /// is the correct answer in each case.
+    uint64_t ChangeTickById(Entity entity, Core::Reflect::ComponentId id) const
+    {
+        if (id >= _pools.size() || !_pools[id].changeTick)
+            return 0;
+        return _pools[id].changeTick(_pools[id].pool, entity);
+    }
+
+    /// @brief True if the entity's component @p id was written after @p sinceTick.
+    bool ChangedById(Entity entity, Core::Reflect::ComponentId id, uint64_t sinceTick) const
+    {
+        return ChangeTickById(entity, id) > sinceTick;
+    }
+
     /// @brief Marks the entity's component changed by ComponentId rather than
     /// static type — for generic reflected writers (e.g. the inspector edits a
     /// component through its field offsets, with no compile-time T). No-op for
@@ -377,6 +400,7 @@ struct Scene
         void (*destroy)(void *pool)                         = nullptr;
         void (*stamp)(void *pool, Entity entity, uint64_t tick) = nullptr; // null unless the pool is tracked
         std::size_t (*size)(const void *pool)               = nullptr;
+        uint64_t (*changeTick)(const void *pool, Entity entity) = nullptr; // ditto; reads what stamp wrote
     };
 
     template <typename T> static void RemoveFn(void *pool, Entity entity)
@@ -396,6 +420,11 @@ struct Scene
     template <typename T> static std::size_t SizeFn(const void *pool)
     {
         return static_cast<const SparseSet<T> *>(pool)->Size();
+    }
+
+    template <typename T> static uint64_t ChangeTickFn(const void *pool, Entity entity)
+    {
+        return static_cast<const SparseSet<T> *>(pool)->ChangeTick(entity);
     }
 
     /// @brief Returns a pointer to the pool for T, or nullptr if it has never
@@ -438,7 +467,8 @@ struct Scene
             if (meta && meta->tracksChanges)
             {
                 pool->SetTracksChanges(true);
-                slot.stamp = &StampFn<T>;
+                slot.stamp      = &StampFn<T>;
+                slot.changeTick = &ChangeTickFn<T>;
             }
         }
         return *static_cast<SparseSet<T> *>(slot.pool);
