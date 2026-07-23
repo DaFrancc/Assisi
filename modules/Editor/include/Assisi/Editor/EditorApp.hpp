@@ -256,6 +256,12 @@ class EditorApp : public Assisi::App::Application
     /// created) if the level didn't load. Reached from the Game panel's debug
     /// control; a game reaches the same capability through WorldManager.
     bool LoadLevelAsNewWorld(const std::string &virtualPath);
+    /// @brief Travels to @p virtualPath: the running game changes level without
+    /// leaving Play. The edited world goes dormant (Stop still restores it); any
+    /// other outgoing world is destroyed. A failed travel keeps play running
+    /// where it is. Reached from the Game panel's debug control; a game calls
+    /// WorldManager::LoadLevel directly.
+    bool TravelToLevel(const std::string &virtualPath);
     /// @brief Destroys every world the play session created and shows the edited
     /// one again. Called by StopPlay before it restores the snapshot.
     void DestroyPlayWorlds();
@@ -638,6 +644,9 @@ class EditorApp : public Assisi::App::Application
     // it creates a second resident world, which resolves assets and builds Jolt
     // bodies — main-thread-drain work, never mid-ImGui.
     std::optional<std::string> _pendingWorldLoad;
+    // ...and for "Travel here", which additionally frees the outgoing world's
+    // GPU assets — the strongest reason of the three not to run mid-frame.
+    std::optional<std::string> _pendingTravel;
 };
 
 } // namespace Assisi::Editor

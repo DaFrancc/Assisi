@@ -58,8 +58,14 @@ void EditorApp::DrawLevelsWindow()
         // (LoadLevel frees/rebuilds that table). _pendingLevelLoad marks the load
         // in-flight so the button disables (reads as "loading") and a second click
         // can't queue a duplicate; the marshalled task clears it once done.
-        ImGui::BeginDisabled(_pendingLevelLoad.has_value());
-        if (ImGui::Button("Load", ImVec2(halfW, 0.0f)))
+        // Open Level is an *editing* gesture — it changes which level you are
+        // working on — so it is dead during a session. (It used to silently force
+        // the session back to Editing, which was worse: a click meant to load
+        // something ended your play without saying so.) The play-time equivalent
+        // is the Game panel's Travel, which changes level without leaving Play.
+        const bool canOpen = (_playState == PlayState::Editing) && !_pendingLevelLoad.has_value();
+        ImGui::BeginDisabled(!canOpen);
+        if (ImGui::Button("Load", ImVec2(halfW, 0.0f)) && canOpen)
         {
             _pendingLevelLoad = _levelFiles[static_cast<std::size_t>(_selectedLevel)];
             Jobs().RunOnMain([this, name = *_pendingLevelLoad] {
@@ -68,6 +74,9 @@ void EditorApp::DrawLevelsWindow()
             });
         }
         ImGui::EndDisabled();
+        if (_playState != PlayState::Editing && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Stop play mode to open another level for editing "
+                              "(the Game panel's Travel changes level during play).");
         ImGui::SameLine();
         // Save is only allowed while editing: during Play/Pause `*_scene` is the
         // *simulated* scene (settled physics, spawned/deleted entities), so saving

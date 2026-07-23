@@ -1,7 +1,7 @@
 # Multi-Scene Design Notes
 
 Branch: `multi-scene` (off `dev`, merges back to `dev`).
-Status: **S1 and S2 built** (see §4); S3-S5 designed, not started.
+Status: **S1-S3 built** (see §4); S4-S5 designed, not started.
 
 Two features any real game needs, neither of which the engine can express
 today:
@@ -326,7 +326,7 @@ destroys the session's worlds before restoring. Not yet covered by an
 automated check: that the second load leaves the first world's GPU assets
 intact — that one needs a device, so it is an eyes-on check.
 
-**S3 — In-play hard travel.** `WorldManager::LoadLevel` + Game-panel debug
+**S3 — In-play hard travel. BUILT.** `WorldManager::LoadLevel` + Game-panel debug
 control; Play/Stop semantics preserved via the edited-world role.
 *DoD*: press Play in level A, travel to level B from the debug control, keep
 playing in B (physics live, no return to edit mode), travel again, then Stop
@@ -341,6 +341,24 @@ world's resolved pointers nulled and rebuilt correctly by Stop — and the
 new world renders after it, with streaming pop-in allowed exactly as on a
 normal level load. Travel from Paused neither crashes nor leaks a stale
 pause history.
+
+*As built*: `WorldManager` gained a `Services` block (cache, database,
+renderer) installed once by the app, so `LoadLevel(path)` really is the plain
+game-facing call the design asked for; with no render services it falls back
+to scene + physics only, which is the shape a headless server wants and is
+what the tests drive. Travel keeps the edited world resident and Dormant and
+destroys any other outgoing world, flushing its queued destroys first. Cache
+reclamation is `SweepAssetCache()`, called by the editor right after a travel
+completes: it runs only when at most one drawable world plus a dormant edited
+world remain, drops the dormant world's bindings via the new
+`Runtime::ClearSceneAssetBindings` *before* the Clear, and re-resolves the
+survivor. The editor exposes travel as the Game panel's **Travel here**
+(play only), discarding the pause scratch history first; the Levels window's
+Load is now disabled during a session rather than silently ending it.
+`TestWorld.cpp` drives A→B→A→(missing)→Stop against a temp asset root and
+pins that the failed travel leaves no half-created world and does not move
+the active one. Not covered automatically: that the swept-and-re-resolved
+world renders correctly with streaming pop-in — eyes-on.
 
 **S4 — Entity migration.** `MigrateEntity`, subtree-aware, with the new
 src→dst EntityRef mapping mode and cross-world transient rebinding (Jolt

@@ -38,4 +38,16 @@ void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &c
 /// loop while loads are in flight.
 void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database);
 
+/// @brief Nulls every MeshRenderer's resolved GPU pointers in @p scene, leaving
+/// the durable asset ids alone.
+///
+/// The inverse of ResolveSceneAssets, for a scene whose backing GPU resources
+/// are about to be (or have just been) freed: after an AssetCache::Clear, a
+/// scene that is not re-resolved holds pointers into released memory. A scene
+/// that is still resident but not being drawn — the editor's dormant level while
+/// the game has travelled elsewhere — is exactly that case, and it is cheaper
+/// and safer to drop its pointers than to keep its assets alive. It re-resolves
+/// when it comes back into use.
+void ClearSceneAssetBindings(ECS::Scene &scene);
+
 } // namespace Assisi::Runtime

@@ -86,10 +86,14 @@ void EditorApp::OnStart()
         }
     }
 
-    // The editor's one world. It holds both roles: active (rendered, input-driven)
-    // and edited (saved, dirtied, undone into). Opening a level clears this world's
-    // scene in place rather than creating another one, which is what keeps the
-    // history binding below valid for the whole session.
+    // What the manager needs to turn a level file into a running world when the
+    // game travels. Installed once; captured by pointer, and all three outlive it.
+    _worlds.SetServices({.cache = &_assetCache, .database = &_assetDatabase, .renderer = &_sceneRenderer});
+
+    // The editor's starting world. It holds both roles: active (rendered,
+    // input-driven) and edited (saved, dirtied, undone into). Opening a level
+    // clears this world's scene in place rather than creating another one, which
+    // is what keeps the history binding below valid for the whole session.
     _world = &_worlds.Create("Main");
     _worlds.SetActive(*_world);
     _worlds.SetEdited(*_world);
@@ -677,6 +681,12 @@ void EditorApp::OnUpdate(float dt)
         const std::string request = *_pendingWorldLoad;
         _pendingWorldLoad.reset();
         LoadLevelAsNewWorld(request);
+    }
+    if (_pendingTravel)
+    {
+        const std::string request = *_pendingTravel;
+        _pendingTravel.reset();
+        TravelToLevel(request);
     }
 
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see

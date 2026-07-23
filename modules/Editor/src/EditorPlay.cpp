@@ -118,6 +118,7 @@ void EditorApp::StopPlay()
     // already be pointed at the authored level rather than wherever play ended up.
     // A queued "load as new world" from this frame is dropped with it.
     _pendingWorldLoad.reset();
+    _pendingTravel.reset();
     DestroyPlayWorlds();
 
     // Runs unconditionally, including for an empty snapshot: entering Play on an
@@ -386,6 +387,25 @@ void EditorApp::DrawGameControlWindow()
         ImGui::SetTooltip("During play only. Loads the level selected in the Levels window into a "
                           "SECOND world alongside this one; both simulate, and the Entities panel "
                           "picks which to look at. Stop destroys every world the session created.");
+    }
+
+    // Travel: what the running game does when it changes level. Distinct from the
+    // Levels window's Load, which changes what you are *editing* — this replaces
+    // the world being played and never leaves Play. The edited world goes dormant
+    // so Stop still restores it.
+    ImGui::SameLine();
+    const bool canTravel = (playing || paused) && !_levelFiles.empty() && !_pendingTravel.has_value();
+    ImGui::BeginDisabled(!canTravel);
+    if (ImGui::Button("Travel here") && canTravel)
+    {
+        _pendingTravel = "levels/" + _levelFiles[static_cast<std::size_t>(_selectedLevel)] + ".alvl";
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("During play only. Changes level to the one selected in the Levels window "
+                          "without leaving Play — the world you were in is retired. Stop still "
+                          "returns to the level you were editing, with its undo history.");
     }
 
     // Destroying the shown world needs a successor to show, and neither role may

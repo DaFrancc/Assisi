@@ -13,6 +13,8 @@
 #include <vector>
 
 #include <Assisi/App/World.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
@@ -227,7 +229,7 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
             world.physics.AddBody(at, glm::quat{1.f, 0.f, 0.f, 0.f},
                                   Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
                                   Assisi::Physics::BodyMotion::Dynamic);
-        world.scene.Add<Assisi::Physics::RigidBody>(entity, body);
+        (void)world.scene.Add<Assisi::Physics::RigidBody>(entity, body);
         return entity;
     };
 
@@ -274,6 +276,75 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
     }
     SyncUnrenderedWorld(falling);
     CHECK(falling.scene.Get<Assisi::ECS::Transform>(a)->position.y < fell);
+}
+
+TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
+{
+    // The S3 model, exercised without a GPU (no render services installed, so the
+    // manager takes the scene+physics path). What matters here is the bookkeeping:
+    // which world is active, which survives, and what a failed travel does.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "assisi-world-travel-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "levels");
+    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
+
+    // Two levels, distinguishable by entity count.
+    const auto writeLevel = [&root](const char *name, int32_t entities)
+    {
+        Assisi::ECS::Scene scene;
+        for (int32_t i = 0; i < entities; ++i)
+        {
+            (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
+        }
+        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / name));
+    };
+    writeLevel("A.alvl", 3);
+    writeLevel("B.alvl", 7);
+
+    WorldManager worlds;
+    World       &authored = worlds.Create("Main");
+    worlds.SetActive(authored);
+    worlds.SetEdited(authored);
+    authored.state = WorldState::Active;
+    REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(authored.scene, "levels/A.alvl"));
+
+    // --- travel A -> B -------------------------------------------------------
+    World *const inB = worlds.LoadLevel("levels/B.alvl");
+    REQUIRE(inB != nullptr);
+    CHECK(worlds.Active() == inB);
+    CHECK(inB->simulate);
+    CHECK(inB->levelPath == "levels/B.alvl");
+    CHECK(worlds.Count() == 2u); // the authored level is still resident...
+    CHECK(worlds.Edited() == &authored);
+    CHECK(authored.state == WorldState::Dormant); // ...dormant and frozen
+    CHECK_FALSE(authored.simulate);
+
+    // --- travel B -> A again -------------------------------------------------
+    // A second world of the same level as the edited one: names are generated, so
+    // this is a distinct world and not a collision.
+    World *const inA2 = worlds.LoadLevel("levels/A.alvl");
+    REQUIRE(inA2 != nullptr);
+    CHECK(inA2 != &authored);
+    CHECK(worlds.Active() == inA2);
+    CHECK(worlds.Count() == 2u); // B was destroyed on the way out; edited kept
+    CHECK(worlds.Edited() == &authored);
+
+    // --- a travel that fails -------------------------------------------------
+    CHECK(worlds.LoadLevel("levels/DoesNotExist.alvl") == nullptr);
+    CHECK(worlds.Active() == inA2); // still playing exactly where we were
+    CHECK(worlds.Count() == 2u);    // no half-created world left behind
+
+    // --- Stop ----------------------------------------------------------------
+    CHECK(worlds.DestroyAllExcept(authored) == 1u);
+    CHECK(worlds.Count() == 1u);
+    CHECK(worlds.Active() == &authored);
+    // The authored scene came through untouched by any of it.
+    std::size_t count = 0;
+    authored.scene.ForEachEntity([&count](Assisi::ECS::Entity) { ++count; });
+    CHECK(count == 3u);
+
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")

@@ -77,6 +77,33 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     return true;
 }
 
+bool EditorApp::TravelToLevel(const std::string &virtualPath)
+{
+    if (!Assisi::Core::AssetSystem::Exists(virtualPath))
+    {
+        Assisi::Core::Log::Error("Travel: '{}' not found under the asset root; staying put.", virtualPath);
+        return false;
+    }
+
+    // The pause scratch history binds a scene by reference and travel can destroy
+    // the world holding it — discard it first, exactly as resuming does. Without
+    // this, pause-then-travel is a use-after-free two clicks deep.
+    _pausedHistory.reset();
+
+    Assisi::App::World *const arrived = _worlds.LoadLevel(virtualPath);
+    if (arrived == nullptr)
+    {
+        return false; // WorldManager logged why; play continues where it was
+    }
+
+    SetActiveWorld(*arrived);
+
+    // The outgoing world is gone (or dormant), so this is the moment GPU memory
+    // can come back. A no-op while anything else is still live.
+    _worlds.SweepAssetCache();
+    return true;
+}
+
 void EditorApp::DestroyPlayWorlds()
 {
     Assisi::App::World *edited = _worlds.Edited();

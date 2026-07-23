@@ -40,4 +40,13 @@ void ResolveSceneAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core
         ResolveMeshRendererAssets(meshRenderer, cache, database);
 }
 
+void ClearSceneAssetBindings(ECS::Scene &scene)
+{
+    for (auto [entity, meshRenderer] : scene.Query<MeshRenderer>())
+    {
+        meshRenderer.meshBuffer = nullptr;
+        meshRenderer.materials.clear();
+    }
+}
+
 } // namespace Assisi::Runtime

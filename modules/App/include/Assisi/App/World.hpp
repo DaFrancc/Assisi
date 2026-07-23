@@ -28,6 +28,19 @@
 #include <string_view>
 #include <vector>
 
+namespace Assisi::Core
+{
+class AssetDatabase;
+}
+namespace Assisi::Render
+{
+class AssetCache;
+}
+namespace Assisi::Runtime
+{
+class SceneRenderer;
+}
+
 namespace Assisi::App
 {
 
@@ -149,6 +162,55 @@ class WorldManager
         }
     }
 
+    /// @brief The engine services a world needs to turn a level file into a
+    /// running world. Installed once at startup by the app; a headless server
+    /// leaves the render-side ones null and gets a scene + physics with no GPU
+    /// assets resolved.
+    struct Services
+    {
+        Render::AssetCache        *cache    = nullptr;
+        const Core::AssetDatabase *database = nullptr;
+        Runtime::SceneRenderer    *renderer = nullptr;
+    };
+    void SetServices(const Services &services) { _services = services; }
+
+    /// @brief **Travel**: loads @p levelPath into a new world, makes it the
+    /// active one, and retires the world that was active.
+    ///
+    /// This is the game-facing "change level" call — the thing a trigger volume
+    /// or a match-end handler invokes. It is deliberately not the editor's Open
+    /// Level, which changes *what you are editing* and reuses the edited world in
+    /// place; travel replaces the world being played.
+    ///
+    /// What happens to the outgoing world depends on its role. The **edited**
+    /// world is never destroyed — it goes Dormant and unsimulated, so Stop can
+    /// still restore the level its author was working on with its undo history
+    /// intact. Any other outgoing world is destroyed.
+    ///
+    /// The asset cache is *not* cleared during the load: the outgoing world is
+    /// still alive and rendering while the new one is built. Once the swap is
+    /// done, SweepAssetCache() below is the moment to reclaim.
+    ///
+    /// @return the new world, or nullptr if the level did not load — in which
+    /// case nothing changed: the half-created world is destroyed and the caller
+    /// keeps playing where it was. Call only at a frame safe point, never
+    /// between BeginFrame and EndFrame.
+    World *LoadLevel(std::string_view levelPath);
+
+    /// @brief Reclaims GPU memory after a travel, when it is safe to.
+    ///
+    /// "Safe" is narrow and deliberately so: every live world's MeshRenderers
+    /// hold raw pointers into the cache, so a Clear is only allowed when at most
+    /// one world can still be drawing — one live world, plus at most a dormant
+    /// edited world whose bindings are dropped here and rebuilt when it is
+    /// restored. Under those conditions this clears the cache and re-resolves
+    /// the survivor, which re-imports its assets from disk asynchronously
+    /// (expect the same placeholder pop-in as a normal level load). Otherwise it
+    /// does nothing and says why at debug level.
+    ///
+    /// @return true if the sweep ran.
+    bool SweepAssetCache();
+
     /// @brief Destroys every world except @p keep, moving both roles to it first.
     /// Used by Stop, which tears down whatever the play session created.
     /// @return how many worlds were destroyed.
@@ -163,6 +225,7 @@ class WorldManager
     World        *_active = nullptr;
     World        *_edited = nullptr;
     std::uint32_t _nextId = 1;
+    Services      _services;
 };
 
 /// @brief Brings a simulated-but-unrendered world's Transforms up to date, in the
