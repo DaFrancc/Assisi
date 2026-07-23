@@ -660,53 +660,64 @@ void EditorApp::OnFixedUpdate(float dt)
 {
     if (!_scene)
         return;
+    // The network runs whether or not the simulation does, and deliberately so.
+    // A session is not a play session: an editor can host while in Editing mode
+    // and have a collaborator watch entities move under the gizmo, and a client
+    // must keep applying what the host sends even though its own physics is
+    // frozen. Gating this on IsSimulating() would make hosting silently do
+    // nothing until someone pressed Play — which is exactly the bug this
+    // comment exists to stop someone reintroducing.
+    //
+    // Poll first: a command that arrived for this tick should be applied on this
+    // tick, not the next one.
+    PollNetSession();
+
     // **In the editor, the play state is a flat switch: while it is not Playing,
     // nothing steps anywhere.** Not "the world you are looking at is frozen" —
     // Pause means the whole session is frozen, logic and physics alike, in every
     // resident world. Per-world `simulate` then selects among the worlds of a
     // *running* session; it never overrides the session being stopped, which is
     // what it used to do for any world other than the viewed one.
-    if (!IsSimulating())
-        return;
-
-    // Network first: a command that arrived for this tick should be applied on
-    // this tick, not the next one.
-    PollNetSession();
-
-    // Every simulated world steps, and each runs its OWN FixedUpdate systems
-    // immediately before its own physics — the Unity/Unreal convention (apply
-    // forces this tick, then simulate them), now held per world rather than only
-    // for the active one. Worlds step sequentially, which is what lets them share
-    // one Jolt thread pool.
     //
-    // Only Active worlds step: Dormant means "resident and inspectable, but not
-    // stepped" (WorldState), and a stale `simulate` must not be able to break
-    // that. Resuming while viewing the dormant edited world used to do exactly
-    // that and step its physics.
-    _worlds.ForEach(
-        [this, dt](Assisi::App::World &world)
-        {
-            if (world.state != Assisi::App::WorldState::Active || !world.simulate)
-                return;
-
-            world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
-                              {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
-                               /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
-
+    // A block rather than an early return, because the session tick below has to
+    // run in either state — see PollNetSession's note above.
+    if (IsSimulating())
+    {
+        // Every simulated world steps, and each runs its OWN FixedUpdate systems
+        // immediately before its own physics — the Unity/Unreal convention (apply
+        // forces this tick, then simulate them), now held per world rather than only
+        // for the active one. Worlds step sequentially, which is what lets them share
+        // one Jolt thread pool.
+        //
+        // Only Active worlds step: Dormant means "resident and inspectable, but not
+        // stepped" (WorldState), and a stale `simulate` must not be able to break
+        // that. Resuming while viewing the dormant edited world used to do exactly
+        // that and step its physics.
+        _worlds.ForEach(
+            [this, dt](Assisi::App::World &world)
             {
-                // Jolt's whole step, including its internal job dispatch. Everything
-                // under `fixed-update` that isn't a named ECS system is this.
-                ASSISI_PROFILE_SCOPE("physics-step");
-                world.physics.Update(dt);
-            }
-            {
-                // Snapshot the new poses for render interpolation; OnRender blends them.
-                // Linear in the body count, and separable from the solve — worth its own
-                // slice so a big scene says which of the two grew.
-                ASSISI_PROFILE_SCOPE("physics-capture");
-                world.physics.CaptureState();
-            }
-        });
+                if (world.state != Assisi::App::WorldState::Active || !world.simulate)
+                    return;
+
+                world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
+                                  {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
+                                   /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
+
+                {
+                    // Jolt's whole step, including its internal job dispatch. Everything
+                    // under `fixed-update` that isn't a named ECS system is this.
+                    ASSISI_PROFILE_SCOPE("physics-step");
+                    world.physics.Update(dt);
+                }
+                {
+                    // Snapshot the new poses for render interpolation; OnRender blends them.
+                    // Linear in the body count, and separable from the solve — worth its own
+                    // slice so a big scene says which of the two grew.
+                    ASSISI_PROFILE_SCOPE("physics-capture");
+                    world.physics.CaptureState();
+                }
+            });
+    }
 
     // Last: a snapshot describes the world at the *end* of the tick it is
     // stamped with, so it has to be built after everything that moves it.
