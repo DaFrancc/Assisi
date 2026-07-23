@@ -280,13 +280,18 @@ teardown on user-initiated level load, host keeps running when a client drops.
 
 The toolbar Play control gains a small net dropdown: **Standalone** (default,
 today's behavior, and the default every run — the selection is not sticky) /
-**Host** (play and listen for joins, no spawned client) / **Host + 1 client**
-(PIE). This dropdown is the *only* way to host — see §3, sessions are
-Play-bound. Host + 2/3 are deferred (§6): each PIE client is a full
-editor process with its own Vulkan device, swapchain, and level asset set —
-"host + 3" on one GPU makes the "moving smoothly" DoD unjudgeable under
-contention. Host + 1 is the workhorse; a headless client can be added by hand
-for load testing.
+**Host** (play and listen for joins, no spawned client) / **Host + 1/2/3
+clients** (PIE). This dropdown is the *only* way to host — see §3, sessions
+are Play-bound. Multi-client counts exist because whole classes of bugs only
+appear with more than one client — per-connection baseline divergence, join
+ordering, one client disconnecting while others stay — even though N full
+editor processes (each with its own Vulkan device, swapchain, and level asset
+set) is expensive on one GPU. The testing split that keeps that honest:
+**perceptual** judgments (interpolation smoothness) are made on Host + 1,
+where contention can't masquerade as a netcode bug; Host + 2/3 runs are
+judged **functionally** (connection counts, entity counts, per-client stats,
+clean teardown). Headless clients (`--connect`) remain the cheap way to add
+further load.
 
 On `StartPlay()` in host mode:
 1. **Serialize the current (pre-play) scene to a temp level file** in the
@@ -301,9 +306,9 @@ On `StartPlay()` in host mode:
    to rule on — one session per editor, created by Play, destroyed by Stop.
    (Plain **Host** mode does step 2 without step 1's temp snapshot — manual
    joins use the §2 disk-path handshake — and without step 3.)
-3. Spawn 1 child process of the same executable (`/proc/self/exe`) with
-   `--pie-client 127.0.0.1:<port>`: an editor instance that auto-joins on
-   startup (level arrives via the §2 handshake), titled "PIE Client".
+3. Spawn N child processes of the same executable (`/proc/self/exe`) with
+   `--pie-client 127.0.0.1:<port>`: editor instances that auto-join on
+   startup (level arrives via the §2 handshake), titled "PIE Client 1..N".
 
 `--pie-client` is a **restricted viewer**, not a second editor:
 - **No shared-file writes**: skip the startup reimport (read-only asset
@@ -368,7 +373,11 @@ window that auto-connects and shows the moving world *including the unsaved
 edits*; the PIE window frames the replicated entities without hunting; Stop
 closes it and ends the session; repeat 3× with no zombie processes (`ps`
 verified), no port-in-use failure, and no writes to imgui.ini / options.json /
-asset sidecars by the child (mtimes verified).
+asset sidecars by the child (mtimes verified). Then "Host + 3": all three
+windows connect (host panel shows 3 clients, each client shows the full
+entity count and 0 rejected snapshots), closing one client's window leaves
+the other two live, and Stop tears down all three — functional checks only;
+smoothness is not judged under 4-process GPU contention.
 *Ordering rationale*: M3 lands before the authoring UX because it converts
 every subsequent verification — all of M4, M5, and every future networking
 change — from manual two-window choreography into one click. The `--pie-client`
@@ -406,8 +415,6 @@ component again.
   (mirrored children of local parents, strip interaction, transform spaces) —
   the EntityRef wire machinery itself already exists and stays tested. Mirrors
   are flat in v1.
-- **Host + 2/3 PIE clients**: dropdown extension is trivial; deferred until
-  one-GPU contention is measured so the perceptual DoDs stay judgeable.
 - **Dirty-host resolution beyond a warning** (auto-save on join, or shipping
   the host's in-memory scene to remote clients): PIE covers the solo-dev case
   via the temp snapshot; cross-machine needs a level-transfer design.
