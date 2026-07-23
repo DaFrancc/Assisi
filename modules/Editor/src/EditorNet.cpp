@@ -53,7 +53,11 @@ void EditorApp::DrawNetworkWindow()
         return;
     }
 
-    const bool active = _netSession && _netSession->IsActive();
+    // Re-read the session's liveness at every point that depends on it, never
+    // once at the top. The buttons below can destroy it *during this frame*,
+    // and a cached "is it active" flag then describes a session that no longer
+    // exists — which is precisely how the Disconnect button used to segfault.
+    const auto active = [this] { return _netSession && _netSession->IsActive(); };
 
     // ---- status line -------------------------------------------------------
     if (_netSession)
@@ -70,13 +74,13 @@ void EditorApp::DrawNetworkWindow()
     // ---- controls ----------------------------------------------------------
     ImGui::SetNextItemWidth(140.f);
     ImGui::InputText("Address", _netAddress.data(), _netAddress.size(),
-                     active ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
+                     active() ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
     ImGui::SameLine();
     ImGui::SetNextItemWidth(90.f);
-    ImGui::InputInt("Port", &_netPort, 0, 0, active ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
+    ImGui::InputInt("Port", &_netPort, 0, 0, active() ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
     _netPort = std::clamp(_netPort, 1, 65535);
 
-    ImGui::BeginDisabled(active || !_scene);
+    ImGui::BeginDisabled(active() || !_scene);
     if (ImGui::Button("Host"))
     {
         // Bound to the scene that exists right now. A level load replaces the
@@ -84,29 +88,45 @@ void EditorApp::DrawNetworkWindow()
         // than left holding a dangling reference.
         _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene);
         if (!_netSession->Host(static_cast<std::uint16_t>(_netPort)))
+        {
+            // Copy the reason out before dropping the session that holds it,
+            // or a failed Host reports nothing at all.
+            _netError = _netSession->LastError();
             _netSession.reset();
+        }
+        else
+        {
+            _netError.clear();
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Join"))
     {
         _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene);
         if (!_netSession->Join(_netAddress.data(), static_cast<std::uint16_t>(_netPort)))
+        {
+            _netError = _netSession->LastError();
             _netSession.reset();
+        }
+        else
+        {
+            _netError.clear();
+        }
     }
     ImGui::EndDisabled();
 
     ImGui::SameLine();
-    ImGui::BeginDisabled(!active);
+    ImGui::BeginDisabled(!active());
     if (ImGui::Button("Disconnect"))
         ShutdownNetSession();
     ImGui::EndDisabled();
 
-    if (_netSession && !_netSession->LastError().empty() && !active)
-    {
-        ImGui::TextColored(ImVec4{0.9f, 0.4f, 0.4f, 1.f}, "%s", _netSession->LastError().c_str());
-    }
+    if (!_netError.empty())
+        ImGui::TextColored(ImVec4{0.9f, 0.4f, 0.4f, 1.f}, "%s", _netError.c_str());
 
-    if (!active)
+    // Re-checked, not the value from the top of the function: Disconnect above
+    // may have just torn the session down.
+    if (!active())
     {
         ImGui::Separator();
         ImGui::TextDisabled("Hosting replicates this scene; entities need a Replicated component to travel.");

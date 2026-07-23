@@ -462,6 +462,9 @@ class EditorApp : public Assisi::App::Application
     /// editors in one process would not share it.
     std::array<char, 64> _netAddress{"127.0.0.1"};
     int32_t              _netPort = 27015;
+    /// Why the last Host/Join failed. Held here rather than read back off the
+    /// session, because a failed attempt destroys the session that knows.
+    std::string _netError;
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;
