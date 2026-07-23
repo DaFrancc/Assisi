@@ -1,7 +1,7 @@
 # Multi-Scene Design Notes
 
 Branch: `multi-scene` (off `dev`, merges back to `dev`).
-Status: **design, not started**.
+Status: **S1 built** (see §4); S2–S5 designed, not started.
 
 Two features any real game needs, neither of which the engine can express
 today:
@@ -276,13 +276,26 @@ Designed here so the branches converge instead of colliding:
 
 ## 4. Milestones — each with a user-visible definition of done
 
-**S1 — The World refactor (behavior-identical).** Introduce `World` +
+**S1 — The World refactor (behavior-identical). BUILT.** Introduce `World` +
 `WorldManager` (stable addresses, edited-world role); editor and app loop
 run on the active world; per-world physics over a **shared Jolt job
 system/thread pool**; Open Level clears the edited world in place.
 *DoD*: the editor looks and behaves exactly as before (load, edit, play,
 undo, save all unchanged); full test suite green; no panel knows the
 refactor happened; one thread pool total (verified — not one per world).
+
+*As built*: `App::World`/`App::WorldManager` (modules/App/World.hpp) with
+`TestWorld.cpp` covering address stability, creation-order iteration, the
+role-holder destroy refusal, and — measured against `/proc/self/task` — that
+four extra worlds add zero threads. `ECS::SceneRegistry` retired into the
+manager and deleted. The Jolt globals block in PhysicsWorld.cpp became a
+refcounted `JoltRuntime` holding the one thread pool and temp allocator,
+acquired as `Impl`'s first member so the ordering is right by construction.
+`SceneRenderer::Render` gained an overload taking the propagation bookmark,
+which now lives in the world; the single-scene overload keeps the renderer's
+own. The editor's `_scene`/`_physics` are the active world's, `SetPlayState`
+is the one place play state and the world's `simulate` flag move together,
+and the fixed loop steps every simulated world.
 
 **S2 — Multiple resident worlds.** Create/load/destroy worlds at runtime;
 fixed loop steps all simulated worlds; **pose write-back + transform

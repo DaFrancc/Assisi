@@ -1,6 +1,7 @@
 add_executable(Assisi-App-Tests
   main.cpp
   TestSystemRegistry.cpp
+  TestWorld.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-App-Tests)

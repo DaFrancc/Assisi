@@ -95,7 +95,23 @@ class SceneRenderer
     /// projection changed since last frame, and draws every mesh entity. No-op
     /// until Initialize() succeeds.
     void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
-                const Camera &camera);
+                const Camera &camera)
+    {
+        Render(frame, scene, cameraTransform, camera, _lastPropagationTick);
+    }
+
+    /// @brief As above, with the transform-propagation bookmark supplied by the
+    /// caller instead of kept in the renderer.
+    ///
+    /// The bookmark is the scene tick at the end of that scene's last
+    /// propagation, and it is only meaningful *per scene*: one renderer drawing
+    /// two scenes with a single bookmark would compare scene B's tick against
+    /// scene A's and skip propagating whichever it drew second. An app holding
+    /// several worlds resident stores the bookmark in the world
+    /// (App::World::propagationTick) and passes it here; the overload above
+    /// keeps the renderer's own for the single-scene case.
+    void Render(const Render::RenderFrame &frame, ECS::Scene &scene, const Transform &cameraTransform,
+                const Camera &camera, uint64_t &propagationTick);
 
     [[nodiscard]] bool IsValid() const { return _meshPass.IsValid(); }
 
@@ -260,8 +276,10 @@ class SceneRenderer
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 
-    // Change-detection bookmark for PropagateTransforms: the scene tick at the end
-    // of the last propagation. 0 forces a full recompute on the first frame.
+    // Change-detection bookmark for PropagateTransforms used by the single-scene
+    // Render() overload: the scene tick at the end of the last propagation. 0
+    // forces a full recompute on the first frame. Apps with several worlds
+    // resident pass their own per-world bookmark instead.
     uint64_t _lastPropagationTick = 0;
 };
 

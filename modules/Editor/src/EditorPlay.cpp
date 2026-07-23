@@ -65,7 +65,7 @@ void EditorApp::StartPlay()
             });
     }
 
-    _playState = PlayState::Playing;
+    SetPlayState(PlayState::Playing);
     Assisi::Core::Log::Info("Play: started (scene snapshotted, {} entities).", _playSnapshot.size());
 }
 
@@ -79,7 +79,7 @@ void EditorApp::ResumePlay()
     // scene and the simulation carries on, but they were never part of the editing
     // history and their undo does not persist).
     _pausedHistory.reset();
-    _playState = PlayState::Playing;
+    SetPlayState(PlayState::Playing);
 }
 
 void EditorApp::PausePlay()
@@ -92,7 +92,7 @@ void EditorApp::PausePlay()
     // undoable *within the pause*, without ever touching the persistent editing
     // history. Bound to the same scene + rebind hook as the main one.
     _pausedHistory.emplace(*_scene, MakeEditRebindHook());
-    _playState = PlayState::Paused;
+    SetPlayState(PlayState::Paused);
 }
 
 void EditorApp::StopPlay()
@@ -145,10 +145,10 @@ void EditorApp::StopPlay()
         }
 
         _selectedEntity = Assisi::ECS::NullEntity;
-        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, _physics);
+        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
     }
 
-    _playState = PlayState::Editing;
+    SetPlayState(PlayState::Editing);
     _playSnapshot.clear();
 
     Assisi::Core::Log::Info("Play: stopped (scene restored at exact identity).");
@@ -245,7 +245,7 @@ void EditorApp::DeleteEntity(Assisi::ECS::Entity entity)
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(e))
         {
-            _physics.RemoveBody(*rbc);
+            _physics->RemoveBody(*rbc);
             _scene->Remove<Assisi::Physics::RigidBody>(e);
         }
         _scene->Destroy(e);

@@ -16,6 +16,7 @@
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
+#include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
@@ -23,7 +24,6 @@
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/ECS/SceneRegistry.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -348,9 +348,16 @@ class EditorApp : public Assisi::App::Application
     Assisi::App::SystemRegistry _gameSystems;
 
     // --- State ---
-    Assisi::ECS::SceneRegistry         _scenes;
-    Assisi::ECS::Scene                *_scene = nullptr;
-    Assisi::Physics::PhysicsWorld      _physics;
+    // Every resident level lives in the manager (docs/multi-scene-design-notes.md).
+    // The editor drives exactly one world at this stage, which is both the active
+    // world (rendered, input-driven) and the *edited* world (saved, dirtied, undone
+    // into) — the two roles only diverge once the game can travel to another level
+    // mid-play. `_scene`/`_physics` are the active world's, cached here so the
+    // panels read exactly as before.
+    Assisi::App::WorldManager          _worlds;
+    Assisi::App::World                *_world   = nullptr; ///< The active world.
+    Assisi::ECS::Scene                *_scene   = nullptr; ///< == &_world->scene.
+    Assisi::Physics::PhysicsWorld     *_physics = nullptr; ///< == &_world->physics.
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;
@@ -496,6 +503,19 @@ class EditorApp : public Assisi::App::Application
     };
     PlayState _playState = PlayState::Editing;
 
+    /// @brief The one place the play state changes. It also sets the active
+    /// world's `simulate` flag, which is what the fixed loop actually steps on —
+    /// keeping the two in one assignment is what stops them drifting apart once
+    /// more than one world is resident.
+    void SetPlayState(PlayState state)
+    {
+        _playState = state;
+        if (_world != nullptr)
+        {
+            _world->simulate = (state == PlayState::Playing);
+        }
+    }
+
     // One entity's exact-identity snapshot for the play/stop restore. Unlike a
     // Save() (which renumbers entities to dense serial indices), this keeps the
     // exact (index, generation) handle so Stop can restore entities *in place* via
@@ -591,11 +611,6 @@ class EditorApp : public Assisi::App::Application
     // never mid-frame: LoadLevel frees GPU assets (incl. the bindless table) that
     // this frame's already-recorded draws still reference, which faults the GPU.
     std::optional<std::string> _pendingLevelLoad;
-
-    // True while the current scene still has async mesh/material loads in flight
-    // (or on the frame one just finished), driving the per-frame re-resolve in
-    // OnUpdate that upgrades MeshRenderers as assets stream in. See ResolveMesh.
-    bool _assetsWereLoading = false;
 };
 
 } // namespace Assisi::Editor

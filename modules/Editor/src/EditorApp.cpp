@@ -86,22 +86,22 @@ void EditorApp::OnStart()
         }
     }
 
-    auto mainScene = _scenes.Create("Main");
-    if (!mainScene)
-    {
-        // Abort for real: without a scene the per-frame hooks have nothing to
-        // run on. RequestClose() here means Run()'s first ShouldClose() check
-        // fails and the loop body never executes; the _scene guards in
-        // OnFixedUpdate/OnUpdate are defense-in-depth for that same null.
-        Assisi::Core::Log::Error("Failed to create the main scene; aborting startup");
-        RequestClose();
-        return;
-    }
-    _scene = *mainScene;
+    // The editor's one world. It holds both roles: active (rendered, input-driven)
+    // and edited (saved, dirtied, undone into). Opening a level clears this world's
+    // scene in place rather than creating another one, which is what keeps the
+    // history binding below valid for the whole session.
+    _world = &_worlds.Create("Main");
+    _worlds.SetActive(*_world);
+    _worlds.SetEdited(*_world);
+    _world->state    = Assisi::App::WorldState::Active;
+    _world->simulate = false; // starts Editing; SetPlayState owns this from here on
+    _scene           = &_world->scene;
+    _physics         = &_world->physics;
 
-    // Editor-only undo/redo. Binds the Main scene (stable for the session — level
-    // loads Clear it in place, never swap the object). The rebind hook rebuilds the
-    // transient state serialization drops after an apply. See EditHistory.hpp.
+    // Editor-only undo/redo. Binds the edited world's scene (stable for the
+    // session — level loads Clear it in place, never swap the object). The rebind
+    // hook rebuilds the transient state serialization drops after an apply. See
+    // EditHistory.hpp.
     _history.emplace(*_scene, MakeEditRebindHook());
 
     // Editor reconcile pass: give every asset a `.aast` GUID sidecar and build
@@ -589,7 +589,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // (an inspector edit or the frozen pose is authoritative then).
     if (IsSimulating())
     {
-        _physics.InterpolateTransforms(*_scene, GetInterpolationAlpha());
+        _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha());
     }
 
     // Refresh the editor camera's world matrix from its TRS before the view
@@ -608,22 +608,41 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // Collider wireframes — queued before Render() consumes them.
         SubmitColliderWireframes();
     }
-    _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera);
+    // The propagation bookmark comes from the world, not the renderer: one
+    // renderer will serve several worlds once more than one is resident.
+    _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera, _world->propagationTick);
 }
 
 void EditorApp::OnFixedUpdate(float dt)
 {
-    // Simulation ticks only while the game is running (Run, not Pause/Stop). When
-    // it isn't, physics is frozen so the scene only renders — the editor camera
-    // and picking still run from OnUpdate, which is not gated here.
-    if (!_scene || !IsSimulating())
+    if (!_scene)
         return;
+
     // Game FixedUpdate systems run before the physics step (the Unity/Unreal
-    // convention: apply forces this tick, then simulate them).
-    _gameSystems.Run(Assisi::App::SystemPhase::FixedUpdate, {*_scene, dt, GetInput(), _actions, GetEvents()});
-    _physics.Update(dt);
-    // Snapshot the new poses for render interpolation; OnRender blends them.
-    _physics.CaptureState();
+    // convention: apply forces this tick, then simulate them). They run in the
+    // ACTIVE world only: there is one InputContext, so ticking a controller
+    // system in every resident world would apply the same keypresses everywhere.
+    // Which systems opt into which worlds is the per-world registration question
+    // S2 answers (docs/multi-scene-design-notes.md §1, world affinity).
+    if (_world->simulate)
+    {
+        _gameSystems.Run(Assisi::App::SystemPhase::FixedUpdate, {*_scene, dt, GetInput(), _actions, GetEvents()});
+    }
+
+    // Physics steps every simulated world. `simulate` follows the play state (Run
+    // sets it, Pause/Stop clear it), so in the editor this is still "physics ticks
+    // only while playing" — frozen otherwise, with the camera and picking left
+    // live from OnUpdate. Worlds step sequentially, which is what lets them share
+    // one Jolt scratch allocator.
+    _worlds.ForEach(
+        [dt](Assisi::App::World &world)
+        {
+            if (!world.simulate)
+                return;
+            world.physics.Update(dt);
+            // Snapshot the new poses for render interpolation; OnRender blends them.
+            world.physics.CaptureState();
+        });
 }
 
 void EditorApp::OnUpdate(float dt)
@@ -654,7 +673,7 @@ void EditorApp::OnUpdate(float dt)
     // EditorLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in
     // asynchronously. Upgrade placeholders in place while loads are in flight.
-    Assisi::App::UpgradeStreamingAssets(*_scene, _assetCache, _assetDatabase, _assetsWereLoading);
+    Assisi::App::UpgradeStreamingAssets(*_scene, _assetCache, _assetDatabase, _world->streamingPending);
 
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
@@ -762,7 +781,7 @@ void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflec
             const auto *rbc = _scene->Get<Physics::RigidBody>(entity);
             const auto *tc  = _scene->Get<Runtime::Transform>(entity);
             if (rbc && tc)
-                _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+                _physics->SetBodyTransform(*rbc, tc->position, tc->rotation);
         }
     }
     else if (id == kRigidBodyDesc)
@@ -774,14 +793,14 @@ void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflec
             const auto *tc   = _scene->Get<Runtime::Transform>(entity);
             const auto *desc = _scene->Get<Physics::RigidBodyDescriptor>(entity);
             if (tc && desc && _scene->Get<Physics::RigidBody>(entity) == nullptr)
-                _physics.AddBodyFromDescriptor(*_scene, entity, *tc, *desc);
+                _physics->AddBodyFromDescriptor(*_scene, entity, *tc, *desc);
         }
         else
         {
             // Descriptor removed: tear down its Jolt body + the transient handle
             // (RigidBody is ACOMP(transient), never in the payload).
             if (const auto *rbc = _scene->Get<Physics::RigidBody>(entity))
-                _physics.RemoveBody(*rbc);
+                _physics->RemoveBody(*rbc);
             _scene->Remove<Physics::RigidBody>(entity);
         }
     }
@@ -854,9 +873,9 @@ void EditorApp::DrawDiagnosticsWindow()
     // Physics collision substeps per fixed step. 1 is a single solve (relies on
     // speculative contacts + per-body CCD, like Unity/Unreal); raising it trades
     // CPU for shallower impact penetration. Watch the CPU ms above as you change it.
-    int collisionSteps = _physics.GetCollisionSteps();
+    int collisionSteps = _physics->GetCollisionSteps();
     if (ImGui::InputInt("Physics collision steps", &collisionSteps))
-        _physics.SetCollisionSteps(collisionSteps);
+        _physics->SetCollisionSteps(collisionSteps);
 
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");

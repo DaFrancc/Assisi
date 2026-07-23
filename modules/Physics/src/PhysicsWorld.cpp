@@ -104,6 +104,82 @@ class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
     }
 };
 
+// ---------------------------------------------------------------------------
+// Shared Jolt runtime
+// ---------------------------------------------------------------------------
+
+/* Everything a PhysicsWorld needs from Jolt that is *not* per-world state: the
+   library globals (allocator, Factory, type registration), plus the job-system
+   thread pool and scratch allocator that Update() hands to PhysicsSystem.
+   Multi-scene runs several PhysicsWorlds side by side (docs/multi-scene-design-
+   notes.md §1); a pool per world would spawn hardware_concurrency() threads per
+   resident level and oversubscribe the machine, so the pool is shared and every
+   world steps against it.
+
+   Refcounted rather than a leaked singleton so a process that stops using
+   physics gives its worker threads back, and so construction order is correct by
+   construction: the globals are registered before the pool is built (Jolt
+   allocates through its own allocator, which RegisterDefaultAllocator installs),
+   and the pool outlives every PhysicsWorld that could still be stepping —
+   PhysicsWorld::Impl holds its handle as its first member, so it is acquired
+   before any other Jolt object of that world and released after all of them.
+   Atomic so worlds constructed/destroyed on different threads can't lose a count
+   and double-free the factory.
+
+   Sharing ONE temp allocator across worlds is only valid because worlds step
+   sequentially in the fixed-update loop — the allocator is a stack, and two
+   concurrent Update() calls would interleave their frames. Stepping worlds in
+   parallel would need a temp allocator per world (the pool itself is fine to
+   share; Jolt is built for that). */
+struct JoltRuntime
+{
+    JPH::TempAllocatorImpl   tempAlloc{10u * 1024u * 1024u}; // 10 MiB
+    JPH::JobSystemThreadPool jobSystem{JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
+                                       static_cast<int>(std::thread::hardware_concurrency()) - 1};
+};
+
+std::atomic<int32_t> gJoltRefCount{0};
+JoltRuntime         *gJoltRuntime = nullptr;
+
+/// @brief RAII handle to the shared runtime. The first one constructed brings
+/// Jolt up; the last one destroyed tears it down.
+class JoltRuntimeRef
+{
+  public:
+    JoltRuntimeRef()
+    {
+        if (gJoltRefCount++ == 0)
+        {
+            /* Must be called before any Jolt allocation — including the runtime's
+               own pool and temp allocator below. */
+            JPH::RegisterDefaultAllocator();
+            JPH::Factory::sInstance = new JPH::Factory();
+            JPH::RegisterTypes();
+            gJoltRuntime = new JoltRuntime();
+            Assisi::Core::Log::Info("Jolt: runtime up ({} worker threads, shared by every physics world).",
+                                    gJoltRuntime->jobSystem.GetMaxConcurrency());
+        }
+    }
+
+    ~JoltRuntimeRef()
+    {
+        if (--gJoltRefCount == 0)
+        {
+            delete gJoltRuntime;
+            gJoltRuntime = nullptr;
+            JPH::UnregisterTypes();
+            delete JPH::Factory::sInstance;
+            JPH::Factory::sInstance = nullptr;
+        }
+    }
+
+    JoltRuntimeRef(const JoltRuntimeRef &) = delete;
+    JoltRuntimeRef &operator=(const JoltRuntimeRef &) = delete;
+
+    JPH::TempAllocator       &TempAlloc() const { return gJoltRuntime->tempAlloc; }
+    JPH::JobSystemThreadPool &JobSystem() const { return gJoltRuntime->jobSystem; }
+};
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -115,6 +191,10 @@ namespace Assisi::Physics
 
 struct PhysicsWorld::Impl
 {
+    /* First member: brings the shared Jolt runtime up before any other member's
+       constructor allocates through Jolt, and releases it after they are gone. */
+    JoltRuntimeRef jolt;
+
     static constexpr uint32_t kMaxBodies = 1024;
     static constexpr uint32_t kMaxBodyPairs = 65536;
     static constexpr uint32_t kMaxContactConstraints = 10240;
@@ -130,9 +210,6 @@ struct PhysicsWorld::Impl
     ObjVsBPFilter objVsBPFilter;
     ObjLayerFilter objLayerFilter;
 
-    JPH::TempAllocatorImpl tempAlloc{10u * 1024u * 1024u}; // 10 MiB
-    JPH::JobSystemThreadPool jobSystem{JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
-                                       static_cast<int>(std::thread::hardware_concurrency()) - 1};
     JPH::PhysicsSystem physicsSystem;
 
     std::vector<JPH::BodyID> allBodyIds;     ///< Every body ever added; used by Clear().
@@ -160,34 +237,6 @@ struct PhysicsWorld::Impl
 
 namespace
 {
-/* Jolt's allocator, factory, and type registration are process-global, not
-   per-PhysicsSystem. Refcount them so multiple PhysicsWorld instances share a
-   single init/teardown instead of leaking the factory or tearing it out from
-   under a sibling instance. Atomic so worlds constructed/destroyed on
-   different threads can't lose a count and double-free the factory. */
-std::atomic<int32_t> gJoltRefCount{0};
-
-void AcquireJoltGlobals()
-{
-    if (gJoltRefCount++ == 0)
-    {
-        /* Must be called before any Jolt allocations (including Impl member ctors). */
-        JPH::RegisterDefaultAllocator();
-        JPH::Factory::sInstance = new JPH::Factory();
-        JPH::RegisterTypes();
-    }
-}
-
-void ReleaseJoltGlobals()
-{
-    if (--gJoltRefCount == 0)
-    {
-        JPH::UnregisterTypes();
-        delete JPH::Factory::sInstance;
-        JPH::Factory::sInstance = nullptr;
-    }
-}
-
 /* Jolt's BoxShape requires each half extent to be at least its convex radius
    (cDefaultConvexRadius) and asserts below that — reachable from an ordinary
    inspector drag. Clamp silently: a warning here would fire once per drag
@@ -239,9 +288,8 @@ constexpr float kLinearCastThreshold      = 0.3f;
 
 PhysicsWorld::PhysicsWorld()
 {
-    AcquireJoltGlobals();
-
-    /* Only now safe to construct TempAllocatorImpl and JobSystemThreadPool. */
+    /* Impl's first member acquires the shared Jolt runtime, so the library is up
+       (allocator/Factory/types) before any of its other members construct. */
     _impl = std::make_unique<Impl>();
 
     _impl->physicsSystem.Init(Impl::kMaxBodies, 0u, Impl::kMaxBodyPairs, Impl::kMaxContactConstraints,
@@ -266,10 +314,10 @@ PhysicsWorld::PhysicsWorld()
 
 PhysicsWorld::~PhysicsWorld()
 {
-    /* Tear down this instance's PhysicsSystem before releasing the shared Jolt
-       globals it depends on (factory/type registration). */
+    /* Impl's members are destroyed in reverse declaration order, so the shared
+       runtime handle (its first member) is released after this world's
+       PhysicsSystem and bodies are gone. */
     _impl.reset();
-    ReleaseJoltGlobals();
 }
 
 RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const ColliderShapeDesc &shape,
@@ -369,7 +417,10 @@ void PhysicsWorld::RemoveBody(const RigidBody &body)
 
 void PhysicsWorld::Update(float deltaTime)
 {
-    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jobSystem);
+    /* Pool and scratch allocator are per-call arguments, which is what lets every
+       world share one set (see JoltRuntime). Worlds step sequentially. */
+    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->jolt.TempAlloc(),
+                                &_impl->jolt.JobSystem());
 }
 
 void PhysicsWorld::SetCollisionSteps(int32_t steps)

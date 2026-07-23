@@ -562,15 +562,15 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
         const auto *rbc  = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity);
         const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
         if (tc && rbc)
-            _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+            _physics->SetBodyTransform(*rbc, tc->position, tc->rotation);
         if (rbc && desc)
         {
-            _physics.ReshapeBody(*rbc, Assisi::Physics::PhysicsWorld::ColliderShapeDesc{
-                                           .shape       = desc->shape,
-                                           .halfExtents = desc->halfExtents,
-                                           .radius      = desc->radius,
-                                           .halfHeight  = desc->halfHeight});
-            _physics.SetBodyCCD(*rbc, desc->enableCCD);
+            _physics->ReshapeBody(*rbc, Assisi::Physics::PhysicsWorld::ColliderShapeDesc{
+                                            .shape       = desc->shape,
+                                            .halfExtents = desc->halfExtents,
+                                            .radius      = desc->radius,
+                                            .halfHeight  = desc->halfHeight});
+            _physics->SetBodyCCD(*rbc, desc->enableCCD);
         }
     }
 
@@ -592,19 +592,19 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
         {
             if (nowDragging)
             {
-                _physics.SetBodyMotionType(*rbc, Assisi::Physics::BodyMotion::Static);
+                _physics->SetBodyMotionType(*rbc, Assisi::Physics::BodyMotion::Static);
             }
             else
             {
                 const auto *desc     = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
                 const bool  isStatic = desc && desc->isStatic;
-                _physics.SetBodyMotionType(*rbc, isStatic ? Assisi::Physics::BodyMotion::Static
-                                                          : Assisi::Physics::BodyMotion::Dynamic);
+                _physics->SetBodyMotionType(*rbc, isStatic ? Assisi::Physics::BodyMotion::Static
+                                                           : Assisi::Physics::BodyMotion::Dynamic);
                 if (!isStatic)
                 {
                     const auto *tc = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
                     if (tc)
-                        _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+                        _physics->SetBodyTransform(*rbc, tc->position, tc->rotation);
                 }
             }
         }
@@ -665,7 +665,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         if (tc != nullptr && desc != nullptr &&
             _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) == nullptr)
         {
-            _physics.AddBodyFromDescriptor(*_scene, _selectedEntity, *tc, *desc);
+            _physics->AddBodyFromDescriptor(*_scene, _selectedEntity, *tc, *desc);
         }
     }
 
@@ -700,7 +700,7 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
         {
-            _physics.RemoveBody(*rbc);
+            _physics->RemoveBody(*rbc);
         }
         _scene->Remove<Assisi::Physics::RigidBody>(_selectedEntity);
     }
@@ -850,7 +850,7 @@ void EditorApp::DrawInspector()
     {
         if (ImGui::CollapsingHeader("RigidBody (runtime)", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            const auto [linearVelocity, angularVelocity] = _physics.GetBodyVelocity(*rbc);
+            const auto [linearVelocity, angularVelocity] = _physics->GetBodyVelocity(*rbc);
             // %f takes a double through varargs, so each float is promoted anyway —
             // the casts just make the promotion explicit rather than implicit.
             ImGui::Text("Linear  (m/s):   %.3f, %.3f, %.3f", static_cast<double>(linearVelocity.x),
@@ -858,7 +858,7 @@ void EditorApp::DrawInspector()
             ImGui::Text("Angular (rad/s): %.3f, %.3f, %.3f", static_cast<double>(angularVelocity.x),
                         static_cast<double>(angularVelocity.y), static_cast<double>(angularVelocity.z));
             ImGui::Text("Speed:  %.3f m/s", static_cast<double>(glm::length(linearVelocity)));
-            ImGui::Text("CCD:    %s", _physics.IsBodyCCDEnabled(*rbc) ? "LinearCast (on)" : "Discrete (off)");
+            ImGui::Text("CCD:    %s", _physics->IsBodyCCDEnabled(*rbc) ? "LinearCast (on)" : "Discrete (off)");
         }
     }
 

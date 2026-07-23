@@ -141,11 +141,16 @@ void EditorApp::SaveLevel(const std::string &name)
         Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", name);
         return;
     }
-    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved) && _history)
+    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved))
     {
+        // Save As renames what this world *is* — keep its level identity truthful,
+        // since travel and (later) the network level handshake read it.
+        _world->levelPath = "levels/" + name + ".alvl";
+
         // Record the history position that now matches disk — IsSceneDirty compares
         // against this to drive the title's unsaved-changes marker.
-        _savedStateToken = _history->CurrentStateToken();
+        if (_history)
+            _savedStateToken = _history->CurrentStateToken();
     }
 }
 
@@ -164,12 +169,18 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // remains below is purely editor bookkeeping about the OLD scene. (We are at a
     // safe point — level loads are marshalled to the main-thread drain, never run
     // from OnImGui; see the Load button in DrawLevelsWindow.)
-    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, _physics, _sceneRenderer))
+    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, *_physics, _sceneRenderer))
         return false;
+
+    // Open Level reuses the edited world, clearing its scene in place rather than
+    // creating a second one. That is what keeps the undo history's Scene& binding
+    // (and every panel's) valid for the whole session — see
+    // docs/multi-scene-design-notes.md §2. Only the world's level identity changes.
+    _world->levelPath = virtualPath;
 
     // A load also ends any in-progress play session: the snapshot describes the
     // old scene, so it must not survive into the new one.
-    _playState = PlayState::Editing;
+    SetPlayState(PlayState::Editing);
     _playSnapshot.clear();
     _selectedEntity = Assisi::ECS::NullEntity;
 

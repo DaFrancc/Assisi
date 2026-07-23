@@ -175,7 +175,7 @@ void EditorApp::DrawTransformGizmo()
             // property, so only position/rotation sync — matches the inspector).
             if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
             {
-                _physics.SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);
+                _physics->SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);
             }
         }
     }
