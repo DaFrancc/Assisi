@@ -20,6 +20,7 @@
 #include <Assisi/Window/Key.hpp>
 
 #include <imgui.h>
+#include <imgui_internal.h> // ImGui input watchdog: ActiveId/HoveredWindow introspection
 
 #include <nlohmann/json.hpp>
 
@@ -952,6 +953,66 @@ void EditorApp::OnImGui()
         GetWindow().SetTitle(dirty ? GetConfig().title + " *" : GetConfig().title);
         _titleDirtyShown = dirty;
     }
+
+    LogImGuiWedgeDiagnostics();
+}
+
+// ---------------------------------------------------------------------------
+// ImGui input watchdog
+// ---------------------------------------------------------------------------
+
+void EditorApp::LogImGuiWedgeDiagnostics()
+{
+    // Diagnostic for the "ImGui stops responding until a new window opens"
+    // report (2026-07-22): while any widget holds ActiveId, ImGui suppresses
+    // hover on every other window — clicks land nowhere, windows can't be
+    // dragged, ImGuizmo goes dead — yet the engine's own input (fly camera,
+    // F11) keeps working. A widget holding ActiveId for seconds with NO mouse
+    // button down and NO text field being edited is wedged, not in use; log
+    // enough internal state to identify the widget and what freed it.
+    // (Opening a window "fixes" the symptom because FocusWindow() clears a
+    // stuck ActiveId — that's the reported F11 behavior.)
+    const ImGuiIO      &io = ImGui::GetIO();
+    const ImGuiContext &g  = *ImGui::GetCurrentContext();
+
+    const bool anyMouseDown = io.MouseDown[0] || io.MouseDown[1] || io.MouseDown[2];
+    // Wedge class 1: a widget holds ActiveId with no button down and no text
+    // edit — hover is suppressed everywhere, so every window plays dead.
+    const bool wedgedActiveId = g.ActiveId != 0 && !anyMouseDown && !io.WantTextInput;
+    // Wedge class 2: ImGui has no valid mouse position even though the editor
+    // is not fly-looking (mouse capture) and the app has OS focus — the
+    // backend lost the cursor, so ImGui ignores all mouse input.
+    const bool wedgedMousePos =
+        !ImGui::IsMousePosValid() && !GetInput().IsMouseCaptured() && !io.AppFocusLost;
+    const bool suspicious = wedgedActiveId || wedgedMousePos;
+
+    if (!suspicious)
+    {
+        if (_imguiWedgeSeconds >= kImGuiWedgeThreshold)
+        {
+            Assisi::Core::Log::Warn("ImGui watchdog: wedge cleared after {:.1f}s (ActiveId now 0x{:08X}).",
+                                    _imguiWedgeSeconds, g.ActiveId);
+        }
+        _imguiWedgeSeconds    = 0.f;
+        _imguiWedgeNextReport = kImGuiWedgeThreshold;
+        return;
+    }
+
+    _imguiWedgeSeconds += io.DeltaTime;
+    if (_imguiWedgeSeconds < _imguiWedgeNextReport)
+        return;
+    _imguiWedgeNextReport = _imguiWedgeSeconds + 2.f; // re-report every ~2s while wedged
+
+    const ImGuiWindow *modal = ImGui::GetTopMostPopupModal();
+    Assisi::Core::Log::Warn(
+        "ImGui watchdog [{}]: ActiveId=0x{:08X} in window '{}' (source {}) held {:.1f}s with no mouse button. "
+        "hovered='{}' nav='{}' modal='{}' popups={} wantMouse={} wantKb={} mouse=({:.0f},{:.0f}) captured={}",
+        wedgedActiveId ? (wedgedMousePos ? "activeId+mousePos" : "activeId") : "mousePos", g.ActiveId,
+        g.ActiveIdWindow ? g.ActiveIdWindow->Name : "<none>", static_cast<int>(g.ActiveIdSource),
+        _imguiWedgeSeconds, g.HoveredWindow ? g.HoveredWindow->Name : "<none>",
+        g.NavWindow ? g.NavWindow->Name : "<none>", modal ? modal->Name : "<none>", g.OpenPopupStack.Size,
+        io.WantCaptureMouse, io.WantCaptureKeyboard, static_cast<double>(io.MousePos.x),
+        static_cast<double>(io.MousePos.y), GetInput().IsMouseCaptured());
 }
 
 } // namespace Assisi::Editor

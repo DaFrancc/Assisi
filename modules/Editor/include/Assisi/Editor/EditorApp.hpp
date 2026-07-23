@@ -148,6 +148,11 @@ class EditorApp : public Assisi::App::Application
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See EditorApp.cpp
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
 
+    /// @brief Diagnostic (end of OnImGui): warns with full ImGui internal state
+    /// when a widget holds ActiveId for seconds with no mouse button down and no
+    /// text edit — the "UI stops responding until a new window opens" wedge.
+    void LogImGuiWedgeDiagnostics();
+
     // Build collider wireframes AND silhouette outlines (collider volume + entity
     // mesh) for every RigidBodyDescriptor and hand them to the renderer (green
     // depth-tested, orange x-ray for the selection), plus the list of collider
@@ -444,6 +449,14 @@ class EditorApp : public Assisi::App::Application
     // steps, positive = redo N. Applied at the top of the next OnUpdate (never
     // mid-ImGui, which would invalidate cached component pointers).
     int32_t _pendingHistorySteps = 0;
+
+    // ImGui input watchdog (LogImGuiWedgeDiagnostics): seconds a widget has held
+    // ActiveId with no mouse button down and no text edit, and the next elapsed
+    // time at which to (re-)log the wedge. Diagnostic for the reported
+    // "UI stops responding until a new window opens" freeze.
+    static constexpr float kImGuiWedgeThreshold = 3.f;
+    float _imguiWedgeSeconds    = 0.f;
+    float _imguiWedgeNextReport = kImGuiWedgeThreshold;
 
     // Per-component delete confirmation: the inspector's X button arms a two-step
     // confirm for one component at a time. Scoped to an entity so switching
