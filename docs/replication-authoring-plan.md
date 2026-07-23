@@ -101,7 +101,9 @@ Rationale, in one line each:
   so it is ready when Parent is designed.
 - `NetSync::Replicated` itself does **not** wire-replicate: `priority` is a
   server-side send concern. The client adds the marker to mirrors locally (it
-  already does — that is how disconnect cleanup finds them).
+  already does; note the disconnect cleanup itself walks the NetId map, not
+  this marker — the marker is what the §2 strip keys on and what queries and
+  tools see).
 
 ### Replication server/client changes
 
@@ -129,7 +131,10 @@ records nothing about which level is loaded. `EditorApp` gains a current-level
 virtual path (set by `LoadLevelFromPath`, cleared on new/empty scene), plumbed
 into `NetSession` so `ServerHello` can carry it. `ServerHello` also carries a
 **content hash of the level file** as saved — a path alone cannot detect that
-the two machines' files differ.
+the two machines' files differ. The level field is explicitly **tagged** with
+its addressing (virtual path | PIE absolute temp path), never sniffed from its
+shape — the Phase-2 game client and the Steam provider inherit this field, so
+its semantics get pinned now while wire churn is free.
 
 **Handshake ordering (the gate).** Today the client sends `ClientHello`
 immediately on `ServerHello`, the server marks it ready, and snapshots stream
@@ -162,8 +167,11 @@ write into / destroy arbitrary level entities. So:
 
 **Client with unsaved changes.** No modal (none exists in the editor today —
 v2 cited a prompt that was never built). The network panel shows the pending
-join with a "Join — discards unsaved changes" confirm button; nothing loads
-until clicked. PIE clients are fresh processes and skip this entirely.
+join with a "Join — discards unsaved changes" confirm button; the confirm
+gates the *connection*, not just the load — nothing connects until clicked
+(the dirty check is purely local), so the host never sees a parked,
+never-ready client inflating its client count. PIE clients are fresh
+processes and skip this entirely.
 
 **Duplicate prevention.** After the (unconditional) load, **strip level
 entities that carry `Replicated`** — the server's copies are authoritative and
@@ -173,14 +181,23 @@ bandwidth. The strip is safe *because* the load just came from disk: it never
 destroys user work. Ordering detail: the load path builds Jolt bodies for the
 whole level (`RebindSceneAssetsAndPhysics`), so the strip must run before the
 physics rebuild — or trigger a second one — to avoid stale bodies for entities
-that no longer exist.
+that no longer exist. **Strip semantics for hierarchies**: the strip removes
+*only* the marked entity, and explicitly clears the `Parent` component of any
+now-orphaned children — otherwise their stale parent handles read as "no
+parent" through a dangling reference, and unmarked children of a marked parent
+silently render at local-as-world coordinates on every client. (Accepting
+root-at-local for such children is v1 behavior; the authoring-side warning
+lives in §3.)
 
 **Save is disabled while joined.** Mirrors are ordinary entities with
 serializable components (including `Replicated`); one Save on a joined client
 would bake the server's world — at interpolated poses — into the shared level
 file, and the stripped level would overwrite the authored one. The Save/Save As
 buttons disable with a tooltip while the session is in the client role, same
-gesture as the existing play-mode save guard.
+gesture as the existing play-mode save guard. General rule for any *future*
+scene-serializing feature (crash autosave, editor snapshots): serializing a
+session-view scene must filter `Mirrored` — guard the act of serialization,
+not each button.
 
 **Play is disabled while joined.** A client pressing Play would snapshot
 mirrors into the play snapshot, roll their fields back on Stop to values the
@@ -199,9 +216,16 @@ missing entities the file contains — with a clean title bar, since the
 session load reset the dirty token. Under the session-view rule the fix is
 simple: when a client session ends (either side), the editor reloads the level
 from disk. The scene is whole, clean, and truthfully matches the file.
+Exception: `--pie-client` skips the disconnect reload and simply exits — at
+that moment the host's StopPlay is deleting the temp level file it would
+reload from, and the process is being torn down anyway.
 
 - Headless client (`ServerApp`): `LoadLevelSim` with the same path + the same
-  strip and map-clear; no UI concerns.
+  strip and map-clear; no UI concerns. Headless *hosting* (`sandbox --host`)
+  gets the same ServerHello bookkeeping — it already knows which level it
+  loaded (`--load-level`), so it sends that path + hash; a headless host with
+  no level sends "none", and joining editors treat that like any other
+  load-failure abort.
 
 **Host with unsaved edits.** The handshake replicates a file, not the host's
 memory: unmarked entities with unsaved host edits will silently differ on
@@ -245,7 +269,10 @@ teardown on user-initiated level load, host keeps running when a client drops.
   not replicate in v1, so a marked child appears on clients at its local
   coordinates read as world space. The checkbox is the cheap place to catch
   it: marking a parented entity shows "this entity is parented; it will
-  replicate at its local transform — unparent it or mark the root."
+  replicate at its local transform — unparent it or mark the root." The
+  **inverse warning too**: marking an entity that *has* children shows "this
+  entity has children; they will not follow it on clients" (the §2 strip
+  removes only the marked entity and orphans its children in place).
 - **Mirrored entities** (`Mirrored` tag): hierarchy rows tinted + icon;
   inspector shows a banner ("Mirrored from server — read-only"). Read-only is
   enforced at **one shared predicate** (`IsEditable(entity)` ≈ not Mirrored)
@@ -257,12 +284,24 @@ teardown on user-initiated level load, host keeps running when a client drops.
   undo). Note the rationale: this is not cosmetic — the server only resends
   fields it re-stamps, so a client edit to a static field would diverge
   *permanently*, not snap back.
+- **Debugging past the aggregates**: counts and glyphs can't localize which
+  one of 40 entities failed to appear. The inspector shows a "NetId: n" line
+  for replicated entities on both host and client (`NetIdOf`/`EntityOf`
+  already exist on both halves — this is nearly free). `norep` fields render
+  dimmed with a "not replicated" hint, so a field-level exclusion is visible
+  where the field is edited rather than only in C++.
 - **Network panel**: the Host button leaves the panel — hosting lives in the
   Play control (below). The panel keeps Join, Disconnect, the stats, the
   pending-join confirm (§2), the dirty-host warning (§2), the negotiated level
   path on both sides, and the zero-replicated-entities amber warning with the
   fix in it ("no entities are marked Replicated — check 'Replicated' in the
-  inspector").
+  inspector"). While hosting it also shows the **bound endpoint**
+  (address:port) — the port is auto-picked (§4), and "read the log to learn
+  your own port" is not a joinable experience for the manual cross-machine
+  flow. A second amber warning covers the likeliest confusion after
+  zero-marked: **unmarked dynamic entities** — bodies that will move on the
+  host (non-static `RigidBodyDescriptor`) but carry no `Replicated`, i.e.
+  props that roll on the host and sit frozen at file pose on every client.
 - **Sessions are Play-bound on the host.** Networking is a feature of the
   *game*, so the editor tests it the way the game runs it: hosting starts by
   entering Play (via the net dropdown, §4) and `StopPlay` always tears the
@@ -278,11 +317,17 @@ teardown on user-initiated level load, host keeps running when a client drops.
 
 ## 4. PIE-style multi-process testing (the Unreal route)
 
-The toolbar Play control gains a small net dropdown: **Standalone** (default,
-today's behavior, and the default every run — the selection is not sticky) /
-**Host** (play and listen for joins, no spawned client) / **Host + 1/2/3
-clients** (PIE). This dropdown is the *only* way to host — see §3, sessions
-are Play-bound. Multi-client counts exist because whole classes of bugs only
+The toolbar Play control gains a small net dropdown: **Standalone** (default
+at every editor launch) / **Host** (play and listen for joins, no spawned
+client) / **Host + 1/2/3 clients** (PIE). Stickiness is per editor session:
+the selection persists across Play presses — re-selecting "Host + 1" every
+edit-test cycle would undercut this milestone's own one-click rationale — and
+resets to Standalone at launch, so a forgotten "Host + 3" never ambushes a
+later session with three windows. This dropdown is the *only* way to host —
+see §3, sessions are Play-bound. Plain **Host** requires a saved current
+level (its handshake is the §2 disk path): with none — the demo scene, or a
+never-saved level — Play → Host refuses with "save the level to host". PIE
+modes have no such requirement (the temp snapshot is the level). Multi-client counts exist because whole classes of bugs only
 appear with more than one client — per-connection baseline divergence, join
 ordering, one client disconnecting while others stay — even though N full
 editor processes (each with its own Vulkan device, swapchain, and level asset
@@ -336,6 +381,14 @@ crash cannot leak windows.
 New small utility: `App::ChildProcess` (spawn argv / terminate with grace /
 reap; POSIX now, interface portable for the Windows pass).
 
+Accepted iteration cost of Play-bound sessions, stated so it reads as a
+choice and not a surprise: every host Stop disconnects every client — PIE
+clients respawn as fresh processes each Play cycle (full editor boot), and a
+manually-joined cross-machine client must rejoin by hand after every Stop.
+That is the price of "connections do not outlive the level", and it is the
+right v1 trade; if PIE respawn latency ever grinds, keeping the child process
+alive and re-joining it is an optimization that changes no semantics.
+
 ## 5. Connection providers (how peers find and reach each other)
 
 Transport backend + addressing scheme = a **provider**, and the preferred one
@@ -386,9 +439,12 @@ deferred ClientHello gate, always-load-from-disk + strip + map invalidation,
 save/play disabled while joined, host sessions Play-bound + torn down by Stop,
 disconnect reload, structure-dirty resolve in OnUpdate, no-physics-for-mirrors,
 the `NetProvider` seam + `direct` provider + config default + panel dropdown,
-§5). The existing panel Host button is the hosting UI for
-this milestone — gated to Play state as scaffolding; M3's dropdown replaces
-it.
+§5). Also: rewrite the `EditorApp.cpp` net-pump comment, which still
+justifies the ungated pump with the editing-while-hosting preview this plan
+dropped — the pump's surviving reason is the joined viewer, and the code's
+stated rationale must match the design's. The existing panel Host button is
+the hosting UI for this milestone — gated to Play state as scaffolding; M3's
+dropdown replaces it.
 *DoD*: editor A hosts `Materials.alvl` with one entity marked Replicated
 (hand-edited into the .alvl — the checkbox arrives in M4) and moving in Play;
 editor B joins **twice, from both starting states** — with no level open, and
@@ -397,8 +453,10 @@ entity is visible and moving smoothly, and nothing is duplicated; while
 joined, B's Save and Play buttons are disabled; B disconnects → mirrors
 vanish and the level reloads whole (the stripped entities are back, scene
 clean); separately, A pressing Stop ends B's session the same way (B reloads,
-scene clean, A's session gone). I run this end-to-end myself (windowed +
-headless variants) before handing it over.
+scene clean, A's session gone). The provider seam is visible too: the panel's
+provider dropdown shows "Direct IP", the join routes through `NetProvider`,
+and `networking.preferredProvider` in game.json selects the default. I run
+this end-to-end myself (windowed + headless variants) before handing it over.
 
 **M3 — PIE processes** (net dropdown, temp scene snapshot, ChildProcess,
 `--pie-client` restrictions, StopPlay teardown).
@@ -419,13 +477,16 @@ flag plus §2's joined-client guards make it safe to hand out windows before
 the full mirror read-only UX exists.
 
 **M4 — Authoring in the editor** (inspector checkbox + wire glyphs +
-non-replicated-component note + parented warning, mirrored read-only via the
-single predicate + hierarchy tint + history exclusion, panel warnings + level
-display).
+non-replicated-component note + parented and has-children warnings, mirrored
+read-only via the single predicate + hierarchy tint + history exclusion,
+panel warnings + level display + bound endpoint + unmarked-dynamic-bodies
+warning, NetId inspector line, dimmed `norep` fields).
 *DoD*: an entity can be made to replicate with one click and no code; marking
-a parented entity warns; hosting an unmarked level warns loudly; a mirrored
-entity cannot be edited by the inspector, gizmo, Delete key, or hierarchy
-actions, and never appears in undo history.
+a parented entity (or one with children) warns; hosting an unmarked level
+warns loudly, as does hosting with unmarked dynamic bodies; a replicated
+entity shows its NetId on both host and client; a mirrored entity cannot be
+edited by the inspector, gizmo, Delete key, or hierarchy actions, and never
+appears in undo history.
 
 **M5 — Verification + docs**: full self-driven E2E (host editor + PIE client +
 headless client simultaneously; disconnect/reconnect; level switch mid-session
