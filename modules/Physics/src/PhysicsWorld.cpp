@@ -686,26 +686,32 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
-    // Transform is ACOMP(tracked): writing it through the query reference bypasses
-    // Scene::GetMut's stamping, so each moved body must report the change itself,
-    // or PropagateTransforms would not see the new pose. Resolve the id once.
-    const Assisi::Core::Reflect::ComponentId transformId =
-        Assisi::Core::Reflect::ComponentIdOf<Assisi::ECS::Transform>();
-
     // Below these per-physics-step deltas a body is treated as at rest, so the pose
     // is snapped to the current step instead of blended (see the per-body use).
     constexpr float kRestPositionDeltaSq = 1e-8f; // (0.1 mm)^2 of translation between steps
     constexpr float kRestRotationDelta   = 1e-7f; // 1 - |dot(prev, cur)|; ~0.0009 rad between steps
 
+    // QueryMut, not Query: Transform is ACOMP(tracked) and this is the physics
+    // writeback, so the new pose has to stamp a change tick. PropagateTransforms's
+    // dirty-skip and network delta replication both filter on that tick, and a
+    // write through a plain Query's `Transform&` stamps nothing — the body would
+    // move with both consumers still reporting it unchanged. The proxy stamps
+    // exactly like Scene::GetMut, which is what the old explicit MarkChanged-by-id
+    // call here was standing in for.
+    //
+    // RigidBody comes along as a Mut proxy because QueryMut wraps every type, but
+    // it is only read — through the const Get(), which never stamps (and RigidBody
+    // is ACOMP(transient) and untracked anyway, so there is no tick lane to touch).
     for (auto [entity, transform, rb] :
-         scene.Query<Assisi::ECS::Transform, RigidBody>())
+         scene.QueryMut<Assisi::ECS::Transform, RigidBody>())
     {
-        if (!bodies.IsAdded(rb.bodyId) || bodies.GetMotionType(rb.bodyId) == JPH::EMotionType::Static)
+        const JPH::BodyID bodyId = rb.Get().bodyId;
+        if (!bodies.IsAdded(bodyId) || bodies.GetMotionType(bodyId) == JPH::EMotionType::Static)
         {
             continue;
         }
 
-        const auto it = _impl->snapshots.find(rb.bodyId.GetIndexAndSequenceNumber());
+        const auto it = _impl->snapshots.find(bodyId.GetIndexAndSequenceNumber());
         if (it == _impl->snapshots.end())
         {
             continue;
@@ -713,25 +719,29 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
 
         const Impl::MotionSnapshot &s = it->second;
 
+        // Taken once, after the skips: every mutable access through the proxy
+        // stamps, so binding the reference here costs one tick per body that
+        // actually moves rather than one per field written — and bodies that were
+        // skipped above are never marked changed at all.
+        Assisi::ECS::Transform &t = transform.GetMut();
+
         // A body settling toward sleep produces consecutive step poses that differ
         // by a hair; blending them with a per-frame-varying alpha makes the render
         // pose wobble (~0.001 rad). Below the rest deltas, snap to the current step
         // so it renders stable. Snapping still tracks a slow creep exactly (it
         // writes curPosition/curRotation every frame) — it only drops the blend.
         const glm::vec3 positionDelta = s.curPosition - s.prevPosition;
-        transform.position = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
-                                 ? s.curPosition
-                                 : glm::mix(s.prevPosition, s.curPosition, alpha);
+        t.position = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
+                         ? s.curPosition
+                         : glm::mix(s.prevPosition, s.curPosition, alpha);
 
         // 1 - |dot(prev, cur)| is ~0 for near-identical orientations; abs folds the
         // quaternion q/-q double cover. slerp keeps angular speed constant across
         // the blend and is renormalised since the result feeds the render matrix.
         const float rotationDelta = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
-        transform.rotation = rotationDelta < kRestRotationDelta
-                                 ? s.curRotation
-                                 : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
-
-        scene.MarkChanged(entity, transformId);
+        t.rotation = rotationDelta < kRestRotationDelta
+                         ? s.curRotation
+                         : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
     }
 }
 

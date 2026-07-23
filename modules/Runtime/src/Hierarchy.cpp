@@ -112,9 +112,15 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
         if (worldChanged)
         {
             const glm::mat4 local = LocalMatrix(*t);
-            // Written through the plain (non-stamping) Get: worldMatrix is derived
-            // output, so this must NOT re-mark the Transform changed, or every
-            // resolved entity would look dirty again next pass.
+            // Written through the plain (non-stamping) Get, and it must stay that
+            // way: worldMatrix is derived output, so stamping here would re-mark
+            // this Transform changed and every resolved entity would look dirty
+            // again on the next pass — a self-retriggering loop that turns the
+            // dirty-skip into a no-op. This is the one place where writing a
+            // tracked component without stamping is correct, and it is safe because
+            // worldMatrix is not a reflected AFIELD: it is never serialized and
+            // never replicated, so no consumer outside this file needs the signal.
+            // Peers recompute it from the local TRS with their own propagation pass.
             t->worldMatrix = parentWorld != nullptr ? (*parentWorld * local) : local;
         }
 
@@ -123,6 +129,12 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
         return worldChanged;
     };
 
+    // Deliberately the plain Query, and it must stay one. This loop only enumerates
+    // the Transform holders (resolve() re-fetches by entity); switching it to
+    // QueryMut would stamp every Transform in the scene every frame, which defeats
+    // the dirty-skip below — the next pass would find everything changed — and would
+    // hand network delta replication a full Transform set per tick. See the write in
+    // resolve() for why the worldMatrix store is likewise non-stamping.
     for (auto [entity, transform] : scene.Query<Transform>())
         resolve(entity);
 

@@ -292,3 +292,76 @@ TEST_CASE("PropagateTransforms: reparenting a child to a different parent follow
 
     CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(21.f)); // 20 + 1
 }
+
+// ── Propagation must not stamp its own output ────────────────────────────────
+// PropagateTransforms writes Transform::worldMatrix, and Transform is
+// ACOMP(tracked) — but that write goes through the non-stamping Scene::Get and the
+// enumerating loop is deliberately a plain Query, not QueryMut. Both choices are
+// load-bearing rather than oversights, and both are easy to "fix" into a bug, so
+// they are pinned here.
+//
+// If either stamped, every entity propagation touched would carry a tick newer
+// than the tick the pass returns, so the next pass would find the whole scene
+// dirty and recompute it forever (the dirty-skip becomes a no-op) — and network
+// delta replication, which filters on the same signal, would ship every Transform
+// in the scene every tick. It is safe precisely because worldMatrix is derived
+// output: it has no AFIELD, is never serialized and never replicated, and a peer
+// rebuilds it from the local TRS with its own propagation pass.
+
+TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dirty itself")
+{
+    ECS::Scene        scene;
+    const ECS::Entity parent = scene.Create();
+    const ECS::Entity child  = scene.Create();
+    REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
+
+    const uint64_t tick = PropagateTransforms(scene, 0);
+
+    // A real move of the parent through the stamping GetMut — the only write in
+    // this pass that is allowed to advance the tick.
+    scene.GetMut<Transform>(parent)->position.x = 100.f;
+    const uint64_t afterMove = scene.CurrentChangeTick();
+    REQUIRE(afterMove > tick);
+
+    const uint64_t tick2 = PropagateTransforms(scene, tick);
+    REQUIRE(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(101.f)); // recomputed
+
+    // Nothing in the pass stamped: the tick it returns is the one the move left.
+    CHECK(tick2 == afterMove);
+    CHECK(scene.CurrentChangeTick() == afterMove);
+
+    // And so a pass resuming from tick2 finds nothing dirty — no self-retrigger.
+    // Proven by the value, not just the tick: poke worldMatrix to a sentinel and
+    // check the skipping pass leaves it alone.
+    scene.Get<Transform>(child)->worldMatrix[3][0] = -1.f;
+    const uint64_t tick3 = PropagateTransforms(scene, tick2);
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(-1.f)); // skipped
+    CHECK(tick3 == tick2);
+}
+
+TEST_CASE("PropagateTransforms: moving a parent leaves the child's local Transform unchanged")
+{
+    ECS::Scene        scene;
+    const ECS::Entity parent = scene.Create();
+    const ECS::Entity child  = scene.Create();
+    REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
+
+    const uint64_t tick = PropagateTransforms(scene, 0);
+
+    scene.GetMut<Transform>(parent)->position.x = 100.f;
+    PropagateTransforms(scene, tick);
+
+    // The child's world position moved, so a naive reading says "the child
+    // changed" — but what is tracked (and replicated) is the *local* TRS, and that
+    // genuinely did not change. Only the parent reports changed, which is exactly
+    // the minimal delta: a peer applies the parent's new TRS and its own
+    // propagation rebuilds the child. Stamping the child here would be redundant
+    // traffic that grows with subtree size.
+    CHECK(scene.Changed<Transform>(parent, tick));
+    CHECK_FALSE(scene.Changed<Transform>(child, tick));
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(101.f));
+}

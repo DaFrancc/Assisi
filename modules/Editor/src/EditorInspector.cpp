@@ -691,8 +691,11 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
     {
         // Entities start transform-less; when the author gives one a placement,
         // drop it in front of the camera so it lands in view rather than at the
-        // world origin.
-        if (auto *tc = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity))
+        // world origin. GetMut, not Get: Transform is ACOMP(tracked), and the Add
+        // above stamping is not enough on its own — that stamp covers the default
+        // pose, this write replaces it, and a consumer must see the tick for the
+        // value it will actually read.
+        if (auto *tc = _scene->GetMut<Assisi::Runtime::Transform>(_selectedEntity))
         {
             RefreshCameraMatrix();
             const glm::vec3 forward =
