@@ -157,11 +157,19 @@ deferred:
   cubes, fly camera, F12 MSAA/FXAA toggle, resize without froxel artifacts).
   Likely long since true in practice — verify and clear the flag, or fold this
   into the next graphics session.
-- **Phase 2 — reshape `apps/sandbox` into the actual template**: single scene
-  (cubes + ground + light), fly camera, physics, one small example gameplay
-  system, collapse the two-scene setup. Blocked in practice on the Phase 3
-  decision (you can't strip the sandbox down before deciding where the editor
-  tooling goes).
+- **Phase 2 — reshape `apps/sandbox` into the actual template**: now UNBLOCKED
+  — the Phase 3 decision was made and executed on branch `extract-editor`
+  (2026-07-22, `docs/editor-extraction-plan.md`): the editor is a library,
+  `modules/Editor` / `Assisi::Editor`, and the sandbox is a thin
+  `EditorApp` consumer. Phase 2's shape is now two targets over a shared
+  GameLib: `Game` (no editor code in the link) and `GameEditor` (links
+  `Assisi::Editor`). Still to do in Phase 2, beyond the original list
+  (single scene, example gameplay system, two-scene collapse): exclude
+  `assets/editor/**` from Game-target staging, generalize the asset-staging
+  CMake (keyed on `Assisi-Sandbox` today), move `game.json` input-binding
+  load + Escape-to-quit + `ActionMap` to the game side, and the game-side
+  play-transition lifecycle hooks the `EditorConfig` seam deliberately
+  deferred.
 
 ## 4. Lighting — stages L1–L5 (`lighting-design-notes.md`)
 
@@ -254,14 +262,22 @@ These were real and unrecorded — the docs assumed some of them existed.
 
 ## 5. Decisions waiting on the user (unblock further work; zero code until decided)
 
-**Only two remain** — the four round-6 items below were decided and fixed on
-2026-07-22 (branch `hygiene/round6`); they are kept with their rationale so the
-reasoning is not lost.
+**Only one remains** — the four round-6 items below were decided and fixed on
+2026-07-22 (branch `hygiene/round6`), and Template Phase 3 was decided and
+executed the same day (branch `extract-editor`); they are kept with their
+rationale so the reasoning is not lost.
 
 Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
 
-- **Template Phase 3:** preserve the editor tooling as a separate `apps/editor`
-  (the plan's recommendation) or shelve it in git history. Gates Phase 2.
+- ~~**Template Phase 3**~~ **Decided and executed 2026-07-22** (branch
+  `extract-editor`, `docs/editor-extraction-plan.md`): neither of the two
+  options on file — the editor became a *library* (`modules/Editor`), not a
+  separate `apps/editor` executable, because reflection registers per final
+  binary: a standalone editor exe could never inspect the components a
+  template user writes. Games become two targets (Phase 2): `Game` and
+  `GameEditor`, the latter linking the library. The extraction also
+  surfaced and shipped missing engine runtime (level load → asset resolve +
+  physics rebuild — stage E0 of the plan doc).
 - ~~**M4a**~~ **Fixed 2026-07-22** (`4bc09e2`): `Register` now refuses once an id
   has been issued — error naming the component, then an assert. Decoupling id
   from sort order would have traded the bug for non-determinism (the name sort is

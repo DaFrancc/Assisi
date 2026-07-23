@@ -270,7 +270,7 @@ Asset staging still copies `assets/editor/**` for every target; excluding it
 from game targets belongs to Phase 2 (there is no game target yet to test
 against) — noted in `remaining-work.md`, not done here.
 
-### E4 — docs & close-out
+### E4 — docs & close-out — **DONE 2026-07-22**
 
 - `template-conversion-plan.md`: Phase 3 decision recorded (library, this
   layout), Phase 2 rewritten against the two-target shape:

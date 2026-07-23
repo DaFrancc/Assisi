@@ -54,29 +54,57 @@ still looks identical — lit cubes, fly camera (RMB-look + WASD, scroll zoom),
 F12 MSAA/FXAA toggle (exercises pipeline rebuild), window resize (exercises the
 froxel-grid rebuild — no rectangular lighting artifacts).
 
-### Phase 2 — NEXT
+### Phase 3 — editor tooling disposition — **DECIDED & EXECUTED 2026-07-22**
 
-Reshape `apps/sandbox` into the actual thin template:
+(Resolved out of order because Phase 2 was blocked on it. Full analysis and
+staging: `docs/editor-extraction-plan.md`, branch `extract-editor`.)
 
-- Single scene with a few cubes + a ground + a light.
-- Fly camera, physics enabled, input bindings.
-- One small example gameplay system so the template visibly *does* something out
-  of the box.
-- Simplify the sandbox's current two-scene setup (separate `_cameraScene` +
-  `SceneRegistry`) down to a single scene where sensible.
+**Decision: the editor is a library — `modules/Editor` (`Assisi::Editor`) —
+not a separate `apps/editor` executable.** Reflection registration is
+link-time and per-binary (`assisi_link_reflections` gathers OBJECT libraries
+at each final link), so a standalone editor exe could never inspect the game
+components a template user writes. Instead, the Unreal shape: each project
+builds `Game` (no editor code in the link) and `GameEditor` (links
+`Assisi::Editor` and sees every game component for free).
+
+What landed (stages E0–E3 of the plan doc):
+
+- **E0** — the level runtime a *game* needs moved out of the sandbox into the
+  engine: `PhysicsWorld::AddBodyFromDescriptor`/`RebuildSceneBodies`,
+  `Runtime::AssetResolve`, `App::LevelRuntime`
+  (`InstallAssetResolvers`/`LoadLevel`/`UpgradeStreamingAssets`). Before
+  this, a game built on `Assisi::App` loaded levels with no meshes and no
+  physics.
+- **E1/E2** — `SandboxApp` became `Assisi::Editor::EditorApp`, moved
+  wholesale into the library. `apps/sandbox` is now `main.cpp` + CMake. The
+  game-side seam is `EditorConfig::registerGameSystems` — game systems tick
+  only while Playing (contract documented at the declaration).
+- **E3** — `SceneRenderer`'s editor overlays (outline/icons/lines) are
+  opt-in via `InitParams::enableEditorVisuals`, default off, so a game
+  never builds those pipelines or touches `assets/editor/**`.
+
+### Phase 2 — NEXT (now unblocked)
+
+Reshape `apps/sandbox` into the actual template — now with the two-target
+shape Phase 3 settled:
+
+- `apps/game/` (renamed from sandbox): `GameLib` (the user's code — systems,
+  components, a `RegisterGameSystems(SystemRegistry&)`), a thin `Game` exe,
+  and a `GameEditor` exe that constructs `Editor::EditorApp` with the game's
+  hooks. Both exes call `assisi_link_reflections`.
+- Single scene with a few cubes + a ground + a light; fly camera; physics;
+  one small example gameplay system so the template visibly *does* something
+  out of the box (and proves the play-mode seam).
+- Move `game.json` input-binding load, Escape-to-quit, and the `ActionMap`
+  from `EditorApp` to the game side (via `EditorConfig` growth, not
+  subclassing).
+- Game-side play-transition lifecycle hooks (start/stop notification) — the
+  seam deliberately deferred them.
+- Exclude `assets/editor/**` from the `Game` target's staged assets;
+  generalize the staging/prune CMake (keyed on `Assisi-Sandbox` today).
+- Simplify the two-scene setup down to a single scene where sensible.
 
 This is the "download → name → runs into a blank scene with cubes" payoff.
-
-### Phase 3 — editor tooling disposition
-
-`apps/sandbox` currently also carries editor tooling: the reflection-based
-inspector, level save/load, entity picking + eyedropper, and the diagnostics
-window.
-
-**OPEN DECISION (unanswered):** preserve it as a separate `apps/editor`
-(recommended — it's recent, real work, and matches the editor-tooling-vs-game-
-project split) **or** shelve it in git history. Decide before stripping the
-template down.
 
 ### Later (not scoped yet)
 
