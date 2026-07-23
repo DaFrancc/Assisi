@@ -14,63 +14,71 @@ as "everything else is done."
 
 ## 1. Networking — stages 0–6 (`networking-design-notes.md`)
 
-The declared next milestone. Design settled 2026-07-20, **review-hardened
-2026-07-22 (v2)** by a multi-agent research pass (4 researchers + 2 adversarial
-reviewers; cited reports in `docs/research/networking/`) — GNS confirmed
-against the full 2026 field, architecture validated, stages revised below.
-**Nothing built** (no `modules/Net`/`NetSync`, no headless split in
-`Application`, no `simTick`). Stage 7 (prediction, lag compensation, interest
-management, NAT-traversal production infra) is explicitly deferred and
+Design settled 2026-07-20, review-hardened 2026-07-22 (v2) by a multi-agent
+research pass (cited reports in `docs/research/networking/`). **Stages 0-5 are
+built and green; Stage 6 is half done.** Stage 7 (prediction, lag compensation,
+interest management, NAT-traversal production infra) remains deferred and is
 excluded here.
 
-- **Stage 0 — GNS build integration.** protobuf(+abseil) + crypto backend + GNS
-  via FetchContent (pin a **recent `master` SHA** — the v1.6.0 tag is from
-  2021), static, warnings-clean, both platforms. The designated risk stage;
-  timeboxed, with an escalation ladder in the doc (terminal fallback: enet6 +
-  DTLS behind the same pimpl). Done = loopback echo test in `modules/Net/tests`
-  passing locally on both compilers (there is no CI — see §4c).
-- **Stage 2 — headless Application.** Split `Initialize()` into
-  `InitializeCore()` / `InitializePresentation()`; `AppConfig::headless` +
-  `--server`; loop paced by `SleepUntil` against `_closeRequested` instead of
-  window/vsync; `OnRender` gets a default no-op body. v2 adds three named
-  prerequisites: `SystemContext` input abstraction (shares the seam with
-  Stage 3 — sequence together), a render-free `LoadLevel` core, and the
-  headless link-DAG decision (v1 accepts the fat link with a "boots with no
-  GPU/libvulkan" DoD; the App-split/component-relocation refactor is a
-  committed pre-condition for a container server, not a v1 blocker).
-- **Stage 1 — `Assisi::Net` transport wrapper.** Pimpl over GNS, dense
-  `ConnectionId`, lanes, `Poll()` on the main thread, `CreateLoopbackPair` for
-  the listen server — built as a reusable test fixture (default pair for
-  listen-server; `bUseNetworkLoopback` for fake lag/loss soaks). Needs Stage 0.
-- **Stage 3 — sim tick + input commands + clock.** `simTick` in the fixed-step
-  loop, `InputCommand` sampled per tick from `ActionMap` (with a reserved
-  sub-tick fraction field), per-connection command queues, and a named
-  `NetClock` deliverable (client leads by ½·RTT + a command frame; buffer-depth
-  telemetry; adaptive dilation itself deferred). Forces player-controlling
-  systems off direct `IsKeyDown` polling.
-- **Stage 3½ — `QueryMut` (ECS, gates Stage 5).** Re-ordered out of Stage 5 by
-  the review: additive stamping query (`Mut<T>` write-proxies over the
-  existing tested tick substrate); plain `Query` untouched. ~1-2 days
-  mechanism + call-site migration; DoD = query-mutated tracked component
-  reports `Changed`.
-- **Stage 4 — binary codec over FieldMeta.** **`BitWriter`/`BitReader`
-  (bit-level from day one — revised)**, `Write/ReadComponent` walking
-  reflection metadata, `ComponentId`-keyed blocks with per-field change
-  bitmask, full state = delta-vs-empty-baseline, protocol hash (now including
-  quantization params + codec version) at handshake. Fuzz-hardened reader is a
-  committed DoD.
-- **Stage 5 — replication core.** `ReplicationServer`/`ReplicationClient`,
-  NetId map, delta replication off change ticks, snapshot interpolation.
-  v2 additions: priority-list-shaped send loop (accumulator deferred), 20-30 Hz
-  default snapshot rate (configurable divisor of 60), paginated late-join
-  baseline, untrusted-input hardening (rate caps + semantic input validation),
-  deferred EntityRef resolve, ε-convergence soak DoD under fake lag/loss.
-- **Stage 6 — listen server + sandbox Host/Join UI.** Reconnect = rejoin in
-  v1 (mid-session repair deferred).
+### Built
 
-Suggested order (v2): Stage 2+3 together (shared input seam) → 0 → 1 → 3½/4 →
-5 → 6, with §2 below as a short preface. (0 can also go first — 0 and 2 stay
-independent.)
+- **Stage 0 — GNS build integration.** Done. protobuf v35.1 (+ force-fetched
+  abseil) and GameNetworkingSockets pinned to `master` @ `f4525e39` (2026-06-06)
+  behind `ASSISI_ENABLE_NETWORKING`. `OVERRIDE_FIND_PACKAGE` redirects GNS's own
+  `find_package(Protobuf)` to the tree we build; `protobuf_generate_cpp` is
+  shimmed onto `protobuf_generate`. Linux only so far — **Windows has never been
+  built** (see the gap list below).
+- **Stage 1 — `Assisi::Net`.** Done. Pimpl over GNS, dense `ConnectionId`, three
+  lanes, `Poll()` on the calling thread, `CreateLoopbackPair` in both modes.
+  4 test cases / 166 assertions, including 40 reliable messages arriving in
+  order through 5% loss and 50 ms of simulated latency.
+- **Stage 2 — headless Application.** Done. `InitializeCore()` /
+  `InitializePresentation()`, `AppConfig::headless` + `--server`, tick-paced
+  loop against `_closeRequested`, `OnRender` defaulted, `LoadLevelSim` as the
+  render-free level load. The no-GPU DoD holds on Linux: with `DISPLAY` and
+  `WAYLAND_DISPLAY` unset the server loads six shared libraries, none of them
+  Vulkan/GL/X11/Wayland/DRM.
+- **Stage 3 — sim tick, input commands, clock.** Done. `Application::_simTick`
+  in the fixed-step loop and on `SystemContext` (whose input/actions are now
+  nullable pointers, so `SystemRegistry.hpp` no longer includes Window);
+  `InputCommand` with the reserved sub-tick byte, redundant send buffer,
+  server-side jitter queue, `ClampInputCommand`, and `NetClock`.
+- **Stage 3½ — `QueryMut`.** Done, plus the call-site migration.
+- **Stage 4 — binary codec.** Done. Bit-level `BitWriter`/`BitReader`,
+  reflection-driven component blocks, protocol hash including quantization
+  params and a codec version, fuzz-hardened reader.
+- **Stage 5 — replication core.** Done. `ReplicationServer`/`ReplicationClient`,
+  NetId map, delta replication off change ticks, spawn/despawn from set
+  comparison, budgeted priority-shaped send loop, input hardening, deferred
+  EntityRef resolve. 32 cases / 260 assertions including a soak through 150 ms
+  RTT and 5% loss.
+- **Stage 6 — partial.** `--host` / `--connect` run the protocol between two
+  processes over real UDP.
+
+### Remaining in this milestone
+
+- **Stage 6 — the rest.** The windowed client that *renders* what it receives;
+  snapshot interpolation on the client (hold 2-3 snapshots, render at
+  `serverTime - interpDelay`); the listen server itself (one process, both
+  halves through `CreateLoopbackPair` — every piece exists and is tested, it is
+  not wired up); sandbox Host/Join UI and the net-stats overlay. Reconnect stays
+  "rejoin" in v1.
+- **Component removal is invisible to change detection.** `Scene::Remove<T>` /
+  `RemoveById` never stamp, so a removed component is not replicated away — the
+  client keeps a stale one. An ECS-level gap, surfaced by the QueryMut
+  migration; needs an answer `Changed<T>` cannot give.
+- **Two reflectgen hooks are missing**, and `Replication.cpp` stands in for
+  them: a type-erased *construct in place* (the client currently creates a
+  component via `addToScene` with an empty JSON object) and a *get mutable*
+  (currently a `const_cast` on `getByEntity`). Both are contained in one
+  function so adding the hooks changes only that.
+- **Windows build of the GNS dependency chain.** Untested; Stage 0's
+  `USE_CRYPTO=BCrypt` path has never run.
+- **Paginated late-join over the Bulk lane.** The byte budget already spreads a
+  large initial world over several snapshots and the tests cover it, but the
+  design's explicit Bulk-lane pagination is not implemented.
+- **`ScopedRawEntityContext` relocation** out of Runtime (open decision 3) —
+  not yet needed, since NetSync uses the codec's own remap hooks.
 
 ## 2. Code-review round 6 — cleared
 

@@ -4,8 +4,15 @@ Captured 2026-07-20. **v2, revised 2026-07-22** after a multi-agent research
 review (4 independent researchers — engine case studies, transport-library
 survey, replication theory, codebase fit/ops — cross-checked by 2 adversarial
 reviewers, then synthesized; full cited reports in `docs/research/networking/`).
-**Nothing here is built yet.** This records the decided architecture and the
-staged path to it, so the work can start (and pause) at well-defined seams.
+
+**Implementation status (2026-07-22): stages 0-5 are built, tested and
+committed; stage 6 is half done** (headless `--host`/`--connect` work between
+two processes over UDP; the windowed client, client-side interpolation, the
+listen server, and the Host/Join UI are not wired up). The plan below is left
+as written — it is the design record, and the stage text is what the code was
+built against. Where the implementation diverged, the divergence is noted
+inline. See `remaining-work.md` §1 for the current gap list, which is the
+authoritative status.
 
 The review's headline: **the architecture survives scrutiny unchanged** —
 server-authoritative delta-snapshot replication over a two-module
@@ -274,7 +281,10 @@ InputContext → PostProcess, the loop condition is `_window->ShouldClose()`, an
      Vulkan/GLFW/nvrhi but never initializes them. Gate with a hard DoD:
      **the headless sandbox must boot and tick on a machine with no GPU and no
      `libvulkan` present** (loader is dlopen'd lazily in practice — *prove* it,
-     don't assume it).
+     don't assume it). **Verified as built:** under `LD_DEBUG=libs` with
+     `DISPLAY` and `WAYLAND_DISPLAY` unset, `--server` loads six shared
+     libraries, none of them Vulkan, GL, X11, Wayland or DRM, and `libvulkan`
+     is dlopen'd rather than DT_NEEDED so its absence cannot fail startup.
    - **Committed pre-condition for shipping a container/dedicated server
      binary (not a v1 blocker):** (i) move the *pure-data* component structs
      (`MeshRenderer`, `Camera`, light components, `Name`, `Hierarchy`,
@@ -460,6 +470,11 @@ are driven from App's loop.
   32 clients after level change) is a reliable-lane burst that can stall
   snapshots. Paginate the baseline over the Bulk lane at a byte budget per
   tick; the client is "joining" until the baseline drains, then switches live.
+  **As built:** the byte budget exists and does spread a large initial world
+  over several snapshots (an entity dropped for space is deliberately left out
+  of the ack record, so it stays a spawn rather than being counted delivered),
+  and a 40-entity world through a 120-byte budget is covered by test. The
+  separate Bulk-lane pagination and the explicit "joining" state are not.
 - **Untrusted-input hardening (named scope, not a footnote):**
   per-connection command-rate cap (reject floods before the codec runs);
   per-read bounds checks in the codec (Stage 4's fuzz hardening);
@@ -469,6 +484,11 @@ are driven from App's loop.
   food; server authority is necessary, not sufficient). GNS's built-in
   encryption + connection handshake covers the wire itself — don't re-invent
   that layer.
+- **Component *removal* is a known hole.** Change detection stamps writes, not
+  removals (`Scene::Remove<T>`/`RemoveById` never stamp), so a component taken
+  off a replicated entity is not replicated away and the client keeps a stale
+  one. Surfaced during the Stage-3½ call-site migration. Entity despawn is
+  unaffected — that falls out of the acked-set comparison.
 - **Transient components are never on the wire** (`serializable=false`, e.g.
   `Physics::RigidBody` = live Jolt handle). Each side rebuilds them locally
   from replicated descriptors — the exact pattern `RebindSceneAssetsAndPhysics`
