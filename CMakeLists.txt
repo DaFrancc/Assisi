@@ -47,6 +47,13 @@ option(ASSISI_ENABLE_CHIARA "Compile the Chiara capture system in" OFF)
 # Release build handed to RenderDoc still wants labels.
 option(ASSISI_ENABLE_GPU_MARKERS "Emit GPU debug-utils markers for RenderDoc/Nsight" ${ASSISI_ENABLE_CHIARA})
 
+# Networking (Assisi::Net / Assisi::NetSync) pulls in GameNetworkingSockets and,
+# through it, protobuf + abseil — by far the heaviest configure in the tree. It is
+# ON by default because networking is a first-class engine subsystem, not an
+# optional backend; the switch exists so a contributor who is only touching, say,
+# ECS can configure a build that neither fetches nor compiles any of it.
+option(ASSISI_ENABLE_NETWORKING "Build the networking modules (fetches GameNetworkingSockets + protobuf)" ON)
+
 # Assimp is the deferred multi-format catch-all mesh-import backend (FBX/OBJ/DAE/…).
 # The runtime glTF path uses fastgltf; Assimp stays OFF so its heavy build doesn't
 # tax every configure until a second format backend is actually wired. Flip this ON
@@ -602,6 +609,157 @@ foreach(_glslang_target
     endif()
 endforeach()
 
+# --- GameNetworkingSockets (+ protobuf, + abseil) — the networking transport.
+#
+# This is the one dependency in the tree with a dependency of its own that we
+# also have to configure, so it is the longest block here. Read top to bottom:
+# protobuf first (GNS find_package()s it), then the generator shim, then GNS.
+#
+# Everything is gated on ASSISI_ENABLE_NETWORKING so a build that does not need
+# the network modules never pays the (large) protobuf+abseil compile.
+if (ASSISI_ENABLE_NETWORKING)
+
+    # ---- protobuf (GNS's wire format for its own handshake/control messages)
+    #
+    # Pinned to the current release line rather than the last pre-abseil release
+    # (21.12, Dec 2022). 21.x is years out of support — no security backports for
+    # a parser that eats network bytes — and old protobuf fights modern GCC/MSVC.
+    # The cost is abseil: protobuf's own cmake/abseil-cpp.cmake FetchContent's it
+    # (pinned by protobuf's cmake/dependencies.cmake) when no system absl is
+    # found, which is what we want — one fewer version pair for us to keep in
+    # lockstep.
+    #
+    # OVERRIDE_FIND_PACKAGE is the load-bearing keyword: GNS's src/CMakeLists.txt
+    # calls find_package(Protobuf CONFIG), which would otherwise resolve to the
+    # *system* protobuf (or fail on a clean machine) instead of the tree we just
+    # built. With the override, that find_package() is redirected here.
+    set(protobuf_BUILD_TESTS          OFF CACHE BOOL "" FORCE)
+    set(protobuf_BUILD_EXAMPLES       OFF CACHE BOOL "" FORCE)
+    set(protobuf_BUILD_CONFORMANCE    OFF CACHE BOOL "" FORCE)
+    set(protobuf_WITH_ZLIB            OFF CACHE BOOL "" FORCE)
+    # protoc is a build-time tool: GNS runs it to generate its .pb.cc sources.
+    # libupb has to stay ON with it: protoc links the libupb target, and with the
+    # target absent CMake does not error — it degrades the dependency to a plain
+    # library name and the link fails late with "cannot find -llibupb".
+    set(protobuf_BUILD_PROTOC_BINARIES ON CACHE BOOL "" FORCE)
+    set(protobuf_BUILD_LIBUPB          ON CACHE BOOL "" FORCE)
+    # Fetch abseil rather than link the distro's. protobuf will happily
+    # find_package(absl CONFIG) and pick up e.g. Arch's shared abseil, which
+    # silently couples our build to whatever version that machine ships and
+    # gives the final binary a runtime dependency on it. This tree is
+    # self-contained by design; make protobuf's dependency resolution match.
+    set(protobuf_FORCE_FETCH_DEPENDENCIES ON CACHE BOOL "" FORCE)
+    # protobuf_INSTALL / ABSL_ENABLE_INSTALL are ON *against* our instincts: we
+    # never run `cmake --install`, and this tree installs nothing. But GNS's own
+    # CMakeLists unconditionally does install(TARGETS ... EXPORT ...) on its
+    # static lib, and CMake refuses to generate an export set whose members link
+    # a target ("libprotobuf") that is in no export set. There is no GNS option
+    # to suppress its install rules, so the fix is to let protobuf (and, through
+    # it, abseil) be exportable too. The cost is install rules nobody invokes.
+    # ...and the same for the two dependencies protobuf itself exports through.
+    # utf8_range in particular derives its own install flag from protobuf_INSTALL
+    # with a non-FORCE cache set, so a build directory configured once with
+    # installs off keeps the stale OFF forever — force all three here.
+    set(protobuf_INSTALL          ON  CACHE BOOL "" FORCE)
+    set(ABSL_ENABLE_INSTALL       ON  CACHE BOOL "" FORCE)
+    set(utf8_range_ENABLE_INSTALL ON  CACHE BOOL "" FORCE)
+    set(utf8_range_ENABLE_TESTS   OFF CACHE BOOL "" FORCE)
+    # abseil: no tests, and it must inherit our C++ standard rather than pinning
+    # its own (a mismatch is an ODR/ABI trap, not a warning).
+    set(ABSL_PROPAGATE_CXX_STD ON  CACHE BOOL "" FORCE)
+    set(ABSL_BUILD_TESTING     OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(protobuf
+        GIT_REPOSITORY https://github.com/protocolbuffers/protobuf.git
+        GIT_TAG        v35.1
+        GIT_SHALLOW    TRUE
+        SYSTEM
+        OVERRIDE_FIND_PACKAGE
+    )
+    FetchContent_MakeAvailable(protobuf)
+
+    # protobuf_generate_cpp() lives in protobuf's *installed* config package
+    # (cmake/protobuf-module.cmake.in), which a FetchContent/add_subdirectory
+    # consumer never gets — the source tree only defines the modern
+    # protobuf_generate(). GNS calls the legacy spelling, so provide it: include
+    # the generator that does exist, then a thin forwarding shim. This is exactly
+    # what protobuf's own module-compat shim does, minus the imported-target
+    # plumbing that is meaningless for an in-tree build.
+    if (NOT COMMAND protobuf_generate)
+        include("${protobuf_SOURCE_DIR}/cmake/protobuf-generate.cmake")
+    endif()
+    if (NOT COMMAND protobuf_generate_cpp)
+        # protobuf's shim defaults this to TRUE: pass -I for each .proto's own
+        # directory, which is what GNS's relative proto paths assume.
+        if (NOT DEFINED PROTOBUF_GENERATE_CPP_APPEND_PATH)
+            set(PROTOBUF_GENERATE_CPP_APPEND_PATH TRUE)
+        endif()
+        function(protobuf_generate_cpp SRCS HDRS)
+            cmake_parse_arguments(_pgc "" "EXPORT_MACRO" "" ${ARGN})
+            if (NOT _pgc_UNPARSED_ARGUMENTS)
+                message(SEND_ERROR "protobuf_generate_cpp() called without any .proto files")
+                return()
+            endif()
+            if (PROTOBUF_GENERATE_CPP_APPEND_PATH)
+                set(_append_arg APPEND_PATH)
+            endif()
+            set(_outvar)
+            protobuf_generate(${_append_arg} LANGUAGE cpp
+                EXPORT_MACRO ${_pgc_EXPORT_MACRO} OUT_VAR _outvar
+                PROTOS ${_pgc_UNPARSED_ARGUMENTS})
+            set(${SRCS})
+            set(${HDRS})
+            foreach(_file ${_outvar})
+                if (_file MATCHES "cc$")
+                    list(APPEND ${SRCS} ${_file})
+                else()
+                    list(APPEND ${HDRS} ${_file})
+                endif()
+            endforeach()
+            set(${SRCS} ${${SRCS}} PARENT_SCOPE)
+            set(${HDRS} ${${HDRS}} PARENT_SCOPE)
+        endfunction()
+    endif()
+
+    # ---- GameNetworkingSockets itself
+    #
+    # Pinned to a `master` commit, NOT the newest tag: v1.6.0 is 2021-06-03 and
+    # five years stale, while master is actively maintained by Valve (this pin is
+    # 2026-06-06) and carries the modern-protobuf compatibility and native-ICE
+    # work the tag predates. Record the SHA + date on any bump.
+    #
+    # Crypto backend is per-platform and adds no fetched dependency:
+    #   Windows — AES via the OS (BCrypt), 25519 via GNS's bundled reference impl.
+    #   Linux   — system OpenSSL. A deliberate, documented exception to this
+    #             tree's "fully self-contained" rule, same class as GLFW's system
+    #             X11 libs; OpenSSL is universally present on Linux dev machines.
+    #             (Escape hatch if that ever chafes: USE_CRYPTO=libsodium.)
+    # ENABLE_ICE stays at its default ON: the native ICE client is in-tree and
+    # pulls in nothing extra (USE_STEAMWEBRTC, which *would* drag in Google's
+    # WebRTC, stays off), so the Stage-7 NAT-traversal path costs a rebuild of
+    # nothing when we get to it.
+    set(BUILD_STATIC_LIB         ON  CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIB         OFF CACHE BOOL "" FORCE)
+    set(BUILD_EXAMPLES           OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS              OFF CACHE BOOL "" FORCE)
+    set(BUILD_TOOLS              OFF CACHE BOOL "" FORCE)
+    set(USE_STEAMWEBRTC          OFF CACHE BOOL "" FORCE)
+    set(Protobuf_USE_STATIC_LIBS ON  CACHE BOOL "" FORCE)
+    if (WIN32)
+        set(USE_CRYPTO      "BCrypt"    CACHE STRING "" FORCE)
+        set(USE_CRYPTO25519 "Reference" CACHE STRING "" FORCE)
+    else()
+        set(USE_CRYPTO      "OpenSSL" CACHE STRING "" FORCE)
+        set(USE_CRYPTO25519 "OpenSSL" CACHE STRING "" FORCE)
+    endif()
+    FetchContent_Declare(GameNetworkingSockets
+        GIT_REPOSITORY https://github.com/ValveSoftware/GameNetworkingSockets.git
+        GIT_TAG        f4525e39ee10f6b45181fd92d01fee75f7d71756 # master @ 2026-06-06; newest tag (v1.6.0) is 2021 and too old for current protobuf
+        SYSTEM
+    )
+    FetchContent_MakeAvailable(GameNetworkingSockets)
+
+endif()
+
 # End of third-party dependencies — restore normal message verbosity and the
 # deprecation-warning / policy state so our own configuration output (modules,
 # reflectgen, apps) prints and is diagnosed as usual.
@@ -655,6 +813,13 @@ add_subdirectory(modules/Math)
 add_subdirectory(modules/Geometry)
 add_subdirectory(modules/Window)
 add_subdirectory(modules/Render)
+# Net sits low, beside Core: a transport with no ECS/Render dependency, so
+# anything (asset streaming, telemetry, editor collaboration) may link it later
+# without dragging the world in. The replication layer that *does* know about
+# entities is a separate module above ECS.
+if (ASSISI_ENABLE_NETWORKING)
+  add_subdirectory(modules/Net)
+endif()
 add_subdirectory(modules/ECS)
 add_subdirectory(modules/Runtime)
 add_subdirectory(modules/Physics)
