@@ -1,0 +1,224 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#pragma once
+
+/// @file Reflect/BinaryCodec.hpp
+/// @brief Reflection-driven binary codec for component state — the network wire
+///        format.
+///
+/// JSON stays the level-file format (readable, diffable, name-keyed). The network
+/// gets this: a compact little-endian bitstream driven by the same `FieldMeta`
+/// the editor and the JSON serializer already walk, so a component becomes
+/// replicable by being reflected, with no hand-written per-type codec to forget
+/// to update.
+///
+/// **Per-component block:**
+/// @code
+///   [ ComponentId varint ][ field-changed bitmask ][ payloads of set fields ]
+/// @endcode
+/// The bitmask carries exactly one bit per *non-transient* field, in declaration
+/// order — so its width is part of the protocol hash, and a field flipping to
+/// `transient` is a protocol change, correctly.
+///
+/// **There is no separate "full snapshot" format.** Full state is a delta against
+/// the empty baseline: pass `kAllFields`. That is the Quake 3 unification — spawn,
+/// delta, keyframe and late-join all run one code path, so the rarely-exercised
+/// one cannot rot.
+///
+/// **Wire identity is `ComponentId`, not name.** The registry sorts by name and
+/// assigns dense ids, so ids agree across same-build binaries; `ProtocolHash()`
+/// verifies that agreement at handshake instead of trusting it.
+///
+/// **Trust boundary.** Decoding runs on untrusted bytes. `ReadComponent` never
+/// reads outside the buffer, never throws, and reports failure through the
+/// reader's sticky `Failed()` — a truncated or bit-flipped packet leaves the
+/// component partially written with zeroes and the connection to be dropped by
+/// the caller, never memory corruption. See TestBinaryCodec.cpp's fuzz cases.
+///
+/// **Core does not link glm and must not include ECS.** The glm-typed fields
+/// (Vec2/3/4, Quat, Mat4) are therefore encoded as their raw float arrays at the
+/// field offset — 2/3/4/4/16 floats — and `EntityRef` as the raw 64 bits of
+/// `ECS::Entity` (`uint32 index` then `uint32 generation`, verified against
+/// modules/ECS/include/Assisi/ECS/Entity.hpp). Both choices keep Core's
+/// dependency surface exactly where it is; the cost is that this file owns two
+/// hardcoded layout facts, and the static asserts plus the protocol hash are what
+/// keep them honest.
+
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <span>
+#include <string>
+
+#include <Assisi/Core/BitStream.hpp>
+#include <Assisi/Core/Reflect/ComponentId.hpp>
+#include <Assisi/Core/Reflect/ComponentMeta.hpp>
+
+namespace Assisi::Core::Reflect
+{
+
+/// @brief One bit per non-transient field, in declaration order.
+///
+/// Bit N corresponds to the N-th field that survives the `transient` filter — not
+/// to `meta.fields[N]`. Use FieldMaskBit()/CountCodecFields() rather than
+/// counting by hand.
+using FieldMask = std::uint64_t;
+
+/// @brief Every field set — a full-state block (a delta against the empty
+/// baseline). Bits past the component's field count are ignored.
+inline constexpr FieldMask kAllFields = ~FieldMask{0};
+
+/// @brief Maximum non-transient fields a component may have to be network-encodable.
+///
+/// The mask is one machine word, which keeps the per-block overhead at one
+/// bitfield read. No engine component is close to this; a component that grows
+/// past it wants splitting anyway (it is one replication unit — all-or-nothing
+/// for delta granularity). Encoding one asserts and refuses rather than silently
+/// dropping the tail.
+inline constexpr std::size_t kMaxCodecFields = 64;
+
+/// @brief Bit width of a serialized `EntityRef`.
+///
+/// `ECS::Entity` is `{ uint32_t index; uint32_t generation; }`. Core cannot
+/// include the ECS header to say so, so the width is hardcoded here and the
+/// packing is fixed by contract: `index` in the low 32 bits, `generation` in the
+/// high 32. Both ends of the wire and the Stage 5 remap hook agree on that
+/// layout.
+inline constexpr std::uint32_t kEntityRefBits = 64;
+
+/// @brief Hard cap on the element count of a vector-typed field read off the wire.
+///
+/// The count prefix is attacker-controlled. The reader additionally checks the
+/// count against the bits actually remaining, which is the tighter bound for
+/// AssetId vectors (128 bits each); this cap is the belt to that's suspenders,
+/// and bounds the pathological case where the buffer really is that large.
+inline constexpr std::size_t kMaxVectorElements = 4096;
+
+/// @brief Optional per-call hooks the codec routes reference-typed fields through.
+///
+/// Today its only job is `EntityRef` translation. The codec deliberately does
+/// *not* know about NetIds: local `(index, generation)` handles are not stable
+/// across machines, but the map that fixes that is replication state (Stage 5),
+/// not codec state. Threading it as a hook means Stage 5 substitutes NetIds
+/// without this file changing at all — and leaves the codec independently
+/// testable with no replication session in scope.
+///
+/// A null hook (or a null context) writes the raw handle bits through unchanged,
+/// which is exactly what a same-process round trip — save games, tests, the
+/// editor — wants.
+struct CodecContext
+{
+    /// Encode side: local packed handle → wire id. Stage 5 supplies NetId lookup.
+    std::function<std::uint64_t(std::uint64_t)> entityToWire;
+    /// Decode side: wire id → local packed handle. The inverse of entityToWire.
+    std::function<std::uint64_t(std::uint64_t)> entityFromWire;
+};
+
+/// @brief Number of fields the codec encodes for @p meta — its non-transient
+/// fields, which is also the bitmask's width.
+[[nodiscard]] std::size_t CountCodecFields(const ComponentMeta &meta);
+
+/// @brief Mask with only field @p codecIndex set. Returns 0 for an out-of-range
+/// index, so `mask & FieldMaskBit(i)` is safe to fold in a loop.
+[[nodiscard]] constexpr FieldMask FieldMaskBit(std::size_t codecIndex)
+{
+    return codecIndex < kMaxCodecFields ? (FieldMask{1} << codecIndex) : FieldMask{0};
+}
+
+/// @brief Writes a complete component block: id varint, field mask, payloads.
+///
+/// @param meta      The component's reflected descriptor. `meta.id` must be
+///                  finalized (it is, any time after startup).
+/// @param component Pointer to a live instance of that component type.
+/// @param writer    Destination; appended to, never reset.
+/// @param mask      Which fields to include — `kAllFields` for full state. Bits
+///                  above the component's field count are ignored. The caller
+///                  owns this decision because only it knows the baseline
+///                  (Stage 5's per-connection acked state).
+/// @param context   Optional reference-remap hooks; null means raw handles.
+/// @return false if the component could not be encoded — an unfinalized id, more
+///         than kMaxCodecFields fields, or a `FieldType::Unknown` field. Failure
+///         is loud (asserts in debug, logs an error always) and leaves a partial
+///         block in the writer: an unencodable component is a build-time
+///         reflection bug, not a runtime condition to recover from, and silently
+///         shipping a component whose fields the receiver will misparse is the
+///         one outcome worse than refusing.
+bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter &writer,
+                    FieldMask mask = kAllFields, const CodecContext *context = nullptr);
+
+/// @brief Reads the `ComponentId` prefix of a block.
+///
+/// Split from ReadComponent because the id is exactly what the caller needs to
+/// find the `ComponentMeta` to pass *to* ReadComponent — the dispatch has to
+/// happen between the two. So the asymmetry is deliberate: WriteComponent emits
+/// the whole block; the read side is `ReadComponentId` → resolve → `ReadComponent`.
+/// @return the decoded id, or kInvalidComponentId if the reader failed.
+[[nodiscard]] ComponentId ReadComponentId(BitReader &reader);
+
+/// @brief Reads a component block's mask and payloads (everything after the id
+/// prefix) into @p component, leaving unmasked fields untouched.
+///
+/// Untouched is the point: a delta carries only what changed, so the destination
+/// must be the receiver's current state and the decode is an in-place patch.
+///
+/// @param appliedMask Optional out-param receiving the mask that was on the
+///                    wire, so a caller can tell which fields it just patched
+///                    (Stage 5 uses it for interpolation bookkeeping).
+/// @return false if the reader failed at any point, or a field type could not be
+///         decoded. On failure the component holds whatever was patched before
+///         the failure — the caller drops the connection rather than trusting it.
+bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader,
+                   FieldMask *appliedMask = nullptr, const CodecContext *context = nullptr);
+
+// ── Protocol identity ─────────────────────────────────────────────────────────
+// Two builds must agree on the component table and every field's wire encoding
+// before a single snapshot is exchanged. Layout agreement alone is not enough:
+// two builds quantizing a Vec3 differently corrupt *silently*, so the
+// quantization parameters are inside the hash too.
+
+/// @brief Bumped whenever the encoding rules here change in a way that is not
+/// visible in the component table — bit order, block framing, varint form, a
+/// field type's representation. A pure-layout change does not need it; the
+/// component table already covers that.
+inline constexpr std::uint8_t kCodecVersion = 1;
+
+/// @brief The canonical protocol layout text: codec version, then every
+/// component in id order with its non-transient fields' name, type, and
+/// quantization parameters.
+///
+/// This is what gets hashed, and it is deliberately readable — when two builds
+/// disagree, diffing the two descriptions names the offending field, which a
+/// 64-bit mismatch never could.
+///
+/// Field *offsets* are excluded on purpose: they are local memory layout, not
+/// wire layout. Two builds with different struct padding are perfectly
+/// wire-compatible, and hashing offsets would reject them for nothing.
+[[nodiscard]] std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components);
+
+/// @brief ProtocolLayoutDescription over the whole ComponentRegistry, in id order.
+[[nodiscard]] std::string ProtocolLayoutDescription();
+
+/// @brief FNV-1a 64 of ProtocolLayoutDescription — the value exchanged at
+/// handshake; a mismatch rejects the connection.
+///
+/// Stable across runs and machines for an identical build (the registry's
+/// name-sorted determinism guarantees the ordering), and different whenever a
+/// component or field is added, removed, renamed, retyped, reordered, or
+/// re-quantized. Reuses Core::ContentHash64 rather than adding a second hash to
+/// the codebase.
+[[nodiscard]] std::uint64_t ProtocolHash(std::span<const ComponentMeta> components);
+
+/// @brief ProtocolHash over the whole ComponentRegistry.
+[[nodiscard]] std::uint64_t ProtocolHash();
+
+/// @brief Short human-readable protocol string sent alongside the hash, e.g.
+/// `"assisi-proto/1 components=37 hash=1a2b3c4d5e6f7081"`.
+///
+/// A bare 64-bit mismatch tells a player nothing; this makes the rejection
+/// diagnosable from a log line ("their component count is 36, ours is 37") without
+/// shipping the full layout description over the wire.
+[[nodiscard]] std::string ProtocolSummary(std::span<const ComponentMeta> components);
+
+/// @brief ProtocolSummary over the whole ComponentRegistry.
+[[nodiscard]] std::string ProtocolSummary();
+
+} // namespace Assisi::Core::Reflect
