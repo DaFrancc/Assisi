@@ -312,6 +312,14 @@ void EditorApp::DrawOptionsWindow()
             _sceneRenderer.SetGpuCulling(gpuCulling);
         }
 
+        // Show/hide the editor overlays (selection outline, entity icons,
+        // collider wireframes) — declutters the viewport for screenshots or
+        // eyeballing the scene as a game would render it. Editor-side only:
+        // OnRender skips the submissions; the scene itself is untouched.
+        // (Whether the overlay passes were even BUILT is the Initialize-time
+        // EditorConfig::enableEditorVisuals / --no-editor-visuals decision.)
+        ImGui::Checkbox("Editor Overlays", &_showEditorOverlays);
+
         const Assisi::Runtime::DrawStats draw = _sceneRenderer.LastDrawStats();
         ImGui::Text("Items: %u drawn / %u meshes culled", draw.drawnItems, draw.culledMeshes);
         ImGui::Text("Draws: %u batches / %u indirect calls", draw.batches, draw.drawCalls);

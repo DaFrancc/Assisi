@@ -21,12 +21,15 @@ constexpr const char *kUsage =
     "Usage: Assisi-Sandbox [options]\n"
     "  -l, --load-level <lvl>  virtual path of a level to open at startup,\n"
     "                          e.g. levels/Materials.alvl\n"
+    "  --no-editor-visuals     don't build the renderer's editor overlay passes\n"
+    "                          (selection outline, entity icons, wireframes) —\n"
+    "                          runs the render path a Game build gets\n"
     "  -h, --help              show this help and exit\n";
 
-// Parses argv into a startup-level virtual path (empty if none). Returns false
-// with a message printed when the arguments are malformed; sets shouldExit when
-// --help was handled (a clean early exit, not an error).
-bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &shouldExit)
+// Parses argv into the editor config inputs. Returns false with a message
+// printed when the arguments are malformed; sets shouldExit when --help was
+// handled (a clean early exit, not an error).
+bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &shouldExit)
 {
     for (int i = 1; i < argc; ++i)
     {
@@ -47,6 +50,10 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &shou
             }
             startupLevel = argv[++i];
         }
+        else if (arg == "--no-editor-visuals")
+        {
+            editorVisuals = false;
+        }
         else
         {
             std::fprintf(stderr, "Unknown argument '%.*s'\n\n%s", static_cast<int>(arg.size()), arg.data(), kUsage);
@@ -60,8 +67,9 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &shou
 int main(int argc, char **argv)
 {
     std::string_view startupLevel;
-    bool             shouldExit = false;
-    if (!ParseArgs(argc, argv, startupLevel, shouldExit))
+    bool             editorVisuals = true;
+    bool             shouldExit    = false;
+    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, shouldExit))
     {
         return EXIT_FAILURE;
     }
@@ -70,7 +78,9 @@ int main(int argc, char **argv)
         return EXIT_SUCCESS;
     }
 
-    Assisi::Editor::EditorApp app({.registerGameSystems = nullptr, .startupLevel = std::string(startupLevel)});
+    Assisi::Editor::EditorApp app({.registerGameSystems = nullptr,
+                                   .startupLevel        = std::string(startupLevel),
+                                   .enableEditorVisuals = editorVisuals});
     if (!app.Initialize())
     {
         return EXIT_FAILURE;

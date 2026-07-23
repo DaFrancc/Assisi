@@ -95,6 +95,14 @@ struct EditorConfig
     /// startup, e.g. "levels/Materials.alvl". Empty = none. Resolved through
     /// Core::AssetSystem; a missing/typo'd path warns and starts empty.
     std::string startupLevel;
+
+    /// Build the SceneRenderer's editor overlay passes (selection outline,
+    /// entity icons, collider wireframes). On by default — this exists so the
+    /// renderer's off-path (what a Game build runs: passes never built, no
+    /// assets/editor/** loads) can be exercised from a stock editor binary
+    /// via --no-editor-visuals, without a custom build. Distinct from the F11
+    /// "Editor overlays" checkbox, which only hides the overlays per frame.
+    bool enableEditorVisuals = true;
 };
 
 class EditorApp : public Assisi::App::Application
@@ -468,6 +476,12 @@ class EditorApp : public Assisi::App::Application
     // Options overlay (frame graph + display/pacing settings), toggled with F11.
     // Owned by the app, not the engine — see DrawOptionsWindow in EditorOptions.cpp.
     bool _showOptions = false;
+
+    // F11 "Editor overlays" checkbox: per-frame visibility of the selection
+    // outline, entity icons, and collider wireframes — for decluttering the
+    // view / screenshots. Purely editor-side (skips the submissions); the
+    // passes themselves exist per EditorConfig::enableEditorVisuals.
+    bool _showEditorOverlays = true;
 
     // --- Play control (game-control window, F5/F6/F7; see EditorPlay.cpp) ---
     // Physics and any game-logic systems tick only while Playing; the editor

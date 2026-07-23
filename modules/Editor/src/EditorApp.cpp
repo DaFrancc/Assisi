@@ -544,7 +544,7 @@ void EditorApp::SetupScene()
                                     .bindlessLayout = _assetCache.BindlessLayout(),
                                     .bindlessTable = _assetCache.BindlessTable(),
                                     .materialTable = _assetCache.MaterialTableBuffer(),
-                                    .enableEditorVisuals = true}))
+                                    .enableEditorVisuals = _editorConfig.enableEditorVisuals}))
     {
         RequestClose();
         return;
@@ -595,12 +595,19 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // Refresh the editor camera's world matrix from its TRS before the view
     // matrix is derived from it; SceneRenderer propagates the game scene it draws.
     RefreshCameraMatrix();
-    // The selected entity gets an always-on-top orange selection outline.
-    _sceneRenderer.SetHighlightedEntity(_selectedEntity);
-    // Editor entity icons show while authoring/paused, but not during live play.
-    _sceneRenderer.SetEditorIconsVisible(_playState != PlayState::Playing);
-    // Collider wireframes (editor-only) — queued before Render() consumes them.
-    SubmitColliderWireframes();
+    // Editor overlays (selection outline, entity icons, collider wireframes),
+    // all gated on the F11 "Editor overlays" checkbox so the view can be
+    // decluttered without touching how the scene itself renders. (Whether the
+    // overlay *passes* even exist is a separate Initialize-time decision —
+    // EditorConfig::enableEditorVisuals.)
+    _sceneRenderer.SetHighlightedEntity(_showEditorOverlays ? _selectedEntity : Assisi::ECS::NullEntity);
+    // Entity icons show while authoring/paused, but not during live play.
+    _sceneRenderer.SetEditorIconsVisible(_showEditorOverlays && _playState != PlayState::Playing);
+    if (_showEditorOverlays)
+    {
+        // Collider wireframes — queued before Render() consumes them.
+        SubmitColliderWireframes();
+    }
     _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera);
 }
 
