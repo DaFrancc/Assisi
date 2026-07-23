@@ -52,7 +52,7 @@ void SandboxApp::StartPlay()
         _scene->ForEachEntity(
             [&](Assisi::ECS::Entity entity)
             {
-                std::vector<Sandbox::ComponentSnapshot> components;
+                std::vector<Assisi::Editor::ComponentSnapshot> components;
                 for (const auto *meta : registry.SerializableComponents())
                 {
                     if (const void *comp = meta->getByEntity(_scene, entity.index, entity.generation))
@@ -133,7 +133,7 @@ void SandboxApp::StopPlay()
             // Phase 2: restore each entity's components from the captured JSON.
             for (const PlayEntitySnapshot &snap : _playSnapshot)
             {
-                for (const Sandbox::ComponentSnapshot &comp : snap.components)
+                for (const Assisi::Editor::ComponentSnapshot &comp : snap.components)
                 {
                     if (const auto *meta = registry.ById(comp.id); meta != nullptr && meta->addToScene)
                         meta->addToScene(_scene, snap.handle.index, snap.handle.generation, comp.data);
@@ -173,13 +173,13 @@ Assisi::ECS::Entity SandboxApp::CreateEntity()
     // Capture the creation as one undoable transaction: undo destroys the bare
     // entity, redo revives it at this exact handle. Components added afterwards
     // are their own transactions (so undo peels them off before removing the entity).
-    if (Sandbox::EditHistory *history = ActiveHistory())
+    if (Assisi::Editor::EditHistory *history = ActiveHistory())
     {
-        Sandbox::Transaction txn;
+        Assisi::Editor::Transaction txn;
         txn.label           = EditLabel("Create Entity", entity);
         txn.selectionBefore = previousSelection;
         txn.selectionAfter  = entity;
-        txn.cmds.push_back(Sandbox::EntityDelta{entity, std::nullopt, history->CaptureEntityComponents(entity)});
+        txn.cmds.push_back(Assisi::Editor::EntityDelta{entity, std::nullopt, history->CaptureEntityComponents(entity)});
         history->Push(std::move(txn));
     }
     return entity;
@@ -223,15 +223,15 @@ void SandboxApp::DeleteEntity(Assisi::ECS::Entity entity)
     // (components must still be alive to serialize). Undo revives every entity at
     // its exact handle and restores its components (two-phase, so Parent refs
     // resolve); redo re-deletes.
-    Sandbox::EditHistory *history = ActiveHistory();
-    Sandbox::Transaction  txn;
+    Assisi::Editor::EditHistory *history = ActiveHistory();
+    Assisi::Editor::Transaction  txn;
     if (history != nullptr)
     {
         txn.label           = EditLabel(subtree.size() > 1 ? "Delete Subtree" : "Delete Entity", entity);
         txn.selectionBefore = _selectedEntity;
         txn.selectionAfter  = Assisi::ECS::NullEntity;
         for (const Assisi::ECS::Entity e : subtree)
-            txn.cmds.push_back(Sandbox::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
+            txn.cmds.push_back(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
     }
 
     // Tear down each entity's Jolt body (RigidBody is transient — never in the

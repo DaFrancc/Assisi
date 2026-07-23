@@ -58,7 +58,7 @@ void SandboxApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
 
     // One-frame capture around this raw-offset EntityRef write (an off-inspector
     // edit site that would otherwise slip past the inspector's record-before-write).
-    Sandbox::EditHistory *history = ActiveHistory();
+    Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history != nullptr)
         history->RecordBefore(_eyedropperEntity, _eyedropperMeta->id,
                               EditLabel("Assign reference", _eyedropperEntity), _eyedropperEntity);

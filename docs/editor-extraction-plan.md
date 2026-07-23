@@ -165,7 +165,11 @@ That's acceptable interim behavior (S5 replaces the scan with a baked index)
 but it is not an editor/engine boundary — only the material reconcile
 (`ReconcileMeshMaterials`) is genuinely editor-only.
 
-### E1 — create `modules/Editor`, move `EditHistory` first
+### E1 — create `modules/Editor`, move `EditHistory` first — **DONE 2026-07-22**
+
+Landed as planned; namespace is `Assisi::Editor`, the test suite is named
+`Editor` (replacing `Sandbox`, count stays 8), and the library links only
+Runtime + nlohmann until E2 grows it.
 
 Smallest piece, proves the module + test wiring before the big move:
 

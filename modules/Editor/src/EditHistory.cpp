@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include "EditHistory.hpp"
+#include <Assisi/Editor/EditHistory.hpp>
 
 #include <utility>
 
@@ -9,7 +9,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
-namespace Sandbox
+namespace Assisi::Editor
 {
 
 namespace Reflect = Assisi::Core::Reflect;
@@ -396,4 +396,4 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
     }
 }
 
-} // namespace Sandbox
+} // namespace Assisi::Editor

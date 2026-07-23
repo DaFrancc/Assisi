@@ -298,7 +298,7 @@ void SandboxApp::SelectAsset(std::string_view vpath)
         {
             // One-frame capture around this raw-offset asset write (another
             // off-inspector edit site the inspector's record-before-write misses).
-            Sandbox::EditHistory *history = ActiveHistory();
+            Assisi::Editor::EditHistory *history = ActiveHistory();
             if (history != nullptr)
                 history->RecordBefore(_assetBrowserEntity, _assetBrowserMeta->id,
                                       EditLabel("Assign asset", _assetBrowserEntity), _assetBrowserEntity);

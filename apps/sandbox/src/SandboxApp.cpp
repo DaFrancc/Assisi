@@ -606,7 +606,7 @@ void SandboxApp::OnUpdate(float dt)
     // Delete key removes the selected entity (+ its subtree), undoably. Gated like
     // undo: only when a history is active and no text field owns the keyboard (so
     // Delete edits text there instead). Same safe mutation point as the undo above.
-    if (Sandbox::EditHistory *history = ActiveHistory();
+    if (Assisi::Editor::EditHistory *history = ActiveHistory();
         history != nullptr && !ImGui::GetIO().WantTextInput && _selectedEntity != Assisi::ECS::NullEntity &&
         _scene->IsAlive(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
@@ -636,13 +636,13 @@ void SandboxApp::FlushDeferred()
 // Undo/redo (editor-only)
 // ---------------------------------------------------------------------------
 
-Sandbox::EditHistory::RebindHook SandboxApp::MakeEditRebindHook()
+Assisi::Editor::EditHistory::RebindHook SandboxApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
     { ApplyEditRebind(entity, id, present); };
 }
 
-Sandbox::EditHistory *SandboxApp::ActiveHistory()
+Assisi::Editor::EditHistory *SandboxApp::ActiveHistory()
 {
     switch (_playState)
     {
@@ -752,7 +752,7 @@ void SandboxApp::HandleUndoRedoHotkeys()
     // Route to whichever history is live now — the main one while editing, the
     // scratch one while paused, none while playing (physics owns Transforms then).
     // Runs at the top of OnUpdate — a safe point to mutate.
-    Sandbox::EditHistory *history = ActiveHistory();
+    Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history == nullptr)
         return;
 
@@ -823,7 +823,7 @@ void SandboxApp::DrawHistoryWindow()
 {
     ImGui::Begin("History");
 
-    Sandbox::EditHistory *history = ActiveHistory();
+    Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history == nullptr)
     {
         ImGui::TextDisabled(_playState == PlayState::Playing ? "(history is off while playing)"
@@ -903,7 +903,7 @@ void SandboxApp::OnImGui()
     // commit finished drags/typing, drop no-ops, abandon dead-entity gestures.
     // Never mid-panel — the commit only reads the scene + stores JSON, but keeping
     // it at one point keeps the capture model simple. Playing captures nothing.
-    if (Sandbox::EditHistory *history = ActiveHistory())
+    if (Assisi::Editor::EditHistory *history = ActiveHistory())
         history->EndFrameSweep(_captureEditingActive);
 
     // Reflect unsaved changes in the OS window title, but only re-set it when the

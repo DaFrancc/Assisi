@@ -14,7 +14,7 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
-#include "EditHistory.hpp"
+#include <Assisi/Editor/EditHistory.hpp>
 
 using namespace Assisi;
 using ECS::Entity;
@@ -24,11 +24,11 @@ using Runtime::Camera;
 using Runtime::Parent;
 using Runtime::SceneSerializer;
 using Runtime::Transform;
-using Sandbox::ComponentDelta;
-using Sandbox::ComponentSnapshot;
-using Sandbox::EditHistory;
-using Sandbox::EntityDelta;
-using Sandbox::Transaction;
+using Assisi::Editor::ComponentDelta;
+using Assisi::Editor::ComponentSnapshot;
+using Assisi::Editor::EditHistory;
+using Assisi::Editor::EntityDelta;
+using Assisi::Editor::Transaction;
 
 namespace
 {

@@ -1,13 +1,15 @@
-# Editor-only unit tests. The sandbox is an executable, not a library, so the
-# handful of editor subsystems that are worth testing in isolation (EditHistory)
-# are compiled straight into this test target from ../src rather than linked.
-add_executable(Assisi-Sandbox-Tests
+# Editor unit tests. EditHistory is deliberately light (Core/ECS/Runtime +
+# nlohmann only), but the Editor *library* grows the whole App stack at E2
+# (ImGui, GLFW, Jolt via Assisi::App) — so the suite compiles the sources it
+# tests directly rather than linking Assisi::Editor, keeping the test binary
+# free of windowing/physics baggage.
+add_executable(Assisi-Editor-Tests
   main.cpp
   TestEditHistory.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
 )
 
-Assisi_apply_test_defaults(Assisi-Sandbox-Tests)
+Assisi_apply_test_defaults(Assisi-Editor-Tests)
 
 # GCC-only, optimized builds only: constructing a ComponentDelta (which holds two
 # std::optional<nlohmann::json>) and moving it into the command variant makes GCC
@@ -18,22 +20,21 @@ Assisi_apply_test_defaults(Assisi-Sandbox-Tests)
 # check.
 if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   set_source_files_properties(TestEditHistory.cpp
-    TARGET_DIRECTORY Assisi-Sandbox-Tests
+    TARGET_DIRECTORY Assisi-Editor-Tests
     PROPERTIES COMPILE_OPTIONS -Wno-maybe-uninitialized)
 endif()
 
 # doctest is header-only; pull it in as SYSTEM headers so its macros don't trip
 # our strict warning set.
-target_include_directories(Assisi-Sandbox-Tests SYSTEM PRIVATE
+target_include_directories(Assisi-Editor-Tests SYSTEM PRIVATE
   "${doctest_SOURCE_DIR}"
 )
 
-# So the test can include the editor sources by their bare name ("EditHistory.hpp").
-target_include_directories(Assisi-Sandbox-Tests PRIVATE
-  "${CMAKE_CURRENT_SOURCE_DIR}/../src"
+target_include_directories(Assisi-Editor-Tests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../include"
 )
 
-target_link_libraries(Assisi-Sandbox-Tests
+target_link_libraries(Assisi-Editor-Tests
   PRIVATE
     Assisi::Runtime
     nlohmann_json::nlohmann_json
@@ -44,11 +45,11 @@ target_link_libraries(Assisi-Sandbox-Tests
 # generated objects in so Transform / Parent / MeshRenderer / Camera register;
 # listed explicitly (not via assisi_link_reflections) to avoid dragging in
 # Physics-Generated + Jolt, which these tests don't exercise.
-target_sources(Assisi-Sandbox-Tests PRIVATE
+target_sources(Assisi-Editor-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
 )
 
-add_test(NAME Sandbox COMMAND Assisi-Sandbox-Tests)
+add_test(NAME Editor COMMAND Assisi-Editor-Tests)
 
-set_target_properties(Assisi-Sandbox-Tests PROPERTIES FOLDER "tests")
+set_target_properties(Assisi-Editor-Tests PROPERTIES FOLDER "tests")

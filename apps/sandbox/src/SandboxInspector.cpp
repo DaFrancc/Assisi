@@ -625,7 +625,7 @@ void SandboxApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMe
     // Capture as one transaction: record the absent-before state, then commit after
     // the add *and* its side effects below (camera-facing placement, physics body),
     // so undo restores exactly what the author sees.
-    Sandbox::EditHistory *history = ActiveHistory();
+    Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history != nullptr)
         history->RecordBefore(_selectedEntity, meta.id, EditLabel("Add " + meta.name, _selectedEntity),
                               _selectedEntity);
@@ -678,7 +678,7 @@ void SandboxApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compon
     }
 
     // Capture the present-before state so undo can restore the removed component.
-    Sandbox::EditHistory *history = ActiveHistory();
+    Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history != nullptr)
         history->RecordBefore(_selectedEntity, meta.id, EditLabel("Remove " + meta.name, _selectedEntity),
                               _selectedEntity);
@@ -734,7 +734,7 @@ void SandboxApp::DrawInspector()
         // Record-before-write for the rename: capture the Name state (present or
         // absent) before the field can change it, so the first-keystroke *creation*
         // of the Name component is captured as absent -> present.
-        if (Sandbox::EditHistory *history = ActiveHistory())
+        if (Assisi::Editor::EditHistory *history = ActiveHistory())
             history->RecordBefore(_selectedEntity,
                                   Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Name>(),
                                   EditLabel("Rename", _selectedEntity), _selectedEntity);
@@ -819,7 +819,7 @@ void SandboxApp::DrawInspector()
             // end of frame commits or drops it. See EditHistory.hpp §5. The gizmo
             // shares this same (entity, Transform) gesture, so a gizmo drag and an
             // inspector Transform edit are one coalesced transaction, not two.
-            if (Sandbox::EditHistory *history = ActiveHistory())
+            if (Assisi::Editor::EditHistory *history = ActiveHistory())
                 history->RecordBefore(_selectedEntity, meta->id, EditLabel("Edit " + meta->name, _selectedEntity),
                                       _selectedEntity);
 

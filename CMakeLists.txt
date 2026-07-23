@@ -642,6 +642,7 @@ add_subdirectory(modules/Runtime)
 add_subdirectory(modules/Physics)
 add_subdirectory(modules/Debug)
 add_subdirectory(modules/App)
+add_subdirectory(modules/Editor)
 
 # CMake 4.x scans each binary subdir for CMakePresets.json immediately after
 # creating it, before the subdirectory's CMakeLists.txt is processed. Pre-create

@@ -4,9 +4,9 @@
 /// @file EditHistory.hpp
 /// @brief Editor-only scene undo/redo — a linear stack of reversible edits.
 ///
-/// This is the sandbox editor's Ctrl-Z system. It lives entirely in the editor
-/// app (never compiled into a shipped game — see docs/editor-undo-redo-design-notes.md
-/// §9) and rests on two neutral runtime primitives added for it: Scene::ReviveAt
+/// This is the editor's Ctrl-Z system. It lives in the editor library (never
+/// linked into a shipped game — see docs/editor-undo-redo-design-notes.md §9)
+/// and rests on two neutral runtime primitives added for it: Scene::ReviveAt
 /// (exact-identity resurrection) and SceneSerializer::ScopedRawEntityContext
 /// (raw-handle EntityRef serialization).
 ///
@@ -38,7 +38,7 @@ namespace Assisi::ECS
 struct Scene;
 }
 
-namespace Sandbox
+namespace Assisi::Editor
 {
 
 /// @brief One component's reversible change on a live entity.
@@ -267,4 +267,4 @@ class EditHistory
     bool                     _applying = false;
 };
 
-} // namespace Sandbox
+} // namespace Assisi::Editor

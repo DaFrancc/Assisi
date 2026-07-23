@@ -138,7 +138,7 @@ void SandboxApp::DrawTransformGizmo()
     // nothing in the undo history.
     const Assisi::Core::Reflect::ComponentId transformId =
         Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
-    Sandbox::EditHistory *history = ActiveHistory();
+    Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history != nullptr)
         history->RecordBefore(_selectedEntity, transformId, EditLabel("Edit Transform", _selectedEntity),
                               _selectedEntity);

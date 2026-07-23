@@ -33,7 +33,7 @@
 #include <Assisi/Render/Texture.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
-#include "EditHistory.hpp"
+#include <Assisi/Editor/EditHistory.hpp>
 
 #include <nvrhi/nvrhi.h>
 
@@ -181,13 +181,13 @@ class SandboxApp : public Assisi::App::Application
     /// pointers (MeshRenderer). Routed through the same helpers the live edits use.
     void ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present);
     /// @brief Builds the rebind hook bound to this app (shared by both histories).
-    Sandbox::EditHistory::RebindHook MakeEditRebindHook();
+    Assisi::Editor::EditHistory::RebindHook MakeEditRebindHook();
     /// @brief The history that captures and applies edits *right now*, or nullptr
     /// when editing must not be captured. Editing -> the persistent main history;
     /// Paused -> a scratch history discarded when play resumes or stops; Playing ->
     /// nullptr (the simulation owns the scene, edits are neither captured nor
     /// undoable). This is the single switch every capture/undo site routes through.
-    [[nodiscard]] Sandbox::EditHistory *ActiveHistory();
+    [[nodiscard]] Assisi::Editor::EditHistory *ActiveHistory();
     /// @brief True when the scene has edits not yet written to disk — the active
     /// history's position differs from the one recorded at the last successful
     /// SaveLevel. Drives the window-title `*` marker.
@@ -387,11 +387,11 @@ class SandboxApp : public Assisi::App::Application
     // std::optional because it binds a Scene& not available until the Main scene is
     // created; it persists across play sessions (Stop restores exact identity so its
     // entity handles stay valid — see StopPlay).
-    std::optional<Sandbox::EditHistory> _history;
+    std::optional<Assisi::Editor::EditHistory> _history;
     // A throwaway history active only while Paused: edits made during a pause are
     // undoable there, but the whole container is discarded when play resumes or
     // stops, so paused undo never leaks into the persistent editing history.
-    std::optional<Sandbox::EditHistory> _pausedHistory;
+    std::optional<Assisi::Editor::EditHistory> _pausedHistory;
     // Accumulated across a frame's ImGui panels: true if an edit widget (inspector
     // drag/type, or the gizmo) is still being manipulated. The end-of-OnImGui sweep
     // reads it to decide whether an open capture gesture has ended. Reset each frame.
@@ -441,7 +441,7 @@ class SandboxApp : public Assisi::App::Application
     struct PlayEntitySnapshot
     {
         Assisi::ECS::Entity                     handle;
-        std::vector<Sandbox::ComponentSnapshot> components;
+        std::vector<Assisi::Editor::ComponentSnapshot> components;
     };
     std::vector<PlayEntitySnapshot> _playSnapshot; ///< Captured at Run; restored on Stop.
 
