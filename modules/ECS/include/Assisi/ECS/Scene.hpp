@@ -153,7 +153,8 @@ struct Scene
     /// @brief Like Get<T>, but marks the component changed (for ACOMP(tracked)
     /// types) so change-detection consumers see the write. Prefer this over Get<T>
     /// whenever you intend to modify a tracked component. Conservative: it stamps
-    /// on access, whether or not you actually alter the value.
+    /// on access, whether or not you actually alter the value. The query-shaped
+    /// equivalent is QueryMut<Ts...>, whose Mut proxies stamp the same way.
     template <typename T> T *GetMut(Entity entity)
     {
         SparseSet<T> *pool = GetPool<T>();
@@ -188,10 +189,12 @@ struct Scene
 
     // ── Change detection ──────────────────────────────────────────────────────
     // A monotonic per-write tick, stamped onto a component whenever it is accessed
-    // mutably (Add / GetMut / MarkChanged) for an ACOMP(tracked) type. A consumer
-    // remembers the tick it last ran at; a component whose tick exceeds that has
-    // changed since. Conservative (mutable access stamps even if the value is
-    // unchanged) — safe over-reporting, never a missed change.
+    // mutably (Add / GetMut / MarkChanged / a Mut proxy from QueryMut) for an
+    // ACOMP(tracked) type. A consumer remembers the tick it last ran at; a
+    // component whose tick exceeds that has changed since. Conservative (mutable
+    // access stamps even if the value is unchanged) — safe over-reporting, never a
+    // missed change. The one way to lose a change is to write through an access
+    // path that cannot stamp: Get<T> or a plain Query — see QueryMut.
 
     /// @brief The scene's current change tick — the value the most recent mutable
     /// access stamped. Record it after a system runs; anything with a higher
@@ -268,6 +271,13 @@ struct Scene
     /// here: it is deferred to FlushDestroyed() and touches no pool mid-loop. To
     /// Add/Remove a queried component for entities found while iterating, collect
     /// them into a local vector and apply the change after the loop.
+    ///
+    /// @warning The yielded `Ts&` are mutable, but writing an ACOMP(tracked)
+    /// component through them does **not** stamp change detection — exactly as
+    /// Get<T> does not, and for the same reason: this view cannot tell a read
+    /// from a write. `Changed<T>` would keep reporting false and every consumer
+    /// filtering on it would skip the entity. Use QueryMut<Ts...> for the types
+    /// you write.
     template <typename... Ts> QueryView<std::tuple<Ts...>, std::tuple<>> Query() { return Query<Ts...>(Without<>{}); }
 
     /// @brief Returns a lazy view over entities that have every Ts but none of the Es.
@@ -279,8 +289,52 @@ struct Scene
     /// pool (an Es) mid-loop is safe: it is re-probed each step through its stable
     /// pool address, nothing cached points into it, so a change there cannot
     /// dangle the iterator (and the debug check does not count excluded pools).
-    template <typename... Ts, typename... Es> QueryView<std::tuple<Ts...>, std::tuple<Es...>> Query(Without<Es...>)
+    template <typename... Ts, typename... Es> QueryView<std::tuple<Ts...>, std::tuple<Es...>> Query(Without<Es...> without)
     {
+        return MakeView<RefAccess, Ts...>(without, NoChangeTick{});
+    }
+
+    /// @brief Like Query<Ts...>, but yields Mut<T> write proxies that stamp
+    /// change detection — the query-shaped counterpart of GetMut.
+    ///
+    /// `for (auto [e, pos] : scene.QueryMut<Position>()) pos->x += 1.f;` records
+    /// the write on an ACOMP(tracked) Position, so `Changed<Position>(e, since)`
+    /// reports it. Const access through the proxy (`pos.Get().x`) does not stamp;
+    /// see Mut in Query.hpp for the exact list of spellings that do.
+    ///
+    /// Wrap only the components you write. A Mut-wrapped read stamps too (the
+    /// proxy cannot tell), which is safe but pointless replication traffic — read
+    /// the rest through a plain Query alongside. Untracked components cost
+    /// nothing here beyond the same TracksChanges() bool GetMut already checks.
+    ///
+    /// Every warning on Query applies unchanged: same iteration machinery, same
+    /// mid-loop structural-mutation hazard, same debug invalidation guard.
+    template <typename... Ts> QueryMutView<std::tuple<Ts...>, std::tuple<>> QueryMut()
+    {
+        return QueryMut<Ts...>(Without<>{});
+    }
+
+    /// @brief QueryMut with exclusions — `scene.QueryMut<A>(Without<B>{})`.
+    /// Yields exactly the entity set Query<A>(Without<B>{}) does, as Mut proxies.
+    template <typename... Ts, typename... Es>
+    QueryMutView<std::tuple<Ts...>, std::tuple<Es...>> QueryMut(Without<Es...> without)
+    {
+        return MakeView<MutAccess, Ts...>(without, &_changeTick);
+    }
+
+  private:
+    /// @brief Shared body of Query/QueryMut: resolve the pools, reject the
+    /// no-match case, and pick the pool that drives iteration.
+    ///
+    /// The two query flavours differ only in what their iterator yields (the
+    /// Access policy) and in whether they carry the change-tick back-pointer, so
+    /// pool intersection lives here once — a second copy would be free to drift
+    /// away from this one's smallest-pool and null-pool handling.
+    template <typename Access, typename... Ts, typename... Es>
+    QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access> MakeView(Without<Es...>, ChangeTickPtr<Access> changeTick)
+    {
+        using View = QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>;
+
         std::tuple<SparseSet<Ts> *...> pools = {GetPool<Ts>()...};
         std::tuple<const SparseSet<Es> *...> excluded = {GetPool<Es>()...};
 
@@ -290,7 +344,7 @@ struct Scene
         std::apply([&](auto *...ps) { anyNull = (... || (ps == nullptr)); }, pools);
         if (anyNull)
         {
-            return QueryView<std::tuple<Ts...>, std::tuple<Es...>>{pools, nullptr, excluded};
+            return View{pools, nullptr, excluded, changeTick};
         }
 
         /* Drive iteration from the smallest required pool to minimise skipped
@@ -312,10 +366,9 @@ struct Scene
             },
             pools);
 
-        return QueryView<std::tuple<Ts...>, std::tuple<Es...>>{pools, primary, excluded};
+        return View{pools, primary, excluded, changeTick};
     }
 
-  private:
     struct PoolStorage
     {
         void *pool                                          = nullptr;
