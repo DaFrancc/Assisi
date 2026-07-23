@@ -167,6 +167,11 @@ bool WindowContext::ShouldClose() const
     return _nativeWindowHandle == nullptr || glfwWindowShouldClose(_nativeWindowHandle) != 0;
 }
 
+bool WindowContext::IsFocused() const
+{
+    return _nativeWindowHandle != nullptr && glfwGetWindowAttrib(_nativeWindowHandle, GLFW_FOCUSED) != 0;
+}
+
 void WindowContext::RequestClose() const
 {
     if (_nativeWindowHandle == nullptr)

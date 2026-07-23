@@ -980,10 +980,16 @@ void EditorApp::LogImGuiWedgeDiagnostics()
     // edit — hover is suppressed everywhere, so every window plays dead.
     const bool wedgedActiveId = g.ActiveId != 0 && !anyMouseDown && !io.WantTextInput;
     // Wedge class 2: ImGui has no valid mouse position even though the editor
-    // is not fly-looking (mouse capture) and the app has OS focus — the
-    // backend lost the cursor, so ImGui ignores all mouse input.
+    // is not fly-looking (mouse capture) and the window HAS OS focus — the
+    // backend lost the cursor, so ImGui ignores all mouse input. The focus
+    // check must be the GLFW attrib (a level): io.AppFocusLost is an edge
+    // ImGui clears every frame, and an unfocused window with the cursor
+    // elsewhere legitimately has no mouse position (first watchdog session
+    // logged exactly that pattern — a ~10s alt-tab, not a wedge). While
+    // FOCUSED, the glfw backend re-polls the cursor as a fallback every
+    // frame, so this firing at all means something upstream is truly stuck.
     const bool wedgedMousePos =
-        !ImGui::IsMousePosValid() && !GetInput().IsMouseCaptured() && !io.AppFocusLost;
+        !ImGui::IsMousePosValid() && !GetInput().IsMouseCaptured() && GetWindow().IsFocused();
     const bool suspicious = wedgedActiveId || wedgedMousePos;
 
     if (!suspicious)
@@ -1006,13 +1012,14 @@ void EditorApp::LogImGuiWedgeDiagnostics()
     const ImGuiWindow *modal = ImGui::GetTopMostPopupModal();
     Assisi::Core::Log::Warn(
         "ImGui watchdog [{}]: ActiveId=0x{:08X} in window '{}' (source {}) held {:.1f}s with no mouse button. "
-        "hovered='{}' nav='{}' modal='{}' popups={} wantMouse={} wantKb={} mouse=({:.0f},{:.0f}) captured={}",
+        "hovered='{}' nav='{}' modal='{}' popups={} wantMouse={} wantKb={} mouse=({:.0f},{:.0f}) captured={} "
+        "focused={}",
         wedgedActiveId ? (wedgedMousePos ? "activeId+mousePos" : "activeId") : "mousePos", g.ActiveId,
         g.ActiveIdWindow ? g.ActiveIdWindow->Name : "<none>", static_cast<int>(g.ActiveIdSource),
         _imguiWedgeSeconds, g.HoveredWindow ? g.HoveredWindow->Name : "<none>",
         g.NavWindow ? g.NavWindow->Name : "<none>", modal ? modal->Name : "<none>", g.OpenPopupStack.Size,
         io.WantCaptureMouse, io.WantCaptureKeyboard, static_cast<double>(io.MousePos.x),
-        static_cast<double>(io.MousePos.y), GetInput().IsMouseCaptured());
+        static_cast<double>(io.MousePos.y), GetInput().IsMouseCaptured(), GetWindow().IsFocused());
 }
 
 } // namespace Assisi::Editor

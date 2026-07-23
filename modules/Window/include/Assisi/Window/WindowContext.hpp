@@ -91,6 +91,10 @@ class WindowContext
     /// @brief Returns true if the user or OS has requested the window to close.
     [[nodiscard]] bool ShouldClose() const;
 
+    /// @brief Whether the window currently has OS input focus. False for a
+    /// destroyed window.
+    [[nodiscard]] bool IsFocused() const;
+
     /// @brief Flags the window for closure; ShouldClose() will return true afterward.
     void RequestClose() const;
 
