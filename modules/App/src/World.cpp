@@ -2,6 +2,7 @@
 #include <Assisi/App/World.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 
 #include <algorithm>
 
@@ -61,6 +62,16 @@ const World *WorldManager::Find(std::string_view name) const
     return it == _worlds.end() ? nullptr : it->get();
 }
 
+std::size_t WorldManager::DestroyAllExcept(World &keep)
+{
+    _active = &keep;
+    _edited = &keep;
+
+    const std::size_t before = _worlds.size();
+    std::erase_if(_worlds, [&keep](const std::unique_ptr<World> &w) { return w.get() != &keep; });
+    return before - _worlds.size();
+}
+
 void WorldManager::SetActive(World &world)
 {
     _active = &world;
@@ -69,6 +80,14 @@ void WorldManager::SetActive(World &world)
 void WorldManager::SetEdited(World &world)
 {
     _edited = &world;
+}
+
+void SyncUnrenderedWorld(World &world)
+{
+    // Poses first: without this the propagation below would compute correct
+    // matrices for positions the bodies left behind at spawn.
+    world.physics.SyncTransforms(world.scene);
+    world.propagationTick = Runtime::PropagateTransforms(world.scene, world.propagationTick);
 }
 
 } // namespace Assisi::App

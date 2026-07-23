@@ -725,6 +725,12 @@ void EditorApp::DrawInspector()
         return;
     }
 
+    // A non-edited resident world is inspect-only: its fields read, none of them
+    // write. Blanket-disabling the whole panel is deliberate — an edit here could
+    // not be captured (the histories bind the edited world) nor saved.
+    const bool editable = IsEditable();
+    ImGui::BeginDisabled(!editable);
+
     ImGui::Text("Entity [%u:%u]", _selectedEntity.index, _selectedEntity.generation);
 
     // Rename field: every entity gets an always-available name box. It reads the
@@ -1000,7 +1006,11 @@ void EditorApp::DrawInspector()
     if (ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
         _captureEditingActive = true;
 
-    HandlePhysicsEditing(anyFieldEdited);
+    ImGui::EndDisabled();
+    if (editable)
+    {
+        HandlePhysicsEditing(anyFieldEdited);
+    }
     ImGui::End();
 }
 

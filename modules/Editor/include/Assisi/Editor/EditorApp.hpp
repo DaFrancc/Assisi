@@ -244,6 +244,28 @@ class EditorApp : public Assisi::App::Application
     /// the entity is named (e.g. "Edit Transform - Player"), else its id.
     [[nodiscard]] std::string EditLabel(std::string_view action, Assisi::ECS::Entity entity) const;
 
+    // --- Worlds (multi-scene S2; docs/multi-scene-design-notes.md) ---
+    /// @brief Switches which world the editor renders and inspects, repointing
+    /// `_scene`/`_physics` at it. One world is rendered per viewport, so "shown"
+    /// and "active" are the same thing — selecting another world moves the view
+    /// there, and the panels follow.
+    void SetActiveWorld(Assisi::App::World &world);
+    /// @brief Loads @p virtualPath into a NEW resident world and shows it, leaving
+    /// the current world alive and simulating. The asset cache is not cleared —
+    /// the other world's resolved pointers reference it. Returns false (nothing
+    /// created) if the level didn't load. Reached from the Game panel's debug
+    /// control; a game reaches the same capability through WorldManager.
+    bool LoadLevelAsNewWorld(const std::string &virtualPath);
+    /// @brief Destroys every world the play session created and shows the edited
+    /// one again. Called by StopPlay before it restores the snapshot.
+    void DestroyPlayWorlds();
+    /// @brief True when edits may be captured and saved — i.e. the world being
+    /// shown is the edited world. Other residents are inspect-only, so the panels
+    /// disable their editing controls.
+    [[nodiscard]] bool IsEditable() const;
+    /// @brief The resident-world dropdown drawn at the top of the Entities panel.
+    void DrawWorldSelector();
+
     // --- Level management ---
     void ScanLevels();
     void LoadLevel(const std::string &name);
@@ -611,6 +633,11 @@ class EditorApp : public Assisi::App::Application
     // never mid-frame: LoadLevel frees GPU assets (incl. the bindless table) that
     // this frame's already-recorded draws still reference, which faults the GPU.
     std::optional<std::string> _pendingLevelLoad;
+
+    // Same marshalling, for the Game panel's "Load as new world" debug control:
+    // it creates a second resident world, which resolves assets and builds Jolt
+    // bodies — main-thread-drain work, never mid-ImGui.
+    std::optional<std::string> _pendingWorldLoad;
 };
 
 } // namespace Assisi::Editor

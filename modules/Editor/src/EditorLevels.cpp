@@ -73,7 +73,9 @@ void EditorApp::DrawLevelsWindow()
         // *simulated* scene (settled physics, spawned/deleted entities), so saving
         // then would overwrite the level file with simulation state — and corrupt
         // dirty tracking after Stop restores the pre-play scene.
-        const bool canSave = (_playState == PlayState::Editing);
+        // ...and only into the edited world: another resident world is someone
+        // else's level, and the dirty token tracks the edited history alone.
+        const bool canSave = (_playState == PlayState::Editing) && IsEditable();
         ImGui::BeginDisabled(!canSave);
         if (ImGui::Button("Save", ImVec2(-1.0f, 0.0f)))
             SaveLevel(_levelFiles[static_cast<std::size_t>(_selectedLevel)]);
@@ -83,7 +85,7 @@ void EditorApp::DrawLevelsWindow()
     }
 
     ImGui::Separator();
-    const bool canSaveAs = (_playState == PlayState::Editing);
+    const bool canSaveAs = (_playState == PlayState::Editing) && IsEditable();
     ImGui::BeginDisabled(!canSaveAs);
     ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Save As").x - ImGui::GetStyle().ItemSpacing.x
                             - ImGui::GetStyle().FramePadding.x * 2.0f);

@@ -22,6 +22,7 @@ target_sources(Assisi-Editor
     "src/EditorLevels.cpp"
     "src/EditorOptions.cpp"
     "src/EditorPlay.cpp"
+    "src/EditorWorlds.cpp"
     "src/ImGuiQueries.hpp"
 )
 

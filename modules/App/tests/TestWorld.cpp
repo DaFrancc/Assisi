@@ -13,6 +13,8 @@
 #include <vector>
 
 #include <Assisi/App/World.hpp>
+#include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 
 using namespace Assisi::App;
 
@@ -148,6 +150,131 @@ TEST_CASE("Resident worlds share one physics thread pool")
     CHECK(ThreadCount() == afterFirst);
 }
 #endif
+
+TEST_CASE("DestroyAllExcept keeps one world and gives it both roles")
+{
+    WorldManager worlds;
+    World       &keep = worlds.Create("Keep");
+    worlds.SetActive(keep);
+    worlds.SetEdited(keep);
+    World &travelled = worlds.Create("Travelled");
+    worlds.SetActive(travelled);
+    worlds.Create("Another");
+
+    CHECK(worlds.DestroyAllExcept(keep) == 2u);
+    CHECK(worlds.Count() == 1u);
+    CHECK(worlds.Active() == &keep);
+    CHECK(worlds.Edited() == &keep);
+}
+
+TEST_CASE("An unrendered world's transforms follow its physics")
+{
+    // The S2 mechanism, and the reason it is two steps: Jolt poses reach Transform
+    // components only through the render path, which never runs for a world that
+    // simulates without being drawn. Propagating alone would give correct matrices
+    // of the spawn pose.
+    WorldManager worlds;
+    World       &world = worlds.Create("Falling");
+
+    const Assisi::ECS::Entity entity = world.scene.Create();
+    auto *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
+    REQUIRE(transform != nullptr);
+    transform->position = {0.f, 10.f, 0.f};
+
+    const Assisi::Physics::RigidBody body = world.physics.AddBody(
+        {0.f, 10.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+        Assisi::Physics::PhysicsWorld::ColliderShapeDesc{}, Assisi::Physics::BodyMotion::Dynamic);
+    REQUIRE(world.scene.Add<Assisi::Physics::RigidBody>(entity, body) != nullptr);
+
+    constexpr float kStep = 1.f / 60.f;
+    for (int32_t i = 0; i < 30; ++i) // half a second of free fall
+    {
+        world.physics.Update(kStep);
+        world.physics.CaptureState();
+    }
+
+    // Before the sync the Transform still holds the spawn pose, however far the
+    // body has actually fallen.
+    CHECK(world.scene.Get<Assisi::ECS::Transform>(entity)->position.y == doctest::Approx(10.f));
+
+    SyncUnrenderedWorld(world);
+
+    const auto *synced = world.scene.Get<Assisi::ECS::Transform>(entity);
+    REQUIRE(synced != nullptr);
+    CHECK(synced->position.y < 9.f); // gravity happened, and reached the component
+    // ...and the world matrix agrees, i.e. propagation ran AFTER the write-back
+    // rather than over the stale pose.
+    CHECK(synced->worldMatrix[3].y == doctest::Approx(synced->position.y));
+    CHECK(world.propagationTick > 0u);
+}
+
+TEST_CASE("Resident worlds simulate independently and outlive each other")
+{
+    // Two levels resident at once must be two physics spaces, not one shared one:
+    // a floor in world B must not catch world A's falling body, and destroying
+    // either must leave the other's simulation untouched.
+    WorldManager worlds;
+    World       &falling = worlds.Create("Falling");
+    World       &caught  = worlds.Create("Caught");
+    worlds.SetActive(falling);
+    worlds.SetEdited(falling);
+
+    const auto spawnBody = [](World &world, glm::vec3 at)
+    {
+        const Assisi::ECS::Entity entity = world.scene.Create();
+        world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
+        const Assisi::Physics::RigidBody body =
+            world.physics.AddBody(at, glm::quat{1.f, 0.f, 0.f, 0.f},
+                                  Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
+                                  Assisi::Physics::BodyMotion::Dynamic);
+        world.scene.Add<Assisi::Physics::RigidBody>(entity, body);
+        return entity;
+    };
+
+    const Assisi::ECS::Entity a = spawnBody(falling, {0.f, 5.f, 0.f});
+    const Assisi::ECS::Entity b = spawnBody(caught, {0.f, 5.f, 0.f});
+
+    // Only the second world has ground under it.
+    caught.physics.AddBody({0.f, 0.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+                           Assisi::Physics::PhysicsWorld::ColliderShapeDesc{.halfExtents = {50.f, 0.5f, 50.f}},
+                           Assisi::Physics::BodyMotion::Static);
+
+    falling.simulate = true;
+    caught.simulate  = true;
+
+    constexpr float kStep = 1.f / 60.f;
+    for (int32_t i = 0; i < 120; ++i) // two seconds
+    {
+        worlds.ForEach(
+            [](World &world)
+            {
+                if (!world.simulate)
+                    return;
+                world.physics.Update(kStep);
+                world.physics.CaptureState();
+            });
+    }
+    worlds.ForEach([](World &world) { SyncUnrenderedWorld(world); });
+
+    const float fell   = falling.scene.Get<Assisi::ECS::Transform>(a)->position.y;
+    const float landed = caught.scene.Get<Assisi::ECS::Transform>(b)->position.y;
+    CHECK(fell < -5.f);   // nothing to stop it
+    CHECK(landed > 0.f);  // the other world's floor did stop it
+    CHECK(landed < 5.f);  // ...but it did fall
+
+    // Tearing one down leaves the other simulating.
+    worlds.SetActive(falling);
+    REQUIRE(worlds.Destroy(caught.name));
+    CHECK(worlds.Count() == 1u);
+
+    for (int32_t i = 0; i < 60; ++i)
+    {
+        falling.physics.Update(kStep);
+        falling.physics.CaptureState();
+    }
+    SyncUnrenderedWorld(falling);
+    CHECK(falling.scene.Get<Assisi::ECS::Transform>(a)->position.y < fell);
+}
 
 TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")
 {

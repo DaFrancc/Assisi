@@ -117,6 +117,18 @@ class PhysicsWorld
     /// pose — the authoritative physics state is the current snapshot.
     void InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha);
 
+    /// @brief Writes each dynamic body's *last stepped* pose into its Transform,
+    /// with no blend.
+    ///
+    /// For worlds that simulate but are not rendered (a second resident level —
+    /// docs/multi-scene-design-notes.md §1). Interpolation exists to smooth
+    /// physics against a faster display; with nothing being displayed there is
+    /// nothing to smooth against, and the render path that would normally call
+    /// InterpolateTransforms never runs for these worlds — so without this their
+    /// Transforms would sit at spawn pose forever no matter how much the bodies
+    /// move. Call once per frame after the fixed-step loop, before propagating.
+    void SyncTransforms(Assisi::ECS::Scene &scene) { InterpolateTransforms(scene, 1.f); }
+
     /// @brief Returns the current world-space position and rotation of a body.
     std::pair<glm::vec3, glm::quat> GetBodyTransform(const RigidBody &body) const;
 

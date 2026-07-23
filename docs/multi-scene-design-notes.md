@@ -1,7 +1,7 @@
 # Multi-Scene Design Notes
 
 Branch: `multi-scene` (off `dev`, merges back to `dev`).
-Status: **S1 built** (see §4); S2–S5 designed, not started.
+Status: **S1 and S2 built** (see §4); S3-S5 designed, not started.
 
 Two features any real game needs, neither of which the engine can express
 today:
@@ -297,7 +297,7 @@ own. The editor's `_scene`/`_physics` are the active world's, `SetPlayState`
 is the one place play state and the world's `simulate` flag move together,
 and the fixed loop steps every simulated world.
 
-**S2 — Multiple resident worlds.** Create/load/destroy worlds at runtime;
+**S2 — Multiple resident worlds. BUILT.** Create/load/destroy worlds at runtime;
 fixed loop steps all simulated worlds; **pose write-back + transform
 propagation** for unrendered simulated worlds (§1 — poses first, matrices
 second); cache-lifetime policy (load without Clear); hierarchy panel world
@@ -309,6 +309,22 @@ independently, world matrices correct in both); destroying the second world
 leaves the first untouched; Stop destroys every Play-created world and
 restores the edited level exactly. Asset check: loading the second world
 does not invalidate the first world's meshes/materials (no cache Clear).
+
+*As built*: `LoadLevel` gained an `AssetCacheReset` argument — the second
+world loads with `Keep`, so the Clear is no longer unconditional. Physics
+poses reach unrendered worlds via `PhysicsWorld::SyncTransforms` (the
+no-blend write-back) followed by propagation, packaged as
+`App::SyncUnrenderedWorld`; `TestWorld.cpp` pins both the ordering (the
+matrix must agree with the *post*-write-back position) and world
+independence (a floor in one world does not catch the other's falling body).
+The editor drives it from the Game panel's **Load as new world** debug
+control, available during Play only — while Editing there is exactly one
+world, which keeps Play/Stop's snapshot unambiguous. The Entities panel
+gained a world dropdown (hidden until a second world exists), an
+`IsEditable()` predicate gates every mutating control, and `StopPlay`
+destroys the session's worlds before restoring. Not yet covered by an
+automated check: that the second load leaves the first world's GPU assets
+intact — that one needs a device, so it is an eyes-on check.
 
 **S3 — In-play hard travel.** `WorldManager::LoadLevel` + Game-panel debug
 control; Play/Stop semantics preserved via the edited-world role.

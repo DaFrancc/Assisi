@@ -65,7 +65,10 @@ void EditorApp::DrawTransformGizmo()
     // IsUsing/IsOver read false when the gizmo isn't shown.
     ImGuizmo::BeginFrame();
 
-    if (_scene == nullptr || _selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
+    // No handles over an inspect-only world: the drag would move an entity whose
+    // change could be neither undone nor saved.
+    if (_scene == nullptr || !IsEditable() || _selectedEntity == Assisi::ECS::NullEntity ||
+        !_scene->IsAlive(_selectedEntity))
     {
         return;
     }

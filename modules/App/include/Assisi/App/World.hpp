@@ -149,6 +149,11 @@ class WorldManager
         }
     }
 
+    /// @brief Destroys every world except @p keep, moving both roles to it first.
+    /// Used by Stop, which tears down whatever the play session created.
+    /// @return how many worlds were destroyed.
+    std::size_t DestroyAllExcept(World &keep);
+
   private:
     // A vector, not a map: worlds number in the handful, so the O(n) name lookup
     // is cheaper than hashing, and creation order gives deterministic iteration.
@@ -159,5 +164,16 @@ class WorldManager
     World        *_edited = nullptr;
     std::uint32_t _nextId = 1;
 };
+
+/// @brief Brings a simulated-but-unrendered world's Transforms up to date, in the
+/// order that actually works: **poses first, matrices second**.
+///
+/// The render path does two things for the world it draws — writes physics poses
+/// into Transforms, then propagates those into world matrices. A resident world
+/// that simulates without being drawn gets neither. Propagating alone is the
+/// tempting half-fix and is worse than useless: it produces perfectly correct
+/// matrices of stale spawn poses. Call once per frame, after the fixed-step loop,
+/// for every simulated world that is not the one being rendered.
+void SyncUnrenderedWorld(World &world);
 
 } // namespace Assisi::App

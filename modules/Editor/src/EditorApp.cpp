@@ -669,11 +669,35 @@ void EditorApp::OnUpdate(float dt)
         DeleteEntity(_selectedEntity);
     }
 
+    // A world requested from the Game panel is created here, at the frame's safe
+    // point — the same reason level loads are marshalled: it resolves assets and
+    // touches GPU resources this frame's draws may already reference.
+    if (_pendingWorldLoad)
+    {
+        const std::string request = *_pendingWorldLoad;
+        _pendingWorldLoad.reset();
+        LoadLevelAsNewWorld(request);
+    }
+
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // EditorLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in
     // asynchronously. Upgrade placeholders in place while loads are in flight.
-    Assisi::App::UpgradeStreamingAssets(*_scene, _assetCache, _assetDatabase, _world->streamingPending);
+    // Every resident world streams: a world you are not currently looking at would
+    // otherwise keep its billboard placeholders forever.
+    _worlds.ForEach([this](Assisi::App::World &world)
+                    { Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
+                                                          world.streamingPending); });
+
+    // Worlds that simulate but are not drawn get neither the pose write-back nor
+    // the transform propagation the render path does for the world it draws. Give
+    // them both, in that order — see App::SyncUnrenderedWorld.
+    _worlds.ForEach(
+        [this](Assisi::App::World &world)
+        {
+            if (world.simulate && &world != _world)
+                Assisi::App::SyncUnrenderedWorld(world);
+        });
 
     _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
@@ -693,8 +717,9 @@ void EditorApp::FlushDeferred()
     // End-of-frame: apply entities queued by Scene::Destroy() this frame. Runs
     // after RenderFrame, so a destroyed entity lives out its final frame before
     // its pools are touched — keeping structural changes out of any mid-frame Query.
-    if (_scene)
-        _scene->FlushDestroyed();
+    // Per world: a resident world's queued destroys must flush too, or they pile up
+    // until it is next shown and then all land at once.
+    _worlds.ForEach([](Assisi::App::World &world) { world.scene.FlushDestroyed(); });
 }
 
 // ---------------------------------------------------------------------------
@@ -707,8 +732,20 @@ Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
     { ApplyEditRebind(entity, id, present); };
 }
 
+bool EditorApp::IsEditable() const
+{
+    // Both histories bind the *edited* world's scene by reference, and Save writes
+    // it — so an edit made while a different world is being shown would be captured
+    // into the wrong scene's history and could never be saved. Other resident
+    // worlds are inspect-only (docs/multi-scene-design-notes.md §1).
+    return _world != nullptr && _world == _worlds.Edited();
+}
+
 Assisi::Editor::EditHistory *EditorApp::ActiveHistory()
 {
+    if (!IsEditable())
+        return nullptr;
+
     switch (_playState)
     {
     case PlayState::Editing:
