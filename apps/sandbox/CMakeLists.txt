@@ -7,11 +7,18 @@ Assisi_apply_defaults(Assisi-Sandbox)
 target_sources(Assisi-Sandbox
   PRIVATE
     "src/main.cpp"
+    "src/ServerApp.cpp"
+    "src/ServerApp.hpp"
 )
 
 target_link_libraries(Assisi-Sandbox
   PRIVATE
     Assisi::Editor
+    # ServerApp derives from Application directly and never touches the editor;
+    # named explicitly rather than leaned on through Assisi::Editor's transitive
+    # link, so the dependency survives the editor being dropped from a build.
+    Assisi::App
+    Assisi::Physics
 )
 
 assisi_link_reflections(Assisi-Sandbox)

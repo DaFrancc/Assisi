@@ -9,6 +9,8 @@
 /// this into Game/GameEditor targets over a shared GameLib; see
 /// docs/editor-extraction-plan.md.)
 
+#include "ServerApp.hpp"
+
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/SystemRegistry.hpp>
@@ -20,6 +22,9 @@
 #include <Assisi/Window/InputContext.hpp>
 
 #include <glm/gtc/quaternion.hpp>
+
+#include <charconv>
+#include <cstdint>
 
 #include <cstdio>
 #include <cstdlib>
@@ -35,12 +40,17 @@ constexpr const char *kUsage =
     "  --no-editor-visuals     don't build the renderer's editor overlay passes\n"
     "                          (selection outline, entity icons, wireframes) —\n"
     "                          runs the render path a Game build gets\n"
+    "  --server                run headless: no window, renderer, input or debug\n"
+    "                          UI — just the fixed-step simulation (see ServerApp)\n"
+    "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
+    "                          until interrupted, the default)\n"
     "  -h, --help              show this help and exit\n";
 
 // Parses argv into the editor config inputs. Returns false with a message
 // printed when the arguments are malformed; sets shouldExit when --help was
 // handled (a clean early exit, not an error).
-bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &shouldExit)
+bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &server,
+               std::uint64_t &tickLimit, bool &shouldExit)
 {
     for (int i = 1; i < argc; ++i)
     {
@@ -64,6 +74,27 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
         else if (arg == "--no-editor-visuals")
         {
             editorVisuals = false;
+        }
+        else if (arg == "--server")
+        {
+            server = true;
+        }
+        else if (arg == "--ticks")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "%.*s requires a tick count\n\n%s", static_cast<int>(arg.size()), arg.data(),
+                             kUsage);
+                return false;
+            }
+            const std::string_view value = argv[++i];
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), tickLimit);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+            {
+                std::fprintf(stderr, "--ticks expects a non-negative integer, got '%.*s'\n\n%s",
+                             static_cast<int>(value.size()), value.data(), kUsage);
+                return false;
+            }
         }
         else
         {
@@ -169,13 +200,29 @@ int main(int argc, char **argv)
 {
     std::string_view startupLevel;
     bool             editorVisuals = true;
+    bool             server        = false;
+    std::uint64_t    tickLimit     = 0;
     bool             shouldExit    = false;
-    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, shouldExit))
+    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, tickLimit, shouldExit))
     {
         return EXIT_FAILURE;
     }
     if (shouldExit)
     {
+        return EXIT_SUCCESS;
+    }
+
+    // The dedicated server is a different program, not the editor with its
+    // window hidden: it brings up only the simulation half of Application and
+    // never constructs an editor, a renderer, or a window.
+    if (server)
+    {
+        Sandbox::ServerApp serverApp(std::string(startupLevel), tickLimit);
+        if (!serverApp.Initialize())
+        {
+            return EXIT_FAILURE;
+        }
+        serverApp.Run();
         return EXIT_SUCCESS;
     }
 

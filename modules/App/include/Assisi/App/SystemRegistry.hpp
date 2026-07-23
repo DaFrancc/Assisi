@@ -37,15 +37,24 @@
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Window/ActionMap.hpp>
-#include <Assisi/Window/InputContext.hpp>
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
+
+// Forward-declared, not included: a headless server runs this scheduler with no
+// window and no input devices, so the game-logic context must be expressible
+// without Window's types. A system that genuinely needs them includes the
+// Window headers itself.
+namespace Assisi::Window
+{
+class InputContext;
+class ActionMap;
+} // namespace Assisi::Window
 
 namespace Assisi::App
 {
@@ -64,10 +73,19 @@ struct SystemContext
     World                &world;
     float                 dt;
 
+    /// @brief The fixed-step tick this frame belongs to — the engine's network
+    /// clock. Incremented once per iteration of the fixed-update loop, so it
+    /// advances by one per FixedUpdate and repeats across the Update/PostUpdate
+    /// phases of the same frame. Snapshots are stamped with it and input
+    /// commands target it.
+    std::uint64_t         simTick;
+
     /// Null in headless hosts (dedicated server, tests): an InputContext needs a
     /// live window, so anything that can run windowless must be able to say "no
     /// input". Systems that read input either declare ActiveWorldOnly() and get
-    /// gated out of such hosts anyway, or null-check.
+    /// gated out of such hosts anyway, or null-check. Player-controlling systems
+    /// must read replicated input commands rather than poll these, precisely so
+    /// they still work when these are null.
     Window::InputContext *input;
     Window::ActionMap    *actions;
 

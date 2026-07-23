@@ -26,10 +26,15 @@
 /// @code
 /// _systems.Register(SystemPhase::Update, "PlayerMove",
 ///     [](SystemContext& ctx) {
-///         if (ctx.actions->IsActionDown("MoveForward", *ctx.input))
+///         if (ctx.actions && ctx.actions->IsActionDown("MoveForward", *ctx.input))
 ///             player.velocity.z -= speed * ctx.dt;
 ///     })
 ///     .ActiveWorldOnly();  // input is single; worlds are many
+/// @endcode
+/// The null check is not defensive noise: ctx.actions/ctx.input are null on a
+/// headless server. A system that must also run there reads its input from
+/// replicated commands instead of polling here.
+/// @code
 /// @endcode
 
 #include <Assisi/Core/StringHash.hpp>

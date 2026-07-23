@@ -60,6 +60,15 @@ bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCac
     return true;
 }
 
+bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics)
+{
+    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath))
+        return false;
+
+    physics.RebuildSceneBodies(scene);
+    return true;
+}
+
 void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
                             bool &wereLoading)
 {

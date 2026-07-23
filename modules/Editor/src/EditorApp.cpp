@@ -660,7 +660,6 @@ void EditorApp::OnFixedUpdate(float dt)
 {
     if (!_scene)
         return;
-
     // **In the editor, the play state is a flat switch: while it is not Playing,
     // nothing steps anywhere.** Not "the world you are looking at is frozen" —
     // Pause means the whole session is frozen, logic and physics alike, in every
@@ -687,7 +686,7 @@ void EditorApp::OnFixedUpdate(float dt)
                 return;
 
             world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
-                              {world, dt, &GetInput(), &_actions, GetEvents(),
+                              {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
                                /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
 
             {
@@ -831,7 +830,7 @@ void EditorApp::OnUpdate(float dt)
     // The editor's own systems act on the world being *viewed* — picking, the fly
     // camera and selection all follow the world selector, not the played world.
     const Assisi::App::SystemContext editorCtx{
-        *_world, dt, &input, &_actions, GetEvents(), /*isActiveWorld=*/true, &_worlds};
+        *_world, dt, GetSimTick(), &input, &_actions, GetEvents(), /*isActiveWorld=*/true, &_worlds};
     _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
@@ -854,7 +853,7 @@ void EditorApp::OnUpdate(float dt)
                     return;
 
                 const Assisi::App::SystemContext ctx{
-                    world,   dt, &input, &_actions, GetEvents(),
+                    world,   dt, GetSimTick(), &input, &_actions, GetEvents(),
                     /*isActiveWorld=*/&world == _worlds.Active(), &_worlds};
                 world.systems.Run(Assisi::App::SystemPhase::PreUpdate,  ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update,     ctx);
