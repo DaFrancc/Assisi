@@ -1,7 +1,7 @@
 # Multi-Scene Design Notes
 
 Branch: `multi-scene` (off `dev`, merges back to `dev`).
-Status: **S1-S3 built** (see §4); S4-S5 designed, not started.
+Status: **S1-S4 built** (see §4); S5 (async travel) designed, not started.
 
 Two features any real game needs, neither of which the engine can express
 today:
@@ -360,13 +360,28 @@ pins that the failed travel leaves no half-created world and does not move
 the active one. Not covered automatically: that the swept-and-re-resolved
 world renders correctly with streaming pop-in — eyes-on.
 
-**S4 — Entity migration.** `MigrateEntity`, subtree-aware, with the new
+**S4 — Entity migration. BUILT.** `MigrateEntity`, subtree-aware, with the new
 src→dst EntityRef mapping mode and cross-world transient rebinding (Jolt
 body out of the source PhysicsWorld, rebuilt in the destination's; mesh
 re-resolve) — see §2's scope note.
 *DoD*: an entity spawned in level A travels to level B with its component
 state (position set before travel shows in B); its children arrive with it; a
 ref to a left-behind entity nulls with a logged warning, not a crash.
+
+*As built*: the third EntityRef mapping mode is
+`Runtime::SceneSerializer::TransferEntities(src, dst, set)` — it maps a subset
+of one scene onto fresh handles in another (Save/Load clears the destination;
+the raw context needs ReviveAt; this does neither), remapping in-set refs and
+nulling+warning on out-of-set ones. `Runtime::GatherSubtree` closes the set
+under Parent. `App::WorldManager::MigrateEntity` composes it with the
+transient rebuild App owns: it removes each migrated entity's Jolt body from
+the source PhysicsWorld before the ECS entities leave, then rebuilds bodies
+from RigidBodyDescriptor and re-resolves MeshRenderers in the destination.
+`TestWorld.cpp` proves a parent+child subtree moves with component state
+intact and a live falling body in the destination, and that migrating a child
+out from under its parent nulls the dangling Parent ref. The editor exposes it
+as per-target "-> World" buttons under the Game panel's selection (play,
+≥2 worlds, an entity selected), marshalled to the pre-update safe point.
 
 **S5 — Async travel + docs.** Background world load with swap-on-ready and a
 loading-screen hook; update this doc's status, remaining-work.md, and memory.

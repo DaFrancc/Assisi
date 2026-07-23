@@ -3,11 +3,14 @@
 
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
+#include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
+#include <vector>
 
 namespace Assisi::App
 {
@@ -129,6 +132,63 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     Core::Log::Info("Travel: now in '{}' ({}), {} world(s) resident.", incoming.name, levelPath,
                     _worlds.size());
     return &incoming;
+}
+
+ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root)
+{
+    if (Find(src.name) == nullptr || Find(dst.name) == nullptr)
+    {
+        Core::Log::Error("MigrateEntity: source or destination world is not managed here.");
+        return ECS::NullEntity;
+    }
+    if (&src == &dst || !src.scene.IsAlive(root))
+    {
+        Core::Log::Error("MigrateEntity: root is not alive in the source world (or src == dst).");
+        return ECS::NullEntity;
+    }
+
+    // The whole subtree travels with the root — a player carries whatever is
+    // parented to it. The set is closed under Parent, so TransferEntities never
+    // has to null an in-subtree child ref.
+    const std::vector<ECS::Entity> subtree = Runtime::GatherSubtree(src.scene, root);
+
+    // Tear down each migrated entity's Jolt body in the SOURCE world before the
+    // ECS entities leave. Destroying an entity drops its RigidBody component but
+    // not the Jolt body it referenced — that is a separate handle in src.physics,
+    // and would leak (and keep colliding) otherwise.
+    for (const ECS::Entity e : subtree)
+    {
+        if (const Physics::RigidBody *body = src.scene.Get<Physics::RigidBody>(e))
+            src.physics.RemoveBody(*body);
+    }
+
+    // Move the component data. This creates the destination entities, remaps
+    // in-set EntityRefs, and destroys the source entities (deferred).
+    const std::vector<ECS::Entity> arrived =
+        Runtime::SceneSerializer::TransferEntities(src.scene, dst.scene, subtree);
+    src.scene.FlushDestroyed();
+
+    // Rebuild transients in the DESTINATION world. RigidBody and the MeshRenderer
+    // pointers are transient (never serialized), so the arrived entities have the
+    // durable RigidBodyDescriptor/mesh ids but no live body or resolved GPU
+    // pointers yet.
+    for (const ECS::Entity e : arrived)
+    {
+        const Runtime::Transform          *transform = dst.scene.Get<Runtime::Transform>(e);
+        const Physics::RigidBodyDescriptor *desc      = dst.scene.Get<Physics::RigidBodyDescriptor>(e);
+        if (transform != nullptr && desc != nullptr && dst.scene.Get<Physics::RigidBody>(e) == nullptr)
+            dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc);
+
+        if (Runtime::MeshRenderer *mesh = dst.scene.Get<Runtime::MeshRenderer>(e);
+            mesh != nullptr && _services.cache != nullptr && _services.database != nullptr)
+            Runtime::ResolveMeshRendererAssets(*mesh, *_services.cache, *_services.database);
+    }
+
+    // arrived is parallel to subtree, and subtree[0] is the root (GatherSubtree is
+    // root-first), so arrived[0] is the destination handle of the root.
+    Core::Log::Info("Migrate: moved {} entit{} from '{}' to '{}'.", arrived.size(),
+                    arrived.size() == 1 ? "y" : "ies", src.name, dst.name);
+    return arrived.empty() ? ECS::NullEntity : arrived.front();
 }
 
 bool WorldManager::SweepAssetCache()

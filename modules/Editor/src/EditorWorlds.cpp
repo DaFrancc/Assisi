@@ -77,6 +77,22 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     return true;
 }
 
+void EditorApp::MigrateSelectionTo(const std::string &targetWorld)
+{
+    Assisi::App::World *const dst = _worlds.Find(targetWorld);
+    if (dst == nullptr || _world == nullptr || dst == _world)
+        return;
+    if (_selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
+        return;
+
+    // The selection is a handle into the source world; it is about to be destroyed
+    // there, so drop it. (The migrated copy in the destination has a different
+    // handle; re-selecting it is the game's/inspector's job, not done here.)
+    const Assisi::ECS::Entity moved = _worlds.MigrateEntity(*_world, *dst, _selectedEntity);
+    _selectedEntity = Assisi::ECS::NullEntity;
+    (void)moved;
+}
+
 bool EditorApp::TravelToLevel(const std::string &virtualPath)
 {
     if (!Assisi::Core::AssetSystem::Exists(virtualPath))

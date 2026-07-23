@@ -197,6 +197,27 @@ class WorldManager
     /// between BeginFrame and EndFrame.
     World *LoadLevel(std::string_view levelPath);
 
+    /// @brief Moves an entity — and its whole subtree — from one resident world
+    /// into another, keeping its component state and rebuilding its transients in
+    /// the destination.
+    ///
+    /// This is the "persistent across travel" set (Unreal's seamless-travel
+    /// entities): the player, their inventory. The game marks what travels;
+    /// everything else belongs to the level and is left behind. Subtree-aware —
+    /// children come with the root. EntityRefs within the moved set remap;
+    /// refs pointing outside it null with a warning (Runtime::TransferEntities).
+    ///
+    /// Transients are rebuilt per destination world: the Jolt body is removed
+    /// from @p src's PhysicsWorld and recreated from its RigidBodyDescriptor in
+    /// @p dst's, and MeshRenderer pointers re-resolve against the cache. Needs the
+    /// render Services installed (for the mesh re-resolve); without them the
+    /// component data still moves and physics rebuilds, but meshes stay
+    /// unresolved until something else resolves the destination scene.
+    ///
+    /// @return the destination handle of @p root, or NullEntity if @p src or
+    /// @p dst is unknown to this manager, or @p root is not alive in @p src.
+    ECS::Entity MigrateEntity(World &src, World &dst, ECS::Entity root);
+
     /// @brief Reclaims GPU memory after a travel, when it is safe to.
     ///
     /// "Safe" is narrow and deliberately so: every live world's MeshRenderers

@@ -688,6 +688,12 @@ void EditorApp::OnUpdate(float dt)
         _pendingTravel.reset();
         TravelToLevel(request);
     }
+    if (_pendingMigrate)
+    {
+        const std::string target = *_pendingMigrate;
+        _pendingMigrate.reset();
+        MigrateSelectionTo(target);
+    }
 
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // EditorLevels) and applied in Application::Run's DrainMain, which runs just

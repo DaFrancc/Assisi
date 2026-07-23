@@ -17,6 +17,8 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 
 using namespace Assisi::App;
 
@@ -345,6 +347,106 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
     CHECK(count == 3u);
 
     std::filesystem::remove_all(root);
+}
+
+TEST_CASE("MigrateEntity moves a subtree and rebuilds its physics in the destination")
+{
+    WorldManager worlds;
+    World       &src = worlds.Create("Src");
+    World       &dst = worlds.Create("Dst");
+    worlds.SetActive(src);
+    worlds.SetEdited(src);
+
+    // A parent with a dynamic body, a child parented to it, and a bystander the
+    // child also references (which will be left behind).
+    const Assisi::ECS::Entity parent = src.scene.Create();
+    src.scene.Add<Assisi::ECS::Transform>(parent)->position = {1.f, 2.f, 3.f};
+    (void)src.scene.Add<Assisi::Physics::RigidBodyDescriptor>(parent, Assisi::Physics::RigidBodyDescriptor{});
+    const Assisi::Physics::RigidBody body = src.physics.AddBodyFromDescriptor(
+        src.scene, parent, *src.scene.Get<Assisi::ECS::Transform>(parent),
+        *src.scene.Get<Assisi::Physics::RigidBodyDescriptor>(parent));
+    (void)src.scene.Add<Assisi::Physics::RigidBody>(parent, body);
+
+    const Assisi::ECS::Entity child = src.scene.Create();
+    (void)src.scene.Add<Assisi::ECS::Transform>(child);
+    (void)src.scene.Add<Assisi::Runtime::Parent>(child, Assisi::Runtime::Parent{parent});
+
+    const std::size_t srcBefore = [&]
+    { std::size_t n = 0; src.scene.ForEachEntity([&n](Assisi::ECS::Entity) { ++n; }); return n; }();
+    CHECK(srcBefore == 2u);
+
+    const Assisi::ECS::Entity movedRoot = worlds.MigrateEntity(src, dst, parent);
+    REQUIRE(movedRoot != Assisi::ECS::NullEntity);
+
+    // The subtree (parent + child) left the source entirely.
+    std::size_t srcAfter = 0;
+    src.scene.ForEachEntity([&srcAfter](Assisi::ECS::Entity) { ++srcAfter; });
+    CHECK(srcAfter == 0u);
+    CHECK_FALSE(src.scene.IsAlive(parent));
+
+    // Destination has the parent and its child, two entities.
+    std::size_t dstCount = 0;
+    dst.scene.ForEachEntity([&dstCount](Assisi::ECS::Entity) { ++dstCount; });
+    CHECK(dstCount == 2u);
+
+    // Component state came across.
+    const auto *movedT = dst.scene.Get<Assisi::ECS::Transform>(movedRoot);
+    REQUIRE(movedT != nullptr);
+    CHECK(movedT->position.x == doctest::Approx(1.f));
+    CHECK(movedT->position.z == doctest::Approx(3.f));
+
+    // The in-set Parent ref remapped to the destination handle of the parent, not
+    // a stale source handle.
+    Assisi::ECS::Entity movedChild = Assisi::ECS::NullEntity;
+    dst.scene.ForEachEntity(
+        [&](Assisi::ECS::Entity e)
+        {
+            if (dst.scene.Get<Assisi::Runtime::Parent>(e) != nullptr)
+                movedChild = e;
+        });
+    REQUIRE(movedChild != Assisi::ECS::NullEntity);
+    CHECK(dst.scene.Get<Assisi::Runtime::Parent>(movedChild)->parent == movedRoot);
+
+    // The migrated parent has a live body in the DESTINATION world and it falls
+    // there, independently of the (now empty of dynamics) source world.
+    REQUIRE(dst.scene.Get<Assisi::Physics::RigidBody>(movedRoot) != nullptr);
+    dst.simulate = true;
+    constexpr float kStep = 1.f / 60.f;
+    for (int32_t i = 0; i < 30; ++i)
+    {
+        dst.physics.Update(kStep);
+        dst.physics.CaptureState();
+    }
+    SyncUnrenderedWorld(dst);
+    CHECK(dst.scene.Get<Assisi::ECS::Transform>(movedRoot)->position.y < 2.f);
+}
+
+TEST_CASE("Migrating an entity out from under a ref nulls that ref")
+{
+    // A child whose parent stays behind: migrate the child alone, and its Parent
+    // ref — now pointing outside the migrated set — must resolve to null in the
+    // destination rather than to some unrelated destination entity.
+    WorldManager worlds;
+    World       &src = worlds.Create("Src");
+    World       &dst = worlds.Create("Dst");
+
+    const Assisi::ECS::Entity anchor = src.scene.Create();
+    (void)src.scene.Add<Assisi::ECS::Transform>(anchor);
+    // Give the destination a pre-existing entity, so a stale index couldn't
+    // accidentally resolve onto "nothing".
+    (void)dst.scene.Add<Assisi::ECS::Transform>(dst.scene.Create());
+
+    const Assisi::ECS::Entity loneChild = src.scene.Create();
+    (void)src.scene.Add<Assisi::ECS::Transform>(loneChild);
+    (void)src.scene.Add<Assisi::Runtime::Parent>(loneChild, Assisi::Runtime::Parent{anchor});
+
+    const Assisi::ECS::Entity moved = worlds.MigrateEntity(src, dst, loneChild);
+    REQUIRE(moved != Assisi::ECS::NullEntity);
+
+    CHECK(src.scene.IsAlive(anchor)); // the anchor stayed
+    const auto *parent = dst.scene.Get<Assisi::Runtime::Parent>(moved);
+    REQUIRE(parent != nullptr);
+    CHECK(parent->parent == Assisi::ECS::NullEntity); // the out-of-set ref nulled
 }
 
 TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")

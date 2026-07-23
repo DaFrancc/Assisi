@@ -262,6 +262,10 @@ class EditorApp : public Assisi::App::Application
     /// where it is. Reached from the Game panel's debug control; a game calls
     /// WorldManager::LoadLevel directly.
     bool TravelToLevel(const std::string &virtualPath);
+    /// @brief Migrates the selected entity (and its subtree) into the named
+    /// resident world, then clears the selection. Debug stand-in for the
+    /// game marking entities as travelling.
+    void MigrateSelectionTo(const std::string &targetWorld);
     /// @brief Destroys every world the play session created and shows the edited
     /// one again. Called by StopPlay before it restores the snapshot.
     void DestroyPlayWorlds();
@@ -647,6 +651,9 @@ class EditorApp : public Assisi::App::Application
     // ...and for "Travel here", which additionally frees the outgoing world's
     // GPU assets — the strongest reason of the three not to run mid-frame.
     std::optional<std::string> _pendingTravel;
+    // Same marshalling for "Migrate selection": migration rebuilds physics
+    // bodies and resolves meshes, so it runs at the pre-update safe point.
+    std::optional<std::string> _pendingMigrate;
 };
 
 } // namespace Assisi::Editor

@@ -35,7 +35,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string_view>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -67,6 +69,36 @@ class SceneSerializer
     /// @param assetPath  Virtual path relative to the asset root (e.g. "levels/main.json").
     /// @return true on success, false on any IO or parse error.
     static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath);
+
+    /// @brief Moves a set of entities' component *data* from one scene to another.
+    ///
+    /// Entity migration (docs/multi-scene-design-notes.md §2, S4): the entities
+    /// in @p entities are serialized out of @p src, recreated in @p dst as fresh
+    /// entities, and destroyed in @p src. This is a **third** EntityRef mapping
+    /// mode, distinct from the two above:
+    ///   - Save/Load remaps against a whole scene and *clears* the destination;
+    ///   - the raw-identity context revives at exact handles, which would collide
+    ///     with the destination's own entities;
+    ///   - this maps a *subset* of one scene onto fresh handles in another,
+    ///     leaving the destination otherwise untouched.
+    ///
+    /// EntityRef fields (e.g. Parent) that point WITHIN the migrated set are
+    /// remapped to the new destination entities. A ref that points OUTSIDE the
+    /// set — at an entity left behind in @p src — resolves to NullEntity, and
+    /// each such dropped ref is logged: it is silent data loss otherwise. Pass a
+    /// set closed under the subtree relation (Runtime::GatherSubtree) so a child's
+    /// Parent is never the thing left behind.
+    ///
+    /// Transients are NOT rebuilt here — SceneSerializer links neither Physics nor
+    /// the render layer, so a migrated entity's Jolt body and resolved GPU
+    /// pointers do not exist in @p dst yet. The caller (App::MigrateEntity) tears
+    /// down the source-world body and rebuilds both per destination world.
+    ///
+    /// @return the created destination entities, parallel to @p entities (so
+    /// @p entities[i] became the returned handle at index i). Empty if a
+    /// serialization context is already active on this thread.
+    static std::vector<ECS::Entity> TransferEntities(ECS::Scene &src, ECS::Scene &dst,
+                                                     std::span<const ECS::Entity> entities);
 
     /// @brief Map a live entity to its stable serial index during the current Save.
     ///

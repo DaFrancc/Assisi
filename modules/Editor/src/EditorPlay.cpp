@@ -119,6 +119,7 @@ void EditorApp::StopPlay()
     // A queued "load as new world" from this frame is dropped with it.
     _pendingWorldLoad.reset();
     _pendingTravel.reset();
+    _pendingMigrate.reset();
     DestroyPlayWorlds();
 
     // Runs unconditionally, including for an empty snapshot: entering Play on an
@@ -422,6 +423,30 @@ void EditorApp::DrawGameControlWindow()
         _worlds.Destroy(doomed);
     }
     ImGui::EndDisabled();
+
+    // Entity migration (S4): move the selected entity + its subtree into another
+    // resident world. This is a debug stand-in for what a game does in code
+    // (mark the player/inventory as travelling); it lets you watch a subtree move
+    // between two levels by hand.
+    const bool haveSelection = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity);
+    if (_worlds.Count() > 1 && haveSelection)
+    {
+        ImGui::SeparatorText("Migrate selection");
+        _worlds.ForEach(
+            [this](Assisi::App::World &target)
+            {
+                if (&target == _world)
+                    return; // can't migrate into the world it's already in
+                ImGui::PushID(target.name.c_str());
+                if (ImGui::SmallButton(("-> " + target.name).c_str()))
+                {
+                    _pendingMigrate = target.name;
+                }
+                ImGui::PopID();
+                ImGui::SameLine();
+            });
+        ImGui::NewLine();
+    }
 
     ImGui::End();
 }

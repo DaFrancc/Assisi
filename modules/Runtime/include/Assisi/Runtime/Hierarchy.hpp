@@ -51,4 +51,12 @@ struct Parent
 ///         skip, recomputing everything if you keep passing 0).
 uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick);
 
+/// @brief Collects @p root plus every entity whose Parent chain leads to it.
+///
+/// Root-first, breadth-first over the Parent pool. There is no child index, so
+/// this scans the scene once per collected entity — fine at the scales this is
+/// used (deleting or migrating a subtree). Used by entity migration
+/// (App::MigrateEntity) and mirrors the editor's delete-subtree gather.
+std::vector<ECS::Entity> GatherSubtree(ECS::Scene &scene, ECS::Entity root);
+
 } // namespace Assisi::Runtime
