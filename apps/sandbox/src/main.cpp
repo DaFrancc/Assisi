@@ -42,6 +42,9 @@ constexpr const char *kUsage =
     "                          runs the render path a Game build gets\n"
     "  --server                run headless: no window, renderer, input or debug\n"
     "                          UI — just the fixed-step simulation (see ServerApp)\n"
+    "  --host [port]           --server + replicate to clients (default port 27015)\n"
+    "  --connect <addr[:port]> --server + join a host and mirror its world\n"
+    "  --spawn <n>             --host only: spawn n moving replicated entities\n"
     "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
     "                          until interrupted, the default)\n"
     "  -h, --help              show this help and exit\n";
@@ -49,8 +52,35 @@ constexpr const char *kUsage =
 // Parses argv into the editor config inputs. Returns false with a message
 // printed when the arguments are malformed; sets shouldExit when --help was
 // handled (a clean early exit, not an error).
+// Parses "addr", "addr:port", or ":port" into its parts, leaving whichever it
+// does not find untouched. IPv6 literals are not handled here — --connect takes
+// the plain form, and anything more elaborate belongs in a server browser, not
+// in argv parsing.
+bool ParseAddress(std::string_view text, std::string &outAddress, std::uint16_t &outPort)
+{
+    const std::size_t colon = text.rfind(':');
+    if (colon == std::string_view::npos)
+    {
+        outAddress = std::string(text);
+        return !outAddress.empty();
+    }
+
+    const std::string_view host = text.substr(0, colon);
+    const std::string_view port = text.substr(colon + 1);
+    if (!host.empty())
+        outAddress = std::string(host);
+
+    std::uint32_t  parsedPort = 0;
+    const auto parsed = std::from_chars(port.data(), port.data() + port.size(), parsedPort);
+    if (parsed.ec != std::errc{} || parsed.ptr != port.data() + port.size() || parsedPort == 0 ||
+        parsedPort > 65535u)
+        return false;
+    outPort = static_cast<std::uint16_t>(parsedPort);
+    return true;
+}
+
 bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &server,
-               std::uint64_t &tickLimit, bool &shouldExit)
+               Sandbox::ServerOptions &serverOptions, bool &shouldExit)
 {
     for (int i = 1; i < argc; ++i)
     {
@@ -79,6 +109,58 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
         {
             server = true;
         }
+        else if (arg == "--host")
+        {
+            server             = true;
+            serverOptions.role = Sandbox::ServerRole::Host;
+            // The port is optional, so only consume the next argument when it
+            // does not look like another flag.
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+            {
+                const std::string_view value = argv[++i];
+                std::uint32_t          port  = 0;
+                const auto parsed = std::from_chars(value.data(), value.data() + value.size(), port);
+                if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || port == 0 ||
+                    port > 65535u)
+                {
+                    std::fprintf(stderr, "--host expects a port in 1-65535, got '%.*s'\n\n%s",
+                                 static_cast<int>(value.size()), value.data(), kUsage);
+                    return false;
+                }
+                serverOptions.port = static_cast<std::uint16_t>(port);
+            }
+        }
+        else if (arg == "--connect")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--connect requires an address\n\n%s", kUsage);
+                return false;
+            }
+            server             = true;
+            serverOptions.role = Sandbox::ServerRole::Client;
+            if (!ParseAddress(argv[++i], serverOptions.address, serverOptions.port))
+            {
+                std::fprintf(stderr, "--connect could not parse the address\n\n%s", kUsage);
+                return false;
+            }
+        }
+        else if (arg == "--spawn")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--spawn requires a count\n\n%s", kUsage);
+                return false;
+            }
+            const std::string_view value = argv[++i];
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), serverOptions.spawnCount);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+            {
+                std::fprintf(stderr, "--spawn expects a non-negative integer, got '%.*s'\n\n%s",
+                             static_cast<int>(value.size()), value.data(), kUsage);
+                return false;
+            }
+        }
         else if (arg == "--ticks")
         {
             if (i + 1 >= argc)
@@ -88,7 +170,8 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
                 return false;
             }
             const std::string_view value = argv[++i];
-            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), tickLimit);
+            const auto             parsed =
+                std::from_chars(value.data(), value.data() + value.size(), serverOptions.tickLimit);
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
             {
                 std::fprintf(stderr, "--ticks expects a non-negative integer, got '%.*s'\n\n%s",
@@ -198,12 +281,12 @@ void RegisterDemoProfiles(Assisi::App::WorldManager &worlds)
 
 int main(int argc, char **argv)
 {
-    std::string_view startupLevel;
-    bool             editorVisuals = true;
-    bool             server        = false;
-    std::uint64_t    tickLimit     = 0;
-    bool             shouldExit    = false;
-    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, tickLimit, shouldExit))
+    std::string_view      startupLevel;
+    bool                  editorVisuals = true;
+    bool                  server        = false;
+    bool                  shouldExit    = false;
+    Sandbox::ServerOptions serverOptions;
+    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, shouldExit))
     {
         return EXIT_FAILURE;
     }
@@ -217,7 +300,8 @@ int main(int argc, char **argv)
     // never constructs an editor, a renderer, or a window.
     if (server)
     {
-        Sandbox::ServerApp serverApp(std::string(startupLevel), tickLimit);
+        serverOptions.level = std::string(startupLevel);
+        Sandbox::ServerApp serverApp(serverOptions);
         if (!serverApp.Initialize())
         {
             return EXIT_FAILURE;

@@ -19,6 +19,7 @@ target_link_libraries(Assisi-Sandbox
     # link, so the dependency survives the editor being dropped from a build.
     Assisi::App
     Assisi::Physics
+    Assisi::NetSync
 )
 
 assisi_link_reflections(Assisi-Sandbox)

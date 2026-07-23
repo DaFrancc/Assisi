@@ -2,38 +2,65 @@
 #pragma once
 
 /// @file ServerApp.hpp
-/// @brief The `--server` mode of the sandbox: a headless, simulation-only
-/// Application.
+/// @brief The headless modes of the sandbox: `--server` hosts a world, and
+/// `--connect` joins one.
 ///
 /// Deliberately *not* the editor running with its window switched off. A
 /// dedicated server is a different program with a different job — load a level,
-/// step physics at a fixed rate, and eventually replicate the result — and
-/// pretending otherwise would mean making every editor panel, gizmo, and
-/// selection overlay tolerate a null renderer for no benefit.
+/// step physics at a fixed rate, replicate the result — and pretending
+/// otherwise would mean making every editor panel, gizmo, and selection overlay
+/// tolerate a null renderer for no benefit.
 ///
-/// This is the Stage-2 proof of the headless split: it exercises
-/// Application::InitializeCore() with the presentation half never brought up.
-/// Networking is not wired in here yet; that is Stage 5-6.
+/// The client mode here is headless too, which makes it a *test* client rather
+/// than a playable one: it proves the protocol works between two processes and
+/// logs what it received. The windowed client that renders what it receives is
+/// the editor/game integration, which is separate work.
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Net/NetTransport.hpp>
+#include <Assisi/NetSync/InputCommand.hpp>
+#include <Assisi/NetSync/NetClock.hpp>
+#include <Assisi/NetSync/Replication.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
 #include <cstdint>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace Sandbox
 {
 
+/// @brief What a headless process is doing.
+enum class ServerRole : std::uint8_t
+{
+    /// Simulate only. No sockets — the Stage-2 smoke test of the headless split.
+    Offline,
+    /// Simulate and replicate to connected clients.
+    Host,
+    /// Connect to a host and apply what it sends.
+    Client,
+};
+
+struct ServerOptions
+{
+    ServerRole    role = ServerRole::Offline;
+    std::string   level;                  ///< Virtual path; empty for an empty world.
+    std::string   address = "127.0.0.1";  ///< Client only.
+    std::uint16_t port    = 27015;
+    std::uint64_t tickLimit = 0;          ///< 0 = run until interrupted.
+    /// Host only: spawn this many replicated, moving entities. A world that
+    /// changes every tick is what actually exercises delta replication; a static
+    /// level would converge once and prove very little.
+    std::uint32_t spawnCount = 0;
+};
+
 class ServerApp final : public Assisi::App::Application
 {
   public:
-    /// @param startupLevel Virtual path of a level to load at startup
-    ///   (e.g. "levels/Materials.alvl"). Empty runs an empty world, which is
-    ///   still a useful smoke test of the loop.
-    /// @param tickLimit Stop after this many fixed ticks; 0 runs until
-    ///   interrupted. Bounded runs are what make this testable from a script.
-    explicit ServerApp(std::string startupLevel, std::uint64_t tickLimit);
+    explicit ServerApp(ServerOptions options);
+    ~ServerApp() override;
 
   protected:
     void OnStart() override;
@@ -43,16 +70,31 @@ class ServerApp final : public Assisi::App::Application
     void FlushDeferred() override;
 
   private:
-    std::string   _startupLevel;
-    std::uint64_t _tickLimit = 0;
+    void PumpNetwork();
+    void ReportStatus();
 
-    Assisi::ECS::Scene              _scene;
-    Assisi::Physics::PhysicsWorld   _physics;
+    ServerOptions _options;
 
-    /// Wall-clock of the last status log and the tick it was taken at, so the
-    /// log can report the *measured* tick rate rather than the configured one —
-    /// the whole point of the status line is to catch a loop that is not
-    /// keeping up.
+    Assisi::ECS::Scene            _scene;
+    Assisi::Physics::PhysicsWorld _physics;
+
+    /// Constructed only in a networked role, so the offline mode never
+    /// initializes GameNetworkingSockets at all.
+    std::unique_ptr<Assisi::Net::NetTransport>          _transport;
+    std::unique_ptr<Assisi::NetSync::ReplicationServer> _replicationServer;
+    std::unique_ptr<Assisi::NetSync::ReplicationClient> _replicationClient;
+    std::unique_ptr<Assisi::NetSync::NetClock>          _clock;
+
+    Assisi::Net::ConnectionId              _serverConnection = Assisi::Net::InvalidConnection;
+    std::vector<Assisi::Net::ConnectionId> _clients;
+    std::vector<Assisi::Net::NetEvent>     _events;
+
+    /// Host only: the entities it moves each tick, so the demo world is
+    /// actually in motion.
+    std::vector<Assisi::ECS::Entity> _moving;
+
+    Assisi::NetSync::InputCommandBuffer _inputBuffer;
+
     double        _lastReportSeconds = 0.0;
     std::uint64_t _lastReportTick    = 0;
 };
