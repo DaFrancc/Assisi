@@ -242,7 +242,14 @@ After E2, `apps/sandbox/` is `main.cpp` (arg parsing + `EditorApp`
 construction) and its CMakeLists — the exe target, asset staging, shader
 compilation, and `assisi_link_reflections` stay exe-side, unchanged.
 
-### E3 — make the engine's editor visuals opt-in
+### E3 — make the engine's editor visuals opt-in — **DONE 2026-07-22**
+
+Landed: `SceneRenderer::Initialize(const InitParams&)` with
+`enableEditorVisuals` defaulting to false; overlay entry points no-op when
+off; `RebuildPipeline` on never-built passes was already a safe no-op, so
+render-target changes need no extra gating. The editor passes true.
+Pending: the off-path visual check (local flag flip) rides along with the
+manual run.
 
 `SceneRenderer::Initialize` gains `bool enableEditorVisuals`. Its parameters
 are positional today (`SceneRenderer.cpp:61–63`) — this is the excuse to give

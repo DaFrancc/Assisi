@@ -532,9 +532,18 @@ void EditorApp::SetupScene()
     // The engine's default scene-render path owns lighting + the mesh pipeline.
     // Built against GetSceneFramebufferInfo() rather than the swapchain's own
     // FramebufferInfo so it's already correct if options.json saved an MSAA mode.
-    if (!_sceneRenderer.Initialize(device, GetSceneFramebufferInfo(), fbSize.Width, fbSize.Height, _camera,
-                                   _assetCache.BindlessLayout(), _assetCache.BindlessTable(),
-                                   _assetCache.MaterialTableBuffer()))
+    // The editor opts into the overlay passes (selection outline, entity icons,
+    // collider wireframes) — a game build leaves them off and never loads
+    // assets/editor/**.
+    if (!_sceneRenderer.Initialize({.device = device,
+                                    .framebufferInfo = GetSceneFramebufferInfo(),
+                                    .width = fbSize.Width,
+                                    .height = fbSize.Height,
+                                    .camera = _camera,
+                                    .bindlessLayout = _assetCache.BindlessLayout(),
+                                    .bindlessTable = _assetCache.BindlessTable(),
+                                    .materialTable = _assetCache.MaterialTableBuffer(),
+                                    .enableEditorVisuals = true}))
     {
         RequestClose();
         return;

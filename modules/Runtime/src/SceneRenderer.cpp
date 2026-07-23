@@ -58,22 +58,21 @@ float AspectRatio(int32_t width, int32_t height)
 }
 } // namespace
 
-bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int32_t width,
-                               int32_t height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
-                               nvrhi::IDescriptorTable *bindlessTable, nvrhi::IBuffer *materialTable)
+bool SceneRenderer::Initialize(const InitParams &params)
 {
-    _device = device;
+    _device        = params.device;
+    _editorVisuals = params.enableEditorVisuals;
 
-    const glm::mat4 projection = ProjectionMatrix(camera, AspectRatio(width, height));
+    const glm::mat4 projection = ProjectionMatrix(params.camera, AspectRatio(params.width, params.height));
 
     // The cluster grid's light buffers must exist before MeshPass::Initialize,
     // which binds them into every binding set it creates — so build lighting first.
-    nvrhi::CommandListHandle setupCommandList = device->createCommandList();
+    nvrhi::CommandListHandle setupCommandList = _device->createCommandList();
     setupCommandList->open();
-    const bool lightingOk =
-        _lighting.Initialize(device, setupCommandList, width, height, camera.nearZ, camera.farZ, projection);
+    const bool lightingOk = _lighting.Initialize(_device, setupCommandList, params.width, params.height,
+                                                 params.camera.nearZ, params.camera.farZ, projection);
     setupCommandList->close();
-    device->executeCommandList(setupCommandList);
+    _device->executeCommandList(setupCommandList);
 
     if (!lightingOk)
     {
@@ -82,14 +81,14 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
     }
     _clusterProjection = projection;
 
-    if (!_meshPass.Initialize(Render::MeshPass::InitParams{.device = device,
-                                                           .framebufferInfo = framebufferInfo,
+    if (!_meshPass.Initialize(Render::MeshPass::InitParams{.device = _device,
+                                                           .framebufferInfo = params.framebufferInfo,
                                                            .vertexShaderSpvPath = kSceneVertexShader,
                                                            .pixelShaderSpvPath = kScenePixelShader,
                                                            .clusterGrid = &_lighting.Grid(),
-                                                           .bindlessLayout = bindlessLayout,
-                                                           .bindlessTable = bindlessTable,
-                                                           .materialTable = materialTable}))
+                                                           .bindlessLayout = params.bindlessLayout,
+                                                           .bindlessTable = params.bindlessTable,
+                                                           .materialTable = params.materialTable}))
     {
         Core::Log::Error("SceneRenderer: failed to initialise the scene mesh pass.");
         return false;
@@ -97,34 +96,35 @@ bool SceneRenderer::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferI
 
     // GPU-driven cull (stage F1). Non-fatal: if the compute pipeline fails to
     // build, the "GPU Cull" toggle stays a no-op and the CPU draw path runs.
-    if (!_meshCuller.Initialize(device))
+    if (!_meshCuller.Initialize(_device))
     {
         Core::Log::Warn("SceneRenderer: GPU cull unavailable (mesh_cull compute pipeline failed to build).");
     }
 
-    // The selection outline is an editor/gameplay convenience, not core to drawing
-    // a scene — if its pipelines fail to build, log and carry on without it rather
-    // than failing the whole renderer.
-    if (!_outlinePass.Initialize(device, framebufferInfo, static_cast<uint32_t>(width),
-                                 static_cast<uint32_t>(height), kOutlineMaskVertexShader, kOutlineMaskPixelShader,
-                                 kOutlineEdgeVertexShader, kOutlineEdgePixelShader, kIconVertexShader,
-                                 kIconMaskPixelShader))
+    // Editor overlay passes (selection outline, entity icons, overlay lines).
+    // Opt-in: a game never builds these pipelines or touches assets/editor/**;
+    // the editor asks for them. Failures inside the opted-in path stay
+    // non-fatal — each overlay warns and is dropped, never the renderer.
+    if (_editorVisuals)
     {
-        Core::Log::Warn("SceneRenderer: selection outline unavailable (outline pass failed to initialise).");
-    }
+        if (!_outlinePass.Initialize(_device, params.framebufferInfo, static_cast<uint32_t>(params.width),
+                                     static_cast<uint32_t>(params.height), kOutlineMaskVertexShader,
+                                     kOutlineMaskPixelShader, kOutlineEdgeVertexShader, kOutlineEdgePixelShader,
+                                     kIconVertexShader, kIconMaskPixelShader))
+        {
+            Core::Log::Warn("SceneRenderer: selection outline unavailable (outline pass failed to initialise).");
+        }
 
-    // Editor entity icons are likewise a convenience overlay; a failure here just
-    // drops the icons, it must not fail the whole renderer.
-    if (!_iconPass.Initialize(device, framebufferInfo, kIconVertexShader, kIconPixelShader, kEntityIconTexture))
-    {
-        Core::Log::Warn("SceneRenderer: entity icons unavailable (icon pass failed to initialise).");
-    }
+        if (!_iconPass.Initialize(_device, params.framebufferInfo, kIconVertexShader, kIconPixelShader,
+                                  kEntityIconTexture))
+        {
+            Core::Log::Warn("SceneRenderer: entity icons unavailable (icon pass failed to initialise).");
+        }
 
-    // The overlay line renderer (collider wireframes) is editor chrome too; a
-    // failure just drops the lines rather than failing the renderer.
-    if (!_linePass.Initialize(device, framebufferInfo, kLineVertexShader, kLinePixelShader))
-    {
-        Core::Log::Warn("SceneRenderer: overlay lines unavailable (line pass failed to initialise).");
+        if (!_linePass.Initialize(_device, params.framebufferInfo, kLineVertexShader, kLinePixelShader))
+        {
+            Core::Log::Warn("SceneRenderer: overlay lines unavailable (line pass failed to initialise).");
+        }
     }
 
     return true;
@@ -247,19 +247,27 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
 
 void SceneRenderer::SubmitOverlayLines(std::span<const Render::LineVertex> vertices, bool onTop)
 {
+    if (!_editorVisuals)
+    {
+        return; // overlay passes were never built (InitParams::enableEditorVisuals off)
+    }
     std::vector<Render::LineVertex> &sink = onTop ? _overlayLinesOnTop : _overlayLinesDepthTested;
     sink.insert(sink.end(), vertices.begin(), vertices.end());
 }
 
 void SceneRenderer::SetIconSuppressedEntities(std::span<const ECS::Entity> entities)
 {
+    if (!_editorVisuals)
+    {
+        return;
+    }
     _iconSuppressed.assign(entities.begin(), entities.end());
 }
 
 void SceneRenderer::SubmitOutlineGroup(std::span<const Render::OutlinePass::OutlineItem> items,
                                        const glm::vec3 &color)
 {
-    if (items.empty())
+    if (!_editorVisuals || items.empty())
     {
         return;
     }

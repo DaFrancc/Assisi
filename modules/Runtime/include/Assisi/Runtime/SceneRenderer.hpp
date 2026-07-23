@@ -47,19 +47,39 @@ class SceneRenderer
   public:
     SceneRenderer() = default;
 
+    /// @brief Everything Initialize() needs, gathered so callers name what they
+    /// set (the positional list had reached eight parameters).
+    struct InitParams
+    {
+        nvrhi::IDevice        *device = nullptr;
+        /// Format/sample-count the mesh pipeline targets
+        /// (e.g. Application::GetSceneFramebufferInfo()).
+        nvrhi::FramebufferInfo framebufferInfo;
+        /// Viewport size in pixels, for the initial cluster grid.
+        int32_t                width  = 0;
+        int32_t                height = 0;
+        /// Projection params (near/far/FOV) of the active camera.
+        Camera                 camera;
+        /// The scene AssetCache's bindless material-texture table + layout,
+        /// threaded into the mesh pipeline (stage D). Must outlive the renderer.
+        nvrhi::IBindingLayout   *bindlessLayout = nullptr;
+        nvrhi::IDescriptorTable *bindlessTable  = nullptr;
+        nvrhi::IBuffer          *materialTable  = nullptr;
+        /// Editor overlay passes: selection outline, entity icons, overlay
+        /// lines. Off by default — they cost three extra pipelines and load
+        /// editor-only assets (assets/editor/**), and a game has no use for
+        /// them; the editor opts in. When off, the passes are never built and
+        /// the overlay entry points (SetHighlightedEntity, SubmitOverlayLines,
+        /// SubmitOutline*, SetEditorIconsVisible, ...) are no-ops.
+        bool enableEditorVisuals = false;
+    };
+
     /// @brief Bring up clustered lighting and the scene mesh pipeline against the
     /// given render-target format. Uses the engine's default scene shaders.
-    /// @param framebufferInfo  Format/sample-count the mesh pipeline targets
-    ///        (e.g. Application::GetSceneFramebufferInfo()).
-    /// @param width,height     Viewport size in pixels, for the initial cluster grid.
-    /// @param camera           Projection params (near/far/FOV) of the active camera.
-    /// @param bindlessLayout / bindlessTable  The scene AssetCache's bindless
-    ///        material-texture table + layout, threaded into the mesh pipeline
-    ///        (stage D). Must outlive the renderer.
-    /// @return false if the lighting compute shaders or the mesh pipeline failed to build.
-    [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &framebufferInfo, int32_t width,
-                                  int32_t height, const Camera &camera, nvrhi::IBindingLayout *bindlessLayout,
-                                  nvrhi::IDescriptorTable *bindlessTable, nvrhi::IBuffer *materialTable);
+    /// @return false if the lighting compute shaders or the mesh pipeline failed
+    /// to build. (The editor overlay passes are non-fatal: each failure warns and
+    /// that overlay is dropped.)
+    [[nodiscard]] bool Initialize(const InitParams &params);
 
     /// @brief Rebuild the cluster froxel grid for a new viewport/projection.
     /// Call from the application's resize hook. No-op until Initialize() succeeds.
@@ -124,14 +144,19 @@ class SceneRenderer
     /// outline (a selection highlight). Pass ECS::NullEntity to clear it. The
     /// entity must carry a Transform and a MeshRenderer with a resolved mesh, or
     /// the outline is silently skipped. Drawn each Render() after the scene.
-    void SetHighlightedEntity(ECS::Entity entity) { _highlightedEntity = entity; }
+    /// No-op unless InitParams::enableEditorVisuals was set.
+    void SetHighlightedEntity(ECS::Entity entity)
+    {
+        _highlightedEntity = _editorVisuals ? entity : ECS::NullEntity;
+    }
     [[nodiscard]] ECS::Entity HighlightedEntity() const { return _highlightedEntity; }
 
     /// @brief Show/hide the editor's entity icons — world-space billboards marking
     /// entities that have a Transform but no mesh. Off by default (games don't want
     /// them); an editor turns them on while authoring and off during play. Drawn
-    /// each Render() after the scene when enabled.
-    void SetEditorIconsVisible(bool visible) { _editorIconsVisible = visible; }
+    /// each Render() after the scene when enabled. No-op unless
+    /// InitParams::enableEditorVisuals was set.
+    void SetEditorIconsVisible(bool visible) { _editorIconsVisible = _editorVisuals && visible; }
     [[nodiscard]] bool EditorIconsVisible() const { return _editorIconsVisible; }
 
     /// @brief Queue a batch of coloured world-space line segments (a LineList —
@@ -197,6 +222,11 @@ class SceneRenderer
 
     // The entity drawn with a selection outline this frame (NullEntity = none).
     ECS::Entity _highlightedEntity = ECS::NullEntity;
+
+    // Editor overlay passes were requested at Initialize (InitParams::
+    // enableEditorVisuals). When false the passes were never built and every
+    // overlay entry point no-ops.
+    bool _editorVisuals = false;
 
     bool _editorIconsVisible = false; // editor opts in; off during play and for games
     // Reused scratch for the per-frame icon positions, so drawing icons doesn't
