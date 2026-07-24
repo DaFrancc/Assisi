@@ -250,17 +250,26 @@ class WorldManager
     // in exactly as on any load.
 
     /// @brief Starts loading @p levelPath into a new Loading world on a worker,
-    /// without disturbing the active world. Poll PendingLoadReady(); swap with
-    /// PromotePendingLoad(). With no jobs service the load runs synchronously and
-    /// is ready immediately.
+    /// without disturbing the active world. Drive it each frame with
+    /// PumpPendingLoad(), poll PendingLoadReady(), then swap with
+    /// PromotePendingLoad(). With no jobs service the deserialize runs
+    /// synchronously; asset streaming still proceeds across frames.
     ///
     /// @return the Loading world (address stable), or nullptr if a load is
     /// already pending (one at a time) or the world could not be created.
     World *BeginLoadLevel(std::string_view levelPath);
 
-    /// @brief True when a background load has finished its worker half and is
-    /// ready for an instant PromotePendingLoad(). False if none is pending or it
-    /// is still loading.
+    /// @brief Advances a pending background load: once the worker has
+    /// deserialized, this resolves the world's assets and streams them in — on the
+    /// main thread, over successive frames — so that "ready" means meshes and
+    /// materials are actually resident, not just the scene graph. Call once per
+    /// frame at a safe point (it touches the asset cache / GPU). No-op if nothing
+    /// is pending or the worker is still running.
+    void PumpPendingLoad();
+
+    /// @brief True when a background load is fully ready for an instant
+    /// PromotePendingLoad() — deserialized AND its assets streamed in (no pop-in).
+    /// False if none is pending or it is still loading/streaming.
     [[nodiscard]] bool PendingLoadReady() const;
 
     /// @brief Progress of the pending load in [0, 1] — advances as the worker
@@ -333,11 +342,21 @@ class WorldManager
         World                 *world = nullptr;
         Core::Task<bool>       task;                 ///< Invalid in the sync path.
         std::string            path;
-        std::optional<bool>    syncResult;           ///< Set (only) by the sync fallback.
-        // [0,1], written by the worker, read by the UI thread. shared_ptr so the
-        // worker lambda owns a copy (outliving any PendingLoad move) and so the
-        // atomic member doesn't make PendingLoad itself non-movable.
-        std::shared_ptr<std::atomic<float>> progress = std::make_shared<std::atomic<float>>(0.f);
+        std::optional<bool>    syncResult = std::nullopt; ///< Set (only) by the sync fallback.
+
+        // Phase-1 (deserialize) progress in [0,1], written by the worker, read by
+        // the UI thread. shared_ptr so the worker lambda owns a copy (outliving any
+        // PendingLoad move) and so the atomic doesn't make PendingLoad non-movable.
+        std::shared_ptr<std::atomic<float>> deserProgress = std::make_shared<std::atomic<float>>(0.f);
+
+        // Phase-2 (asset streaming) state, all main-thread only, advanced by
+        // PumpPendingLoad once the worker is done.
+        bool        workerDone     = false; ///< Worker finished (or sync path); scene now safe to touch.
+        bool        workerOk       = false; ///< ...and it succeeded.
+        bool        resolveStarted = false; ///< ResolveSceneAssets has kicked off the streams.
+        std::size_t resolveInitialPending = 0; ///< Cache pending-count captured when resolve began.
+        float       assetProgress  = 0.f;   ///< [0,1] fraction of the streams landed.
+        bool        ready          = false; ///< Deserialized AND assets resident (or a failed load).
     };
     std::optional<PendingLoad> _pending;
 

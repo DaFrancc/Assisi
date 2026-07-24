@@ -502,9 +502,11 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
     {
         start.physics.Update(1.f / 60.f);
         start.physics.CaptureState();
+        worlds.PumpPendingLoad(); // drives phase-1 completion + phase-2 asset streaming
     }
 
-    // Once ready, progress has reached 1.0 (the worker sets it before completing).
+    // Once ready, progress has reached 1.0. (No cache in this headless test, so
+    // phase 2 completes immediately — but the ready gate still runs through it.)
     REQUIRE(worlds.PendingLoadReady());
     CHECK(worlds.PendingLoadProgress() == doctest::Approx(1.f));
 

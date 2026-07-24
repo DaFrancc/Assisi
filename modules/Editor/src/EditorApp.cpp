@@ -709,6 +709,12 @@ void EditorApp::OnUpdate(float dt)
         PromotePreloadedWorld();
     }
 
+    // Advance a background preload: once its worker has deserialized, this resolves
+    // and streams the new world's assets (main-thread GPU work) while it stays
+    // hidden, so "ready" means meshes/materials are actually resident. Safe point:
+    // it touches the asset cache.
+    _worlds.PumpPendingLoad();
+
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // EditorLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in

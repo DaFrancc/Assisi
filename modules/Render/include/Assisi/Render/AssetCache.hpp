@@ -164,6 +164,11 @@ class AssetCache
     /// components upgrade (placeholder→mesh, fallback→real material) as loads land.
     bool HasPendingLoads() const { return !_meshLoading.empty() || !_materialLoading.empty(); }
 
+    /// @brief How many async mesh/material loads are still in flight. Cache-wide
+    /// (not per scene). Lets a preload show a streaming-progress percentage by
+    /// comparing against the count captured when its resolve began.
+    std::size_t PendingLoadCount() const { return _meshLoading.size() + _materialLoading.size(); }
+
     /// @brief The bindless material-texture descriptor table and its layout
     /// (GPU-driven stage D). Every resolved texture holds a slot here; materials
     /// reference channels by index. The MeshPass adds the layout to its pipeline

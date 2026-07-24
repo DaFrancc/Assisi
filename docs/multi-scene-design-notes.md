@@ -399,9 +399,18 @@ swap (no multi-second hitch), verified with the frame profiler.
 `Core::JobSystem` worker (installed via `Services.jobs`); the worker does only
 the thread-safe halves — deserialize into the Loading world's scene and build
 its Jolt bodies (a separate `PhysicsSystem`, its own per-world temp allocator,
-so no contention with the stepping world). `PendingLoadReady()` polls;
-`PromotePendingLoad()` does the GPU half (asset resolve) on the main thread and
-the O(1) swap, reusing the same `SwapToActive` travel uses. `CancelPendingLoad`
+so no contention with the stepping world). `PumpPendingLoad()`, called once per
+frame, then does the GPU half on the main thread while the world stays hidden:
+it resolves the world's assets and streams them in over successive frames, so
+`PendingLoadReady()` (and the 100%% mark) means meshes and materials are
+actually resident — a promotion has **no** streaming pop-in.
+`PromotePendingLoad()` is then just the O(1) `SwapToActive` travel uses (a
+forced early promote before streaming settles falls back to resolve-at-swap
+with the usual pop-in). The load percentage covers both phases: deserialize
+0→50%%, asset streaming 50→100%% (driven by `AssetCache::PendingLoadCount`).
+Known limitation: readiness waits on the cache-wide pending count, so a preload
+will not reach 100%% while the *active* world is also mid-stream — conservative,
+never wrong. `CancelPendingLoad`
 waits the worker out (no cancellation token yet) and drops the half-built
 world; the destructor, Stop (`DestroyAllExcept`), and a superseding sync
 `LoadLevel` all route through it, so a worker is never left writing into a freed

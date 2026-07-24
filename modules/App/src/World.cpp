@@ -174,55 +174,122 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
 
     const std::string path(levelPath);
 
-    auto progress = std::make_shared<std::atomic<float>>(0.f);
+    auto deserProgress = std::make_shared<std::atomic<float>>(0.f);
 
     if (_services.jobs == nullptr)
     {
         // No scheduler: do the worker half inline. Still correct — just the hitch
-        // async travel exists to avoid. Ready for promotion immediately.
+        // async travel exists to avoid. Asset streaming (phase 2) still happens
+        // across frames via PumpPendingLoad.
         const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path);
         if (ok)
             incoming.physics.RebuildSceneBodies(incoming.scene);
-        progress->store(1.f);
-        _pending = PendingLoad{
-            .world = &incoming, .task = {}, .path = path, .syncResult = ok, .progress = progress};
+        deserProgress->store(1.f);
+        _pending                = PendingLoad{.world = &incoming, .task = {}, .path = path, .syncResult = ok};
+        _pending->deserProgress = deserProgress;
+        _pending->workerDone    = true;
+        _pending->workerOk      = ok;
         return &incoming;
     }
 
     // The worker touches ONLY this world's scene and physics — both untouched by
     // anything else while Loading — plus a copied path and the shared progress
-    // atomic. No cache, no renderer, no manager state. The world address is
+    // atomic. No cache, no renderer, no manager state (asset resolution is GPU
+    // work and stays on the main thread, in PumpPendingLoad). The world address is
     // stable, so capturing it is safe across any _worlds reallocation the main
     // thread may do meanwhile.
     World *const w = &incoming;
     Core::Task<bool> task = _services.jobs->Run(
         Core::Pool::Worker,
-        [w, path, progress]() -> bool
+        [w, path, deserProgress]() -> bool
         {
-            // Deserialize drives the bar 0 -> ~0.9 (the entity-scaling cost);
-            // building bodies is the cheap tail to 1.0.
+            // Deserialize drives phase-1 progress 0 -> ~0.9 (the entity-scaling
+            // cost); building bodies is the cheap tail to 1.0.
             const bool ok = Runtime::SceneSerializer::LoadFromFile(
-                w->scene, path, [progress](float f) { progress->store(f * 0.9f); });
+                w->scene, path, [deserProgress](float f) { deserProgress->store(f * 0.9f); });
             if (!ok)
                 return false;
             w->physics.RebuildSceneBodies(w->scene);
-            progress->store(1.f);
+            deserProgress->store(1.f);
             return true;
         });
 
-    _pending = PendingLoad{
-        .world = &incoming, .task = std::move(task), .path = path, .syncResult = std::nullopt, .progress = progress};
+    _pending                = PendingLoad{.world = &incoming, .task = std::move(task), .path = path};
+    _pending->deserProgress = deserProgress;
     Core::Log::Info("Preload: '{}' loading in the background (world '{}').", path, incoming.name);
     return &incoming;
 }
 
+void WorldManager::PumpPendingLoad()
+{
+    if (!_pending || _pending->ready)
+        return;
+
+    // Phase 1: wait for the worker. Its scene is off-limits until it completes.
+    if (!_pending->workerDone)
+    {
+        if (!_pending->task.IsValid() || !_pending->task.IsComplete())
+            return; // still deserializing on the worker
+        _pending->workerDone = true;
+        _pending->workerOk   = _pending->task.Get();
+    }
+
+    // A failed deserialize has nothing to stream — it is "ready" so Promote can
+    // run and discard it.
+    if (!_pending->workerOk)
+    {
+        _pending->ready = true;
+        return;
+    }
+
+    // No render services (headless): there are no GPU assets to stream.
+    if (_services.cache == nullptr || _services.database == nullptr)
+    {
+        _pending->assetProgress = 1.f;
+        _pending->ready         = true;
+        return;
+    }
+
+    World &world = *_pending->world;
+
+    // Phase 2: resolve the world's assets once, then let them stream in across
+    // frames. This is the half the worker could not do (GPU); the world is not
+    // rendered yet, so streaming placeholders are invisible.
+    if (!_pending->resolveStarted)
+    {
+        Runtime::ResolveSceneAssets(world.scene, *_services.cache, *_services.database);
+        _pending->resolveStarted        = true;
+        _pending->resolveInitialPending = _services.cache->PendingLoadCount();
+        world.streamingPending          = true;
+    }
+    else
+    {
+        App::UpgradeStreamingAssets(world.scene, *_services.cache, *_services.database,
+                                    world.streamingPending);
+    }
+
+    // Progress across the streams. Cache-wide count, but during a preload the
+    // active world is normally settled, so it tracks this world's loads.
+    const std::size_t pending = _services.cache->PendingLoadCount();
+    if (_pending->resolveInitialPending == 0 || pending == 0)
+    {
+        _pending->assetProgress = 1.f;
+    }
+    else
+    {
+        const float landed = 1.f - static_cast<float>(pending) /
+                                       static_cast<float>(_pending->resolveInitialPending);
+        _pending->assetProgress = std::clamp(landed, 0.f, 1.f);
+    }
+
+    // Ready only when every stream has landed — no pop-in after the swap.
+    if (!_services.cache->HasPendingLoads())
+        _pending->ready = true;
+}
+
 bool WorldManager::PendingLoadReady() const
 {
-    if (!_pending)
-        return false;
-    if (_pending->syncResult.has_value())
-        return true; // synchronous fallback finished in BeginLoadLevel
-    return _pending->task.IsValid() && _pending->task.IsComplete();
+    return _pending && _pending->ready;
 }
 
 std::string_view WorldManager::PendingLoadPath() const
@@ -234,9 +301,12 @@ float WorldManager::PendingLoadProgress() const
 {
     if (!_pending)
         return 0.f;
-    if (_pending->syncResult.has_value())
-        return 1.f; // the synchronous fallback finished before this could be polled
-    return _pending->progress->load();
+    if (_pending->ready)
+        return 1.f;
+    // Deserialize is the first half of the bar, asset streaming the second.
+    if (!_pending->workerDone)
+        return _pending->deserProgress->load() * 0.5f;
+    return 0.5f + _pending->assetProgress * 0.5f;
 }
 
 World *WorldManager::PromotePendingLoad()
@@ -244,21 +314,21 @@ World *WorldManager::PromotePendingLoad()
     if (!_pending)
         return nullptr;
 
-    // Take the result. If the worker has not finished, block on it (help-waiting)
-    // — the "swap now even though it isn't ready" path.
-    bool ok = false;
-    if (_pending->syncResult.has_value())
+    // Bring the load to a promotable point. Normally the caller waited for
+    // PendingLoadReady(), so this is immediate; if promotion is forced early, block
+    // on the worker (help-waiting) and resolve assets inline — accepting the
+    // streaming pop-in the ready-gate exists to avoid.
+    if (!_pending->workerDone)
     {
-        ok = *_pending->syncResult;
-    }
-    else if (_pending->task.IsValid())
-    {
-        _pending->task.Wait();
-        ok = _pending->task.Get();
+        if (_pending->task.IsValid())
+            _pending->task.Wait();
+        PumpPendingLoad(); // latches workerDone/workerOk, and kicks off resolve
     }
 
-    World *const     incoming = _pending->world;
-    const std::string path    = _pending->path;
+    const bool        ok       = _pending->workerOk;
+    World *const      incoming = _pending->world;
+    const std::string path     = _pending->path;
+    const bool        resolved = _pending->resolveStarted;
     _pending.reset();
 
     if (!ok)
@@ -268,10 +338,10 @@ World *WorldManager::PromotePendingLoad()
         return nullptr;
     }
 
-    // The GPU half the worker could not do: resolve this world's assets on the
-    // main thread. Streaming upgrades the placeholders over the next frames,
-    // exactly as on a normal load. Headless (no cache) skips it.
-    if (_services.cache != nullptr && _services.database != nullptr)
+    // Assets were resolved by PumpPendingLoad while the world was still hidden, so
+    // a ready promotion has no pop-in. Only a forced early promote (before the pump
+    // ever resolved) needs the fallback resolve here.
+    if (!resolved && _services.cache != nullptr && _services.database != nullptr)
     {
         Runtime::ResolveSceneAssets(incoming->scene, *_services.cache, *_services.database);
         incoming->streamingPending = true;
