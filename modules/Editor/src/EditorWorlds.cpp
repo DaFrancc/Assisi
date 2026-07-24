@@ -119,7 +119,14 @@ void EditorApp::PromotePreloadedWorld()
         return; // promotion logged the failure; nothing changed
 
     SetActiveWorld(*arrived);
-    _worlds.SweepAssetCache();
+
+    // Deliberately NO SweepAssetCache() here. The sweep does a full cache Clear +
+    // re-import of the survivor from disk — which is exactly the streaming pop-in
+    // the preload spent frames avoiding. Seamless travel keeps its pre-loaded
+    // assets resident; reclaiming the retired level's GPU memory is the deferred
+    // refcounted-eviction job, not something to pay for with a visible re-load
+    // right after a swap that was supposed to be instant. (Synchronous "Travel
+    // here" still sweeps — it has a loading-screen moment anyway.)
 }
 
 bool EditorApp::TravelToLevel(const std::string &virtualPath)

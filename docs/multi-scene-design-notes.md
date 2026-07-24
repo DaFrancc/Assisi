@@ -410,7 +410,17 @@ with the usual pop-in). The load percentage covers both phases: deserialize
 0→50%%, asset streaming 50→100%% (driven by `AssetCache::PendingLoadCount`).
 Known limitation: readiness waits on the cache-wide pending count, so a preload
 will not reach 100%% while the *active* world is also mid-stream — conservative,
-never wrong. `CancelPendingLoad`
+never wrong.
+
+**Async promote must NOT sweep the asset cache.** The sweep does a full
+`AssetCache::Clear()` + re-import of the survivor from disk — the exact
+streaming pop-in the preload spent frames avoiding. So `PromotePreloadedWorld`
+skips `SweepAssetCache()` (synchronous "Travel here" still sweeps; it has a
+loading-screen moment anyway). The cost is that a seamless travel does not
+reclaim the retired level's GPU memory — the cache grows to the union of
+levels visited until a synchronous travel/Stop clears it. That is the same
+bound the v1 cache policy already documents; per-world refcounted eviction
+(deferred, §5) is the way to reclaim without a re-load. `CancelPendingLoad`
 waits the worker out (no cancellation token yet) and drops the half-built
 world; the destructor, Stop (`DestroyAllExcept`), and a superseding sync
 `LoadLevel` all route through it, so a worker is never left writing into a freed
