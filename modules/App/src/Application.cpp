@@ -336,8 +336,10 @@ void Application::Run()
         // Run work marshalled back to the main thread (Jobs().RunOnMain) at this
         // safe point — before OnUpdate's systems run and before any render command
         // list is open. This is where deferred level loads land (see SandboxApp);
-        // background async results (streaming) will publish here too.
-        _jobs.DrainMain();
+        // background async results (streaming) publish here too. The budget (0 =
+        // unbounded by default) lets an app spread a burst of streaming asset
+        // publishes across frames — see SetMainThreadTaskBudget.
+        _jobs.DrainMain(_mainThreadTaskBudget);
 
         OnUpdate(static_cast<float>(dt));
 

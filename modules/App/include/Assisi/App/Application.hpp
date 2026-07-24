@@ -114,6 +114,16 @@ class Application
     /// ParallelFor(...) to fan work out, or Run(pool, fn) for async chains.
     Core::JobSystem &Jobs() { return _jobs; }
 
+    /// @brief Cap on main-thread tasks drained per frame (0 = unbounded, the
+    /// default). Async results publish on the main queue, and a streaming asset
+    /// publish does real GPU work — createTexture + writeTexture + a blocking
+    /// executeCommandList per texture/mesh. Draining a whole burst in one frame
+    /// spikes it; lowering this budget spreads those publishes across frames so a
+    /// background load doesn't hitch the running frame, at the cost of the results
+    /// landing a few frames later. Clear it (0) when the burst is over.
+    void SetMainThreadTaskBudget(uint32_t perFrame) { _mainThreadTaskBudget = perFrame; }
+    [[nodiscard]] uint32_t GetMainThreadTaskBudget() const { return _mainThreadTaskBudget; }
+
     void      RequestClose();
     int32_t   GetFps()             const { return _fps; }
 
@@ -197,6 +207,11 @@ class Application
     // per frame after the fixed-update loop; read by OnRender via
     // GetInterpolationAlpha() to blend physics state between fixed steps.
     float _interpolationAlpha = 0.0f;
+
+    // Per-frame cap passed to JobSystem::DrainMain (0 = unbounded). See
+    // SetMainThreadTaskBudget: throttles streaming asset publishes so a burst of
+    // GPU uploads spreads across frames instead of hitching one.
+    uint32_t _mainThreadTaskBudget = 0;
 
     // Rolling per-frame samples (milliseconds) for the ImGui plots and the
     // percentile stats, kept as ring buffers: _frameHistoryOffset is the next
