@@ -108,6 +108,47 @@ is fine); larger buffer writes (mesh vertex data) take the staging path.
   - *Meshes stay on main* (per plan): arena vertex/index `writeBuffer` records into
     the shared list in `PublishMesh`, budgeted by P0b. Small next to textures.
 
+## Measured on hardware (2026-07-24, RTX 3070) — the mesh publish was the spike
+
+Instrumented `PumpPublishes` and ran the editor (debug build) with a seamless
+preload. Four spike pumps, all the same shape:
+
+```
+AssetCache pump 66.66 ms: mesh 1x 66.54 ms, mat 0x 0.00 ms, flush 0.12 ms; 0 queued
+AssetCache pump 76.18 ms: mesh 1x 76.06 ms, mat 0x 0.00 ms, flush 0.11 ms; 0 queued
+```
+
+- **Materials 0.00 ms** — P0/P1 fully worked; texture upload is free on main now.
+- **Flush ~0.1 ms** — P0's batched submit is negligible.
+- **One mesh = the entire spike.** The culprit is `models/car_lod/car_lod.gltf`:
+  **619,635 vertices / 1,952,460 indices (~36 MB)**.
+
+`MeshBuffer::Upload` was re-fitting the whole-mesh bounds on the **main thread** —
+`ComputeBoundingSphere` (two passes) + `ComputeAabb` (one) = three walks of a
+619k-vertex array. Benchmarked on that exact size:
+
+| | BoundingSphere | Aabb | staging memcpy | total |
+|---|---|---|---|---|
+| Debug `-O0` | 39.3 ms | 21.8 ms | 2.9 ms | **~64 ms** |
+| Ship `-O2` | 2.4 ms | 0.7 ms | 1.9 ms | **~5 ms** |
+
+The debug figure matches the observed 66–76 ms, so **~95% of the headline number
+was a `-O0` artifact** (glm is ~20× slower unoptimized) — but the ~5 ms in ship was
+a real hitch, and none of it belonged on the main thread.
+
+**Fixed:** whole-mesh bounds moved to the import worker. `MeshData` gained
+`LocalBounds`/`LocalAabb`/`BoundsComputed`; `EnsureMeshBounds` (idempotent) is
+called at the end of `ImportMesh` (worker) and read by `MeshBuffer::Upload`.
+`EnsureSubMeshTables` shares the same fit instead of walking twice. Removes
+~61 ms debug / ~3 ms ship from the main thread per large mesh.
+
+**Remaining main-thread mesh cost:** the arena `writeBuffer` staging memcpy
+(~1.9 ms ship for 36 MB, near memory bandwidth). Moving it to a worker is harder
+than the texture case — `GeometryArena::Allocate` mutates shared bump-allocator
+state and may reallocate, so the worker cannot touch it without either reserving
+the range on main first (size unknown at kick time) or a two-phase
+import→reserve→record→submit handoff. Deferred; P0b's budget already spreads it.
+
 ## Plan (priority order)
 
 ### P0 — Shared upload command list (one execute/frame)  [High impact, low risk, ~1 day]

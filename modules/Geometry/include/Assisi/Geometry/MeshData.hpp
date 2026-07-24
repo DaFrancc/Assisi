@@ -69,6 +69,15 @@ struct MeshData
     std::vector<SubMesh>      SubMeshes; ///< May be empty — see degenerate rule above.
     std::vector<LodRange>     Lods;      ///< [0] = LOD0. May be empty alongside SubMeshes.
     std::vector<MaterialData> Materials; ///< Material slot table (import defaults).
+
+    // Whole-mesh bounds, fit over every vertex. Filled by EnsureMeshBounds — at
+    // import time, on the worker thread — so the main-thread publish reads them
+    // instead of re-walking the vertex array (three passes over a 600k-vertex mesh
+    // was the streaming publish's dominant main-thread cost). `BoundsComputed`
+    // distinguishes "not yet fit" from a legitimately zero-sized mesh.
+    BoundingSphere LocalBounds;
+    Aabb           LocalAabb;
+    bool           BoundsComputed = false;
 };
 
 /// @brief Fits an AABB around the vertices referenced by an index range
@@ -155,6 +164,26 @@ inline BoundingSphere ComputeBoundingSphere(const MeshData &meshData)
     return BoundingSphere{.center = center, .radius = std::sqrt(radiusSquared)};
 }
 
+/// @brief Fits the whole-mesh bounds (`LocalBounds` / `LocalAabb`) if they have
+///        not been fit yet; a no-op afterwards.
+///
+/// Walking every vertex three times (ComputeBoundingSphere is itself two passes,
+/// plus ComputeAabb) is expensive on a large mesh — ~3 ms optimized, ~60 ms at
+/// -O0, for a 600k-vertex model — so this must run on the import worker, NOT on
+/// the main thread at publish. Call it wherever a MeshData is produced off the
+/// main thread; consumers then read the fields. Idempotent, so a mesh that
+/// arrives already fit costs nothing.
+inline void EnsureMeshBounds(MeshData &meshData)
+{
+    if (meshData.BoundsComputed)
+    {
+        return;
+    }
+    meshData.LocalBounds = ComputeBoundingSphere(meshData);
+    meshData.LocalAabb = ComputeAabb(meshData);
+    meshData.BoundsComputed = true;
+}
+
 /// @brief Normalizes the degenerate case in place: a mesh with geometry but no
 ///        submesh table gains one full-range submesh (slot 0), one LOD spanning
 ///        it, and — if the slot table is empty — one default-constructed
@@ -166,12 +195,16 @@ inline void EnsureSubMeshTables(MeshData &meshData)
         return;
     }
 
+    // The implicit whole-mesh submesh spans every vertex, so its bounds ARE the
+    // mesh's — share the one fit rather than walking the vertices twice.
+    EnsureMeshBounds(meshData);
+
     SubMesh whole;
     whole.IndexOffset = 0;
     whole.IndexCount = static_cast<uint32_t>(meshData.Indices.size());
     whole.MaterialSlot = 0;
-    whole.LocalBounds = ComputeBoundingSphere(meshData);
-    whole.LocalAabb = ComputeAabb(meshData);
+    whole.LocalBounds = meshData.LocalBounds;
+    whole.LocalAabb = meshData.LocalAabb;
     meshData.SubMeshes.push_back(whole);
 
     meshData.Lods.clear();

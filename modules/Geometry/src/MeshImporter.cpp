@@ -657,6 +657,12 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
         ComputeTangents(merged);
     }
 
+    // Fit the whole-mesh bounds here, on the import worker — after tangents, so
+    // the vertex array is final. The main-thread publish (MeshBuffer::Upload)
+    // then just reads them; re-walking a large mesh's vertices there was the
+    // streaming publish's dominant main-thread cost.
+    EnsureMeshBounds(merged);
+
     return merged;
 }
 

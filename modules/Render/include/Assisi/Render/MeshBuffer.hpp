@@ -64,8 +64,14 @@ class MeshBuffer
         _vertexBase = range.vertexBase;
         _indexBase = range.indexBase;
 
-        _localBounds = Geometry::ComputeBoundingSphere(meshData);
-        _localAabb = Geometry::ComputeAabb(meshData);
+        // Read the bounds the import worker already fit (EnsureMeshBounds) rather
+        // than re-walking the vertex array here — three passes over a large mesh is
+        // milliseconds on the main thread mid-frame. The call is a no-op for an
+        // imported mesh; it only computes for meshes built in-process (prim://
+        // factories, tests), which are tiny.
+        Geometry::EnsureMeshBounds(meshData);
+        _localBounds = meshData.LocalBounds;
+        _localAabb = meshData.LocalAabb;
         _subMeshes = std::move(meshData.SubMeshes);
         _lods = std::move(meshData.Lods);
         _materials = std::move(meshData.Materials);
