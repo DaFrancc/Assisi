@@ -1,263 +1,391 @@
-# Streaming Upload Performance Plan
+# Streaming Frame-Stability Plan (main-thread residency)
 
-Branch: `multi-scene`. Goal: eliminate frame-time stutter caused by streaming GPU
-asset uploads during a seamless background level preload (multi-scene S5).
+Branch: `multi-scene`. **Goal: frame-time stability while assets stream.** All
+streaming work happens on other threads; the main thread must never hitch, no
+matter how large the asset or how long the total load takes. Load *latency* is
+explicitly not a concern — a seamless preload may take as long as it likes, as
+long as the player can't tell it's happening. Reducing total work is a side
+benefit (it makes loads quicker), never the justification for an item.
 
-Diagnosis and plan verified against the **vendored nvrhi source** the engine
-builds: `out/build/gcc-debug/_deps/nvrhi-src/src/vulkan/`.
+> This reframes the earlier revision of this doc, which was organized around
+> making uploads *cheaper*. Cheaper was the wrong primary objective; several of
+> its priorities change under the stability lens (thread contention rises,
+> BC7/KTX2 precooking drops out of the main sequence).
 
-## Corrected diagnosis (what actually costs what)
+**Success criterion (testable):** *no unbounded main-thread work in the
+streaming path.* Worst-case per-frame main-thread streaming cost must be O(1)
+in asset size — bounded by budget constants (`PumpPublishes` time/byte budgets)
+and per-item constants, never by the vertex/byte count of any single asset.
+This matters doubly because the pump's "always publish at least one" escape
+hatch (AssetCache.cpp:833-839, required so an over-budget asset can't wedge
+forever) makes a single item's publish cost the worst-case frame cost — so
+per-item main-thread cost *is* the stability contract. A softer second
+criterion covers contention: streaming threads must not preempt the main
+thread, observable only as p99/worst frame time (see "How to measure").
 
-`executeCommandList` is **NOT** GPU-blocking — `Queue::submit` (vulkan-queue.cpp
-122-209) is a mutex-guarded `vkQueueSubmit` + timeline-semaphore signal, returns
-immediately. The real per-item **main-thread** costs, biggest first:
+The foreground tier (10 ms / 128 MB when no seamless preload is active,
+EditorApp.cpp:728) is a deliberate exception: behind a blocking load there is
+nothing to protect. The 2 ms / 16 MB seamless tier (EditorApp.cpp:726) is the
+contract this doc is about.
 
-1. **The staging memcpy inside `writeTexture`** (vulkan-texture.cpp 474-545):
-   row-by-row memcpy of pixel data into an upload buffer, on the recording
-   thread. A 2048² RGBA8 + mips ≈ 22 MB; a 5-channel material burst is >100 MB of
-   main-thread memcpy in one frame. **This is the dominant cost and neither of
-   our interim fixes touched it.**
-2. **A fresh command list per publish** (`device->createCommandList()` in
-   `Texture::UploadDecoded`, `GeometryArena::Allocate`, `WriteMaterialToTable`).
-   The `UploadManager` is per-CommandList (vulkan-backend.h:1352), so every
-   publish starts with zero chunks → `vkCreateBuffer`+`vkAllocateMemory`+map. GPU
-   memory allocation is one of the most expensive Vulkan CPU calls.
-3. **One `vkQueueSubmit` per item** — tens–hundreds of µs of driver time each,
-   dozens per frame in a burst.
-4. GPU-side: many small submits serialize with the frame's render submit (small
-   but nonzero).
+Everything below is verified against the code on this branch and the **vendored
+nvrhi source** the engine builds
+(`out/build/gcc-debug/_deps/nvrhi-src/src/vulkan/`), except where marked
+*unmeasured* or *assumed*.
 
-`writeBuffer` ≤64 KB is inline `vkCmdUpdateBuffer` (cheap; the 96 B material row
-is fine); larger buffer writes (mesh vertex data) take the staging path.
+## What is on the main thread today (the inventory)
 
-### nvrhi threading facts (verified, decisive for P1/P4)
+Streaming pipeline: resolve (main, O(1) kick) → decode/import (worker) →
+continuation enqueues a `PendingPublish` (main, O(1), in `DrainMain` at
+Application.cpp:342) → `PumpPublishes` drains under budget at the frame safe
+point (EditorApp.cpp:725-728, after DrainMain, before RenderFrame) →
+`FlushUploads` submits one batch.
 
-- **Multithreaded command-list recording is supported/intended** (ProgrammingGuide:
-  "valid to record multiple command lists concurrently and execute in any order";
-  `CommandList::open` → `getOrCreateCommandBuffer` is mutex-guarded, "free-threaded",
-  vulkan-queue.cpp:85).
-- **`createTexture` is free-threaded** (vkCreateImage + allocator, both internally
-  synchronized; nvrhi guards its shared maps). So texture create + writeTexture
-  recording **can run on a worker**.
-- **Submission (`executeCommandList*`) must stay on the main thread** here:
-  `queueWaitForSemaphore`/`queueSignalSemaphore` (vulkan-queue.cpp:126-128, used by
-  VulkanContext.cpp:996-997 for swapchain acquire/present) is persistent queue
-  state that "will not work well with multi-threaded submission to the same
-  queue." Keep `writeDescriptorTable` (bindless registration) on main too.
-- `executeCommandLists(lists, count)` (vulkan-device.cpp:650) issues **one**
-  `vkQueueSubmit` for an array of lists — batch the executes.
-- **nvrhi never emits Vulkan queue-family ownership transfers** — every barrier
-  uses `VK_QUEUE_FAMILY_IGNORED`, no resource is `VK_SHARING_MODE_CONCURRENT`. So a
-  different-family transfer/copy queue is **spec-undefined** (§7.7) → P4 rejected.
-- Upload managers "never shrink their working set" — reclaim staging by releasing
-  and recreating the command list once after a big load.
+Per item, on the main thread, ordered by severity:
 
-## Current state (already committed on `multi-scene`)
+| # | Work | Where | Cost class | Status |
+|---|------|-------|-----------|--------|
+| 1 | Mesh arena staging memcpy: `writeBuffer` of vertex+index bytes memcpys into an nvrhi upload chunk on the recording thread | `PublishMesh` (AssetCache.cpp:714-720) → `MeshBuffer::Upload` (MeshBuffer.hpp:54) → `GeometryArena::Allocate` (GeometryArena.hpp:100-103) → nvrhi `CommandList::writeBuffer` staging path (vulkan-buffer.cpp:488-499) | **O(mesh bytes) — UNBOUNDED.** ~1.9 ms ship for the 36 MB car_lod mesh; scales linearly | **R1 below** |
+| 2 | Arena grow: `createBuffer` (vkCreateBuffer + vkAllocateMemory, device-local, tens of MB) + record prefix `copyBuffer` | `GeometryArena::Grow` (GeometryArena.hpp:144-181, createBuffer at :159) | Unpredictable driver-side CPU; the prefix copy itself is GPU-side (recording is O(1)). *Unmeasured* — the pump diagnostic folds it into `mesh ms` | **R2 below** |
+| 3 | Streaming re-resolve sweep: `ResolveSceneAssets` over every `MeshRenderer` in every resident world, every frame, while ANY load is pending cache-wide | EditorApp.cpp:735-745 (`ForEach` → `UpgradeStreamingAssets`, LevelRuntime.cpp:62-73) plus a second sweep of the incoming world in `WorldManager::PumpPendingLoad` (World.cpp:267); sweep body AssetResolve.cpp:37-41 | O(entities × material slots) hash lookups per frame per world — O(scene), not O(1). Continuous drag, not a spike (316-entity test scene; *unmeasured in ship*). First touch of each material also does `ReadText` + parse of the `.amat` **on main** (AssetCache.cpp:519-527) — synchronous file IO, cold-cache read can be ms | **R4 below** |
+| 4 | `writeDescriptorTable` (bindless registration) — must stay on main per nvrhi | `PublishMaterial` → `RegisterBindlessTexture` (AssetCache.cpp:722-772) | Bounded per material (≤5 channels); **measured 0.00 ms**. Would only matter if very many distinct textures published in one pump — the byte budget already bounds that | Acceptable |
+| 5 | `FlushUploads`: one `executeCommandLists` for the whole batch | AssetCache.cpp:784-807 | **Measured ~0.1 ms**, one vkQueueSubmit regardless of batch size | Acceptable |
+| 6 | Decode continuations (`OnMeshLoaded` / `OnMaterialLoaded`) | AssetCache.cpp:595-625, 694-712, run in `DrainMain` | O(1) — enqueue a `PendingPublish`, move-only | Done (P0b) |
+| 7 | Material row write (96 B, inline `vkCmdUpdateBuffer`), texture `Adopt`, `Material::Create` | `PublishMaterial`, `WriteMaterialToTable` (AssetCache.cpp:449-481) | Bounded, µs | Done (P0/P1) |
+| 8 | `Clear()` → `waitForIdle` full stall | AssetCache.cpp:888-897 | Deliberate — level unload, not the streaming path | By design |
 
-- **P0 + P0b DONE** — shared upload command list + publish queue with a time/byte
-  budget. `AssetCache` owns one persistent `_uploadList` (16 MB chunk) every
-  streaming publish records into; `PumpPublishes(timeBudgetMs, byteBudget)` drains
-  the decoded-and-waiting queue once per frame at the editor's safe point (after
-  `DrainMain`, before `RenderFrame`) and submits the whole batch with one
-  `executeCommandList`. Decode continuations (`OnMeshLoaded`/`OnMaterialLoaded`) are
-  now O(1): they enqueue a `PendingPublish`; the GPU work moved to
-  `PublishMesh`/`PublishMaterial`. `Texture::UploadDecoded`,
-  `GeometryArena::Allocate`/`Grow`, `MeshBuffer::Upload`, and `WriteMaterialToTable`
-  all took an optional `nvrhi::ICommandList*` (null = old self-contained path for
-  sync callers). The loading marker persists until the publish, so
-  `HasPendingLoads`/`PendingLoadCount` stay residency-accurate (the pop-in gate
-  holds). Editor budgets: 2 ms / 16 MB while a seamless preload streams, 10 ms /
-  128 MB foreground. `Clear()` drops the publish queue and recreates `_uploadList`
-  to reclaim peak staging. Debug+ship build green, 8/8 test suites pass. **Still
-  owes eyes-on GPU verification** (correct meshes/materials, smooth frame graph).
-- `2848652` — `Application::SetMainThreadTaskBudget` caps `DrainMain(n)` per frame.
-  **Retired as the streaming throttle** (P0b replaced it); the editor no longer sets
-  it. Mechanism kept in `Application` for any future deferred main work.
-- `f9b0222` — AssetCache concurrency cap (`_maxConcurrentLoads = 3`, `_pendingLoads`
-  queue, `PumpLoadQueue`) + sequential channel decode + refactor to named members
-  (`StartMeshLoad`/`OnMeshLoaded`, `StartMaterialLoad`/`OnMaterialLoaded`,
-  `DecodeMaterialChannels`). **P2 refines this into a byte-weighted cap + low-prio
-  IO pool.** Keep the cap for now.
+Not in the streaming path but worth knowing: `ResolveTexture` on a real file
+path decodes + mip-gens **synchronously on main** (AssetCache.cpp:255-260 →
+`LoadFromAssets`). Streaming materials never hit it (workers decode channels;
+publish only resolves `prim://` fallbacks), but any future direct caller with a
+disk path would reintroduce a main-thread decode. Same for `ResolvePrimitive`'s
+self-contained upload (fine — primitives are tiny and built in-process).
 
-- **P1 DONE** — material channel textures are now created **and recorded on the
-  decode worker**, so the `writeTexture` staging memcpy (the dominant main-thread
-  CPU cost — confirmed eyes-on: "the gpu doesnt spike, only the cpu") runs off the
-  main thread. `Texture::UploadDecoded` split into free-threaded `CreateImage`
-  (createTexture) + `RecordMips` (records writeTexture into an open list), plus
-  `Adopt` for the main-thread publish. The material worker
-  (`DecodeAndRecordMaterialChannels`) decodes each channel, creates its GPU texture,
-  and records all channel uploads into one closed command list returned in the
-  bundle. `PublishMaterial` is now µs on main: it hands the worker list to a batch,
-  adopts each texture (dedup by (path,space) — a duplicate's worker texture is
-  dropped), registers bindless, writes the 96 B row. `FlushUploads` submits every
-  worker list + the shared main list in **one** `executeCommandLists`. Verified
-  thread-safe against vendored nvrhi: ProgrammingGuide blesses concurrent recording;
-  `createTexture`/`createCommandList` take no locks and use only device-level Vulkan
-  calls (no external-sync requirement); the naive one-alloc-per-resource allocator
-  and `nameVKObject` are device-level too; only `executeCommandList*` and
-  `writeDescriptorTable` stay on main. Debug+ship green, 8/8 suites pass. **Owes
-  eyes-on GPU verification** (correct textures, flat CPU frame graph during a
-  preload) — Vulkan validation layers in the debug build are the threading safety
-  net.
-  - *Deferred refinement (kick-time dedup):* two materials sharing a texture path
-    still each decode + create it on their workers; publish-time dedup keeps one and
-    drops the other (wasted worker createTexture + upload bandwidth, but off-main and
-    correct). A main-thread `(path,space)→loading` registry checked at
-    `ResolveMaterialPath` would make a shared texture load once. Not needed for
-    correctness; a worker-side efficiency win for texture-heavy shared sets.
-  - *Meshes stay on main* (per plan): arena vertex/index `writeBuffer` records into
-    the shared list in `PublishMesh`, budgeted by P0b. Small next to textures.
+## What has already landed, and what it bought
 
-## Measured on hardware (2026-07-24, RTX 3070) — the mesh publish was the spike
+All committed on `multi-scene`; working tree clean.
 
-Instrumented `PumpPublishes` and ran the editor (debug build) with a seamless
-preload. Four spike pumps, all the same shape:
+- **P0 + P0b** (`708f9a4`) — shared upload command list + budgeted publish
+  queue. `AssetCache` owns one persistent `_uploadList` with a 16 MB staging
+  chunk (`kUploadChunkSize`, AssetCache.cpp:84, created at :114-118); every
+  streaming publish records into it; `PumpPublishes(timeBudgetMs, byteBudget)`
+  (AssetCache.cpp:809-886) drains once per frame at the safe point and
+  `FlushUploads` submits everything in **one** `executeCommandLists`. Decode
+  continuations became O(1). Retired `SetMainThreadTaskBudget` as the streaming
+  throttle (mechanism kept in `Application`). `Clear()` recreates the list to
+  return peak staging (upload managers never shrink).
+  *Stability effect:* per-frame publish work became budget-bounded; per-item
+  submit/alloc overhead (once the dominant *count* of main-thread ops) went to
+  one submit per frame.
+- **P1** (`c7a6a8b`) — material channel textures are created **and recorded on
+  the decode worker** (`DecodeAndRecordMaterialChannels`, AssetCache.cpp:627-676):
+  decode, `Texture::CreateImage`, `RecordMips` into one worker command list,
+  returned closed in the bundle. `PublishMaterial` on main only hands the list
+  to the batch, adopts textures (dedup by (path, space)), registers bindless,
+  writes the 96 B row. `Texture::UploadDecoded` split into free-threaded
+  `CreateImage` + `RecordMips` + `Adopt` (Texture.cpp:203-228, 218-243 region).
+  *Stability effect:* the `writeTexture` staging memcpy — previously the
+  dominant unbounded main-thread cost (a 2048² RGBA8 + mips ≈ 22 MB per
+  channel) — left the main thread entirely. Measured: **materials cost 0.00 ms
+  on main.**
+- **Bounds fix** (`f9bdd46`) — whole-mesh bounds fitting moved to the import
+  worker. `MeshData` gained `LocalBounds`/`LocalAabb`/`BoundsComputed`;
+  idempotent `Geometry::EnsureMeshBounds` (MeshData.hpp:176-193) runs at the end
+  of `ImportMesh` (MeshImporter.cpp:664); `MeshBuffer::Upload` reads instead of
+  recomputing (MeshBuffer.hpp:67-74); `EnsureSubMeshTables` shares the same fit.
+- **Pump diagnostic** (`db406e8`) — per-phase timing in `PumpPublishes`
+  (AssetCache.cpp:876-885), logged when a pump ≥ 2 ms: `mesh Nx / mat Nx /
+  flush` split plus queue depth.
+
+### Measured evidence (2026-07-24, RTX 3070, debug build, seamless preload)
+
+Four spike pumps, all the same shape:
 
 ```
 AssetCache pump 66.66 ms: mesh 1x 66.54 ms, mat 0x 0.00 ms, flush 0.12 ms; 0 queued
 AssetCache pump 76.18 ms: mesh 1x 76.06 ms, mat 0x 0.00 ms, flush 0.11 ms; 0 queued
 ```
 
-- **Materials 0.00 ms** — P0/P1 fully worked; texture upload is free on main now.
-- **Flush ~0.1 ms** — P0's batched submit is negligible.
-- **One mesh = the entire spike.** The culprit is `models/car_lod/car_lod.gltf`:
-  **619,635 vertices / 1,952,460 indices (~36 MB)**.
+One mesh publish was the entire spike: `assets/models/car_lod/car_lod.gltf`,
+**619,635 vertices / 1,952,460 indices**. At 48 B/vertex (`Geometry::Vertex`:
+vec3+vec3+vec2+vec4, MeshData.hpp:30-37) that is 28.4 MiB of vertices + 7.4 MiB
+of indices ≈ **36 MB**. Root cause was `MeshBuffer::Upload` re-fitting
+whole-mesh bounds on main — three passes over the vertex array. Benchmarked at
+that exact vertex count:
 
-`MeshBuffer::Upload` was re-fitting the whole-mesh bounds on the **main thread** —
-`ComputeBoundingSphere` (two passes) + `ComputeAabb` (one) = three walks of a
-619k-vertex array. Benchmarked on that exact size:
-
-| | BoundingSphere | Aabb | staging memcpy | total |
+| | ComputeBoundingSphere | ComputeAabb | staging memcpy | total |
 |---|---|---|---|---|
-| Debug `-O0` | 39.3 ms | 21.8 ms | 2.9 ms | **~64 ms** |
-| Ship `-O2` | 2.4 ms | 0.7 ms | 1.9 ms | **~5 ms** |
+| Debug `-O0` | 39.3 ms | 21.8 ms | 2.9 ms | ~64 ms |
+| Ship `-O2` | 2.4 ms | 0.7 ms | 1.9 ms | ~5 ms |
 
-The debug figure matches the observed 66–76 ms, so **~95% of the headline number
-was a `-O0` artifact** (glm is ~20× slower unoptimized) — but the ~5 ms in ship was
-a real hitch, and none of it belonged on the main thread.
+**Caveat that must not get lost: ~95% of the 66-76 ms headline was a `-O0`
+artifact** (glm is ~20× slower unoptimized). The bounds fix removed that cost
+from main regardless — but the honest ship-build picture before the fix was a
+~5 ms hitch, of which ~1.9 ms (the memcpy) remains today. All future numbers
+come from the **ship build** (`make gs`), and the metric is worst-frame / p99
+frame time during a preload, not average pump cost — jitter is what matters.
 
-**Fixed:** whole-mesh bounds moved to the import worker. `MeshData` gained
-`LocalBounds`/`LocalAabb`/`BoundsComputed`; `EnsureMeshBounds` (idempotent) is
-called at the end of `ImportMesh` (worker) and read by `MeshBuffer::Upload`.
-`EnsureSubMeshTables` shares the same fit instead of walking twice. Removes
-~61 ms debug / ~3 ms ship from the main thread per large mesh.
+## Verified nvrhi facts (load-bearing; line numbers from the vendored source)
 
-**Remaining main-thread mesh cost:** the arena `writeBuffer` staging memcpy
-(~1.9 ms ship for 36 MB, near memory bandwidth). Moving it to a worker is harder
-than the texture case — `GeometryArena::Allocate` mutates shared bump-allocator
-state and may reallocate, so the worker cannot touch it without either reserving
-the range on main first (size unknown at kick time) or a two-phase
-import→reserve→record→submit handoff. Deferred; P0b's budget already spreads it.
+- **Multithreaded recording is supported/intended**: ProgrammingGuide (~line 36)
+  blesses recording multiple command lists concurrently and executing in any
+  order; `CommandList::open` → `Queue::getOrCreateCommandBuffer` is
+  mutex-guarded, "free-threaded" (vulkan-queue.cpp:83-85).
+- `createTexture`, `createBuffer`, `createCommandList` are free-threaded —
+  device-level Vulkan calls (internally synchronized), no nvrhi shared-state
+  mutation, no external-sync requirement.
+- **Submission stays on the main thread.** `Queue::submit`
+  (vulkan-queue.cpp:122-129) documents that the wait/signal semaphore lists are
+  persistent queue state, so `queueWaitForSemaphore`/`queueSignalSemaphore`
+  "will not work well with multi-threaded command list submission to the same
+  queue" — and the swapchain path uses exactly those
+  (VulkanContext.cpp:996-997). `writeDescriptorTable` also stays on main.
+- `executeCommandList` is **not** GPU-blocking: `Queue::submit` is a
+  mutex-guarded `vkQueueSubmit` + timeline-semaphore signal, returns
+  immediately. `executeCommandLists(lists, count)` (vulkan-device.cpp:650)
+  issues **one** `vkQueueSubmit` for the array.
+- `writeBuffer` ≤64 KB (offset 4-aligned) is inline `vkCmdUpdateBuffer`; larger
+  writes suballocate an upload chunk and **memcpy on the recording thread**
+  (vulkan-buffer.cpp:473-499). `writeTexture` does the same row-by-row
+  (vulkan-texture.cpp:474+). This is why "record on the worker" moves the real
+  cost, not just bookkeeping.
+- **Every nvrhi buffer is created with `eTransferSrc | eTransferDst`
+  unconditionally** (vulkan-buffer.cpp:48-49). Newly verified — this closes the
+  open question on R1: the arena buffers are valid `copyBuffer` destinations
+  and a `cpuAccess=Write` staging buffer is a valid source, with no desc
+  changes.
+- `copyBuffer` (vulkan-buffer.cpp:225-261) auto-barriers src→CopySource,
+  dst→CopyDest, and tracks `cpuAccess != None` buffers as
+  `referencedStagingBuffers` — the submit keeps a staging buffer alive until
+  the GPU retires it, so the publisher can drop its handle immediately.
+- `mapBuffer` waits only if the buffer was used in a submitted command list
+  (`lastUseCommandListID != 0`, vulkan-buffer.cpp:585-589); a fresh buffer maps
+  with **no GPU wait**. Only `isVolatile` buffers are pre-mapped, so mapping a
+  plain `cpuAccess=Write` buffer cannot double-map.
+- `writeBuffer` on a `cpuAccess=Write` buffer is **invalid** in nvrhi ("Using
+  writeBuffer on mappable buffers is invalid", vulkan-buffer.cpp:488-503) — the
+  staging design must use map/memcpy/unmap + `copyBuffer`, which it does.
+- *Coherency wrinkle (newly found, assessed no-new-risk):* `cpuAccess=Write`
+  requests only `eHostVisible` — not `eHostCoherent`
+  (vulkan-allocator.cpp:28-45) — and `unmapBuffer` never flushes (explicit TODO,
+  vulkan-buffer.cpp:626-634). Spec-strict, a non-coherent memory type would need
+  `vkFlushMappedMemoryRanges`. But nvrhi's own `UploadManager` chunks — the path
+  under *every* existing `writeBuffer`/`writeTexture` in the engine — are the
+  identical mechanism (`cpuAccess=Write`, persistently mapped, memcpy, no flush;
+  vulkan-upload.cpp:49-57). Any memory type where the engine currently works,
+  the staging design works. Desktop drivers' first HOST_VISIBLE type is
+  coherent in practice.
+- **nvrhi emits no Vulkan queue-family ownership transfers** — every barrier
+  uses `VK_QUEUE_FAMILY_IGNORED`, all resources are
+  `VK_SHARING_MODE_EXCLUSIVE`. Basis for the transfer-queue rejection below.
+- Upload/scratch managers never shrink their working set; releasing and
+  recreating the command list is the only way to reclaim staging memory
+  (done in `Clear()`, AssetCache.cpp:924-931).
 
-## Plan (priority order)
+## Remaining work, in stability-impact order
 
-### P0 — Shared upload command list (one execute/frame)  [High impact, low risk, ~1 day]
-Replace the three per-item `createCommandList/open/write/close/execute` sites with
-one persistent, reused upload list owned by `AssetCache` (or a small
-`GpuUploadQueue` the cache + arena share):
-- One `nvrhi::CommandListHandle _uploadList`, created once. First publish of a
-  frame `open()`s it; all `writeTexture` / arena `writeBuffer` / material-row
-  writes record into it; at the pump point (DrainMain safe point, **before**
-  `RenderFrame()` opens the render list) `close()` + **one** `executeCommandList`.
-- Correctness is free: same queue, submitted before the frame's render submit →
-  draws see the data, nvrhi auto-barriers handle it.
-- Reusing the handle reuses the UploadManager's staging chunks → removes the
-  per-publish `vkAllocateMemory`. After a preload completes, release+recreate the
-  list once to return peak staging memory.
-- Pass `CommandListParameters::uploadChunkSize` ~8–16 MB (default 64 KB) so a
-  texture burst doesn't fragment into dozens of chunks.
-- **GeometryArena grow path** (GeometryArena.hpp 118-145) — two safe options:
-  - *Preferred:* reserve capacity once at preload start (sum incoming geometry
-    from the import/manifest) → no mid-stream realloc/copy.
-  - *Fallback:* record the grow's `copyBuffer(grown,0,old,0,used)` into the **same
-    open shared list** (linear ordering + auto-barriers make it safe; old buffer
-    kept alive by the list's referencedResources). Never let grow self-execute.
-- Sites to change: `Texture::UploadDecoded` (Texture.cpp 216-229),
-  `GeometryArena::Allocate`/grow (GeometryArena.hpp 83-90, 118-145),
-  `WriteMaterialToTable` / material-table write (AssetCache.cpp ~505-510).
-  Precedent: NVIDIA Donut `TextureCache` keeps one reused `m_CommandList`.
+### R1 — Mesh staging-buffer handoff: the memcpy moves to the worker  [removes the last unbounded main-thread publish cost]
 
-### P0b — AssetCache publish queue + time/byte budget  [High impact, low effort]
-The `DrainMain(maxTasks)` cap is the wrong layer (counts tasks, throttles all main
-work). Budget the integration step itself:
-- The `.Then(Pool::Main, …)` continuation becomes O(1): push a
-  `PendingPublish { bundle, byteSize }` into an AssetCache-owned queue.
-- `AssetCache::PumpPublishes(timeBudgetMs, byteBudget)` runs once/frame at the
-  DrainMain safe point: pop-and-publish while `elapsed < timeBudgetMs && bytes <
-  byteBudget`, recording into the P0 shared list, then one execute. Carry the
-  remainder to next frame. Keep whole-material atomicity (all 5 channels + row in
-  one item — never half-textured).
-- Defaults: **~2 ms main-thread + ~16 MB per frame during play**; high tier (10+
-  ms / unbounded) behind a blocking loading screen. Seamless preload = low tier.
-  Precedent: Unity `backgroundLoadingPriority` 2/4/10/50 ms; UE
-  `s.AsyncLoadingTimeLimit` 5 ms; Donut `ProcessRenderingThreadCommands(timeLimit)`.
-- Retire `SetMainThreadTaskBudget` as the streaming throttle (keep the mechanism
-  for other deferred main work if useful, or remove if now unused).
+The staging memcpy in row 1 of the inventory is O(mesh bytes) on main. Design
+(verified against nvrhi as noted above):
 
-### P1 — Record uploads on workers (memcpys off main)  [High impact, medium effort]
-Deletes the remaining main-thread staging memcpy:
-- In the mesh/material worker job, after decode: `device->createTexture(desc)`
-  (free-threaded), `createCommandList()`, `open()`, `writeTexture()` per mip (big
-  memcpys now on the worker), `close()`. Return the **closed** `CommandListHandle`
-  + texture handles in the bundle.
-- Main-thread publish then only: `executeCommandLists(array)` (one submit for all
-  ready lists), `writeDescriptorTable` (bindless slot, main-only, cheap), mint id,
-  write 96 B row (into P0 list). Per-material main cost: ms → µs.
-- Keep every execute on main (the `queueWaitForSemaphore` landmine).
-- Pool the per-load command lists (bounded by the in-flight cap ≈3); drop the pool
-  after preload to reclaim staging.
-- Move texture dedup to **kick time**: a main-thread `(path,colorSpace) →
-  loading/loaded` registry checked before dispatch, so a shared texture decodes +
-  records once (today two materials can both decode it, dedup only at publish).
-- Meshes: leave arena writes on main inside the P0 batcher (vertex data is small
-  next to textures; concurrent arena recording buys little). Budget via P0b.
+- **Worker** (end of the mesh import job): `device->createBuffer` with
+  `cpuAccess = CpuAccessMode::Write` sized vertices+indices (one buffer, two
+  regions, or two buffers — implementer's choice), `mapBuffer` (no GPU wait on
+  a fresh buffer), memcpy vertices and indices in, `unmapBuffer`. Return the
+  staging handle(s) + counts in the mesh bundle instead of relying on main to
+  copy out of `MeshData`.
+- **Main** (`PublishMesh`): ensure capacity / reserve the arena range (bump
+  cursor arithmetic, O(1)), record two `copyBuffer(arenaBuf, arenaOffset,
+  staging, srcOffset, bytes)` into the shared upload list, drop the staging
+  handle (the submit keeps it alive until retire). Recording a copy is
+  microseconds and **O(1) in mesh size**.
 
-### P2 — Low-priority IO pool + byte-weighted cap  [Medium]
-- Build the `Pool::IO` the JobSystem design already reserves: 1–2 threads at
-  **below-normal OS priority** (`pthread_setschedparam`/nice; Windows
-  `THREAD_PRIORITY_BELOW_NORMAL`) for decode/import jobs. OS preempts streaming
-  instead of frame threads → ends the three-way oversubscription with Jolt's pool
-  and main structurally. Precedent: UE AsyncLoadingThread, Unity background thread.
-- Make the in-flight cap **byte-weighted** (e.g. ≤64 MB decoded-image bytes in
-  flight) rather than count-based (3× 4K vs 3× 256² are very different).
-- Keep sequential channel decode (already done; nested parallel-for per asset is
-  the anti-pattern).
+Why this shape and not "reserve the offset on main at kick, worker records
+`writeBuffer` at that offset": the worker never needs to know its arena offset,
+so a concurrent arena grow cannot invalidate its work. The naive alternative
+has a real hazard — a grow between reserve and submit swaps the buffer handle
+and GPU-copies only the *used* prefix, silently losing a not-yet-submitted
+worker write aimed at the old handle past the copied prefix. The staging design
+is immune: the worker's product is a self-contained buffer; main binds it to
+the arena-of-the-moment at publish time. (It also sidesteps nvrhi's "writeBuffer
+needs the size at reserve time" and the mappable-buffer restriction.)
 
-### P3 — Import-time BC7/KTX2 + pregenerated mips  [High long-term, high effort]
-Runtime stbir mip gen + stb decode is the dominant decode cost; RGBA8 is 4–8× the
-bytes of block-compressed. Precook BC7/KTX2 with mips (fits the planned
-`.amat`/`.aast` import pipeline): deletes the mip pass, ~4× fewer upload bytes,
-shrinks every budget above. What UE/Unity/id Tech actually stream.
+Verification status: buffer usage flags ✅ (unconditional TRANSFER_SRC/DST),
+`createBuffer` free-threaded ✅, `mapBuffer` no-wait-on-fresh ✅, staging
+lifetime across the submit ✅, coherency assessed identical-to-existing-path ✅.
+Cost note: this adds a vkCreateBuffer + vkAllocateMemory per mesh **on the
+worker** — acceptable (off main); pool staging buffers later only if worker-side
+cost ever matters.
 
-### P4 — Dedicated transfer/copy queue  [REJECTED]
-nvrhi emits no queue-family ownership transfers (`VK_QUEUE_FAMILY_IGNORED`
-everywhere, exclusive sharing) → a different-family copy queue is undefined per
-Vulkan §7.7 (latent cross-vendor corruption). Same-family extra queue isn't
-portable (AMD: one graphics queue). Payoff is small once P0/P1 land (the stutter
-is CPU-side). Revisit only if GPU frame time rises during streaming after P0–P2.
+Side benefit (not the justification): one less CPU→CPU copy than the
+upload-manager path in some cases; negligible.
 
-## Expected outcome
-P0 + P0b: a dozens-of-submits burst frame → one bounded ~2 ms publish slice.
-P1: that slice → microseconds + one batched submit. Stutter gone up to the byte
-budget, which is then freely tunable.
+### R2 — Arena grow off the publish path  [unpredictable driver cost on main]
 
-## Execution order
-Do **P0 + P0b** first (contained to AssetCache/Texture/GeometryArena; test the
-improvement), then **P1**. P2/P3 later. Cannot self-verify GPU output — needs
-eyes-on test after each step (correct meshes/materials, smooth frame graph).
+`GeometryArena::Grow` runs `createBuffer` (device-local vkAllocateMemory,
+potentially tens of MB) on main mid-publish. Initial capacities are 4 MB vertex
+/ 2 MB index (GeometryArena.hpp:51-52) — car_lod alone is 28.4 MiB of vertices,
+so a real level forces grows immediately and repeatedly (geometric doubling,
+GeometryArena.hpp:150). The cost is *unmeasured* (the pump diagnostic folds it
+into `mesh ms`); measure before building anything beyond the first bullet.
+
+In cheap-first order:
+
+1. **Raise initial capacities** (e.g. 64 MB vertex / 32 MB index ≈ one mid-size
+   level) — one line each, removes most grows outright. VRAM cost is the trade;
+   fine at current scale.
+2. **Pre-reserve at preload start** once a manifest knows the incoming
+   geometry total (fits the planned `.aast` relationship files) — no mid-stream
+   grow at all.
+3. **Worker-created grow buffer** if grows must remain: `createBuffer` is
+   free-threaded, so when the pump sees queued mesh bytes exceeding remaining
+   capacity it can kick a worker job to create the grown buffer; main then only
+   records the prefix `copyBuffer` (O(1)) and swaps the handle. Only worth it
+   if (1)/(2) prove insufficient in measurements.
+
+### R3 — Thread contention: low-priority IO pool + a thread census  [likely the dominant residual jitter]
+
+Frame jitter can occur with **zero** main-thread work if the OS preempts the
+main thread in favor of streaming workers. Current thread population on a
+16-hardware-thread machine: Jolt's shared pool spawns `hardware_concurrency()-1`
+= 15 threads (PhysicsWorld.cpp:139-141; the log line "Jolt: runtime up (16
+worker threads…)" reports `GetMaxConcurrency()`, which counts the calling
+thread too — it is 15 spawned threads, not 16), `Core::JobSystem` spawns
+another `hardware_concurrency()-1` = 15 (JobSystem.cpp:10-18), plus main:
+**up to 31 runnable threads on 16 hardware threads.** P1 made this *worse* for
+streaming, deliberately: decode workers now also run `createTexture` +
+command-list recording (the big memcpys), and R1 adds the mesh staging memcpy
+to workers too. The work went off-main; the *scheduling pressure* did not.
+
+- Build **`Pool::IO`** — designed but not built ("Not yet built" note,
+  JobSystem.hpp:33-34): 1-2 threads at below-normal OS priority, and route
+  decode/import (and R1's staging fill) to it. On Linux, SCHED_OTHER thread
+  priority is the per-thread nice value via `setpriority(PRIO_PROCESS,
+  gettid(), n)` (`pthread_setschedparam` only carries a priority for the
+  realtime policies); on Windows,
+  `SetThreadPriority(THREAD_PRIORITY_BELOW_NORMAL)`. The OS then preempts
+  streaming instead of the frame threads — the structural fix, vs. tuning
+  budgets around contention. Precedent: UE's AsyncLoadingThread, Unity's
+  background loading thread.
+- **Cap total threads across Jolt + jobs.** Two full-size pools is 2×
+  oversubscription before streaming even starts; consider sizing the two pools
+  jointly (e.g. jobs = cores − Jolt's typical live concurrency) — needs its own
+  evaluation, noted here so it isn't lost.
+- Keep the in-flight load cap (`_maxConcurrentLoads = 3`,
+  AssetCache.cpp:562); byte-weighting it (≤N decoded MB in flight, not 3
+  items) remains a good refinement once `Pool::IO` exists — it bounds worker
+  memory pressure, which is itself a stability input (allocator churn, cache
+  eviction).
+- *Assumed, not measured:* that residual jitter after R1 is contention-shaped.
+  The pump diagnostic distinguishes it: all phases low but pump total high ⇒
+  the main thread was preempted mid-pump (see AssetCache.cpp:876-881 comment).
+  Whole-frame p99 in ship is the real arbiter.
+
+### R4 — Event-driven streaming upgrade instead of the per-frame sweep  [O(scene) per frame → O(what landed)]
+
+While any load is pending cache-wide, **every** resident world re-resolves
+**every** `MeshRenderer` **every** frame (inventory row 3). Per entity it's
+hash lookups + a `materials` vector rebuild — bounded per entity, but O(scene)
+per frame, growing with entity count forever; and the *first* touch of each
+material does synchronous `.amat` file IO on main (AssetCache.cpp:519). At 316
+entities this is probably tens of µs in ship (*unmeasured — measure before
+building*); it is the one item here that scales with content size rather than
+asset size.
+
+Fix shape (design, not yet committed to):
+
+- The cache records which paths became resident this pump (`PublishMesh` /
+  `PublishMaterial` already know); exposes e.g. `TakeNewlyResident()`.
+- Each world keeps the set of entities still holding a placeholder (built on
+  the initial resolve — the sweep already visits everything once). Per frame,
+  upgrade only entities referencing newly-resident paths, then shrink the set.
+  Empty set ⇒ zero per-frame work — replacing the cache-wide
+  `HasPendingLoads()` gate (EditorApp.cpp:735-745) that today makes world A
+  sweep because world B is loading.
+- The `.amat` parse-on-main belongs in the worker load body eventually (parse
+  needs the asset database for channel-id→path resolution, which is main-thread
+  state — resolve ids on main at kick as today, move only the file read+parse);
+  low priority while `.amat` files are small, worth remembering when they grow.
+
+### R5 — Publish-cost guardrails (cheap, ongoing)
+
+- Keep the pump diagnostic permanently (it is the stability regression test's
+  sensor), but treat any `mesh Nx` time that scales with vertex count as a bug
+  after R1 lands.
+- When a genuinely enormous single asset appears (a 100 MB mesh), the escape
+  hatch still publishes it in one frame — after R1 that publish is O(1) on
+  main, so this stops being a stability event. The GPU copy still lands in one
+  submit; if GPU frame time ever visibly dips at that submit, split the
+  `copyBuffer` across pumps (the staging buffer makes partial copies trivial —
+  another reason R1's shape is right).
+
+## Demoted / rejected
+
+- **Import-time BC7/KTX2 + pregenerated mips** (was P3) — **demoted out of this
+  plan.** It reduces total work (deletes runtime mip gen, ~4× fewer bytes
+  decoded/staged/resident) but does not change *which thread* any work lands
+  on: after P1/R1 everything it would shrink already runs on workers. It is a
+  size/VRAM/load-latency project that belongs with the `.amat`/`.aast` import
+  pipeline. Honest indirect benefit: smaller worker jobs shorten the window in
+  which R3's contention can bite, and shrink staging traffic — welcome, not
+  sufficient to sequence it here.
+- **Dedicated transfer/copy queue** (was P4) — **stays rejected, with
+  evidence.** nvrhi emits no queue-family ownership transfers
+  (`VK_QUEUE_FAMILY_IGNORED` everywhere, exclusive sharing), so copies on a
+  different-family queue are undefined per Vulkan spec §7.7 — latent
+  cross-vendor corruption. A same-family second queue isn't portable (AMD
+  commonly exposes one graphics queue). And the stutter was never GPU-side:
+  submission is one mutex-guarded `vkQueueSubmit` per frame. Revisit only if
+  GPU frame time measurably rises during streaming after R1-R3.
+
+## How to measure
+
+- **Ship build only** (`make gs`). The debug build overstates glm/loop-heavy
+  costs ~20× (see the `-O0` caveat above) and will misrank every item here.
+- **Metric: worst-frame / p99 frame time during a seamless preload**, compared
+  against the same scene idle. Not average pump cost — a 60 s load of 2 ms
+  pumps is a success; one 20 ms frame is the failure, however cheap the load
+  was on average.
+- The pump diagnostic (AssetCache.cpp:876-885, ≥2 ms threshold) localizes any
+  spike: `mesh` high ⇒ R1/R2 regression; `mat` high ⇒ descriptor writes (many
+  distinct textures — revisit inventory row 4); `flush` high ⇒ submit; all low
+  but total high ⇒ preemption ⇒ R3.
+- After R1: verify `mesh 1x` time for car_lod drops from ~1.9 ms to µs in
+  ship, and that no pump line scales with the asset being published.
+- Items marked *unmeasured* (grow cost, sweep cost, post-R1 contention) get a
+  measurement before their fix gets built — this doc has already had one
+  priority inverted by a `-O0` artifact.
+- GPU output correctness needs eyes-on after each step (correct
+  meshes/materials, flat frame graph); Vulkan validation layers in the debug
+  build are the threading safety net.
 
 ## Key file references
-- `modules/Render/src/AssetCache.cpp` — publish sites, `OnMeshLoaded` /
-  `OnMaterialLoaded` / `WriteMaterialToTable`; the P0b publish queue lands here.
-- `modules/Render/src/Texture.cpp` (`UploadDecoded`, 216-229).
-- `modules/Render/include/Assisi/Render/GeometryArena.hpp` (`Upload`/`Allocate`,
-  grow 118-145).
-- `modules/Render/src/VulkanContext.cpp` (single graphics queue; 316-320, 996-997).
-- `modules/App/src/Application.cpp:342` (`_jobs.DrainMain(_mainThreadTaskBudget)`;
-  P0b's `PumpPublishes` runs at this safe point).
-- Vendored nvrhi: `out/build/gcc-debug/_deps/nvrhi-src/src/vulkan/`
-  (vulkan-queue.cpp 85/122-209; vulkan-texture.cpp 264/474-545; vulkan-buffer.cpp
-  444-505; vulkan-device.cpp:650; vulkan-backend.h:1352).
 
-Sources: nvrhi ProgrammingGuide; Donut TextureCache.cpp; Unity
-`Application.backgroundLoadingPriority`; UE async asset loading; Vulkan spec §7.7.
+- `modules/Render/src/AssetCache.cpp` — publish queue, `PumpPublishes`
+  (:809-886), `PublishMesh` (:714), `PublishMaterial` (:722), `FlushUploads`
+  (:784), worker record `DecodeAndRecordMaterialChannels` (:627), `.amat`
+  main-thread parse (:519-527), `kUploadChunkSize` (:84).
+- `modules/Render/include/Assisi/Render/GeometryArena.hpp` — `Allocate` (:77),
+  `Grow` (:144), initial capacities (:51-52).
+- `modules/Render/include/Assisi/Render/MeshBuffer.hpp` — `Upload` (:54).
+- `modules/Render/src/Texture.cpp` — `CreateImage`/`RecordMips`/`UploadDecoded`.
+- `modules/App/src/LevelRuntime.cpp:62` — `UpgradeStreamingAssets`;
+  `modules/Runtime/src/AssetResolve.cpp:37` — the sweep body.
+- `modules/Editor/src/EditorApp.cpp:716-745` — pump call, budgets, per-world
+  sweep. `modules/App/src/World.cpp:223-288` — `PumpPendingLoad`.
+- `modules/App/src/Application.cpp:342` — `DrainMain` safe point.
+- `modules/Core/include/Assisi/Core/JobSystem.hpp:33` — `Pool::IO` "not yet
+  built"; `modules/Core/src/JobSystem.cpp:10-18` — worker count.
+- `modules/Physics/src/PhysicsWorld.cpp:139-141` — Jolt pool sizing.
+- `modules/Render/src/VulkanContext.cpp:996-997` — swapchain semaphores (why
+  submits stay on main).
+- Vendored nvrhi: `out/build/gcc-debug/_deps/nvrhi-src/src/vulkan/` —
+  vulkan-buffer.cpp (:48-49 usage flags, :225 copyBuffer, :444 writeBuffer,
+  :578 mapBuffer), vulkan-queue.cpp (:83, :122-129), vulkan-texture.cpp (:474),
+  vulkan-device.cpp (:650), vulkan-allocator.cpp (:28-45),
+  vulkan-upload.cpp (:49-57), vulkan-backend.h (:1352).
+
+Sources: nvrhi ProgrammingGuide; Vulkan spec §7.7; Unity
+`Application.backgroundLoadingPriority`; UE `s.AsyncLoadingTimeLimit` /
+AsyncLoadingThread; Donut TextureCache.
