@@ -408,18 +408,26 @@ class AssetCache
     // publish. Bounds concurrent CPU decode work so a big load can't saturate every
     // worker core and starve the main render thread (frame spikes).
 
-    /// @brief One PBR channel's decoded pixels plus its source path (for dedup at
-    /// publish). Nested so OnMaterialLoaded can take a MaterialLoadBundle by value.
-    struct DecodedChannel
+    /// @brief One PBR channel's GPU texture, created and recorded on the decode
+    /// worker (streaming P1), plus its source path for dedup at publish. `texture` is
+    /// null for an empty or failed channel (the publish substitutes a prim:// default).
+    /// Its pixels are uploaded when the bundle's `uploadList` executes on the main
+    /// thread. Nested so OnMaterialLoaded can take a MaterialLoadBundle by value.
+    struct RecordedChannel
     {
-        std::optional<DecodedImage> image;
-        Core::AssetPath             path;
+        nvrhi::TextureHandle texture;
+        Core::AssetPath      path;
     };
-    /// @brief A material load's result: parsed data + every channel decoded.
+    /// @brief A material load's result: parsed data, every channel's GPU texture
+    /// (created + recorded on the worker), and the single closed command list that
+    /// records all their uploads — executed once on the main thread at publish. The
+    /// staging memcpys ran on the worker; the main thread only submits + adopts.
     struct MaterialLoadBundle
     {
-        Geometry::MaterialData        data;
-        std::array<DecodedChannel, 5> channels;
+        Geometry::MaterialData           data;
+        std::array<RecordedChannel, 5>   channels;
+        nvrhi::CommandListHandle         uploadList;      ///< closed; null if no channel decoded
+        std::size_t                      decodedBytes = 0; ///< for the publish byte budget
     };
 
     /// @brief A load queued but not yet started — stored as data (not a thunk) so
@@ -467,6 +475,13 @@ class AssetCache
     nvrhi::CommandListHandle _uploadList;
     bool                     _uploadOpen = false;
 
+    // Worker-recorded material upload lists collected during a pump (streaming P1):
+    // each material's channel textures are created + recorded on its decode worker
+    // and handed back closed. FlushUploads submits these together with the shared
+    // main-thread list in one executeCommandLists, then drops them (the lifetime
+    // tracker keeps them + their textures alive until the GPU retires the submit).
+    std::vector<nvrhi::CommandListHandle> _uploadBatch;
+
     /// @brief Starts queued loads up to the concurrency cap. Called when a load is
     /// queued and again after each running load publishes. Main thread only.
     void PumpLoadQueue();
@@ -497,10 +512,15 @@ class AssetCache
     /// buffer allocation — and issues a single vkQueueSubmit for the whole batch.
     void FlushUploads();
     /// @brief Worker-thread body of a material load: decode every channel image
-    /// sequentially (a nested parallel-for would defeat the concurrency cap). Pure —
-    /// touches no cache state, so it is safe off the main thread.
-    static MaterialLoadBundle DecodeMaterialChannels(Geometry::MaterialData data,
-                                                     std::array<Core::AssetPath, 5> channelPaths,
-                                                     std::uint64_t epoch, const std::atomic<std::uint64_t> &loadEpoch);
+    /// sequentially (a nested parallel-for would defeat the concurrency cap), and for
+    /// each, create its GPU texture and record its upload into one shared command list
+    /// (the staging memcpy — the dominant main-thread cost — runs here on the worker;
+    /// streaming P1). Touches no cache state (createTexture + command-list recording
+    /// are free-threaded), so it is safe off the main thread. Returns the textures +
+    /// the closed list; the main thread submits and adopts them at publish.
+    static MaterialLoadBundle DecodeAndRecordMaterialChannels(nvrhi::IDevice *device, Geometry::MaterialData data,
+                                                              std::array<Core::AssetPath, 5> channelPaths,
+                                                              std::uint64_t                  epoch,
+                                                              const std::atomic<std::uint64_t> &loadEpoch);
 };
 } /* namespace Assisi::Render */

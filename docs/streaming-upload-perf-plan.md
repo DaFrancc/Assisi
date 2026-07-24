@@ -79,9 +79,34 @@ is fine); larger buffer writes (mesh vertex data) take the staging path.
   `DecodeMaterialChannels`). **P2 refines this into a byte-weighted cap + low-prio
   IO pool.** Keep the cap for now.
 
-## Next: P1 (record uploads on workers) — see below. P0/P0b removed the per-publish
-staging alloc and per-item submit; P1 removes the remaining main-thread
-`writeTexture` staging memcpy by recording on the decode worker.
+- **P1 DONE** — material channel textures are now created **and recorded on the
+  decode worker**, so the `writeTexture` staging memcpy (the dominant main-thread
+  CPU cost — confirmed eyes-on: "the gpu doesnt spike, only the cpu") runs off the
+  main thread. `Texture::UploadDecoded` split into free-threaded `CreateImage`
+  (createTexture) + `RecordMips` (records writeTexture into an open list), plus
+  `Adopt` for the main-thread publish. The material worker
+  (`DecodeAndRecordMaterialChannels`) decodes each channel, creates its GPU texture,
+  and records all channel uploads into one closed command list returned in the
+  bundle. `PublishMaterial` is now µs on main: it hands the worker list to a batch,
+  adopts each texture (dedup by (path,space) — a duplicate's worker texture is
+  dropped), registers bindless, writes the 96 B row. `FlushUploads` submits every
+  worker list + the shared main list in **one** `executeCommandLists`. Verified
+  thread-safe against vendored nvrhi: ProgrammingGuide blesses concurrent recording;
+  `createTexture`/`createCommandList` take no locks and use only device-level Vulkan
+  calls (no external-sync requirement); the naive one-alloc-per-resource allocator
+  and `nameVKObject` are device-level too; only `executeCommandList*` and
+  `writeDescriptorTable` stay on main. Debug+ship green, 8/8 suites pass. **Owes
+  eyes-on GPU verification** (correct textures, flat CPU frame graph during a
+  preload) — Vulkan validation layers in the debug build are the threading safety
+  net.
+  - *Deferred refinement (kick-time dedup):* two materials sharing a texture path
+    still each decode + create it on their workers; publish-time dedup keeps one and
+    drops the other (wasted worker createTexture + upload bandwidth, but off-main and
+    correct). A main-thread `(path,space)→loading` registry checked at
+    `ResolveMaterialPath` would make a shared texture load once. Not needed for
+    correctness; a worker-side efficiency win for texture-heavy shared sets.
+  - *Meshes stay on main* (per plan): arena vertex/index `writeBuffer` records into
+    the shared list in `PublishMesh`, budgeted by P0b. Small next to textures.
 
 ## Plan (priority order)
 

@@ -198,21 +198,38 @@ Texture::DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace) noexc
     return frames;
 }
 
-void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName,
-                            nvrhi::ICommandList *sharedList)
+nvrhi::TextureHandle Texture::CreateImage(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName)
 {
-    const char    *name      = debugName != nullptr ? debugName : "Texture";
-    const uint32_t mipLevels = static_cast<uint32_t>(image.mips.size());
-
     nvrhi::TextureDesc desc;
     desc.width            = image.width;
     desc.height           = image.height;
     desc.format           = FormatFor(image.colorSpace);
-    desc.mipLevels        = mipLevels;
-    desc.debugName        = name;
+    desc.mipLevels        = static_cast<uint32_t>(image.mips.size());
+    desc.debugName        = debugName != nullptr ? debugName : "Texture";
     desc.initialState     = nvrhi::ResourceStates::ShaderResource;
     desc.keepInitialState = true;
-    _texture              = device->createTexture(desc);
+    return device->createTexture(desc);
+}
+
+void Texture::RecordMips(nvrhi::ICommandList *commandList, nvrhi::ITexture *texture, const DecodedImage &image)
+{
+    const uint32_t mipLevels = static_cast<uint32_t>(image.mips.size());
+    for (uint32_t level = 0; level < mipLevels; ++level)
+    {
+        if (image.mips[level].empty())
+        {
+            continue; // a downsample that failed in BuildMipChain
+        }
+        const uint32_t mipWidth = std::max(1u, image.width >> level);
+        commandList->writeTexture(texture, 0, level, image.mips[level].data(),
+                                  static_cast<size_t>(mipWidth) * kChannels);
+    }
+}
+
+void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName,
+                            nvrhi::ICommandList *sharedList)
+{
+    _texture = CreateImage(device, image, debugName);
 
     // Record into the caller's shared list when given one (it opens/closes/executes
     // and batches many uploads into a single submit); otherwise run self-contained.
@@ -225,16 +242,7 @@ void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, c
         commandList->open();
     }
 
-    for (uint32_t level = 0; level < mipLevels; ++level)
-    {
-        if (image.mips[level].empty())
-        {
-            continue; // a downsample that failed in BuildMipChain
-        }
-        const uint32_t mipWidth = std::max(1u, image.width >> level);
-        commandList->writeTexture(_texture, 0, level, image.mips[level].data(),
-                                  static_cast<size_t>(mipWidth) * kChannels);
-    }
+    RecordMips(commandList, _texture, image);
 
     if (ownList != nullptr)
     {

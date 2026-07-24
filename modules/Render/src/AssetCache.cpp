@@ -9,6 +9,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -623,29 +624,53 @@ void AssetCache::OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
                                                .mesh       = std::move(*imported)});
 }
 
-AssetCache::MaterialLoadBundle AssetCache::DecodeMaterialChannels(Geometry::MaterialData data,
-                                                                 std::array<Core::AssetPath, 5> channelPaths,
-                                                                 std::uint64_t                  epoch,
-                                                                 const std::atomic<std::uint64_t> &loadEpoch)
+AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
+    nvrhi::IDevice *device, Geometry::MaterialData data, std::array<Core::AssetPath, 5> channelPaths,
+    std::uint64_t epoch, const std::atomic<std::uint64_t> &loadEpoch)
 {
     if (loadEpoch.load(std::memory_order_relaxed) != epoch)
         return {}; // superseded before the decode ran; the publish drops it anyway
 
     // Decode each channel sequentially — one worker per material (a nested
     // parallel-for would spread a single material across every pool core, exactly
-    // the saturation the concurrency cap exists to prevent). An empty or failed
-    // channel is left without an image → the prim:// fallback at publish.
+    // the saturation the concurrency cap exists to prevent). For each decoded
+    // channel, create its GPU texture and record its upload into ONE command list
+    // on this worker: that is where the writeTexture staging memcpy happens, and
+    // moving it here is the whole point of P1 (the main-thread CPU spike). An empty
+    // or failed channel is left without a texture → the prim:// fallback at publish.
     MaterialLoadBundle bundle;
     bundle.data = std::move(data);
+
+    nvrhi::CommandListHandle list; // created lazily on the first channel that decodes
     for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
     {
         if (channelPaths[ch].Empty())
             continue;
-        bundle.channels[ch].path = channelPaths[ch];
         std::expected<DecodedImage, Core::AssetError> img =
             Texture::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
-        if (img)
-            bundle.channels[ch].image = std::move(*img);
+        if (!img)
+            continue;
+
+        if (!list)
+        {
+            nvrhi::CommandListParameters params;
+            params.uploadChunkSize = kUploadChunkSize;
+            list                   = device->createCommandList(params);
+            list->open();
+        }
+        const std::string    name(channelPaths[ch].View());
+        nvrhi::TextureHandle texture = Texture::CreateImage(device, *img, name.c_str());
+        Texture::RecordMips(list, texture, *img);
+
+        bundle.channels[ch].texture = texture;
+        bundle.channels[ch].path    = channelPaths[ch];
+        for (const std::vector<unsigned char> &mip : img->mips)
+            bundle.decodedBytes += mip.size();
+    }
+    if (list)
+    {
+        list->close();
+        bundle.uploadList = std::move(list);
     }
     return bundle;
 }
@@ -653,12 +678,15 @@ AssetCache::MaterialLoadBundle AssetCache::DecodeMaterialChannels(Geometry::Mate
 void AssetCache::StartMaterialLoad(Core::AssetPath path, Geometry::MaterialData data,
                                    std::array<Core::AssetPath, 5> channelPaths, std::uint64_t epoch)
 {
-    // The material was parsed on the main thread (it needs the DB); the worker only
-    // decodes the channel images, then the main thread uploads + builds.
+    // The material was parsed on the main thread (it needs the DB); the worker
+    // decodes the channel images AND records their GPU uploads (P1). The main thread
+    // then only submits the recorded list, adopts the textures, and builds.
+    nvrhi::IDevice                   *device    = _device;
     const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
     _jobs
-        ->Run(Core::Pool::Worker, [data = std::move(data), channelPaths, epoch, loadEpoch]() mutable
-              { return DecodeMaterialChannels(std::move(data), channelPaths, epoch, *loadEpoch); })
+        ->Run(Core::Pool::Worker,
+              [device, data = std::move(data), channelPaths, epoch, loadEpoch]() mutable
+              { return DecodeAndRecordMaterialChannels(device, std::move(data), channelPaths, epoch, *loadEpoch); })
         .Then(Core::Pool::Main, [this, path, epoch](MaterialLoadBundle bundle)
               { OnMaterialLoaded(path, epoch, std::move(bundle)); });
 }
@@ -670,21 +698,16 @@ void AssetCache::OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, Mat
 
     if (epoch != _loadEpoch.load(std::memory_order_relaxed))
         return; // Stale (see OnMeshLoaded): return before erasing so a stale completion can't drop
-                // a current-epoch job's loading marker and trigger a duplicate load.
+                // a current-epoch job's loading marker and trigger a duplicate load. The bundle
+                // (worker-created textures + list) is dropped here and freed.
 
-    // Sum the decoded image bytes for the pump's byte budget (dominant upload cost).
-    std::size_t bytes = 0;
-    for (const DecodedChannel &dc : bundle.channels)
-        if (dc.image.has_value())
-            for (const std::vector<unsigned char> &mip : dc.image->mips)
-                bytes += mip.size();
-
-    // Enqueue the GPU upload (O(1)); the path stays in _materialLoading until
-    // PublishMaterial makes it resident, so it keeps rendering with the fallback.
+    // Enqueue the publish (O(1)); the decode + upload recording already happened on
+    // the worker, so this is cheap. The path stays in _materialLoading until
+    // PublishMaterial submits + adopts, so it keeps rendering with the fallback.
     _pendingPublishes.push_back(PendingPublish{.isMaterial = true,
                                                .path       = path,
                                                .epoch      = epoch,
-                                               .byteSize   = bytes,
+                                               .byteSize   = bundle.decodedBytes,
                                                .material   = std::move(bundle)});
 }
 
@@ -699,23 +722,30 @@ void AssetCache::PublishMesh(PendingPublish publish)
 void AssetCache::PublishMaterial(PendingPublish publish)
 {
     _materialLoading.erase(publish.path);
-    nvrhi::ICommandList *uploadList = BeginUpload();
 
-    // Resolve each channel to a bindless slot, then build the material and write its
-    // table row — all recorded into the shared upload list. Every slot/row written
-    // here is brand new: no draw references this material yet (loading entities use
-    // the fallback), so nothing an in-flight frame reads is mutated.
+    // The channel textures were created + recorded on the decode worker; hand its
+    // closed list to the batch so FlushUploads submits it (the memcpy already ran).
+    if (publish.material.uploadList)
+        _uploadBatch.push_back(std::move(publish.material.uploadList));
+
+    // Adopt each channel's worker-created texture into the cache (or reference an
+    // already-resident one and drop the duplicate), then build the material and
+    // write its row into the shared list. Every slot/row is brand new — no draw
+    // references this material yet (loading entities use the fallback), so nothing
+    // an in-flight frame reads is mutated.
     MaterialTextures textures;
     uint32_t        *slots[5] = {&textures.baseColor, &textures.normal, &textures.metallicRoughness,
                                  &textures.occlusion, &textures.emissive};
     for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
     {
-        DecodedChannel &dc = publish.material.channels[ch];
-        if (dc.image.has_value())
+        RecordedChannel &rc = publish.material.channels[ch];
+        if (rc.texture)
         {
-            // Dedup by (path, space): a texture shared across materials is uploaded
-            // once, even if it was decoded on more than one worker.
-            const TextureKey key{dc.path, kChannels[ch].space};
+            // Dedup by (path, space): a texture shared across materials resolves to
+            // one resident copy. A duplicate's worker texture is simply not adopted —
+            // its recorded upload still executes (harmless: it targets a texture we
+            // release, kept alive by the list until the submit retires) and is freed.
+            const TextureKey key{rc.path, kChannels[ch].space};
             if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
             {
                 *slots[ch] = it->second.BindlessIndex();
@@ -723,7 +753,7 @@ void AssetCache::PublishMaterial(PendingPublish publish)
             else
             {
                 Texture &texture = _textures[key];
-                texture.UploadDecoded(_device, *dc.image, std::string(dc.path.View()).c_str(), uploadList);
+                texture.Adopt(std::move(rc.texture));
                 *slots[ch] = RegisterBindlessTexture(texture);
             }
             if (kChannels[ch].isNormal)
@@ -738,7 +768,7 @@ void AssetCache::PublishMaterial(PendingPublish publish)
 
     Material &material = _materials[publish.path];
     material.Create(_device, MintMaterialId(), publish.material.data, textures);
-    WriteMaterialToTable(material, uploadList);
+    WriteMaterialToTable(material, BeginUpload());
 }
 
 nvrhi::ICommandList *AssetCache::BeginUpload()
@@ -753,10 +783,26 @@ nvrhi::ICommandList *AssetCache::BeginUpload()
 
 void AssetCache::FlushUploads()
 {
-    if (!_uploadOpen)
+    if (!_uploadOpen && _uploadBatch.empty())
         return;
-    _uploadList->close();
-    _device->executeCommandList(_uploadList);
+    if (_uploadOpen)
+        _uploadList->close();
+
+    // One submit for the whole batch (P0/P1): the worker-recorded material texture
+    // lists plus the shared main-thread list (mesh arena writes, material rows). The
+    // lists touch disjoint resources, so their relative order is irrelevant; draws in
+    // the frame that follows this submit see all of it.
+    std::vector<nvrhi::ICommandList *> lists;
+    lists.reserve(_uploadBatch.size() + 1);
+    for (const nvrhi::CommandListHandle &list : _uploadBatch)
+        lists.push_back(list);
+    if (_uploadOpen)
+        lists.push_back(_uploadList);
+    _device->executeCommandLists(lists.data(), lists.size());
+
+    // Drop our handles: nvrhi's lifetime tracker keeps each list and its referenced
+    // resources (the textures) alive until the GPU retires this submit.
+    _uploadBatch.clear();
     _uploadOpen = false;
 }
 
@@ -838,6 +884,7 @@ void AssetCache::Clear()
     // already recorded into the upload list this frame can't exist here — pumps
     // always FlushUploads before returning, so _uploadOpen is false between them.
     _pendingPublishes.clear();
+    _uploadBatch.clear(); // empty between pumps (FlushUploads drains it); defensive.
 
     // Recreate the shared upload list to return its peak staging memory: an upload
     // manager never shrinks its chunk pool, so a level's worth of texture bursts
