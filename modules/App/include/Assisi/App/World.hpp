@@ -22,6 +22,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -262,6 +263,12 @@ class WorldManager
     /// is still loading.
     [[nodiscard]] bool PendingLoadReady() const;
 
+    /// @brief Progress of the pending load in [0, 1] — advances as the worker
+    /// deserializes, reaching 1.0 when ready. 0 if none is pending. A UI can show
+    /// this as a percentage; it is only a rough guide (the asset streaming after
+    /// promotion is separate).
+    [[nodiscard]] float PendingLoadProgress() const;
+
     /// @brief Whether a background load is in flight or awaiting promotion.
     [[nodiscard]] bool HasPendingLoad() const { return _pending.has_value(); }
 
@@ -327,6 +334,10 @@ class WorldManager
         Core::Task<bool>       task;                 ///< Invalid in the sync path.
         std::string            path;
         std::optional<bool>    syncResult;           ///< Set (only) by the sync fallback.
+        // [0,1], written by the worker, read by the UI thread. shared_ptr so the
+        // worker lambda owns a copy (outliving any PendingLoad move) and so the
+        // atomic member doesn't make PendingLoad itself non-movable.
+        std::shared_ptr<std::atomic<float>> progress = std::make_shared<std::atomic<float>>(0.f);
     };
     std::optional<PendingLoad> _pending;
 

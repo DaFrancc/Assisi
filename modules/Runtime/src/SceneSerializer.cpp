@@ -325,7 +325,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
 // Load
 // ---------------------------------------------------------------------------
 
-void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
+void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress)
 {
     const int32_t version = j.value("version", 0);
     if (version != 1)
@@ -354,8 +354,14 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
         s_context->indexToEntity.push_back(scene.Create());
 
     // Pass 2: deserialize components now that every EntityRef can resolve.
-    for (size_t i = 0; i < entities.size(); ++i)
+    const size_t entityCount = entities.size();
+    for (size_t i = 0; i < entityCount; ++i)
     {
+        // Report progress across this pass — the load's dominant cost. Cheap
+        // enough to call per entity (a few atomic stores through the callback).
+        if (onProgress)
+            onProgress(entityCount == 0 ? 1.f : static_cast<float>(i) / static_cast<float>(entityCount));
+
         const auto &entityJson = entities[i];
         if (!entityJson.contains("components"))
             continue;
@@ -404,7 +410,7 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
     return true;
 }
 
-bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath)
+bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress)
 {
     const auto text = Core::AssetSystem::ReadText(assetPath);
     if (!text)
@@ -415,7 +421,7 @@ bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath
 
     try
     {
-        Load(scene, nlohmann::json::parse(*text));
+        Load(scene, nlohmann::json::parse(*text), onProgress);
         return true;
     }
     catch (const std::exception &ex)

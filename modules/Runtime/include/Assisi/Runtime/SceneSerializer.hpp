@@ -34,6 +34,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
 #include <span>
 #include <string_view>
@@ -50,6 +51,12 @@ namespace Assisi::Runtime
 class SceneSerializer
 {
   public:
+    /// @brief Optional progress reporter for a load, called with a fraction in
+    /// [0, 1] as the component-deserialize pass advances. Invoked on the thread
+    /// that drives the load (a worker, for async travel), so an implementation
+    /// that publishes to another thread must synchronise itself.
+    using ProgressFn = std::function<void(float)>;
+
     /// @brief Serialize the entire scene to a JSON value.
     static nlohmann::json Save(ECS::Scene &scene);
 
@@ -57,7 +64,9 @@ class SceneSerializer
     ///
     /// Clears the scene before loading.  Only components registered in
     /// ComponentRegistry are restored; unrecognised names are skipped with a warning.
-    static void Load(ECS::Scene &scene, const nlohmann::json &j);
+    /// @p onProgress (optional) is called as the per-entity deserialize pass runs —
+    /// the dominant, entity-scaling cost — ending at 1.0.
+    static void Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress = {});
 
     /// @brief Write the scene to a JSON file at the given filesystem path.
     ///
@@ -67,8 +76,9 @@ class SceneSerializer
     /// @brief Load the scene from an asset-relative path via AssetSystem.
     ///
     /// @param assetPath  Virtual path relative to the asset root (e.g. "levels/main.json").
+    /// @param onProgress Optional; forwarded to Load() (see it) for load-progress UI.
     /// @return true on success, false on any IO or parse error.
-    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath);
+    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress = {});
 
     /// @brief Moves a set of entities' component *data* from one scene to another.
     ///

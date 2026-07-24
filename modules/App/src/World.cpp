@@ -174,6 +174,8 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
 
     const std::string path(levelPath);
 
+    auto progress = std::make_shared<std::atomic<float>>(0.f);
+
     if (_services.jobs == nullptr)
     {
         // No scheduler: do the worker half inline. Still correct — just the hitch
@@ -181,25 +183,35 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path);
         if (ok)
             incoming.physics.RebuildSceneBodies(incoming.scene);
-        _pending = PendingLoad{.world = &incoming, .task = {}, .path = path, .syncResult = ok};
+        progress->store(1.f);
+        _pending = PendingLoad{
+            .world = &incoming, .task = {}, .path = path, .syncResult = ok, .progress = progress};
         return &incoming;
     }
 
     // The worker touches ONLY this world's scene and physics — both untouched by
-    // anything else while Loading — plus a copied path. No cache, no renderer, no
-    // manager state. The world address is stable, so capturing it is safe across
-    // any _worlds reallocation the main thread may do meanwhile.
+    // anything else while Loading — plus a copied path and the shared progress
+    // atomic. No cache, no renderer, no manager state. The world address is
+    // stable, so capturing it is safe across any _worlds reallocation the main
+    // thread may do meanwhile.
     World *const w = &incoming;
-    Core::Task<bool> task = _services.jobs->Run(Core::Pool::Worker,
-                                                [w, path]() -> bool
-                                                {
-                                                    if (!Runtime::SceneSerializer::LoadFromFile(w->scene, path))
-                                                        return false;
-                                                    w->physics.RebuildSceneBodies(w->scene);
-                                                    return true;
-                                                });
+    Core::Task<bool> task = _services.jobs->Run(
+        Core::Pool::Worker,
+        [w, path, progress]() -> bool
+        {
+            // Deserialize drives the bar 0 -> ~0.9 (the entity-scaling cost);
+            // building bodies is the cheap tail to 1.0.
+            const bool ok = Runtime::SceneSerializer::LoadFromFile(
+                w->scene, path, [progress](float f) { progress->store(f * 0.9f); });
+            if (!ok)
+                return false;
+            w->physics.RebuildSceneBodies(w->scene);
+            progress->store(1.f);
+            return true;
+        });
 
-    _pending = PendingLoad{.world = &incoming, .task = std::move(task), .path = path, .syncResult = std::nullopt};
+    _pending = PendingLoad{
+        .world = &incoming, .task = std::move(task), .path = path, .syncResult = std::nullopt, .progress = progress};
     Core::Log::Info("Preload: '{}' loading in the background (world '{}').", path, incoming.name);
     return &incoming;
 }
@@ -216,6 +228,15 @@ bool WorldManager::PendingLoadReady() const
 std::string_view WorldManager::PendingLoadPath() const
 {
     return _pending ? std::string_view{_pending->path} : std::string_view{};
+}
+
+float WorldManager::PendingLoadProgress() const
+{
+    if (!_pending)
+        return 0.f;
+    if (_pending->syncResult.has_value())
+        return 1.f; // the synchronous fallback finished before this could be polled
+    return _pending->progress->load();
 }
 
 World *WorldManager::PromotePendingLoad()

@@ -414,12 +414,15 @@ void EditorApp::DrawGameControlWindow()
     // Async travel (S5): a background preload, then an instant swap. This is
     // "Travel here" split into two — the load runs on a worker while this world
     // keeps simulating uninterrupted, and the swap only happens when you press it.
+    // The three controls sit on one row: [Prepare load] [NN%] [Load level].
     const bool loadingInFlight = _worlds.HasPendingLoad();
-    const bool preloadReady     = _worlds.PendingLoadReady();
+    const bool preloadReady    = _worlds.PendingLoadReady();
+
+    // 1) Prepare: start the background load. Disabled once one is in flight.
     const bool canPreload =
         (playing || paused) && !_levelFiles.empty() && !loadingInFlight && !_pendingPreload.has_value();
     ImGui::BeginDisabled(!canPreload);
-    if (ImGui::Button("Preload") && canPreload)
+    if (ImGui::Button("Prepare load") && canPreload)
     {
         _pendingPreload = "levels/" + _levelFiles[static_cast<std::size_t>(_selectedLevel)] + ".alvl";
     }
@@ -427,27 +430,36 @@ void EditorApp::DrawGameControlWindow()
     if (ImGui::IsItemHovered())
     {
         ImGui::SetTooltip("During play only. Starts loading the selected level on a worker thread — "
-                          "this world keeps simulating with no hitch. Press \"Swap to preloaded\" when "
-                          "it is ready for an instant transition.");
+                          "this world keeps simulating with no hitch. Watch the percentage, then press "
+                          "\"Load level\" for an instant transition.");
     }
 
+    // 2) Progress: the load percentage, next to the prepare button.
     ImGui::SameLine();
-    ImGui::BeginDisabled(!loadingInFlight);
-    if (ImGui::Button("Swap to preloaded") && loadingInFlight)
+    if (loadingInFlight)
+    {
+        const int32_t pct = static_cast<int32_t>(_worlds.PendingLoadProgress() * 100.f + 0.5f);
+        if (preloadReady)
+            ImGui::TextColored(ImVec4(0.5f, 1.f, 0.5f, 1.f), "100%% ready");
+        else
+            ImGui::Text("%d%%", pct);
+    }
+    else
+    {
+        ImGui::TextDisabled("--");
+    }
+
+    // 3) Load: promote the finished world in an instant swap. Enabled once ready.
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!preloadReady);
+    if (ImGui::Button("Load level") && preloadReady)
     {
         _pendingPromote = true; // marshalled: promotion resolves/frees GPU assets
     }
     ImGui::EndDisabled();
-
-    if (loadingInFlight)
+    if (ImGui::IsItemHovered() && loadingInFlight && !preloadReady)
     {
-        ImGui::SameLine();
-        if (preloadReady)
-            ImGui::TextDisabled("ready: %.*s", static_cast<int>(_worlds.PendingLoadPath().size()),
-                                _worlds.PendingLoadPath().data());
-        else
-            ImGui::TextDisabled("loading %.*s...", static_cast<int>(_worlds.PendingLoadPath().size()),
-                                _worlds.PendingLoadPath().data());
+        ImGui::SetTooltip("Available once the preload reaches 100%%.");
     }
 
     // Destroying the shown world needs a successor to show, and neither role may

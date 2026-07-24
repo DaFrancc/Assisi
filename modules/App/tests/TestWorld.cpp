@@ -504,6 +504,10 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
         start.physics.CaptureState();
     }
 
+    // Once ready, progress has reached 1.0 (the worker sets it before completing).
+    REQUIRE(worlds.PendingLoadReady());
+    CHECK(worlds.PendingLoadProgress() == doctest::Approx(1.f));
+
     // Promote — blocks only if the worker is somehow still going; either way the
     // swap itself is a repoint.
     World *const arrived = worlds.PromotePendingLoad();
