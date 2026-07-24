@@ -811,9 +811,21 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
     if (_pendingPublishes.empty())
         return;
 
-    const std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
-    std::size_t                                 bytes = 0;
-    bool                                        any   = false;
+    using Clock = std::chrono::steady_clock;
+    const auto elapsedMsSince = [](Clock::time_point t)
+    { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); };
+
+    // Per-phase timing to localize the streaming CPU spike (which of the remaining
+    // main-thread costs dominates): mesh arena writeBuffer memcpy vs material publish
+    // (adopt + bindless descriptor writes) vs the batched submit. Only logged when a
+    // pump is expensive (see below), so it stays silent in the normal case.
+    const Clock::time_point start = Clock::now();
+    std::size_t             bytes     = 0;
+    std::size_t             meshCount = 0;
+    std::size_t             matCount  = 0;
+    double                  meshMs    = 0.0;
+    double                  matMs     = 0.0;
+    bool                    any       = false;
     while (!_pendingPublishes.empty())
     {
         // Budget stops the batch — but always publish at least one (a single asset
@@ -822,9 +834,7 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
         {
             if (bytes >= byteBudget)
                 break;
-            const double elapsedMs =
-                std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
-            if (elapsedMs >= timeBudgetMs)
+            if (elapsedMsSince(start) >= timeBudgetMs)
                 break;
         }
 
@@ -836,18 +846,43 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
         if (publish.epoch != _loadEpoch.load(std::memory_order_relaxed))
             continue;
 
-        const std::size_t publishBytes = publish.byteSize;
+        const std::size_t       publishBytes = publish.byteSize;
+        const Clock::time_point publishStart = Clock::now();
         if (publish.isMaterial)
+        {
             PublishMaterial(std::move(publish));
+            matMs += elapsedMsSince(publishStart);
+            ++matCount;
+        }
         else
+        {
             PublishMesh(std::move(publish));
+            meshMs += elapsedMsSince(publishStart);
+            ++meshCount;
+        }
         bytes += publishBytes;
         any = true;
     }
 
     // One submit for the whole batch (P0): draws in the frame that follows see it.
+    double flushMs = 0.0;
     if (any)
+    {
+        const Clock::time_point flushStart = Clock::now();
         FlushUploads();
+        flushMs = elapsedMsSince(flushStart);
+    }
+
+    // Diagnostic: a pump is a spike when its main-thread wall-clock blows past the
+    // budget (the "always at least one" escape hatch fired with an expensive item,
+    // or the pump was preempted mid-work). The phase split says which cost it was —
+    // meshMs high => arena memcpy (mesh P1 next); matMs high => descriptor writes;
+    // flushMs high => submit; all low but total high => the main thread was
+    // preempted by the decode workers (points at P2, a low-priority IO pool).
+    const double totalMs = elapsedMsSince(start);
+    if (totalMs >= 2.0)
+        Core::Log::Info("AssetCache pump {:.2f} ms: mesh {}x {:.2f} ms, mat {}x {:.2f} ms, flush {:.2f} ms; {} queued",
+                        totalMs, meshCount, meshMs, matCount, matMs, flushMs, _pendingPublishes.size());
 }
 
 void AssetCache::Clear()
