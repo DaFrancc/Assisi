@@ -430,6 +430,21 @@ class AssetCache
         std::size_t                      decodedBytes = 0; ///< for the publish byte budget
     };
 
+    /// @brief A finished mesh import whose geometry the worker has already copied
+    /// into a GPU staging buffer (see MeshBuffer::StageMeshGeometry). `data` keeps
+    /// the metadata (submesh/LOD/material tables, bounds) but its Vertices/Indices
+    /// are released once staged, so the mesh's bytes are resident once, GPU-side,
+    /// rather than twice. `staging` is null when the mesh had no geometry or
+    /// staging failed — the publish then falls back to the direct upload path,
+    /// which still has the CPU data because the release is conditional on success.
+    struct MeshLoadBundle
+    {
+        Geometry::MeshData   data;
+        nvrhi::BufferHandle  staging;
+        uint32_t             vertexCount = 0;
+        uint32_t             indexCount  = 0;
+    };
+
     /// @brief A load queued but not yet started — stored as data (not a thunk) so
     /// PumpLoadQueue dispatches it by kind. Only the fields for its kind are used.
     struct PendingLoad
@@ -461,7 +476,7 @@ class AssetCache
         Core::AssetPath    path;
         std::uint64_t      epoch    = 0;
         std::size_t        byteSize = 0; ///< decoded bytes, for the pump's byte budget
-        Geometry::MeshData mesh;         ///< mesh only
+        MeshLoadBundle     mesh;         ///< mesh only
         MaterialLoadBundle material;     ///< material only
     };
     std::deque<PendingPublish> _pendingPublishes;
@@ -490,10 +505,17 @@ class AssetCache
     /// @brief Wires up a material decode job (worker) + its publish (OnMaterialLoaded).
     void StartMaterialLoad(Core::AssetPath path, Geometry::MaterialData data,
                            std::array<Core::AssetPath, 5> channelPaths, std::uint64_t epoch);
-    /// @brief Main-thread publish of a finished mesh import: free the load slot,
-    /// then upload + cache the buffer (or record the failure).
+    /// @brief Main-thread continuation of a finished mesh import: free the load slot
+    /// and enqueue a publish (O(1) — the GPU work is deferred to PumpPublishes).
     void OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
-                      std::expected<Geometry::MeshData, Geometry::MeshImportError> imported);
+                      std::expected<MeshLoadBundle, Geometry::MeshImportError> imported);
+    /// @brief Worker-thread body of a mesh load: import, then copy the geometry into
+    /// a GPU staging buffer so the main-thread publish is a recorded copy rather than
+    /// a memcpy proportional to the mesh. Touches no cache state (createBuffer and
+    /// mapBuffer on a fresh buffer are free-threaded), so it is safe off the main thread.
+    static std::expected<MeshLoadBundle, Geometry::MeshImportError>
+    ImportAndStageMesh(nvrhi::IDevice *device, Core::AssetPath path, const PathToIdFn &pathToId, std::uint64_t epoch,
+                       const std::atomic<std::uint64_t> &loadEpoch);
     /// @brief Main-thread continuation of a finished material decode: free the load
     /// slot and enqueue a publish (O(1) — the GPU work is deferred to PumpPublishes).
     void OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, MaterialLoadBundle bundle);

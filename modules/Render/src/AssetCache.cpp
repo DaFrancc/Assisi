@@ -79,12 +79,6 @@ const std::array<ChannelDesc, 5> kChannels = {{
 // material's channels. Peak staging is reclaimed by recreating the list on Clear.
 constexpr uint64_t kUploadChunkSize = 16ull << 20; // 16 MB
 
-// Decoded byte size of a mesh (vertices + indices), for the publish byte budget.
-std::size_t MeshByteSize(const Geometry::MeshData &mesh)
-{
-    return mesh.Vertices.size() * sizeof(Geometry::Vertex) + mesh.Indices.size() * sizeof(uint32_t);
-}
-
 Core::AssetId ChannelId(const Geometry::MaterialData &data, std::size_t channel)
 {
     switch (channel)
@@ -571,29 +565,66 @@ void AssetCache::PumpLoadQueue()
     }
 }
 
+std::expected<AssetCache::MeshLoadBundle, Geometry::MeshImportError>
+AssetCache::ImportAndStageMesh(nvrhi::IDevice *device, Core::AssetPath path, const PathToIdFn &pathToId,
+                               std::uint64_t epoch, const std::atomic<std::uint64_t> &loadEpoch)
+{
+    if (loadEpoch.load(std::memory_order_relaxed) != epoch)
+    {
+        Core::Log::Warn("AssetCache: cancelled superseded mesh load for '{}'.", path.View());
+        return std::unexpected(Geometry::MeshImportError::Cancelled);
+    }
+
+    std::expected<Geometry::MeshData, Geometry::MeshImportError> imported = Geometry::ImportMesh(path.View(), pathToId);
+    if (!imported)
+    {
+        return std::unexpected(imported.error());
+    }
+
+    // Normalize the degenerate no-submesh case here, on the worker, while the CPU
+    // geometry is still around: the staged publish path has no vertices left to
+    // derive a table from (and this is main-thread work the direct path would do).
+    Geometry::EnsureSubMeshTables(*imported);
+
+    MeshLoadBundle bundle;
+    bundle.vertexCount = static_cast<uint32_t>(imported->Vertices.size());
+    bundle.indexCount  = static_cast<uint32_t>(imported->Indices.size());
+
+    // Copy the geometry into a GPU staging buffer HERE, on the worker — this is the
+    // bulk memcpy that used to land on the main thread inside writeBuffer (O(mesh
+    // bytes) mid-frame). The main-thread publish then only records a copy.
+    const std::string name(path.View());
+    bundle.staging = MeshBuffer::StageMeshGeometry(device, *imported, name.c_str());
+    if (bundle.staging != nullptr)
+    {
+        // Staged successfully: release the CPU copies so the mesh's bytes aren't
+        // resident twice. The metadata (tables, bounds) is what publish still needs.
+        // Only on success — the fallback path below re-reads these.
+        imported->Vertices.clear();
+        imported->Vertices.shrink_to_fit();
+        imported->Indices.clear();
+        imported->Indices.shrink_to_fit();
+    }
+    bundle.data = std::move(*imported);
+    return bundle;
+}
+
 void AssetCache::StartMeshLoad(Core::AssetPath path, PathToIdFn pathToId, std::uint64_t epoch)
 {
-    // Import on a worker (pure CPU over copied inputs, touching no cache state),
-    // then publish on the main thread. The worker bails early if a Clear() has
-    // superseded this epoch — saving the parse for a load nobody awaits anymore.
+    // Import + stage on a worker (touching no cache state), then publish on the main
+    // thread. The worker bails early if a Clear() has superseded this epoch — saving
+    // the parse for a load nobody awaits anymore.
+    nvrhi::IDevice                   *device    = _device;
     const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
     _jobs
-        ->Run(Core::Pool::Worker,
-              [path, pathToId, epoch, loadEpoch]() -> std::expected<Geometry::MeshData, Geometry::MeshImportError>
-              {
-                  if (loadEpoch->load(std::memory_order_relaxed) != epoch)
-                  {
-                      Core::Log::Warn("AssetCache: cancelled superseded mesh load for '{}'.", path.View());
-                      return std::unexpected(Geometry::MeshImportError::Cancelled);
-                  }
-                  return Geometry::ImportMesh(path.View(), pathToId);
-              })
-        .Then(Core::Pool::Main, [this, path, epoch](std::expected<Geometry::MeshData, Geometry::MeshImportError> r)
+        ->Run(Core::Pool::Worker, [device, path, pathToId, epoch, loadEpoch]()
+              { return ImportAndStageMesh(device, path, pathToId, epoch, *loadEpoch); })
+        .Then(Core::Pool::Main, [this, path, epoch](std::expected<MeshLoadBundle, Geometry::MeshImportError> r)
               { OnMeshLoaded(path, epoch, std::move(r)); });
 }
 
 void AssetCache::OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
-                              std::expected<Geometry::MeshData, Geometry::MeshImportError> imported)
+                              std::expected<MeshLoadBundle, Geometry::MeshImportError> imported)
 {
     // A started load has finished (success, failure, or stale): free its slot and
     // let the next queued load begin. The decode fan-out continues even though this
@@ -615,13 +646,12 @@ void AssetCache::OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
                         Geometry::ToString(imported.error()));
         return; // a later resolve returns the cube
     }
-    // Enqueue the GPU upload (O(1)); the path stays in _meshLoading until PublishMesh
+    // Enqueue the publish (O(1)); the path stays in _meshLoading until PublishMesh
     // makes it resident, so HasPendingLoads / re-resolve keep treating it as pending.
-    _pendingPublishes.push_back(PendingPublish{.isMaterial = false,
-                                               .path       = path,
-                                               .epoch      = epoch,
-                                               .byteSize   = MeshByteSize(*imported),
-                                               .mesh       = std::move(*imported)});
+    const std::size_t bytes = static_cast<std::size_t>(imported->vertexCount) * sizeof(Geometry::Vertex) +
+                              static_cast<std::size_t>(imported->indexCount) * sizeof(uint32_t);
+    _pendingPublishes.push_back(PendingPublish{
+        .isMaterial = false, .path = path, .epoch = epoch, .byteSize = bytes, .mesh = std::move(*imported)});
 }
 
 AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
@@ -715,7 +745,22 @@ void AssetCache::PublishMesh(PendingPublish publish)
 {
     _meshLoading.erase(publish.path);
     MeshBuffer &buffer = _meshes[publish.path];
-    buffer.Upload(_arena, std::move(publish.mesh), BeginUpload());
+    if (publish.mesh.staging != nullptr)
+    {
+        // The worker already copied the geometry into a GPU staging buffer, so this
+        // records two copyBuffers — O(1) in mesh size, no main-thread memcpy. Our
+        // handle drops here; the upload list keeps the staging buffer alive until
+        // its submit retires.
+        buffer.UploadStaged(_arena, std::move(publish.mesh.data), publish.mesh.staging, publish.mesh.vertexCount,
+                            publish.mesh.indexCount, BeginUpload());
+    }
+    else
+    {
+        // No staging (empty geometry, or the staging allocation failed): fall back to
+        // the direct path, which memcpys here. The CPU data is still present — the
+        // worker only releases it when staging succeeded.
+        buffer.Upload(_arena, std::move(publish.mesh.data), BeginUpload());
+    }
     buffer.SetId(_nextMeshId++);
 }
 

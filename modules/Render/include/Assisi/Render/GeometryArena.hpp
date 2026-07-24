@@ -112,6 +112,47 @@ class GeometryArena
         return range;
     }
 
+    /// @brief Appends one mesh whose geometry already lives in a GPU staging
+    /// buffer, returning its range. The staged twin of Allocate: instead of
+    /// memcpying CPU data into an upload chunk on the calling thread, it records
+    /// GPU-side copies out of @p staging — so the per-mesh main-thread cost is two
+    /// commands, O(1) in mesh size, rather than O(bytes).
+    ///
+    /// @p staging holds the vertices at byte offset 0 followed immediately by the
+    /// indices (the layout StageMeshGeometry writes). It must outlive the submit;
+    /// the command list's referenced-resource tracking handles that once recorded,
+    /// so the caller may drop its handle right after this returns.
+    ///
+    /// The worker that filled @p staging never learns its arena offset, so a grow
+    /// racing it is impossible by construction — the offsets below are read on the
+    /// main thread, after any grow this same call performs.
+    Range AllocateStaged(nvrhi::IBuffer *staging, uint32_t vertexCount, uint32_t indexCount,
+                         nvrhi::ICommandList *commandList)
+    {
+        const uint64_t vertexBytes = static_cast<uint64_t>(vertexCount) * _vertexStride;
+        const uint64_t indexBytes = static_cast<uint64_t>(indexCount) * sizeof(uint32_t);
+
+        EnsureVertexCapacity(_vertexUsed + vertexBytes, commandList);
+        EnsureIndexCapacity(_indexUsed + indexBytes, commandList);
+
+        Range range;
+        range.vertexBase = static_cast<uint32_t>(_vertexUsed / _vertexStride);
+        range.indexBase = static_cast<uint32_t>(_indexUsed / sizeof(uint32_t));
+        range.vertexCount = vertexCount;
+        range.indexCount = indexCount;
+
+        // Recorded after the grow copy above, so the destination is the grown
+        // buffer and nvrhi's auto-barriers order the two.
+        if (vertexBytes > 0)
+            commandList->copyBuffer(_vertexBuffer, _vertexUsed, staging, 0, vertexBytes);
+        if (indexBytes > 0)
+            commandList->copyBuffer(_indexBuffer, _indexUsed, staging, vertexBytes, indexBytes);
+
+        _vertexUsed += vertexBytes;
+        _indexUsed += indexBytes;
+        return range;
+    }
+
     /// @brief Frees every range at once (bump cursor back to 0), keeping the
     /// buffers for reuse — the wholesale free that matches AssetCache::Clear.
     /// Per-mesh Free + compaction is the streaming-era extension (see the

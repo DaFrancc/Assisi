@@ -16,7 +16,9 @@
 /// re-imports or opts in at resolve time (see
 /// docs/mesh-material-architecture.md §1, §8).
 
+#include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 
 #include <nvrhi/nvrhi.h>
@@ -76,6 +78,90 @@ class MeshBuffer
         _lods = std::move(meshData.Lods);
         _materials = std::move(meshData.Materials);
         // Vertex/index data is deliberately not retained (see file comment).
+    }
+
+    /// @brief Copy a mesh's geometry into a fresh GPU staging buffer — the
+    /// worker-thread half of a staged upload. Returns null if the mesh has no
+    /// geometry (or the allocation fails), in which case the caller falls back to
+    /// the direct path.
+    ///
+    /// This is where the bulk memcpy happens, and the whole point is that it runs
+    /// on a decode/import worker instead of the main thread: `writeBuffer`'s
+    /// staging copy would otherwise run on whichever thread records it, making the
+    /// main-thread publish O(mesh bytes). Free-threaded — `createBuffer` touches no
+    /// shared device state, and `mapBuffer` on a brand-new buffer takes no GPU wait
+    /// (nothing has used it yet).
+    ///
+    /// Layout: vertices at offset 0, then indices — what
+    /// GeometryArena::AllocateStaged expects. nvrhi rejects `writeBuffer` on a
+    /// mappable buffer, so the fill goes through map + memcpy + unmap by necessity.
+    static nvrhi::BufferHandle StageMeshGeometry(nvrhi::IDevice *device, const Geometry::MeshData &meshData,
+                                                 const char *debugName = nullptr)
+    {
+        const uint64_t vertexBytes = meshData.Vertices.size() * sizeof(Geometry::Vertex);
+        const uint64_t indexBytes = meshData.Indices.size() * sizeof(uint32_t);
+        if (vertexBytes + indexBytes == 0)
+        {
+            return nullptr;
+        }
+
+        nvrhi::BufferDesc desc;
+        desc.byteSize = vertexBytes + indexBytes;
+        desc.cpuAccess = nvrhi::CpuAccessMode::Write;
+        desc.debugName = debugName != nullptr ? debugName : "MeshStaging";
+        // Every nvrhi buffer gets TRANSFER_SRC|TRANSFER_DST unconditionally, so no
+        // further usage flags are needed to copy out of this.
+        desc.initialState = nvrhi::ResourceStates::CopySource;
+        desc.keepInitialState = true;
+        nvrhi::BufferHandle staging = device->createBuffer(desc);
+        if (staging == nullptr)
+        {
+            return nullptr;
+        }
+
+        void *mapped = device->mapBuffer(staging, nvrhi::CpuAccessMode::Write);
+        if (mapped == nullptr)
+        {
+            return nullptr;
+        }
+        if (vertexBytes > 0)
+        {
+            std::memcpy(mapped, meshData.Vertices.data(), vertexBytes);
+        }
+        if (indexBytes > 0)
+        {
+            std::memcpy(static_cast<std::byte *>(mapped) + vertexBytes, meshData.Indices.data(), indexBytes);
+        }
+        device->unmapBuffer(staging);
+        return staging;
+    }
+
+    /// @brief Upload from a staging buffer the worker already filled (see
+    /// StageMeshGeometry) — the main-thread half. Identical bookkeeping to
+    /// Upload(), but the geometry moves GPU-side via recorded copies instead of a
+    /// main-thread memcpy, so this is O(1) in mesh size.
+    ///
+    /// @p meshData supplies only the metadata (submesh/LOD/material tables, bounds,
+    /// index count); its Vertices/Indices may already have been released by the
+    /// worker once staged.
+    void UploadStaged(GeometryArena &arena, Geometry::MeshData meshData, nvrhi::IBuffer *staging,
+                      uint32_t vertexCount, uint32_t indexCount, nvrhi::ICommandList *commandList)
+    {
+        _indexCount = indexCount;
+
+        const GeometryArena::Range range = arena.AllocateStaged(staging, vertexCount, indexCount, commandList);
+        _arena = &arena;
+        _vertexBase = range.vertexBase;
+        _indexBase = range.indexBase;
+
+        // Bounds were fit on the import worker (EnsureMeshBounds); the vertex data
+        // may be gone by now, so they must already be present — unlike Upload(),
+        // there is nothing here to recompute them from.
+        _localBounds = meshData.LocalBounds;
+        _localAabb = meshData.LocalAabb;
+        _subMeshes = std::move(meshData.SubMeshes);
+        _lods = std::move(meshData.Lods);
+        _materials = std::move(meshData.Materials);
     }
 
     /// @brief The arena's shared vertex/index buffers (null until Upload). Read
