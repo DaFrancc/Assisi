@@ -182,9 +182,58 @@ frame time during a preload, not average pump cost — jitter is what matters.
   recreating the command list is the only way to reclaim staging memory
   (done in `Clear()`, AssetCache.cpp:924-931).
 
+## R1 — DONE and verified on hardware (2026-07-24, ship build, RTX 3070)
+
+Implemented as designed below (`7929ad1`), plus a follow-up that turned out to
+matter more than the handoff itself (`9fea454`). Streaming a 620k-vertex /
+~36 MB mesh into a live world now produces **no frame over 8 ms**.
+
+**The surprise: allocation churn, paid in the wrong frame.** After R1 landed,
+spikes remained. Frame-phase instrumentation showed `unaccounted` ≈ 0 on every
+slow frame — the main thread was never descheduled, so **contention was not the
+cause and R3 would not have fixed it** (a useful negative result: R3 stays on
+the list, but it was not this). The cost was in `RenderFrame`; splitting that
+put 9.9–30.8 ms in `EndFrame` with the GPU near idle. Everything in `EndFrame`
+except `runGarbageCollection()` is already folded into `_lastGpuWaitMs`, which
+read ~0.1 ms — so by elimination it was GC, which releases every retired
+submit's resources on the main thread at the end of *every* frame.
+
+The churn was largely self-inflicted by P1: each material load created a command
+list with a 16 MB minimum upload chunk (`kUploadChunkSize`, correct for the
+shared list, badly wrong per-load), used it once, and dropped it. R1 added a
+staging buffer per mesh on top. **Neither cost is paid where it is caused** —
+it surfaces in a later, unrelated frame, which is why the pump diagnostic
+happily read `mesh 0.00 ms` while frames still hitched. Fix: pool both
+(AssetCache.cpp). Command lists recycle immediately (nvrhi fences their chunk
+reuse); staging buffers are parked behind an `EventQuery` and reclaimed by
+`pollEventQuery` — polled, never waited on, so a GC spike is never traded for a
+GPU stall.
+
+**Measured, same scenario, ship build:**
+
+| | before pooling | after |
+|---|---|---|
+| Slow frames (>8 ms) during a preload | 9–11 | **0** |
+| Max `runGarbageCollection` | 30.8 ms | **0.00 ms** while streaming |
+| Pumps ≥2 ms | 3 (2.75–6.23 ms) | **0** |
+
+The only remaining slow frames are outside the streaming window: startup
+(`imgui 5.20`, `gc 4.92` — cold pools filling, one-time) and the Play
+transition (`imgui 10.89`, `gc 0.00` — entirely editor UI, not streaming, and
+absent from a Game build). Cold-pool warm-up is confirmed rather than inferred:
+`gc 4.92` on the first load, `gc 0.00` on every frame after.
+
+> **Instrumentation is temporary.** The slow-frame phase breakdown
+> (Application.cpp), the render sub-phase timings, `VulkanContext::GetLastGcMs`,
+> and `PumpPublishes`'s phase log were added to find this and are deliberately
+> ad-hoc. They are to be **removed and replaced by a proper performance and
+> memory capture system** — see [[project-perf-capture-system]]. Until that
+> exists they stay, because they are the only reason two wrong hypotheses
+> (contention; "the memcpy is the whole cost") were caught.
+
 ## Remaining work, in stability-impact order
 
-### R1 — Mesh staging-buffer handoff: the memcpy moves to the worker  [removes the last unbounded main-thread publish cost]
+### R1 (design, as built) — Mesh staging-buffer handoff: the memcpy moves to the worker  [removes the last unbounded main-thread publish cost]
 
 The staging memcpy in row 1 of the inventory is O(mesh bytes) on main. Design
 (verified against nvrhi as noted above):
