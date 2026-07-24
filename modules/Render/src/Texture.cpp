@@ -198,7 +198,8 @@ Texture::DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace) noexc
     return frames;
 }
 
-void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName)
+void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName,
+                            nvrhi::ICommandList *sharedList)
 {
     const char    *name      = debugName != nullptr ? debugName : "Texture";
     const uint32_t mipLevels = static_cast<uint32_t>(image.mips.size());
@@ -213,8 +214,17 @@ void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, c
     desc.keepInitialState = true;
     _texture              = device->createTexture(desc);
 
-    nvrhi::CommandListHandle commandList = device->createCommandList();
-    commandList->open();
+    // Record into the caller's shared list when given one (it opens/closes/executes
+    // and batches many uploads into a single submit); otherwise run self-contained.
+    nvrhi::CommandListHandle ownList;
+    nvrhi::ICommandList     *commandList = sharedList;
+    if (commandList == nullptr)
+    {
+        ownList     = device->createCommandList();
+        commandList = ownList;
+        commandList->open();
+    }
+
     for (uint32_t level = 0; level < mipLevels; ++level)
     {
         if (image.mips[level].empty())
@@ -225,8 +235,12 @@ void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, c
         commandList->writeTexture(_texture, 0, level, image.mips[level].data(),
                                   static_cast<size_t>(mipWidth) * kChannels);
     }
-    commandList->close();
-    device->executeCommandList(commandList);
+
+    if (ownList != nullptr)
+    {
+        ownList->close();
+        device->executeCommandList(ownList);
+    }
 }
 
 std::expected<void, Assisi::Core::AssetError> Texture::LoadFromAssets(nvrhi::IDevice *device, std::string_view vpath,
@@ -242,14 +256,15 @@ std::expected<void, Assisi::Core::AssetError> Texture::LoadFromAssets(nvrhi::IDe
 }
 
 void Texture::UploadSolidColor(nvrhi::IDevice *device, unsigned char r, unsigned char g, unsigned char b,
-                               unsigned char a, ColorSpace colorSpace, const char *debugName)
+                               unsigned char a, ColorSpace colorSpace, const char *debugName,
+                               nvrhi::ICommandList *sharedList)
 {
     DecodedImage image;
     image.width      = 1;
     image.height     = 1;
     image.colorSpace = colorSpace;
     image.mips.push_back({r, g, b, a}); // single 1x1 level — nothing to downsample
-    UploadDecoded(device, image, debugName);
+    UploadDecoded(device, image, debugName, sharedList);
 }
 
 } // namespace Assisi::Render

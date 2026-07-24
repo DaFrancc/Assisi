@@ -54,15 +54,34 @@ is fine); larger buffer writes (mesh vertex data) take the staging path.
 
 ## Current state (already committed on `multi-scene`)
 
-- `2848652` — `Application::SetMainThreadTaskBudget` caps `DrainMain(n)` per frame;
-  editor sets 2/frame during a preload. **P0b will retire this for publishes** (it
-  counts tasks, not bytes, and throttles all main tasks). Keep the mechanism; stop
-  using it as the streaming throttle.
+- **P0 + P0b DONE** — shared upload command list + publish queue with a time/byte
+  budget. `AssetCache` owns one persistent `_uploadList` (16 MB chunk) every
+  streaming publish records into; `PumpPublishes(timeBudgetMs, byteBudget)` drains
+  the decoded-and-waiting queue once per frame at the editor's safe point (after
+  `DrainMain`, before `RenderFrame`) and submits the whole batch with one
+  `executeCommandList`. Decode continuations (`OnMeshLoaded`/`OnMaterialLoaded`) are
+  now O(1): they enqueue a `PendingPublish`; the GPU work moved to
+  `PublishMesh`/`PublishMaterial`. `Texture::UploadDecoded`,
+  `GeometryArena::Allocate`/`Grow`, `MeshBuffer::Upload`, and `WriteMaterialToTable`
+  all took an optional `nvrhi::ICommandList*` (null = old self-contained path for
+  sync callers). The loading marker persists until the publish, so
+  `HasPendingLoads`/`PendingLoadCount` stay residency-accurate (the pop-in gate
+  holds). Editor budgets: 2 ms / 16 MB while a seamless preload streams, 10 ms /
+  128 MB foreground. `Clear()` drops the publish queue and recreates `_uploadList`
+  to reclaim peak staging. Debug+ship build green, 8/8 test suites pass. **Still
+  owes eyes-on GPU verification** (correct meshes/materials, smooth frame graph).
+- `2848652` — `Application::SetMainThreadTaskBudget` caps `DrainMain(n)` per frame.
+  **Retired as the streaming throttle** (P0b replaced it); the editor no longer sets
+  it. Mechanism kept in `Application` for any future deferred main work.
 - `f9b0222` — AssetCache concurrency cap (`_maxConcurrentLoads = 3`, `_pendingLoads`
   queue, `PumpLoadQueue`) + sequential channel decode + refactor to named members
   (`StartMeshLoad`/`OnMeshLoaded`, `StartMaterialLoad`/`OnMaterialLoaded`,
   `DecodeMaterialChannels`). **P2 refines this into a byte-weighted cap + low-prio
   IO pool.** Keep the cap for now.
+
+## Next: P1 (record uploads on workers) — see below. P0/P0b removed the per-publish
+staging alloc and per-item submit; P1 removes the remaining main-thread
+`writeTexture` staging memcpy by recording on the decode worker.
 
 ## Plan (priority order)
 

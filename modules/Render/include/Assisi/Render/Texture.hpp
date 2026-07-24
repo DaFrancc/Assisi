@@ -71,7 +71,15 @@ class Texture
 
     /// @brief Create the GPU texture and upload a decoded mip chain — the
     /// main-thread half (device work). Pairs with DecodeImage.
-    void UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName = nullptr);
+    ///
+    /// When @p sharedList is non-null the upload is *recorded* into that already-open
+    /// command list and NOT executed — the caller batches many uploads into one
+    /// command list and submits it once (see AssetCache's shared upload list), which
+    /// avoids a fresh command list + staging allocation + queue submit per texture.
+    /// When null (the synchronous convenience path) a private command list is
+    /// created, recorded, closed, and executed here as before.
+    void UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName = nullptr,
+                       nvrhi::ICommandList *sharedList = nullptr);
 
     /// @brief Loads an image from a virtual asset path (via stb_image) and uploads it.
     /// Synchronous convenience = DecodeImage + UploadDecoded on the calling thread;
@@ -88,10 +96,11 @@ class Texture
                                                                   ColorSpace colorSpace = ColorSpace::Srgb) noexcept;
 
     /// @brief Uploads a solid 1x1 color — used for default/placeholder textures.
-    /// Single mip level (nothing to downsample).
+    /// Single mip level (nothing to downsample). @p sharedList batches the upload
+    /// like UploadDecoded (null = self-contained, execute here).
     void UploadSolidColor(nvrhi::IDevice *device, unsigned char r, unsigned char g, unsigned char b,
                           unsigned char a, ColorSpace colorSpace = ColorSpace::Srgb,
-                          const char *debugName = nullptr);
+                          const char *debugName = nullptr, nvrhi::ICommandList *sharedList = nullptr);
 
     nvrhi::ITexture *NativeTexture() const { return _texture; }
     bool IsValid() const { return _texture != nullptr; }

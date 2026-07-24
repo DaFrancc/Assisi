@@ -164,15 +164,31 @@ class AssetCache
     /// material is still loading. Never null.
     const Material *FallbackMaterial() const { return &_fallbackMaterial; }
 
-    /// @brief Whether any async mesh/material load is still in flight. The app
-    /// re-resolves its scene's MeshRenderers each frame while this is true, so
-    /// components upgrade (placeholder→mesh, fallback→real material) as loads land.
+    /// @brief Whether any async mesh/material load is still in flight — decoding on
+    /// a worker, OR decoded and waiting in the publish queue for its GPU upload (a
+    /// path stays in _meshLoading/_materialLoading until it is actually resident, so
+    /// this is inclusive of queued-but-not-yet-published work). The app re-resolves
+    /// its scene's MeshRenderers each frame while this is true, so components upgrade
+    /// (placeholder→mesh, fallback→real material) as loads land.
     bool HasPendingLoads() const { return !_meshLoading.empty() || !_materialLoading.empty(); }
 
-    /// @brief How many async mesh/material loads are still in flight. Cache-wide
-    /// (not per scene). Lets a preload show a streaming-progress percentage by
-    /// comparing against the count captured when its resolve began.
+    /// @brief How many async mesh/material loads are still in flight (decoding or
+    /// queued for publish — see HasPendingLoads). Cache-wide (not per scene). Lets a
+    /// preload show a streaming-progress percentage by comparing against the count
+    /// captured when its resolve began.
     std::size_t PendingLoadCount() const { return _meshLoading.size() + _materialLoading.size(); }
+
+    /// @brief Drain decoded-and-waiting asset uploads into the GPU under a per-frame
+    /// budget, recording them all into one shared command list and submitting it
+    /// once. Async decode continuations are O(1) (they only enqueue a publish); the
+    /// actual GPU work — the writeTexture staging memcpy, arena writes, material-row
+    /// writes — happens here, on the main thread, at the caller's frame safe point
+    /// (after DrainMain, before RenderFrame). Publishes up to @p byteBudget bytes or
+    /// @p timeBudgetMs milliseconds of work, whichever first (always at least one, so
+    /// an oversized asset can't wedge the queue), and carries the rest to next frame.
+    /// A whole material (its channels + row) is one indivisible publish, so a model
+    /// never appears half-textured. No-op when nothing is queued. Main thread only.
+    void PumpPublishes(double timeBudgetMs, std::size_t byteBudget);
 
     /// @brief Cap on how many mesh/material loads decode concurrently. Streaming a
     /// whole level fans out one job per asset; letting them all run saturates
@@ -250,8 +266,11 @@ class AssetCache
     uint32_t MintMaterialId();
 
     /// @brief Writes @p material's constants into row Material::Id() of the material
-    /// table, uploading the dense prefix. Called whenever a material is (re)built.
-    void WriteMaterialToTable(const Material &material);
+    /// table. Called whenever a material is (re)built. When @p sharedList is non-null
+    /// the 96-byte row write is recorded into it (the async publish batcher);
+    /// otherwise it runs on a private command list executed here (the synchronous
+    /// fallback-material build).
+    void WriteMaterialToTable(const Material &material, nvrhi::ICommandList *sharedList = nullptr);
 
     /// @brief (Re)build the id-0 fallback material from the engine defaults.
     void BuildFallbackMaterial();
@@ -419,6 +438,35 @@ class AssetCache
     std::size_t             _activeLoads        = 0;
     std::deque<PendingLoad> _pendingLoads;
 
+    // --- Decoded-and-waiting publish queue (see PumpPublishes) ------------------
+    // A finished decode's main-thread continuation is O(1): it drops here rather
+    // than doing GPU work, so DrainMain never hitches on a burst of uploads. The
+    // asset's path stays in _meshLoading/_materialLoading until PublishMesh/
+    // PublishMaterial actually uploads it, so HasPendingLoads stays true (and a
+    // re-resolve keeps returning the placeholder) until it is genuinely resident.
+
+    /// @brief One decoded asset waiting for its GPU upload. Tagged by kind; only the
+    /// fields for its kind are populated (mesh: `mesh`; material: `material`).
+    struct PendingPublish
+    {
+        bool               isMaterial = false;
+        Core::AssetPath    path;
+        std::uint64_t      epoch    = 0;
+        std::size_t        byteSize = 0; ///< decoded bytes, for the pump's byte budget
+        Geometry::MeshData mesh;         ///< mesh only
+        MaterialLoadBundle material;     ///< material only
+    };
+    std::deque<PendingPublish> _pendingPublishes;
+
+    // One persistent command list all publishes record into, submitted once per
+    // pump (P0). Reusing it reuses the upload manager's staging chunks — no
+    // per-publish GPU allocation — and batches the whole frame's uploads into a
+    // single submit. Created in Initialize (recreated by Clear to reclaim peak
+    // staging). _uploadOpen tracks whether it is mid-recording within a pump; it is
+    // always false between pumps (FlushUploads closes it), so Clear never races it.
+    nvrhi::CommandListHandle _uploadList;
+    bool                     _uploadOpen = false;
+
     /// @brief Starts queued loads up to the concurrency cap. Called when a load is
     /// queued and again after each running load publishes. Main thread only.
     void PumpLoadQueue();
@@ -431,9 +479,23 @@ class AssetCache
     /// then upload + cache the buffer (or record the failure).
     void OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
                       std::expected<Geometry::MeshData, Geometry::MeshImportError> imported);
-    /// @brief Main-thread publish of a finished material decode: free the load slot,
-    /// then upload each channel's texture, build the material, and write its table row.
+    /// @brief Main-thread continuation of a finished material decode: free the load
+    /// slot and enqueue a publish (O(1) — the GPU work is deferred to PumpPublishes).
     void OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, MaterialLoadBundle bundle);
+    /// @brief GPU-side publish of a decoded mesh (called from PumpPublishes under
+    /// budget): upload into the arena via the shared list, then cache + assign an id.
+    void PublishMesh(PendingPublish publish);
+    /// @brief GPU-side publish of a decoded material (from PumpPublishes): upload each
+    /// channel's texture into the shared list, build the material, write its row.
+    void PublishMaterial(PendingPublish publish);
+
+    /// @brief The shared upload command list, opened on demand (lazily on the first
+    /// publish of a pump) so many uploads batch into it; returns it for recording.
+    nvrhi::ICommandList *BeginUpload();
+    /// @brief Close + submit the shared upload list once, if it was opened this pump.
+    /// Reusing the one list across a pump reuses its staging chunks — no per-publish
+    /// buffer allocation — and issues a single vkQueueSubmit for the whole batch.
+    void FlushUploads();
     /// @brief Worker-thread body of a material load: decode every channel image
     /// sequentially (a nested parallel-for would defeat the concurrency cap). Pure —
     /// touches no cache state, so it is safe off the main thread.

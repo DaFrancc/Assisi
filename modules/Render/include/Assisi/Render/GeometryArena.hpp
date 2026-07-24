@@ -66,13 +66,22 @@ class GeometryArena
     /// @brief Appends one mesh's vertices + indices, returning its range. Grows
     /// the backing buffers first if needed. @p vertexData is @p vertexCount
     /// vertices of the arena's stride; @p indexData is @p indexCount 32-bit indices.
-    Range Allocate(const void *vertexData, uint32_t vertexCount, const uint32_t *indexData, uint32_t indexCount)
+    ///
+    /// When @p sharedList is non-null both the (possible) grow copy and the vertex/
+    /// index writes are *recorded* into that already-open command list and NOT
+    /// executed — the caller batches many uploads into one submit (see AssetCache's
+    /// shared upload list). The grow copy is recorded into the same list *before*
+    /// the new-data writes, so linear ordering + nvrhi's auto-barriers keep it
+    /// correct, and the old buffer stays alive via the list's referenced resources.
+    /// When null, a private command list is created and executed here as before.
+    Range Allocate(const void *vertexData, uint32_t vertexCount, const uint32_t *indexData, uint32_t indexCount,
+                   nvrhi::ICommandList *sharedList = nullptr)
     {
         const uint64_t vertexBytes = static_cast<uint64_t>(vertexCount) * _vertexStride;
         const uint64_t indexBytes = static_cast<uint64_t>(indexCount) * sizeof(uint32_t);
 
-        EnsureVertexCapacity(_vertexUsed + vertexBytes);
-        EnsureIndexCapacity(_indexUsed + indexBytes);
+        EnsureVertexCapacity(_vertexUsed + vertexBytes, sharedList);
+        EnsureIndexCapacity(_indexUsed + indexBytes, sharedList);
 
         Range range;
         range.vertexBase = static_cast<uint32_t>(_vertexUsed / _vertexStride);
@@ -80,14 +89,23 @@ class GeometryArena
         range.vertexCount = vertexCount;
         range.indexCount = indexCount;
 
-        nvrhi::CommandListHandle commandList = _device->createCommandList();
-        commandList->open();
+        nvrhi::CommandListHandle ownList;
+        nvrhi::ICommandList     *commandList = sharedList;
+        if (commandList == nullptr)
+        {
+            ownList = _device->createCommandList();
+            commandList = ownList;
+            commandList->open();
+        }
         if (vertexBytes > 0)
             commandList->writeBuffer(_vertexBuffer, vertexData, vertexBytes, _vertexUsed);
         if (indexBytes > 0)
             commandList->writeBuffer(_indexBuffer, indexData, indexBytes, _indexUsed);
-        commandList->close();
-        _device->executeCommandList(commandList);
+        if (ownList != nullptr)
+        {
+            ownList->close();
+            _device->executeCommandList(ownList);
+        }
 
         _vertexUsed += vertexBytes;
         _indexUsed += indexBytes;
@@ -109,13 +127,22 @@ class GeometryArena
     uint32_t VertexStride() const { return _vertexStride; }
 
   private:
-    void EnsureVertexCapacity(uint64_t needed) { Grow(_vertexBuffer, _vertexCapacity, _vertexUsed, needed, true); }
-    void EnsureIndexCapacity(uint64_t needed) { Grow(_indexBuffer, _indexCapacity, _indexUsed, needed, false); }
+    void EnsureVertexCapacity(uint64_t needed, nvrhi::ICommandList *sharedList = nullptr)
+    {
+        Grow(_vertexBuffer, _vertexCapacity, _vertexUsed, needed, true, sharedList);
+    }
+    void EnsureIndexCapacity(uint64_t needed, nvrhi::ICommandList *sharedList = nullptr)
+    {
+        Grow(_indexBuffer, _indexCapacity, _indexUsed, needed, false, sharedList);
+    }
 
     /// @brief Ensures @p buffer holds at least @p needed bytes, reallocating with
     /// geometric growth and GPU-copying the @p used prefix when it must. Holders
-    /// that go through VertexBuffer()/IndexBuffer() never see the handle swap.
-    void Grow(nvrhi::BufferHandle &buffer, uint64_t &capacity, uint64_t used, uint64_t needed, bool isVertex)
+    /// that go through VertexBuffer()/IndexBuffer() never see the handle swap. When
+    /// @p sharedList is non-null the prefix copy is recorded into it (not executed);
+    /// see Allocate.
+    void Grow(nvrhi::BufferHandle &buffer, uint64_t &capacity, uint64_t used, uint64_t needed, bool isVertex,
+              nvrhi::ICommandList *sharedList = nullptr)
     {
         if (needed <= capacity)
             return;
@@ -133,11 +160,20 @@ class GeometryArena
 
         if (used > 0)
         {
-            nvrhi::CommandListHandle commandList = _device->createCommandList();
-            commandList->open();
+            nvrhi::CommandListHandle ownList;
+            nvrhi::ICommandList     *commandList = sharedList;
+            if (commandList == nullptr)
+            {
+                ownList = _device->createCommandList();
+                commandList = ownList;
+                commandList->open();
+            }
             commandList->copyBuffer(grown, 0, buffer, 0, used);
-            commandList->close();
-            _device->executeCommandList(commandList);
+            if (ownList != nullptr)
+            {
+                ownList->close();
+                _device->executeCommandList(ownList);
+            }
         }
 
         buffer = grown; // old handle released by ref-count once its last use retires

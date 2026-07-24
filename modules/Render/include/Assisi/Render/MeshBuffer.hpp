@@ -48,7 +48,10 @@ class MeshBuffer
     /// the arena and the returned base offsets, then keeps the
     /// submesh/LOD/material tables and drops the vertex/index data. The arena
     /// owns the GPU buffers; this instance only references them.
-    void Upload(GeometryArena &arena, Geometry::MeshData meshData)
+    /// @p sharedList, when non-null, batches this mesh's arena upload into the
+    /// caller's shared command list (recorded, not executed here — see
+    /// GeometryArena::Allocate). Null keeps the self-contained synchronous upload.
+    void Upload(GeometryArena &arena, Geometry::MeshData meshData, nvrhi::ICommandList *sharedList = nullptr)
     {
         Geometry::EnsureSubMeshTables(meshData);
 
@@ -56,7 +59,7 @@ class MeshBuffer
 
         const GeometryArena::Range range =
             arena.Allocate(meshData.Vertices.data(), static_cast<uint32_t>(meshData.Vertices.size()),
-                           meshData.Indices.data(), static_cast<uint32_t>(meshData.Indices.size()));
+                           meshData.Indices.data(), static_cast<uint32_t>(meshData.Indices.size()), sharedList);
         _arena = &arena;
         _vertexBase = range.vertexBase;
         _indexBase = range.indexBase;

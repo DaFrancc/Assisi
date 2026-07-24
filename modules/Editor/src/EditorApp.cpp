@@ -715,12 +715,17 @@ void EditorApp::OnUpdate(float dt)
     // it touches the asset cache.
     _worlds.PumpPendingLoad();
 
-    // While a seamless preload is streaming, cap how many asset publishes drain per
-    // frame so their GPU uploads (a createTexture + blocking submit each) spread
-    // across frames instead of hitching the world you are still playing. Unbounded
-    // otherwise, so a normal (foreground) level load still resolves as fast as
-    // possible. Applies to next frame's DrainMain, which is exactly right.
-    SetMainThreadTaskBudget(_worlds.HasPendingLoad() ? 2u : 0u);
+    // Drain decoded-and-waiting asset uploads into the GPU under a per-frame budget,
+    // batched into one submit (P0/P0b). The async decode continuations that ran in
+    // DrainMain above only enqueued these; the GPU work (the writeTexture staging
+    // memcpy, arena writes, material rows) happens here, at the frame safe point
+    // before RenderFrame, so it's visible to this frame's draws. Gentle tier while a
+    // seamless preload streams behind the world you're playing; generous for a
+    // foreground load (nothing to protect). A no-op when the queue is empty.
+    if (_worlds.HasPendingLoad())
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/2.0, /*byteBudget=*/16ull << 20);
+    else
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/10.0, /*byteBudget=*/128ull << 20);
 
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // EditorLevels) and applied in Application::Run's DrainMain, which runs just
