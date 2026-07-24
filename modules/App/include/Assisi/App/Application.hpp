@@ -224,6 +224,20 @@ class Application
     std::array<float, kFrameHistory>  _frameTimeHistory{}; // full frame delta, for 1%-low etc.
     int32_t                           _frameHistoryOffset = 0;
     int32_t                           _frameSampleCount = 0;
+
+    // Sub-phase timings (ms) of the most recent RenderFrame, filled there and read
+    // by the slow-frame diagnostic in Run(). RenderFrame is a single opaque phase
+    // in that report, but it is where streaming-correlated spikes actually land, so
+    // it needs its own breakdown to be actionable.
+    struct RenderPhaseTimings
+    {
+        double begin = 0.0; ///< BeginFrame (swapchain acquire).
+        double scene = 0.0; ///< OnRender — the scene pass.
+        double post  = 0.0; ///< PostProcess resolve.
+        double imgui = 0.0; ///< OnImGui + DebugUI begin/end.
+        double end   = 0.0; ///< EndFrame (submit + present).
+    };
+    RenderPhaseTimings _renderPhases{};
 };
 
 } // namespace Assisi::App

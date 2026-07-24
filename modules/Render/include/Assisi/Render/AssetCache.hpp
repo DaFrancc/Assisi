@@ -36,6 +36,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <mutex>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -497,6 +498,50 @@ class AssetCache
     // tracker keeps them + their textures alive until the GPU retires the submit).
     std::vector<nvrhi::CommandListHandle> _uploadBatch;
 
+    // --- Transient upload resource pool ----------------------------------------
+    // Streaming creates GPU resources per asset: a command list to record a
+    // material's texture uploads (P1) and a staging buffer for a mesh's geometry
+    // (R1). Creating and destroying those per asset is not merely wasteful — the
+    // destruction is not paid where it is caused. nvrhi releases a retired submit's
+    // resources inside `runGarbageCollection()`, which the context calls at the end
+    // of EVERY frame on the main thread, after the present. So a burst of streaming
+    // allocations surfaces as a main-thread spike in an unrelated later frame
+    // (measured at 10-30 ms). Pooling removes the churn: steady-state streaming
+    // performs no GPU create/destroy, so there is nothing for GC to collect.
+    //
+    // Threading: workers acquire, the main thread releases; guarded by _poolMutex.
+    // Command lists may be recycled the moment their batch is submitted — nvrhi
+    // round-robins their internal command buffers and fences upload-chunk reuse
+    // against the completed submission (vulkan-upload.cpp). Staging buffers may NOT:
+    // a worker memcpys into them, so one must not be handed out again until the GPU
+    // has finished copying out of it — hence the event-query gate below.
+    std::mutex                            _poolMutex;
+    std::vector<nvrhi::CommandListHandle> _freeUploadLists;
+    std::vector<nvrhi::BufferHandle>      _freeStagingBuffers;
+
+    /// @brief Staging buffers whose submit may still be executing, held with the
+    /// query that tells us when it has retired.
+    struct StagingInFlight
+    {
+        nvrhi::EventQueryHandle          query;
+        std::vector<nvrhi::BufferHandle> buffers;
+    };
+    std::vector<StagingInFlight> _stagingInFlight;
+    /// Staging buffers bound into the batch being assembled by the current pump;
+    /// moved into _stagingInFlight under a fresh query when that batch is submitted.
+    std::vector<nvrhi::BufferHandle> _batchStaging;
+    /// Event queries reused by the gate above, so the gate itself doesn't churn.
+    std::vector<nvrhi::EventQueryHandle> _freeEventQueries;
+
+    /// @brief Borrow a recorded-into command list, creating one only if the pool is
+    /// empty. Worker-callable.
+    nvrhi::CommandListHandle AcquireUploadList();
+    /// @brief Borrow a staging buffer of at least @p bytes, creating one only if no
+    /// pooled buffer is large enough. Worker-callable.
+    nvrhi::BufferHandle AcquireStagingBuffer(std::uint64_t bytes);
+    /// @brief Return retired staging buffers to the free list. Main thread, per pump.
+    void RecycleRetiredStaging();
+
     /// @brief Starts queued loads up to the concurrency cap. Called when a load is
     /// queued and again after each running load publishes. Main thread only.
     void PumpLoadQueue();
@@ -514,7 +559,7 @@ class AssetCache
     /// a memcpy proportional to the mesh. Touches no cache state (createBuffer and
     /// mapBuffer on a fresh buffer are free-threaded), so it is safe off the main thread.
     static std::expected<MeshLoadBundle, Geometry::MeshImportError>
-    ImportAndStageMesh(nvrhi::IDevice *device, Core::AssetPath path, const PathToIdFn &pathToId, std::uint64_t epoch,
+    ImportAndStageMesh(AssetCache &cache, Core::AssetPath path, const PathToIdFn &pathToId, std::uint64_t epoch,
                        const std::atomic<std::uint64_t> &loadEpoch);
     /// @brief Main-thread continuation of a finished material decode: free the load
     /// slot and enqueue a publish (O(1) — the GPU work is deferred to PumpPublishes).
@@ -540,7 +585,9 @@ class AssetCache
     /// streaming P1). Touches no cache state (createTexture + command-list recording
     /// are free-threaded), so it is safe off the main thread. Returns the textures +
     /// the closed list; the main thread submits and adopts them at publish.
-    static MaterialLoadBundle DecodeAndRecordMaterialChannels(nvrhi::IDevice *device, Geometry::MaterialData data,
+    /// @p cache is used only for its thread-safe upload-resource pool and device;
+    /// no cache state is read or mutated.
+    static MaterialLoadBundle DecodeAndRecordMaterialChannels(AssetCache &cache, Geometry::MaterialData data,
                                                               std::array<Core::AssetPath, 5> channelPaths,
                                                               std::uint64_t                  epoch,
                                                               const std::atomic<std::uint64_t> &loadEpoch);

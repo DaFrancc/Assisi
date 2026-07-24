@@ -566,9 +566,10 @@ void AssetCache::PumpLoadQueue()
 }
 
 std::expected<AssetCache::MeshLoadBundle, Geometry::MeshImportError>
-AssetCache::ImportAndStageMesh(nvrhi::IDevice *device, Core::AssetPath path, const PathToIdFn &pathToId,
+AssetCache::ImportAndStageMesh(AssetCache &cache, Core::AssetPath path, const PathToIdFn &pathToId,
                                std::uint64_t epoch, const std::atomic<std::uint64_t> &loadEpoch)
 {
+    nvrhi::IDevice *device = cache._device;
     if (loadEpoch.load(std::memory_order_relaxed) != epoch)
     {
         Core::Log::Warn("AssetCache: cancelled superseded mesh load for '{}'.", path.View());
@@ -592,9 +593,18 @@ AssetCache::ImportAndStageMesh(nvrhi::IDevice *device, Core::AssetPath path, con
 
     // Copy the geometry into a GPU staging buffer HERE, on the worker — this is the
     // bulk memcpy that used to land on the main thread inside writeBuffer (O(mesh
-    // bytes) mid-frame). The main-thread publish then only records a copy.
-    const std::string name(path.View());
-    bundle.staging = MeshBuffer::StageMeshGeometry(device, *imported, name.c_str());
+    // bytes) mid-frame). The main-thread publish then only records a copy. The
+    // buffer is pooled: creating and destroying one per mesh would just move the
+    // cost into the next frame's runGarbageCollection, on the main thread.
+    const std::uint64_t stagingBytes = MeshBuffer::MeshStagingBytes(*imported);
+    if (stagingBytes > 0)
+    {
+        nvrhi::BufferHandle staging = cache.AcquireStagingBuffer(stagingBytes);
+        if (MeshBuffer::StageMeshGeometry(device, staging, *imported))
+        {
+            bundle.staging = std::move(staging);
+        }
+    }
     if (bundle.staging != nullptr)
     {
         // Staged successfully: release the CPU copies so the mesh's bytes aren't
@@ -614,11 +624,10 @@ void AssetCache::StartMeshLoad(Core::AssetPath path, PathToIdFn pathToId, std::u
     // Import + stage on a worker (touching no cache state), then publish on the main
     // thread. The worker bails early if a Clear() has superseded this epoch — saving
     // the parse for a load nobody awaits anymore.
-    nvrhi::IDevice                   *device    = _device;
     const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
     _jobs
-        ->Run(Core::Pool::Worker, [device, path, pathToId, epoch, loadEpoch]()
-              { return ImportAndStageMesh(device, path, pathToId, epoch, *loadEpoch); })
+        ->Run(Core::Pool::Worker, [this, path, pathToId, epoch, loadEpoch]()
+              { return ImportAndStageMesh(*this, path, pathToId, epoch, *loadEpoch); })
         .Then(Core::Pool::Main, [this, path, epoch](std::expected<MeshLoadBundle, Geometry::MeshImportError> r)
               { OnMeshLoaded(path, epoch, std::move(r)); });
 }
@@ -655,9 +664,10 @@ void AssetCache::OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
 }
 
 AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
-    nvrhi::IDevice *device, Geometry::MaterialData data, std::array<Core::AssetPath, 5> channelPaths,
-    std::uint64_t epoch, const std::atomic<std::uint64_t> &loadEpoch)
+    AssetCache &cache, Geometry::MaterialData data, std::array<Core::AssetPath, 5> channelPaths, std::uint64_t epoch,
+    const std::atomic<std::uint64_t> &loadEpoch)
 {
+    nvrhi::IDevice *device = cache._device;
     if (loadEpoch.load(std::memory_order_relaxed) != epoch)
         return {}; // superseded before the decode ran; the publish drops it anyway
 
@@ -683,9 +693,7 @@ AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
 
         if (!list)
         {
-            nvrhi::CommandListParameters params;
-            params.uploadChunkSize = kUploadChunkSize;
-            list                   = device->createCommandList(params);
+            list = cache.AcquireUploadList(); // pooled: no per-material create/destroy
             list->open();
         }
         const std::string    name(channelPaths[ch].View());
@@ -711,12 +719,11 @@ void AssetCache::StartMaterialLoad(Core::AssetPath path, Geometry::MaterialData 
     // The material was parsed on the main thread (it needs the DB); the worker
     // decodes the channel images AND records their GPU uploads (P1). The main thread
     // then only submits the recorded list, adopts the textures, and builds.
-    nvrhi::IDevice                   *device    = _device;
     const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
     _jobs
         ->Run(Core::Pool::Worker,
-              [device, data = std::move(data), channelPaths, epoch, loadEpoch]() mutable
-              { return DecodeAndRecordMaterialChannels(device, std::move(data), channelPaths, epoch, *loadEpoch); })
+              [this, data = std::move(data), channelPaths, epoch, loadEpoch]() mutable
+              { return DecodeAndRecordMaterialChannels(*this, std::move(data), channelPaths, epoch, *loadEpoch); })
         .Then(Core::Pool::Main, [this, path, epoch](MaterialLoadBundle bundle)
               { OnMaterialLoaded(path, epoch, std::move(bundle)); });
 }
@@ -748,11 +755,12 @@ void AssetCache::PublishMesh(PendingPublish publish)
     if (publish.mesh.staging != nullptr)
     {
         // The worker already copied the geometry into a GPU staging buffer, so this
-        // records two copyBuffers — O(1) in mesh size, no main-thread memcpy. Our
-        // handle drops here; the upload list keeps the staging buffer alive until
-        // its submit retires.
+        // records two copyBuffers — O(1) in mesh size, no main-thread memcpy.
         buffer.UploadStaged(_arena, std::move(publish.mesh.data), publish.mesh.staging, publish.mesh.vertexCount,
                             publish.mesh.indexCount, BeginUpload());
+        // Hand the buffer to the batch so FlushUploads can park it behind an event
+        // query and recycle it, instead of letting it be destroyed by a later GC.
+        _batchStaging.push_back(std::move(publish.mesh.staging));
     }
     else
     {
@@ -816,6 +824,74 @@ void AssetCache::PublishMaterial(PendingPublish publish)
     WriteMaterialToTable(material, BeginUpload());
 }
 
+nvrhi::CommandListHandle AssetCache::AcquireUploadList()
+{
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        if (!_freeUploadLists.empty())
+        {
+            nvrhi::CommandListHandle list = std::move(_freeUploadLists.back());
+            _freeUploadLists.pop_back();
+            return list;
+        }
+    }
+    // Pool empty (first loads, or more concurrent loads than before): create one.
+    // A generous upload chunk is right for a POOLED list — it is reused for the
+    // process's lifetime, so the chunk is amortized instead of being allocated and
+    // freed per asset (which is what made this expensive in the first place).
+    nvrhi::CommandListParameters params;
+    params.uploadChunkSize = kUploadChunkSize;
+    return _device->createCommandList(params);
+}
+
+nvrhi::BufferHandle AssetCache::AcquireStagingBuffer(std::uint64_t bytes)
+{
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        // First buffer big enough wins. Sizes cluster (a level's meshes are mostly
+        // similar), so this stays effectively O(1) without bucketing.
+        for (std::size_t i = 0; i < _freeStagingBuffers.size(); ++i)
+        {
+            if (_freeStagingBuffers[i]->getDesc().byteSize >= bytes)
+            {
+                nvrhi::BufferHandle buffer = std::move(_freeStagingBuffers[i]);
+                _freeStagingBuffers.erase(_freeStagingBuffers.begin() + static_cast<std::ptrdiff_t>(i));
+                return buffer;
+            }
+        }
+    }
+
+    nvrhi::BufferDesc desc;
+    desc.byteSize = bytes;
+    desc.cpuAccess = nvrhi::CpuAccessMode::Write;
+    desc.debugName = "AssetCache::MeshStaging";
+    desc.initialState = nvrhi::ResourceStates::CopySource;
+    desc.keepInitialState = true;
+    return _device->createBuffer(desc);
+}
+
+void AssetCache::RecycleRetiredStaging()
+{
+    std::lock_guard<std::mutex> lock(_poolMutex);
+    for (std::size_t i = 0; i < _stagingInFlight.size();)
+    {
+        // pollEventQuery is non-blocking: a batch still executing is simply left for
+        // a later pump. Never wait here — that would trade a GC spike for a GPU stall.
+        if (_device->pollEventQuery(_stagingInFlight[i].query))
+        {
+            for (nvrhi::BufferHandle &buffer : _stagingInFlight[i].buffers)
+                _freeStagingBuffers.push_back(std::move(buffer));
+            _device->resetEventQuery(_stagingInFlight[i].query);
+            _freeEventQueries.push_back(std::move(_stagingInFlight[i].query));
+            _stagingInFlight.erase(_stagingInFlight.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+        else
+        {
+            ++i;
+        }
+    }
+}
+
 nvrhi::ICommandList *AssetCache::BeginUpload()
 {
     if (!_uploadOpen)
@@ -845,14 +921,48 @@ void AssetCache::FlushUploads()
         lists.push_back(_uploadList);
     _device->executeCommandLists(lists.data(), lists.size());
 
-    // Drop our handles: nvrhi's lifetime tracker keeps each list and its referenced
-    // resources (the textures) alive until the GPU retires this submit.
+    // Return the worker lists to the pool rather than dropping them. Recycling is
+    // safe immediately: nvrhi round-robins each list's internal command buffers and
+    // fences upload-chunk reuse against the completed submission, so reopening one
+    // never disturbs work still in flight. Dropping them instead would hand the
+    // destruction to the next frame's runGarbageCollection — a main-thread spike.
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        for (nvrhi::CommandListHandle &list : _uploadBatch)
+            _freeUploadLists.push_back(std::move(list));
+
+        // Staging buffers must wait for the GPU: a worker memcpys into them. Park
+        // them behind an event query on this submit; RecycleRetiredStaging frees
+        // them for reuse once it retires (polled, never waited on).
+        if (!_batchStaging.empty())
+        {
+            StagingInFlight parked;
+            if (!_freeEventQueries.empty())
+            {
+                parked.query = std::move(_freeEventQueries.back());
+                _freeEventQueries.pop_back();
+            }
+            else
+            {
+                parked.query = _device->createEventQuery();
+            }
+            _device->setEventQuery(parked.query, nvrhi::CommandQueue::Graphics);
+            parked.buffers = std::move(_batchStaging);
+            _stagingInFlight.push_back(std::move(parked));
+            _batchStaging.clear();
+        }
+    }
     _uploadBatch.clear();
     _uploadOpen = false;
 }
 
 void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
 {
+    // Reclaim staging buffers whose submit has retired, so the next loads reuse
+    // them instead of allocating. Cheap (a poll per parked batch) and worth doing
+    // even when nothing is queued, so buffers don't sit parked after a load ends.
+    RecycleRetiredStaging();
+
     if (_pendingPublishes.empty())
         return;
 
@@ -965,6 +1075,25 @@ void AssetCache::Clear()
     // always FlushUploads before returning, so _uploadOpen is false between them.
     _pendingPublishes.clear();
     _uploadBatch.clear(); // empty between pumps (FlushUploads drains it); defensive.
+
+    // waitForIdle above retired every submit, so all parked staging is reusable —
+    // reclaim it without polling. The pools themselves survive Clear() deliberately:
+    // they exist so a level load does not churn GPU allocations, and the next load
+    // is exactly when they are wanted.
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        for (StagingInFlight &parked : _stagingInFlight)
+        {
+            for (nvrhi::BufferHandle &buffer : parked.buffers)
+                _freeStagingBuffers.push_back(std::move(buffer));
+            _device->resetEventQuery(parked.query);
+            _freeEventQueries.push_back(std::move(parked.query));
+        }
+        _stagingInFlight.clear();
+        for (nvrhi::BufferHandle &buffer : _batchStaging)
+            _freeStagingBuffers.push_back(std::move(buffer));
+        _batchStaging.clear();
+    }
 
     // Recreate the shared upload list to return its peak staging memory: an upload
     // manager never shrinks its chunk pool, so a level's worth of texture bursts

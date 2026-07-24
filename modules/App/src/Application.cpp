@@ -242,6 +242,14 @@ void Application::RequestClose()
 namespace
 {
 using Clock = std::chrono::steady_clock;
+/// Duration in fractional seconds — shared by the frame loop, SleepUntil, and the
+/// slow-frame diagnostic, so the timing helpers agree on one representation.
+using Seconds = std::chrono::duration<double>;
+
+/// CPU frame time above which the main loop logs a per-phase breakdown (see the
+/// slow-frame diagnostic in Run). Half a 60 Hz frame: high enough to stay quiet
+/// in normal play, low enough that a streaming hitch is always reported.
+constexpr double kSlowFrameMs = 8.0;
 
 /// Waits until `target` while wasting as little CPU as possible. sleep_for()
 /// overshoots its request by a scheduler-dependent amount, so we can't sleep the
@@ -258,8 +266,6 @@ using Clock = std::chrono::steady_clock;
 /// fine — only the main loop calls this.
 void SleepUntil(Clock::time_point target)
 {
-    using Seconds = std::chrono::duration<double>;
-
     static double marginSec = 1e-3; // conservative seed; converges within a few frames
 
     const double remainingSec = Seconds(target - Clock::now()).count();
@@ -317,8 +323,15 @@ void Application::Run()
         const double            dt    = std::min(rawDt, 0.25);
         prevTime                      = now;
 
+        // Per-phase stopwatches for the slow-frame diagnostic below. Cheap
+        // (steady_clock reads), and only reported when a frame actually spikes.
+        const auto phaseMs = [](Clock::time_point from, Clock::time_point to)
+        { return Seconds(to - from).count() * 1000.0; };
+
+        const Clock::time_point inputStart = Clock::now();
         Window::WindowContext::PollEvents();
         _input->Poll();
+        const Clock::time_point inputEnd = Clock::now();
 
         accumulator += dt;
         while (accumulator >= physicsStep)
@@ -326,6 +339,7 @@ void Application::Run()
             OnFixedUpdate(static_cast<float>(physicsStep));
             accumulator -= physicsStep;
         }
+        const Clock::time_point fixedEnd = Clock::now();
 
         // What's left in the accumulator is how far we are into the *next*
         // physics step — the blend factor OnRender uses to interpolate
@@ -340,8 +354,10 @@ void Application::Run()
         // unbounded by default) lets an app spread a burst of streaming asset
         // publishes across frames — see SetMainThreadTaskBudget.
         _jobs.DrainMain(_mainThreadTaskBudget);
+        const Clock::time_point drainEnd = Clock::now();
 
         OnUpdate(static_cast<float>(dt));
+        const Clock::time_point updateEnd = Clock::now();
 
         // Frame pacing is exclusive with vsync: only cap here in FpsLimit mode with
         // a finite limit. In VSync mode FIFO present paces us; with an unlimited cap
@@ -369,9 +385,12 @@ void Application::Run()
             vulkanContext->SetVSync(_options.frameSync == FrameSyncMode::VSync);
         }
 
+        const Clock::time_point renderStart = Clock::now();
         RenderFrame();
+        const Clock::time_point renderEnd = Clock::now();
         _events.Flush();
         FlushDeferred();
+        const Clock::time_point flushEnd = Clock::now();
 
         // Frame-time accounting. CPU frame time is this loop iteration's wall-clock
         // minus the two intervals the CPU is deliberately idle: the FPS-limit sleep
@@ -382,6 +401,31 @@ void Application::Run()
         const double cpuMs =
             std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - sleepMs - gpuWaitMs);
         const double gpuMs = vulkanContext ? static_cast<double>(vulkanContext->GetLastGpuFrameTimeMs()) : 0.0;
+
+        // Slow-frame diagnostic. A spike is only actionable if you know which phase
+        // ate it — and, crucially, whether ANY phase did. `unaccounted` is the gap
+        // between the frame's measured CPU time and the sum of its phases: when the
+        // phases are all small but the frame is long, the main thread was not doing
+        // work, it was descheduled (the streaming/physics pools oversubscribing the
+        // CPU). That distinction picks the fix, so it is reported explicitly.
+        if (cpuMs >= kSlowFrameMs)
+        {
+            const double inputMs  = phaseMs(inputStart, inputEnd);
+            const double fixedMs  = phaseMs(inputEnd, fixedEnd);
+            const double drainMs  = phaseMs(fixedEnd, drainEnd);
+            const double updateMs = phaseMs(drainEnd, updateEnd);
+            const double renderMs = phaseMs(renderStart, renderEnd);
+            const double flushMs  = phaseMs(renderEnd, flushEnd);
+            const double accounted = inputMs + fixedMs + drainMs + updateMs + renderMs + flushMs;
+            Core::Log::Info("Slow frame {:.2f} ms cpu (gpu {:.2f}, gpuWait {:.2f}): input {:.2f}, fixed {:.2f}, "
+                            "drain {:.2f}, update {:.2f}, render {:.2f}, flush {:.2f} | unaccounted {:.2f}"
+                            " || render: begin {:.2f}, scene {:.2f}, post {:.2f}, imgui {:.2f}, end {:.2f} "
+                            "(of which gc {:.2f})",
+                            cpuMs, gpuMs, gpuWaitMs, inputMs, fixedMs, drainMs, updateMs, renderMs, flushMs,
+                            cpuMs - accounted, _renderPhases.begin, _renderPhases.scene, _renderPhases.post,
+                            _renderPhases.imgui, _renderPhases.end,
+                            vulkanContext ? vulkanContext->GetLastGcMs() : 0.0);
+        }
 
         // Record raw (un-averaged) per-frame samples for the plots so spikes stay
         // visible; the numeric readout uses the smoothed averages below. The full
@@ -432,11 +476,18 @@ void Application::RenderFrame()
         return;
     }
 
+    // Sub-phase stopwatches for the slow-frame diagnostic (see Run). Reset first so
+    // an early return below can't report the previous frame's numbers as this one's.
+    _renderPhases                    = RenderPhaseTimings{};
+    const Clock::time_point beginStart = Clock::now();
+
     auto frame = vulkanContext->BeginFrame();
     if (!frame.has_value())
     {
         return; // minimized, or swapchain is stale and about to be resized
     }
+    const Clock::time_point beginEnd = Clock::now();
+    _renderPhases.begin              = Seconds(beginEnd - beginStart).count() * 1000.0;
 
     // When an AA mode is active, the scene renders into PostProcess's offscreen
     // target instead of the swapchain directly — everything else about `frame`
@@ -458,19 +509,27 @@ void Application::RenderFrame()
                                                           false, 0);
     }
 
+    const Clock::time_point sceneStart = Clock::now();
     OnRender(sceneFrame);
+    const Clock::time_point sceneEnd = Clock::now();
+    _renderPhases.scene              = Seconds(sceneEnd - sceneStart).count() * 1000.0;
 
     // No-op if AA is off (the scene already rendered directly into `frame`
     // above); otherwise resolves/FXAA's the offscreen render into it.
     _postProcess.Resolve(frame->commandList, *frame);
+    const Clock::time_point postEnd = Clock::now();
+    _renderPhases.post              = Seconds(postEnd - sceneEnd).count() * 1000.0;
 
     Debug::DebugUI::BeginFrame(*frame);
 
     OnImGui();
 
     Debug::DebugUI::EndFrame(*frame);
+    const Clock::time_point imguiEnd = Clock::now();
+    _renderPhases.imgui              = Seconds(imguiEnd - postEnd).count() * 1000.0;
 
     vulkanContext->EndFrame();
+    _renderPhases.end = Seconds(Clock::now() - imguiEnd).count() * 1000.0;
 }
 
 void Application::ConfigurePostProcess()

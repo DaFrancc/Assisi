@@ -80,49 +80,34 @@ class MeshBuffer
         // Vertex/index data is deliberately not retained (see file comment).
     }
 
-    /// @brief Copy a mesh's geometry into a fresh GPU staging buffer — the
-    /// worker-thread half of a staged upload. Returns null if the mesh has no
-    /// geometry (or the allocation fails), in which case the caller falls back to
-    /// the direct path.
+    /// @brief Copy a mesh's geometry into @p staging — the worker-thread half of a
+    /// staged upload. @p staging must be at least MeshStagingBytes(meshData) big and
+    /// CPU-writable; the caller supplies it (pooled, so streaming does not churn GPU
+    /// allocations). Returns false if the mesh has no geometry or the map fails.
     ///
-    /// This is where the bulk memcpy happens, and the whole point is that it runs
-    /// on a decode/import worker instead of the main thread: `writeBuffer`'s
-    /// staging copy would otherwise run on whichever thread records it, making the
-    /// main-thread publish O(mesh bytes). Free-threaded — `createBuffer` touches no
-    /// shared device state, and `mapBuffer` on a brand-new buffer takes no GPU wait
-    /// (nothing has used it yet).
+    /// This is where the bulk memcpy happens, and the whole point is that it runs on
+    /// a decode/import worker instead of the main thread: `writeBuffer`'s staging
+    /// copy would otherwise run on whichever thread records it, making the
+    /// main-thread publish O(mesh bytes). Free-threaded — `mapBuffer` on a buffer
+    /// whose previous submit has retired takes no GPU wait.
     ///
     /// Layout: vertices at offset 0, then indices — what
     /// GeometryArena::AllocateStaged expects. nvrhi rejects `writeBuffer` on a
     /// mappable buffer, so the fill goes through map + memcpy + unmap by necessity.
-    static nvrhi::BufferHandle StageMeshGeometry(nvrhi::IDevice *device, const Geometry::MeshData &meshData,
-                                                 const char *debugName = nullptr)
+    static bool StageMeshGeometry(nvrhi::IDevice *device, nvrhi::IBuffer *staging,
+                                  const Geometry::MeshData &meshData)
     {
-        const uint64_t vertexBytes = meshData.Vertices.size() * sizeof(Geometry::Vertex);
-        const uint64_t indexBytes = meshData.Indices.size() * sizeof(uint32_t);
-        if (vertexBytes + indexBytes == 0)
+        const uint64_t vertexBytes = MeshVertexBytes(meshData);
+        const uint64_t indexBytes = MeshIndexBytes(meshData);
+        if (staging == nullptr || vertexBytes + indexBytes == 0)
         {
-            return nullptr;
-        }
-
-        nvrhi::BufferDesc desc;
-        desc.byteSize = vertexBytes + indexBytes;
-        desc.cpuAccess = nvrhi::CpuAccessMode::Write;
-        desc.debugName = debugName != nullptr ? debugName : "MeshStaging";
-        // Every nvrhi buffer gets TRANSFER_SRC|TRANSFER_DST unconditionally, so no
-        // further usage flags are needed to copy out of this.
-        desc.initialState = nvrhi::ResourceStates::CopySource;
-        desc.keepInitialState = true;
-        nvrhi::BufferHandle staging = device->createBuffer(desc);
-        if (staging == nullptr)
-        {
-            return nullptr;
+            return false;
         }
 
         void *mapped = device->mapBuffer(staging, nvrhi::CpuAccessMode::Write);
         if (mapped == nullptr)
         {
-            return nullptr;
+            return false;
         }
         if (vertexBytes > 0)
         {
@@ -133,7 +118,21 @@ class MeshBuffer
             std::memcpy(static_cast<std::byte *>(mapped) + vertexBytes, meshData.Indices.data(), indexBytes);
         }
         device->unmapBuffer(staging);
-        return staging;
+        return true;
+    }
+
+    static uint64_t MeshVertexBytes(const Geometry::MeshData &meshData)
+    {
+        return meshData.Vertices.size() * sizeof(Geometry::Vertex);
+    }
+    static uint64_t MeshIndexBytes(const Geometry::MeshData &meshData)
+    {
+        return meshData.Indices.size() * sizeof(uint32_t);
+    }
+    /// @brief Staging-buffer size a staged upload of @p meshData needs.
+    static uint64_t MeshStagingBytes(const Geometry::MeshData &meshData)
+    {
+        return MeshVertexBytes(meshData) + MeshIndexBytes(meshData);
     }
 
     /// @brief Upload from a staging buffer the worker already filled (see
