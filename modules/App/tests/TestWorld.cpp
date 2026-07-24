@@ -14,6 +14,7 @@
 
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -447,6 +448,115 @@ TEST_CASE("Migrating an entity out from under a ref nulls that ref")
     const auto *parent = dst.scene.Get<Assisi::Runtime::Parent>(moved);
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == Assisi::ECS::NullEntity); // the out-of-set ref nulled
+}
+
+TEST_CASE("Async travel loads in the background then swaps instantly")
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "assisi-world-async-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "levels");
+    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
+
+    {
+        // Physics bodies in the background level, so promotion's worker actually
+        // builds Jolt bodies (in a SEPARATE PhysicsSystem) while the main thread
+        // steps the running world below — the concurrency async travel rests on.
+        Assisi::ECS::Scene scene;
+        for (int32_t i = 0; i < 12; ++i)
+        {
+            const Assisi::ECS::Entity e = scene.Create();
+            (void)scene.Add<Assisi::ECS::Transform>(e);
+            (void)scene.Add<Assisi::Physics::RigidBodyDescriptor>(e, Assisi::Physics::RigidBodyDescriptor{});
+        }
+        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "Big.alvl"));
+    }
+
+    Assisi::Core::JobSystem jobs;
+
+    WorldManager worlds;
+    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
+    World &start = worlds.Create("Start");
+    worlds.SetActive(start);
+    worlds.SetEdited(start);
+    start.state = WorldState::Active;
+
+    // A live dynamic body in the running world, so its Update() does real solver
+    // work (island builder, temp allocator) concurrently with the worker's build.
+    (void)start.physics.AddBody({0.f, 20.f, 0.f}, glm::quat{1.f, 0.f, 0.f, 0.f},
+                                Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
+                                Assisi::Physics::BodyMotion::Dynamic);
+
+    World *const loading = worlds.BeginLoadLevel("levels/Big.alvl");
+    REQUIRE(loading != nullptr);
+    CHECK(loading->state == WorldState::Loading);
+    CHECK(worlds.HasPendingLoad());
+    CHECK(worlds.Active() == &start); // the running world is untouched while it loads
+    CHECK(worlds.PendingLoadPath() == "levels/Big.alvl");
+
+    // The current world keeps stepping while the load runs on a worker — this is
+    // where a worker building bodies would collide with the main thread if the
+    // per-world isolation were wrong.
+    start.simulate = true;
+    for (int32_t i = 0; i < 200 && !worlds.PendingLoadReady(); ++i)
+    {
+        start.physics.Update(1.f / 60.f);
+        start.physics.CaptureState();
+    }
+
+    // Promote — blocks only if the worker is somehow still going; either way the
+    // swap itself is a repoint.
+    World *const arrived = worlds.PromotePendingLoad();
+    REQUIRE(arrived != nullptr);
+    CHECK(arrived == loading);
+    CHECK(worlds.Active() == arrived);
+    CHECK(arrived->state == WorldState::Active);
+    CHECK_FALSE(worlds.HasPendingLoad());
+
+    std::size_t count = 0;
+    arrived->scene.ForEachEntity([&count](Assisi::ECS::Entity) { ++count; });
+    CHECK(count == 12u); // the background-loaded scene really is here
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("A pending background load is safely abandoned on cancel")
+{
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "assisi-world-async-cancel-test";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "levels");
+    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
+    {
+        Assisi::ECS::Scene scene;
+        (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
+        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "X.alvl"));
+    }
+
+    Assisi::Core::JobSystem jobs;
+    WorldManager            worlds;
+    worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
+    World &start = worlds.Create("Start");
+    worlds.SetActive(start);
+    worlds.SetEdited(start);
+
+    REQUIRE(worlds.BeginLoadLevel("levels/X.alvl") != nullptr);
+    CHECK(worlds.Count() == 2u);
+
+    // Cancel waits the worker out and drops the half-built world; the active one
+    // is untouched. (This is the path Stop and teardown take.)
+    worlds.CancelPendingLoad();
+    CHECK_FALSE(worlds.HasPendingLoad());
+    CHECK(worlds.Count() == 1u);
+    CHECK(worlds.Active() == &start);
+
+    // A failed preload (missing level) promotes to nullptr and leaves nothing behind.
+    REQUIRE(worlds.BeginLoadLevel("levels/Missing.alvl") != nullptr);
+    CHECK(worlds.PromotePendingLoad() == nullptr);
+    CHECK(worlds.Count() == 1u);
+    CHECK(worlds.Active() == &start);
+
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")

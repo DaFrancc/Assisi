@@ -15,6 +15,13 @@
 namespace Assisi::App
 {
 
+WorldManager::~WorldManager()
+{
+    // A background load must never outlive the worlds it writes into. This waits
+    // the worker out (there is no cancellation token) before _worlds is destroyed.
+    CancelPendingLoad();
+}
+
 World &WorldManager::Create(std::string_view label)
 {
     std::unique_ptr<World> world = std::make_unique<World>();
@@ -23,6 +30,43 @@ World &WorldManager::Create(std::string_view label)
     World &ref = *world;
     _worlds.push_back(std::move(world));
     return ref;
+}
+
+void WorldManager::EraseWorld(World &world)
+{
+    const std::string name = world.name;
+    std::erase_if(_worlds, [&name](const std::unique_ptr<World> &w) { return w->name == name; });
+}
+
+World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
+{
+    World *const outgoing = (_active == &incoming) ? nullptr : _active;
+
+    incoming.levelPath = std::move(levelPath);
+    incoming.state     = WorldState::Active;
+    incoming.simulate  = true;
+    _active            = &incoming;
+
+    if (outgoing != nullptr)
+    {
+        // Anything the outgoing world queued for destruction is applied now — the
+        // world may be about to disappear, and if it is the edited one those
+        // destroys must not surface later as a surprise on Stop.
+        outgoing->scene.FlushDestroyed();
+        outgoing->simulate = false;
+
+        if (outgoing == _edited)
+        {
+            // The authored level stays resident so Stop can restore it.
+            outgoing->state = WorldState::Dormant;
+        }
+        else
+        {
+            outgoing->state = WorldState::Unloading;
+            EraseWorld(*outgoing);
+        }
+    }
+    return &incoming;
 }
 
 bool WorldManager::Destroy(std::string_view name)
@@ -70,6 +114,10 @@ const World *WorldManager::Find(std::string_view name) const
 
 World *WorldManager::LoadLevel(std::string_view levelPath)
 {
+    // A synchronous travel supersedes any background preload — wait it out and
+    // drop it rather than racing two loads.
+    CancelPendingLoad();
+
     World *const outgoing = _active;
 
     World &incoming = Create("Level");
@@ -98,40 +146,138 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
         // half-built one and leave everything else exactly as it was.
         Core::Log::Error("Travel to '{}' failed; staying in '{}'.", levelPath,
                          outgoing != nullptr ? outgoing->name : std::string_view{"(none)"});
-        const std::string name = incoming.name;
-        std::erase_if(_worlds, [&name](const std::unique_ptr<World> &w) { return w->name == name; });
+        EraseWorld(incoming);
         return nullptr;
     }
 
-    incoming.levelPath = std::string(levelPath);
-    incoming.state     = WorldState::Active;
-    incoming.simulate  = true;
-    _active            = &incoming;
+    World *const result = SwapToActive(incoming, std::string(levelPath));
+    Core::Log::Info("Travel: now in '{}' ({}), {} world(s) resident.", result->name, levelPath,
+                    _worlds.size());
+    return result;
+}
 
-    if (outgoing != nullptr && outgoing != &incoming)
+// ---------------------------------------------------------------------------
+// Async travel (S5)
+// ---------------------------------------------------------------------------
+
+World *WorldManager::BeginLoadLevel(std::string_view levelPath)
+{
+    if (_pending)
     {
-        // Anything the outgoing world queued for destruction is applied now — the
-        // world may be about to disappear, and if it is the edited one those
-        // destroys must not surface later as a surprise on Stop.
-        outgoing->scene.FlushDestroyed();
-        outgoing->simulate = false;
-
-        if (outgoing == _edited)
-        {
-            // The authored level stays resident so Stop can restore it.
-            outgoing->state = WorldState::Dormant;
-        }
-        else
-        {
-            outgoing->state = WorldState::Unloading;
-            const std::string name = outgoing->name;
-            std::erase_if(_worlds, [&name](const std::unique_ptr<World> &w) { return w->name == name; });
-        }
+        Core::Log::Warn("BeginLoadLevel('{}') ignored: a background load ('{}') is already pending.",
+                        levelPath, _pending->path);
+        return nullptr;
     }
 
-    Core::Log::Info("Travel: now in '{}' ({}), {} world(s) resident.", incoming.name, levelPath,
-                    _worlds.size());
+    World &incoming = Create("Level");
+    incoming.state  = WorldState::Loading;
+
+    const std::string path(levelPath);
+
+    if (_services.jobs == nullptr)
+    {
+        // No scheduler: do the worker half inline. Still correct — just the hitch
+        // async travel exists to avoid. Ready for promotion immediately.
+        const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path);
+        if (ok)
+            incoming.physics.RebuildSceneBodies(incoming.scene);
+        _pending = PendingLoad{.world = &incoming, .task = {}, .path = path, .syncResult = ok};
+        return &incoming;
+    }
+
+    // The worker touches ONLY this world's scene and physics — both untouched by
+    // anything else while Loading — plus a copied path. No cache, no renderer, no
+    // manager state. The world address is stable, so capturing it is safe across
+    // any _worlds reallocation the main thread may do meanwhile.
+    World *const w = &incoming;
+    Core::Task<bool> task = _services.jobs->Run(Core::Pool::Worker,
+                                                [w, path]() -> bool
+                                                {
+                                                    if (!Runtime::SceneSerializer::LoadFromFile(w->scene, path))
+                                                        return false;
+                                                    w->physics.RebuildSceneBodies(w->scene);
+                                                    return true;
+                                                });
+
+    _pending = PendingLoad{.world = &incoming, .task = std::move(task), .path = path, .syncResult = std::nullopt};
+    Core::Log::Info("Preload: '{}' loading in the background (world '{}').", path, incoming.name);
     return &incoming;
+}
+
+bool WorldManager::PendingLoadReady() const
+{
+    if (!_pending)
+        return false;
+    if (_pending->syncResult.has_value())
+        return true; // synchronous fallback finished in BeginLoadLevel
+    return _pending->task.IsValid() && _pending->task.IsComplete();
+}
+
+std::string_view WorldManager::PendingLoadPath() const
+{
+    return _pending ? std::string_view{_pending->path} : std::string_view{};
+}
+
+World *WorldManager::PromotePendingLoad()
+{
+    if (!_pending)
+        return nullptr;
+
+    // Take the result. If the worker has not finished, block on it (help-waiting)
+    // — the "swap now even though it isn't ready" path.
+    bool ok = false;
+    if (_pending->syncResult.has_value())
+    {
+        ok = *_pending->syncResult;
+    }
+    else if (_pending->task.IsValid())
+    {
+        _pending->task.Wait();
+        ok = _pending->task.Get();
+    }
+
+    World *const     incoming = _pending->world;
+    const std::string path    = _pending->path;
+    _pending.reset();
+
+    if (!ok)
+    {
+        Core::Log::Error("Preload of '{}' failed; discarding it, active world unchanged.", path);
+        EraseWorld(*incoming);
+        return nullptr;
+    }
+
+    // The GPU half the worker could not do: resolve this world's assets on the
+    // main thread. Streaming upgrades the placeholders over the next frames,
+    // exactly as on a normal load. Headless (no cache) skips it.
+    if (_services.cache != nullptr && _services.database != nullptr)
+    {
+        Runtime::ResolveSceneAssets(incoming->scene, *_services.cache, *_services.database);
+        incoming->streamingPending = true;
+    }
+
+    World *const result = SwapToActive(*incoming, path);
+    Core::Log::Info("Preload promoted: now in '{}' ({}), {} world(s) resident.", result->name, path,
+                    _worlds.size());
+    return result;
+}
+
+void WorldManager::CancelPendingLoad()
+{
+    if (!_pending)
+        return;
+
+    // No cancellation token exists yet, so "cancel" means wait the worker out and
+    // throw the result away — the worker is writing into this world's scene, and
+    // freeing it from under a live worker would be a use-after-free.
+    if (!_pending->syncResult.has_value() && _pending->task.IsValid())
+        _pending->task.Wait();
+
+    World *const incoming = _pending->world;
+    const std::string path = _pending->path;
+    _pending.reset();
+    EraseWorld(*incoming);
+    Core::Log::Info("Preload of '{}' cancelled and discarded.", path);
 }
 
 ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root)
@@ -241,6 +387,11 @@ bool WorldManager::SweepAssetCache()
 
 std::size_t WorldManager::DestroyAllExcept(World &keep)
 {
+    // A background load in flight would be writing into a world this is about to
+    // free (or into `keep` if that is the pending world — it never is, since the
+    // pending world holds no role). Wait it out and drop it first.
+    CancelPendingLoad();
+
     _active = &keep;
     _edited = &keep;
 

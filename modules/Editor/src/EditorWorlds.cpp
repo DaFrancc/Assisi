@@ -93,6 +93,35 @@ void EditorApp::MigrateSelectionTo(const std::string &targetWorld)
     (void)moved;
 }
 
+void EditorApp::BeginPreload(const std::string &virtualPath)
+{
+    if (!Assisi::Core::AssetSystem::Exists(virtualPath))
+    {
+        Assisi::Core::Log::Error("Preload: '{}' not found under the asset root.", virtualPath);
+        return;
+    }
+    // The load runs on a worker; the current world keeps simulating. Readiness is
+    // polled in the Game panel, and the swap is a separate, deliberate step.
+    _worlds.BeginLoadLevel(virtualPath);
+}
+
+void EditorApp::PromotePreloadedWorld()
+{
+    if (!_worlds.HasPendingLoad())
+        return;
+
+    // As with travel, discard the pause scratch history first: promotion can
+    // retire the world it binds. Then swap (instant) and show the arrival.
+    _pausedHistory.reset();
+
+    Assisi::App::World *const arrived = _worlds.PromotePendingLoad();
+    if (arrived == nullptr)
+        return; // promotion logged the failure; nothing changed
+
+    SetActiveWorld(*arrived);
+    _worlds.SweepAssetCache();
+}
+
 bool EditorApp::TravelToLevel(const std::string &virtualPath)
 {
     if (!Assisi::Core::AssetSystem::Exists(virtualPath))

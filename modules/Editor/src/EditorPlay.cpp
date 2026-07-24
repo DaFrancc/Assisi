@@ -120,6 +120,8 @@ void EditorApp::StopPlay()
     _pendingWorldLoad.reset();
     _pendingTravel.reset();
     _pendingMigrate.reset();
+    _pendingPreload.reset();
+    _pendingPromote = false;
     DestroyPlayWorlds();
 
     // Runs unconditionally, including for an empty snapshot: entering Play on an
@@ -407,6 +409,45 @@ void EditorApp::DrawGameControlWindow()
         ImGui::SetTooltip("During play only. Changes level to the one selected in the Levels window "
                           "without leaving Play — the world you were in is retired. Stop still "
                           "returns to the level you were editing, with its undo history.");
+    }
+
+    // Async travel (S5): a background preload, then an instant swap. This is
+    // "Travel here" split into two — the load runs on a worker while this world
+    // keeps simulating uninterrupted, and the swap only happens when you press it.
+    const bool loadingInFlight = _worlds.HasPendingLoad();
+    const bool preloadReady     = _worlds.PendingLoadReady();
+    const bool canPreload =
+        (playing || paused) && !_levelFiles.empty() && !loadingInFlight && !_pendingPreload.has_value();
+    ImGui::BeginDisabled(!canPreload);
+    if (ImGui::Button("Preload") && canPreload)
+    {
+        _pendingPreload = "levels/" + _levelFiles[static_cast<std::size_t>(_selectedLevel)] + ".alvl";
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("During play only. Starts loading the selected level on a worker thread — "
+                          "this world keeps simulating with no hitch. Press \"Swap to preloaded\" when "
+                          "it is ready for an instant transition.");
+    }
+
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!loadingInFlight);
+    if (ImGui::Button("Swap to preloaded") && loadingInFlight)
+    {
+        _pendingPromote = true; // marshalled: promotion resolves/frees GPU assets
+    }
+    ImGui::EndDisabled();
+
+    if (loadingInFlight)
+    {
+        ImGui::SameLine();
+        if (preloadReady)
+            ImGui::TextDisabled("ready: %.*s", static_cast<int>(_worlds.PendingLoadPath().size()),
+                                _worlds.PendingLoadPath().data());
+        else
+            ImGui::TextDisabled("loading %.*s...", static_cast<int>(_worlds.PendingLoadPath().size()),
+                                _worlds.PendingLoadPath().data());
     }
 
     // Destroying the shown world needs a successor to show, and neither role may

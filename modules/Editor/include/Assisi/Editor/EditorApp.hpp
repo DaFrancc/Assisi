@@ -266,6 +266,13 @@ class EditorApp : public Assisi::App::Application
     /// resident world, then clears the selection. Debug stand-in for the
     /// game marking entities as travelling.
     void MigrateSelectionTo(const std::string &targetWorld);
+    /// @brief Starts a background preload of @p virtualPath — the running world
+    /// keeps simulating. Poll via _worlds.PendingLoadReady(); swap with
+    /// PromotePreloadedWorld(). The async form of TravelToLevel.
+    void BeginPreload(const std::string &virtualPath);
+    /// @brief Swaps the finished preload in as active (instant) and shows it,
+    /// then sweeps the asset cache. No-op if nothing is preloaded.
+    void PromotePreloadedWorld();
     /// @brief Destroys every world the play session created and shows the edited
     /// one again. Called by StopPlay before it restores the snapshot.
     void DestroyPlayWorlds();
@@ -654,6 +661,11 @@ class EditorApp : public Assisi::App::Application
     // Same marshalling for "Migrate selection": migration rebuilds physics
     // bodies and resolves meshes, so it runs at the pre-update safe point.
     std::optional<std::string> _pendingMigrate;
+    // Async travel (S5): "Preload" starts a background load; "Swap" promotes it.
+    // Both marshalled — BeginLoadLevel mutates the world store, and promotion
+    // resolves/frees GPU assets, so neither may run mid-ImGui.
+    std::optional<std::string> _pendingPreload;
+    bool                       _pendingPromote = false;
 };
 
 } // namespace Assisi::Editor

@@ -88,7 +88,10 @@ void EditorApp::OnStart()
 
     // What the manager needs to turn a level file into a running world when the
     // game travels. Installed once; captured by pointer, and all three outlive it.
-    _worlds.SetServices({.cache = &_assetCache, .database = &_assetDatabase, .renderer = &_sceneRenderer});
+    _worlds.SetServices({.cache    = &_assetCache,
+                         .database = &_assetDatabase,
+                         .renderer = &_sceneRenderer,
+                         .jobs     = &Jobs()});
 
     // The editor's starting world. It holds both roles: active (rendered,
     // input-driven) and edited (saved, dirtied, undone into). Opening a level
@@ -694,16 +697,32 @@ void EditorApp::OnUpdate(float dt)
         _pendingMigrate.reset();
         MigrateSelectionTo(target);
     }
+    if (_pendingPreload)
+    {
+        const std::string request = *_pendingPreload;
+        _pendingPreload.reset();
+        BeginPreload(request);
+    }
+    if (_pendingPromote)
+    {
+        _pendingPromote = false;
+        PromotePreloadedWorld();
+    }
 
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // EditorLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in
     // asynchronously. Upgrade placeholders in place while loads are in flight.
     // Every resident world streams: a world you are not currently looking at would
-    // otherwise keep its billboard placeholders forever.
+    // otherwise keep its billboard placeholders forever. A world still Loading in
+    // the background is skipped — a worker owns its scene until promotion.
     _worlds.ForEach([this](Assisi::App::World &world)
-                    { Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
-                                                          world.streamingPending); });
+                    {
+                        if (world.state == Assisi::App::WorldState::Loading)
+                            return;
+                        Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
+                                                            world.streamingPending);
+                    });
 
     // Worlds that simulate but are not drawn get neither the pose write-back nor
     // the transform propagation the render path does for the world it draws. Give
@@ -734,8 +753,13 @@ void EditorApp::FlushDeferred()
     // after RenderFrame, so a destroyed entity lives out its final frame before
     // its pools are touched — keeping structural changes out of any mid-frame Query.
     // Per world: a resident world's queued destroys must flush too, or they pile up
-    // until it is next shown and then all land at once.
-    _worlds.ForEach([](Assisi::App::World &world) { world.scene.FlushDestroyed(); });
+    // until it is next shown and then all land at once. A world still Loading in the
+    // background is skipped — its scene belongs to a worker until promotion.
+    _worlds.ForEach([](Assisi::App::World &world)
+                    {
+                        if (world.state != Assisi::App::WorldState::Loading)
+                            world.scene.FlushDestroyed();
+                    });
 }
 
 // ---------------------------------------------------------------------------

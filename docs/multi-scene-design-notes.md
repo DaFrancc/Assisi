@@ -1,7 +1,7 @@
 # Multi-Scene Design Notes
 
 Branch: `multi-scene` (off `dev`, merges back to `dev`).
-Status: **S1-S4 built** (see §4); S5 (async travel) designed, not started.
+Status: **S1-S5 built** (see §4) — multi-scene feature-complete on this branch.
 
 Two features any real game needs, neither of which the engine can express
 today:
@@ -134,9 +134,14 @@ store). Rules:
   globals (allocator/Factory/RegisterTypes) must be acquired before *any*
   Jolt allocation including the pool's construction — the service does its
   own Acquire/Release of the existing refcounted globals and is declared to
-  outlive every World. Sharing one temp allocator is valid only because
-  worlds step **sequentially** in the fixed loop; parallel world stepping
-  would need per-world allocators (noted, not planned).
+  outlive every World. **Correction (found by ThreadSanitizer during S5):**
+  the *thread pool* is shared (that is the anti-oversubscription win), but the
+  temp allocator is **per-world**, not shared. A `TempAllocatorImpl` is a
+  stack used across a step by the pool workers one `Update()` dispatches;
+  sharing it across two worlds' steps aliases the same scratch stack across
+  pool-worker threads with no happens-before edge — a real race TSan flags,
+  even when worlds step sequentially. 10 MiB of scratch per world is cheap and
+  makes stepping safe sequentially or (later) in parallel.
 - **`SystemContext` carries the world** (scene + physics + dt + ...), so game
   systems are world-agnostic — the same system runs in whichever worlds it is
   registered for. **World-affinity rules** (settled during S1, enforced by
@@ -289,8 +294,9 @@ refactor happened; one thread pool total (verified — not one per world).
 role-holder destroy refusal, and — measured against `/proc/self/task` — that
 four extra worlds add zero threads. `ECS::SceneRegistry` retired into the
 manager and deleted. The Jolt globals block in PhysicsWorld.cpp became a
-refcounted `JoltRuntime` holding the one thread pool and temp allocator,
-acquired as `Impl`'s first member so the ordering is right by construction.
+refcounted `JoltRuntime` holding the one shared thread pool (the temp
+allocator stayed per-world — see the §1 correction), acquired as `Impl`'s
+first member so the ordering is right by construction.
 `SceneRenderer::Render` gained an overload taking the propagation bookmark,
 which now lives in the world; the single-scene overload keeps the renderer's
 own. The editor's `_scene`/`_physics` are the active world's, `SetPlayState`
@@ -383,10 +389,31 @@ out from under its parent nulls the dangling Parent ref. The editor exposes it
 as per-target "-> World" buttons under the Game panel's selection (play,
 ≥2 worlds, an entity selected), marshalled to the pre-update safe point.
 
-**S5 — Async travel + docs.** Background world load with swap-on-ready and a
-loading-screen hook; update this doc's status, remaining-work.md, and memory.
+**S5 — Async travel + docs. BUILT.** Background world load with swap-on-ready
+and a loading-screen hook; update this doc's status, remaining-work.md, and
+memory.
 *DoD*: travel from a heavy level shows the old world simulating until the
 swap (no multi-second hitch), verified with the frame profiler.
+
+*As built*: `WorldManager::BeginLoadLevel` starts the load on a
+`Core::JobSystem` worker (installed via `Services.jobs`); the worker does only
+the thread-safe halves — deserialize into the Loading world's scene and build
+its Jolt bodies (a separate `PhysicsSystem`, its own per-world temp allocator,
+so no contention with the stepping world). `PendingLoadReady()` polls;
+`PromotePendingLoad()` does the GPU half (asset resolve) on the main thread and
+the O(1) swap, reusing the same `SwapToActive` travel uses. `CancelPendingLoad`
+waits the worker out (no cancellation token yet) and drops the half-built
+world; the destructor, Stop (`DestroyAllExcept`), and a superseding sync
+`LoadLevel` all route through it, so a worker is never left writing into a freed
+world. With no jobs service the load runs inline (still correct). The editor
+exposes it as **Preload** + **Swap to preloaded** in the Game panel, both
+marshalled to the pre-update safe point; the per-frame streaming/flush loops
+skip a `Loading` world so the main thread never touches a scene the worker owns.
+*ThreadSanitizer:* the async path is race-free — the only warnings under TSan
+are inside Jolt's own threaded solver (`PhysicsSystem::Update` jobs) and
+reproduce with a single stepping world, so they are pre-existing Jolt+TSan
+noise, not from this work. The one genuine race TSan found (the shared temp
+allocator) is fixed above.
 
 Order: strictly serial. S1 is the load-bearing refactor and must merge to
 `dev` early (see §3 merge-order note).

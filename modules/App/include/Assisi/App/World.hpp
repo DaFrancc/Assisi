@@ -18,12 +18,14 @@
 /// edited world. Multiple residents (S2) and in-play level change (S3) build on
 /// this without touching the panels.
 
+#include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -113,6 +115,15 @@ struct World
 class WorldManager
 {
   public:
+    WorldManager() = default;
+
+    /// Waits out any in-flight background load before the worlds are destroyed —
+    /// a worker must never be left writing into freed scene/physics.
+    ~WorldManager();
+
+    WorldManager(const WorldManager &)            = delete;
+    WorldManager &operator=(const WorldManager &) = delete;
+
     /// @brief Creates a world and returns it. The name is generated from
     /// @p label plus a monotonic counter, so callers never collide and two
     /// worlds of the same level are distinguishable.
@@ -171,6 +182,9 @@ class WorldManager
         Render::AssetCache        *cache    = nullptr;
         const Core::AssetDatabase *database = nullptr;
         Runtime::SceneRenderer    *renderer = nullptr;
+        /// The scheduler async travel loads on. Null → BeginLoadLevel falls back
+        /// to a synchronous load (still correct, just hitches).
+        Core::JobSystem           *jobs = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
 
@@ -218,6 +232,61 @@ class WorldManager
     /// @p dst is unknown to this manager, or @p root is not alive in @p src.
     ECS::Entity MigrateEntity(World &src, World &dst, ECS::Entity root);
 
+    // --- Async travel (S5) ---------------------------------------------------
+    //
+    // Travel in three moves instead of one, so a heavy level never hitches the
+    // running world: begin a background load, let it finish while the current
+    // world keeps simulating, then swap when you choose to. The swap is O(1) —
+    // all the cost (parsing the file, building the Jolt bodies) was paid on a
+    // worker.
+    //
+    // What is safe off the main thread, and why it is split this way: a Loading
+    // world's scene and physics are touched by nobody else (the fixed loop skips
+    // it, the renderer never draws it), so deserializing into it and building its
+    // Jolt bodies — a *separate* PhysicsSystem from the one being stepped — runs
+    // on a worker with no contention. Resolving its GPU assets is NOT thread-safe,
+    // so that half waits for the main-thread promotion, after which assets stream
+    // in exactly as on any load.
+
+    /// @brief Starts loading @p levelPath into a new Loading world on a worker,
+    /// without disturbing the active world. Poll PendingLoadReady(); swap with
+    /// PromotePendingLoad(). With no jobs service the load runs synchronously and
+    /// is ready immediately.
+    ///
+    /// @return the Loading world (address stable), or nullptr if a load is
+    /// already pending (one at a time) or the world could not be created.
+    World *BeginLoadLevel(std::string_view levelPath);
+
+    /// @brief True when a background load has finished its worker half and is
+    /// ready for an instant PromotePendingLoad(). False if none is pending or it
+    /// is still loading.
+    [[nodiscard]] bool PendingLoadReady() const;
+
+    /// @brief Whether a background load is in flight or awaiting promotion.
+    [[nodiscard]] bool HasPendingLoad() const { return _pending.has_value(); }
+
+    /// @brief The level path of the pending load, or "" if none.
+    [[nodiscard]] std::string_view PendingLoadPath() const;
+
+    /// @brief Swaps the finished background world in as active, retiring the
+    /// outgoing world (the edited world goes dormant; a play world is destroyed) —
+    /// the same swap travel does, but instant. Resolves the new world's GPU assets
+    /// first (the half the worker could not do), so streaming pop-in follows
+    /// exactly as on a normal load. If the load is not ready yet this blocks
+    /// (help-waiting) until it is — the "swap now anyway" path.
+    ///
+    /// @return the promoted world, or nullptr if none was pending or the load
+    /// failed (in which case the half-built world is destroyed and the active
+    /// world is untouched). Call only at a frame safe point (it may resolve/free
+    /// GPU assets), never between BeginFrame and EndFrame.
+    World *PromotePendingLoad();
+
+    /// @brief Abandons a pending load: waits out the worker (there is no
+    /// cancellation token yet) and destroys the half-built world. Used by teardown
+    /// and by Stop, which must not leave a worker writing into a world it is about
+    /// to free.
+    void CancelPendingLoad();
+
     /// @brief Reclaims GPU memory after a travel, when it is safe to.
     ///
     /// "Safe" is narrow and deliberately so: every live world's MeshRenderers
@@ -247,6 +316,29 @@ class WorldManager
     World        *_edited = nullptr;
     std::uint32_t _nextId = 1;
     Services      _services;
+
+    // An in-flight or ready-to-promote background load. The worker fills
+    // `world`'s scene + physics and returns whether it succeeded; a synchronous
+    // fallback (no jobs service) records the same result in `syncResult` with an
+    // invalid task. At most one at a time.
+    struct PendingLoad
+    {
+        World                 *world = nullptr;
+        Core::Task<bool>       task;                 ///< Invalid in the sync path.
+        std::string            path;
+        std::optional<bool>    syncResult;           ///< Set (only) by the sync fallback.
+    };
+    std::optional<PendingLoad> _pending;
+
+    // Makes @p incoming the active world and retires whoever was active — the
+    // edited world goes dormant, any other outgoing world is destroyed. Shared by
+    // synchronous LoadLevel and async PromotePendingLoad.
+    World *SwapToActive(World &incoming, std::string levelPath);
+
+    // Removes @p world from the store unconditionally (no role checks). Used for
+    // half-built worlds that never held a role. Safe to call with a dangling name
+    // capture only after any worker touching it has finished.
+    void EraseWorld(World &world);
 };
 
 /// @brief Brings a simulated-but-unrendered world's Transforms up to date, in the

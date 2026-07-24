@@ -108,16 +108,15 @@ class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
 // Shared Jolt runtime
 // ---------------------------------------------------------------------------
 
-/* Everything a PhysicsWorld needs from Jolt that is *not* per-world state: the
-   library globals (allocator, Factory, type registration), plus the job-system
-   thread pool and scratch allocator that Update() hands to PhysicsSystem.
-   Multi-scene runs several PhysicsWorlds side by side (docs/multi-scene-design-
-   notes.md §1); a pool per world would spawn hardware_concurrency() threads per
-   resident level and oversubscribe the machine, so the pool is shared and every
-   world steps against it.
+/* The Jolt state that is genuinely process-global and worth sharing across every
+   PhysicsWorld: the library globals (allocator, Factory, type registration) and
+   the job-system thread pool. Multi-scene runs several PhysicsWorlds side by side
+   (docs/multi-scene-design-notes.md §1); a pool per world would spawn
+   hardware_concurrency() threads *per resident level* and oversubscribe the
+   machine, so the pool is shared and every world's Update() dispatches onto it.
 
-   Refcounted rather than a leaked singleton so a process that stops using
-   physics gives its worker threads back, and so construction order is correct by
+   Refcounted rather than a leaked singleton so a process that stops using physics
+   gives its worker threads back, and so construction order is correct by
    construction: the globals are registered before the pool is built (Jolt
    allocates through its own allocator, which RegisterDefaultAllocator installs),
    and the pool outlives every PhysicsWorld that could still be stepping —
@@ -126,14 +125,17 @@ class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
    Atomic so worlds constructed/destroyed on different threads can't lose a count
    and double-free the factory.
 
-   Sharing ONE temp allocator across worlds is only valid because worlds step
-   sequentially in the fixed-update loop — the allocator is a stack, and two
-   concurrent Update() calls would interleave their frames. Stepping worlds in
-   parallel would need a temp allocator per world (the pool itself is fine to
-   share; Jolt is built for that). */
+   The scratch allocator is deliberately NOT here — it is per-world (see Impl).
+   TempAllocatorImpl is a stack, used throughout a step by the pool workers a
+   single Update() dispatches; two worlds' Update()s sharing one would interleave
+   their frames. Sharing it was only ever "safe" while worlds stepped strictly
+   sequentially, and even then the accesses cross pool-worker threads without a
+   happens-before edge (a real data race ThreadSanitizer flags). A per-world
+   allocator is 10 MiB of scratch each — cheap — and makes stepping safe whether
+   worlds run sequentially or (later) in parallel. The pool stays shared; Jolt is
+   built for many PhysicsSystems on one JobSystem. */
 struct JoltRuntime
 {
-    JPH::TempAllocatorImpl   tempAlloc{10u * 1024u * 1024u}; // 10 MiB
     JPH::JobSystemThreadPool jobSystem{JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
                                        static_cast<int>(std::thread::hardware_concurrency()) - 1};
 };
@@ -176,7 +178,6 @@ class JoltRuntimeRef
     JoltRuntimeRef(const JoltRuntimeRef &) = delete;
     JoltRuntimeRef &operator=(const JoltRuntimeRef &) = delete;
 
-    JPH::TempAllocator       &TempAlloc() const { return gJoltRuntime->tempAlloc; }
     JPH::JobSystemThreadPool &JobSystem() const { return gJoltRuntime->jobSystem; }
 };
 
@@ -209,6 +210,10 @@ struct PhysicsWorld::Impl
     BPLayerInterface bpLayerInterface;
     ObjVsBPFilter objVsBPFilter;
     ObjLayerFilter objLayerFilter;
+
+    // Per-world scratch for this world's Update() (see JoltRuntime for why it is
+    // not shared). Constructed after `jolt`, so the Jolt allocator is installed.
+    JPH::TempAllocatorImpl tempAlloc{10u * 1024u * 1024u}; // 10 MiB
 
     JPH::PhysicsSystem physicsSystem;
 
@@ -417,9 +422,11 @@ void PhysicsWorld::RemoveBody(const RigidBody &body)
 
 void PhysicsWorld::Update(float deltaTime)
 {
-    /* Pool and scratch allocator are per-call arguments, which is what lets every
-       world share one set (see JoltRuntime). Worlds step sequentially. */
-    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->jolt.TempAlloc(),
+    /* This world's own scratch allocator, and the shared thread pool. Both are
+       Update() arguments; the pool is shared (one set of workers), the allocator
+       is per-world so two worlds' steps never touch the same scratch stack (see
+       JoltRuntime). */
+    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc,
                                 &_impl->jolt.JobSystem());
 }
 
