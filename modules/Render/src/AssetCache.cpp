@@ -83,22 +83,8 @@ Core::AssetId ChannelId(const Geometry::MaterialData &data, std::size_t channel)
     }
 }
 
-// One channel's decoded image, produced on a worker. `image` is empty for an
-// unset channel or one whose decode failed (→ the prim:// fallback at publish);
-// `path` keys the texture cache so a texture shared across materials uploads once.
-struct DecodedChannel
-{
-    std::optional<DecodedImage> image;
-    Core::AssetPath             path;
-};
-
-// The full result of a material load job: the parsed data plus every channel's
-// decoded pixels, ready for the main thread to upload and build.
-struct MaterialLoadBundle
-{
-    Geometry::MaterialData        data;
-    std::array<DecodedChannel, 5> channels;
-};
+// (DecodedChannel and MaterialLoadBundle are private nested types of AssetCache —
+// OnMaterialLoaded takes a MaterialLoadBundle by value, so they live in the header.)
 } // namespace
 
 void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace)
@@ -203,49 +189,16 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
     if (_meshLoading.contains(path))
         return nullptr;
 
+    // Queue the load as data; PumpLoadQueue starts it only when fewer than
+    // _maxConcurrentLoads are running, so a whole level's worth of loads don't all
+    // decode at once and starve the main thread. The path enters _meshLoading now
+    // (queued counts as pending) so the re-resolve loop won't re-request it.
     _meshLoading.insert(path);
-    const uint64_t               epoch    = _loadEpoch.load(std::memory_order_relaxed);
-    const std::atomic<uint64_t> *loadEpoch = &_loadEpoch; // worker reads it to bail early (read-only)
-    Core::AssetPath              loadPath = path;
-    PathToIdFn                   pathToId = _pathToId; // copy: the worker must not touch cache state
-
-    _jobs->Run(Core::Pool::Worker,
-               [loadPath, pathToId, epoch, loadEpoch]() -> std::expected<Geometry::MeshData, Geometry::MeshImportError>
-               {
-                   // Cancel a stale load before doing any import work: if a newer Clear() has already
-                   // superseded this epoch (e.g. the Load button was spammed), skip the expensive
-                   // parse. The main-thread continuation drops it either way; this just avoids the
-                   // wasted CPU for a load nobody is waiting for anymore.
-                   if (loadEpoch->load(std::memory_order_relaxed) != epoch)
-                   {
-                       // Superseded by a newer level load before the import ran; skip the work (the
-                       // continuation drops it anyway). Logged because a cancellation means loads were
-                       // issued faster than they finish — e.g. the Load button being spammed.
-                       Core::Log::Warn("AssetCache: cancelled superseded mesh load for '{}'.", loadPath.View());
-                       return std::unexpected(Geometry::MeshImportError::Cancelled);
-                   }
-                   return Geometry::ImportMesh(loadPath.View(), pathToId);
-               })
-        .Then(Core::Pool::Main,
-              [this, loadPath, epoch](std::expected<Geometry::MeshData, Geometry::MeshImportError> imported) {
-                  if (epoch != _loadEpoch.load(std::memory_order_relaxed))
-                      return; // Stale: the level that asked for this mesh has since unloaded. Return
-                              // WITHOUT erasing the loading marker — Clear() already dropped ours, and
-                              // a current-epoch job for the same path may own the marker now. Erasing
-                              // it would make HasPendingLoads() lie and let a duplicate import double-
-                              // upload the same entry (leaked arena range, wasted id).
-                  _meshLoading.erase(loadPath);
-                  if (!imported)
-                  {
-                      _missingMeshWarned.insert(loadPath);
-                      Core::Log::Warn("AssetCache: no mesh for '{}' ({}), falling back to prim://cube.",
-                                      loadPath.View(), Geometry::ToString(imported.error()));
-                      return; // a later resolve returns the cube
-                  }
-                  MeshBuffer &buffer = _meshes[loadPath];
-                  buffer.Upload(_arena, std::move(*imported));
-                  buffer.SetId(_nextMeshId++);
-              });
+    _pendingLoads.push_back(PendingLoad{.isMaterial = false,
+                                        .path       = path,
+                                        .epoch      = _loadEpoch.load(std::memory_order_relaxed),
+                                        .pathToId   = _pathToId}); // copy: the worker must not touch cache state
+    PumpLoadQueue();
 
     return nullptr; // loading — placeholder for now
 }
@@ -558,96 +511,172 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
     for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
         channelPaths[ch] = PathForId(ChannelId(*data, ch));
 
+    // Queue the load as data; PumpLoadQueue starts it under the concurrency cap.
+    // The path enters _materialLoading now (queued counts as pending). The material
+    // was already parsed above on the main thread (it needs the DB); only the
+    // channel image decode is deferred to a worker.
     _materialLoading.insert(path);
-    const uint64_t               epoch     = _loadEpoch.load(std::memory_order_relaxed);
-    const std::atomic<uint64_t> *loadEpoch = &_loadEpoch; // worker reads it to bail early (read-only)
-    Core::AssetPath              loadPath = path;
-    Geometry::MaterialData       materialData = std::move(*data);
-    Core::JobSystem             *jobs = _jobs; // captured by value; the worker must not touch cache state
-
-    _jobs
-        ->Run(Core::Pool::Worker,
-              [jobs, materialData, channelPaths, epoch, loadEpoch, loadPath]() -> MaterialLoadBundle {
-                  // Cancel a stale load before decoding anything: if a newer Clear() already
-                  // superseded this epoch (Load spammed), skip the channel decodes. The
-                  // continuation drops it regardless; this just avoids the wasted work.
-                  if (loadEpoch->load(std::memory_order_relaxed) != epoch)
-                  {
-                      Core::Log::Warn("AssetCache: cancelled superseded material load for '{}'.", loadPath.View());
-                      return MaterialLoadBundle{};
-                  }
-                  // Worker: decode every channel image, in parallel across the
-                  // channels — a texture-heavy material (e.g. a full glTF PBR set)
-                  // then costs max(channel) rather than sum(channel). Pure CPU over
-                  // copied inputs; each channel writes a disjoint slot, so no
-                  // synchronisation is needed. Nested ParallelFor is deadlock-free
-                  // (the waiting worker runs the sub-tasks itself — help-waiting).
-                  MaterialLoadBundle bundle;
-                  bundle.data = materialData;
-                  jobs->ParallelFor(static_cast<uint32_t>(kChannels.size()), 1,
-                                    [&bundle, &channelPaths](uint32_t begin, uint32_t end) {
-                                        for (uint32_t ch = begin; ch < end; ++ch)
-                                        {
-                                            if (channelPaths[ch].Empty())
-                                                continue; // unset channel → fallback prim at publish
-                                            bundle.channels[ch].path = channelPaths[ch];
-                                            std::expected<DecodedImage, Core::AssetError> img =
-                                                Texture::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
-                                            if (img)
-                                                bundle.channels[ch].image = std::move(*img);
-                                            // a decode failure leaves the image empty → fallback prim at publish
-                                        }
-                                    });
-                  return bundle;
-              })
-        .Then(Core::Pool::Main, [this, loadPath, epoch](MaterialLoadBundle bundle) {
-            if (epoch != _loadEpoch.load(std::memory_order_relaxed))
-                return; // Stale (see ResolveMesh's twin): return before erasing so a stale completion
-                        // can't drop a current-epoch job's loading marker and trigger a duplicate load.
-            _materialLoading.erase(loadPath);
-
-            // Publish (main thread): resolve each channel to a bindless slot, then
-            // build the material and write its table row. Every slot/row written
-            // here is brand new — no draw references this material yet (loading
-            // entities use the fallback), so nothing an in-flight frame reads is
-            // mutated.
-            MaterialTextures textures;
-            uint32_t        *slots[5] = {&textures.baseColor, &textures.normal, &textures.metallicRoughness,
-                                         &textures.occlusion, &textures.emissive};
-            for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
-            {
-                DecodedChannel &dc = bundle.channels[ch];
-                if (dc.image.has_value())
-                {
-                    // Dedup by (path, space): a texture shared across materials is
-                    // uploaded once, even if it was decoded on more than one worker.
-                    const TextureKey key{dc.path, kChannels[ch].space};
-                    if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
-                    {
-                        *slots[ch] = it->second.BindlessIndex();
-                    }
-                    else
-                    {
-                        Texture &texture = _textures[key];
-                        texture.UploadDecoded(_device, *dc.image, std::string(dc.path.View()).c_str());
-                        *slots[ch] = RegisterBindlessTexture(texture);
-                    }
-                    if (kChannels[ch].isNormal)
-                        textures.hasNormalTexture = true;
-                }
-                else
-                {
-                    const Texture *fallback = ResolveTexture(*kChannels[ch].fallback, kChannels[ch].space);
-                    *slots[ch] = fallback != nullptr ? fallback->BindlessIndex() : 0u;
-                }
-            }
-
-            Material &material = _materials[loadPath];
-            material.Create(_device, MintMaterialId(), bundle.data, textures);
-            WriteMaterialToTable(material);
-        });
+    _pendingLoads.push_back(PendingLoad{.isMaterial   = true,
+                                        .path         = path,
+                                        .epoch        = _loadEpoch.load(std::memory_order_relaxed),
+                                        .materialData = std::move(*data),
+                                        .channelPaths = channelPaths});
+    PumpLoadQueue();
 
     return &_fallbackMaterial; // fallback while loading
+}
+
+void AssetCache::PumpLoadQueue()
+{
+    // Start queued loads until the concurrency cap is hit. Called when a load is
+    // queued and again from each load's publish, so a finished load makes room for
+    // the next. Main-thread only — no locking needed.
+    while (_activeLoads < _maxConcurrentLoads && !_pendingLoads.empty())
+    {
+        PendingLoad load = std::move(_pendingLoads.front());
+        _pendingLoads.pop_front();
+        ++_activeLoads;
+        if (load.isMaterial)
+            StartMaterialLoad(std::move(load.path), std::move(load.materialData), load.channelPaths, load.epoch);
+        else
+            StartMeshLoad(std::move(load.path), std::move(load.pathToId), load.epoch);
+    }
+}
+
+void AssetCache::StartMeshLoad(Core::AssetPath path, PathToIdFn pathToId, std::uint64_t epoch)
+{
+    // Import on a worker (pure CPU over copied inputs, touching no cache state),
+    // then publish on the main thread. The worker bails early if a Clear() has
+    // superseded this epoch — saving the parse for a load nobody awaits anymore.
+    const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
+    _jobs
+        ->Run(Core::Pool::Worker,
+              [path, pathToId, epoch, loadEpoch]() -> std::expected<Geometry::MeshData, Geometry::MeshImportError>
+              {
+                  if (loadEpoch->load(std::memory_order_relaxed) != epoch)
+                  {
+                      Core::Log::Warn("AssetCache: cancelled superseded mesh load for '{}'.", path.View());
+                      return std::unexpected(Geometry::MeshImportError::Cancelled);
+                  }
+                  return Geometry::ImportMesh(path.View(), pathToId);
+              })
+        .Then(Core::Pool::Main, [this, path, epoch](std::expected<Geometry::MeshData, Geometry::MeshImportError> r)
+              { OnMeshLoaded(path, epoch, std::move(r)); });
+}
+
+void AssetCache::OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
+                              std::expected<Geometry::MeshData, Geometry::MeshImportError> imported)
+{
+    // A started load has finished (success, failure, or stale): free its slot and
+    // let the next queued load begin.
+    --_activeLoads;
+    PumpLoadQueue();
+
+    if (epoch != _loadEpoch.load(std::memory_order_relaxed))
+        return; // Stale: the level that asked for this mesh has since unloaded. Return WITHOUT
+                // erasing the loading marker — Clear() already dropped ours, and a current-epoch
+                // job for the same path may own it now.
+    _meshLoading.erase(path);
+    if (!imported)
+    {
+        _missingMeshWarned.insert(path);
+        Core::Log::Warn("AssetCache: no mesh for '{}' ({}), falling back to prim://cube.", path.View(),
+                        Geometry::ToString(imported.error()));
+        return; // a later resolve returns the cube
+    }
+    MeshBuffer &buffer = _meshes[path];
+    buffer.Upload(_arena, std::move(*imported));
+    buffer.SetId(_nextMeshId++);
+}
+
+AssetCache::MaterialLoadBundle AssetCache::DecodeMaterialChannels(Geometry::MaterialData data,
+                                                                 std::array<Core::AssetPath, 5> channelPaths,
+                                                                 std::uint64_t                  epoch,
+                                                                 const std::atomic<std::uint64_t> &loadEpoch)
+{
+    if (loadEpoch.load(std::memory_order_relaxed) != epoch)
+        return {}; // superseded before the decode ran; the publish drops it anyway
+
+    // Decode each channel sequentially — one worker per material (a nested
+    // parallel-for would spread a single material across every pool core, exactly
+    // the saturation the concurrency cap exists to prevent). An empty or failed
+    // channel is left without an image → the prim:// fallback at publish.
+    MaterialLoadBundle bundle;
+    bundle.data = std::move(data);
+    for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
+    {
+        if (channelPaths[ch].Empty())
+            continue;
+        bundle.channels[ch].path = channelPaths[ch];
+        std::expected<DecodedImage, Core::AssetError> img =
+            Texture::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
+        if (img)
+            bundle.channels[ch].image = std::move(*img);
+    }
+    return bundle;
+}
+
+void AssetCache::StartMaterialLoad(Core::AssetPath path, Geometry::MaterialData data,
+                                   std::array<Core::AssetPath, 5> channelPaths, std::uint64_t epoch)
+{
+    // The material was parsed on the main thread (it needs the DB); the worker only
+    // decodes the channel images, then the main thread uploads + builds.
+    const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
+    _jobs
+        ->Run(Core::Pool::Worker, [data = std::move(data), channelPaths, epoch, loadEpoch]() mutable
+              { return DecodeMaterialChannels(std::move(data), channelPaths, epoch, *loadEpoch); })
+        .Then(Core::Pool::Main, [this, path, epoch](MaterialLoadBundle bundle)
+              { OnMaterialLoaded(path, epoch, std::move(bundle)); });
+}
+
+void AssetCache::OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, MaterialLoadBundle bundle)
+{
+    --_activeLoads;
+    PumpLoadQueue();
+
+    if (epoch != _loadEpoch.load(std::memory_order_relaxed))
+        return; // Stale (see OnMeshLoaded): return before erasing so a stale completion can't drop
+                // a current-epoch job's loading marker and trigger a duplicate load.
+    _materialLoading.erase(path);
+
+    // Publish: resolve each channel to a bindless slot, then build the material and
+    // write its table row. Every slot/row written here is brand new — no draw
+    // references this material yet (loading entities use the fallback), so nothing
+    // an in-flight frame reads is mutated.
+    MaterialTextures textures;
+    uint32_t        *slots[5] = {&textures.baseColor, &textures.normal, &textures.metallicRoughness,
+                                 &textures.occlusion, &textures.emissive};
+    for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
+    {
+        DecodedChannel &dc = bundle.channels[ch];
+        if (dc.image.has_value())
+        {
+            // Dedup by (path, space): a texture shared across materials is uploaded
+            // once, even if it was decoded on more than one worker.
+            const TextureKey key{dc.path, kChannels[ch].space};
+            if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
+            {
+                *slots[ch] = it->second.BindlessIndex();
+            }
+            else
+            {
+                Texture &texture = _textures[key];
+                texture.UploadDecoded(_device, *dc.image, std::string(dc.path.View()).c_str());
+                *slots[ch] = RegisterBindlessTexture(texture);
+            }
+            if (kChannels[ch].isNormal)
+                textures.hasNormalTexture = true;
+        }
+        else
+        {
+            const Texture *fallback = ResolveTexture(*kChannels[ch].fallback, kChannels[ch].space);
+            *slots[ch] = fallback != nullptr ? fallback->BindlessIndex() : 0u;
+        }
+    }
+
+    Material &material = _materials[path];
+    material.Create(_device, MintMaterialId(), bundle.data, textures);
+    WriteMaterialToTable(material);
 }
 
 void AssetCache::Clear()
@@ -670,6 +699,13 @@ void AssetCache::Clear()
     ++_loadEpoch;
     _meshLoading.clear();
     _materialLoading.clear();
+
+    // Drop loads that were queued but never started (their epoch is now stale
+    // anyway). Loads already running are left to finish and publish; their
+    // continuations decrement _activeLoads and see the bumped epoch, so they drop
+    // their result — no need to touch _activeLoads here (resetting it while a job
+    // is mid-flight would underflow when that job's continuation decrements).
+    _pendingLoads.clear();
 
     _meshes.clear();
     _arena.Reset(); // wholesale free — the MeshBuffers that held ranges are gone.

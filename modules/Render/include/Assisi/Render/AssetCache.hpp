@@ -29,8 +29,12 @@
 /// so a device rebuild regenerates them uniformly. Material paths resolve `.amat`
 /// files (empty/failed -> a neutral fallback material).
 
+#include <array>
+#include <optional>
+#include <expected>
 #include <atomic>
 #include <cstdint>
+#include <deque>
 #include <functional>
 #include <string_view>
 #include <unordered_map>
@@ -44,6 +48,7 @@
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Geometry/MaterialData.hpp>
 #include <Assisi/Geometry/MeshData.hpp>
+#include <Assisi/Geometry/MeshImporter.hpp>
 #include <Assisi/Render/Buffer.hpp>
 #include <Assisi/Render/GeometryArena.hpp>
 #include <Assisi/Render/Material.hpp>
@@ -168,6 +173,15 @@ class AssetCache
     /// (not per scene). Lets a preload show a streaming-progress percentage by
     /// comparing against the count captured when its resolve began.
     std::size_t PendingLoadCount() const { return _meshLoading.size() + _materialLoading.size(); }
+
+    /// @brief Cap on how many mesh/material loads decode concurrently. Streaming a
+    /// whole level fans out one job per asset; letting them all run saturates
+    /// every worker core in a burst and starves the main render thread (frame
+    /// spikes during a load). Capping below the pool size leaves cores for
+    /// rendering and physics, spreading the work out. Excess loads queue and start
+    /// as running ones finish. Clamped to at least 1.
+    void SetMaxConcurrentLoads(std::size_t n) { _maxConcurrentLoads = n < 1 ? 1 : n; }
+    [[nodiscard]] std::size_t GetMaxConcurrentLoads() const { return _maxConcurrentLoads; }
 
     /// @brief The bindless material-texture descriptor table and its layout
     /// (GPU-driven stage D). Every resolved texture holds a slot here; materials
@@ -366,5 +380,65 @@ class AssetCache
     // bump makes the in-flight publishes no-ops).
     std::unordered_set<Core::AssetPath> _meshLoading;
     std::unordered_set<Core::AssetPath> _materialLoading;
+
+    // --- In-flight load throttle (see SetMaxConcurrentLoads) --------------------
+    // A load is *queued* the moment it is requested (its path enters
+    // _meshLoading/_materialLoading so HasPendingLoads and the re-resolve loop see
+    // it), but its worker job only starts once fewer than _maxConcurrentLoads are
+    // already running. Excess loads wait in _pendingLoads and start as running ones
+    // publish. Bounds concurrent CPU decode work so a big load can't saturate every
+    // worker core and starve the main render thread (frame spikes).
+
+    /// @brief One PBR channel's decoded pixels plus its source path (for dedup at
+    /// publish). Nested so OnMaterialLoaded can take a MaterialLoadBundle by value.
+    struct DecodedChannel
+    {
+        std::optional<DecodedImage> image;
+        Core::AssetPath             path;
+    };
+    /// @brief A material load's result: parsed data + every channel decoded.
+    struct MaterialLoadBundle
+    {
+        Geometry::MaterialData        data;
+        std::array<DecodedChannel, 5> channels;
+    };
+
+    /// @brief A load queued but not yet started — stored as data (not a thunk) so
+    /// PumpLoadQueue dispatches it by kind. Only the fields for its kind are used.
+    struct PendingLoad
+    {
+        bool                           isMaterial = false;
+        Core::AssetPath                path;
+        std::uint64_t                  epoch = 0;
+        PathToIdFn                     pathToId;     ///< mesh only
+        Geometry::MaterialData         materialData; ///< material only
+        std::array<Core::AssetPath, 5> channelPaths; ///< material only
+    };
+
+    std::size_t             _maxConcurrentLoads = 3;
+    std::size_t             _activeLoads        = 0;
+    std::deque<PendingLoad> _pendingLoads;
+
+    /// @brief Starts queued loads up to the concurrency cap. Called when a load is
+    /// queued and again after each running load publishes. Main thread only.
+    void PumpLoadQueue();
+    /// @brief Wires up a mesh import job (worker) + its publish (OnMeshLoaded).
+    void StartMeshLoad(Core::AssetPath path, PathToIdFn pathToId, std::uint64_t epoch);
+    /// @brief Wires up a material decode job (worker) + its publish (OnMaterialLoaded).
+    void StartMaterialLoad(Core::AssetPath path, Geometry::MaterialData data,
+                           std::array<Core::AssetPath, 5> channelPaths, std::uint64_t epoch);
+    /// @brief Main-thread publish of a finished mesh import: free the load slot,
+    /// then upload + cache the buffer (or record the failure).
+    void OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
+                      std::expected<Geometry::MeshData, Geometry::MeshImportError> imported);
+    /// @brief Main-thread publish of a finished material decode: free the load slot,
+    /// then upload each channel's texture, build the material, and write its table row.
+    void OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, MaterialLoadBundle bundle);
+    /// @brief Worker-thread body of a material load: decode every channel image
+    /// sequentially (a nested parallel-for would defeat the concurrency cap). Pure —
+    /// touches no cache state, so it is safe off the main thread.
+    static MaterialLoadBundle DecodeMaterialChannels(Geometry::MaterialData data,
+                                                     std::array<Core::AssetPath, 5> channelPaths,
+                                                     std::uint64_t epoch, const std::atomic<std::uint64_t> &loadEpoch);
 };
 } /* namespace Assisi::Render */
