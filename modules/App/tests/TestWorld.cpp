@@ -644,10 +644,12 @@ TEST_CASE("A level's profile decides which systems its world runs")
     CHECK(gameplayTicks == 1); // the menu world runs no gameplay systems at all
     CHECK(menuTicks == 1);
 
-    // A level naming no profile takes the host's default.
+    // A level naming no profile takes the host's default — and keeps naming
+    // none, so a save does not bake this host's default into the file.
     World *const plain = worlds.LoadLevel("levels/Plain.alvl");
     REQUIRE(plain != nullptr);
-    CHECK(plain->profile == "Gameplay");
+    CHECK(plain->installedProfile == "Gameplay");
+    CHECK(plain->profile.empty());
 
     std::filesystem::remove_all(root);
 }
@@ -699,9 +701,56 @@ TEST_CASE("An unknown profile falls back to the default instead of leaving a wor
     World &world = worlds.Create("Typo");
     worlds.ApplyProfile(world, "Gamplay"); // sic
 
-    CHECK(world.profile == "Default");
+    CHECK(world.installedProfile == "Default");
     TickUpdate(world, events);
     CHECK(defaultTicks == 1);
+
+    // ...but the level's own request survives, because that is what a save writes
+    // back. Overwriting it with the fallback's name would silently destroy the
+    // author's choice — the typo becomes permanent the first time the level is
+    // saved, and a level authored for the game build loses its profile whenever
+    // it is opened in a host that does not register it.
+    CHECK(world.profile == "Gamplay");
+}
+
+TEST_CASE("A profile the host cannot honour still round-trips through a save")
+{
+    // The end-to-end version of the check above: author a level for a profile
+    // this host has never heard of, load it, save it, and the file must come back
+    // unchanged rather than rewritten with whatever ran instead.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "assisi-world-profile-preserve";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "levels");
+    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
+
+    const std::filesystem::path file = root / "levels" / "L.alvl";
+    {
+        Assisi::ECS::Scene scene;
+        (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
+        const Assisi::Runtime::LevelHeader header{.profile = "ShippedGameOnly"};
+        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, file, header));
+    }
+
+    WorldManager worlds;
+    worlds.RegisterProfile("Default", [](World &) {});
+    worlds.SetDefaultProfile("Default");
+
+    World *const loaded = worlds.LoadLevel("levels/L.alvl");
+    REQUIRE(loaded != nullptr);
+    CHECK(loaded->installedProfile == "Default"); // what actually ran
+    CHECK(loaded->profile == "ShippedGameOnly");  // what the level asked for
+
+    // Save exactly as the editor does, from the world's recorded profile.
+    const Assisi::Runtime::LevelHeader out{.profile = loaded->profile};
+    REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(loaded->scene, file, out));
+
+    Assisi::ECS::Scene           reloaded;
+    Assisi::Runtime::LevelHeader header;
+    REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(reloaded, "levels/L.alvl", {}, &header));
+    CHECK(header.profile == "ShippedGameOnly");
+
+    std::filesystem::remove_all(root);
 }
 
 TEST_CASE("Re-applying a profile replaces the previous systems rather than stacking them")

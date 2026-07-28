@@ -64,10 +64,12 @@ void WorldManager::ApplyProfile(World &world, std::string_view name)
         return nullptr;
     };
 
-    // Owns its name rather than viewing the caller's: the clear below wipes
-    // world.profile, and passing that in (the async path, which parks the level's
-    // choice there until promotion) would leave `chosen` dangling mid-function.
-    std::string             chosen    = name.empty() ? _defaultProfile : std::string(name);
+    // Both names are owned before anything is written: `name` may view
+    // world.profile itself (the async path parks the level's request there until
+    // promotion), and the assignments below would otherwise read a string while
+    // overwriting it.
+    const std::string       requested = std::string(name);
+    std::string             chosen    = requested.empty() ? _defaultProfile : requested;
     const ProfileInstaller *installer = chosen.empty() ? nullptr : find(chosen);
 
     if (installer == nullptr && !chosen.empty())
@@ -89,7 +91,12 @@ void WorldManager::ApplyProfile(World &world, std::string_view name)
     // world (the editor opening another level into the one it edits) must start
     // from empty.
     world.systems.Clear();
-    world.profile.clear();
+
+    // The level's request is recorded whether or not it could be honoured — it is
+    // what a save round-trips, and a fallback must not rewrite the file with the
+    // name of whatever ran instead.
+    world.profile = requested;
+    world.installedProfile.clear();
 
     if (installer == nullptr)
     {
@@ -99,7 +106,7 @@ void WorldManager::ApplyProfile(World &world, std::string_view name)
     }
 
     (*installer)(world);
-    world.profile = std::move(chosen);
+    world.installedProfile = std::move(chosen);
 }
 
 void WorldManager::EraseWorld(World &world)
@@ -436,9 +443,9 @@ World *WorldManager::PromotePendingLoad()
     }
 
     // The worker parked the level's requested profile here; install it now that we
-    // are back on the main thread and the task is joined. Copied out first because
-    // ApplyProfile resets the field it would otherwise be reading.
-    ApplyProfile(*incoming, std::string(incoming->profile));
+    // are back on the main thread and the task is joined. Passing the field to a
+    // function that also writes it is safe — ApplyProfile owns its copy first.
+    ApplyProfile(*incoming, incoming->profile);
 
     World *const result = SwapToActive(*incoming, path);
     Core::Log::Info("Preload promoted: now in '{}' ({}), {} world(s) resident.", result->name, path,

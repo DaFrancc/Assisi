@@ -88,10 +88,19 @@ struct World
     /// applied, which is deliberate — Create() installs nothing.
     SystemRegistry        systems;
 
-    /// Name of the profile that populated @ref systems, or "" if none has been
-    /// applied. Also what a save writes back into the level file, so a level's
-    /// choice survives a round trip through the editor.
+    /// The profile name the **level asked for**, or "" if it named none. This is
+    /// what a save writes back, so it is preserved verbatim even when it could
+    /// not be honoured: rewriting it with whatever was actually installed would
+    /// silently destroy the author's choice in any host that happens not to
+    /// register that profile — a game-build level opened in a tools build, or a
+    /// name whose typo is about to be fixed.
     std::string           profile;
+
+    /// The profile that actually populated @ref systems, or "" if none ran.
+    /// Differs from @ref profile only when the request could not be honoured and
+    /// ApplyProfile fell back — that difference is the diagnostic, and it is
+    /// deliberately not persisted.
+    std::string           installedProfile;
 
     /// Unique key within the manager. Deliberately NOT the level path: travel
     /// A→B→A leaves two worlds of one path resident, so names are generated.
