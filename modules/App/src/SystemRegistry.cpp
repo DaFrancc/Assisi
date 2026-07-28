@@ -132,6 +132,21 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Before(std::string_v
     return *this;
 }
 
+SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::ActiveWorldOnly()
+{
+    if (!_setActiveOnly)
+    {
+        // Render systems run for the world being drawn and nothing else, so the
+        // constraint is already implied — a call here means the author expected a
+        // gate that does not exist in this phase.
+        Core::Log::Error("SystemRegistry: ActiveWorldOnly() is meaningless on a render system "
+                         "and was ignored.");
+        return *this;
+    }
+    _setActiveOnly();
+    return *this;
+}
+
 // ---------------------------------------------------------------------------
 // Add — append to a phase and hand back a slot-bound handle
 // ---------------------------------------------------------------------------
@@ -139,7 +154,8 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Before(std::string_v
 template <typename Ctx>
 SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase,
                                                  std::string_view          name,
-                                                 std::function<void(Ctx &)> fn)
+                                                 std::function<void(Ctx &)> fn,
+                                                 bool                      supportsActiveOnly)
 {
     // Duplicate names make After()/Before() ambiguous: TopoSort's nameToIndex
     // keeps only the first entry per name, so every edge targeting this name binds
@@ -160,7 +176,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
     }
 
     const std::size_t entryIndex = phase.entries.size();
-    phase.entries.push_back({std::string(name), std::move(fn), {}, {}});
+    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false});
     phase.dirty = true;
 
     // Capture the phase and slot index (not a pointer to the Entry): the entries
@@ -172,7 +188,11 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
             typename Phase<Ctx>::Entry &entry = phasePtr->entries[entryIndex];
             (before ? entry.before : entry.after).emplace_back(depName);
             phasePtr->dirty = true;
-        });
+        },
+        supportsActiveOnly ? SystemHandle::SetActiveOnly(
+                                 [phasePtr, entryIndex]
+                                 { phasePtr->entries[entryIndex].activeOnly = true; })
+                           : SystemHandle::SetActiveOnly{});
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +200,8 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
 // ---------------------------------------------------------------------------
 
 template <typename Ctx>
-void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx)
+void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx,
+                              bool skipActiveOnly)
 {
     if (phase.dirty)
     {
@@ -189,7 +210,12 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx
     }
 
     for (std::size_t i : phase.sorted)
-        phase.entries[i].fn(ctx);
+    {
+        const typename Phase<Ctx>::Entry &entry = phase.entries[i];
+        if (skipActiveOnly && entry.activeOnly)
+            continue;
+        entry.fn(ctx);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,23 +233,24 @@ SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase               
                                                       std::string_view                     name,
                                                       std::function<void(SystemContext &)> fn)
 {
-    return Add(_gamePhases[Index(phase)], name, std::move(fn));
+    return Add(_gamePhases[Index(phase)], name, std::move(fn), /*supportsActiveOnly=*/true);
 }
 
 SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view name,
                                                             std::function<void(RenderContext &)> fn)
 {
-    return Add(_renderPhase, name, std::move(fn));
+    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/false);
 }
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
 {
-    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), ctx);
+    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), ctx,
+             /*skipActiveOnly=*/!ctx.isActiveWorld);
 }
 
 void SystemRegistry::RunRender(RenderContext ctx)
 {
-    RunPhase(_renderPhase, "Render", ctx);
+    RunPhase(_renderPhase, "Render", ctx, /*skipActiveOnly=*/false);
 }
 
 } // namespace Assisi::App

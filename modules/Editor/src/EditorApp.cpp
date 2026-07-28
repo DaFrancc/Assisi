@@ -633,7 +633,8 @@ void EditorApp::OnFixedUpdate(float dt)
     // S2 answers (docs/multi-scene-design-notes.md §1, world affinity).
     if (_world->simulate)
     {
-        _gameSystems.Run(Assisi::App::SystemPhase::FixedUpdate, {*_scene, dt, GetInput(), _actions, GetEvents()});
+        _gameSystems.Run(Assisi::App::SystemPhase::FixedUpdate,
+                         {*_world, dt, &GetInput(), &_actions, GetEvents(), /*isActiveWorld=*/true});
     }
 
     // Physics steps every simulated world. `simulate` follows the play state (Run
@@ -752,16 +753,20 @@ void EditorApp::OnUpdate(float dt)
                 Assisi::App::SyncUnrenderedWorld(world);
         });
 
-    _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
-    _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
+    // The editor's own systems act on the world being *viewed* — picking, the fly
+    // camera and selection all follow the world selector, not the played world.
+    const Assisi::App::SystemContext editorCtx{*_world, dt,           &input,
+                                               &_actions, GetEvents(), /*isActiveWorld=*/true};
+    _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
+    _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
     // Game logic ticks only while Playing — after the editor's own systems, in
     // the game registry's own phase order (see the EditorConfig seam contract).
     if (IsSimulating())
     {
-        _gameSystems.Run(Assisi::App::SystemPhase::PreUpdate,  {*_scene, dt, input, _actions, GetEvents()});
-        _gameSystems.Run(Assisi::App::SystemPhase::Update,     {*_scene, dt, input, _actions, GetEvents()});
-        _gameSystems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
+        _gameSystems.Run(Assisi::App::SystemPhase::PreUpdate,  editorCtx);
+        _gameSystems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
+        _gameSystems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
     }
 }
 

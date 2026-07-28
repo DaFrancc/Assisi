@@ -14,6 +14,11 @@
 /// _systems.Register(SystemPhase::Update, "Damage", &DamageSystem)
 ///         .After("Physics");
 ///
+/// // Input-consuming system: one InputContext, N resident worlds — running it
+/// // everywhere would apply the same keypresses in every world.
+/// _systems.Register(SystemPhase::Update, "PlayerMove", &PlayerMoveSystem)
+///         .ActiveWorldOnly();
+///
 /// // Render system — needs view/projection
 /// _systems.RegisterRender("DrawScene",
 ///     [this](RenderContext& ctx) {
@@ -21,8 +26,8 @@
 ///     });
 ///
 /// // Dispatch
-/// _systems.Run(SystemPhase::Update, { *_scene, dt, GetInput() });
-/// _systems.RunRender({ *_scene, 0.f, view, proj });
+/// _systems.Run(SystemPhase::Update, {world, dt, &input, &actions, events, isActive});
+/// _systems.RunRender({ world.scene, 0.f, view, proj });
 /// @endcode
 ///
 /// Systems run in dependency order within each phase.
@@ -44,14 +49,32 @@
 namespace Assisi::App
 {
 
+struct World;
+
 /// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, PostUpdate).
+///
+/// Carries the **world**, not a bare scene: a system reaches its entities
+/// through `ctx.world.scene` and its bodies through `ctx.world.physics`, which
+/// is what makes the same system function usable in whichever worlds install it
+/// (docs/world-system-binding-design-notes.md §2).
 struct SystemContext
 {
-    ECS::Scene            &scene;
-    float                  dt;
-    Window::InputContext  &input;
-    Window::ActionMap     &actions;
-    Core::EventQueue      &events;
+    World                &world;
+    float                 dt;
+
+    /// Null in headless hosts (dedicated server, tests): an InputContext needs a
+    /// live window, so anything that can run windowless must be able to say "no
+    /// input". Systems that read input either declare ActiveWorldOnly() and get
+    /// gated out of such hosts anyway, or null-check.
+    Window::InputContext *input;
+    Window::ActionMap    *actions;
+
+    Core::EventQueue     &events;
+
+    /// True when `world` is the one the app treats as active — the world being
+    /// rendered and driven by input. Systems registered ActiveWorldOnly() are
+    /// skipped when this is false; prefer that over testing this by hand.
+    bool                  isActiveWorld = true;
 };
 
 /// @brief Passed to render systems (Render phase only).
@@ -99,18 +122,32 @@ class SystemRegistry
         /// @brief This system runs before the named system within the same phase.
         SystemHandle &Before(std::string_view name);
 
+        /// @brief Skip this system in worlds that are not the active one.
+        ///
+        /// For anything that consumes input or drives the one camera/HUD: the app
+        /// has a single InputContext but may have several worlds simulating, so an
+        /// ungated controller system would apply the same keypresses in all of
+        /// them (docs/multi-scene-design-notes.md §1). Meaningless on render
+        /// systems, which only ever run for the world being drawn — calling it
+        /// there logs an error and changes nothing.
+        SystemHandle &ActiveWorldOnly();
+
       private:
         friend class SystemRegistry;
 
         /// Records a dependency: @p before selects the before-list over the after-list.
         using AddDependency = std::function<void(bool before, std::string_view name)>;
+        /// Marks the entry active-world-only. Null for render-phase handles.
+        using SetActiveOnly = std::function<void()>;
 
-        explicit SystemHandle(AddDependency addDependency)
+        SystemHandle(AddDependency addDependency, SetActiveOnly setActiveOnly)
             : _addDependency(std::move(addDependency))
+            , _setActiveOnly(std::move(setActiveOnly))
         {
         }
 
         AddDependency _addDependency;
+        SetActiveOnly _setActiveOnly;
     };
 
     /// @brief Register a game logic system for a non-Render phase.
@@ -145,6 +182,9 @@ class SystemRegistry
             std::function<void(Ctx &)> fn;
             std::vector<std::string>  after;
             std::vector<std::string>  before;
+            /// Set by SystemHandle::ActiveWorldOnly(). Always false for render
+            /// entries, which only ever run for the world being drawn.
+            bool                      activeOnly = false;
         };
 
         std::vector<Entry>       entries;
@@ -159,17 +199,21 @@ class SystemRegistry
     static std::string_view PhaseName(std::size_t gamePhaseIndex);
 
     /// @brief Append a system to @p phase and return a handle bound to its slot.
+    /// @p supportsActiveOnly is false for the render phase, whose handles reject
+    /// ActiveWorldOnly().
     template <typename Ctx>
-    SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn);
+    SystemHandle Add(Phase<Ctx> &phase, std::string_view name, std::function<void(Ctx &)> fn,
+                     bool supportsActiveOnly);
 
     /// @brief Topological sort (Kahn's algorithm) over any entry type with name/after/before.
     template <typename Entry>
     static std::vector<std::size_t> TopoSort(const std::vector<Entry> &entries,
                                              std::string_view          phaseName);
 
-    /// @brief Re-sort @p phase if dirty, then run its systems in dependency order.
+    /// @brief Re-sort @p phase if dirty, then run its systems in dependency order,
+    /// omitting active-world-only entries when @p skipActiveOnly.
     template <typename Ctx>
-    void RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx);
+    void RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx, bool skipActiveOnly);
 
     std::array<Phase<SystemContext>, kGamePhaseCount> _gamePhases;
     Phase<RenderContext>                              _renderPhase;
