@@ -647,29 +647,34 @@ void EditorApp::OnFixedUpdate(float dt)
     if (!_scene)
         return;
 
-    // Game FixedUpdate systems run before the physics step (the Unity/Unreal
-    // convention: apply forces this tick, then simulate them). They run in the
-    // ACTIVE world only: there is one InputContext, so ticking a controller
-    // system in every resident world would apply the same keypresses everywhere.
-    // Which systems opt into which worlds is the per-world registration question
-    // S2 answers (docs/multi-scene-design-notes.md §1, world affinity).
-    if (_world->simulate)
-    {
-        _world->systems.Run(
-            Assisi::App::SystemPhase::FixedUpdate,
-            {*_world, dt, &GetInput(), &_actions, GetEvents(), /*isActiveWorld=*/true});
-    }
-
-    // Physics steps every simulated world. `simulate` follows the play state (Run
-    // sets it, Pause/Stop clear it), so in the editor this is still "physics ticks
-    // only while playing" — frozen otherwise, with the camera and picking left
-    // live from OnUpdate. Worlds step sequentially, which is what lets them share
-    // one Jolt scratch allocator.
+    // Every simulated world steps, and each runs its OWN FixedUpdate systems
+    // immediately before its own physics — the Unity/Unreal convention (apply
+    // forces this tick, then simulate them), now held per world rather than only
+    // for the active one. Worlds step sequentially, which is what lets them share
+    // one Jolt thread pool.
+    //
+    // Two gates, and they are not the same gate:
+    //   - `simulate` is per world, and physics has always followed it alone.
+    //   - IsSimulating() is the editor's play state, and gates the SYSTEMS only.
+    //     Pause clears the flag on the viewed world but not on any other resident
+    //     play world (SetPlayState), and travel-from-pause hands the incoming
+    //     world simulate=true — so without this a secondary world would keep
+    //     running game logic while the editor reads Paused. Physics keeps its
+    //     pre-existing behaviour here; only logic is held back.
+    const bool simulating = IsSimulating();
     _worlds.ForEach(
-        [dt](Assisi::App::World &world)
+        [this, dt, simulating](Assisi::App::World &world)
         {
             if (!world.simulate)
                 return;
+
+            if (simulating && world.state == Assisi::App::WorldState::Active)
+            {
+                world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
+                                  {world, dt, &GetInput(), &_actions, GetEvents(),
+                                   /*isActiveWorld=*/&world == _worlds.Active()});
+            }
+
             world.physics.Update(dt);
             // Snapshot the new poses for render interpolation; OnRender blends them.
             world.physics.CaptureState();
@@ -783,13 +788,31 @@ void EditorApp::OnUpdate(float dt)
     _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
-    // Game logic ticks only while Playing — after the editor's own systems, in
-    // the game registry's own phase order (see the EditorConfig seam contract).
+    // Game logic ticks only while Playing, after the editor's own systems — and
+    // now in EVERY simulated world, each out of its own registry, rather than
+    // only in whichever world the editor happens to be looking at. Systems that
+    // consume input opt out of the non-active worlds by declaring
+    // ActiveWorldOnly() (one InputContext, N worlds).
+    //
+    // This also drops an old quirk: the game phases used to run against the
+    // *viewed* world, so inspecting the dormant edited world mid-play ticked
+    // game logic into it while its FixedUpdate stayed frozen. A world that is
+    // not simulating now runs nothing, whichever one is on screen.
     if (IsSimulating())
     {
-        _world->systems.Run(Assisi::App::SystemPhase::PreUpdate,  editorCtx);
-        _world->systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
-        _world->systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
+        _worlds.ForEach(
+            [this, dt, &input](Assisi::App::World &world)
+            {
+                if (world.state != Assisi::App::WorldState::Active || !world.simulate)
+                    return;
+
+                const Assisi::App::SystemContext ctx{
+                    world, dt, &input, &_actions, GetEvents(),
+                    /*isActiveWorld=*/&world == _worlds.Active()};
+                world.systems.Run(Assisi::App::SystemPhase::PreUpdate,  ctx);
+                world.systems.Run(Assisi::App::SystemPhase::Update,     ctx);
+                world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
+            });
     }
 }
 

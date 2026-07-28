@@ -769,6 +769,107 @@ TEST_CASE("A level's profile survives a save/load round trip")
     std::filesystem::remove_all(root);
 }
 
+TEST_CASE("Dispatching every simulated world runs shared systems twice, input systems once")
+{
+    // The shape of the frame loop's per-world dispatch (P3), without an editor:
+    // iterate the resident worlds, skip the ones that are not Active+simulate,
+    // and mark the active one so ActiveWorldOnly systems can opt out of the rest.
+    Assisi::Core::EventQueue events;
+    WorldManager             worlds;
+
+    int32_t aiTicks    = 0;
+    int32_t inputTicks = 0;
+    worlds.RegisterProfile("Gameplay",
+                           [&](World &w)
+                           {
+                               w.systems.Register(SystemPhase::Update, "AI",
+                                                  [&](SystemContext &) { ++aiTicks; });
+                               w.systems.Register(SystemPhase::Update, "PlayerInput",
+                                                  [&](SystemContext &) { ++inputTicks; })
+                                   .ActiveWorldOnly();
+                           });
+
+    World &played    = worlds.Create("Played");
+    World &background = worlds.Create("Background");
+    World &dormant   = worlds.Create("Dormant");
+    for (World *w : {&played, &background, &dormant})
+        worlds.ApplyProfile(*w, "Gameplay");
+
+    worlds.SetActive(played);
+    played.state     = WorldState::Active;
+    played.simulate  = true;
+    background.state = WorldState::Active;
+    background.simulate = true;
+    // Resident and inspectable but not stepped — the edited world during a play
+    // session. Its systems exist; they must never run.
+    dormant.state    = WorldState::Dormant;
+    dormant.simulate = false;
+
+    worlds.ForEach(
+        [&](World &world)
+        {
+            if (world.state != WorldState::Active || !world.simulate)
+                return;
+            TickUpdate(world, events, /*isActiveWorld=*/&world == worlds.Active());
+        });
+
+    CHECK(aiTicks == 2);    // both simulated worlds
+    CHECK(inputTicks == 1); // ...but one InputContext, so only the active one
+}
+
+TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
+{
+    // The regression this gate exists for: the editor's Pause clears `simulate`
+    // on the VIEWED world only, and travel-from-pause hands the incoming world
+    // simulate=true — so a secondary play world keeps its flag set through a
+    // Pause. Gating game phases on the per-world flag alone would leave it
+    // ticking logic while the editor reads Paused. The host's play state is a
+    // second, independent gate (EditorApp::OnFixedUpdate/OnUpdate).
+    Assisi::Core::EventQueue events;
+    WorldManager             worlds;
+
+    int32_t ticks = 0;
+    worlds.RegisterProfile("Gameplay", [&](World &w) {
+        w.systems.Register(SystemPhase::Update, "Logic", [&](SystemContext &) { ++ticks; });
+    });
+
+    World &viewed     = worlds.Create("Viewed");
+    World &secondary  = worlds.Create("Secondary");
+    worlds.ApplyProfile(viewed, "Gameplay");
+    worlds.ApplyProfile(secondary, "Gameplay");
+    worlds.SetActive(viewed);
+    viewed.state    = WorldState::Active;
+    secondary.state = WorldState::Active;
+
+    // Pause, as the editor leaves things: the viewed world's flag is cleared,
+    // the secondary world's is emphatically not.
+    bool hostIsPlaying = false;
+    viewed.simulate    = false;
+    secondary.simulate = true;
+
+    const auto dispatch = [&]
+    {
+        if (!hostIsPlaying)
+            return;
+        worlds.ForEach(
+            [&](World &world)
+            {
+                if (world.state != WorldState::Active || !world.simulate)
+                    return;
+                TickUpdate(world, events, /*isActiveWorld=*/&world == worlds.Active());
+            });
+    };
+
+    dispatch();
+    CHECK(ticks == 0); // paused means paused everywhere, stale flag or not
+
+    // Resume: both worlds are simulating again and both run their logic.
+    hostIsPlaying   = true;
+    viewed.simulate = true;
+    dispatch();
+    CHECK(ticks == 2);
+}
+
 TEST_CASE("A background load's profile is installed when it is promoted")
 {
     // The worker parks the level's choice on the world it exclusively owns;
