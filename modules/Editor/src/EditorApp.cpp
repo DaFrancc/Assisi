@@ -123,6 +123,14 @@ void EditorApp::OnStart()
         _worlds.SetDefaultProfile("Default");
     }
 
+    // Any further named profiles the game has, for levels that want a different
+    // set than the default. After the default is registered, so a game can point
+    // SetDefaultProfile at one of its own instead.
+    if (_editorConfig.registerProfiles)
+    {
+        _editorConfig.registerProfiles(_worlds);
+    }
+
     // The editor's starting world. It holds both roles: active (rendered,
     // input-driven) and edited (saved, dirtied, undone into). Opening a level
     // clears this world's scene in place rather than creating another one, which

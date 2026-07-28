@@ -130,6 +130,22 @@ void RegisterDemoSystems(Assisi::App::SystemRegistry &systems)
         .After("SpinDemo")
         .ActiveWorldOnly();
 }
+
+/// A second profile, so that "which systems run" is visibly a per-level choice
+/// rather than a global one. `assets/levels/Test.alvl` selects it by name, and a
+/// world built from it keeps the input probe but does no spinning — load it
+/// alongside a default-profile level and only one of the two animates.
+void RegisterDemoProfiles(Assisi::App::WorldManager &worlds)
+{
+    worlds.RegisterProfile("Static",
+                           [](Assisi::App::World &world)
+                           {
+                               world.systems
+                                   .Register(Assisi::App::SystemPhase::Update, "InputDemo",
+                                             &InputDemoSystem)
+                                   .ActiveWorldOnly();
+                           });
+}
 } // namespace
 
 int main(int argc, char **argv)
@@ -147,6 +163,7 @@ int main(int argc, char **argv)
     }
 
     Assisi::Editor::EditorApp app({.registerGameSystems = &RegisterDemoSystems,
+                                   .registerProfiles    = &RegisterDemoProfiles,
                                    .startupLevel        = std::string(startupLevel),
                                    .enableEditorVisuals = editorVisuals});
     if (!app.Initialize())

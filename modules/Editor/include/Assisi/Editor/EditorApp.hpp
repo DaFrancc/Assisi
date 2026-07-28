@@ -89,7 +89,23 @@ struct EditorConfig
 {
     /// Called once at startup with the game's system registry. May be null
     /// (an editor with no game logic — pure level editing).
+    ///
+    /// What this registers becomes the **default profile**: the systems every
+    /// world gets unless its level names another one. Each world receives its
+    /// own instance, so this is invoked once per world, not once per session —
+    /// an installer with one-time side effects is a bug.
     std::function<void(App::SystemRegistry &)> registerGameSystems;
+
+    /// Called once at startup, after the default profile is registered, for a
+    /// game that has more than one system set — a menu level that runs no
+    /// gameplay, a level with an extra simulation its neighbours don't need.
+    /// Register them with WorldManager::RegisterProfile(name, installer); a
+    /// level selects one by name through its `"profile"` key. May be null (the
+    /// common case: one profile for everything).
+    ///
+    /// May also call SetDefaultProfile to point the unnamed case at something
+    /// other than what registerGameSystems installed.
+    std::function<void(App::WorldManager &)> registerProfiles;
 
     /// Virtual path (under the asset root) of a level to open once at
     /// startup, e.g. "levels/Materials.alvl". Empty = none. Resolved through
