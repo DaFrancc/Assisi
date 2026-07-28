@@ -268,7 +268,7 @@ namespace
 }
 } // namespace
 
-nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
+nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &header)
 {
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
@@ -304,7 +304,11 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
     }
 
     nlohmann::json result;
-    result["version"]  = 1;
+    result["version"] = 1;
+    // Only written when set, so levels that never name a profile stay free of the
+    // key rather than gaining an empty one on every save.
+    if (!header.profile.empty())
+        result["profile"] = header.profile;
     result["entities"] = nlohmann::json::array();
 
     for (auto &[key, entityJson] : entityMap)
@@ -325,7 +329,8 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
 // Load
 // ---------------------------------------------------------------------------
 
-void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress)
+void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress,
+                           LevelHeader *header)
 {
     const int32_t version = j.value("version", 0);
     if (version != 1)
@@ -333,6 +338,9 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
         Core::Log::Error("SceneSerializer: unsupported level file version {}", version);
         return;
     }
+
+    if (header != nullptr)
+        header->profile = j.value("profile", std::string{});
 
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
@@ -393,7 +401,8 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
 // File I/O helpers
 // ---------------------------------------------------------------------------
 
-bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path &path)
+bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path &path,
+                                 const LevelHeader &header)
 {
     std::ofstream f(path);
     if (!f.is_open())
@@ -401,7 +410,7 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
         Core::Log::Error("SceneSerializer: cannot open '{}' for writing", path.string());
         return false;
     }
-    f << Save(scene).dump(2);
+    f << Save(scene, header).dump(2);
     if (!f.good())
     {
         Core::Log::Error("SceneSerializer: write failed for '{}'", path.string());
@@ -410,7 +419,8 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
     return true;
 }
 
-bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress)
+bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
+                                   const ProgressFn &onProgress, LevelHeader *header)
 {
     const auto text = Core::AssetSystem::ReadText(assetPath);
     if (!text)
@@ -421,7 +431,7 @@ bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath
 
     try
     {
-        Load(scene, nlohmann::json::parse(*text), onProgress);
+        Load(scene, nlohmann::json::parse(*text), onProgress, header);
         return true;
     }
     catch (const std::exception &ex)

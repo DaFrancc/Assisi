@@ -380,11 +380,16 @@ class EditorApp : public Assisi::App::Application
     Assisi::App::SystemRegistry _systems;
     Assisi::Window::ActionMap   _actions;
 
-    // The game's hooks (see EditorConfig). Game systems live in their OWN
-    // registry, run only while Playing — never mixed into _systems, whose
-    // editor systems (picking, camera, selection) run in every state.
+    // The game's hooks (see EditorConfig). Game systems live in each WORLD's own
+    // registry — installed by the default profile at world creation, run only
+    // while Playing — never mixed into _systems, whose editor systems (picking,
+    // camera, selection) run in every state and belong to the editor viewing a
+    // world rather than to any world.
     EditorConfig                _editorConfig;
-    Assisi::App::SystemRegistry _gameSystems;
+
+    // The game's render systems earn one warning per session, not one per world:
+    // the default profile's installer runs for every world it builds.
+    bool                        _warnedGameRenderSystems = false;
 
     // --- State ---
     // Every resident level lives in the manager (docs/multi-scene-design-notes.md).

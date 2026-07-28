@@ -40,9 +40,10 @@ void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, c
 
 bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
                const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset)
+               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset,
+               Runtime::LevelHeader *header)
 {
-    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath))
+    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, header))
         return false;
 
     if (reset == AssetCacheReset::ClearFirst)

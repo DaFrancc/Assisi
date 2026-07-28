@@ -12,6 +12,7 @@
 /// @code{.json}
 /// {
 ///   "version": 1,
+///   "profile": "Gameplay",
 ///   "entities": [
 ///     {
 ///       "components": {
@@ -48,6 +49,23 @@
 namespace Assisi::Runtime
 {
 
+/// @brief The parts of a level file that describe the level rather than its
+/// entities. Optional in the file; absent fields keep their defaults, so older
+/// levels load unchanged.
+struct LevelHeader
+{
+    /// @brief Which system profile the level wants installed into the world it
+    /// loads into (docs/world-system-binding-design-notes.md §3). Empty means
+    /// "the host's default profile" — the common case, so most levels never
+    /// mention it.
+    ///
+    /// A name, not a system list: systems are C++ functions, so data can only
+    /// select among sets the game registered. Keeping the file's vocabulary to a
+    /// single name is also what lets the game's system list evolve without
+    /// touching level files.
+    std::string profile;
+};
+
 class SceneSerializer
 {
   public:
@@ -57,8 +75,12 @@ class SceneSerializer
     /// that publishes to another thread must synchronise itself.
     using ProgressFn = std::function<void(float)>;
 
-    /// @brief Serialize the entire scene to a JSON value.
-    static nlohmann::json Save(ECS::Scene &scene);
+    /// @brief Serialize the entire scene to a JSON value, plus @p header.
+    ///
+    /// The header must be passed by every save that wants to preserve it: a
+    /// Scene does not carry it (it is a property of the level, not of the
+    /// entities), so a save that omits it strips the field from the file.
+    static nlohmann::json Save(ECS::Scene &scene, const LevelHeader &header = {});
 
     /// @brief Deserialize entities and components from a JSON value into the scene.
     ///
@@ -66,19 +88,25 @@ class SceneSerializer
     /// ComponentRegistry are restored; unrecognised names are skipped with a warning.
     /// @p onProgress (optional) is called as the per-entity deserialize pass runs —
     /// the dominant, entity-scaling cost — ending at 1.0.
-    static void Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress = {});
+    /// @p header (optional) receives the file's non-entity metadata; left
+    /// untouched if the load fails its version check.
+    static void Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress = {},
+                     LevelHeader *header = nullptr);
 
     /// @brief Write the scene to a JSON file at the given filesystem path.
     ///
     /// @return true on success, false if the file could not be opened.
-    static bool SaveToFile(ECS::Scene &scene, const std::filesystem::path &path);
+    static bool SaveToFile(ECS::Scene &scene, const std::filesystem::path &path,
+                           const LevelHeader &header = {});
 
     /// @brief Load the scene from an asset-relative path via AssetSystem.
     ///
     /// @param assetPath  Virtual path relative to the asset root (e.g. "levels/main.json").
     /// @param onProgress Optional; forwarded to Load() (see it) for load-progress UI.
+    /// @param header     Optional; receives the file's non-entity metadata.
     /// @return true on success, false on any IO or parse error.
-    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress = {});
+    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
+                             const ProgressFn &onProgress = {}, LevelHeader *header = nullptr);
 
     /// @brief Moves a set of entities' component *data* from one scene to another.
     ///

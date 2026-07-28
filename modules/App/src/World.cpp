@@ -32,6 +32,76 @@ World &WorldManager::Create(std::string_view label)
     return ref;
 }
 
+void WorldManager::RegisterProfile(std::string_view name, ProfileInstaller installer)
+{
+    if (name.empty() || !installer)
+    {
+        Core::Log::Error("WorldManager: RegisterProfile ignored — a profile needs both a name and "
+                         "an installer.");
+        return;
+    }
+
+    for (std::pair<std::string, ProfileInstaller> &profile : _profiles)
+    {
+        if (profile.first == name)
+        {
+            profile.second = std::move(installer);
+            return;
+        }
+    }
+    _profiles.emplace_back(std::string(name), std::move(installer));
+}
+
+void WorldManager::ApplyProfile(World &world, std::string_view name)
+{
+    const auto find = [this](std::string_view wanted) -> const ProfileInstaller *
+    {
+        for (const std::pair<std::string, ProfileInstaller> &profile : _profiles)
+        {
+            if (profile.first == wanted)
+                return &profile.second;
+        }
+        return nullptr;
+    };
+
+    // Owns its name rather than viewing the caller's: the clear below wipes
+    // world.profile, and passing that in (the async path, which parks the level's
+    // choice there until promotion) would leave `chosen` dangling mid-function.
+    std::string             chosen    = name.empty() ? _defaultProfile : std::string(name);
+    const ProfileInstaller *installer = chosen.empty() ? nullptr : find(chosen);
+
+    if (installer == nullptr && !chosen.empty())
+    {
+        // Fall back to the default rather than leaving the world systemless: a
+        // world that physics-steps but runs no game logic looks like a gameplay
+        // bug, not the load error it is.
+        Core::Log::Error("World '{}': unknown system profile '{}' — falling back to the default "
+                         "profile ('{}').",
+                         world.name, chosen,
+                         _defaultProfile.empty() ? std::string_view{"(none set)"}
+                                                 : std::string_view{_defaultProfile});
+        chosen    = _defaultProfile;
+        installer = chosen.empty() ? nullptr : find(chosen);
+    }
+
+    // Never stack one profile on another: Register is append-only and a repeated
+    // name binds every After()/Before() edge to the first entry, so re-targeting a
+    // world (the editor opening another level into the one it edits) must start
+    // from empty.
+    world.systems.Clear();
+    world.profile.clear();
+
+    if (installer == nullptr)
+    {
+        // No profile at all is the normal state for a host that registered none
+        // (the editor with no game module, the tests) — not worth a warning.
+        return;
+    }
+
+    (*installer)(world);
+    world.profile = std::move(chosen);
+}
+
 void WorldManager::EraseWorld(World &world)
 {
     const std::string name = world.name;
@@ -123,19 +193,22 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     World &incoming = Create("Level");
     incoming.state  = WorldState::Loading;
 
-    bool loaded = false;
+    Runtime::LevelHeader header;
+    bool                 loaded = false;
     if (_services.cache != nullptr && _services.database != nullptr && _services.renderer != nullptr)
     {
         // Keep, never ClearFirst: the outgoing world is still alive (and still
         // being drawn) until the swap below.
         loaded = App::LoadLevel(incoming.scene, levelPath, *_services.cache, *_services.database,
-                                incoming.physics, *_services.renderer, AssetCacheReset::Keep);
+                                incoming.physics, *_services.renderer, AssetCacheReset::Keep,
+                                &header);
     }
     else
     {
         // No render services (a headless server): the scene and its bodies are
         // all that matter.
-        loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath);
+        loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath,
+                                                        /*onProgress=*/{}, &header);
         if (loaded)
             incoming.physics.RebuildSceneBodies(incoming.scene);
     }
@@ -149,6 +222,10 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
         EraseWorld(incoming);
         return nullptr;
     }
+
+    // Content is committed, so the world can be given its systems. Before the
+    // swap: the moment it goes Active the frame loop will dispatch it.
+    ApplyProfile(incoming, header.profile);
 
     World *const result = SwapToActive(incoming, std::string(levelPath));
     Core::Log::Info("Travel: now in '{}' ({}), {} world(s) resident.", result->name, levelPath,
@@ -181,9 +258,14 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         // No scheduler: do the worker half inline. Still correct — just the hitch
         // async travel exists to avoid. Asset streaming (phase 2) still happens
         // across frames via PumpPendingLoad.
-        const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path);
+        Runtime::LevelHeader header;
+        const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path,
+                                                               /*onProgress=*/{}, &header);
         if (ok)
+        {
             incoming.physics.RebuildSceneBodies(incoming.scene);
+            incoming.profile = std::move(header.profile);
+        }
         deserProgress->store(1.f);
         _pending                = PendingLoad{.world = &incoming, .task = {}, .path = path, .syncResult = ok};
         _pending->deserProgress = deserProgress;
@@ -205,11 +287,17 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         {
             // Deserialize drives phase-1 progress 0 -> ~0.9 (the entity-scaling
             // cost); building bodies is the cheap tail to 1.0.
-            const bool ok = Runtime::SceneSerializer::LoadFromFile(
-                w->scene, path, [deserProgress](float f) { deserProgress->store(f * 0.9f); });
+            Runtime::LevelHeader header;
+            const bool           ok = Runtime::SceneSerializer::LoadFromFile(
+                w->scene, path, [deserProgress](float f) { deserProgress->store(f * 0.9f); },
+                &header);
             if (!ok)
                 return false;
             w->physics.RebuildSceneBodies(w->scene);
+            // Park the level's choice on the world itself; installing it is main-
+            // thread work (an installer may touch anything) and happens at
+            // promotion, after this task is joined.
+            w->profile = std::move(header.profile);
             deserProgress->store(1.f);
             return true;
         });
@@ -346,6 +434,11 @@ World *WorldManager::PromotePendingLoad()
         Runtime::ResolveSceneAssets(incoming->scene, *_services.cache, *_services.database);
         incoming->streamingPending = true;
     }
+
+    // The worker parked the level's requested profile here; install it now that we
+    // are back on the main thread and the task is joined. Copied out first because
+    // ApplyProfile resets the field it would otherwise be reading.
+    ApplyProfile(*incoming, std::string(incoming->profile));
 
     World *const result = SwapToActive(*incoming, path);
     Core::Log::Info("Preload promoted: now in '{}' ({}), {} world(s) resident.", result->name, path,

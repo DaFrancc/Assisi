@@ -11,6 +11,7 @@
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <imgui.h>
 
@@ -55,8 +56,9 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     // and assets this level shares with them are reused instead of re-uploaded.
     // (The Clear that used to live in the load path becomes a post-travel sweep —
     // docs/multi-scene-design-notes.md §0.)
+    Assisi::Runtime::LevelHeader header;
     if (!Assisi::App::LoadLevel(world.scene, virtualPath, _assetCache, _assetDatabase, world.physics,
-                                _sceneRenderer, Assisi::App::AssetCacheReset::Keep))
+                                _sceneRenderer, Assisi::App::AssetCacheReset::Keep, &header))
     {
         // Destroy the half-created world rather than leaving an empty resident:
         // it holds no role yet, so this always succeeds.
@@ -66,6 +68,7 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     }
 
     world.levelPath = virtualPath;
+    _worlds.ApplyProfile(world, header.profile);
     world.state     = Assisi::App::WorldState::Active;
     // A world created during play simulates immediately; one created while editing
     // stays frozen, because nothing outside the edited world has a restore story.

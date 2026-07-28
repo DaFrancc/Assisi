@@ -27,6 +27,14 @@
 #include <cstdint>
 #include <string_view>
 
+namespace Assisi::Runtime
+{
+// Declared, not included: the definition lives in SceneSerializer.hpp, which
+// drags in nlohmann/json — and this header is included (via World.hpp) almost
+// everywhere. Callers that build a header include that themselves.
+struct LevelHeader;
+} // namespace Assisi::Runtime
+
 namespace Assisi::App
 {
 
@@ -82,10 +90,15 @@ enum class AssetCacheReset : std::uint8_t
 /// Editor-state bookkeeping (undo-history wipe, selection/eyedropper reset,
 /// play-state reset) is deliberately not here — it belongs to the caller that
 /// has that state.
+///
+/// @p header (optional) receives the level's non-entity metadata — notably the
+/// system profile it asks for, which the caller applies to the world it loaded
+/// into (docs/world-system-binding-design-notes.md §3).
 bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
                const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
                Runtime::SceneRenderer &sceneRenderer,
-               AssetCacheReset reset = AssetCacheReset::ClearFirst);
+               AssetCacheReset reset = AssetCacheReset::ClearFirst,
+               Runtime::LevelHeader *header = nullptr);
 
 /// @brief Per-frame streaming upgrade: while the cache has async loads in
 /// flight (and for one frame after the last finishes, to pick up the final

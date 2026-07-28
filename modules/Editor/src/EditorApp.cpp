@@ -93,6 +93,36 @@ void EditorApp::OnStart()
                          .renderer = &_sceneRenderer,
                          .jobs     = &Jobs()});
 
+    // The game's systems become the **default profile**: every world the editor
+    // builds gets its own instance of them, which is what keeps a system's
+    // cross-frame state from advancing N× across resident worlds
+    // (docs/world-system-binding-design-notes.md §3). The seam itself is
+    // unchanged — it still hands out a SystemRegistry — so a game that knows
+    // nothing about profiles keeps working.
+    //
+    // Registered before the first Create() below, because that world is given the
+    // default profile the moment it exists.
+    if (_editorConfig.registerGameSystems)
+    {
+        _worlds.RegisterProfile("Default",
+                                [this](Assisi::App::World &world)
+                                {
+                                    _editorConfig.registerGameSystems(world.systems);
+
+                                    // Once, not once per world: what this warns about is
+                                    // how the game registered, not anything about a world.
+                                    if (!_warnedGameRenderSystems && world.systems.HasRenderSystems())
+                                    {
+                                        _warnedGameRenderSystems = true;
+                                        Assisi::Core::Log::Warn(
+                                            "EditorApp: the game registered render system(s), which "
+                                            "do not run in-editor — the editor owns rendering. They "
+                                            "will run in the standalone game build only.");
+                                    }
+                                });
+        _worlds.SetDefaultProfile("Default");
+    }
+
     // The editor's starting world. It holds both roles: active (rendered,
     // input-driven) and edited (saved, dirtied, undone into). Opening a level
     // clears this world's scene in place rather than creating another one, which
@@ -104,6 +134,11 @@ void EditorApp::OnStart()
     _world->simulate = false; // starts Editing; SetPlayState owns this from here on
     _scene           = &_world->scene;
     _physics         = &_world->physics;
+
+    // Create() deliberately installs nothing, so a world built in memory (rather
+    // than loaded from a level naming its profile) is given the default here. A
+    // startup level opened below re-applies whatever that level asks for.
+    _worlds.ApplyProfile(*_world, /*name=*/"");
 
     // Editor-only undo/redo. Binds the edited world's scene (stable for the
     // session — level loads Clear it in place, never swap the object). The rebind
@@ -152,19 +187,6 @@ void EditorApp::OnStart()
                           }
                       });
 
-    // The game's systems go into their own registry, ticked only while Playing
-    // (see the EditorConfig seam contract). Registered once here, gated at the
-    // run sites in OnUpdate/OnFixedUpdate.
-    if (_editorConfig.registerGameSystems)
-    {
-        _editorConfig.registerGameSystems(_gameSystems);
-        if (_gameSystems.HasRenderSystems())
-        {
-            Assisi::Core::Log::Warn(
-                "EditorApp: the game registered render system(s), which do not run in-editor — "
-                "the editor owns rendering. They will run in the standalone game build only.");
-        }
-    }
 }
 
 void EditorApp::ReimportAssets()
@@ -633,8 +655,9 @@ void EditorApp::OnFixedUpdate(float dt)
     // S2 answers (docs/multi-scene-design-notes.md §1, world affinity).
     if (_world->simulate)
     {
-        _gameSystems.Run(Assisi::App::SystemPhase::FixedUpdate,
-                         {*_world, dt, &GetInput(), &_actions, GetEvents(), /*isActiveWorld=*/true});
+        _world->systems.Run(
+            Assisi::App::SystemPhase::FixedUpdate,
+            {*_world, dt, &GetInput(), &_actions, GetEvents(), /*isActiveWorld=*/true});
     }
 
     // Physics steps every simulated world. `simulate` follows the play state (Run
@@ -764,9 +787,9 @@ void EditorApp::OnUpdate(float dt)
     // the game registry's own phase order (see the EditorConfig seam contract).
     if (IsSimulating())
     {
-        _gameSystems.Run(Assisi::App::SystemPhase::PreUpdate,  editorCtx);
-        _gameSystems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
-        _gameSystems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
+        _world->systems.Run(Assisi::App::SystemPhase::PreUpdate,  editorCtx);
+        _world->systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
+        _world->systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
     }
 }
 

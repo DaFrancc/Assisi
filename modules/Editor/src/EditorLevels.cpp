@@ -152,7 +152,11 @@ void EditorApp::SaveLevel(const std::string &name)
         Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", name);
         return;
     }
-    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved))
+    // Carry the world's profile back into the file. A Scene does not know it —
+    // it is a property of the level — so a save that dropped it would silently
+    // strip the field from every level the editor touches.
+    const Assisi::Runtime::LevelHeader header{.profile = _world->profile};
+    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header))
     {
         // Save As renames what this world *is* — keep its level identity truthful,
         // since travel and (later) the network level handshake read it.
@@ -180,7 +184,9 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // remains below is purely editor bookkeeping about the OLD scene. (We are at a
     // safe point — level loads are marshalled to the main-thread drain, never run
     // from OnImGui; see the Load button in DrawLevelsWindow.)
-    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, *_physics, _sceneRenderer))
+    Assisi::Runtime::LevelHeader header;
+    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, *_physics,
+                                _sceneRenderer, Assisi::App::AssetCacheReset::ClearFirst, &header))
         return false;
 
     // Open Level reuses the edited world, clearing its scene in place rather than
@@ -188,6 +194,11 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // (and every panel's) valid for the whole session — see
     // docs/multi-scene-design-notes.md §2. Only the world's level identity changes.
     _world->levelPath = virtualPath;
+
+    // ...and its systems, which belong to the level that is now in it. This is the
+    // re-target case ApplyProfile's Clear exists for: the world already holds the
+    // previous level's profile.
+    _worlds.ApplyProfile(*_world, header.profile);
 
     // A load also ends any in-progress play session: the snapshot describes the
     // old scene, so it must not survive into the new one.

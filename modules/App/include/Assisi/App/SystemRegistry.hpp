@@ -169,6 +169,19 @@ class SystemRegistry
     /// silently dropping them.
     [[nodiscard]] bool HasRenderSystems() const { return !_renderPhase.entries.empty(); }
 
+    /// @brief Drops every registered system, in every phase.
+    ///
+    /// Registration is otherwise append-only, and re-registering a name corrupts
+    /// the ordering graph (After()/Before() bind to the first entry of a name).
+    /// So a world whose systems are being *re-targeted* — the editor opening a
+    /// different level into the world it already edits — must clear before
+    /// applying the incoming level's profile, never stack one on the other.
+    ///
+    /// Handles returned by earlier Register() calls are dead afterwards: they
+    /// address slots that no longer exist. Registering fresh systems hands back
+    /// fresh handles, which is the only supported order.
+    void Clear();
+
   private:
     /// @brief One phase's worth of systems taking context type @p Ctx, plus its
     /// cached execution order.  Game and render phases are the same machinery

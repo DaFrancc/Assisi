@@ -253,4 +253,17 @@ void SystemRegistry::RunRender(RenderContext ctx)
     RunPhase(_renderPhase, "Render", ctx, /*skipActiveOnly=*/false);
 }
 
+void SystemRegistry::Clear()
+{
+    for (Phase<SystemContext> &phase : _gamePhases)
+    {
+        phase.entries.clear();
+        phase.sorted.clear();
+        phase.dirty = false; // nothing to sort
+    }
+    _renderPhase.entries.clear();
+    _renderPhase.sorted.clear();
+    _renderPhase.dirty = false;
+}
+
 } // namespace Assisi::App

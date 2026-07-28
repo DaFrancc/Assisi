@@ -18,6 +18,7 @@
 /// edited world. Multiple residents (S2) and in-play level change (S3) build on
 /// this without touching the panels.
 
+#include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -25,10 +26,12 @@
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 namespace Assisi::Core
@@ -76,6 +79,19 @@ struct World
 
     ECS::Scene            scene;
     Physics::PhysicsWorld physics;
+
+    /// This world's game systems, installed once by its profile (see
+    /// WorldManager::RegisterProfile). Per world rather than per app because a
+    /// system's cross-frame state lives in its registered lambda's captures: one
+    /// shared instance running over several worlds would advance that state N×
+    /// too fast (docs/multi-scene-design-notes.md §1). Empty until a profile is
+    /// applied, which is deliberate — Create() installs nothing.
+    SystemRegistry        systems;
+
+    /// Name of the profile that populated @ref systems, or "" if none has been
+    /// applied. Also what a save writes back into the level file, so a level's
+    /// choice survives a round trip through the editor.
+    std::string           profile;
 
     /// Unique key within the manager. Deliberately NOT the level path: travel
     /// A→B→A leaves two worlds of one path resident, so names are generated.
@@ -129,9 +145,50 @@ class WorldManager
     /// @p label plus a monotonic counter, so callers never collide and two
     /// worlds of the same level are distinguishable.
     ///
-    /// The new world starts Loading, unsimulated, and holds no role — the
-    /// caller loads into it and then activates it.
+    /// The new world starts Loading, unsimulated, holds no role, and has an
+    /// **empty system registry** — profiles are applied at the commit points
+    /// below, never here, so a world is never at risk of being installed into
+    /// twice (see ApplyProfile).
     World &Create(std::string_view label = "World");
+
+    // --- System profiles -----------------------------------------------------
+    //
+    // Which systems a world runs is decided once, when its content is committed,
+    // by a named *profile*: an installer function the game registers at startup.
+    // Code defines the profiles (systems are C++ functions, so data cannot create
+    // them); level files merely select one by name. See
+    // docs/world-system-binding-design-notes.md §3.
+    //
+    // Profiles are expected to compose out of smaller installer functions, so a
+    // level that wants "the usual set plus water" costs one line rather than a
+    // re-declaration. Composition is additive only: removing a system from a set
+    // breaks any After()/Before() constraint naming it.
+
+    /// @brief Populates a freshly committed world with its systems. Called once
+    /// per world, on the main thread — so an installer must not carry one-time
+    /// side effects, and any cross-frame state it needs belongs in its
+    /// registered lambdas' captures (which is what makes that state per world).
+    using ProfileInstaller = std::function<void(World &)>;
+
+    /// @brief Registers @p installer under @p name. Re-registering a name
+    /// replaces the previous installer (worlds already built keep their
+    /// systems).
+    void RegisterProfile(std::string_view name, ProfileInstaller installer);
+
+    /// @brief Sets the profile applied to worlds whose level names none — the
+    /// common case, so most levels never mention a profile at all.
+    void SetDefaultProfile(std::string_view name) { _defaultProfile = name; }
+
+    /// @brief Installs @p name's systems into @p world, replacing whatever it
+    /// had (see SystemRegistry::Clear — re-registering over an existing set
+    /// would corrupt the ordering graph).
+    ///
+    /// An empty @p name selects the default profile. An **unknown** name is an
+    /// error that falls back to the default rather than leaving the world
+    /// systemless: a typo in a level file must not ship a world where physics
+    /// steps and no game logic runs, which is silent and looks like a gameplay
+    /// bug rather than a load error.
+    void ApplyProfile(World &world, std::string_view name);
 
     /// @brief Destroys the named world.
     ///
@@ -332,6 +389,11 @@ class WorldManager
     World        *_edited = nullptr;
     std::uint32_t _nextId = 1;
     Services      _services;
+
+    // Profiles number in the handful and are looked up once per world load, so a
+    // vector scan beats hashing and keeps registration order for diagnostics.
+    std::vector<std::pair<std::string, ProfileInstaller>> _profiles;
+    std::string                                          _defaultProfile;
 
     // An in-flight or ready-to-promote background load. The worker fills
     // `world`'s scene + physics and returns whether it succeeded; a synchronous
