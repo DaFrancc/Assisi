@@ -547,14 +547,18 @@ class EditorApp : public Assisi::App::Application
     };
     PlayState _playState = PlayState::Editing;
 
-    /// @brief The one place the play state changes. It also sets the active
-    /// world's `simulate` flag, which is what the fixed loop actually steps on —
-    /// keeping the two in one assignment is what stops them drifting apart once
-    /// more than one world is resident.
+    /// @brief The one place the play state changes.
+    ///
+    /// The state itself is the flat freeze: while it is not Playing the fixed
+    /// loop steps nothing, in any world. This also sets the viewed world's
+    /// `simulate` flag, which selects among the worlds of a *running* session —
+    /// but only when that world is Active, since a Dormant world is by definition
+    /// not stepped and must not be marked otherwise (resuming while inspecting
+    /// the dormant edited world would else hand it a live flag).
     void SetPlayState(PlayState state)
     {
         _playState = state;
-        if (_world != nullptr)
+        if (_world != nullptr && _world->state == Assisi::App::WorldState::Active)
         {
             _world->simulate = (state == PlayState::Playing);
         }

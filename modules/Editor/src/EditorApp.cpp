@@ -647,33 +647,34 @@ void EditorApp::OnFixedUpdate(float dt)
     if (!_scene)
         return;
 
+    // **In the editor, the play state is a flat switch: while it is not Playing,
+    // nothing steps anywhere.** Not "the world you are looking at is frozen" —
+    // Pause means the whole session is frozen, logic and physics alike, in every
+    // resident world. Per-world `simulate` then selects among the worlds of a
+    // *running* session; it never overrides the session being stopped, which is
+    // what it used to do for any world other than the viewed one.
+    if (!IsSimulating())
+        return;
+
     // Every simulated world steps, and each runs its OWN FixedUpdate systems
     // immediately before its own physics — the Unity/Unreal convention (apply
     // forces this tick, then simulate them), now held per world rather than only
     // for the active one. Worlds step sequentially, which is what lets them share
     // one Jolt thread pool.
     //
-    // Two gates, and they are not the same gate:
-    //   - `simulate` is per world, and physics has always followed it alone.
-    //   - IsSimulating() is the editor's play state, and gates the SYSTEMS only.
-    //     Pause clears the flag on the viewed world but not on any other resident
-    //     play world (SetPlayState), and travel-from-pause hands the incoming
-    //     world simulate=true — so without this a secondary world would keep
-    //     running game logic while the editor reads Paused. Physics keeps its
-    //     pre-existing behaviour here; only logic is held back.
-    const bool simulating = IsSimulating();
+    // Only Active worlds step: Dormant means "resident and inspectable, but not
+    // stepped" (WorldState), and a stale `simulate` must not be able to break
+    // that. Resuming while viewing the dormant edited world used to do exactly
+    // that and step its physics.
     _worlds.ForEach(
-        [this, dt, simulating](Assisi::App::World &world)
+        [this, dt](Assisi::App::World &world)
         {
-            if (!world.simulate)
+            if (world.state != Assisi::App::WorldState::Active || !world.simulate)
                 return;
 
-            if (simulating && world.state == Assisi::App::WorldState::Active)
-            {
-                world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
-                                  {world, dt, &GetInput(), &_actions, GetEvents(),
-                                   /*isActiveWorld=*/&world == _worlds.Active()});
-            }
+            world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
+                              {world, dt, &GetInput(), &_actions, GetEvents(),
+                               /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
 
             world.physics.Update(dt);
             // Snapshot the new poses for render interpolation; OnRender blends them.
@@ -719,6 +720,20 @@ void EditorApp::OnUpdate(float dt)
         const std::string request = *_pendingTravel;
         _pendingTravel.reset();
         TravelToLevel(request);
+    }
+
+    // A travel a game system asked for last frame. Applied here rather than where
+    // it was requested: systems run inside the walk over the resident worlds, and
+    // travelling from there would invalidate that walk and could free the world
+    // the system is running in. This is the safe point — before the frame's draws
+    // are recorded, so freeing the outgoing world's GPU assets is legal.
+    if (_worlds.HasTravelRequest())
+    {
+        if (Assisi::App::World *const arrived = _worlds.ProcessTravelRequest())
+        {
+            SetActiveWorld(*arrived);
+            _worlds.SweepAssetCache();
+        }
     }
     if (_pendingMigrate)
     {
@@ -773,18 +788,26 @@ void EditorApp::OnUpdate(float dt)
 
     // Worlds that simulate but are not drawn get neither the pose write-back nor
     // the transform propagation the render path does for the world it draws. Give
-    // them both, in that order — see App::SyncUnrenderedWorld.
-    _worlds.ForEach(
-        [this](Assisi::App::World &world)
-        {
-            if (world.simulate && &world != _world)
-                Assisi::App::SyncUnrenderedWorld(world);
-        });
+    // them both, in that order — see App::SyncUnrenderedWorld. Skipped entirely
+    // while the session is frozen: nothing stepped, so there are no new poses to
+    // write back, and the same flat-freeze rule as OnFixedUpdate applies.
+    if (IsSimulating())
+    {
+        _worlds.ForEach(
+            [this](Assisi::App::World &world)
+            {
+                if (world.simulate && world.state == Assisi::App::WorldState::Active &&
+                    &world != _world)
+                {
+                    Assisi::App::SyncUnrenderedWorld(world);
+                }
+            });
+    }
 
     // The editor's own systems act on the world being *viewed* — picking, the fly
     // camera and selection all follow the world selector, not the played world.
-    const Assisi::App::SystemContext editorCtx{*_world, dt,           &input,
-                                               &_actions, GetEvents(), /*isActiveWorld=*/true};
+    const Assisi::App::SystemContext editorCtx{
+        *_world, dt, &input, &_actions, GetEvents(), /*isActiveWorld=*/true, &_worlds};
     _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
@@ -807,8 +830,8 @@ void EditorApp::OnUpdate(float dt)
                     return;
 
                 const Assisi::App::SystemContext ctx{
-                    world, dt, &input, &_actions, GetEvents(),
-                    /*isActiveWorld=*/&world == _worlds.Active()};
+                    world,   dt, &input, &_actions, GetEvents(),
+                    /*isActiveWorld=*/&world == _worlds.Active(), &_worlds};
                 world.systems.Run(Assisi::App::SystemPhase::PreUpdate,  ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update,     ctx);
                 world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);

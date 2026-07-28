@@ -919,6 +919,70 @@ TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
     CHECK(ticks == 2);
 }
 
+TEST_CASE("Travelling from inside a system is refused, and deferred travel replaces it")
+{
+    // A trigger volume or a match-end handler wants to change level, but it runs
+    // inside the frame loop's walk over the resident worlds — where LoadLevel
+    // would invalidate the walk and could free the very world the system is
+    // running in. The mutators refuse there; RequestTravel is the way through.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "assisi-world-deferred-travel";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "levels");
+    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
+
+    const auto writeLevel = [&root](const char *name)
+    {
+        Assisi::ECS::Scene scene;
+        (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
+        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / name));
+    };
+    writeLevel("A.alvl");
+    writeLevel("B.alvl");
+
+    WorldManager worlds;
+    World       &start = worlds.Create("Main");
+    worlds.SetActive(start);
+    start.state = WorldState::Active;
+    REQUIRE(worlds.LoadLevel("levels/A.alvl") != nullptr);
+    const std::size_t residentBefore = worlds.Count();
+
+    // Directly mutating from inside a walk is refused (and logged), leaving the
+    // world list exactly as it was.
+    worlds.ForEach(
+        [&](World &)
+        {
+            CHECK(worlds.LoadLevel("levels/B.alvl") == nullptr);
+            CHECK(worlds.PromotePendingLoad() == nullptr);
+            CHECK_FALSE(worlds.Destroy("Main#1"));
+        });
+    CHECK(worlds.Count() == residentBefore);
+    CHECK(worlds.Active()->levelPath == "levels/A.alvl");
+
+    // Requesting is allowed from the same place, and changes nothing yet.
+    worlds.ForEach([&](World &) { worlds.RequestTravel("levels/B.alvl"); });
+    CHECK(worlds.HasTravelRequest());
+    CHECK(worlds.Active()->levelPath == "levels/A.alvl");
+
+    // The host applies it at its safe point.
+    World *const arrived = worlds.ProcessTravelRequest();
+    REQUIRE(arrived != nullptr);
+    CHECK(arrived->levelPath == "levels/B.alvl");
+    CHECK(worlds.Active() == arrived);
+    CHECK_FALSE(worlds.HasTravelRequest()); // consumed
+    CHECK(worlds.ProcessTravelRequest() == nullptr); // and not repeated
+
+    // Two requests in one frame is a game-logic conflict; the last one wins
+    // rather than travelling twice.
+    worlds.RequestTravel("levels/A.alvl");
+    worlds.RequestTravel("levels/B.alvl");
+    World *const second = worlds.ProcessTravelRequest();
+    REQUIRE(second != nullptr);
+    CHECK(second->levelPath == "levels/B.alvl");
+
+    std::filesystem::remove_all(root);
+}
+
 TEST_CASE("A background load's profile is installed when it is promoted")
 {
     // The worker parks the level's choice on the world it exclusively owns;

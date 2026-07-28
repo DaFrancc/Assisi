@@ -179,15 +179,33 @@ resident awake entities:
 
 ## 4. Stage P3 — dispatch per world
 
-- **Uniform simulating gate.** (Review-critical: gating FixedUpdate on
-  `state == Active && simulate` alone regresses Pause — Pause clears only
-  the *viewed* world's `simulate` flag, and travel-from-pause force-sets
-  it on the incoming world, so secondary play worlds would tick game
-  logic while the editor says Paused.) In the editor, **all** game phases
-  — FixedUpdate included — are additionally gated on `IsSimulating()`.
-  And the "simulate follows play state" comment is already false for
-  travel-from-pause; stop asserting it. (Alternative — Pause clears every
-  play world's flag — rejected: it destroys per-world intent.)
+- **The editor's play state is a flat freeze** (review-critical, then
+  settled by the user). Pause means **the whole session is frozen — logic
+  *and* physics, in every resident world** — not "the world you are
+  looking at stops". Gating on per-world `simulate` alone regressed this,
+  because Pause clears only the *viewed* world's flag and travel-from-pause
+  force-sets it on the incoming world. `OnFixedUpdate` now returns early
+  unless `IsSimulating()`; per-world `simulate` selects among the worlds of
+  a *running* session and can never override the session being stopped.
+  `SyncUnrenderedWorld` is skipped for the same reason — nothing stepped,
+  so there are no poses to write back.
+- **Only Active worlds step.** Dormant means "resident and inspectable, but
+  not stepped", and a stale `simulate` must not be able to break that:
+  resuming while viewing the dormant edited world used to hand it a live
+  flag and step its physics. Both the dispatch gate and `SetPlayState`
+  enforce it now.
+- **Game code changes level through `WorldManager::RequestTravel`,** never
+  by calling LoadLevel from a system. Systems run inside the frame loop's
+  walk over the resident worlds, where travelling would invalidate the walk
+  and could free the world whose system is executing. `ForEach` raises a
+  guard for its duration and the mutating operations (LoadLevel,
+  BeginLoadLevel, PromotePendingLoad, Destroy, DestroyAllExcept) refuse and
+  log while it is up, so the mistake is an error message rather than a
+  use-after-free. `SystemContext::worlds` is how a system reaches the
+  request; the host drains it with `ProcessTravelRequest()` at its frame
+  safe point (the editor, alongside its own deferred level operations —
+  *before* the frame's draws are recorded, which is where freeing the
+  outgoing world's GPU assets is legal). Last request of a frame wins.
 - `OnFixedUpdate`: when `IsSimulating()`, for each world with
   `state == Active && simulate`, run its FixedUpdate phase
   (`isActiveWorld = (&world == worlds.Active())`), then step that world's
@@ -262,9 +280,19 @@ lets an open-world profile install everything.
   growth noted in §1 above (lifecycle hooks, batched live-world Jolt
   inserts, travel cancelling in-flight chunk streams).
 - **Travel policy:** `WorldManager::LoadLevel` hardcodes
-  destroy-outgoing; revisitable-with-state levels (Metroidvania
-  backtracking) need a keep-dormant or serialize-out policy later. A
-  travel-policy question, not a binding question.
+  destroy-outgoing *and always loads fresh from disk* — it never returns
+  to an already-resident world of that path. So A→B→A restarts A rather
+  than resuming it, which is correct for "go to this level" and wrong for
+  revisitable levels (Metroidvania backtracking, RE-style hubs). The
+  state-preserving switch that exists today is Load-as-new-world plus the
+  world selector (`SetActiveWorld`). Three candidate fixes, none chosen:
+  activate-if-resident (cheapest, makes "restart this level"
+  inexpressible, ambiguous when two worlds share a path), keep-dormant on
+  travel (preserves everything including physics, needs a residency budget
+  and eviction), serialize-out/restore-in (cheap in memory, loses in-flight
+  velocities unless the snapshot is extended — the machinery already exists
+  as the play/stop `_playSnapshot`). A travel-policy question, not a
+  binding question.
 - **Open-world blockers outside this design:** parallel system dispatch,
   origin rebasing / precision, broadphase scale, residency.
 

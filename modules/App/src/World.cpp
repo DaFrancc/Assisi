@@ -22,8 +22,42 @@ WorldManager::~WorldManager()
     CancelPendingLoad();
 }
 
+bool WorldManager::RefuseWhileIterating(std::string_view what) const
+{
+    if (_iterationDepth == 0)
+        return false;
+
+    Core::Log::Error("WorldManager: {} was called while iterating the resident worlds — refusing, "
+                     "because it would invalidate the walk and can destroy the world whose code is "
+                     "running. Game logic changes level with RequestTravel(); the host applies it "
+                     "at the next frame safe point.",
+                     what);
+    return true;
+}
+
+void WorldManager::RequestTravel(std::string_view levelPath)
+{
+    // Deliberately allowed mid-iteration — this is the call a system makes
+    // instead of LoadLevel. Last request of the frame wins.
+    _travelRequest.emplace(levelPath);
+}
+
+World *WorldManager::ProcessTravelRequest()
+{
+    if (!_travelRequest)
+        return nullptr;
+
+    // Take the request before travelling: LoadLevel can run game code (a profile
+    // installer), and a request it makes belongs to the next frame, not this one.
+    const std::string path = *std::exchange(_travelRequest, std::nullopt);
+    return LoadLevel(path);
+}
+
 World &WorldManager::Create(std::string_view label)
 {
+    // Not refusable: Create returns a reference, so there is no failure value.
+    // The mutators above are the ones a system could plausibly reach for, and
+    // LoadLevel (which calls this) is already guarded at its own entry.
     std::unique_ptr<World> world = std::make_unique<World>();
     world->name.assign(label).append("#").append(std::to_string(_nextId++));
 
@@ -148,6 +182,9 @@ World *WorldManager::SwapToActive(World &incoming, std::string levelPath)
 
 bool WorldManager::Destroy(std::string_view name)
 {
+    if (RefuseWhileIterating("Destroy"))
+        return false;
+
     const auto it = std::ranges::find_if(_worlds, [name](const std::unique_ptr<World> &w)
                                          { return w->name == name; });
     if (it == _worlds.end())
@@ -191,6 +228,9 @@ const World *WorldManager::Find(std::string_view name) const
 
 World *WorldManager::LoadLevel(std::string_view levelPath)
 {
+    if (RefuseWhileIterating("LoadLevel"))
+        return nullptr;
+
     // A synchronous travel supersedes any background preload — wait it out and
     // drop it rather than racing two loads.
     CancelPendingLoad();
@@ -246,6 +286,9 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
 
 World *WorldManager::BeginLoadLevel(std::string_view levelPath)
 {
+    if (RefuseWhileIterating("BeginLoadLevel"))
+        return nullptr;
+
     if (_pending)
     {
         Core::Log::Warn("BeginLoadLevel('{}') ignored: a background load ('{}') is already pending.",
@@ -406,6 +449,9 @@ float WorldManager::PendingLoadProgress() const
 
 World *WorldManager::PromotePendingLoad()
 {
+    if (RefuseWhileIterating("PromotePendingLoad"))
+        return nullptr;
+
     if (!_pending)
         return nullptr;
 
@@ -578,6 +624,9 @@ bool WorldManager::SweepAssetCache()
 
 std::size_t WorldManager::DestroyAllExcept(World &keep)
 {
+    if (RefuseWhileIterating("DestroyAllExcept"))
+        return 0;
+
     // A background load in flight would be writing into a world this is about to
     // free (or into `keep` if that is the pending world — it never is, since the
     // pending world holds no role). Wait it out and drop it first.

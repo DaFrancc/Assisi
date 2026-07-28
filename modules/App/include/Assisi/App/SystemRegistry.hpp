@@ -51,6 +51,7 @@ namespace Assisi::App
 {
 
 struct World;
+class WorldManager;
 
 /// @brief Passed to game logic systems (PreUpdate, FixedUpdate, Update, PostUpdate).
 ///
@@ -76,6 +77,16 @@ struct SystemContext
     /// rendered and driven by input. Systems registered ActiveWorldOnly() are
     /// skipped when this is false; prefer that over testing this by hand.
     bool                  isActiveWorld = true;
+
+    /// Every resident world, for the few systems that need to change level.
+    ///
+    /// A system runs inside the frame loop's walk over the worlds, so it must
+    /// **never** call LoadLevel/Destroy/Promote directly — those would invalidate
+    /// the walk and can free the very world the system is running in. They refuse
+    /// and log if tried. Change level with `ctx.worlds->RequestTravel(path)`,
+    /// which the host applies at its next frame safe point. Null in hosts that
+    /// run systems without a manager (tests).
+    WorldManager         *worlds = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).

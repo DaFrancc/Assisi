@@ -227,6 +227,19 @@ class WorldManager
     /// order** — deterministic, so stepping several worlds is reproducible.
     template <typename F> void ForEach(F &&fn)
     {
+        // The guard makes the mutating operations refuse while this is running.
+        // The frame loop dispatches game systems from inside a ForEach, and a
+        // system calling LoadLevel would erase/append to _worlds under this loop
+        // and could destroy the very world whose system is executing. Systems
+        // travel through RequestTravel instead; this turns the mistake into an
+        // error message rather than a use-after-free.
+        ++_iterationDepth;
+        struct Unguard
+        {
+            std::uint32_t &depth;
+            ~Unguard() { --depth; }
+        } unguard{_iterationDepth};
+
         for (const std::unique_ptr<World> &world : _worlds)
         {
             fn(*world);
@@ -277,6 +290,35 @@ class WorldManager
     /// keeps playing where it was. Call only at a frame safe point, never
     /// between BeginFrame and EndFrame.
     World *LoadLevel(std::string_view levelPath);
+
+    // --- Deferred travel -----------------------------------------------------
+    //
+    // The game-facing way to change level. LoadLevel itself is a frame-safe-point
+    // operation (it resolves GPU assets and destroys worlds), and the thing most
+    // likely to want it — a trigger volume, a match-end handler — runs inside the
+    // frame loop's iteration over the worlds, which is the one place it must not
+    // be called from. So game code *requests*, and the host applies it at a point
+    // where both are safe.
+
+    /// @brief Queues a travel to @p levelPath, to be applied by
+    /// ProcessTravelRequest() at the host's next frame safe point.
+    ///
+    /// Safe to call from anywhere, including from inside a system — that is the
+    /// point of it. Only the most recent request survives: two systems asking for
+    /// different levels in one frame is a game-logic conflict, and taking the last
+    /// one keeps it deterministic rather than travelling twice.
+    void RequestTravel(std::string_view levelPath);
+
+    /// @brief Whether a travel has been requested and not yet applied.
+    [[nodiscard]] bool HasTravelRequest() const { return _travelRequest.has_value(); }
+
+    /// @brief Applies a queued travel, if any, and clears the request.
+    ///
+    /// Call once per frame from a safe point — never between BeginFrame and
+    /// EndFrame, and never from inside ForEach. Does nothing when no request is
+    /// pending. @return whatever LoadLevel returned (nullptr on failure or when
+    /// nothing was queued).
+    World *ProcessTravelRequest();
 
     /// @brief Moves an entity — and its whole subtree — from one resident world
     /// into another, keeping its component state and rebuilding its transients in
@@ -403,6 +445,15 @@ class WorldManager
     // vector scan beats hashing and keeps registration order for diagnostics.
     std::vector<std::pair<std::string, ProfileInstaller>> _profiles;
     std::string                                          _defaultProfile;
+
+    // Non-zero while a ForEach is walking _worlds; the mutating operations refuse
+    // rather than invalidate it. A counter, not a flag, so nested iteration
+    // unwinds correctly.
+    std::uint32_t              _iterationDepth = 0;
+    std::optional<std::string> _travelRequest;
+
+    // Logs and returns false when @p what would mutate the world list mid-walk.
+    [[nodiscard]] bool RefuseWhileIterating(std::string_view what) const;
 
     // An in-flight or ready-to-promote background load. The worker fills
     // `world`'s scene + physics and returns whether it succeeded; a synchronous
