@@ -2,6 +2,11 @@
 /// @file SystemRegistry.cpp
 
 #include <Assisi/App/SystemRegistry.hpp>
+
+// SystemContext holds World by reference (forward-declared in the header, to
+// keep World.hpp's own include of this one acyclic); the activation gate reads
+// through it, so the definition is needed here.
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <cstdint>
@@ -147,6 +152,20 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::ActiveWorldOnly()
     return *this;
 }
 
+void SystemRegistry::SystemHandle::Require(Core::Reflect::ComponentId id)
+{
+    if (id == Core::Reflect::kInvalidComponentId)
+    {
+        // An unreflected type has no pool and would gate the system off forever.
+        // Fail loud: silently never running is the worst outcome here.
+        Core::Log::Error("SystemRegistry: RequireAny() names a type with no ComponentId — it is "
+                         "not registered with the reflection system (ACOMP). Ignoring it, so the "
+                         "system stays eligible.");
+        return;
+    }
+    _addRequirement(id);
+}
+
 // ---------------------------------------------------------------------------
 // Add — append to a phase and hand back a slot-bound handle
 // ---------------------------------------------------------------------------
@@ -176,7 +195,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
     }
 
     const std::size_t entryIndex = phase.entries.size();
-    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false});
+    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false, {}});
     phase.dirty = true;
 
     // Capture the phase and slot index (not a pointer to the Entry): the entries
@@ -192,7 +211,9 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
         supportsActiveOnly ? SystemHandle::SetActiveOnly(
                                  [phasePtr, entryIndex]
                                  { phasePtr->entries[entryIndex].activeOnly = true; })
-                           : SystemHandle::SetActiveOnly{});
+                           : SystemHandle::SetActiveOnly{},
+        [phasePtr, entryIndex](Core::Reflect::ComponentId id)
+        { phasePtr->entries[entryIndex].requireAny.push_back(id); });
 }
 
 // ---------------------------------------------------------------------------
@@ -201,7 +222,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
 
 template <typename Ctx>
 void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx,
-                              bool skipActiveOnly)
+                              bool skipActiveOnly, const ECS::Scene &gateScene)
 {
     if (phase.dirty)
     {
@@ -209,10 +230,29 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx
         phase.dirty  = false;
     }
 
+    // Whether a gated system has anything to work on. Cheap enough to pay every
+    // frame for every system: each id is an index into the scene's pool array,
+    // so a system whose components are absent costs a load and a compare rather
+    // than a call. That is what makes it affordable for a profile to install
+    // systems a given world may never need.
+    const auto eligible = [&gateScene](const typename Phase<Ctx>::Entry &entry)
+    {
+        if (entry.requireAny.empty())
+            return true;
+        for (const Core::Reflect::ComponentId id : entry.requireAny)
+        {
+            if (gateScene.ComponentCount(id) > 0)
+                return true;
+        }
+        return false;
+    };
+
     for (std::size_t i : phase.sorted)
     {
         const typename Phase<Ctx>::Entry &entry = phase.entries[i];
         if (skipActiveOnly && entry.activeOnly)
+            continue;
+        if (!eligible(entry))
             continue;
         entry.fn(ctx);
     }
@@ -245,12 +285,12 @@ SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view nam
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
 {
     RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), ctx,
-             /*skipActiveOnly=*/!ctx.isActiveWorld);
+             /*skipActiveOnly=*/!ctx.isActiveWorld, ctx.world.scene);
 }
 
 void SystemRegistry::RunRender(RenderContext ctx)
 {
-    RunPhase(_renderPhase, "Render", ctx, /*skipActiveOnly=*/false);
+    RunPhase(_renderPhase, "Render", ctx, /*skipActiveOnly=*/false, ctx.scene);
 }
 
 void SystemRegistry::Clear()

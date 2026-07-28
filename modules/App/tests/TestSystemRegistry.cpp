@@ -10,6 +10,8 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 
 using namespace Assisi::App;
 
@@ -173,6 +175,84 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
     CHECK(order[0] == "First");
     CHECK(order[1] == "Middle");
     CHECK(order[2] == "Last");
+}
+
+TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist")
+{
+    // What lets a profile install systems a world may never need: an open-world
+    // profile installs everything, and residency decides what runs. The gate has
+    // to open and close with the data, not just once at startup.
+    WorldManager             worlds;
+    World                   &world = worlds.Create("Test");
+    Assisi::Core::EventQueue events;
+    SystemRegistry           systems;
+
+    int32_t gated   = 0;
+    int32_t ungated = 0;
+    systems.Register(SystemPhase::Update, "Ungated", [&](SystemContext &) { ++ungated; });
+    systems.Register(SystemPhase::Update, "Gated", [&](SystemContext &) { ++gated; })
+        .RequireAny<Assisi::ECS::Transform>();
+
+    // Empty scene: the gated system has nothing to work on.
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    CHECK(ungated == 1);
+    CHECK(gated == 0);
+
+    // One matching entity is enough to open it.
+    const Assisi::ECS::Entity entity = world.scene.Create();
+    (void)world.scene.Add<Assisi::ECS::Transform>(entity);
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    CHECK(ungated == 2);
+    CHECK(gated == 1);
+
+    // ...and removing the last one closes it again.
+    world.scene.Remove<Assisi::ECS::Transform>(entity);
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    CHECK(ungated == 3);
+    CHECK(gated == 1);
+}
+
+TEST_CASE("SystemRegistry: RequireAny runs when ANY of the listed components is present")
+{
+    WorldManager             worlds;
+    World                   &world = worlds.Create("Test");
+    Assisi::Core::EventQueue events;
+    SystemRegistry           systems;
+
+    int32_t ticks = 0;
+    systems.Register(SystemPhase::Update, "EitherOr", [&](SystemContext &) { ++ticks; })
+        .RequireAny<Assisi::ECS::Transform, Assisi::Physics::RigidBodyDescriptor>();
+
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    CHECK(ticks == 0);
+
+    // Only the SECOND of the two listed components exists — still eligible.
+    const Assisi::ECS::Entity entity = world.scene.Create();
+    (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity);
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
+    CHECK(ticks == 1);
+}
+
+TEST_CASE("SystemRegistry: the activation gate is per world, not per registry")
+{
+    // Two worlds built from one profile share the system *set*; whether each
+    // one runs it is decided by that world's own contents.
+    WorldManager             worlds;
+    World                   &withData = worlds.Create("WithData");
+    World                   &empty    = worlds.Create("Empty");
+    Assisi::Core::EventQueue events;
+    SystemRegistry           systems;
+
+    int32_t ticks = 0;
+    systems.Register(SystemPhase::Update, "Gated", [&](SystemContext &) { ++ticks; })
+        .RequireAny<Assisi::ECS::Transform>();
+
+    (void)withData.scene.Add<Assisi::ECS::Transform>(withData.scene.Create());
+
+    systems.Run(SystemPhase::Update, MakeGameCtx(empty, events, true));
+    CHECK(ticks == 0);
+    systems.Run(SystemPhase::Update, MakeGameCtx(withData, events, true));
+    CHECK(ticks == 1);
 }
 
 TEST_CASE("SystemRegistry: a dependency cycle falls back to running all systems")

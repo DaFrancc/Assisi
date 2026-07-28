@@ -1,11 +1,11 @@
 # World–System Binding Design Notes
 
-Branch: planned on `multi-scene` (after S1-S5; this is the "per-world
-registration question" deferred at EditorApp.cpp:632-633).
-Status: **planned, not started.** Plan reviewed by two independent
-adversarial passes (one codebase-grounded, one architecture/research);
-their accepted findings are folded in below and marked where they changed
-the design.
+Branch: `multi-scene` (after S1-S5; this is the "per-world registration
+question" deferred at EditorApp.cpp:632-633).
+Status: **P1-P4 all built.** Plan reviewed by two independent adversarial
+passes (one codebase-grounded, one architecture/research); their accepted
+findings are folded in below and marked where they changed the design.
+Sections 2-5 describe what is in the tree; §6 is the deferred list.
 
 ## 0. Problem
 
@@ -208,20 +208,30 @@ resident awake entities:
   `Entity` payload must carry `WorldEntity{world, entity}` instead
   (§1's rule). Per-world queues are a later decision.
 
-## 5. Stage P4 — data-driven activation gate
+## 5. Stage P4 — data-driven activation gate — **BUILT**
 
-`SystemHandle::RequireAny<Ts...>()` (plus a runtime-ComponentId form):
-dispatch skips the system when every listed component pool in
-`ctx.world.scene` is empty. This is Unity's `RequireForUpdate` / flecs's
-empty-table skip, hand-rolled, and it is what lets an open-world profile
-install everything.
+`SystemHandle::RequireAny<Ts...>()`: dispatch skips the system when every
+listed component pool in the context's scene is empty. This is Unity's
+`RequireForUpdate` / flecs's empty-table skip, hand-rolled, and it is what
+lets an open-world profile install everything.
 
-- ECS work: no pool-size query exists today (`Scene::GetPool<T>` is
-  private; the type-erased `PoolStorage` has no size accessor), but pools
-  are ComponentId-indexed arrays and `SparseSet::Size()` exists — a
-  ~10-line addition. A never-created pool reads as size 0. Deferred
-  `Destroy()` means the gate can over-run by one frame for
-  already-queued entities — harmless.
+- ECS work, as built: `PoolStorage` gained a `size` function pointer and
+  `Scene` a public `ComponentCount(ComponentId)` — ids index a
+  bounds-checked array, so a check is two loads and a compare, with no
+  hashing and no iteration. A never-created pool reports 0, the same as an
+  emptied one. Deferred `Destroy()` means the gate can be one frame late
+  to *close* (queued-for-destruction entities still hold their
+  components); that over-runs a system rather than skipping one, which is
+  the safe direction.
+- Two deviations from the plan, both deliberate: the gate applies to
+  **render systems too** (RenderContext carries a scene, so it costs
+  nothing and is equally useful there), and there is **no public
+  runtime-ComponentId form** on the handle — the template covers every
+  caller today, and a runtime form belongs with data-driven registration,
+  which does not exist yet.
+- A type named in `RequireAny` that has no ComponentId (not `ACOMP`
+  registered) is logged and ignored rather than gating the system off
+  forever — silently never running is the worse failure.
 - Idle cost (verified against the actual pool layout): one or two indexed
   loads + compares per idle system per phase; hundreds of systems remain
   well under 0.1 ms/frame. Registration count does not appear in the

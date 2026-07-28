@@ -34,6 +34,7 @@
 /// Systems with no ordering relationship run in registration order.
 
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -132,6 +133,25 @@ class SystemRegistry
         /// there logs an error and changes nothing.
         SystemHandle &ActiveWorldOnly();
 
+        /// @brief Skip this system while the scene holds none of @p Ts.
+        ///
+        /// What makes it affordable to install a system that a given world may
+        /// never need — an open-world profile installs everything, and the
+        /// regions that stream in decide what actually runs
+        /// (docs/world-system-binding-design-notes.md §5). Idle cost is a couple
+        /// of array loads per phase, so frame cost tracks resident entities
+        /// rather than how many systems were registered.
+        ///
+        /// "Any", not "all": a system reading Water OR Lava wants to run when
+        /// either is present. Declare only what the system cannot work without —
+        /// a component it merely writes to a few entities is not a gate.
+        template <typename... Ts> SystemHandle &RequireAny()
+        {
+            static_assert(sizeof...(Ts) > 0, "RequireAny<> needs at least one component type.");
+            (Require(Core::Reflect::ComponentIdOf<Ts>()), ...);
+            return *this;
+        }
+
       private:
         friend class SystemRegistry;
 
@@ -139,15 +159,23 @@ class SystemRegistry
         using AddDependency = std::function<void(bool before, std::string_view name)>;
         /// Marks the entry active-world-only. Null for render-phase handles.
         using SetActiveOnly = std::function<void()>;
+        /// Appends one component id to the entry's activation gate.
+        using AddRequirement = std::function<void(Core::Reflect::ComponentId)>;
 
-        SystemHandle(AddDependency addDependency, SetActiveOnly setActiveOnly)
+        /// Non-template half of RequireAny, so the fold above stays a one-liner.
+        void Require(Core::Reflect::ComponentId id);
+
+        SystemHandle(AddDependency addDependency, SetActiveOnly setActiveOnly,
+                     AddRequirement addRequirement)
             : _addDependency(std::move(addDependency))
             , _setActiveOnly(std::move(setActiveOnly))
+            , _addRequirement(std::move(addRequirement))
         {
         }
 
-        AddDependency _addDependency;
-        SetActiveOnly _setActiveOnly;
+        AddDependency  _addDependency;
+        SetActiveOnly  _setActiveOnly;
+        AddRequirement _addRequirement;
     };
 
     /// @brief Register a game logic system for a non-Render phase.
@@ -198,6 +226,10 @@ class SystemRegistry
             /// Set by SystemHandle::ActiveWorldOnly(). Always false for render
             /// entries, which only ever run for the world being drawn.
             bool                      activeOnly = false;
+            /// Set by SystemHandle::RequireAny(). Empty means "always eligible";
+            /// otherwise the system runs only while the scene holds at least one
+            /// of these components.
+            std::vector<Core::Reflect::ComponentId> requireAny;
         };
 
         std::vector<Entry>       entries;
@@ -224,9 +256,11 @@ class SystemRegistry
                                              std::string_view          phaseName);
 
     /// @brief Re-sort @p phase if dirty, then run its systems in dependency order,
-    /// omitting active-world-only entries when @p skipActiveOnly.
+    /// omitting active-world-only entries when @p skipActiveOnly and entries whose
+    /// RequireAny components are all absent from @p gateScene.
     template <typename Ctx>
-    void RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx, bool skipActiveOnly);
+    void RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx, bool skipActiveOnly,
+                  const ECS::Scene &gateScene);
 
     std::array<Phase<SystemContext>, kGamePhaseCount> _gamePhases;
     Phase<RenderContext>                              _renderPhase;

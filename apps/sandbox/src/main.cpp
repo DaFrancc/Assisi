@@ -121,7 +121,11 @@ void InputDemoSystem(Assisi::App::SystemContext &ctx)
 
 void RegisterDemoSystems(Assisi::App::SystemRegistry &systems)
 {
-    systems.Register(Assisi::App::SystemPhase::Update, "SpinDemo", &SpinDemoSystem);
+    systems.Register(Assisi::App::SystemPhase::Update, "SpinDemo", &SpinDemoSystem)
+        // Nothing to spin without Transforms — so in a world that has none (an
+        // empty one, or a streamed-out region later), this costs one array load
+        // per frame instead of a call and a query.
+        .RequireAny<Assisi::ECS::Transform>();
     systems.Register(Assisi::App::SystemPhase::Update, "InputDemo", &InputDemoSystem)
         .After("SpinDemo")
         .ActiveWorldOnly();
