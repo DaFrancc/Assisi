@@ -228,6 +228,33 @@ class EditorApp : public Assisi::App::Application
     bool AssetIdPathField(const char *inputId, Assisi::Core::AssetId &id);
     void HandlePhysicsEditing(bool anyFieldEdited);
 
+    /// @brief Holds the selected entity's rigid body still for the duration of an
+    /// edit gesture, and keeps the hold alive.
+    ///
+    /// Call every frame a Transform-editing gesture is held — a gizmo drag, an
+    /// Inspector field. The body is made Static, which takes it out of the
+    /// solver's hands entirely: while you are placing it, it will not be pushed
+    /// out of anything it overlaps, will not rotate itself free of a contact, and
+    /// will not stutter against a surface. Everything it overlaps still gets
+    /// pushed by it, which is the half you do want.
+    ///
+    /// Idempotent while the same entity stays selected. If the selection moves
+    /// mid-gesture the previous body is released first, so a hold can never be
+    /// left behind on an entity nothing is editing any more.
+    ///
+    /// The matching release is NOT here — it happens once per frame at the end of
+    /// OnImGui, on the first frame nothing calls this. See ThawEditedBody.
+    void RequestPhysicsFreeze();
+
+    /// @brief Returns the body frozen by HandlePhysicsEditing to its authored
+    /// motion type and clears the freeze.
+    ///
+    /// Safe to call when nothing is frozen, when the world it belonged to is
+    /// gone, and when the entity or its body has since been destroyed — all of
+    /// which are reachable, and all of which must still clear the state rather
+    /// than leave a freeze recorded against something that no longer exists.
+    void ThawEditedBody();
+
     /// @brief Writes an eyedropper-picked entity into the armed EntityRef field.
     void ApplyEyedropperPick(Assisi::ECS::Entity picked);
 
@@ -477,7 +504,25 @@ class EditorApp : public Assisi::App::Application
     static constexpr float kMouseSensitivity = 0.1f;
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
-    bool                _wasDragging    = false;
+
+    // Physics freeze while an Inspector field is being held (see
+    // HandlePhysicsEditing / ThawEditedBody). Dragging a Transform field on a
+    // dynamic body would otherwise fight the solver, so the body is made Static
+    // for the duration and restored on release.
+    //
+    // This is deliberately shaped like _captureEditingActive: the request is a
+    // per-frame flag raised by the panel, and the *release* is decided at the end
+    // of OnImGui, where it runs whether or not the Inspector drew anything. A
+    // release keyed off the panel's own edge could be skipped entirely — the
+    // Inspector early-returns when nothing is selected — which stranded the body
+    // Static forever while its descriptor still said dynamic: an object frozen in
+    // mid-air that the inspector insisted was falling.
+    bool                _physicsFreezeRequested = false;
+    Assisi::ECS::Entity _frozenBodyEntity       = Assisi::ECS::NullEntity;
+    /// World that owns _frozenBodyEntity, by name rather than pointer: the viewed
+    /// world can change (or be destroyed) between freeze and release, and the
+    /// thaw must reach the body it actually froze, not whatever is on screen now.
+    std::string         _frozenBodyWorld;
 
     // Reused per-frame scratch for collider wireframes (see SubmitColliderWireframes):
     // the depth-tested (unselected) and on-top (selected) line batches, and the list

@@ -1126,6 +1126,10 @@ void EditorApp::OnImGui()
     // inspector raise it below, and the end-of-frame capture sweep reads it.
     _captureEditingActive = false;
 
+    // Same shape, for the physics freeze the Inspector applies while a field is
+    // held (HandlePhysicsEditing). Released at the end of this function.
+    _physicsFreezeRequested = false;
+
     // First: resets ImGuizmo's per-frame state and draws the manipulator over the
     // scene (behind the panels below). Also refreshes IsUsingGizmo() for picking.
     DrawTransformGizmo();
@@ -1140,6 +1144,15 @@ void EditorApp::OnImGui()
     DrawHelloImageWindow();
     DrawAssetBrowser();
     DrawStaleResolutionModal();
+
+    // Release the Inspector's physics freeze here rather than inside the panel.
+    // The panel cannot be trusted to observe its own release: DrawInspector
+    // early-returns when nothing is selected, so deselecting (or destroying) the
+    // entity on the same frame the drag ends skipped the restore entirely and left
+    // the body Static for the rest of the session — visibly stuck in mid-air, with
+    // a descriptor that still read dynamic. This runs unconditionally.
+    if (!_physicsFreezeRequested)
+        ThawEditedBody();
 
     // After every panel has drawn (so each open gesture sees its final value):
     // commit finished drags/typing, drop no-ops, abandon dead-entity gestures.
