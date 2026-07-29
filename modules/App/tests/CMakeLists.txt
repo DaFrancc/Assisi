@@ -1,5 +1,6 @@
 add_executable(Assisi-App-Tests
   main.cpp
+  TestBounce.cpp
   TestSystemRegistry.cpp
   TestWorld.cpp
 )

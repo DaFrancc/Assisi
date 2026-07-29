@@ -177,6 +177,36 @@ resident awake entities:
 7. `EditorApp::_gameSystems` is removed; play-mode game systems come from
    the played world's own registry.
 
+### Installers configure the world, not just the registry
+
+`ProfileInstaller` takes `World &` rather than `SystemRegistry &`, and
+that turned out to matter more than "it might be handy later". Systems
+routinely need per-world *engine* state switched on to do anything, and
+the profile is the only place that knows both halves.
+
+The worked example is the contact log. `Physics::PhysicsWorld` records
+collisions only when `SetContactReporting(true)` is called on it —
+off by default, and off means no Jolt contact listener is installed at
+all, so a world nobody asked for contacts in does not pay the virtual
+call. `App::BounceSystem` (which ricochets `Physics::Bounce` entities off
+whatever they hit) is useless without it. A profile enables both together:
+
+```cpp
+worlds.RegisterProfile("Static", [](World &world) {
+    world.physics.SetContactReporting(true);
+    world.systems.Register(SystemPhase::FixedUpdate, "Bounce", &BounceSystem)
+        .RequireAny<Physics::Bounce>();
+});
+```
+
+The consequence for §3.4's re-application rule: **anything an installer
+can switch on, `ApplyProfile` must switch off first.** `systems.Clear()`
+alone is not enough — `ApplyProfile` also resets contact reporting, or the
+first bouncy level opened in a session would leave every level opened
+after it in that world paying for a contact log nothing reads. Any future
+per-world switch a profile can set needs the same treatment, in the same
+place.
+
 ## 4. Stage P3 — dispatch per world
 
 - **The editor's play state is a flat freeze** (review-critical, then

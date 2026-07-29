@@ -126,6 +126,13 @@ void WorldManager::ApplyProfile(World &world, std::string_view name)
     // from empty.
     world.systems.Clear();
 
+    // Same reasoning as the Clear above, for the other per-world switch an
+    // installer can throw: a profile that wants contact reporting turns it on, so
+    // re-targeting a world to a profile that does not want it must find it off.
+    // Otherwise the first bouncy level opened in a session would leave every level
+    // opened after it paying for a contact log nothing reads.
+    world.physics.SetContactReporting(false);
+
     // The level's request is recorded whether or not it could be honoured — it is
     // what a save round-trips, and a fallback must not rewrite the file with the
     // name of whatever ran instead.

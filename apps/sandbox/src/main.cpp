@@ -14,7 +14,9 @@
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/App/PhysicsSystems.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Window/InputContext.hpp>
 
 #include <glm/gtc/quaternion.hpp>
@@ -135,16 +137,31 @@ void RegisterDemoSystems(Assisi::App::SystemRegistry &systems)
 /// rather than a global one. `assets/levels/Test.alvl` selects it by name, and a
 /// world built from it keeps the input probe but does no spinning — load it
 /// alongside a default-profile level and only one of the two animates.
+///
+/// It is also where the bounce is switched on, and that is the more interesting
+/// half: a profile installer receives the whole World, not just its registry, so
+/// it can set up the *engine* state its systems need as well as the systems
+/// themselves. App::BounceSystem does nothing without contact reporting, and
+/// contact reporting is off by default, so the two are enabled together in one
+/// place rather than left for a level author to remember separately.
 void RegisterDemoProfiles(Assisi::App::WorldManager &worlds)
 {
-    worlds.RegisterProfile("Static",
-                           [](Assisi::App::World &world)
-                           {
-                               world.systems
-                                   .Register(Assisi::App::SystemPhase::Update, "InputDemo",
-                                             &InputDemoSystem)
-                                   .ActiveWorldOnly();
-                           });
+    worlds.RegisterProfile(
+        "Static",
+        [](Assisi::App::World &world)
+        {
+            world.physics.SetContactReporting(true);
+
+            world.systems
+                .Register(Assisi::App::SystemPhase::FixedUpdate, "Bounce", &Assisi::App::BounceSystem)
+                // A world with no Bounce components never calls it — and this is
+                // the level's own gate, so a second resident level without
+                // bouncers pays nothing for this one having them.
+                .RequireAny<Assisi::Physics::Bounce>();
+
+            world.systems.Register(Assisi::App::SystemPhase::Update, "InputDemo", &InputDemoSystem)
+                .ActiveWorldOnly();
+        });
 }
 } // namespace
 
