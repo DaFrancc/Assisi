@@ -12,6 +12,7 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -234,7 +236,90 @@ struct PhysicsWorld::Impl
     /// flipping motion type (which keeps its ID). Populated in AddBody, torn down
     /// in Clear.
     std::unordered_map<JPH::uint32, MotionSnapshot> snapshots;
+
+    // --- Contact reporting (off unless SetContactReporting turns it on) -------
+
+    /// The entity behind each body, keyed like `snapshots`. Only bodies created
+    /// through AddBodyFromDescriptor appear — it is the one entry point that knows
+    /// an entity — so a contact against a body from the raw AddBody reports
+    /// NullEntity for that side rather than a wrong handle.
+    std::unordered_map<JPH::uint32, ECS::Entity> bodyEntities;
+
+    bool contactReporting = false;
+
+    /// Written from Jolt's worker jobs during Update(), read from the main thread
+    /// between steps. The mutex only guards the append: contacts are rare relative
+    /// to the collision work that produced them, so this never becomes the
+    /// bottleneck, and per-thread buffers would cost more to merge than they save.
+    std::mutex           contactMutex;
+    std::vector<Contact> contacts;
+
+    ECS::Entity EntityFor(const JPH::BodyID &id) const
+    {
+        const auto it = bodyEntities.find(id.GetIndexAndSequenceNumber());
+        return it == bodyEntities.end() ? ECS::NullEntity : it->second;
+    }
+
+    /// Records both sides of a contact. Called from Jolt's narrow phase — i.e.
+    /// *before* the solver runs, which is the whole reason the velocities are
+    /// captured here rather than read back afterwards.
+    void RecordContact(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold);
+
+    /// Installed as the PhysicsSystem's contact listener only while reporting is
+    /// on, so a world that does not want contacts never even pays the virtual call.
+    class ContactCollector final : public JPH::ContactListener
+    {
+      public:
+        explicit ContactCollector(Impl &owner) : _owner(owner) {}
+
+        void OnContactAdded(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
+                            JPH::ContactSettings &settings) override
+        {
+            (void)settings; // we observe contacts, we don't retune them
+            _owner.RecordContact(body1, body2, manifold);
+        }
+
+        // OnContactPersisted is deliberately not overridden. A body resting on a
+        // surface persists its contact every step; reporting those would make a
+        // contact-driven response (a bounce) re-fire forever into something that
+        // is simply lying still.
+
+      private:
+        Impl &_owner;
+    };
+
+    ContactCollector collector{*this};
 };
+
+void PhysicsWorld::Impl::RecordContact(const JPH::Body &body1, const JPH::Body &body2,
+                                       const JPH::ContactManifold &manifold)
+{
+    const ECS::Entity e1 = EntityFor(body1.GetID());
+    const ECS::Entity e2 = EntityFor(body2.GetID());
+    if (e1 == ECS::NullEntity && e2 == ECS::NullEntity)
+        return; // nothing on either side a system could act on
+
+    // Jolt's manifold normal is the direction body2 must move to separate from
+    // body1, so it already points away from body1's surface. Each side gets the
+    // one that points away from the *other*, which is what a reflection wants.
+    const JPH::Vec3 n = manifold.mWorldSpaceNormal;
+    const glm::vec3 awayFromBody1{n.GetX(), n.GetY(), n.GetZ()};
+
+    // Body::GetLinearVelocity asserts on a static body (no motion state to read).
+    const auto linearVelocity = [](const JPH::Body &body)
+    {
+        if (body.IsStatic())
+            return glm::vec3(0.f);
+        const JPH::Vec3 v = body.GetLinearVelocity();
+        return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
+    };
+
+    const std::lock_guard<std::mutex> lock(contactMutex);
+    if (e1 != ECS::NullEntity)
+        contacts.push_back(Contact{e1, e2, -awayFromBody1, linearVelocity(body1)});
+    if (e2 != ECS::NullEntity)
+        contacts.push_back(Contact{e2, e1, awayFromBody1, linearVelocity(body2)});
+}
 
 // ---------------------------------------------------------------------------
 // PhysicsWorld
@@ -375,6 +460,14 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
     if (descriptor.enableCCD)
         SetBodyCCD(body, true);
     (void)scene.Add<RigidBody>(entity, body);
+
+    // The only body-creation path that knows an entity, so the only one that can
+    // make a contact nameable in ECS terms. Recorded unconditionally: reporting can
+    // be switched on later in the world's life, and rebuilding the map then would
+    // mean walking the scene.
+    if (!body.bodyId.IsInvalid())
+        _impl->bodyEntities[body.bodyId.GetIndexAndSequenceNumber()] = entity;
+
     return body;
 }
 
@@ -397,6 +490,10 @@ void PhysicsWorld::Clear()
     _impl->allBodyIds.clear();
     _impl->dynamicBodyIds.clear();
     _impl->snapshots.clear();
+    _impl->bodyEntities.clear();
+    // Logged contacts name bodies that no longer exist — and, after a level load,
+    // entity handles that mean something entirely different.
+    _impl->contacts.clear();
 }
 
 void PhysicsWorld::RemoveBody(const RigidBody &body)
@@ -418,16 +515,58 @@ void PhysicsWorld::RemoveBody(const RigidBody &body)
     std::erase_if(_impl->allBodyIds, matches);
     std::erase_if(_impl->dynamicBodyIds, matches);
     _impl->snapshots.erase(key);
+
+    // Drop any logged contact naming the entity whose body just went away, on
+    // either side — acting on one would look up a RigidBody component pointing at
+    // a destroyed Jolt body.
+    const ECS::Entity gone = _impl->EntityFor(id);
+    _impl->bodyEntities.erase(key);
+    if (gone != ECS::NullEntity)
+    {
+        std::erase_if(_impl->contacts, [gone](const Contact &contact)
+                      { return contact.entity == gone || contact.other == gone; });
+    }
 }
 
 void PhysicsWorld::Update(float deltaTime)
 {
+    // The log describes the step about to run, not the one before it — clearing
+    // here is what guarantees a consumer sees each impact exactly once. Safe
+    // without the mutex: no Jolt worker is inside a callback at this point.
+    _impl->contacts.clear();
+
     /* This world's own scratch allocator, and the shared thread pool. Both are
        Update() arguments; the pool is shared (one set of workers), the allocator
        is per-world so two worlds' steps never touch the same scratch stack (see
        JoltRuntime). */
     _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc,
                                 &_impl->jolt.JobSystem());
+}
+
+void PhysicsWorld::SetContactReporting(bool enable)
+{
+    if (_impl->contactReporting == enable)
+        return;
+
+    _impl->contactReporting = enable;
+
+    // Unhooking the listener rather than early-returning inside it is what makes
+    // "off" genuinely free: Jolt skips the call entirely instead of making a
+    // virtual call per contact to reach a branch that does nothing.
+    _impl->physicsSystem.SetContactListener(enable ? &_impl->collector : nullptr);
+
+    if (!enable)
+        _impl->contacts.clear();
+}
+
+bool PhysicsWorld::IsContactReporting() const
+{
+    return _impl->contactReporting;
+}
+
+std::span<const Contact> PhysicsWorld::Contacts() const
+{
+    return {_impl->contacts.data(), _impl->contacts.size()};
 }
 
 void PhysicsWorld::SetCollisionSteps(int32_t steps)
@@ -587,6 +726,20 @@ void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, g
     {
         it->second = Impl::MotionSnapshot{position, rotation, position, rotation};
     }
+}
+
+void PhysicsWorld::SetBodyLinearVelocity(const RigidBody &body, glm::vec3 velocity)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId) || bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static)
+        return;
+
+    // Activate first, then set: a body Jolt has put to sleep on a surface ignores
+    // velocity written while it is asleep, which reads as the call silently doing
+    // nothing — exactly the case a contact response hits, since landing is what
+    // puts a body to sleep in the first place.
+    bodies.ActivateBody(body.bodyId);
+    bodies.SetLinearVelocity(body.bodyId, JPH::Vec3(velocity.x, velocity.y, velocity.z));
 }
 
 void PhysicsWorld::ReshapeBody(const RigidBody &body, const ColliderShapeDesc &shape)

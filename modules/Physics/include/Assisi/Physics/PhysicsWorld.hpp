@@ -20,6 +20,7 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <utility>
 
 namespace Assisi::Physics
@@ -30,6 +31,34 @@ enum class BodyMotion
 {
     Static,  ///< Immovable; collides but is never moved by the simulation.
     Dynamic, ///< Fully simulated; affected by gravity and collisions.
+};
+
+/// @brief One side of a collision that began during the most recent Update().
+///
+/// Reported per participant rather than per pair: two bodies touching produce
+/// two Contacts, one from each point of view, so a consumer never has to work
+/// out which end of the pair it is looking at. A body whose entity is unknown to
+/// this world (created through the raw AddBody, which takes no entity) is only
+/// ever the @ref other side.
+///
+/// Only *new* contacts appear here. A body resting on the floor reports once, on
+/// the step it lands, and then nothing — which is what keeps a contact-driven
+/// response from re-firing every step into a body that is simply lying there.
+struct Contact
+{
+    ECS::Entity entity{ECS::NullEntity}; ///< The entity this record speaks for.
+    ECS::Entity other{ECS::NullEntity};  ///< What it hit; NullEntity if that body has no entity.
+
+    /// Unit world-space normal pointing away from @ref other's surface — so a
+    /// body arriving at a floor sees +Y here, whichever way the pair was ordered.
+    glm::vec3 normal{0.f};
+
+    /// @ref entity's linear velocity at the moment the contact was found, which
+    /// is **before the solver ran**. This is the field that makes the log worth
+    /// keeping: by the time a system sees it, the step has already absorbed the
+    /// impact and the body's live velocity is whatever Jolt left it with. Zero
+    /// for a static body.
+    glm::vec3 velocity{0.f};
 };
 
 /// @brief Wraps a Jolt PhysicsSystem and exposes a minimal API for the game loop.
@@ -85,6 +114,31 @@ class PhysicsWorld
 
     /// @brief Advances the simulation by `deltaTime` seconds.
     void Update(float deltaTime);
+
+    // --- Contact reporting ---------------------------------------------------
+    //
+    // Off by default, and off costs nothing: with reporting disabled the world
+    // installs no Jolt contact listener at all, so the simulation never makes the
+    // call. Switch it on per world — a profile installer is the natural place,
+    // since "this level has bouncy things in it" is exactly the kind of decision a
+    // profile encodes (docs/world-system-binding-design-notes.md §3).
+
+    /// @brief Starts or stops recording new contacts during Update().
+    /// Turning it off also drops whatever is currently logged.
+    void SetContactReporting(bool enable);
+
+    /// @brief Whether this world is recording contacts (see SetContactReporting).
+    [[nodiscard]] bool IsContactReporting() const;
+
+    /// @brief The contacts that began during the most recent Update(), or an
+    /// empty span when reporting is off.
+    ///
+    /// Cleared at the top of every Update(), so the span describes exactly one
+    /// fixed step and a consumer cannot process the same impact twice. Valid
+    /// until the next Update() or Clear(). Entity handles in it are the ones this
+    /// world's bodies were created with, so a consumer should still check the
+    /// entity is alive before acting on it.
+    [[nodiscard]] std::span<const Contact> Contacts() const;
 
     /// @brief Number of collision substeps Jolt runs per Update() call.
     ///
@@ -144,6 +198,16 @@ class PhysicsWorld
 
     /// @brief Teleports a body to the given position and rotation, and reactivates it.
     void SetBodyTransform(const RigidBody &body, glm::vec3 position, glm::quat rotation);
+
+    /// @brief Replaces a body's linear velocity (m/s), waking it.
+    ///
+    /// Unlike SetBodyTransform this does not touch the pose or the interpolation
+    /// snapshots — the change shows up through the simulation, over the following
+    /// steps, exactly as if the solver had produced it. The wake is deliberate: a
+    /// body that had gone to sleep on a surface would otherwise keep the new
+    /// velocity on paper and never move. No-op on a static body, which has no
+    /// velocity to set.
+    void SetBodyLinearVelocity(const RigidBody &body, glm::vec3 velocity);
 
     /// @brief Replaces the collision shape of an existing body.
     ///

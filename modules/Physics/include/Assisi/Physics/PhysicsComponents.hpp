@@ -65,4 +65,27 @@ struct RigidBodyDescriptor
     AFIELD() bool      enableCCD = false; ///< Enable continuous collision detection (dynamic only).
 };
 
+/// @brief Makes a rigid body ricochet off whatever it touches.
+///
+/// Deliberately *not* Jolt restitution, which is a solver property applied while
+/// the contact is being resolved. This is the gameplay-layer version: the
+/// PhysicsWorld's contact log records the impact, and a system rewrites the
+/// body's linear velocity on the next fixed step — reflecting it about the
+/// contact normal and scaling it by @ref rebound. Only the linear velocity is
+/// touched; spin, mass, and the solver's own response are left alone.
+///
+/// Needs a RigidBody to act on, and only reports contacts in a world whose
+/// PhysicsWorld has contact reporting switched on (PhysicsWorld::SetContactReporting) —
+/// that is the profile installer's job, so worlds with no bouncers pay nothing.
+ACOMP()
+struct Bounce
+{
+    /// Fraction of speed carried back out of an impact: 0 stops the body dead,
+    /// 0.5 halves it, 1 returns it at full speed, and above 1 it *gains* speed on
+    /// every bounce (which will run away — that is the author's choice, not a
+    /// bug). Negative is meaningless; the inspector floors it here and the system
+    /// clamps again on use, so a hand-edited level file can't invert a bounce.
+    AFIELD(min = 0.0) float rebound = 1.f;
+};
+
 } // namespace Assisi::Physics
