@@ -47,10 +47,10 @@ std::shared_ptr<DumpState> &SharedDumpState()
     return state;
 }
 
-/// @brief `captures/chiara-YYYYMMDD-HHMMSS.json` under the user root — the same
-/// place options.json lives, because a capture is per-user writable state and
-/// not asset content.
-[[nodiscard]] std::filesystem::path NextCapturePath()
+/// @brief `captures/<prefix>-YYYYMMDD-HHMMSS.json` under the user root — the
+/// same place options.json lives, because a capture is per-user writable state
+/// and not asset content.
+[[nodiscard]] std::filesystem::path NextCapturePath(const char *prefix = "chiara")
 {
     const std::filesystem::path directory = Core::AssetSystem::GetUserRoot() / "captures";
     std::error_code             ec;
@@ -66,7 +66,7 @@ std::shared_ptr<DumpState> &SharedDumpState()
 
     char stamp[32] = {};
     std::strftime(stamp, sizeof(stamp), "%Y%m%d-%H%M%S", &local);
-    return directory / ("chiara-" + std::string(stamp) + ".json");
+    return directory / (std::string(prefix) + "-" + stamp + ".json");
 }
 
 [[nodiscard]] std::string FormatBytes(std::uint64_t bytes)
@@ -115,6 +115,31 @@ void Application::DumpChiaraCapture(double lastSeconds)
               });
 }
 
+void Application::StartChiaraSession()
+{
+    const std::filesystem::path path = NextCapturePath("chiara-session");
+    if (!Chiara::BeginSession(path))
+    {
+        Core::Log::Warn("Chiara: could not start a session at {}", path.string());
+    }
+}
+
+void Application::StopChiaraSession()
+{
+    // Read the path first: the stats are empty once the session is closed.
+    const std::string             path   = Chiara::GetSessionStats().path;
+    const Chiara::SerializeResult result = Chiara::EndSession();
+    if (!result.success)
+    {
+        return;
+    }
+
+    const std::shared_ptr<DumpState>  state = SharedDumpState();
+    const std::lock_guard<std::mutex> lock(state->resultMutex);
+    state->lastResult = result;
+    state->lastPath   = path;
+}
+
 void Application::DrawChiaraPanel()
 {
     const std::shared_ptr<DumpState> state   = SharedDumpState();
@@ -156,15 +181,25 @@ void Application::DrawChiaraPanel()
 
     ImGui::Separator();
 
-    ImGui::BeginDisabled(dumping);
+    const Chiara::SessionStats session = Chiara::GetSessionStats();
+
+    // Snapshot dumps: reach back into the ring for what already happened. Bounded
+    // by the ring, which is the point — you press these *after* seeing a spike.
+    ImGui::TextDisabled("Snapshot — the recent past, from memory");
+    ImGui::BeginDisabled(dumping || session.active);
     if (ImGui::Button("Dump 5 s"))
     {
         DumpChiaraCapture(5.0);
     }
     ImGui::SameLine();
-    if (ImGui::Button("Dump 15 s"))
+    if (ImGui::Button("Dump 20 s"))
     {
-        DumpChiaraCapture(15.0);
+        DumpChiaraCapture(20.0);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Dump 60 s"))
+    {
+        DumpChiaraCapture(60.0);
     }
     ImGui::SameLine();
     if (ImGui::Button("Dump all"))
@@ -172,6 +207,55 @@ void Application::DrawChiaraPanel()
         DumpChiaraCapture(0.0);
     }
     ImGui::EndDisabled();
+
+    if (!session.active && stats.mainWindowSeconds > 0.0)
+    {
+        ImGui::TextDisabled("A dump longer than the %.0f s held above just gets everything.",
+                            stats.mainWindowSeconds);
+    }
+
+    ImGui::Separator();
+
+    // Session recording: streams to disk as it goes, so its length is bounded by
+    // free space rather than by the ring. Use it when you know in advance what
+    // you want to capture and it is longer than the buffer holds.
+    ImGui::TextDisabled("Session — record forwards, straight to disk");
+    ImGui::BeginDisabled(dumping);
+    if (!session.active)
+    {
+        if (ImGui::Button("Start session"))
+        {
+            StartChiaraSession();
+        }
+    }
+    else
+    {
+        if (ImGui::Button("Stop session"))
+        {
+            StopChiaraSession();
+        }
+    }
+    ImGui::EndDisabled();
+
+    if (session.active)
+    {
+        ImGui::Text("Recording %.1f s — %s, %llu events, %llu flushes", session.elapsedSeconds,
+                    FormatBytes(session.bytesWritten).c_str(),
+                    static_cast<unsigned long long>(session.eventsWritten),
+                    static_cast<unsigned long long>(session.drains));
+
+        // The number that decides whether the trace can be trusted. Draining
+        // pauses capture, so it happens on a schedule; if a ring wrapped between
+        // two of them the trace has a hole, and a hole nobody mentions is worse
+        // than one that announces itself.
+        if (session.eventsLost > 0)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "Lost %llu events — drains are not keeping up",
+                               static_cast<unsigned long long>(session.eventsLost));
+        }
+        ImGui::TextDisabled("%s", session.path.c_str());
+        ImGui::TextDisabled("The file is readable even if the process dies mid-session.");
+    }
 
     if (dumping)
     {
@@ -221,6 +305,8 @@ namespace Assisi::App
 // Inline-equivalent stubs so a default build links without the caller knowing.
 void Application::DrawChiaraPanel() {}
 void Application::DumpChiaraCapture(double) {}
+void Application::StartChiaraSession() {}
+void Application::StopChiaraSession() {}
 
 } // namespace Assisi::App
 

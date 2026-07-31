@@ -13,6 +13,7 @@
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
 #include <Assisi/Chiara/Profile.hpp>
+#include <Assisi/Chiara/Serializer.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -531,6 +532,12 @@ void Application::PumpChiaraCounters()
     // Jolt's free hook takes no size, so residency is not knowable without a
     // header on every block. Churn is the perf-relevant signal anyway: a frame
     // that allocates is a frame that will pay to free.
+    // Streams a running session's events to disk before the rings can wrap over
+    // them. Returns immediately unless one is running, and even then only does
+    // real work when a buffer is filling — so the cost of asking every frame is
+    // a couple of atomic loads.
+    Chiara::PumpSession();
+
     const Physics::JoltAllocationStats jolt = Physics::GetJoltAllocationStats();
     ASSISI_PROFILE_COUNTER("physics/alloc-count-per-frame",
                            static_cast<double>(jolt.count - _lastJoltAllocCount));

@@ -357,6 +357,99 @@ TEST_CASE("Names with JSON metacharacters survive the round trip")
     CHECK(slice.at("args").at("asset") == "meshes\\odd \"name\"\n.gltf");
 }
 
+TEST_CASE("A session records more than the rings could ever hold")
+{
+    // The reason sessions exist. The rolling ring answers "what just happened";
+    // this answers "record all of this", where all of it is longer than any
+    // buffer. If a session only ever produced a ring's worth, it would be a
+    // worse version of the dump button.
+    EnsureInitialized();
+    const TempTrace trace("session");
+
+    REQUIRE(Chiara::BeginSession(trace.Path()));
+    CHECK(Chiara::GetSessionStats().active);
+
+    // The test rings hold 32768 records; emit several times that, pumping as a
+    // frame loop would. Nothing may be lost.
+    constexpr std::int32_t kBatches         = 8;
+    constexpr std::int32_t kScopesPerBatch  = 20'000;
+    for (std::int32_t batch = 0; batch < kBatches; ++batch)
+    {
+        for (std::int32_t i = 0; i < kScopesPerBatch; ++i)
+        {
+            ASSISI_PROFILE_SCOPE("session-work");
+        }
+        Chiara::PumpSession();
+    }
+
+    const Chiara::SessionStats before = Chiara::GetSessionStats();
+    CHECK(before.drains > 0);
+
+    const Chiara::SerializeResult result = Chiara::EndSession();
+    REQUIRE(result.success);
+    CHECK_FALSE(Chiara::GetSessionStats().active);
+
+    // Far more than one ring's worth reached the file.
+    CHECK(result.eventsWritten > 100'000);
+
+    const json parsed = trace.Parse(); // Well-formed despite being written in chunks.
+    std::int32_t sessionScopes = 0;
+    for (const json &event : parsed.at("traceEvents"))
+    {
+        if (event.at("ph") == "X" && event.at("name") == "session-work")
+        {
+            ++sessionScopes;
+        }
+    }
+    CHECK(sessionScopes > 100'000);
+}
+
+TEST_CASE("A session binds args whose scope closes in a later chunk")
+{
+    // Args reach the ring before the scope that owns them, so one emitted near a
+    // drain boundary routinely outlives its owner's absence. Dropping it there
+    // would silently lose context on exactly the long-running work a session is
+    // for.
+    EnsureInitialized();
+    const TempTrace trace("session-args");
+
+    REQUIRE(Chiara::BeginSession(trace.Path()));
+    {
+        ASSISI_PROFILE_SCOPE("straddles-a-drain");
+        ASSISI_PROFILE_ARG_STR("asset", "meshes/spans_chunks.gltf");
+
+        // Force a drain while the scope above is still open, so its arg lands in
+        // one chunk and the scope itself in the next.
+        for (std::int32_t i = 0; i < 25'000; ++i)
+        {
+            ASSISI_PROFILE_SCOPE("filler");
+        }
+        Chiara::PumpSession();
+    }
+    const Chiara::SerializeResult result = Chiara::EndSession();
+    REQUIRE(result.success);
+
+    const json parsed = trace.Parse();
+    const json owner  = FindNamed(parsed, "X", "straddles-a-drain");
+    REQUIRE_FALSE(owner.is_null());
+    REQUIRE(owner.contains("args"));
+    CHECK(owner.at("args").at("asset") == "meshes/spans_chunks.gltf");
+}
+
+TEST_CASE("Only one session runs at a time")
+{
+    EnsureInitialized();
+    const TempTrace first("session-a");
+    const TempTrace second("session-b");
+
+    REQUIRE(Chiara::BeginSession(first.Path()));
+    CHECK_FALSE(Chiara::BeginSession(second.Path()));
+    CHECK(Chiara::EndSession().success);
+
+    // And ending one that is not running is a no-op, not a crash.
+    CHECK_FALSE(Chiara::EndSession().success);
+}
+
 TEST_CASE("Serializing while other threads emit stays consistent")
 {
     // Stage 6 runs the dump on a JobSystem worker while the frame keeps going,

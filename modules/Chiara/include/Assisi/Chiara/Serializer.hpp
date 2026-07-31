@@ -61,4 +61,59 @@ struct SerializeResult
 }
 #endif
 
+/// @brief Progress of a running session.
+struct SessionStats
+{
+    bool          active         = false;
+    double        elapsedSeconds = 0.0;
+    std::uint64_t eventsWritten  = 0;
+    std::uint64_t bytesWritten   = 0;
+    std::uint64_t drains         = 0; ///< Times the rings have been emptied to disk.
+    std::uint64_t eventsLost     = 0; ///< Overwritten before a drain reached them — see below.
+    std::string   path;
+};
+
+/// @name Session recording — capture for as long as you like
+///
+/// The rolling ring answers "what just happened"; a session answers "record this
+/// whole thing", where the thing is longer than any buffer would hold. The
+/// difference is where the events live: a session streams them to disk as it
+/// goes, so its length is bounded by free space rather than by RAM.
+///
+/// The file is written incrementally and is **valid to open even if the process
+/// dies mid-session** — Perfetto accepts a truncated JSON array, so a crash
+/// still leaves everything captured up to that moment.
+///
+/// `eventsLost` is the number that matters while one runs. Draining pauses
+/// capture for the length of a ring walk, so it happens on a schedule rather
+/// than continuously; if a thread manages to wrap its ring between two drains,
+/// the gap is counted and surfaced instead of quietly shortening the trace.
+///@{
+#if defined(ASSISI_CHIARA_ENABLED)
+
+/// @brief Starts streaming to @p path. Fails if a session is already running.
+[[nodiscard]] bool BeginSession(const std::filesystem::path &path);
+
+/// @brief Drains whatever the rings hold into the open session file.
+///
+/// Call once per frame — it returns immediately unless a ring is filling up, so
+/// the cost of asking is a few atomic loads. This is what keeps a session from
+/// losing events; nothing else calls it.
+void PumpSession();
+
+/// @brief Final drain, then closes the file. Safe to call when none is running.
+SerializeResult EndSession();
+
+[[nodiscard]] SessionStats GetSessionStats();
+
+#else
+
+[[nodiscard]] inline bool BeginSession(const std::filesystem::path &) { return false; }
+inline void               PumpSession() {}
+inline SerializeResult    EndSession() { return {}; }
+[[nodiscard]] inline SessionStats GetSessionStats() { return {}; }
+
+#endif
+///@}
+
 } // namespace Assisi::Chiara

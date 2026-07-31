@@ -252,6 +252,18 @@ class Application
     /// system compiled in.
     void DumpChiaraCapture(double lastSeconds = 0.0);
 
+    /// @brief Starts streaming a capture to disk and keeps going until stopped.
+    ///
+    /// The counterpart to DumpChiaraCapture: that one reaches backwards into the
+    /// ring for what already happened and is bounded by it; this one records
+    /// forwards for as long as you like, bounded by free disk space instead. Use
+    /// it when you know in advance what you want to capture and it is longer
+    /// than the buffer holds — a level load, a whole play session.
+    void StartChiaraSession();
+
+    /// @brief Ends the session and closes its file. Harmless if none is running.
+    void StopChiaraSession();
+
   private:
 
     /// Running Jolt allocation totals as of the previous frame, so the counters

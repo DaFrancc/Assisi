@@ -353,7 +353,42 @@ makes late-thread teardown ordering (Jolt's pool, the NVML worker, static
 destructors) a non-issue. `Shutdown()` only stops recording. Keep the string
 table in a non-wrapping arena so interning is never evicted.
 
-## 5. Capture model — always recording, dump the last N
+## 5. Capture model — a rolling ring, plus sessions for the long stuff
+
+Two mechanisms, because they answer different questions.
+
+**The rolling ring answers "what just happened."** It is bounded by RAM and you
+read it *backwards*, after the fact — which is the only way to catch something
+you did not know was coming. Dump buttons for 5 / 20 / 60 seconds and everything
+held.
+
+**A session answers "record all of this,"** where all of it is longer than any
+buffer would hold. It streams to disk as it goes, so its length is bounded by
+free space instead of memory, and you start it *before* the thing you want —
+a level load, a whole play session. `BeginSession` / `PumpSession` / `EndSession`.
+
+The session file is valid to open **even if the process dies mid-recording**:
+Perfetto accepts a truncated JSON array, so a crash still leaves everything up to
+that moment readable. That is a genuine advantage over the ring, which dies with
+the process, and it makes a session the right tool for chasing a hang.
+
+`PumpSession` is called once per frame and drains when either 20,000 events have
+accumulated or two seconds have passed. Both triggers are needed: the event count
+alone never flushes an idle session, and the timer alone loses a burst. A drain
+pauses capture exactly as a dump does — which is why it is scheduled rather than
+continuous — and if a ring wraps between two drains the lost count is surfaced in
+the panel rather than quietly shortening the trace.
+
+Args are the one thing that does not fall out for free. They reach the ring
+*before* the scope that owns them, so an arg near a chunk boundary routinely has
+no owner yet, and it must be carried to the next chunk rather than counted
+orphaned. The test for "can this still be claimed?" is the shadow stack: if the
+arg was emitted at or after the outermost still-open scope began, an open scope
+can still turn out to be its owner. A first attempt used "newer than any slice in
+this chunk", which drops every arg followed by shorter sibling work — i.e. the
+common case, silently.
+
+### Always recording, dump the last N
 
 Recording starts at `Initialize` and runs continuously. By the time you decide
 something is worth recording, the spike already happened. The panel offers

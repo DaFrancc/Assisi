@@ -17,6 +17,9 @@
 #    include <cstdio>
 #    include <format>
 #    include <fstream>
+#    include <map>
+#    include <memory>
+#    include <mutex>
 #    include <string_view>
 #    include <thread>
 #    include <vector>
@@ -153,7 +156,8 @@ private:
 /// Anything left unclaimed is an arg emitted outside any scope — dropped, but
 /// counted, because a silently vanishing arg looks exactly like one that was
 /// never emitted.
-[[nodiscard]] std::uint64_t BindArgsToSlices(std::vector<Slice> &slices, std::vector<PendingArg> &args)
+[[nodiscard]] std::uint64_t BindArgsToSlices(std::vector<Slice> &slices, std::vector<PendingArg> &args,
+                                            std::vector<PendingArg> *unbound = nullptr)
 {
     std::ranges::sort(slices,
                       [](const Slice &left, const Slice &right)
@@ -185,6 +189,10 @@ private:
         if (openStack.empty())
         {
             ++orphaned;
+            if (unbound != nullptr)
+            {
+                unbound->push_back(arg);
+            }
             continue;
         }
 
@@ -328,7 +336,368 @@ void WritePointEvent(TraceWriter &writer, const Event &event, std::int32_t trace
     needsComma = true;
 }
 
+/// @brief Pulls `[from, to)` out of one thread's ring into the three shapes the
+/// writer needs. Shared by the one-shot dump and the session drain so they can
+/// never disagree about what a record means.
+void GatherRange(const ThreadSnapshot &snapshot, std::uint64_t from, std::uint64_t to, std::uint64_t windowBegin,
+                 std::vector<Slice> &slices, std::vector<PendingArg> &args, std::vector<Event> &pointEvents)
+{
+    for (std::uint64_t index = from; index < to; ++index)
+    {
+        const Event &event = snapshot.ring->At(index);
+
+        if (event.type == EventType::Scope)
+        {
+            // Kept if it *overlaps* the window rather than starts inside it: a
+            // long scope straddling the edge is exactly the one worth seeing,
+            // and clipping it away would orphan its args.
+            const std::uint64_t endTicks = event.timestampTicks + event.payload;
+            if (endTicks < windowBegin)
+            {
+                continue;
+            }
+            Slice slice;
+            slice.beginTicks = event.timestampTicks;
+            slice.endTicks   = endTicks;
+            slice.name       = event.name;
+            slices.push_back(std::move(slice));
+            continue;
+        }
+
+        if (event.timestampTicks < windowBegin)
+        {
+            continue;
+        }
+
+        switch (event.type)
+        {
+        case EventType::ArgString:
+        {
+            PendingArg arg;
+            arg.ticks    = event.timestampTicks;
+            arg.key      = event.name;
+            arg.text     = std::bit_cast<const char *>(event.payload);
+            arg.isString = true;
+            args.push_back(arg);
+            break;
+        }
+        case EventType::ArgU64:
+        {
+            PendingArg arg;
+            arg.ticks = event.timestampTicks;
+            arg.key   = event.name;
+            arg.value = event.payload;
+            args.push_back(arg);
+            break;
+        }
+        case EventType::ClockSnapshot:
+            break; // Calibration, not something to look at.
+        default:
+            pointEvents.push_back(event);
+            break;
+        }
+    }
+}
+
+// --- Session state ----------------------------------------------------------
+
+/// Ceiling on args held across chunks for one thread. A scope open for the whole
+/// session would otherwise accumulate its args forever; past this many, waiting
+/// has clearly stopped working and they are counted orphaned instead.
+constexpr std::size_t kMaxCarriedArgs = 4096;
+
+/// One thread's place in an ongoing session.
+struct SessionThread
+{
+    std::int32_t            traceTid        = 0;
+    std::uint64_t           nextIndex       = 0;
+    bool                    metadataWritten = false;
+    /// Args whose enclosing scope had not ended yet when the last chunk was
+    /// written. A scope reaches the ring only when it closes, so an arg near a
+    /// chunk boundary routinely outlives its owner's absence — dropping it here
+    /// would silently lose exactly the context on long-running work.
+    std::vector<PendingArg> carriedArgs;
+};
+
+struct Session
+{
+    std::mutex                                          mutex;
+    bool                                                active = false;
+    std::unique_ptr<TraceWriter>                        writer;
+    std::filesystem::path                               path;
+    std::uint64_t                                       originTicks    = 0;
+    double                                              ticksPerSecond = 1.0;
+    bool                                                needsComma     = false;
+    std::int32_t                                        nextTraceTid   = 0;
+    std::uint64_t                                       eventsWritten  = 0;
+    std::uint64_t                                       orphanedArgs   = 0;
+    std::uint64_t                                       drains         = 0;
+    std::uint64_t                                       eventsLost     = 0;
+    std::uint64_t                                       lastDrainTicks = 0;
+    std::uint64_t                                       lastTotalEvents = 0;
+    std::map<const Detail::EventRing *, SessionThread>  threads;
+};
+
+Session &TheSession()
+{
+    static Session session;
+    return session;
+}
+
+/// @brief Writes everything the rings hold since the last drain. Caller holds
+/// the session mutex and has already stopped the producers.
+void DrainLocked(Session &session)
+{
+    const std::vector<ThreadSnapshot> snapshots = SnapshotThreads();
+
+    for (const ThreadSnapshot &snapshot : snapshots)
+    {
+        if (snapshot.ring == nullptr)
+        {
+            continue;
+        }
+
+        auto [entry, inserted] = session.threads.try_emplace(snapshot.ring);
+        SessionThread &thread  = entry->second;
+        if (inserted)
+        {
+            thread.traceTid = session.nextTraceTid++;
+            // A thread that appears mid-session starts where it is now, not at
+            // the beginning of its ring — anything older predates the session.
+            thread.nextIndex = snapshot.beginIndex;
+        }
+
+        if (!thread.metadataWritten)
+        {
+            session.writer->Write(
+                "{}\n{{\"ph\":\"M\",\"pid\":{},\"tid\":{},\"name\":\"thread_name\",\"args\":{{\"name\":\"{}\"}}}}",
+                session.needsComma ? "," : "", kProcessId, thread.traceTid, EscapeJson(snapshot.name));
+            session.writer->Write(",\n{{\"ph\":\"M\",\"pid\":{},\"tid\":{},\"name\":\"thread_sort_index\",\"args\":{{"
+                                  "\"sort_index\":{}}}}}",
+                                  kProcessId, thread.traceTid, snapshot.isMain ? 0 : thread.traceTid + 1);
+            session.needsComma      = true;
+            thread.metadataWritten  = true;
+        }
+
+        // The ring dropped records we had not read yet: the drain did not keep
+        // up. Counted rather than papered over — a trace with a hole in it that
+        // does not say so is worse than one that admits it.
+        if (snapshot.beginIndex > thread.nextIndex)
+        {
+            session.eventsLost += snapshot.beginIndex - thread.nextIndex;
+            thread.nextIndex = snapshot.beginIndex;
+        }
+
+        std::vector<Slice>      slices;
+        std::vector<PendingArg> args = std::move(thread.carriedArgs);
+        std::vector<Event>      pointEvents;
+        thread.carriedArgs.clear();
+
+        GatherRange(snapshot, thread.nextIndex, snapshot.endIndex, /*windowBegin=*/0, slices, args, pointEvents);
+        thread.nextIndex = snapshot.endIndex;
+
+        std::vector<PendingArg> unbound;
+        (void)BindArgsToSlices(slices, args, &unbound);
+
+        // An arg that found no owner in this chunk is not necessarily orphaned:
+        // its scope may simply still be running, in which case it will close in
+        // a later chunk and claim it then. The shadow stack is what tells the
+        // two cases apart — if the arg was emitted at or after the outermost
+        // still-open scope began, an open scope can still be its owner.
+        //
+        // Getting this wrong is silent: a first attempt carried args by "newer
+        // than any slice in this chunk", which drops every arg followed by
+        // shorter sibling work — exactly the common case.
+        std::uint64_t oldestOpenBegin = UINT64_MAX;
+        for (const OpenScope &open : snapshot.openScopes)
+        {
+            oldestOpenBegin = std::min(oldestOpenBegin, open.beginTicks);
+        }
+
+        for (const PendingArg &arg : unbound)
+        {
+            if (arg.ticks >= oldestOpenBegin && thread.carriedArgs.size() < kMaxCarriedArgs)
+            {
+                thread.carriedArgs.push_back(arg);
+            }
+            else
+            {
+                // Genuinely ownerless — emitted outside any scope — or the carry
+                // list is saturated by a scope that has stayed open so long it is
+                // not going to be resolved by waiting.
+                ++session.orphanedArgs;
+            }
+        }
+
+        for (const Slice &slice : slices)
+        {
+            WriteSlice(*session.writer, slice, thread.traceTid, session.originTicks, session.ticksPerSecond,
+                       session.needsComma);
+            ++session.eventsWritten;
+        }
+        for (const Event &event : pointEvents)
+        {
+            WritePointEvent(*session.writer, event, thread.traceTid, session.originTicks, session.ticksPerSecond,
+                            session.needsComma);
+            ++session.eventsWritten;
+        }
+    }
+
+    session.writer->Flush();
+    ++session.drains;
+    session.lastDrainTicks  = ReadTicks();
+    session.lastTotalEvents = GetCaptureStats().totalEventsWritten;
+}
+
 } // namespace
+
+bool BeginSession(const std::filesystem::path &path)
+{
+    Session                          &session = TheSession();
+    const std::lock_guard<std::mutex> lock(session.mutex);
+    if (session.active)
+    {
+        return false;
+    }
+
+    session.writer = std::make_unique<TraceWriter>(path);
+    if (!session.writer->IsOpen())
+    {
+        session.writer.reset();
+        return false;
+    }
+
+    session.path            = path;
+    session.originTicks     = ReadTicks();
+    session.ticksPerSecond  = TicksPerSecond();
+    session.needsComma      = false;
+    session.nextTraceTid    = 0;
+    session.eventsWritten   = 0;
+    session.orphanedArgs    = 0;
+    session.drains          = 0;
+    session.eventsLost      = 0;
+    session.lastDrainTicks  = session.originTicks;
+    session.lastTotalEvents = GetCaptureStats().totalEventsWritten;
+    session.threads.clear();
+
+    session.writer->Write("{{\"displayTimeUnit\":\"ms\",\"traceEvents\":[");
+    session.writer->Write("\n{{\"ph\":\"M\",\"pid\":{},\"tid\":0,\"name\":\"process_name\",\"args\":{{\"name\":"
+                          "\"Assisi\"}}}}",
+                          kProcessId);
+    session.needsComma = true;
+    session.writer->Flush();
+
+    // Everything already in the rings predates the session; the first drain
+    // starts from wherever each thread is now.
+    for (const ThreadSnapshot &snapshot : SnapshotThreads())
+    {
+        if (snapshot.ring == nullptr)
+        {
+            continue;
+        }
+        SessionThread &thread = session.threads[snapshot.ring];
+        thread.traceTid       = session.nextTraceTid++;
+        thread.nextIndex      = snapshot.endIndex;
+    }
+
+    session.active = true;
+    return true;
+}
+
+void PumpSession()
+{
+    Session &session = TheSession();
+    if (!session.active)
+    {
+        return; // The overwhelmingly common case: a few loads and out.
+    }
+
+    const std::lock_guard<std::mutex> lock(session.mutex);
+    if (!session.active)
+    {
+        return;
+    }
+
+    // Drain on whichever comes first: enough events that the smallest ring could
+    // start dropping, or enough time that a quiet period still reaches disk.
+    // Both are needed — the first alone would never flush an idle session, and
+    // the second alone would lose a burst.
+    constexpr std::uint64_t kEventsPerDrain  = 20'000;
+    constexpr double        kSecondsPerDrain = 2.0;
+
+    const std::uint64_t totalEvents = GetCaptureStats().totalEventsWritten;
+    const std::uint64_t sinceDrain  = totalEvents - session.lastTotalEvents;
+    const double        elapsed =
+        static_cast<double>(ReadTicks() - session.lastDrainTicks) / session.ticksPerSecond;
+
+    if (sinceDrain < kEventsPerDrain && elapsed < kSecondsPerDrain)
+    {
+        return;
+    }
+
+    // Same protocol as a one-shot dump: stop the producers, let the pause become
+    // visible, read, resume. The pause is what makes reading the rings safe at
+    // all, and it is why draining happens on a schedule rather than constantly.
+    const bool wasRecording = IsRecording();
+    SetRecording(false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    DrainLocked(session);
+    SetRecording(wasRecording);
+}
+
+SerializeResult EndSession()
+{
+    Session                          &session = TheSession();
+    const std::lock_guard<std::mutex> lock(session.mutex);
+
+    SerializeResult result;
+    if (!session.active)
+    {
+        result.error = "no session is running";
+        return result;
+    }
+
+    const bool wasRecording = IsRecording();
+    SetRecording(false);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    DrainLocked(session);
+    SetRecording(wasRecording);
+
+    session.writer->Write("\n]}}\n");
+    session.writer->Flush();
+
+    result.success        = true;
+    result.eventsWritten  = session.eventsWritten;
+    result.orphanedArgs   = session.orphanedArgs;
+    result.threadsWritten = session.threads.size();
+    result.bytesWritten   = session.writer->BytesWritten();
+    result.ticksPerSecond = session.ticksPerSecond;
+    result.windowSeconds  = static_cast<double>(ReadTicks() - session.originTicks) / session.ticksPerSecond;
+
+    session.writer.reset();
+    session.active = false;
+    return result;
+}
+
+SessionStats GetSessionStats()
+{
+    Session                          &session = TheSession();
+    const std::lock_guard<std::mutex> lock(session.mutex);
+
+    SessionStats stats;
+    stats.active = session.active;
+    if (!session.active)
+    {
+        return stats;
+    }
+    stats.elapsedSeconds = static_cast<double>(ReadTicks() - session.originTicks) / session.ticksPerSecond;
+    stats.eventsWritten  = session.eventsWritten;
+    stats.bytesWritten   = session.writer != nullptr ? session.writer->BytesWritten() : 0;
+    stats.drains         = session.drains;
+    stats.eventsLost     = session.eventsLost;
+    stats.path           = session.path.string();
+    return stats;
+}
 
 SerializeResult SerializeCapture(const std::filesystem::path &path, double lastSeconds)
 {
@@ -415,62 +784,8 @@ SerializeResult SerializeCapture(const std::filesystem::path &path, double lastS
         trace.traceTid = static_cast<std::int32_t>(traces.size());
 
         std::vector<PendingArg> args;
-
-        for (std::uint64_t index = snapshot.beginIndex; index < snapshot.endIndex; ++index)
-        {
-            const Event &event = snapshot.ring->At(index);
-
-            if (event.type == EventType::Scope)
-            {
-                // Kept if it *overlaps* the window rather than starts inside it:
-                // a long scope straddling the window edge is exactly the one
-                // worth seeing, and clipping it away would orphan its args.
-                const std::uint64_t endTicks = event.timestampTicks + event.payload;
-                if (endTicks < windowBegin)
-                {
-                    continue;
-                }
-                Slice slice;
-                slice.beginTicks = event.timestampTicks;
-                slice.endTicks   = endTicks;
-                slice.name       = event.name;
-                trace.slices.push_back(std::move(slice));
-                continue;
-            }
-
-            if (event.timestampTicks < windowBegin)
-            {
-                continue;
-            }
-
-            switch (event.type)
-            {
-            case EventType::ArgString:
-            {
-                PendingArg arg;
-                arg.ticks    = event.timestampTicks;
-                arg.key      = event.name;
-                arg.text     = std::bit_cast<const char *>(event.payload);
-                arg.isString = true;
-                args.push_back(arg);
-                break;
-            }
-            case EventType::ArgU64:
-            {
-                PendingArg arg;
-                arg.ticks = event.timestampTicks;
-                arg.key   = event.name;
-                arg.value = event.payload;
-                args.push_back(arg);
-                break;
-            }
-            case EventType::ClockSnapshot:
-                break; // Consumed above as calibration, not shown as a slice.
-            default:
-                trace.pointEvents.push_back(event);
-                break;
-            }
-        }
+        GatherRange(snapshot, snapshot.beginIndex, snapshot.endIndex, windowBegin, trace.slices, args,
+                    trace.pointEvents);
 
         // Scopes that never ended have no record at all, so they are recovered
         // from the thread's shadow stack and drawn as running until the dump.
