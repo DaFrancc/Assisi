@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Geometry/DefaultMeshes.hpp>
@@ -872,6 +873,8 @@ nvrhi::BufferHandle AssetCache::AcquireStagingBuffer(std::uint64_t bytes)
 
 void AssetCache::RecycleRetiredStaging()
 {
+    ASSISI_PROFILE_SCOPE("recycle-staging");
+
     std::lock_guard<std::mutex> lock(_poolMutex);
     for (std::size_t i = 0; i < _stagingInFlight.size();)
     {
@@ -879,6 +882,12 @@ void AssetCache::RecycleRetiredStaging()
         // a later pump. Never wait here — that would trade a GC spike for a GPU stall.
         if (_device->pollEventQuery(_stagingInFlight[i].query))
         {
+            // The effect end of the flow opened when this batch was parked. The
+            // arrow the viewer draws from there to here is what makes "this
+            // frame's cost was caused four frames ago" a thing you can see
+            // rather than infer.
+            ASSISI_PROFILE_FLOW_END("staging-lifetime", _stagingInFlight[i].chiaraFlowId);
+
             for (nvrhi::BufferHandle &buffer : _stagingInFlight[i].buffers)
                 _freeStagingBuffers.push_back(std::move(buffer));
             _device->resetEventQuery(_stagingInFlight[i].query);
@@ -906,6 +915,8 @@ void AssetCache::FlushUploads()
 {
     if (!_uploadOpen && _uploadBatch.empty())
         return;
+
+    ASSISI_PROFILE_SCOPE("flush-uploads");
     if (_uploadOpen)
         _uploadList->close();
 
@@ -948,6 +959,12 @@ void AssetCache::FlushUploads()
             }
             _device->setEventQuery(parked.query, nvrhi::CommandQueue::Graphics);
             parked.buffers = std::move(_batchStaging);
+
+            // The cause end of the flow. It is opened inside the flush-uploads
+            // scope, so the arrow starts on the work that created the debt.
+            parked.chiaraFlowId = Chiara::NewFlowId();
+            ASSISI_PROFILE_FLOW_BEGIN("staging-lifetime", parked.chiaraFlowId);
+
             _stagingInFlight.push_back(std::move(parked));
             _batchStaging.clear();
         }
@@ -958,6 +975,8 @@ void AssetCache::FlushUploads()
 
 void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
 {
+    ASSISI_PROFILE_SCOPE("pump-publishes");
+
     // Reclaim staging buffers whose submit has retired, so the next loads reuse
     // them instead of allocating. Cheap (a poll per parked batch) and worth doing
     // even when nothing is queued, so buffers don't sit parked after a load ends.
@@ -1005,12 +1024,24 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
         const Clock::time_point publishStart = Clock::now();
         if (publish.isMaterial)
         {
+            // The scope name is the aggregation key and stays constant; which
+            // asset it was goes in an arg. Naming the scope after the path would
+            // shatter cross-frame aggregation into one bucket per asset, and it
+            // is the arg that makes "click the slice, see the asset" work.
+            ASSISI_PROFILE_SCOPE("publish-material");
+            ASSISI_PROFILE_ARG_STR("asset", publish.path.View());
+            ASSISI_PROFILE_ARG_U64("bytes", static_cast<std::uint64_t>(publishBytes));
+
             PublishMaterial(std::move(publish));
             matMs += elapsedMsSince(publishStart);
             ++matCount;
         }
         else
         {
+            ASSISI_PROFILE_SCOPE("publish-mesh");
+            ASSISI_PROFILE_ARG_STR("asset", publish.path.View());
+            ASSISI_PROFILE_ARG_U64("bytes", static_cast<std::uint64_t>(publishBytes));
+
             PublishMesh(std::move(publish));
             meshMs += elapsedMsSince(publishStart);
             ++meshCount;
@@ -1028,16 +1059,17 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
         flushMs = elapsedMsSince(flushStart);
     }
 
-    // Diagnostic: a pump is a spike when its main-thread wall-clock blows past the
-    // budget (the "always at least one" escape hatch fired with an expensive item,
-    // or the pump was preempted mid-work). The phase split says which cost it was —
-    // meshMs high => arena memcpy (mesh P1 next); matMs high => descriptor writes;
-    // flushMs high => submit; all low but total high => the main thread was
-    // preempted by the decode workers (points at P2, a low-priority IO pool).
-    const double totalMs = elapsedMsSince(start);
-    if (totalMs >= 2.0)
-        Core::Log::Info("AssetCache pump {:.2f} ms: mesh {}x {:.2f} ms, mat {}x {:.2f} ms, flush {:.2f} ms; {} queued",
-                        totalMs, meshCount, meshMs, matCount, matMs, flushMs, _pendingPublishes.size());
+    // The ≥2 ms log line that used to live here is a capture now. It was the
+    // regression sensor the streaming plan called permanent (R5), and it stays
+    // one — the scopes above give the same phase split (mesh = arena memcpy,
+    // material = descriptor writes, flush = submit, all-low-but-total-high = the
+    // main thread was preempted), except scrubbable, nested under the frame, and
+    // without a threshold that has to be guessed in advance.
+    (void)flushMs;
+    ASSISI_PROFILE_COUNTER("stream/pending-publishes", static_cast<double>(_pendingPublishes.size()));
+    ASSISI_PROFILE_COUNTER("stream/pump-bytes", static_cast<double>(bytes));
+    ASSISI_PROFILE_COUNTER("stream/mesh-count", static_cast<double>(meshCount));
+    ASSISI_PROFILE_COUNTER("stream/mat-count", static_cast<double>(matCount));
 }
 
 void AssetCache::Clear()
