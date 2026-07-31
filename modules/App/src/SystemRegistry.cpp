@@ -7,6 +7,7 @@
 // keep World.hpp's own include of this one acyclic); the activation gate reads
 // through it, so the definition is needed here.
 #include <Assisi/App/World.hpp>
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <cstdint>
@@ -195,7 +196,8 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
     }
 
     const std::size_t entryIndex = phase.entries.size();
-    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false, {}});
+    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false, {},
+                             Chiara::InternString(name)});
     phase.dirty = true;
 
     // Capture the phase and slot index (not a pointer to the Entry): the entries
@@ -221,9 +223,15 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
 // ---------------------------------------------------------------------------
 
 template <typename Ctx>
-void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx,
+void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, const char *profileName, Ctx &ctx,
                               bool skipActiveOnly, const ECS::Scene &gateScene)
 {
+    // This is the chokepoint that makes instrumentation feel automatic: a scope
+    // here and one per entry means every system ever written is profiled with no
+    // further work, which is how engines with "magic" coverage actually get it —
+    // dense framework chokepoints, not per-function reflection.
+    ASSISI_PROFILE_SCOPE(profileName);
+
     if (phase.dirty)
     {
         phase.sorted = TopoSort(phase.entries, phaseName);
@@ -254,6 +262,8 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx
             continue;
         if (!eligible(entry))
             continue;
+
+        ASSISI_PROFILE_SCOPE(entry.chiaraName);
         entry.fn(ctx);
     }
 }
@@ -266,6 +276,12 @@ std::string_view SystemRegistry::PhaseName(std::size_t gamePhaseIndex)
 {
     static constexpr std::string_view kNames[] = {"PreUpdate", "FixedUpdate", "Update",
                                                    "PostUpdate"};
+    return kNames[gamePhaseIndex];
+}
+
+const char *SystemRegistry::PhaseProfileName(std::size_t gamePhaseIndex)
+{
+    static constexpr const char *kNames[] = {"PreUpdate", "FixedUpdate", "Update", "PostUpdate"};
     return kNames[gamePhaseIndex];
 }
 
@@ -284,13 +300,13 @@ SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view nam
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
 {
-    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), ctx,
+    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), PhaseProfileName(Index(phase)), ctx,
              /*skipActiveOnly=*/!ctx.isActiveWorld, ctx.world.scene);
 }
 
 void SystemRegistry::RunRender(RenderContext ctx)
 {
-    RunPhase(_renderPhase, "Render", ctx, /*skipActiveOnly=*/false, ctx.scene);
+    RunPhase(_renderPhase, "Render", "Render", ctx, /*skipActiveOnly=*/false, ctx.scene);
 }
 
 void SystemRegistry::Clear()

@@ -2,8 +2,11 @@
 
 #include <Assisi/Core/JobSystem.hpp>
 
+#include <Assisi/Chiara/Chiara.hpp>
+
 #include <algorithm>
 #include <iterator>
+#include <string>
 
 namespace Assisi::Core
 {
@@ -21,7 +24,7 @@ JobSystem::JobSystem(uint32_t workerCount)
     _workers.reserve(workerCount);
     for (uint32_t i = 0; i < workerCount; ++i)
     {
-        _workers.emplace_back([this] { WorkerLoop(); });
+        _workers.emplace_back([this, i] { WorkerLoop(i); });
     }
 }
 
@@ -41,8 +44,17 @@ JobSystem::~JobSystem()
     }
 }
 
-void JobSystem::WorkerLoop()
+void JobSystem::WorkerLoop(uint32_t workerIndex)
 {
+    // This is the only place a worker's identity exists, so it is where the
+    // capture learns the name — and it names the thread for the OS debugger at
+    // the same time, which the engine had never done for any of its threads.
+    //
+    // Safe with the capture runtime down: headless tests and tools build a
+    // JobSystem with no Application and therefore no InitGuard, and every Chiara
+    // entry point is a no-op before Initialize.
+    Chiara::RegisterCurrentThread(("worker-" + std::to_string(workerIndex)).c_str());
+
     while (true)
     {
         std::function<void()> task;
@@ -57,6 +69,7 @@ void JobSystem::WorkerLoop()
             }
             task = std::move(_workerQueue.front());
             _workerQueue.pop_front();
+            _workerQueueDepth.store(static_cast<uint32_t>(_workerQueue.size()), std::memory_order_relaxed);
         }
         task();
     }
@@ -68,12 +81,14 @@ void JobSystem::EnqueueTo(Pool pool, std::function<void()> task)
     {
         std::lock_guard<std::mutex> lock(_mainMutex);
         _mainQueue.push_back(std::move(task));
+        _mainQueueDepth.store(static_cast<uint32_t>(_mainQueue.size()), std::memory_order_relaxed);
         return;
     }
 
     {
         std::lock_guard<std::mutex> lock(_mutex);
         _workerQueue.push_back(std::move(task));
+        _workerQueueDepth.store(static_cast<uint32_t>(_workerQueue.size()), std::memory_order_relaxed);
     }
     _wake.notify_one();
 }
@@ -94,6 +109,7 @@ bool JobSystem::TryRunOneWorkerTask()
         }
         task = std::move(_workerQueue.front());
         _workerQueue.pop_front();
+        _workerQueueDepth.store(static_cast<uint32_t>(_workerQueue.size()), std::memory_order_relaxed);
     }
     task();
     return true;
@@ -110,6 +126,7 @@ bool JobSystem::TryRunOneMainTask()
         }
         task = std::move(_mainQueue.front());
         _mainQueue.erase(_mainQueue.begin());
+        _mainQueueDepth.store(static_cast<uint32_t>(_mainQueue.size()), std::memory_order_relaxed);
     }
     task();
     return true;
@@ -165,6 +182,7 @@ uint32_t JobSystem::DrainMain(uint32_t maxTasks)
             batch.assign(std::make_move_iterator(_mainQueue.begin()), std::make_move_iterator(splitAt));
             _mainQueue.erase(_mainQueue.begin(), splitAt);
         }
+        _mainQueueDepth.store(static_cast<uint32_t>(_mainQueue.size()), std::memory_order_relaxed);
     }
 
     for (std::function<void()> &task : batch)

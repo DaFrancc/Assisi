@@ -3,11 +3,14 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -273,3 +276,84 @@ TEST_CASE("SystemRegistry: a dependency cycle falls back to running all systems"
 
     CHECK(order.size() == 2); // fallback to registration order — nothing dropped
 }
+
+#if defined(ASSISI_CHIARA_ENABLED)
+
+// RunPhase is the chokepoint the whole "instrumentation feels automatic" claim
+// rests on: one scope there and one per entry means every system ever written is
+// profiled with no further work. If that ever silently stops happening, coverage
+// quietly rots everywhere at once, so it is worth a test rather than a comment.
+TEST_CASE("RunPhase profiles the phase and every system it runs")
+{
+    Assisi::Chiara::Config config;
+    config.mainThreadBufferBytes  = 1u << 20;
+    config.otherThreadBufferBytes = 1u << 16;
+    Assisi::Chiara::Initialize(config);
+
+    Assisi::ECS::Scene scene;
+    SystemRegistry     systems;
+    systems.RegisterRender("first-render-system", [](RenderContext &) {});
+    systems.RegisterRender("second-render-system", [](RenderContext &) {});
+
+    // Mark where this case starts so earlier cases' records are excluded.
+    std::uint64_t mark = 0;
+    for (const Assisi::Chiara::ThreadSnapshot &snapshot : Assisi::Chiara::SnapshotThreads())
+    {
+        if (snapshot.isMain)
+        {
+            mark = snapshot.endIndex;
+        }
+    }
+
+    systems.RunRender(MakeCtx(scene));
+
+    std::vector<std::string> scopeNames;
+    for (const Assisi::Chiara::ThreadSnapshot &snapshot : Assisi::Chiara::SnapshotThreads())
+    {
+        if (!snapshot.isMain || snapshot.ring == nullptr)
+        {
+            continue;
+        }
+        for (std::uint64_t index = std::max(mark, snapshot.beginIndex); index < snapshot.endIndex; ++index)
+        {
+            const Assisi::Chiara::Event &event = snapshot.ring->At(index);
+            if (event.type == Assisi::Chiara::EventType::Scope && event.name != nullptr)
+            {
+                scopeNames.emplace_back(event.name);
+            }
+        }
+    }
+
+    const auto contains = [&scopeNames](std::string_view wanted)
+    { return std::ranges::find(scopeNames, wanted) != scopeNames.end(); };
+
+    CHECK(contains("Render"));
+    CHECK(contains("first-render-system"));
+    CHECK(contains("second-render-system"));
+}
+
+TEST_CASE("A system's scope name survives the entry vector reallocating")
+{
+    // Names are interned at registration precisely because Entry lives in a
+    // vector: holding name.c_str() would leave every earlier system's scope
+    // pointing at freed memory as soon as another one is added.
+    Assisi::Chiara::Initialize();
+
+    SystemRegistry systems;
+    systems.RegisterRender("survivor", [](RenderContext &) {});
+    const char *internedBefore = Assisi::Chiara::InternString("survivor");
+
+    for (int32_t i = 0; i < 64; ++i)
+    {
+        systems.RegisterRender("filler-" + std::to_string(i), [](RenderContext &) {});
+    }
+
+    // Interning is idempotent, so the pointer the first entry captured is still
+    // the one that names it — regardless of how far the vector has moved.
+    CHECK(Assisi::Chiara::InternString("survivor") == internedBefore);
+
+    Assisi::ECS::Scene scene;
+    systems.RunRender(MakeCtx(scene)); // Would read freed memory if this regressed.
+}
+
+#endif // ASSISI_CHIARA_ENABLED

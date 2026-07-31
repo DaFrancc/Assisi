@@ -18,6 +18,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <cstring> // std::strcmp — device-extension and validation-layer name comparisons
 #include <vector>
 
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Platform.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -925,6 +926,7 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     _lastGpuWaitMs = 0.0;
     if (_frameQueryPending[slot])
     {
+        ASSISI_PROFILE_SCOPE("wait-frame-slot");
         const std::chrono::steady_clock::time_point waitStart = std::chrono::steady_clock::now();
         _nvrhiDevice->waitEventQuery(_frameQueries[slot]);
         _lastGpuWaitMs =
@@ -944,8 +946,12 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     // in submit/present below). Fold it into _lastGpuWaitMs so it's excluded from
     // the CPU frame-time figure rather than mislabeled as CPU work.
     const std::chrono::steady_clock::time_point acquireStart = std::chrono::steady_clock::now();
-    VkResult acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphores[slot],
-                                                        VK_NULL_HANDLE, &_currentImageIndex);
+    VkResult                                    acquireResult = VK_SUCCESS;
+    {
+        ASSISI_PROFILE_SCOPE("acquire");
+        acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphores[slot],
+                                                  VK_NULL_HANDLE, &_currentImageIndex);
+    }
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - acquireStart).count();
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
@@ -989,6 +995,9 @@ void VulkanContext::EndFrame()
     // CPU work, so time it and fold it into _lastGpuWaitMs. GC (below, after this
     // window) is genuine CPU work and stays counted.
     const std::chrono::steady_clock::time_point presentWaitStart = std::chrono::steady_clock::now();
+    VkResult                                    presentResult    = VK_SUCCESS;
+    {
+    ASSISI_PROFILE_SCOPE("submit-present");
 
     _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
     _commandList->close();
@@ -1009,7 +1018,8 @@ void VulkanContext::EndFrame()
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &_swapchain;
     presentInfo.pImageIndices = &_currentImageIndex;
-    const VkResult presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+    presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+    }
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentWaitStart).count();
     // OUT_OF_DATE/SUBOPTIMAL are expected on resize; they're not errors here.
@@ -1028,12 +1038,21 @@ void VulkanContext::EndFrame()
     }
 
     // Genuine main-thread CPU work: this releases every retired submit's resources,
-    // so destroying large/numerous streaming allocations is paid here. Timed on its
-    // own (not folded into _lastGpuWaitMs) because it is CPU cost, not a GPU stall,
-    // and it is otherwise invisible in a frame breakdown.
-    const std::chrono::steady_clock::time_point gcStart = std::chrono::steady_clock::now();
-    _nvrhiDevice->runGarbageCollection();
-    _lastGcMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gcStart).count();
+    // so destroying large/numerous streaming allocations is paid here. Kept out of
+    // _lastGpuWaitMs because it is CPU cost, not a GPU stall, and it is otherwise
+    // invisible in a frame breakdown.
+    //
+    // This is the frame's most important slice for the case Chiara was built for:
+    // allocation churn caused several frames ago is *paid here*, so the flows that
+    // terminate near it are what name the cause (see design notes §7).
+    {
+        ASSISI_PROFILE_SCOPE("gpu-gc");
+        const std::chrono::steady_clock::time_point gcStart = std::chrono::steady_clock::now();
+        _nvrhiDevice->runGarbageCollection();
+        const double gcMs =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gcStart).count();
+        ASSISI_PROFILE_COUNTER("render/gc-ms", gcMs);
+    }
     ++_frameCounter;
 }
 

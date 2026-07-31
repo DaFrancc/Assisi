@@ -252,8 +252,19 @@ class JobSystem
         }
     }
 
+  public:
+    /// @brief Tasks waiting on the worker queue. A sampled counter, not a
+    /// synchronization primitive: it is read once a frame to plot how deep the
+    /// backlog is getting, which is what distinguishes "the pool is saturated"
+    /// from "the pool is idle and the main thread is the problem".
+    [[nodiscard]] uint32_t WorkerQueueDepth() const { return _workerQueueDepth.load(std::memory_order_relaxed); }
+
+    /// @brief Tasks waiting to run on the main thread — see WorkerQueueDepth.
+    [[nodiscard]] uint32_t MainQueueDepth() const { return _mainQueueDepth.load(std::memory_order_relaxed); }
+
   private:
-    void WorkerLoop();
+    /// @p workerIndex names the thread for the profiler and the OS debugger.
+    void WorkerLoop(uint32_t workerIndex);
 
     /// @brief Pop and run one worker task if any is queued. @return whether one ran.
     bool TryRunOneWorkerTask();
@@ -270,6 +281,12 @@ class JobSystem
 
     std::vector<std::function<void()>> _mainQueue;
     std::mutex                         _mainMutex; ///< Guards _mainQueue.
+
+    /// Queue sizes mirrored as atomics so a profiler can sample them without
+    /// taking the queue locks — reading a depth should never contend with the
+    /// pool it is measuring.
+    std::atomic<uint32_t> _workerQueueDepth{0};
+    std::atomic<uint32_t> _mainQueueDepth{0};
 
     /// The thread that constructed the JobSystem — treated as the main thread
     /// for HelpUntil's main-queue help (matches Application, which owns the

@@ -169,8 +169,9 @@ TEST_CASE("Reading a ring while its producer is stopped never sees a torn record
     Detail::EventRing       ring;
     ring.Reset(storage.data(), kCapacity);
 
-    std::atomic<bool> keepWriting{true};
-    std::atomic<bool> writerStopped{false};
+    std::atomic<bool>          keepWriting{true};
+    std::atomic<bool>          writerStopped{false};
+    std::atomic<std::uint64_t> pushed{0};
 
     std::thread writer(
         [&]
@@ -179,11 +180,16 @@ TEST_CASE("Reading a ring while its producer is stopped never sees a torn record
             while (keepWriting.load(std::memory_order_relaxed))
             {
                 ring.Push(SelfCheckingEvent(seed++));
+                pushed.store(seed, std::memory_order_relaxed);
             }
             writerStopped.store(true, std::memory_order_release);
         });
 
-    for (std::int32_t round = 0; round < 50; ++round)
+    // Wait for actual progress rather than for a number of yields. The ring has
+    // to have wrapped several times over for this test to mean anything, and how
+    // many scheduler slices that takes varies wildly — a sanitized build is an
+    // order of magnitude slower than a plain one.
+    while (pushed.load(std::memory_order_relaxed) < kCapacity * 4)
     {
         std::this_thread::yield();
     }

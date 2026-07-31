@@ -12,6 +12,7 @@
 
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -25,6 +26,7 @@
 #include <csignal>
 #include <cstdint>
 #include <cstdlib>
+#include <optional>
 #include <thread>
 
 #ifdef _WIN32
@@ -318,6 +320,9 @@ void Application::Run()
 
     while (!_window->ShouldClose())
     {
+        ASSISI_PROFILE_SCOPE("Frame");
+        ASSISI_PROFILE_FRAME();
+
         const Clock::time_point now   = Clock::now();
         const double            rawDt = Seconds(now - prevTime).count();
         const double            dt    = std::min(rawDt, 0.25);
@@ -329,15 +334,24 @@ void Application::Run()
         { return Seconds(to - from).count() * 1000.0; };
 
         const Clock::time_point inputStart = Clock::now();
-        Window::WindowContext::PollEvents();
-        _input->Poll();
+        {
+            ASSISI_PROFILE_SCOPE("input");
+            Window::WindowContext::PollEvents();
+            _input->Poll();
+        }
         const Clock::time_point inputEnd = Clock::now();
 
-        accumulator += dt;
-        while (accumulator >= physicsStep)
         {
-            OnFixedUpdate(static_cast<float>(physicsStep));
-            accumulator -= physicsStep;
+            // One scope for the whole substep loop rather than one per substep:
+            // what matters is the total the frame paid, and N nested identical
+            // slices would bury it.
+            ASSISI_PROFILE_SCOPE("fixed-update");
+            accumulator += dt;
+            while (accumulator >= physicsStep)
+            {
+                OnFixedUpdate(static_cast<float>(physicsStep));
+                accumulator -= physicsStep;
+            }
         }
         const Clock::time_point fixedEnd = Clock::now();
 
@@ -353,10 +367,16 @@ void Application::Run()
         // background async results (streaming) publish here too. The budget (0 =
         // unbounded by default) lets an app spread a burst of streaming asset
         // publishes across frames — see SetMainThreadTaskBudget.
-        _jobs.DrainMain(_mainThreadTaskBudget);
+        {
+            ASSISI_PROFILE_SCOPE("drain-main");
+            _jobs.DrainMain(_mainThreadTaskBudget);
+        }
         const Clock::time_point drainEnd = Clock::now();
 
-        OnUpdate(static_cast<float>(dt));
+        {
+            ASSISI_PROFILE_SCOPE("update");
+            OnUpdate(static_cast<float>(dt));
+        }
         const Clock::time_point updateEnd = Clock::now();
 
         // Frame pacing is exclusive with vsync: only cap here in FpsLimit mode with
@@ -388,8 +408,11 @@ void Application::Run()
         const Clock::time_point renderStart = Clock::now();
         RenderFrame();
         const Clock::time_point renderEnd = Clock::now();
-        _events.Flush();
-        FlushDeferred();
+        {
+            ASSISI_PROFILE_SCOPE("flush");
+            _events.Flush();
+            FlushDeferred();
+        }
         const Clock::time_point flushEnd = Clock::now();
 
         // Frame-time accounting. CPU frame time is this loop iteration's wall-clock
@@ -408,23 +431,43 @@ void Application::Run()
         // phases are all small but the frame is long, the main thread was not doing
         // work, it was descheduled (the streaming/physics pools oversubscribing the
         // CPU). That distinction picks the fix, so it is reported explicitly.
+        const double inputMs  = phaseMs(inputStart, inputEnd);
+        const double fixedMs  = phaseMs(inputEnd, fixedEnd);
+        const double drainMs  = phaseMs(fixedEnd, drainEnd);
+        const double updateMs = phaseMs(drainEnd, updateEnd);
+        const double renderMs = phaseMs(renderStart, renderEnd);
+        const double flushMs  = phaseMs(renderEnd, flushEnd);
+
+        // The render bracket contains the GPU wait (every accumulation site sits
+        // inside RenderFrame's callees) but cpuMs already had it subtracted, so
+        // summing the raw phases would bias `unaccounted` low by the whole wait.
+        // Under VSync, where that wait is most of the frame, the figure would sit
+        // pinned at zero and hide exactly the descheduling it exists to reveal.
+        const double renderCpuMs = std::max(0.0, renderMs - gpuWaitMs);
+        const double accounted   = inputMs + fixedMs + drainMs + updateMs + renderCpuMs + flushMs;
+
+        // Deliberately not clamped. A persistently negative value means the
+        // accounting itself is wrong — a phase double-counted, or a new one added
+        // without a bracket — and that is worth seeing rather than flooring away.
+        const double unaccountedMs = cpuMs - accounted;
+
+        ASSISI_PROFILE_COUNTER("frame/cpu-ms", cpuMs);
+        ASSISI_PROFILE_COUNTER("frame/gpu-ms", gpuMs);
+        ASSISI_PROFILE_COUNTER("frame/gpu-wait-ms", gpuWaitMs);
+        ASSISI_PROFILE_COUNTER("frame/sleep-ms", sleepMs);
+        ASSISI_PROFILE_COUNTER("frame/unaccounted-ms", unaccountedMs);
+        ASSISI_PROFILE_COUNTER("jobs/worker-queue-depth", static_cast<double>(_jobs.WorkerQueueDepth()));
+        ASSISI_PROFILE_COUNTER("jobs/main-queue-depth", static_cast<double>(_jobs.MainQueueDepth()));
+
+        // The breakdown that used to be spelled out here is a capture now. What
+        // survives is the pointer to it: a spike you can see in the log but not
+        // explain is worse than useless, and the whole point of Chiara is that
+        // the explanation is one dump away.
         if (cpuMs >= kSlowFrameMs)
         {
-            const double inputMs  = phaseMs(inputStart, inputEnd);
-            const double fixedMs  = phaseMs(inputEnd, fixedEnd);
-            const double drainMs  = phaseMs(fixedEnd, drainEnd);
-            const double updateMs = phaseMs(drainEnd, updateEnd);
-            const double renderMs = phaseMs(renderStart, renderEnd);
-            const double flushMs  = phaseMs(renderEnd, flushEnd);
-            const double accounted = inputMs + fixedMs + drainMs + updateMs + renderMs + flushMs;
-            Core::Log::Info("Slow frame {:.2f} ms cpu (gpu {:.2f}, gpuWait {:.2f}): input {:.2f}, fixed {:.2f}, "
-                            "drain {:.2f}, update {:.2f}, render {:.2f}, flush {:.2f} | unaccounted {:.2f}"
-                            " || render: begin {:.2f}, scene {:.2f}, post {:.2f}, imgui {:.2f}, end {:.2f} "
-                            "(of which gc {:.2f})",
-                            cpuMs, gpuMs, gpuWaitMs, inputMs, fixedMs, drainMs, updateMs, renderMs, flushMs,
-                            cpuMs - accounted, _renderPhases.begin, _renderPhases.scene, _renderPhases.post,
-                            _renderPhases.imgui, _renderPhases.end,
-                            vulkanContext ? vulkanContext->GetLastGcMs() : 0.0);
+            Core::Log::Info("Slow frame {} — {:.2f} ms cpu (gpu {:.2f}, wait {:.2f}, unaccounted {:.2f}); "
+                            "dump a capture for the breakdown",
+                            Chiara::CurrentFrame(), cpuMs, gpuMs, gpuWaitMs, unaccountedMs);
         }
 
         // Record raw (un-averaged) per-frame samples for the plots so spikes stay
@@ -476,18 +519,17 @@ void Application::RenderFrame()
         return;
     }
 
-    // Sub-phase stopwatches for the slow-frame diagnostic (see Run). Reset first so
-    // an early return below can't report the previous frame's numbers as this one's.
-    _renderPhases                    = RenderPhaseTimings{};
-    const Clock::time_point beginStart = Clock::now();
+    ASSISI_PROFILE_SCOPE("render");
 
-    auto frame = vulkanContext->BeginFrame();
+    std::optional<Render::RenderFrame> frame;
+    {
+        ASSISI_PROFILE_SCOPE("begin-frame");
+        frame = vulkanContext->BeginFrame();
+    }
     if (!frame.has_value())
     {
         return; // minimized, or swapchain is stale and about to be resized
     }
-    const Clock::time_point beginEnd = Clock::now();
-    _renderPhases.begin              = Seconds(beginEnd - beginStart).count() * 1000.0;
 
     // When an AA mode is active, the scene renders into PostProcess's offscreen
     // target instead of the swapchain directly — everything else about `frame`
@@ -509,27 +551,29 @@ void Application::RenderFrame()
                                                           false, 0);
     }
 
-    const Clock::time_point sceneStart = Clock::now();
-    OnRender(sceneFrame);
-    const Clock::time_point sceneEnd = Clock::now();
-    _renderPhases.scene              = Seconds(sceneEnd - sceneStart).count() * 1000.0;
+    {
+        ASSISI_PROFILE_SCOPE("scene");
+        OnRender(sceneFrame);
+    }
 
-    // No-op if AA is off (the scene already rendered directly into `frame`
-    // above); otherwise resolves/FXAA's the offscreen render into it.
-    _postProcess.Resolve(frame->commandList, *frame);
-    const Clock::time_point postEnd = Clock::now();
-    _renderPhases.post              = Seconds(postEnd - sceneEnd).count() * 1000.0;
+    {
+        // No-op if AA is off (the scene already rendered directly into `frame`
+        // above); otherwise resolves/FXAA's the offscreen render into it.
+        ASSISI_PROFILE_SCOPE("post-process");
+        _postProcess.Resolve(frame->commandList, *frame);
+    }
 
-    Debug::DebugUI::BeginFrame(*frame);
+    {
+        ASSISI_PROFILE_SCOPE("imgui");
+        Debug::DebugUI::BeginFrame(*frame);
+        OnImGui();
+        Debug::DebugUI::EndFrame(*frame);
+    }
 
-    OnImGui();
-
-    Debug::DebugUI::EndFrame(*frame);
-    const Clock::time_point imguiEnd = Clock::now();
-    _renderPhases.imgui              = Seconds(imguiEnd - postEnd).count() * 1000.0;
-
-    vulkanContext->EndFrame();
-    _renderPhases.end = Seconds(Clock::now() - imguiEnd).count() * 1000.0;
+    {
+        ASSISI_PROFILE_SCOPE("end-frame");
+        vulkanContext->EndFrame();
+    }
 }
 
 void Application::ConfigurePostProcess()

@@ -7,6 +7,7 @@
 
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -183,6 +184,12 @@ class Application
     void RenderFrame();
     void ConfigurePostProcess();
 
+    /// Declared first so the capture runtime is up before anything else exists —
+    /// in particular before _jobs spawns its workers, which register themselves
+    /// with it — and so it is torn down last. Inert and empty unless built with
+    /// -c (see docs/chiara-design-notes.md).
+    Chiara::InitGuard _chiara;
+
     AppConfig     _config;
     OptionsConfig _options;
 
@@ -225,19 +232,10 @@ class Application
     int32_t                           _frameHistoryOffset = 0;
     int32_t                           _frameSampleCount = 0;
 
-    // Sub-phase timings (ms) of the most recent RenderFrame, filled there and read
-    // by the slow-frame diagnostic in Run(). RenderFrame is a single opaque phase
-    // in that report, but it is where streaming-correlated spikes actually land, so
-    // it needs its own breakdown to be actionable.
-    struct RenderPhaseTimings
-    {
-        double begin = 0.0; ///< BeginFrame (swapchain acquire).
-        double scene = 0.0; ///< OnRender — the scene pass.
-        double post  = 0.0; ///< PostProcess resolve.
-        double imgui = 0.0; ///< OnImGui + DebugUI begin/end.
-        double end   = 0.0; ///< EndFrame (submit + present).
-    };
-    RenderPhaseTimings _renderPhases{};
+    // RenderFrame's sub-phase breakdown used to live here as a struct of doubles
+    // scraped into the slow-frame log line. It is now profile scopes inside
+    // RenderFrame — same numbers, but scrubbable, nested under the frame, and
+    // costing nothing in a build without capture.
 };
 
 } // namespace Assisi::App
