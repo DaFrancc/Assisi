@@ -232,6 +232,16 @@ class Application
     int32_t                           _frameHistoryOffset = 0;
     int32_t                           _frameSampleCount = 0;
 
+    /// @brief Samples the once-a-frame memory and subsystem counters into the
+    /// capture. Cheap by construction — everything here is an atomic read or a
+    /// scheduled syscall, never a walk of anything.
+    void PumpChiaraCounters();
+
+    /// Running Jolt allocation totals as of the previous frame, so the counters
+    /// can report a per-frame rate rather than an ever-climbing total.
+    uint64_t _lastJoltAllocCount = 0;
+    uint64_t _lastJoltAllocBytes = 0;
+
     // RenderFrame's sub-phase breakdown used to live here as a struct of doubles
     // scraped into the slow-frame log line. It is now profile scopes inside
     // RenderFrame — same numbers, but scrubbable, nested under the frame, and

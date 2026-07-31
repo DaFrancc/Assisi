@@ -12,6 +12,7 @@
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Core/Platform.hpp>
 #include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 using Assisi::Core::JobSystem;
@@ -322,6 +323,26 @@ TEST_CASE("Many concurrent tasks all complete with the right results")
         expected += static_cast<uint64_t>(i) * i;
     }
     CHECK(sum == expected);
+}
+
+TEST_CASE("Resident memory is reported and moves with a real allocation")
+{
+    const uint64_t before = Assisi::Core::ProcessResidentBytes();
+    // A platform with no implementation returns 0, and this suite only runs on
+    // ones that have it — a silent 0 would make the memory graph a flat line
+    // that looks like "nothing is allocating".
+    CHECK(before > 0);
+
+    // Touch the pages: reserving without writing may never fault them in, and
+    // resident set counts what is actually resident.
+    constexpr std::size_t kBytes = 64u << 20;
+    std::vector<uint8_t>  ballast(kBytes, 1);
+    for (std::size_t i = 0; i < kBytes; i += 4096)
+    {
+        ballast[i] = static_cast<uint8_t>(i);
+    }
+
+    CHECK(Assisi::Core::ProcessResidentBytes() > before);
 }
 
 TEST_CASE("Queue depths track what is waiting")

@@ -14,12 +14,15 @@
 #    endif
 #    include <windows.h>
 #    pragma comment(lib, "user32.lib")
+#    include <psapi.h>
+#    pragma comment(lib, "psapi.lib")
 #    include <string>
 #elif defined(__linux__)
 #    include <sys/wait.h>
 #    include <unistd.h>
 
 #    include <cstdlib>
+#    include <fstream>
 #    include <string>
 #    include <string_view>
 #    include <vector>
@@ -130,6 +133,41 @@ void ShowErrorDialog([[maybe_unused]] std::string_view title, std::string_view m
         if (tryZenity() || tryKdialog() || tryXmessage())
             return;
     }
+#endif
+}
+
+uint64_t ProcessResidentBytes()
+{
+#if defined(_WIN32)
+    PROCESS_MEMORY_COUNTERS counters{};
+    if (::GetProcessMemoryInfo(::GetCurrentProcess(), &counters, sizeof(counters)) != 0)
+    {
+        return static_cast<uint64_t>(counters.WorkingSetSize);
+    }
+    return 0;
+#elif defined(__linux__)
+    // statm's second field is resident pages. Preferred over parsing status's
+    // VmRSS line: two integers to read instead of a labelled text scan, which
+    // matters for something sampled on a schedule.
+    std::ifstream statm("/proc/self/statm");
+    if (!statm.is_open())
+    {
+        return 0;
+    }
+    uint64_t totalPages    = 0;
+    uint64_t residentPages = 0;
+    if (!(statm >> totalPages >> residentPages))
+    {
+        return 0;
+    }
+    const long pageSize = ::sysconf(_SC_PAGESIZE);
+    if (pageSize <= 0)
+    {
+        return 0;
+    }
+    return residentPages * static_cast<uint64_t>(pageSize);
+#else
+    return 0;
 #endif
 }
 

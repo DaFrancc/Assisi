@@ -9,6 +9,7 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
 #include <cstdint>
 #include <set>
@@ -300,6 +301,43 @@ SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view nam
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
 {
+    // Pool occupancy, once per world per frame. PreUpdate is simply the first
+    // phase to run, so it is where a world's frame begins — emitting from every
+    // phase would quadruple the samples without adding anything.
+    //
+    // A runtime loop over ComponentRegistry rather than generated code: the
+    // registry already enumerates every ACOMP with a stable name, so this stays
+    // correct as components are added and needs no codegen to do it. Names are
+    // interned once into a static table, since a counter name must outlive the
+    // capture and interning takes a lock.
+    if (phase == SystemPhase::PreUpdate)
+    {
+        ASSISI_PROFILE_COUNTER("ecs/entity-count", static_cast<double>(ctx.world.scene.AliveCount()));
+
+        const std::span<const Core::Reflect::ComponentMeta> metas =
+            Core::Reflect::ComponentRegistry::Instance().All();
+        static const std::vector<const char *> kCounterNames = [&metas]
+        {
+            std::vector<const char *> names;
+            names.reserve(metas.size());
+            for (const Core::Reflect::ComponentMeta &meta : metas)
+            {
+                names.push_back(Chiara::InternString("ecs/components/" + meta.name));
+            }
+            return names;
+        }();
+
+        // Guard rather than assume: a component registered after the first frame
+        // would leave the cached table short, and a mismatched index here would
+        // label one pool with another's name.
+        const std::size_t counted = std::min(kCounterNames.size(), metas.size());
+        for (std::size_t i = 0; i < counted; ++i)
+        {
+            ASSISI_PROFILE_COUNTER(kCounterNames[i],
+                                   static_cast<double>(ctx.world.scene.ComponentCount(metas[i].id)));
+        }
+    }
+
     RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), PhaseProfileName(Index(phase)), ctx,
              /*skipActiveOnly=*/!ctx.isActiveWorld, ctx.world.scene);
 }

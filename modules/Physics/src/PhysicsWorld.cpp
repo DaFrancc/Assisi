@@ -2,6 +2,7 @@
 
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
+#include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
 
@@ -24,6 +25,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -138,9 +141,75 @@ class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
    built for many PhysicsSystems on one JobSystem. */
 struct JoltRuntime
 {
-    JPH::JobSystemThreadPool jobSystem{JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
-                                       static_cast<int>(std::thread::hardware_concurrency()) - 1};
+    // Default-constructed and then Init'd in the body rather than built by the
+    // thread-starting constructor: Jolt requires the thread-init function to be
+    // set *before* Init, and setting it afterwards compiles fine while silently
+    // doing nothing. Without this the physics workers would stay anonymous in
+    // every capture and every debugger.
+    JPH::JobSystemThreadPool jobSystem;
+
+    JoltRuntime()
+    {
+        jobSystem.SetThreadInitFunction(
+            [](int threadIndex)
+            { Assisi::Chiara::RegisterCurrentThread(("jolt-" + std::to_string(threadIndex)).c_str()); });
+        jobSystem.Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
+                       static_cast<int>(std::thread::hardware_concurrency()) - 1);
+    }
 };
+
+/// Jolt allocation counters. Churn per frame, not residency: JPH::FreeFunction
+/// takes no size, so tracking live bytes would need a header on every block,
+/// which breaks aligned allocation. Churn is the perf-relevant signal anyway —
+/// a physics frame that allocates is a physics frame that will pay for it.
+///
+/// Relaxed atomics because Jolt allocates from its own worker threads; these are
+/// sampled once a frame, so ordering between them does not matter.
+std::atomic<std::uint64_t> gJoltAllocCount{0};
+std::atomic<std::uint64_t> gJoltAllocBytes{0};
+
+void *CountingAllocate(std::size_t size)
+{
+    gJoltAllocCount.fetch_add(1, std::memory_order_relaxed);
+    gJoltAllocBytes.fetch_add(size, std::memory_order_relaxed);
+    return std::malloc(size);
+}
+
+void *CountingReallocate(void *block, std::size_t oldSize, std::size_t newSize)
+{
+    gJoltAllocCount.fetch_add(1, std::memory_order_relaxed);
+    if (newSize > oldSize)
+    {
+        gJoltAllocBytes.fetch_add(newSize - oldSize, std::memory_order_relaxed);
+    }
+    return std::realloc(block, newSize);
+}
+
+void CountingFree(void *block)
+{
+    std::free(block);
+}
+
+void *CountingAlignedAllocate(std::size_t size, std::size_t alignment)
+{
+    gJoltAllocCount.fetch_add(1, std::memory_order_relaxed);
+    gJoltAllocBytes.fetch_add(size, std::memory_order_relaxed);
+#if defined(_WIN32)
+    return _aligned_malloc(size, alignment);
+#else
+    // std::aligned_alloc requires size to be a multiple of alignment.
+    return std::aligned_alloc(alignment, ((size + alignment - 1) / alignment) * alignment);
+#endif
+}
+
+void CountingAlignedFree(void *block)
+{
+#if defined(_WIN32)
+    _aligned_free(block);
+#else
+    std::free(block);
+#endif
+}
 
 std::atomic<int32_t> gJoltRefCount{0};
 JoltRuntime         *gJoltRuntime = nullptr;
@@ -155,8 +224,14 @@ class JoltRuntimeRef
         if (gJoltRefCount++ == 0)
         {
             /* Must be called before any Jolt allocation — including the runtime's
-               own pool and temp allocator below. */
-            JPH::RegisterDefaultAllocator();
+               own pool and temp allocator below. Counting wrappers rather than
+               RegisterDefaultAllocator: all five hooks, because installing only
+               some leaves the rest null and Jolt calls them all. */
+            JPH::Allocate        = CountingAllocate;
+            JPH::Reallocate      = CountingReallocate;
+            JPH::Free            = CountingFree;
+            JPH::AlignedAllocate = CountingAlignedAllocate;
+            JPH::AlignedFree     = CountingAlignedFree;
             JPH::Factory::sInstance = new JPH::Factory();
             JPH::RegisterTypes();
             gJoltRuntime = new JoltRuntime();
@@ -812,6 +887,14 @@ glm::vec3 PhysicsWorld::GetGravity() const
 {
     const JPH::Vec3 g = _impl->physicsSystem.GetGravity();
     return glm::vec3(g.GetX(), g.GetY(), g.GetZ());
+}
+
+JoltAllocationStats GetJoltAllocationStats()
+{
+    JoltAllocationStats stats;
+    stats.count = gJoltAllocCount.load(std::memory_order_relaxed);
+    stats.bytes = gJoltAllocBytes.load(std::memory_order_relaxed);
+    return stats;
 }
 
 } // namespace Assisi::Physics

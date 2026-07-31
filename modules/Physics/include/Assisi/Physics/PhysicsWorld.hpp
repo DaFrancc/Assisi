@@ -249,4 +249,19 @@ class PhysicsWorld
     std::unique_ptr<Impl> _impl;
 };
 
+/// @brief Running totals of what Jolt has allocated since the runtime came up.
+///
+/// **Churn, not residency.** JPH::FreeFunction takes no size, so tracking live
+/// bytes would mean putting a header on every block, which breaks the aligned
+/// allocation Jolt relies on. Churn is the more useful signal anyway: a physics
+/// frame that allocates is a physics frame that will pay for the free later.
+/// Sample once a frame and difference it to get a per-frame rate.
+struct JoltAllocationStats
+{
+    uint64_t count = 0;
+    uint64_t bytes = 0;
+};
+
+[[nodiscard]] JoltAllocationStats GetJoltAllocationStats();
+
 } // namespace Assisi::Physics

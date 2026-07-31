@@ -17,7 +17,9 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Sinks.hpp>
+#include <Assisi/Core/Platform.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
+#include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 
 // --- Standard ---------------------------------------------------------------
@@ -458,6 +460,7 @@ void Application::Run()
         ASSISI_PROFILE_COUNTER("frame/unaccounted-ms", unaccountedMs);
         ASSISI_PROFILE_COUNTER("jobs/worker-queue-depth", static_cast<double>(_jobs.WorkerQueueDepth()));
         ASSISI_PROFILE_COUNTER("jobs/main-queue-depth", static_cast<double>(_jobs.MainQueueDepth()));
+        PumpChiaraCounters();
 
         // The breakdown that used to be spelled out here is a capture now. What
         // survives is the pointer to it: a spike you can see in the log but not
@@ -509,6 +512,32 @@ void Application::Run()
         vulkanContext->GetDevice()->waitForIdle();
 
     OnShutdown();
+}
+
+void Application::PumpChiaraCounters()
+{
+    ASSISI_PROFILE_SCOPE("chiara-counters");
+
+    // Resident set is a syscall, so it is sampled on a schedule rather than every
+    // frame. A quarter-second cadence is far finer than any memory trend worth
+    // seeing and stays invisible in the frame budget.
+    static constexpr uint64_t kRssSampleInterval = 15;
+    if (Chiara::CurrentFrame() % kRssSampleInterval == 0)
+    {
+        ASSISI_PROFILE_COUNTER("mem/process-rss-bytes", static_cast<double>(Core::ProcessResidentBytes()));
+    }
+
+    // Physics allocation *churn* per frame, differenced from running totals —
+    // Jolt's free hook takes no size, so residency is not knowable without a
+    // header on every block. Churn is the perf-relevant signal anyway: a frame
+    // that allocates is a frame that will pay to free.
+    const Physics::JoltAllocationStats jolt = Physics::GetJoltAllocationStats();
+    ASSISI_PROFILE_COUNTER("physics/alloc-count-per-frame",
+                           static_cast<double>(jolt.count - _lastJoltAllocCount));
+    ASSISI_PROFILE_COUNTER("physics/alloc-bytes-per-frame",
+                           static_cast<double>(jolt.bytes - _lastJoltAllocBytes));
+    _lastJoltAllocCount = jolt.count;
+    _lastJoltAllocBytes = jolt.bytes;
 }
 
 void Application::RenderFrame()

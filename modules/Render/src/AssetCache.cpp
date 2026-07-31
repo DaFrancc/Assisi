@@ -1070,6 +1070,25 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
     ASSISI_PROFILE_COUNTER("stream/pump-bytes", static_cast<double>(bytes));
     ASSISI_PROFILE_COUNTER("stream/mesh-count", static_cast<double>(meshCount));
     ASSISI_PROFILE_COUNTER("stream/mat-count", static_cast<double>(matCount));
+
+    // Emitted here rather than from a central pump because this is the only code
+    // that moves these numbers, and a memory graph is only useful if its samples
+    // land where the change happened.
+    ASSISI_PROFILE_COUNTER("mem/arena-vertex-used", static_cast<double>(_arena.VertexUsedBytes()));
+    ASSISI_PROFILE_COUNTER("mem/arena-vertex-capacity", static_cast<double>(_arena.VertexCapacityBytes()));
+    ASSISI_PROFILE_COUNTER("mem/arena-index-used", static_cast<double>(_arena.IndexUsedBytes()));
+    ASSISI_PROFILE_COUNTER("mem/arena-index-capacity", static_cast<double>(_arena.IndexCapacityBytes()));
+
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        std::size_t                 parkedBuffers = 0;
+        for (const StagingInFlight &parked : _stagingInFlight)
+        {
+            parkedBuffers += parked.buffers.size();
+        }
+        ASSISI_PROFILE_COUNTER("mem/staging-parked-buffers", static_cast<double>(parkedBuffers));
+        ASSISI_PROFILE_COUNTER("mem/staging-free-buffers", static_cast<double>(_freeStagingBuffers.size()));
+    }
 }
 
 void AssetCache::Clear()
