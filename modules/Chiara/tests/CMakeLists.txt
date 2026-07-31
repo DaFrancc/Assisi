@@ -7,6 +7,7 @@ add_executable(Assisi-Chiara-Tests
   TestCapture.cpp
   TestEventRing.cpp
   TestMacros.cpp
+  TestSerializer.cpp
   TestThreads.cpp
 )
 
@@ -16,10 +17,14 @@ target_include_directories(Assisi-Chiara-Tests SYSTEM PRIVATE
   "${doctest_SOURCE_DIR}"
 )
 
+# nlohmann is for *reading the trace back* in the serializer tests — asserting on
+# a parsed document rather than on text. Chiara itself writes JSON by hand with
+# std::format and links nothing, which is what keeps it below Core.
 target_link_libraries(Assisi-Chiara-Tests
   PRIVATE
     Assisi::Chiara
     Threads::Threads
+    nlohmann_json::nlohmann_json
 )
 
 add_test(NAME Chiara COMMAND Assisi-Chiara-Tests)

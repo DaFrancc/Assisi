@@ -345,12 +345,20 @@ something is worth recording, the spike already happened. The panel offers
 *dump the last 5 s / 15 s / everything*, plus a pause toggle for A/B
 experiments; explicit start/stop is the same mechanism and needs no extra API.
 
-`SerializeCapture(path, lastSeconds)` pauses recording, walks each ring within
-the window, streams the trace through a buffered `ofstream`, resumes, and
-returns counts. It runs on a JobSystem worker with a `Then(Main, …)`
-continuation for panel status, so the frame never hitches on a dump. Capture is
-blind while it writes — acceptable, because a dump happens after the
-interesting part.
+`SerializeCapture(path, lastSeconds)` pauses recording, **waits a couple of
+milliseconds for the pause to land**, walks each ring within the window into
+memory, resumes, and only then streams the trace through a buffered `ofstream`.
+It runs on a JobSystem worker with a `Then(Main, …)` continuation for panel
+status, so the frame never hitches on a dump.
+
+The drain is not politeness. Excluding the aliased slot covers a producer with
+one push already in flight, but a thread that has not yet *observed* the pause
+is under no such bound and could lap the reader outright. Two milliseconds is
+several orders of magnitude past cache-coherence latency.
+
+Resuming before the file is written rather than after keeps the blind window to
+the ring walk instead of the whole dump — everything the writer still needs is
+copied by then, and it never touches a ring again.
 
 A thread mid-push when its cursor `C` is sampled can complete at most one
 straggler past the observed cursor — and that straggler lands in slot

@@ -4,10 +4,12 @@ Assisi_apply_defaults(Assisi-Chiara)
 target_sources(Assisi-Chiara
   PRIVATE
     "src/Chiara.cpp"
+    "src/Serializer.cpp"
   PUBLIC
     "include/Assisi/Chiara/Chiara.hpp"
     "include/Assisi/Chiara/Event.hpp"
     "include/Assisi/Chiara/Profile.hpp"
+    "include/Assisi/Chiara/Serializer.hpp"
 )
 
 target_include_directories(Assisi-Chiara
