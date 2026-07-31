@@ -1,7 +1,7 @@
 # Frame profiler — design notes (deferred, superseded)
 
 **Status:** Superseded 2026-07-31 by **`chiara-design-notes.md`**. Kept for the
-reasoning, not as a plan — read Chiara's §11 for what carried over and what did
+reasoning, not as a plan — read Chiara's §12 for what carried over and what did
 not.
 
 Short version: the "adopt Tracy?" question at the bottom is answered *neither* —
