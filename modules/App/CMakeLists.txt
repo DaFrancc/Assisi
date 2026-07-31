@@ -13,6 +13,7 @@ target_sources(Assisi-App
   PRIVATE
     "src/AppConfig.cpp"
     "src/Application.cpp"
+    "src/ChiaraPanel.cpp"
     "src/LevelRuntime.cpp"
     "src/OptionsConfig.cpp"
     "src/PhysicsSystems.cpp"

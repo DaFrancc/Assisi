@@ -237,6 +237,23 @@ class Application
     /// scheduled syscall, never a walk of anything.
     void PumpChiaraCounters();
 
+  public:
+    /// @brief Draws the capture control panel — recording toggle, ring coverage,
+    /// and the dump buttons. Call it from OnImGui inside a window of your own;
+    /// it draws contents, not a window, so a game can put it wherever it likes.
+    /// Draws nothing in a build without the capture system.
+    void DrawChiaraPanel();
+
+    /// @brief Writes the last @p lastSeconds of capture to a timestamped file
+    /// under the user root (0 = everything the rings hold).
+    ///
+    /// Runs on a worker, so the calling frame never waits on it, and ignores the
+    /// request if a dump is already in flight. Does nothing without the capture
+    /// system compiled in.
+    void DumpChiaraCapture(double lastSeconds = 0.0);
+
+  private:
+
     /// Running Jolt allocation totals as of the previous frame, so the counters
     /// can report a per-frame rate rather than an ever-climbing total.
     uint64_t _lastJoltAllocCount = 0;

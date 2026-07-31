@@ -1057,7 +1057,32 @@ void EditorApp::DrawDiagnosticsWindow()
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Scroll: FOV  |  LMB: select  |  Esc: quit");
-    ImGui::TextDisabled("F11: graphics settings");
+    ImGui::TextDisabled("F11: graphics settings  |  F9: performance capture");
+    ImGui::End();
+}
+
+void EditorApp::DrawChiaraWindow()
+{
+    // F9 toggles it, next to F11's graphics overlay. Handled here rather than in
+    // the engine so the key stays the app's to rebind or drop — same reasoning as
+    // F11. Chiara owns no input of its own.
+    if (GetInput().IsKeyPressed(Assisi::Window::Key::F9))
+    {
+        _showChiara = !_showChiara;
+    }
+
+    if (!_showChiara)
+    {
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(380, 260), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Performance capture", &_showChiara))
+    {
+        // The panel is App-level so a game gets the same one; the editor only
+        // decides where it lives and what opens it.
+        DrawChiaraPanel();
+    }
     ImGui::End();
 }
 
@@ -1136,6 +1161,7 @@ void EditorApp::OnImGui()
 
     DrawOptionsWindow();
     DrawDiagnosticsWindow();
+    DrawChiaraWindow();
     DrawGameControlWindow();
     DrawEntityListWindow();
     DrawHistoryWindow();
