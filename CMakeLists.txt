@@ -33,6 +33,13 @@ option(ASSISI_ENABLE_FAST_MATH "Enable fast-math in Release" ON)
 # Unit tests (pure-logic modules: ECS, asset-path, action-map, topo-sort).
 option(ASSISI_BUILD_TESTS "Build unit tests" ON)
 
+# Chiara, the performance/memory capture system (docs/chiara-design-notes.md).
+# OFF on every configuration — debug, dev and ship alike — because capture is a
+# decision independent of optimization level, and the build worth profiling is
+# the optimized one. The `-chiara` presets and the `-c` make targets (gd-c,
+# gs-c, …) turn it on; nothing else does.
+option(ASSISI_ENABLE_CHIARA "Compile the Chiara capture system in" OFF)
+
 # Assimp is the deferred multi-format catch-all mesh-import backend (FBX/OBJ/DAE/…).
 # The runtime glTF path uses fastgltf; Assimp stays OFF so its heavy build doesn't
 # tax every configure until a second format backend is actually wired. Flip this ON
@@ -630,6 +637,10 @@ endif()
 # ------------------------------------------------------------
 # Project modules / apps (based on your existing layout)
 # ------------------------------------------------------------
+# Chiara sits *below* Core and is linked PUBLIC by it. Core's JobSystem is the
+# only place worker-thread identity exists, so it has to register those threads
+# with the capture — which forces the dependency this way round, not the other.
+add_subdirectory(modules/Chiara)
 add_subdirectory(modules/Core)
 add_subdirectory(modules/Math)
 # Geometry sits above Core+Math and below Render: CPU-side mesh data and the

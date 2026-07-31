@@ -197,6 +197,70 @@
         "ASSISI_ENABLE_SANITIZERS": "ON",
         "ASSISI_SANITIZER_SET": "thread"
       }
+    },
+
+    {
+      "name": "msvc-debug-chiara",
+      "inherits": "msvc-debug",
+      "description": "Windows + MSVC + Debug + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "msvc-dev-chiara",
+      "inherits": "msvc-dev",
+      "description": "Windows + MSVC + Development + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "msvc-ship-chiara",
+      "inherits": "msvc-ship",
+      "description": "Windows + MSVC + Shipping + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+
+    {
+      "name": "gcc-debug-chiara",
+      "inherits": "gcc-debug",
+      "description": "Linux + GCC + Debug + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "gcc-dev-chiara",
+      "inherits": "gcc-dev",
+      "description": "Linux + GCC + Development + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "gcc-ship-chiara",
+      "inherits": "gcc-ship",
+      "description": "Linux + GCC + Shipping + Chiara capture compiled in (the build worth profiling)",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+
+    {
+      "name": "clang-debug-chiara",
+      "inherits": "clang-debug",
+      "description": "Linux + Clang + Debug + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "clang-dev-chiara",
+      "inherits": "clang-dev",
+      "description": "Linux + Clang + Development + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "clang-ship-chiara",
+      "inherits": "clang-ship",
+      "description": "Linux + Clang + Shipping + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+
+    {
+      "name": "gcc-tsan-chiara",
+      "inherits": "gcc-tsan",
+      "description": "Linux + GCC + ThreadSanitizer + Chiara compiled in — the ring and shadow-stack race tests",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
     }
   ],
   "buildPresets": [
@@ -216,7 +280,21 @@
     { "name": "gcc-asan",    "configurePreset": "gcc-asan"    },
     { "name": "gcc-tsan",    "configurePreset": "gcc-tsan"    },
     { "name": "clang-asan",  "configurePreset": "clang-asan"  },
-    { "name": "clang-tsan",  "configurePreset": "clang-tsan"  }
+    { "name": "clang-tsan",  "configurePreset": "clang-tsan"  },
+
+    { "name": "msvc-debug-chiara",  "configurePreset": "msvc-debug-chiara"  },
+    { "name": "msvc-dev-chiara",    "configurePreset": "msvc-dev-chiara"    },
+    { "name": "msvc-ship-chiara",   "configurePreset": "msvc-ship-chiara"   },
+
+    { "name": "gcc-debug-chiara",   "configurePreset": "gcc-debug-chiara"   },
+    { "name": "gcc-dev-chiara",     "configurePreset": "gcc-dev-chiara"     },
+    { "name": "gcc-ship-chiara",    "configurePreset": "gcc-ship-chiara"    },
+
+    { "name": "clang-debug-chiara", "configurePreset": "clang-debug-chiara" },
+    { "name": "clang-dev-chiara",   "configurePreset": "clang-dev-chiara"   },
+    { "name": "clang-ship-chiara",  "configurePreset": "clang-ship-chiara"  },
+
+    { "name": "gcc-tsan-chiara",    "configurePreset": "gcc-tsan-chiara"    }
   ],
   "testPresets": [
     {
@@ -242,6 +320,20 @@
     { "name": "gcc-asan",    "inherits": "test-base", "configurePreset": "gcc-asan"    },
     { "name": "gcc-tsan",    "inherits": "test-base", "configurePreset": "gcc-tsan"    },
     { "name": "clang-asan",  "inherits": "test-base", "configurePreset": "clang-asan"  },
-    { "name": "clang-tsan",  "inherits": "test-base", "configurePreset": "clang-tsan"  }
+    { "name": "clang-tsan",  "inherits": "test-base", "configurePreset": "clang-tsan"  },
+
+    { "name": "msvc-debug-chiara",  "inherits": "test-base", "configurePreset": "msvc-debug-chiara"  },
+    { "name": "msvc-dev-chiara",    "inherits": "test-base", "configurePreset": "msvc-dev-chiara"    },
+    { "name": "msvc-ship-chiara",   "inherits": "test-base", "configurePreset": "msvc-ship-chiara"   },
+
+    { "name": "gcc-debug-chiara",   "inherits": "test-base", "configurePreset": "gcc-debug-chiara"   },
+    { "name": "gcc-dev-chiara",     "inherits": "test-base", "configurePreset": "gcc-dev-chiara"     },
+    { "name": "gcc-ship-chiara",    "inherits": "test-base", "configurePreset": "gcc-ship-chiara"    },
+
+    { "name": "clang-debug-chiara", "inherits": "test-base", "configurePreset": "clang-debug-chiara" },
+    { "name": "clang-dev-chiara",   "inherits": "test-base", "configurePreset": "clang-dev-chiara"   },
+    { "name": "clang-ship-chiara",  "inherits": "test-base", "configurePreset": "clang-ship-chiara"  },
+
+    { "name": "gcc-tsan-chiara",    "inherits": "test-base", "configurePreset": "gcc-tsan-chiara"    }
   ]
 }

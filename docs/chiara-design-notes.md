@@ -245,7 +245,7 @@ struct Event
     std::uint64_t timestampTicks; // raw TSC; converted at serialize time
     std::uint64_t payload;
     const char   *name;           // interned; dereferenced only when serializing
-    std::uint8_t  type;
+    EventType     type;           // one byte, so the layout below still lands on 32
     std::uint8_t  reserved0;
     std::uint16_t reserved1;
     std::uint32_t reserved2;
@@ -289,6 +289,14 @@ the same rigor as the ring: each thread's stack carries a **generation counter
 bumped before and after every push and pop** (a seqlock). The walker snapshots
 the stack, re-reads the generation, and retries on mismatch or an odd value.
 No torn synthesis, no lock on the emit path.
+
+Its entries are atomics carrying **acquire/release ordering themselves**, not
+plain fields bracketed by the two `atomic_thread_fence`s a textbook seqlock
+uses. The guarantees are the same, and on x86-64 both compile to plain movs —
+but GCC's ThreadSanitizer does not model `atomic_thread_fence` at all (it says
+so via `-Wtsan`), so the fenced form is invisible to the only tool that can
+check this code. A seqlock nobody can verify is not worth the two lines it
+saves.
 
 **Context goes in args, never in the name.** The name is the aggregation key —
 `publish-mesh` — and the asset path is an `ArgString` bound to it. Folding the
@@ -640,6 +648,9 @@ and is one commit.
    disabled-recording emits nothing, eight threads emitting concurrently (also
    the tsan target), and one unguarded case proving the macros compile to
    no-ops in a default build.
+   *(Done. The pre-Initialize cases live in their own binary — the property is
+   "nothing has started yet", which cannot survive sharing a process with cases
+   that start the capture, and doctest promises no ordering.)*
 2. **Chrome JSON serializer.** Window filtering, metadata, the full mapping,
    scope-tree reconstruction for arg folding, shadow-stack synthesis of
    still-open scopes. Tests emit a known scene, serialize, parse with nlohmann,
