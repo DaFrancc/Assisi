@@ -7,13 +7,17 @@ target_sources(Assisi-App
     "include/Assisi/App/Application.hpp"
     "include/Assisi/App/LevelRuntime.hpp"
     "include/Assisi/App/OptionsConfig.hpp"
+    "include/Assisi/App/PhysicsSystems.hpp"
     "include/Assisi/App/SystemRegistry.hpp"
+    "include/Assisi/App/World.hpp"
   PRIVATE
     "src/AppConfig.cpp"
     "src/Application.cpp"
     "src/LevelRuntime.cpp"
     "src/OptionsConfig.cpp"
+    "src/PhysicsSystems.cpp"
     "src/SystemRegistry.cpp"
+    "src/World.cpp"
 )
 
 target_include_directories(Assisi-App

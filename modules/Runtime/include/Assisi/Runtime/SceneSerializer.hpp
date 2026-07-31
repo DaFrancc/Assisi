@@ -12,6 +12,7 @@
 /// @code{.json}
 /// {
 ///   "version": 1,
+///   "profile": "Gameplay",
 ///   "entities": [
 ///     {
 ///       "components": {
@@ -34,8 +35,11 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <optional>
+#include <span>
 #include <string_view>
+#include <vector>
 
 #include <nlohmann/json.hpp>
 
@@ -45,28 +49,94 @@
 namespace Assisi::Runtime
 {
 
+/// @brief The parts of a level file that describe the level rather than its
+/// entities. Optional in the file; absent fields keep their defaults, so older
+/// levels load unchanged.
+struct LevelHeader
+{
+    /// @brief Which system profile the level wants installed into the world it
+    /// loads into (docs/world-system-binding-design-notes.md §3). Empty means
+    /// "the host's default profile" — the common case, so most levels never
+    /// mention it.
+    ///
+    /// A name, not a system list: systems are C++ functions, so data can only
+    /// select among sets the game registered. Keeping the file's vocabulary to a
+    /// single name is also what lets the game's system list evolve without
+    /// touching level files.
+    std::string profile;
+};
+
 class SceneSerializer
 {
   public:
-    /// @brief Serialize the entire scene to a JSON value.
-    static nlohmann::json Save(ECS::Scene &scene);
+    /// @brief Optional progress reporter for a load, called with a fraction in
+    /// [0, 1] as the component-deserialize pass advances. Invoked on the thread
+    /// that drives the load (a worker, for async travel), so an implementation
+    /// that publishes to another thread must synchronise itself.
+    using ProgressFn = std::function<void(float)>;
+
+    /// @brief Serialize the entire scene to a JSON value, plus @p header.
+    ///
+    /// The header must be passed by every save that wants to preserve it: a
+    /// Scene does not carry it (it is a property of the level, not of the
+    /// entities), so a save that omits it strips the field from the file.
+    static nlohmann::json Save(ECS::Scene &scene, const LevelHeader &header = {});
 
     /// @brief Deserialize entities and components from a JSON value into the scene.
     ///
     /// Clears the scene before loading.  Only components registered in
     /// ComponentRegistry are restored; unrecognised names are skipped with a warning.
-    static void Load(ECS::Scene &scene, const nlohmann::json &j);
+    /// @p onProgress (optional) is called as the per-entity deserialize pass runs —
+    /// the dominant, entity-scaling cost — ending at 1.0.
+    /// @p header (optional) receives the file's non-entity metadata; left
+    /// untouched if the load fails its version check.
+    static void Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress = {},
+                     LevelHeader *header = nullptr);
 
     /// @brief Write the scene to a JSON file at the given filesystem path.
     ///
     /// @return true on success, false if the file could not be opened.
-    static bool SaveToFile(ECS::Scene &scene, const std::filesystem::path &path);
+    static bool SaveToFile(ECS::Scene &scene, const std::filesystem::path &path,
+                           const LevelHeader &header = {});
 
     /// @brief Load the scene from an asset-relative path via AssetSystem.
     ///
     /// @param assetPath  Virtual path relative to the asset root (e.g. "levels/main.json").
+    /// @param onProgress Optional; forwarded to Load() (see it) for load-progress UI.
+    /// @param header     Optional; receives the file's non-entity metadata.
     /// @return true on success, false on any IO or parse error.
-    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath);
+    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
+                             const ProgressFn &onProgress = {}, LevelHeader *header = nullptr);
+
+    /// @brief Moves a set of entities' component *data* from one scene to another.
+    ///
+    /// Entity migration (docs/multi-scene-design-notes.md §2, S4): the entities
+    /// in @p entities are serialized out of @p src, recreated in @p dst as fresh
+    /// entities, and destroyed in @p src. This is a **third** EntityRef mapping
+    /// mode, distinct from the two above:
+    ///   - Save/Load remaps against a whole scene and *clears* the destination;
+    ///   - the raw-identity context revives at exact handles, which would collide
+    ///     with the destination's own entities;
+    ///   - this maps a *subset* of one scene onto fresh handles in another,
+    ///     leaving the destination otherwise untouched.
+    ///
+    /// EntityRef fields (e.g. Parent) that point WITHIN the migrated set are
+    /// remapped to the new destination entities. A ref that points OUTSIDE the
+    /// set — at an entity left behind in @p src — resolves to NullEntity, and
+    /// each such dropped ref is logged: it is silent data loss otherwise. Pass a
+    /// set closed under the subtree relation (Runtime::GatherSubtree) so a child's
+    /// Parent is never the thing left behind.
+    ///
+    /// Transients are NOT rebuilt here — SceneSerializer links neither Physics nor
+    /// the render layer, so a migrated entity's Jolt body and resolved GPU
+    /// pointers do not exist in @p dst yet. The caller (App::MigrateEntity) tears
+    /// down the source-world body and rebuilds both per destination world.
+    ///
+    /// @return the created destination entities, parallel to @p entities (so
+    /// @p entities[i] became the returned handle at index i). Empty if a
+    /// serialization context is already active on this thread.
+    static std::vector<ECS::Entity> TransferEntities(ECS::Scene &src, ECS::Scene &dst,
+                                                     std::span<const ECS::Entity> entities);
 
     /// @brief Map a live entity to its stable serial index during the current Save.
     ///

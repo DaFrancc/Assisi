@@ -24,7 +24,16 @@
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
+#include <cstdint>
 #include <string_view>
+
+namespace Assisi::Runtime
+{
+// Declared, not included: the definition lives in SceneSerializer.hpp, which
+// drags in nlohmann/json — and this header is included (via World.hpp) almost
+// everywhere. Callers that build a header include that themselves.
+struct LevelHeader;
+} // namespace Assisi::Runtime
 
 namespace Assisi::App
 {
@@ -47,10 +56,27 @@ void InstallAssetResolvers(Render::AssetCache &cache, const Core::AssetDatabase 
 void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
                                  Physics::PhysicsWorld &physics);
 
+/// @brief What a load should do with the asset cache before resolving.
+enum class AssetCacheReset : std::uint8_t
+{
+    /// Free every cached GPU asset first (and evict the renderer's binding sets)
+    /// so the new level starts from a clean cache. Correct only when no OTHER
+    /// world is resident — the clear frees resources their resolved pointers
+    /// still reference.
+    ClearFirst,
+
+    /// Leave the cache alone: the new level's assets are added to whatever is
+    /// already there, and assets shared with a resident level are reused rather
+    /// than re-uploaded. Required for any load that happens while another world
+    /// is alive (docs/multi-scene-design-notes.md §0 — the Clear moves out of
+    /// the load path and becomes a post-travel sweep).
+    Keep,
+};
+
 /// @brief Loads a level by virtual path (e.g. "levels/Materials.alvl") into
-/// @p scene and makes it runnable: deserialize, drop the old asset set, evict
-/// the renderer's cached bindings, then rebind assets + physics. Returns false
-/// (scene untouched) if the file didn't resolve or deserialize.
+/// @p scene and makes it runnable: deserialize, optionally drop the old asset set
+/// and evict the renderer's cached bindings, then rebind assets + physics.
+/// Returns false (scene untouched) if the file didn't resolve or deserialize.
 ///
 /// ## Call this only at a safe point — never mid-frame.
 ///
@@ -64,9 +90,15 @@ void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, c
 /// Editor-state bookkeeping (undo-history wipe, selection/eyedropper reset,
 /// play-state reset) is deliberately not here — it belongs to the caller that
 /// has that state.
+///
+/// @p header (optional) receives the level's non-entity metadata — notably the
+/// system profile it asks for, which the caller applies to the world it loaded
+/// into (docs/world-system-binding-design-notes.md §3).
 bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
                const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-               Runtime::SceneRenderer &sceneRenderer);
+               Runtime::SceneRenderer &sceneRenderer,
+               AssetCacheReset reset = AssetCacheReset::ClearFirst,
+               Runtime::LevelHeader *header = nullptr);
 
 /// @brief Per-frame streaming upgrade: while the cache has async loads in
 /// flight (and for one frame after the last finishes, to pick up the final

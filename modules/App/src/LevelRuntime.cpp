@@ -40,15 +40,21 @@ void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, c
 
 bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
                const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-               Runtime::SceneRenderer &sceneRenderer)
+               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset,
+               Runtime::LevelHeader *header)
 {
-    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath))
+    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, header))
         return false;
 
-    // New asset set: drop the old cache and evict the mesh pass's binding sets
-    // (they key on raw texture pointers we're about to free) before re-resolving.
-    cache.Clear();
-    sceneRenderer.InvalidateAssetBindings();
+    if (reset == AssetCacheReset::ClearFirst)
+    {
+        // New asset set, and nothing else resident: drop the old cache and evict
+        // the mesh pass's binding sets (they key on raw texture pointers we're
+        // about to free) before re-resolving. With another world alive this would
+        // dangle its resolved pointers, which is why it is a caller's choice.
+        cache.Clear();
+        sceneRenderer.InvalidateAssetBindings();
+    }
 
     RebindSceneAssetsAndPhysics(scene, cache, database, physics);
     return true;

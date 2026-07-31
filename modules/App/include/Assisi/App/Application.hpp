@@ -114,6 +114,16 @@ class Application
     /// ParallelFor(...) to fan work out, or Run(pool, fn) for async chains.
     Core::JobSystem &Jobs() { return _jobs; }
 
+    /// @brief Cap on main-thread tasks drained per frame (0 = unbounded, the
+    /// default). Async results publish on the main queue, and a streaming asset
+    /// publish does real GPU work — createTexture + writeTexture + a blocking
+    /// executeCommandList per texture/mesh. Draining a whole burst in one frame
+    /// spikes it; lowering this budget spreads those publishes across frames so a
+    /// background load doesn't hitch the running frame, at the cost of the results
+    /// landing a few frames later. Clear it (0) when the burst is over.
+    void SetMainThreadTaskBudget(uint32_t perFrame) { _mainThreadTaskBudget = perFrame; }
+    [[nodiscard]] uint32_t GetMainThreadTaskBudget() const { return _mainThreadTaskBudget; }
+
     void      RequestClose();
     int32_t   GetFps()             const { return _fps; }
 
@@ -198,6 +208,11 @@ class Application
     // GetInterpolationAlpha() to blend physics state between fixed steps.
     float _interpolationAlpha = 0.0f;
 
+    // Per-frame cap passed to JobSystem::DrainMain (0 = unbounded). See
+    // SetMainThreadTaskBudget: throttles streaming asset publishes so a burst of
+    // GPU uploads spreads across frames instead of hitching one.
+    uint32_t _mainThreadTaskBudget = 0;
+
     // Rolling per-frame samples (milliseconds) for the ImGui plots and the
     // percentile stats, kept as ring buffers: _frameHistoryOffset is the next
     // slot to overwrite, which is also the oldest sample — the values_offset
@@ -209,6 +224,20 @@ class Application
     std::array<float, kFrameHistory>  _frameTimeHistory{}; // full frame delta, for 1%-low etc.
     int32_t                           _frameHistoryOffset = 0;
     int32_t                           _frameSampleCount = 0;
+
+    // Sub-phase timings (ms) of the most recent RenderFrame, filled there and read
+    // by the slow-frame diagnostic in Run(). RenderFrame is a single opaque phase
+    // in that report, but it is where streaming-correlated spikes actually land, so
+    // it needs its own breakdown to be actionable.
+    struct RenderPhaseTimings
+    {
+        double begin = 0.0; ///< BeginFrame (swapchain acquire).
+        double scene = 0.0; ///< OnRender — the scene pass.
+        double post  = 0.0; ///< PostProcess resolve.
+        double imgui = 0.0; ///< OnImGui + DebugUI begin/end.
+        double end   = 0.0; ///< EndFrame (submit + present).
+    };
+    RenderPhaseTimings _renderPhases{};
 };
 
 } // namespace Assisi::App

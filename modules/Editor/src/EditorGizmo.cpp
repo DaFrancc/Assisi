@@ -65,7 +65,10 @@ void EditorApp::DrawTransformGizmo()
     // IsUsing/IsOver read false when the gizmo isn't shown.
     ImGuizmo::BeginFrame();
 
-    if (_scene == nullptr || _selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
+    // No handles over an inspect-only world: the drag would move an entity whose
+    // change could be neither undone nor saved.
+    if (_scene == nullptr || !IsEditable() || _selectedEntity == Assisi::ECS::NullEntity ||
+        !_scene->IsAlive(_selectedEntity))
     {
         return;
     }
@@ -153,7 +156,22 @@ void EditorApp::DrawTransformGizmo()
     // A held gizmo keeps the shared gesture open until release (mirrors the
     // inspector's active-widget signal).
     if (nowUsing)
+    {
         _captureEditingActive = true;
+
+        // Take the body out of the solver's hands for the duration of the drag,
+        // exactly as the inspector does for its fields. Without this the body is
+        // still Dynamic while being teleported into whatever it overlaps, so the
+        // solver spends every step resolving that penetration — the object creeps
+        // and rotates on its own during a rotate, and stutters as it squeezes free
+        // during a translate. You are placing it, not throwing it at something.
+        //
+        // Raised *before* the pose is applied below, so the very first frame of the
+        // drag is already frozen. Released at the end of OnImGui, so ending the drag
+        // by any route (release, deselect, the gizmo vanishing because the world
+        // selector moved) still restores the body.
+        RequestPhysicsFreeze();
+    }
 
     if (manipulated)
     {
@@ -175,7 +193,7 @@ void EditorApp::DrawTransformGizmo()
             // property, so only position/rotation sync — matches the inspector).
             if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
             {
-                _physics.SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);
+                _physics->SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);
             }
         }
     }

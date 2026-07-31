@@ -3,11 +3,13 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -71,6 +73,12 @@ const std::array<ChannelDesc, 5> kChannels = {{
     {ColorSpace::Srgb, &kWhiteTexture, false},         // emissive
 }};
 
+// Minimum staging chunk for the shared upload command list. A texture burst (a
+// 2K RGBA8 + mips is ~22 MB) would otherwise fragment into dozens of the default
+// 64 KB chunks, each its own vkAllocateMemory; one big chunk absorbs a whole
+// material's channels. Peak staging is reclaimed by recreating the list on Clear.
+constexpr uint64_t kUploadChunkSize = 16ull << 20; // 16 MB
+
 Core::AssetId ChannelId(const Geometry::MaterialData &data, std::size_t channel)
 {
     switch (channel)
@@ -83,22 +91,8 @@ Core::AssetId ChannelId(const Geometry::MaterialData &data, std::size_t channel)
     }
 }
 
-// One channel's decoded image, produced on a worker. `image` is empty for an
-// unset channel or one whose decode failed (→ the prim:// fallback at publish);
-// `path` keys the texture cache so a texture shared across materials uploads once.
-struct DecodedChannel
-{
-    std::optional<DecodedImage> image;
-    Core::AssetPath             path;
-};
-
-// The full result of a material load job: the parsed data plus every channel's
-// decoded pixels, ready for the main thread to upload and build.
-struct MaterialLoadBundle
-{
-    Geometry::MaterialData        data;
-    std::array<DecodedChannel, 5> channels;
-};
+// (DecodedChannel and MaterialLoadBundle are private nested types of AssetCache —
+// OnMaterialLoaded takes a MaterialLoadBundle by value, so they live in the header.)
 } // namespace
 
 void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace)
@@ -109,6 +103,14 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Color
 
     // The shared geometry arena's single vertex format is Geometry::Vertex.
     _arena.Initialize(_device, sizeof(Geometry::Vertex));
+
+    // One persistent command list every streaming publish records into, submitted
+    // once per PumpPublishes (P0). A large staging chunk keeps a texture burst from
+    // fragmenting into many small GPU allocations (see kUploadChunkSize).
+    nvrhi::CommandListParameters uploadParams;
+    uploadParams.uploadChunkSize = kUploadChunkSize;
+    _uploadList                  = _device->createCommandList(uploadParams);
+    _uploadOpen                  = false;
 
     // Bindless material-texture table (GPU-driven stage D): a Pixel-visible
     // Texture_SRV array in its own register space. Every resolved texture takes a
@@ -203,49 +205,16 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
     if (_meshLoading.contains(path))
         return nullptr;
 
+    // Queue the load as data; PumpLoadQueue starts it only when fewer than
+    // _maxConcurrentLoads are running, so a whole level's worth of loads don't all
+    // decode at once and starve the main thread. The path enters _meshLoading now
+    // (queued counts as pending) so the re-resolve loop won't re-request it.
     _meshLoading.insert(path);
-    const uint64_t               epoch    = _loadEpoch.load(std::memory_order_relaxed);
-    const std::atomic<uint64_t> *loadEpoch = &_loadEpoch; // worker reads it to bail early (read-only)
-    Core::AssetPath              loadPath = path;
-    PathToIdFn                   pathToId = _pathToId; // copy: the worker must not touch cache state
-
-    _jobs->Run(Core::Pool::Worker,
-               [loadPath, pathToId, epoch, loadEpoch]() -> std::expected<Geometry::MeshData, Geometry::MeshImportError>
-               {
-                   // Cancel a stale load before doing any import work: if a newer Clear() has already
-                   // superseded this epoch (e.g. the Load button was spammed), skip the expensive
-                   // parse. The main-thread continuation drops it either way; this just avoids the
-                   // wasted CPU for a load nobody is waiting for anymore.
-                   if (loadEpoch->load(std::memory_order_relaxed) != epoch)
-                   {
-                       // Superseded by a newer level load before the import ran; skip the work (the
-                       // continuation drops it anyway). Logged because a cancellation means loads were
-                       // issued faster than they finish — e.g. the Load button being spammed.
-                       Core::Log::Warn("AssetCache: cancelled superseded mesh load for '{}'.", loadPath.View());
-                       return std::unexpected(Geometry::MeshImportError::Cancelled);
-                   }
-                   return Geometry::ImportMesh(loadPath.View(), pathToId);
-               })
-        .Then(Core::Pool::Main,
-              [this, loadPath, epoch](std::expected<Geometry::MeshData, Geometry::MeshImportError> imported) {
-                  if (epoch != _loadEpoch.load(std::memory_order_relaxed))
-                      return; // Stale: the level that asked for this mesh has since unloaded. Return
-                              // WITHOUT erasing the loading marker — Clear() already dropped ours, and
-                              // a current-epoch job for the same path may own the marker now. Erasing
-                              // it would make HasPendingLoads() lie and let a duplicate import double-
-                              // upload the same entry (leaked arena range, wasted id).
-                  _meshLoading.erase(loadPath);
-                  if (!imported)
-                  {
-                      _missingMeshWarned.insert(loadPath);
-                      Core::Log::Warn("AssetCache: no mesh for '{}' ({}), falling back to prim://cube.",
-                                      loadPath.View(), Geometry::ToString(imported.error()));
-                      return; // a later resolve returns the cube
-                  }
-                  MeshBuffer &buffer = _meshes[loadPath];
-                  buffer.Upload(_arena, std::move(*imported));
-                  buffer.SetId(_nextMeshId++);
-              });
+    _pendingLoads.push_back(PendingLoad{.isMaterial = false,
+                                        .path       = path,
+                                        .epoch      = _loadEpoch.load(std::memory_order_relaxed),
+                                        .pathToId   = _pathToId}); // copy: the worker must not touch cache state
+    PumpLoadQueue();
 
     return nullptr; // loading — placeholder for now
 }
@@ -471,7 +440,7 @@ uint32_t AssetCache::MintMaterialId()
     return _nextMaterialId++;
 }
 
-void AssetCache::WriteMaterialToTable(const Material &material)
+void AssetCache::WriteMaterialToTable(const Material &material, nvrhi::ICommandList *sharedList)
 {
     const uint32_t id = material.Id();
     if (id >= kMaxMaterials)
@@ -485,16 +454,22 @@ void AssetCache::WriteMaterialToTable(const Material &material)
 
     // Write ONLY this material's row, at its own offset — never re-upload the whole
     // table. Materials build incrementally across frames during an async load; a
-    // full-prefix re-upload would rewrite every already-resident material's row on
-    // a throwaway command list that races the in-flight frame's reads of the table,
-    // which flickers the whole scene. This row is brand new (no draw references
-    // this material yet — loading entities use the fallback), so writing it touches
-    // no bytes an in-flight frame reads.
-    const MaterialConstants row = material.Constants();
+    // full-prefix re-upload would rewrite every already-resident material's row and
+    // race the in-flight frame's reads of the table, which flickers the whole scene.
+    // This row is brand new (no draw references this material yet — loading entities
+    // use the fallback), so writing it touches no bytes an in-flight frame reads.
+    const MaterialConstants row    = material.Constants();
+    const uint64_t          offset = static_cast<uint64_t>(id) * sizeof(MaterialConstants);
+    if (sharedList != nullptr)
+    {
+        // Async publish: record into the caller's shared list (PumpPublishes submits).
+        sharedList->writeBuffer(_materialTable.NativeBuffer(), &row, sizeof(row), offset);
+        return;
+    }
+    // Synchronous fallback-material build: self-contained command list.
     nvrhi::CommandListHandle commandList = _device->createCommandList();
     commandList->open();
-    commandList->writeBuffer(_materialTable.NativeBuffer(), &row, sizeof(row),
-                             static_cast<uint64_t>(id) * sizeof(MaterialConstants));
+    commandList->writeBuffer(_materialTable.NativeBuffer(), &row, sizeof(row), offset);
     commandList->close();
     _device->executeCommandList(commandList);
 }
@@ -558,96 +533,511 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
     for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
         channelPaths[ch] = PathForId(ChannelId(*data, ch));
 
+    // Queue the load as data; PumpLoadQueue starts it under the concurrency cap.
+    // The path enters _materialLoading now (queued counts as pending). The material
+    // was already parsed above on the main thread (it needs the DB); only the
+    // channel image decode is deferred to a worker.
     _materialLoading.insert(path);
-    const uint64_t               epoch     = _loadEpoch.load(std::memory_order_relaxed);
-    const std::atomic<uint64_t> *loadEpoch = &_loadEpoch; // worker reads it to bail early (read-only)
-    Core::AssetPath              loadPath = path;
-    Geometry::MaterialData       materialData = std::move(*data);
-    Core::JobSystem             *jobs = _jobs; // captured by value; the worker must not touch cache state
-
-    _jobs
-        ->Run(Core::Pool::Worker,
-              [jobs, materialData, channelPaths, epoch, loadEpoch, loadPath]() -> MaterialLoadBundle {
-                  // Cancel a stale load before decoding anything: if a newer Clear() already
-                  // superseded this epoch (Load spammed), skip the channel decodes. The
-                  // continuation drops it regardless; this just avoids the wasted work.
-                  if (loadEpoch->load(std::memory_order_relaxed) != epoch)
-                  {
-                      Core::Log::Warn("AssetCache: cancelled superseded material load for '{}'.", loadPath.View());
-                      return MaterialLoadBundle{};
-                  }
-                  // Worker: decode every channel image, in parallel across the
-                  // channels — a texture-heavy material (e.g. a full glTF PBR set)
-                  // then costs max(channel) rather than sum(channel). Pure CPU over
-                  // copied inputs; each channel writes a disjoint slot, so no
-                  // synchronisation is needed. Nested ParallelFor is deadlock-free
-                  // (the waiting worker runs the sub-tasks itself — help-waiting).
-                  MaterialLoadBundle bundle;
-                  bundle.data = materialData;
-                  jobs->ParallelFor(static_cast<uint32_t>(kChannels.size()), 1,
-                                    [&bundle, &channelPaths](uint32_t begin, uint32_t end) {
-                                        for (uint32_t ch = begin; ch < end; ++ch)
-                                        {
-                                            if (channelPaths[ch].Empty())
-                                                continue; // unset channel → fallback prim at publish
-                                            bundle.channels[ch].path = channelPaths[ch];
-                                            std::expected<DecodedImage, Core::AssetError> img =
-                                                Texture::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
-                                            if (img)
-                                                bundle.channels[ch].image = std::move(*img);
-                                            // a decode failure leaves the image empty → fallback prim at publish
-                                        }
-                                    });
-                  return bundle;
-              })
-        .Then(Core::Pool::Main, [this, loadPath, epoch](MaterialLoadBundle bundle) {
-            if (epoch != _loadEpoch.load(std::memory_order_relaxed))
-                return; // Stale (see ResolveMesh's twin): return before erasing so a stale completion
-                        // can't drop a current-epoch job's loading marker and trigger a duplicate load.
-            _materialLoading.erase(loadPath);
-
-            // Publish (main thread): resolve each channel to a bindless slot, then
-            // build the material and write its table row. Every slot/row written
-            // here is brand new — no draw references this material yet (loading
-            // entities use the fallback), so nothing an in-flight frame reads is
-            // mutated.
-            MaterialTextures textures;
-            uint32_t        *slots[5] = {&textures.baseColor, &textures.normal, &textures.metallicRoughness,
-                                         &textures.occlusion, &textures.emissive};
-            for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
-            {
-                DecodedChannel &dc = bundle.channels[ch];
-                if (dc.image.has_value())
-                {
-                    // Dedup by (path, space): a texture shared across materials is
-                    // uploaded once, even if it was decoded on more than one worker.
-                    const TextureKey key{dc.path, kChannels[ch].space};
-                    if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
-                    {
-                        *slots[ch] = it->second.BindlessIndex();
-                    }
-                    else
-                    {
-                        Texture &texture = _textures[key];
-                        texture.UploadDecoded(_device, *dc.image, std::string(dc.path.View()).c_str());
-                        *slots[ch] = RegisterBindlessTexture(texture);
-                    }
-                    if (kChannels[ch].isNormal)
-                        textures.hasNormalTexture = true;
-                }
-                else
-                {
-                    const Texture *fallback = ResolveTexture(*kChannels[ch].fallback, kChannels[ch].space);
-                    *slots[ch] = fallback != nullptr ? fallback->BindlessIndex() : 0u;
-                }
-            }
-
-            Material &material = _materials[loadPath];
-            material.Create(_device, MintMaterialId(), bundle.data, textures);
-            WriteMaterialToTable(material);
-        });
+    _pendingLoads.push_back(PendingLoad{.isMaterial   = true,
+                                        .path         = path,
+                                        .epoch        = _loadEpoch.load(std::memory_order_relaxed),
+                                        .materialData = std::move(*data),
+                                        .channelPaths = channelPaths});
+    PumpLoadQueue();
 
     return &_fallbackMaterial; // fallback while loading
+}
+
+void AssetCache::PumpLoadQueue()
+{
+    // Start queued loads until the concurrency cap is hit. Called when a load is
+    // queued and again from each load's publish, so a finished load makes room for
+    // the next. Main-thread only — no locking needed.
+    while (_activeLoads < _maxConcurrentLoads && !_pendingLoads.empty())
+    {
+        PendingLoad load = std::move(_pendingLoads.front());
+        _pendingLoads.pop_front();
+        ++_activeLoads;
+        if (load.isMaterial)
+            StartMaterialLoad(std::move(load.path), std::move(load.materialData), load.channelPaths, load.epoch);
+        else
+            StartMeshLoad(std::move(load.path), std::move(load.pathToId), load.epoch);
+    }
+}
+
+std::expected<AssetCache::MeshLoadBundle, Geometry::MeshImportError>
+AssetCache::ImportAndStageMesh(AssetCache &cache, Core::AssetPath path, const PathToIdFn &pathToId,
+                               std::uint64_t epoch, const std::atomic<std::uint64_t> &loadEpoch)
+{
+    nvrhi::IDevice *device = cache._device;
+    if (loadEpoch.load(std::memory_order_relaxed) != epoch)
+    {
+        Core::Log::Warn("AssetCache: cancelled superseded mesh load for '{}'.", path.View());
+        return std::unexpected(Geometry::MeshImportError::Cancelled);
+    }
+
+    std::expected<Geometry::MeshData, Geometry::MeshImportError> imported = Geometry::ImportMesh(path.View(), pathToId);
+    if (!imported)
+    {
+        return std::unexpected(imported.error());
+    }
+
+    // Normalize the degenerate no-submesh case here, on the worker, while the CPU
+    // geometry is still around: the staged publish path has no vertices left to
+    // derive a table from (and this is main-thread work the direct path would do).
+    Geometry::EnsureSubMeshTables(*imported);
+
+    MeshLoadBundle bundle;
+    bundle.vertexCount = static_cast<uint32_t>(imported->Vertices.size());
+    bundle.indexCount  = static_cast<uint32_t>(imported->Indices.size());
+
+    // Copy the geometry into a GPU staging buffer HERE, on the worker — this is the
+    // bulk memcpy that used to land on the main thread inside writeBuffer (O(mesh
+    // bytes) mid-frame). The main-thread publish then only records a copy. The
+    // buffer is pooled: creating and destroying one per mesh would just move the
+    // cost into the next frame's runGarbageCollection, on the main thread.
+    const std::uint64_t stagingBytes = MeshBuffer::MeshStagingBytes(*imported);
+    if (stagingBytes > 0)
+    {
+        nvrhi::BufferHandle staging = cache.AcquireStagingBuffer(stagingBytes);
+        if (MeshBuffer::StageMeshGeometry(device, staging, *imported))
+        {
+            bundle.staging = std::move(staging);
+        }
+    }
+    if (bundle.staging != nullptr)
+    {
+        // Staged successfully: release the CPU copies so the mesh's bytes aren't
+        // resident twice. The metadata (tables, bounds) is what publish still needs.
+        // Only on success — the fallback path below re-reads these.
+        imported->Vertices.clear();
+        imported->Vertices.shrink_to_fit();
+        imported->Indices.clear();
+        imported->Indices.shrink_to_fit();
+    }
+    bundle.data = std::move(*imported);
+    return bundle;
+}
+
+void AssetCache::StartMeshLoad(Core::AssetPath path, PathToIdFn pathToId, std::uint64_t epoch)
+{
+    // Import + stage on a worker (touching no cache state), then publish on the main
+    // thread. The worker bails early if a Clear() has superseded this epoch — saving
+    // the parse for a load nobody awaits anymore.
+    const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
+    _jobs
+        ->Run(Core::Pool::Worker, [this, path, pathToId, epoch, loadEpoch]()
+              { return ImportAndStageMesh(*this, path, pathToId, epoch, *loadEpoch); })
+        .Then(Core::Pool::Main, [this, path, epoch](std::expected<MeshLoadBundle, Geometry::MeshImportError> r)
+              { OnMeshLoaded(path, epoch, std::move(r)); });
+}
+
+void AssetCache::OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
+                              std::expected<MeshLoadBundle, Geometry::MeshImportError> imported)
+{
+    // A started load has finished (success, failure, or stale): free its slot and
+    // let the next queued load begin. The decode fan-out continues even though this
+    // result's GPU upload is deferred to PumpPublishes.
+    --_activeLoads;
+    PumpLoadQueue();
+
+    if (epoch != _loadEpoch.load(std::memory_order_relaxed))
+        return; // Stale: the level that asked for this mesh has since unloaded. Return WITHOUT
+                // erasing the loading marker — Clear() already dropped ours, and a current-epoch
+                // job for the same path may own it now.
+    if (!imported)
+    {
+        // Failure is terminal and has no GPU work — settle it here rather than
+        // queuing a publish. Drop the loading marker so a later resolve falls back.
+        _meshLoading.erase(path);
+        _missingMeshWarned.insert(path);
+        Core::Log::Warn("AssetCache: no mesh for '{}' ({}), falling back to prim://cube.", path.View(),
+                        Geometry::ToString(imported.error()));
+        return; // a later resolve returns the cube
+    }
+    // Enqueue the publish (O(1)); the path stays in _meshLoading until PublishMesh
+    // makes it resident, so HasPendingLoads / re-resolve keep treating it as pending.
+    const std::size_t bytes = static_cast<std::size_t>(imported->vertexCount) * sizeof(Geometry::Vertex) +
+                              static_cast<std::size_t>(imported->indexCount) * sizeof(uint32_t);
+    _pendingPublishes.push_back(PendingPublish{
+        .isMaterial = false, .path = path, .epoch = epoch, .byteSize = bytes, .mesh = std::move(*imported)});
+}
+
+AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
+    AssetCache &cache, Geometry::MaterialData data, std::array<Core::AssetPath, 5> channelPaths, std::uint64_t epoch,
+    const std::atomic<std::uint64_t> &loadEpoch)
+{
+    nvrhi::IDevice *device = cache._device;
+    if (loadEpoch.load(std::memory_order_relaxed) != epoch)
+        return {}; // superseded before the decode ran; the publish drops it anyway
+
+    // Decode each channel sequentially — one worker per material (a nested
+    // parallel-for would spread a single material across every pool core, exactly
+    // the saturation the concurrency cap exists to prevent). For each decoded
+    // channel, create its GPU texture and record its upload into ONE command list
+    // on this worker: that is where the writeTexture staging memcpy happens, and
+    // moving it here is the whole point of P1 (the main-thread CPU spike). An empty
+    // or failed channel is left without a texture → the prim:// fallback at publish.
+    MaterialLoadBundle bundle;
+    bundle.data = std::move(data);
+
+    nvrhi::CommandListHandle list; // created lazily on the first channel that decodes
+    for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
+    {
+        if (channelPaths[ch].Empty())
+            continue;
+        std::expected<DecodedImage, Core::AssetError> img =
+            Texture::DecodeImage(channelPaths[ch].View(), kChannels[ch].space);
+        if (!img)
+            continue;
+
+        if (!list)
+        {
+            list = cache.AcquireUploadList(); // pooled: no per-material create/destroy
+            list->open();
+        }
+        const std::string    name(channelPaths[ch].View());
+        nvrhi::TextureHandle texture = Texture::CreateImage(device, *img, name.c_str());
+        Texture::RecordMips(list, texture, *img);
+
+        bundle.channels[ch].texture = texture;
+        bundle.channels[ch].path    = channelPaths[ch];
+        for (const std::vector<unsigned char> &mip : img->mips)
+            bundle.decodedBytes += mip.size();
+    }
+    if (list)
+    {
+        list->close();
+        bundle.uploadList = std::move(list);
+    }
+    return bundle;
+}
+
+void AssetCache::StartMaterialLoad(Core::AssetPath path, Geometry::MaterialData data,
+                                   std::array<Core::AssetPath, 5> channelPaths, std::uint64_t epoch)
+{
+    // The material was parsed on the main thread (it needs the DB); the worker
+    // decodes the channel images AND records their GPU uploads (P1). The main thread
+    // then only submits the recorded list, adopts the textures, and builds.
+    const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
+    _jobs
+        ->Run(Core::Pool::Worker,
+              [this, data = std::move(data), channelPaths, epoch, loadEpoch]() mutable
+              { return DecodeAndRecordMaterialChannels(*this, std::move(data), channelPaths, epoch, *loadEpoch); })
+        .Then(Core::Pool::Main, [this, path, epoch](MaterialLoadBundle bundle)
+              { OnMaterialLoaded(path, epoch, std::move(bundle)); });
+}
+
+void AssetCache::OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, MaterialLoadBundle bundle)
+{
+    --_activeLoads;
+    PumpLoadQueue();
+
+    if (epoch != _loadEpoch.load(std::memory_order_relaxed))
+        return; // Stale (see OnMeshLoaded): return before erasing so a stale completion can't drop
+                // a current-epoch job's loading marker and trigger a duplicate load. The bundle
+                // (worker-created textures + list) is dropped here and freed.
+
+    // Enqueue the publish (O(1)); the decode + upload recording already happened on
+    // the worker, so this is cheap. The path stays in _materialLoading until
+    // PublishMaterial submits + adopts, so it keeps rendering with the fallback.
+    _pendingPublishes.push_back(PendingPublish{.isMaterial = true,
+                                               .path       = path,
+                                               .epoch      = epoch,
+                                               .byteSize   = bundle.decodedBytes,
+                                               .material   = std::move(bundle)});
+}
+
+void AssetCache::PublishMesh(PendingPublish publish)
+{
+    _meshLoading.erase(publish.path);
+    MeshBuffer &buffer = _meshes[publish.path];
+    if (publish.mesh.staging != nullptr)
+    {
+        // The worker already copied the geometry into a GPU staging buffer, so this
+        // records two copyBuffers — O(1) in mesh size, no main-thread memcpy.
+        buffer.UploadStaged(_arena, std::move(publish.mesh.data), publish.mesh.staging, publish.mesh.vertexCount,
+                            publish.mesh.indexCount, BeginUpload());
+        // Hand the buffer to the batch so FlushUploads can park it behind an event
+        // query and recycle it, instead of letting it be destroyed by a later GC.
+        _batchStaging.push_back(std::move(publish.mesh.staging));
+    }
+    else
+    {
+        // No staging (empty geometry, or the staging allocation failed): fall back to
+        // the direct path, which memcpys here. The CPU data is still present — the
+        // worker only releases it when staging succeeded.
+        buffer.Upload(_arena, std::move(publish.mesh.data), BeginUpload());
+    }
+    buffer.SetId(_nextMeshId++);
+}
+
+void AssetCache::PublishMaterial(PendingPublish publish)
+{
+    _materialLoading.erase(publish.path);
+
+    // The channel textures were created + recorded on the decode worker; hand its
+    // closed list to the batch so FlushUploads submits it (the memcpy already ran).
+    if (publish.material.uploadList)
+        _uploadBatch.push_back(std::move(publish.material.uploadList));
+
+    // Adopt each channel's worker-created texture into the cache (or reference an
+    // already-resident one and drop the duplicate), then build the material and
+    // write its row into the shared list. Every slot/row is brand new — no draw
+    // references this material yet (loading entities use the fallback), so nothing
+    // an in-flight frame reads is mutated.
+    MaterialTextures textures;
+    uint32_t        *slots[5] = {&textures.baseColor, &textures.normal, &textures.metallicRoughness,
+                                 &textures.occlusion, &textures.emissive};
+    for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
+    {
+        RecordedChannel &rc = publish.material.channels[ch];
+        if (rc.texture)
+        {
+            // Dedup by (path, space): a texture shared across materials resolves to
+            // one resident copy. A duplicate's worker texture is simply not adopted —
+            // its recorded upload still executes (harmless: it targets a texture we
+            // release, kept alive by the list until the submit retires) and is freed.
+            const TextureKey key{rc.path, kChannels[ch].space};
+            if (auto it = _textures.find(key); it != _textures.end() && it->second.IsValid())
+            {
+                *slots[ch] = it->second.BindlessIndex();
+            }
+            else
+            {
+                Texture &texture = _textures[key];
+                texture.Adopt(std::move(rc.texture));
+                *slots[ch] = RegisterBindlessTexture(texture);
+            }
+            if (kChannels[ch].isNormal)
+                textures.hasNormalTexture = true;
+        }
+        else
+        {
+            const Texture *fallback = ResolveTexture(*kChannels[ch].fallback, kChannels[ch].space);
+            *slots[ch] = fallback != nullptr ? fallback->BindlessIndex() : 0u;
+        }
+    }
+
+    Material &material = _materials[publish.path];
+    material.Create(_device, MintMaterialId(), publish.material.data, textures);
+    WriteMaterialToTable(material, BeginUpload());
+}
+
+nvrhi::CommandListHandle AssetCache::AcquireUploadList()
+{
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        if (!_freeUploadLists.empty())
+        {
+            nvrhi::CommandListHandle list = std::move(_freeUploadLists.back());
+            _freeUploadLists.pop_back();
+            return list;
+        }
+    }
+    // Pool empty (first loads, or more concurrent loads than before): create one.
+    // A generous upload chunk is right for a POOLED list — it is reused for the
+    // process's lifetime, so the chunk is amortized instead of being allocated and
+    // freed per asset (which is what made this expensive in the first place).
+    nvrhi::CommandListParameters params;
+    params.uploadChunkSize = kUploadChunkSize;
+    return _device->createCommandList(params);
+}
+
+nvrhi::BufferHandle AssetCache::AcquireStagingBuffer(std::uint64_t bytes)
+{
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        // First buffer big enough wins. Sizes cluster (a level's meshes are mostly
+        // similar), so this stays effectively O(1) without bucketing.
+        for (std::size_t i = 0; i < _freeStagingBuffers.size(); ++i)
+        {
+            if (_freeStagingBuffers[i]->getDesc().byteSize >= bytes)
+            {
+                nvrhi::BufferHandle buffer = std::move(_freeStagingBuffers[i]);
+                _freeStagingBuffers.erase(_freeStagingBuffers.begin() + static_cast<std::ptrdiff_t>(i));
+                return buffer;
+            }
+        }
+    }
+
+    nvrhi::BufferDesc desc;
+    desc.byteSize = bytes;
+    desc.cpuAccess = nvrhi::CpuAccessMode::Write;
+    desc.debugName = "AssetCache::MeshStaging";
+    desc.initialState = nvrhi::ResourceStates::CopySource;
+    desc.keepInitialState = true;
+    return _device->createBuffer(desc);
+}
+
+void AssetCache::RecycleRetiredStaging()
+{
+    std::lock_guard<std::mutex> lock(_poolMutex);
+    for (std::size_t i = 0; i < _stagingInFlight.size();)
+    {
+        // pollEventQuery is non-blocking: a batch still executing is simply left for
+        // a later pump. Never wait here — that would trade a GC spike for a GPU stall.
+        if (_device->pollEventQuery(_stagingInFlight[i].query))
+        {
+            for (nvrhi::BufferHandle &buffer : _stagingInFlight[i].buffers)
+                _freeStagingBuffers.push_back(std::move(buffer));
+            _device->resetEventQuery(_stagingInFlight[i].query);
+            _freeEventQueries.push_back(std::move(_stagingInFlight[i].query));
+            _stagingInFlight.erase(_stagingInFlight.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+        else
+        {
+            ++i;
+        }
+    }
+}
+
+nvrhi::ICommandList *AssetCache::BeginUpload()
+{
+    if (!_uploadOpen)
+    {
+        _uploadList->open();
+        _uploadOpen = true;
+    }
+    return _uploadList;
+}
+
+void AssetCache::FlushUploads()
+{
+    if (!_uploadOpen && _uploadBatch.empty())
+        return;
+    if (_uploadOpen)
+        _uploadList->close();
+
+    // One submit for the whole batch (P0/P1): the worker-recorded material texture
+    // lists plus the shared main-thread list (mesh arena writes, material rows). The
+    // lists touch disjoint resources, so their relative order is irrelevant; draws in
+    // the frame that follows this submit see all of it.
+    std::vector<nvrhi::ICommandList *> lists;
+    lists.reserve(_uploadBatch.size() + 1);
+    for (const nvrhi::CommandListHandle &list : _uploadBatch)
+        lists.push_back(list);
+    if (_uploadOpen)
+        lists.push_back(_uploadList);
+    _device->executeCommandLists(lists.data(), lists.size());
+
+    // Return the worker lists to the pool rather than dropping them. Recycling is
+    // safe immediately: nvrhi round-robins each list's internal command buffers and
+    // fences upload-chunk reuse against the completed submission, so reopening one
+    // never disturbs work still in flight. Dropping them instead would hand the
+    // destruction to the next frame's runGarbageCollection — a main-thread spike.
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        for (nvrhi::CommandListHandle &list : _uploadBatch)
+            _freeUploadLists.push_back(std::move(list));
+
+        // Staging buffers must wait for the GPU: a worker memcpys into them. Park
+        // them behind an event query on this submit; RecycleRetiredStaging frees
+        // them for reuse once it retires (polled, never waited on).
+        if (!_batchStaging.empty())
+        {
+            StagingInFlight parked;
+            if (!_freeEventQueries.empty())
+            {
+                parked.query = std::move(_freeEventQueries.back());
+                _freeEventQueries.pop_back();
+            }
+            else
+            {
+                parked.query = _device->createEventQuery();
+            }
+            _device->setEventQuery(parked.query, nvrhi::CommandQueue::Graphics);
+            parked.buffers = std::move(_batchStaging);
+            _stagingInFlight.push_back(std::move(parked));
+            _batchStaging.clear();
+        }
+    }
+    _uploadBatch.clear();
+    _uploadOpen = false;
+}
+
+void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
+{
+    // Reclaim staging buffers whose submit has retired, so the next loads reuse
+    // them instead of allocating. Cheap (a poll per parked batch) and worth doing
+    // even when nothing is queued, so buffers don't sit parked after a load ends.
+    RecycleRetiredStaging();
+
+    if (_pendingPublishes.empty())
+        return;
+
+    using Clock = std::chrono::steady_clock;
+    const auto elapsedMsSince = [](Clock::time_point t)
+    { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); };
+
+    // Per-phase timing to localize the streaming CPU spike (which of the remaining
+    // main-thread costs dominates): mesh arena writeBuffer memcpy vs material publish
+    // (adopt + bindless descriptor writes) vs the batched submit. Only logged when a
+    // pump is expensive (see below), so it stays silent in the normal case.
+    const Clock::time_point start = Clock::now();
+    std::size_t             bytes     = 0;
+    std::size_t             meshCount = 0;
+    std::size_t             matCount  = 0;
+    double                  meshMs    = 0.0;
+    double                  matMs     = 0.0;
+    bool                    any       = false;
+    while (!_pendingPublishes.empty())
+    {
+        // Budget stops the batch — but always publish at least one (a single asset
+        // larger than the whole budget must still make progress, not wedge forever).
+        if (any)
+        {
+            if (bytes >= byteBudget)
+                break;
+            if (elapsedMsSince(start) >= timeBudgetMs)
+                break;
+        }
+
+        PendingPublish publish = std::move(_pendingPublishes.front());
+        _pendingPublishes.pop_front();
+
+        // A Clear() between the decode continuation and this pump supersedes it; the
+        // loading marker was already dropped by Clear, so just skip it.
+        if (publish.epoch != _loadEpoch.load(std::memory_order_relaxed))
+            continue;
+
+        const std::size_t       publishBytes = publish.byteSize;
+        const Clock::time_point publishStart = Clock::now();
+        if (publish.isMaterial)
+        {
+            PublishMaterial(std::move(publish));
+            matMs += elapsedMsSince(publishStart);
+            ++matCount;
+        }
+        else
+        {
+            PublishMesh(std::move(publish));
+            meshMs += elapsedMsSince(publishStart);
+            ++meshCount;
+        }
+        bytes += publishBytes;
+        any = true;
+    }
+
+    // One submit for the whole batch (P0): draws in the frame that follows see it.
+    double flushMs = 0.0;
+    if (any)
+    {
+        const Clock::time_point flushStart = Clock::now();
+        FlushUploads();
+        flushMs = elapsedMsSince(flushStart);
+    }
+
+    // Diagnostic: a pump is a spike when its main-thread wall-clock blows past the
+    // budget (the "always at least one" escape hatch fired with an expensive item,
+    // or the pump was preempted mid-work). The phase split says which cost it was —
+    // meshMs high => arena memcpy (mesh P1 next); matMs high => descriptor writes;
+    // flushMs high => submit; all low but total high => the main thread was
+    // preempted by the decode workers (points at P2, a low-priority IO pool).
+    const double totalMs = elapsedMsSince(start);
+    if (totalMs >= 2.0)
+        Core::Log::Info("AssetCache pump {:.2f} ms: mesh {}x {:.2f} ms, mat {}x {:.2f} ms, flush {:.2f} ms; {} queued",
+                        totalMs, meshCount, meshMs, matCount, matMs, flushMs, _pendingPublishes.size());
 }
 
 void AssetCache::Clear()
@@ -670,6 +1060,49 @@ void AssetCache::Clear()
     ++_loadEpoch;
     _meshLoading.clear();
     _materialLoading.clear();
+
+    // Drop loads that were queued but never started (their epoch is now stale
+    // anyway). Loads already running are left to finish and publish; their
+    // continuations decrement _activeLoads and see the bumped epoch, so they drop
+    // their result — no need to touch _activeLoads here (resetting it while a job
+    // is mid-flight would underflow when that job's continuation decrements).
+    _pendingLoads.clear();
+
+    // Drop decoded-but-not-yet-uploaded publishes: their epoch is now stale, so
+    // PumpPublishes would skip them anyway, but freeing their held CPU data now
+    // (mesh vertices, decoded images) releases the memory immediately. Any that were
+    // already recorded into the upload list this frame can't exist here — pumps
+    // always FlushUploads before returning, so _uploadOpen is false between them.
+    _pendingPublishes.clear();
+    _uploadBatch.clear(); // empty between pumps (FlushUploads drains it); defensive.
+
+    // waitForIdle above retired every submit, so all parked staging is reusable —
+    // reclaim it without polling. The pools themselves survive Clear() deliberately:
+    // they exist so a level load does not churn GPU allocations, and the next load
+    // is exactly when they are wanted.
+    {
+        std::lock_guard<std::mutex> lock(_poolMutex);
+        for (StagingInFlight &parked : _stagingInFlight)
+        {
+            for (nvrhi::BufferHandle &buffer : parked.buffers)
+                _freeStagingBuffers.push_back(std::move(buffer));
+            _device->resetEventQuery(parked.query);
+            _freeEventQueries.push_back(std::move(parked.query));
+        }
+        _stagingInFlight.clear();
+        for (nvrhi::BufferHandle &buffer : _batchStaging)
+            _freeStagingBuffers.push_back(std::move(buffer));
+        _batchStaging.clear();
+    }
+
+    // Recreate the shared upload list to return its peak staging memory: an upload
+    // manager never shrinks its chunk pool, so a level's worth of texture bursts
+    // leaves it holding the high-water mark until dropped. Safe here — waitForIdle
+    // above guarantees its last submit has retired, and _uploadOpen is false.
+    nvrhi::CommandListParameters uploadParams;
+    uploadParams.uploadChunkSize = kUploadChunkSize;
+    _uploadList                  = _device->createCommandList(uploadParams);
+    _uploadOpen                  = false;
 
     _meshes.clear();
     _arena.Reset(); // wholesale free — the MeshBuffers that held ranges are gone.

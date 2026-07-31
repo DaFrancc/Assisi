@@ -11,6 +11,7 @@
 #include <fstream>
 #include <map>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <vector>
 
@@ -107,6 +108,116 @@ ECS::Entity SceneSerializer::IndexToEntity(uint64_t index)
 }
 
 // ---------------------------------------------------------------------------
+// TransferEntities (entity migration)
+// ---------------------------------------------------------------------------
+
+std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS::Scene &dst,
+                                                           std::span<const ECS::Entity> entities)
+{
+    if (s_context || s_rawContextScene != nullptr)
+    {
+        Core::Log::Error("TransferEntities: a serialization context is already active on this thread.");
+        return {};
+    }
+    if (entities.empty())
+        return {};
+
+    ScopedContextReset guard;
+    s_context = SerializationContext{};
+
+    // Source half of the remap: each migrated entity → its index within the set.
+    // A ref to any entity NOT in this map returns nullopt from EntityToIndex,
+    // serializes as ~0ull, and resolves to NullEntity on the destination side —
+    // exactly the "null a ref that leaves the set" behaviour we want.
+    for (uint32_t i = 0; i < entities.size(); ++i)
+    {
+        const ECS::Entity e = entities[i];
+        s_context->entityToIndex[EntityKey(e.index, e.generation)] = i;
+    }
+
+    const auto &registry = Core::Reflect::ComponentRegistry::Instance();
+
+    // Diagnose refs that will be dropped, before serialize silently loses them.
+    // Walk each migrated entity's reflected EntityRef fields; a non-null handle
+    // that is not itself in the migrated set is about to become null.
+    for (const ECS::Entity e : entities)
+    {
+        for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
+        {
+            const void *comp = meta->getByEntity(&src, e.index, e.generation);
+            if (comp == nullptr)
+                continue;
+            for (const Core::Reflect::FieldMeta &field : meta->fields)
+            {
+                if (field.type != Core::Reflect::FieldType::EntityRef || field.transient)
+                    continue;
+                const auto ref = *reinterpret_cast<const ECS::Entity *>(static_cast<const char *>(comp) +
+                                                                        field.offset);
+                if (ref == ECS::NullEntity)
+                    continue;
+                if (!s_context->entityToIndex.contains(EntityKey(ref.index, ref.generation)))
+                {
+                    Core::Log::Warn("Migrate: {}::{} on entity (index {}, gen {}) references entity "
+                                    "(index {}, gen {}) outside the migrated set — it will be null in "
+                                    "the destination.",
+                                    meta->name, field.name, e.index, e.generation, ref.index, ref.generation);
+                }
+            }
+        }
+    }
+
+    // Pass 1: serialize every migrated component while the source map is live, so
+    // in-set EntityRefs capture their set index. Held per entity for pass 3.
+    struct CapturedComponent
+    {
+        const Core::Reflect::ComponentMeta *meta;
+        nlohmann::json                      data;
+    };
+    std::vector<std::vector<CapturedComponent>> captured(entities.size());
+    for (std::size_t i = 0; i < entities.size(); ++i)
+    {
+        const ECS::Entity e = entities[i];
+        for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
+        {
+            if (const void *comp = meta->getByEntity(&src, e.index, e.generation))
+                captured[i].push_back({meta, meta->serialize(comp)});
+        }
+    }
+
+    // Pass 2: create the destination entities and record the destination half of
+    // the remap. All created first, so a ref to a sibling that appears later in
+    // the set still resolves in pass 3 (same forward-ref handling as Load).
+    std::vector<ECS::Entity> created;
+    created.reserve(entities.size());
+    s_context->indexToEntity.reserve(entities.size());
+    for (std::size_t i = 0; i < entities.size(); ++i)
+    {
+        const ECS::Entity d = dst.Create();
+        created.push_back(d);
+        s_context->indexToEntity.push_back(d);
+    }
+
+    // Pass 3: deserialize each captured component into its destination entity.
+    // IndexToEntity now maps in-set refs onto the created handles.
+    for (std::size_t i = 0; i < entities.size(); ++i)
+    {
+        for (const CapturedComponent &c : captured[i])
+        {
+            if (c.meta->addToScene)
+                c.meta->addToScene(&dst, created[i].index, created[i].generation, c.data);
+        }
+    }
+
+    // The originals leave the source scene. Structural, so defer to the source's
+    // own FlushDestroyed (end of its frame) rather than mutating mid-iteration —
+    // the caller tears down their Jolt bodies, which the ECS destroy does not.
+    for (const ECS::Entity e : entities)
+        src.Destroy(e);
+
+    return created;
+}
+
+// ---------------------------------------------------------------------------
 // ScopedRawEntityContext
 // ---------------------------------------------------------------------------
 
@@ -157,7 +268,7 @@ namespace
 }
 } // namespace
 
-nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
+nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &header)
 {
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
@@ -193,7 +304,11 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
     }
 
     nlohmann::json result;
-    result["version"]  = 1;
+    result["version"] = 1;
+    // Only written when set, so levels that never name a profile stay free of the
+    // key rather than gaining an empty one on every save.
+    if (!header.profile.empty())
+        result["profile"] = header.profile;
     result["entities"] = nlohmann::json::array();
 
     for (auto &[key, entityJson] : entityMap)
@@ -214,7 +329,8 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene)
 // Load
 // ---------------------------------------------------------------------------
 
-void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
+void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress,
+                           LevelHeader *header)
 {
     const int32_t version = j.value("version", 0);
     if (version != 1)
@@ -222,6 +338,9 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
         Core::Log::Error("SceneSerializer: unsupported level file version {}", version);
         return;
     }
+
+    if (header != nullptr)
+        header->profile = j.value("profile", std::string{});
 
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
@@ -243,8 +362,14 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
         s_context->indexToEntity.push_back(scene.Create());
 
     // Pass 2: deserialize components now that every EntityRef can resolve.
-    for (size_t i = 0; i < entities.size(); ++i)
+    const size_t entityCount = entities.size();
+    for (size_t i = 0; i < entityCount; ++i)
     {
+        // Report progress across this pass — the load's dominant cost. Cheap
+        // enough to call per entity (a few atomic stores through the callback).
+        if (onProgress)
+            onProgress(entityCount == 0 ? 1.f : static_cast<float>(i) / static_cast<float>(entityCount));
+
         const auto &entityJson = entities[i];
         if (!entityJson.contains("components"))
             continue;
@@ -276,7 +401,8 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j)
 // File I/O helpers
 // ---------------------------------------------------------------------------
 
-bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path &path)
+bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path &path,
+                                 const LevelHeader &header)
 {
     std::ofstream f(path);
     if (!f.is_open())
@@ -284,7 +410,7 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
         Core::Log::Error("SceneSerializer: cannot open '{}' for writing", path.string());
         return false;
     }
-    f << Save(scene).dump(2);
+    f << Save(scene, header).dump(2);
     if (!f.good())
     {
         Core::Log::Error("SceneSerializer: write failed for '{}'", path.string());
@@ -293,7 +419,8 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
     return true;
 }
 
-bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath)
+bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
+                                   const ProgressFn &onProgress, LevelHeader *header)
 {
     const auto text = Core::AssetSystem::ReadText(assetPath);
     if (!text)
@@ -304,7 +431,7 @@ bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath
 
     try
     {
-        Load(scene, nlohmann::json::parse(*text));
+        Load(scene, nlohmann::json::parse(*text), onProgress, header);
         return true;
     }
     catch (const std::exception &ex)

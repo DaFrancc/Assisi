@@ -16,6 +16,7 @@
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
+#include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
 
 #include <Assisi/Core/AssetDatabase.hpp>
@@ -23,7 +24,6 @@
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Geometry/AssetImport.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/ECS/SceneRegistry.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -89,7 +89,23 @@ struct EditorConfig
 {
     /// Called once at startup with the game's system registry. May be null
     /// (an editor with no game logic — pure level editing).
+    ///
+    /// What this registers becomes the **default profile**: the systems every
+    /// world gets unless its level names another one. Each world receives its
+    /// own instance, so this is invoked once per world, not once per session —
+    /// an installer with one-time side effects is a bug.
     std::function<void(App::SystemRegistry &)> registerGameSystems;
+
+    /// Called once at startup, after the default profile is registered, for a
+    /// game that has more than one system set — a menu level that runs no
+    /// gameplay, a level with an extra simulation its neighbours don't need.
+    /// Register them with WorldManager::RegisterProfile(name, installer); a
+    /// level selects one by name through its `"profile"` key. May be null (the
+    /// common case: one profile for everything).
+    ///
+    /// May also call SetDefaultProfile to point the unnamed case at something
+    /// other than what registerGameSystems installed.
+    std::function<void(App::WorldManager &)> registerProfiles;
 
     /// Virtual path (under the asset root) of a level to open once at
     /// startup, e.g. "levels/Materials.alvl". Empty = none. Resolved through
@@ -212,6 +228,33 @@ class EditorApp : public Assisi::App::Application
     bool AssetIdPathField(const char *inputId, Assisi::Core::AssetId &id);
     void HandlePhysicsEditing(bool anyFieldEdited);
 
+    /// @brief Holds the selected entity's rigid body still for the duration of an
+    /// edit gesture, and keeps the hold alive.
+    ///
+    /// Call every frame a Transform-editing gesture is held — a gizmo drag, an
+    /// Inspector field. The body is made Static, which takes it out of the
+    /// solver's hands entirely: while you are placing it, it will not be pushed
+    /// out of anything it overlaps, will not rotate itself free of a contact, and
+    /// will not stutter against a surface. Everything it overlaps still gets
+    /// pushed by it, which is the half you do want.
+    ///
+    /// Idempotent while the same entity stays selected. If the selection moves
+    /// mid-gesture the previous body is released first, so a hold can never be
+    /// left behind on an entity nothing is editing any more.
+    ///
+    /// The matching release is NOT here — it happens once per frame at the end of
+    /// OnImGui, on the first frame nothing calls this. See ThawEditedBody.
+    void RequestPhysicsFreeze();
+
+    /// @brief Returns the body frozen by HandlePhysicsEditing to its authored
+    /// motion type and clears the freeze.
+    ///
+    /// Safe to call when nothing is frozen, when the world it belonged to is
+    /// gone, and when the entity or its body has since been destroyed — all of
+    /// which are reachable, and all of which must still clear the state rather
+    /// than leave a freeze recorded against something that no longer exists.
+    void ThawEditedBody();
+
     /// @brief Writes an eyedropper-picked entity into the armed EntityRef field.
     void ApplyEyedropperPick(Assisi::ECS::Entity picked);
 
@@ -243,6 +286,45 @@ class EditorApp : public Assisi::App::Application
     /// @brief Builds an undo transaction label: the action, plus " - <name>" when
     /// the entity is named (e.g. "Edit Transform - Player"), else its id.
     [[nodiscard]] std::string EditLabel(std::string_view action, Assisi::ECS::Entity entity) const;
+
+    // --- Worlds (multi-scene S2; docs/multi-scene-design-notes.md) ---
+    /// @brief Switches which world the editor renders and inspects, repointing
+    /// `_scene`/`_physics` at it. One world is rendered per viewport, so "shown"
+    /// and "active" are the same thing — selecting another world moves the view
+    /// there, and the panels follow.
+    void SetActiveWorld(Assisi::App::World &world);
+    /// @brief Loads @p virtualPath into a NEW resident world and shows it, leaving
+    /// the current world alive and simulating. The asset cache is not cleared —
+    /// the other world's resolved pointers reference it. Returns false (nothing
+    /// created) if the level didn't load. Reached from the Game panel's debug
+    /// control; a game reaches the same capability through WorldManager.
+    bool LoadLevelAsNewWorld(const std::string &virtualPath);
+    /// @brief Travels to @p virtualPath: the running game changes level without
+    /// leaving Play. The edited world goes dormant (Stop still restores it); any
+    /// other outgoing world is destroyed. A failed travel keeps play running
+    /// where it is. Reached from the Game panel's debug control; a game calls
+    /// WorldManager::LoadLevel directly.
+    bool TravelToLevel(const std::string &virtualPath);
+    /// @brief Migrates the selected entity (and its subtree) into the named
+    /// resident world, then clears the selection. Debug stand-in for the
+    /// game marking entities as travelling.
+    void MigrateSelectionTo(const std::string &targetWorld);
+    /// @brief Starts a background preload of @p virtualPath — the running world
+    /// keeps simulating. Poll via _worlds.PendingLoadReady(); swap with
+    /// PromotePreloadedWorld(). The async form of TravelToLevel.
+    void BeginPreload(const std::string &virtualPath);
+    /// @brief Swaps the finished preload in as active (instant) and shows it,
+    /// then sweeps the asset cache. No-op if nothing is preloaded.
+    void PromotePreloadedWorld();
+    /// @brief Destroys every world the play session created and shows the edited
+    /// one again. Called by StopPlay before it restores the snapshot.
+    void DestroyPlayWorlds();
+    /// @brief True when edits may be captured and saved — i.e. the world being
+    /// shown is the edited world. Other residents are inspect-only, so the panels
+    /// disable their editing controls.
+    [[nodiscard]] bool IsEditable() const;
+    /// @brief The resident-world dropdown drawn at the top of the Entities panel.
+    void DrawWorldSelector();
 
     // --- Level management ---
     void ScanLevels();
@@ -341,16 +423,28 @@ class EditorApp : public Assisi::App::Application
     Assisi::App::SystemRegistry _systems;
     Assisi::Window::ActionMap   _actions;
 
-    // The game's hooks (see EditorConfig). Game systems live in their OWN
-    // registry, run only while Playing — never mixed into _systems, whose
-    // editor systems (picking, camera, selection) run in every state.
+    // The game's hooks (see EditorConfig). Game systems live in each WORLD's own
+    // registry — installed by the default profile at world creation, run only
+    // while Playing — never mixed into _systems, whose editor systems (picking,
+    // camera, selection) run in every state and belong to the editor viewing a
+    // world rather than to any world.
     EditorConfig                _editorConfig;
-    Assisi::App::SystemRegistry _gameSystems;
+
+    // The game's render systems earn one warning per session, not one per world:
+    // the default profile's installer runs for every world it builds.
+    bool                        _warnedGameRenderSystems = false;
 
     // --- State ---
-    Assisi::ECS::SceneRegistry         _scenes;
-    Assisi::ECS::Scene                *_scene = nullptr;
-    Assisi::Physics::PhysicsWorld      _physics;
+    // Every resident level lives in the manager (docs/multi-scene-design-notes.md).
+    // The editor drives exactly one world at this stage, which is both the active
+    // world (rendered, input-driven) and the *edited* world (saved, dirtied, undone
+    // into) — the two roles only diverge once the game can travel to another level
+    // mid-play. `_scene`/`_physics` are the active world's, cached here so the
+    // panels read exactly as before.
+    Assisi::App::WorldManager          _worlds;
+    Assisi::App::World                *_world   = nullptr; ///< The active world.
+    Assisi::ECS::Scene                *_scene   = nullptr; ///< == &_world->scene.
+    Assisi::Physics::PhysicsWorld     *_physics = nullptr; ///< == &_world->physics.
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;
@@ -410,7 +504,25 @@ class EditorApp : public Assisi::App::Application
     static constexpr float kMouseSensitivity = 0.1f;
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
-    bool                _wasDragging    = false;
+
+    // Physics freeze while an Inspector field is being held (see
+    // HandlePhysicsEditing / ThawEditedBody). Dragging a Transform field on a
+    // dynamic body would otherwise fight the solver, so the body is made Static
+    // for the duration and restored on release.
+    //
+    // This is deliberately shaped like _captureEditingActive: the request is a
+    // per-frame flag raised by the panel, and the *release* is decided at the end
+    // of OnImGui, where it runs whether or not the Inspector drew anything. A
+    // release keyed off the panel's own edge could be skipped entirely — the
+    // Inspector early-returns when nothing is selected — which stranded the body
+    // Static forever while its descriptor still said dynamic: an object frozen in
+    // mid-air that the inspector insisted was falling.
+    bool                _physicsFreezeRequested = false;
+    Assisi::ECS::Entity _frozenBodyEntity       = Assisi::ECS::NullEntity;
+    /// World that owns _frozenBodyEntity, by name rather than pointer: the viewed
+    /// world can change (or be destroyed) between freeze and release, and the
+    /// thaw must reach the body it actually froze, not whatever is on screen now.
+    std::string         _frozenBodyWorld;
 
     // Reused per-frame scratch for collider wireframes (see SubmitColliderWireframes):
     // the depth-tested (unselected) and on-top (selected) line batches, and the list
@@ -495,6 +607,23 @@ class EditorApp : public Assisi::App::Application
         Paused
     };
     PlayState _playState = PlayState::Editing;
+
+    /// @brief The one place the play state changes.
+    ///
+    /// The state itself is the flat freeze: while it is not Playing the fixed
+    /// loop steps nothing, in any world. This also sets the viewed world's
+    /// `simulate` flag, which selects among the worlds of a *running* session —
+    /// but only when that world is Active, since a Dormant world is by definition
+    /// not stepped and must not be marked otherwise (resuming while inspecting
+    /// the dormant edited world would else hand it a live flag).
+    void SetPlayState(PlayState state)
+    {
+        _playState = state;
+        if (_world != nullptr && _world->state == Assisi::App::WorldState::Active)
+        {
+            _world->simulate = (state == PlayState::Playing);
+        }
+    }
 
     // One entity's exact-identity snapshot for the play/stop restore. Unlike a
     // Save() (which renumbers entities to dense serial indices), this keeps the
@@ -592,10 +721,21 @@ class EditorApp : public Assisi::App::Application
     // this frame's already-recorded draws still reference, which faults the GPU.
     std::optional<std::string> _pendingLevelLoad;
 
-    // True while the current scene still has async mesh/material loads in flight
-    // (or on the frame one just finished), driving the per-frame re-resolve in
-    // OnUpdate that upgrades MeshRenderers as assets stream in. See ResolveMesh.
-    bool _assetsWereLoading = false;
+    // Same marshalling, for the Game panel's "Load as new world" debug control:
+    // it creates a second resident world, which resolves assets and builds Jolt
+    // bodies — main-thread-drain work, never mid-ImGui.
+    std::optional<std::string> _pendingWorldLoad;
+    // ...and for "Travel here", which additionally frees the outgoing world's
+    // GPU assets — the strongest reason of the three not to run mid-frame.
+    std::optional<std::string> _pendingTravel;
+    // Same marshalling for "Migrate selection": migration rebuilds physics
+    // bodies and resolves meshes, so it runs at the pre-update safe point.
+    std::optional<std::string> _pendingMigrate;
+    // Async travel (S5): "Preload" starts a background load; "Swap" promotes it.
+    // Both marshalled — BeginLoadLevel mutates the world store, and promotion
+    // resolves/frees GPU assets, so neither may run mid-ImGui.
+    std::optional<std::string> _pendingPreload;
+    bool                       _pendingPromote = false;
 };
 
 } // namespace Assisi::Editor

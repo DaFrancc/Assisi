@@ -4,6 +4,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
+#include <algorithm>
 #include <cstdint>
 #include <unordered_set>
 #include <vector>
@@ -128,6 +129,30 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick)
     // The tick a caller should pass as `lastTick` next frame: everything written
     // up to now has been accounted for.
     return scene.CurrentChangeTick();
+}
+
+std::vector<ECS::Entity> GatherSubtree(ECS::Scene &scene, ECS::Entity root)
+{
+    std::vector<ECS::Entity> result{root};
+
+    // Breadth-first: for each collected entity, sweep for entities whose Parent
+    // points at it. `result` grows as we go and the index walk visits each new
+    // entry, so a whole subtree of any depth is collected. No child index exists,
+    // so this scans — acceptable at subtree-edit scale.
+    for (std::size_t i = 0; i < result.size(); ++i)
+    {
+        const ECS::Entity current = result[i];
+        scene.ForEachEntity(
+            [&](ECS::Entity e)
+            {
+                const Parent *parent = scene.Get<Parent>(e);
+                if (parent == nullptr || parent->parent != current)
+                    return;
+                if (std::find(result.begin(), result.end(), e) == result.end())
+                    result.push_back(e);
+            });
+    }
+    return result;
 }
 
 } // namespace Assisi::Runtime

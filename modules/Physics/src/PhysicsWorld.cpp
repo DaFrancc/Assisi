@@ -12,6 +12,7 @@
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
 #include <Jolt/Physics/Body/BodyCreationSettings.h>
+#include <Jolt/Physics/Collision/ContactListener.h>
 #include <Jolt/Physics/Collision/Shape/BoxShape.h>
 #include <Jolt/Physics/Collision/Shape/CapsuleShape.h>
 #include <Jolt/Physics/Collision/Shape/CylinderShape.h>
@@ -23,6 +24,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -104,6 +106,83 @@ class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
     }
 };
 
+// ---------------------------------------------------------------------------
+// Shared Jolt runtime
+// ---------------------------------------------------------------------------
+
+/* The Jolt state that is genuinely process-global and worth sharing across every
+   PhysicsWorld: the library globals (allocator, Factory, type registration) and
+   the job-system thread pool. Multi-scene runs several PhysicsWorlds side by side
+   (docs/multi-scene-design-notes.md §1); a pool per world would spawn
+   hardware_concurrency() threads *per resident level* and oversubscribe the
+   machine, so the pool is shared and every world's Update() dispatches onto it.
+
+   Refcounted rather than a leaked singleton so a process that stops using physics
+   gives its worker threads back, and so construction order is correct by
+   construction: the globals are registered before the pool is built (Jolt
+   allocates through its own allocator, which RegisterDefaultAllocator installs),
+   and the pool outlives every PhysicsWorld that could still be stepping —
+   PhysicsWorld::Impl holds its handle as its first member, so it is acquired
+   before any other Jolt object of that world and released after all of them.
+   Atomic so worlds constructed/destroyed on different threads can't lose a count
+   and double-free the factory.
+
+   The scratch allocator is deliberately NOT here — it is per-world (see Impl).
+   TempAllocatorImpl is a stack, used throughout a step by the pool workers a
+   single Update() dispatches; two worlds' Update()s sharing one would interleave
+   their frames. Sharing it was only ever "safe" while worlds stepped strictly
+   sequentially, and even then the accesses cross pool-worker threads without a
+   happens-before edge (a real data race ThreadSanitizer flags). A per-world
+   allocator is 10 MiB of scratch each — cheap — and makes stepping safe whether
+   worlds run sequentially or (later) in parallel. The pool stays shared; Jolt is
+   built for many PhysicsSystems on one JobSystem. */
+struct JoltRuntime
+{
+    JPH::JobSystemThreadPool jobSystem{JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
+                                       static_cast<int>(std::thread::hardware_concurrency()) - 1};
+};
+
+std::atomic<int32_t> gJoltRefCount{0};
+JoltRuntime         *gJoltRuntime = nullptr;
+
+/// @brief RAII handle to the shared runtime. The first one constructed brings
+/// Jolt up; the last one destroyed tears it down.
+class JoltRuntimeRef
+{
+  public:
+    JoltRuntimeRef()
+    {
+        if (gJoltRefCount++ == 0)
+        {
+            /* Must be called before any Jolt allocation — including the runtime's
+               own pool and temp allocator below. */
+            JPH::RegisterDefaultAllocator();
+            JPH::Factory::sInstance = new JPH::Factory();
+            JPH::RegisterTypes();
+            gJoltRuntime = new JoltRuntime();
+            Assisi::Core::Log::Info("Jolt: runtime up ({} worker threads, shared by every physics world).",
+                                    gJoltRuntime->jobSystem.GetMaxConcurrency());
+        }
+    }
+
+    ~JoltRuntimeRef()
+    {
+        if (--gJoltRefCount == 0)
+        {
+            delete gJoltRuntime;
+            gJoltRuntime = nullptr;
+            JPH::UnregisterTypes();
+            delete JPH::Factory::sInstance;
+            JPH::Factory::sInstance = nullptr;
+        }
+    }
+
+    JoltRuntimeRef(const JoltRuntimeRef &) = delete;
+    JoltRuntimeRef &operator=(const JoltRuntimeRef &) = delete;
+
+    JPH::JobSystemThreadPool &JobSystem() const { return gJoltRuntime->jobSystem; }
+};
+
 } // anonymous namespace
 
 // ---------------------------------------------------------------------------
@@ -115,6 +194,10 @@ namespace Assisi::Physics
 
 struct PhysicsWorld::Impl
 {
+    /* First member: brings the shared Jolt runtime up before any other member's
+       constructor allocates through Jolt, and releases it after they are gone. */
+    JoltRuntimeRef jolt;
+
     static constexpr uint32_t kMaxBodies = 1024;
     static constexpr uint32_t kMaxBodyPairs = 65536;
     static constexpr uint32_t kMaxContactConstraints = 10240;
@@ -130,9 +213,10 @@ struct PhysicsWorld::Impl
     ObjVsBPFilter objVsBPFilter;
     ObjLayerFilter objLayerFilter;
 
+    // Per-world scratch for this world's Update() (see JoltRuntime for why it is
+    // not shared). Constructed after `jolt`, so the Jolt allocator is installed.
     JPH::TempAllocatorImpl tempAlloc{10u * 1024u * 1024u}; // 10 MiB
-    JPH::JobSystemThreadPool jobSystem{JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
-                                       static_cast<int>(std::thread::hardware_concurrency()) - 1};
+
     JPH::PhysicsSystem physicsSystem;
 
     std::vector<JPH::BodyID> allBodyIds;     ///< Every body ever added; used by Clear().
@@ -152,7 +236,90 @@ struct PhysicsWorld::Impl
     /// flipping motion type (which keeps its ID). Populated in AddBody, torn down
     /// in Clear.
     std::unordered_map<JPH::uint32, MotionSnapshot> snapshots;
+
+    // --- Contact reporting (off unless SetContactReporting turns it on) -------
+
+    /// The entity behind each body, keyed like `snapshots`. Only bodies created
+    /// through AddBodyFromDescriptor appear — it is the one entry point that knows
+    /// an entity — so a contact against a body from the raw AddBody reports
+    /// NullEntity for that side rather than a wrong handle.
+    std::unordered_map<JPH::uint32, ECS::Entity> bodyEntities;
+
+    bool contactReporting = false;
+
+    /// Written from Jolt's worker jobs during Update(), read from the main thread
+    /// between steps. The mutex only guards the append: contacts are rare relative
+    /// to the collision work that produced them, so this never becomes the
+    /// bottleneck, and per-thread buffers would cost more to merge than they save.
+    std::mutex           contactMutex;
+    std::vector<Contact> contacts;
+
+    ECS::Entity EntityFor(const JPH::BodyID &id) const
+    {
+        const auto it = bodyEntities.find(id.GetIndexAndSequenceNumber());
+        return it == bodyEntities.end() ? ECS::NullEntity : it->second;
+    }
+
+    /// Records both sides of a contact. Called from Jolt's narrow phase — i.e.
+    /// *before* the solver runs, which is the whole reason the velocities are
+    /// captured here rather than read back afterwards.
+    void RecordContact(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold);
+
+    /// Installed as the PhysicsSystem's contact listener only while reporting is
+    /// on, so a world that does not want contacts never even pays the virtual call.
+    class ContactCollector final : public JPH::ContactListener
+    {
+      public:
+        explicit ContactCollector(Impl &owner) : _owner(owner) {}
+
+        void OnContactAdded(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
+                            JPH::ContactSettings &settings) override
+        {
+            (void)settings; // we observe contacts, we don't retune them
+            _owner.RecordContact(body1, body2, manifold);
+        }
+
+        // OnContactPersisted is deliberately not overridden. A body resting on a
+        // surface persists its contact every step; reporting those would make a
+        // contact-driven response (a bounce) re-fire forever into something that
+        // is simply lying still.
+
+      private:
+        Impl &_owner;
+    };
+
+    ContactCollector collector{*this};
 };
+
+void PhysicsWorld::Impl::RecordContact(const JPH::Body &body1, const JPH::Body &body2,
+                                       const JPH::ContactManifold &manifold)
+{
+    const ECS::Entity e1 = EntityFor(body1.GetID());
+    const ECS::Entity e2 = EntityFor(body2.GetID());
+    if (e1 == ECS::NullEntity && e2 == ECS::NullEntity)
+        return; // nothing on either side a system could act on
+
+    // Jolt's manifold normal is the direction body2 must move to separate from
+    // body1, so it already points away from body1's surface. Each side gets the
+    // one that points away from the *other*, which is what a reflection wants.
+    const JPH::Vec3 n = manifold.mWorldSpaceNormal;
+    const glm::vec3 awayFromBody1{n.GetX(), n.GetY(), n.GetZ()};
+
+    // Body::GetLinearVelocity asserts on a static body (no motion state to read).
+    const auto linearVelocity = [](const JPH::Body &body)
+    {
+        if (body.IsStatic())
+            return glm::vec3(0.f);
+        const JPH::Vec3 v = body.GetLinearVelocity();
+        return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
+    };
+
+    const std::lock_guard<std::mutex> lock(contactMutex);
+    if (e1 != ECS::NullEntity)
+        contacts.push_back(Contact{e1, e2, -awayFromBody1, linearVelocity(body1)});
+    if (e2 != ECS::NullEntity)
+        contacts.push_back(Contact{e2, e1, awayFromBody1, linearVelocity(body2)});
+}
 
 // ---------------------------------------------------------------------------
 // PhysicsWorld
@@ -160,34 +327,6 @@ struct PhysicsWorld::Impl
 
 namespace
 {
-/* Jolt's allocator, factory, and type registration are process-global, not
-   per-PhysicsSystem. Refcount them so multiple PhysicsWorld instances share a
-   single init/teardown instead of leaking the factory or tearing it out from
-   under a sibling instance. Atomic so worlds constructed/destroyed on
-   different threads can't lose a count and double-free the factory. */
-std::atomic<int32_t> gJoltRefCount{0};
-
-void AcquireJoltGlobals()
-{
-    if (gJoltRefCount++ == 0)
-    {
-        /* Must be called before any Jolt allocations (including Impl member ctors). */
-        JPH::RegisterDefaultAllocator();
-        JPH::Factory::sInstance = new JPH::Factory();
-        JPH::RegisterTypes();
-    }
-}
-
-void ReleaseJoltGlobals()
-{
-    if (--gJoltRefCount == 0)
-    {
-        JPH::UnregisterTypes();
-        delete JPH::Factory::sInstance;
-        JPH::Factory::sInstance = nullptr;
-    }
-}
-
 /* Jolt's BoxShape requires each half extent to be at least its convex radius
    (cDefaultConvexRadius) and asserts below that — reachable from an ordinary
    inspector drag. Clamp silently: a warning here would fire once per drag
@@ -239,9 +378,8 @@ constexpr float kLinearCastThreshold      = 0.3f;
 
 PhysicsWorld::PhysicsWorld()
 {
-    AcquireJoltGlobals();
-
-    /* Only now safe to construct TempAllocatorImpl and JobSystemThreadPool. */
+    /* Impl's first member acquires the shared Jolt runtime, so the library is up
+       (allocator/Factory/types) before any of its other members construct. */
     _impl = std::make_unique<Impl>();
 
     _impl->physicsSystem.Init(Impl::kMaxBodies, 0u, Impl::kMaxBodyPairs, Impl::kMaxContactConstraints,
@@ -266,10 +404,10 @@ PhysicsWorld::PhysicsWorld()
 
 PhysicsWorld::~PhysicsWorld()
 {
-    /* Tear down this instance's PhysicsSystem before releasing the shared Jolt
-       globals it depends on (factory/type registration). */
+    /* Impl's members are destroyed in reverse declaration order, so the shared
+       runtime handle (its first member) is released after this world's
+       PhysicsSystem and bodies are gone. */
     _impl.reset();
-    ReleaseJoltGlobals();
 }
 
 RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const ColliderShapeDesc &shape,
@@ -322,6 +460,14 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
     if (descriptor.enableCCD)
         SetBodyCCD(body, true);
     (void)scene.Add<RigidBody>(entity, body);
+
+    // The only body-creation path that knows an entity, so the only one that can
+    // make a contact nameable in ECS terms. Recorded unconditionally: reporting can
+    // be switched on later in the world's life, and rebuilding the map then would
+    // mean walking the scene.
+    if (!body.bodyId.IsInvalid())
+        _impl->bodyEntities[body.bodyId.GetIndexAndSequenceNumber()] = entity;
+
     return body;
 }
 
@@ -344,6 +490,10 @@ void PhysicsWorld::Clear()
     _impl->allBodyIds.clear();
     _impl->dynamicBodyIds.clear();
     _impl->snapshots.clear();
+    _impl->bodyEntities.clear();
+    // Logged contacts name bodies that no longer exist — and, after a level load,
+    // entity handles that mean something entirely different.
+    _impl->contacts.clear();
 }
 
 void PhysicsWorld::RemoveBody(const RigidBody &body)
@@ -365,11 +515,58 @@ void PhysicsWorld::RemoveBody(const RigidBody &body)
     std::erase_if(_impl->allBodyIds, matches);
     std::erase_if(_impl->dynamicBodyIds, matches);
     _impl->snapshots.erase(key);
+
+    // Drop any logged contact naming the entity whose body just went away, on
+    // either side — acting on one would look up a RigidBody component pointing at
+    // a destroyed Jolt body.
+    const ECS::Entity gone = _impl->EntityFor(id);
+    _impl->bodyEntities.erase(key);
+    if (gone != ECS::NullEntity)
+    {
+        std::erase_if(_impl->contacts, [gone](const Contact &contact)
+                      { return contact.entity == gone || contact.other == gone; });
+    }
 }
 
 void PhysicsWorld::Update(float deltaTime)
 {
-    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc, &_impl->jobSystem);
+    // The log describes the step about to run, not the one before it — clearing
+    // here is what guarantees a consumer sees each impact exactly once. Safe
+    // without the mutex: no Jolt worker is inside a callback at this point.
+    _impl->contacts.clear();
+
+    /* This world's own scratch allocator, and the shared thread pool. Both are
+       Update() arguments; the pool is shared (one set of workers), the allocator
+       is per-world so two worlds' steps never touch the same scratch stack (see
+       JoltRuntime). */
+    _impl->physicsSystem.Update(deltaTime, _impl->collisionSteps, &_impl->tempAlloc,
+                                &_impl->jolt.JobSystem());
+}
+
+void PhysicsWorld::SetContactReporting(bool enable)
+{
+    if (_impl->contactReporting == enable)
+        return;
+
+    _impl->contactReporting = enable;
+
+    // Unhooking the listener rather than early-returning inside it is what makes
+    // "off" genuinely free: Jolt skips the call entirely instead of making a
+    // virtual call per contact to reach a branch that does nothing.
+    _impl->physicsSystem.SetContactListener(enable ? &_impl->collector : nullptr);
+
+    if (!enable)
+        _impl->contacts.clear();
+}
+
+bool PhysicsWorld::IsContactReporting() const
+{
+    return _impl->contactReporting;
+}
+
+std::span<const Contact> PhysicsWorld::Contacts() const
+{
+    return {_impl->contacts.data(), _impl->contacts.size()};
 }
 
 void PhysicsWorld::SetCollisionSteps(int32_t steps)
@@ -529,6 +726,20 @@ void PhysicsWorld::SetBodyTransform(const RigidBody &body, glm::vec3 position, g
     {
         it->second = Impl::MotionSnapshot{position, rotation, position, rotation};
     }
+}
+
+void PhysicsWorld::SetBodyLinearVelocity(const RigidBody &body, glm::vec3 velocity)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId) || bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static)
+        return;
+
+    // Activate first, then set: a body Jolt has put to sleep on a surface ignores
+    // velocity written while it is asleep, which reads as the call silently doing
+    // nothing — exactly the case a contact response hits, since landing is what
+    // puts a body to sleep in the first place.
+    bodies.ActivateBody(body.bodyId);
+    bodies.SetLinearVelocity(body.bodyId, JPH::Vec3(velocity.x, velocity.y, velocity.z));
 }
 
 void PhysicsWorld::ReshapeBody(const RigidBody &body, const ColliderShapeDesc &shape)

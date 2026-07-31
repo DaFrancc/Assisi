@@ -2,6 +2,11 @@
 /// @file SystemRegistry.cpp
 
 #include <Assisi/App/SystemRegistry.hpp>
+
+// SystemContext holds World by reference (forward-declared in the header, to
+// keep World.hpp's own include of this one acyclic); the activation gate reads
+// through it, so the definition is needed here.
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
 
 #include <cstdint>
@@ -132,6 +137,35 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Before(std::string_v
     return *this;
 }
 
+SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::ActiveWorldOnly()
+{
+    if (!_setActiveOnly)
+    {
+        // Render systems run for the world being drawn and nothing else, so the
+        // constraint is already implied — a call here means the author expected a
+        // gate that does not exist in this phase.
+        Core::Log::Error("SystemRegistry: ActiveWorldOnly() is meaningless on a render system "
+                         "and was ignored.");
+        return *this;
+    }
+    _setActiveOnly();
+    return *this;
+}
+
+void SystemRegistry::SystemHandle::Require(Core::Reflect::ComponentId id)
+{
+    if (id == Core::Reflect::kInvalidComponentId)
+    {
+        // An unreflected type has no pool and would gate the system off forever.
+        // Fail loud: silently never running is the worst outcome here.
+        Core::Log::Error("SystemRegistry: RequireAny() names a type with no ComponentId — it is "
+                         "not registered with the reflection system (ACOMP). Ignoring it, so the "
+                         "system stays eligible.");
+        return;
+    }
+    _addRequirement(id);
+}
+
 // ---------------------------------------------------------------------------
 // Add — append to a phase and hand back a slot-bound handle
 // ---------------------------------------------------------------------------
@@ -139,7 +173,8 @@ SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Before(std::string_v
 template <typename Ctx>
 SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase,
                                                  std::string_view          name,
-                                                 std::function<void(Ctx &)> fn)
+                                                 std::function<void(Ctx &)> fn,
+                                                 bool                      supportsActiveOnly)
 {
     // Duplicate names make After()/Before() ambiguous: TopoSort's nameToIndex
     // keeps only the first entry per name, so every edge targeting this name binds
@@ -160,7 +195,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
     }
 
     const std::size_t entryIndex = phase.entries.size();
-    phase.entries.push_back({std::string(name), std::move(fn), {}, {}});
+    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false, {}});
     phase.dirty = true;
 
     // Capture the phase and slot index (not a pointer to the Entry): the entries
@@ -172,7 +207,13 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
             typename Phase<Ctx>::Entry &entry = phasePtr->entries[entryIndex];
             (before ? entry.before : entry.after).emplace_back(depName);
             phasePtr->dirty = true;
-        });
+        },
+        supportsActiveOnly ? SystemHandle::SetActiveOnly(
+                                 [phasePtr, entryIndex]
+                                 { phasePtr->entries[entryIndex].activeOnly = true; })
+                           : SystemHandle::SetActiveOnly{},
+        [phasePtr, entryIndex](Core::Reflect::ComponentId id)
+        { phasePtr->entries[entryIndex].requireAny.push_back(id); });
 }
 
 // ---------------------------------------------------------------------------
@@ -180,7 +221,8 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
 // ---------------------------------------------------------------------------
 
 template <typename Ctx>
-void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx)
+void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx,
+                              bool skipActiveOnly, const ECS::Scene &gateScene)
 {
     if (phase.dirty)
     {
@@ -188,8 +230,32 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx
         phase.dirty  = false;
     }
 
+    // Whether a gated system has anything to work on. Cheap enough to pay every
+    // frame for every system: each id is an index into the scene's pool array,
+    // so a system whose components are absent costs a load and a compare rather
+    // than a call. That is what makes it affordable for a profile to install
+    // systems a given world may never need.
+    const auto eligible = [&gateScene](const typename Phase<Ctx>::Entry &entry)
+    {
+        if (entry.requireAny.empty())
+            return true;
+        for (const Core::Reflect::ComponentId id : entry.requireAny)
+        {
+            if (gateScene.ComponentCount(id) > 0)
+                return true;
+        }
+        return false;
+    };
+
     for (std::size_t i : phase.sorted)
-        phase.entries[i].fn(ctx);
+    {
+        const typename Phase<Ctx>::Entry &entry = phase.entries[i];
+        if (skipActiveOnly && entry.activeOnly)
+            continue;
+        if (!eligible(entry))
+            continue;
+        entry.fn(ctx);
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -207,23 +273,37 @@ SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase               
                                                       std::string_view                     name,
                                                       std::function<void(SystemContext &)> fn)
 {
-    return Add(_gamePhases[Index(phase)], name, std::move(fn));
+    return Add(_gamePhases[Index(phase)], name, std::move(fn), /*supportsActiveOnly=*/true);
 }
 
 SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view name,
                                                             std::function<void(RenderContext &)> fn)
 {
-    return Add(_renderPhase, name, std::move(fn));
+    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/false);
 }
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
 {
-    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), ctx);
+    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), ctx,
+             /*skipActiveOnly=*/!ctx.isActiveWorld, ctx.world.scene);
 }
 
 void SystemRegistry::RunRender(RenderContext ctx)
 {
-    RunPhase(_renderPhase, "Render", ctx);
+    RunPhase(_renderPhase, "Render", ctx, /*skipActiveOnly=*/false, ctx.scene);
+}
+
+void SystemRegistry::Clear()
+{
+    for (Phase<SystemContext> &phase : _gamePhases)
+    {
+        phase.entries.clear();
+        phase.sorted.clear();
+        phase.dirty = false; // nothing to sort
+    }
+    _renderPhase.entries.clear();
+    _renderPhase.sorted.clear();
+    _renderPhase.dirty = false;
 }
 
 } // namespace Assisi::App

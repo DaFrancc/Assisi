@@ -176,7 +176,7 @@ bool SceneRenderer::OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebu
 }
 
 void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
-                           const Transform &cameraTransform, const Camera &camera)
+                           const Transform &cameraTransform, const Camera &camera, uint64_t &propagationTick)
 {
     if (!_meshPass.IsValid())
     {
@@ -185,8 +185,9 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
 
     // Refresh world matrices before anything reads them (view matrix, draw). Only
     // entities whose transform changed since last frame are recomputed; the tick
-    // bookmark carries that across frames.
-    _lastPropagationTick = PropagateTransforms(scene, _lastPropagationTick);
+    // bookmark carries that across frames — and belongs to the scene, not to us
+    // (see the header).
+    propagationTick = PropagateTransforms(scene, propagationTick);
 
     const glm::mat4 projection = ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width),
                                                                       static_cast<int32_t>(frame.height)));

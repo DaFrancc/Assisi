@@ -1027,7 +1027,13 @@ void VulkanContext::EndFrame()
                          static_cast<int32_t>(presentResult));
     }
 
+    // Genuine main-thread CPU work: this releases every retired submit's resources,
+    // so destroying large/numerous streaming allocations is paid here. Timed on its
+    // own (not folded into _lastGpuWaitMs) because it is CPU cost, not a GPU stall,
+    // and it is otherwise invisible in a frame breakdown.
+    const std::chrono::steady_clock::time_point gcStart = std::chrono::steady_clock::now();
     _nvrhiDevice->runGarbageCollection();
+    _lastGcMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gcStart).count();
     ++_frameCounter;
 }
 

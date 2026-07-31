@@ -58,8 +58,14 @@ void EditorApp::DrawLevelsWindow()
         // (LoadLevel frees/rebuilds that table). _pendingLevelLoad marks the load
         // in-flight so the button disables (reads as "loading") and a second click
         // can't queue a duplicate; the marshalled task clears it once done.
-        ImGui::BeginDisabled(_pendingLevelLoad.has_value());
-        if (ImGui::Button("Load", ImVec2(halfW, 0.0f)))
+        // Open Level is an *editing* gesture — it changes which level you are
+        // working on — so it is dead during a session. (It used to silently force
+        // the session back to Editing, which was worse: a click meant to load
+        // something ended your play without saying so.) The play-time equivalent
+        // is the Game panel's Travel, which changes level without leaving Play.
+        const bool canOpen = (_playState == PlayState::Editing) && !_pendingLevelLoad.has_value();
+        ImGui::BeginDisabled(!canOpen);
+        if (ImGui::Button("Load", ImVec2(halfW, 0.0f)) && canOpen)
         {
             _pendingLevelLoad = _levelFiles[static_cast<std::size_t>(_selectedLevel)];
             Jobs().RunOnMain([this, name = *_pendingLevelLoad] {
@@ -68,12 +74,17 @@ void EditorApp::DrawLevelsWindow()
             });
         }
         ImGui::EndDisabled();
+        if (_playState != PlayState::Editing && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("Stop play mode to open another level for editing "
+                              "(the Game panel's Travel changes level during play).");
         ImGui::SameLine();
         // Save is only allowed while editing: during Play/Pause `*_scene` is the
         // *simulated* scene (settled physics, spawned/deleted entities), so saving
         // then would overwrite the level file with simulation state — and corrupt
         // dirty tracking after Stop restores the pre-play scene.
-        const bool canSave = (_playState == PlayState::Editing);
+        // ...and only into the edited world: another resident world is someone
+        // else's level, and the dirty token tracks the edited history alone.
+        const bool canSave = (_playState == PlayState::Editing) && IsEditable();
         ImGui::BeginDisabled(!canSave);
         if (ImGui::Button("Save", ImVec2(-1.0f, 0.0f)))
             SaveLevel(_levelFiles[static_cast<std::size_t>(_selectedLevel)]);
@@ -83,7 +94,7 @@ void EditorApp::DrawLevelsWindow()
     }
 
     ImGui::Separator();
-    const bool canSaveAs = (_playState == PlayState::Editing);
+    const bool canSaveAs = (_playState == PlayState::Editing) && IsEditable();
     ImGui::BeginDisabled(!canSaveAs);
     ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Save As").x - ImGui::GetStyle().ItemSpacing.x
                             - ImGui::GetStyle().FramePadding.x * 2.0f);
@@ -141,11 +152,20 @@ void EditorApp::SaveLevel(const std::string &name)
         Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", name);
         return;
     }
-    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved) && _history)
+    // Carry the world's profile back into the file. A Scene does not know it —
+    // it is a property of the level — so a save that dropped it would silently
+    // strip the field from every level the editor touches.
+    const Assisi::Runtime::LevelHeader header{.profile = _world->profile};
+    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header))
     {
+        // Save As renames what this world *is* — keep its level identity truthful,
+        // since travel and (later) the network level handshake read it.
+        _world->levelPath = "levels/" + name + ".alvl";
+
         // Record the history position that now matches disk — IsSceneDirty compares
         // against this to drive the title's unsaved-changes marker.
-        _savedStateToken = _history->CurrentStateToken();
+        if (_history)
+            _savedStateToken = _history->CurrentStateToken();
     }
 }
 
@@ -164,12 +184,25 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // remains below is purely editor bookkeeping about the OLD scene. (We are at a
     // safe point — level loads are marshalled to the main-thread drain, never run
     // from OnImGui; see the Load button in DrawLevelsWindow.)
-    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, _physics, _sceneRenderer))
+    Assisi::Runtime::LevelHeader header;
+    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, *_physics,
+                                _sceneRenderer, Assisi::App::AssetCacheReset::ClearFirst, &header))
         return false;
+
+    // Open Level reuses the edited world, clearing its scene in place rather than
+    // creating a second one. That is what keeps the undo history's Scene& binding
+    // (and every panel's) valid for the whole session — see
+    // docs/multi-scene-design-notes.md §2. Only the world's level identity changes.
+    _world->levelPath = virtualPath;
+
+    // ...and its systems, which belong to the level that is now in it. This is the
+    // re-target case ApplyProfile's Clear exists for: the world already holds the
+    // previous level's profile.
+    _worlds.ApplyProfile(*_world, header.profile);
 
     // A load also ends any in-progress play session: the snapshot describes the
     // old scene, so it must not survive into the new one.
-    _playState = PlayState::Editing;
+    SetPlayState(PlayState::Editing);
     _playSnapshot.clear();
     _selectedEntity = Assisi::ECS::NullEntity;
 

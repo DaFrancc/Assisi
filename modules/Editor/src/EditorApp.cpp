@@ -86,22 +86,72 @@ void EditorApp::OnStart()
         }
     }
 
-    auto mainScene = _scenes.Create("Main");
-    if (!mainScene)
-    {
-        // Abort for real: without a scene the per-frame hooks have nothing to
-        // run on. RequestClose() here means Run()'s first ShouldClose() check
-        // fails and the loop body never executes; the _scene guards in
-        // OnFixedUpdate/OnUpdate are defense-in-depth for that same null.
-        Assisi::Core::Log::Error("Failed to create the main scene; aborting startup");
-        RequestClose();
-        return;
-    }
-    _scene = *mainScene;
+    // What the manager needs to turn a level file into a running world when the
+    // game travels. Installed once; captured by pointer, and all three outlive it.
+    _worlds.SetServices({.cache    = &_assetCache,
+                         .database = &_assetDatabase,
+                         .renderer = &_sceneRenderer,
+                         .jobs     = &Jobs()});
 
-    // Editor-only undo/redo. Binds the Main scene (stable for the session — level
-    // loads Clear it in place, never swap the object). The rebind hook rebuilds the
-    // transient state serialization drops after an apply. See EditHistory.hpp.
+    // The game's systems become the **default profile**: every world the editor
+    // builds gets its own instance of them, which is what keeps a system's
+    // cross-frame state from advancing N× across resident worlds
+    // (docs/world-system-binding-design-notes.md §3). The seam itself is
+    // unchanged — it still hands out a SystemRegistry — so a game that knows
+    // nothing about profiles keeps working.
+    //
+    // Registered before the first Create() below, because that world is given the
+    // default profile the moment it exists.
+    if (_editorConfig.registerGameSystems)
+    {
+        _worlds.RegisterProfile("Default",
+                                [this](Assisi::App::World &world)
+                                {
+                                    _editorConfig.registerGameSystems(world.systems);
+
+                                    // Once, not once per world: what this warns about is
+                                    // how the game registered, not anything about a world.
+                                    if (!_warnedGameRenderSystems && world.systems.HasRenderSystems())
+                                    {
+                                        _warnedGameRenderSystems = true;
+                                        Assisi::Core::Log::Warn(
+                                            "EditorApp: the game registered render system(s), which "
+                                            "do not run in-editor — the editor owns rendering. They "
+                                            "will run in the standalone game build only.");
+                                    }
+                                });
+        _worlds.SetDefaultProfile("Default");
+    }
+
+    // Any further named profiles the game has, for levels that want a different
+    // set than the default. After the default is registered, so a game can point
+    // SetDefaultProfile at one of its own instead.
+    if (_editorConfig.registerProfiles)
+    {
+        _editorConfig.registerProfiles(_worlds);
+    }
+
+    // The editor's starting world. It holds both roles: active (rendered,
+    // input-driven) and edited (saved, dirtied, undone into). Opening a level
+    // clears this world's scene in place rather than creating another one, which
+    // is what keeps the history binding below valid for the whole session.
+    _world = &_worlds.Create("Main");
+    _worlds.SetActive(*_world);
+    _worlds.SetEdited(*_world);
+    _world->state    = Assisi::App::WorldState::Active;
+    _world->simulate = false; // starts Editing; SetPlayState owns this from here on
+    _scene           = &_world->scene;
+    _physics         = &_world->physics;
+
+    // Create() deliberately installs nothing, so a world built in memory (rather
+    // than loaded from a level naming its profile) is given the default here. A
+    // startup level opened below re-applies whatever that level asks for.
+    _worlds.ApplyProfile(*_world, /*name=*/"");
+
+    // Editor-only undo/redo. Binds the edited world's scene (stable for the
+    // session — level loads Clear it in place, never swap the object). The rebind
+    // hook rebuilds the transient state serialization drops after an apply. See
+    // EditHistory.hpp.
     _history.emplace(*_scene, MakeEditRebindHook());
 
     // Editor reconcile pass: give every asset a `.aast` GUID sidecar and build
@@ -145,19 +195,6 @@ void EditorApp::OnStart()
                           }
                       });
 
-    // The game's systems go into their own registry, ticked only while Playing
-    // (see the EditorConfig seam contract). Registered once here, gated at the
-    // run sites in OnUpdate/OnFixedUpdate.
-    if (_editorConfig.registerGameSystems)
-    {
-        _editorConfig.registerGameSystems(_gameSystems);
-        if (_gameSystems.HasRenderSystems())
-        {
-            Assisi::Core::Log::Warn(
-                "EditorApp: the game registered render system(s), which do not run in-editor — "
-                "the editor owns rendering. They will run in the standalone game build only.");
-        }
-    }
 }
 
 void EditorApp::ReimportAssets()
@@ -589,7 +626,7 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // (an inspector edit or the frozen pose is authoritative then).
     if (IsSimulating())
     {
-        _physics.InterpolateTransforms(*_scene, GetInterpolationAlpha());
+        _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha());
     }
 
     // Refresh the editor camera's world matrix from its TRS before the view
@@ -608,22 +645,49 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // Collider wireframes — queued before Render() consumes them.
         SubmitColliderWireframes();
     }
-    _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera);
+    // The propagation bookmark comes from the world, not the renderer: one
+    // renderer will serve several worlds once more than one is resident.
+    _sceneRenderer.Render(frame, *_scene, _cameraTransform, _camera, _world->propagationTick);
 }
 
 void EditorApp::OnFixedUpdate(float dt)
 {
-    // Simulation ticks only while the game is running (Run, not Pause/Stop). When
-    // it isn't, physics is frozen so the scene only renders — the editor camera
-    // and picking still run from OnUpdate, which is not gated here.
-    if (!_scene || !IsSimulating())
+    if (!_scene)
         return;
-    // Game FixedUpdate systems run before the physics step (the Unity/Unreal
-    // convention: apply forces this tick, then simulate them).
-    _gameSystems.Run(Assisi::App::SystemPhase::FixedUpdate, {*_scene, dt, GetInput(), _actions, GetEvents()});
-    _physics.Update(dt);
-    // Snapshot the new poses for render interpolation; OnRender blends them.
-    _physics.CaptureState();
+
+    // **In the editor, the play state is a flat switch: while it is not Playing,
+    // nothing steps anywhere.** Not "the world you are looking at is frozen" —
+    // Pause means the whole session is frozen, logic and physics alike, in every
+    // resident world. Per-world `simulate` then selects among the worlds of a
+    // *running* session; it never overrides the session being stopped, which is
+    // what it used to do for any world other than the viewed one.
+    if (!IsSimulating())
+        return;
+
+    // Every simulated world steps, and each runs its OWN FixedUpdate systems
+    // immediately before its own physics — the Unity/Unreal convention (apply
+    // forces this tick, then simulate them), now held per world rather than only
+    // for the active one. Worlds step sequentially, which is what lets them share
+    // one Jolt thread pool.
+    //
+    // Only Active worlds step: Dormant means "resident and inspectable, but not
+    // stepped" (WorldState), and a stale `simulate` must not be able to break
+    // that. Resuming while viewing the dormant edited world used to do exactly
+    // that and step its physics.
+    _worlds.ForEach(
+        [this, dt](Assisi::App::World &world)
+        {
+            if (world.state != Assisi::App::WorldState::Active || !world.simulate)
+                return;
+
+            world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
+                              {world, dt, &GetInput(), &_actions, GetEvents(),
+                               /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
+
+            world.physics.Update(dt);
+            // Snapshot the new poses for render interpolation; OnRender blends them.
+            world.physics.CaptureState();
+        });
 }
 
 void EditorApp::OnUpdate(float dt)
@@ -650,22 +714,136 @@ void EditorApp::OnUpdate(float dt)
         DeleteEntity(_selectedEntity);
     }
 
+    // A world requested from the Game panel is created here, at the frame's safe
+    // point — the same reason level loads are marshalled: it resolves assets and
+    // touches GPU resources this frame's draws may already reference.
+    if (_pendingWorldLoad)
+    {
+        const std::string request = *_pendingWorldLoad;
+        _pendingWorldLoad.reset();
+        LoadLevelAsNewWorld(request);
+    }
+    if (_pendingTravel)
+    {
+        const std::string request = *_pendingTravel;
+        _pendingTravel.reset();
+        TravelToLevel(request);
+    }
+
+    // A travel a game system asked for last frame. Applied here rather than where
+    // it was requested: systems run inside the walk over the resident worlds, and
+    // travelling from there would invalidate that walk and could free the world
+    // the system is running in. This is the safe point — before the frame's draws
+    // are recorded, so freeing the outgoing world's GPU assets is legal.
+    if (_worlds.HasTravelRequest())
+    {
+        if (Assisi::App::World *const arrived = _worlds.ProcessTravelRequest())
+        {
+            SetActiveWorld(*arrived);
+            _worlds.SweepAssetCache();
+        }
+    }
+    if (_pendingMigrate)
+    {
+        const std::string target = *_pendingMigrate;
+        _pendingMigrate.reset();
+        MigrateSelectionTo(target);
+    }
+    if (_pendingPreload)
+    {
+        const std::string request = *_pendingPreload;
+        _pendingPreload.reset();
+        BeginPreload(request);
+    }
+    if (_pendingPromote)
+    {
+        _pendingPromote = false;
+        PromotePreloadedWorld();
+    }
+
+    // Advance a background preload: once its worker has deserialized, this resolves
+    // and streams the new world's assets (main-thread GPU work) while it stays
+    // hidden, so "ready" means meshes/materials are actually resident. Safe point:
+    // it touches the asset cache.
+    _worlds.PumpPendingLoad();
+
+    // Drain decoded-and-waiting asset uploads into the GPU under a per-frame budget,
+    // batched into one submit (P0/P0b). The async decode continuations that ran in
+    // DrainMain above only enqueued these; the GPU work (the writeTexture staging
+    // memcpy, arena writes, material rows) happens here, at the frame safe point
+    // before RenderFrame, so it's visible to this frame's draws. Gentle tier while a
+    // seamless preload streams behind the world you're playing; generous for a
+    // foreground load (nothing to protect). A no-op when the queue is empty.
+    if (_worlds.HasPendingLoad())
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/2.0, /*byteBudget=*/16ull << 20);
+    else
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/10.0, /*byteBudget=*/128ull << 20);
+
     // A UI-requested level load is marshalled via Jobs().RunOnMain (see
     // EditorLevels) and applied in Application::Run's DrainMain, which runs just
     // before this — so the scene graph is here, but its meshes/materials stream in
     // asynchronously. Upgrade placeholders in place while loads are in flight.
-    Assisi::App::UpgradeStreamingAssets(*_scene, _assetCache, _assetDatabase, _assetsWereLoading);
+    // Every resident world streams: a world you are not currently looking at would
+    // otherwise keep its billboard placeholders forever. A world still Loading in
+    // the background is skipped — a worker owns its scene until promotion.
+    _worlds.ForEach([this](Assisi::App::World &world)
+                    {
+                        if (world.state == Assisi::App::WorldState::Loading)
+                            return;
+                        Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
+                                                            world.streamingPending);
+                    });
 
-    _systems.Run(Assisi::App::SystemPhase::Update,    {*_scene, dt, input, _actions, GetEvents()});
-    _systems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
-
-    // Game logic ticks only while Playing — after the editor's own systems, in
-    // the game registry's own phase order (see the EditorConfig seam contract).
+    // Worlds that simulate but are not drawn get neither the pose write-back nor
+    // the transform propagation the render path does for the world it draws. Give
+    // them both, in that order — see App::SyncUnrenderedWorld. Skipped entirely
+    // while the session is frozen: nothing stepped, so there are no new poses to
+    // write back, and the same flat-freeze rule as OnFixedUpdate applies.
     if (IsSimulating())
     {
-        _gameSystems.Run(Assisi::App::SystemPhase::PreUpdate,  {*_scene, dt, input, _actions, GetEvents()});
-        _gameSystems.Run(Assisi::App::SystemPhase::Update,     {*_scene, dt, input, _actions, GetEvents()});
-        _gameSystems.Run(Assisi::App::SystemPhase::PostUpdate, {*_scene, dt, input, _actions, GetEvents()});
+        _worlds.ForEach(
+            [this](Assisi::App::World &world)
+            {
+                if (world.simulate && world.state == Assisi::App::WorldState::Active &&
+                    &world != _world)
+                {
+                    Assisi::App::SyncUnrenderedWorld(world);
+                }
+            });
+    }
+
+    // The editor's own systems act on the world being *viewed* — picking, the fly
+    // camera and selection all follow the world selector, not the played world.
+    const Assisi::App::SystemContext editorCtx{
+        *_world, dt, &input, &_actions, GetEvents(), /*isActiveWorld=*/true, &_worlds};
+    _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
+    _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
+
+    // Game logic ticks only while Playing, after the editor's own systems — and
+    // now in EVERY simulated world, each out of its own registry, rather than
+    // only in whichever world the editor happens to be looking at. Systems that
+    // consume input opt out of the non-active worlds by declaring
+    // ActiveWorldOnly() (one InputContext, N worlds).
+    //
+    // This also drops an old quirk: the game phases used to run against the
+    // *viewed* world, so inspecting the dormant edited world mid-play ticked
+    // game logic into it while its FixedUpdate stayed frozen. A world that is
+    // not simulating now runs nothing, whichever one is on screen.
+    if (IsSimulating())
+    {
+        _worlds.ForEach(
+            [this, dt, &input](Assisi::App::World &world)
+            {
+                if (world.state != Assisi::App::WorldState::Active || !world.simulate)
+                    return;
+
+                const Assisi::App::SystemContext ctx{
+                    world,   dt, &input, &_actions, GetEvents(),
+                    /*isActiveWorld=*/&world == _worlds.Active(), &_worlds};
+                world.systems.Run(Assisi::App::SystemPhase::PreUpdate,  ctx);
+                world.systems.Run(Assisi::App::SystemPhase::Update,     ctx);
+                world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
+            });
     }
 }
 
@@ -674,8 +852,14 @@ void EditorApp::FlushDeferred()
     // End-of-frame: apply entities queued by Scene::Destroy() this frame. Runs
     // after RenderFrame, so a destroyed entity lives out its final frame before
     // its pools are touched — keeping structural changes out of any mid-frame Query.
-    if (_scene)
-        _scene->FlushDestroyed();
+    // Per world: a resident world's queued destroys must flush too, or they pile up
+    // until it is next shown and then all land at once. A world still Loading in the
+    // background is skipped — its scene belongs to a worker until promotion.
+    _worlds.ForEach([](Assisi::App::World &world)
+                    {
+                        if (world.state != Assisi::App::WorldState::Loading)
+                            world.scene.FlushDestroyed();
+                    });
 }
 
 // ---------------------------------------------------------------------------
@@ -688,8 +872,20 @@ Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
     { ApplyEditRebind(entity, id, present); };
 }
 
+bool EditorApp::IsEditable() const
+{
+    // Both histories bind the *edited* world's scene by reference, and Save writes
+    // it — so an edit made while a different world is being shown would be captured
+    // into the wrong scene's history and could never be saved. Other resident
+    // worlds are inspect-only (docs/multi-scene-design-notes.md §1).
+    return _world != nullptr && _world == _worlds.Edited();
+}
+
 Assisi::Editor::EditHistory *EditorApp::ActiveHistory()
 {
+    if (!IsEditable())
+        return nullptr;
+
     switch (_playState)
     {
     case PlayState::Editing:
@@ -762,7 +958,7 @@ void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflec
             const auto *rbc = _scene->Get<Physics::RigidBody>(entity);
             const auto *tc  = _scene->Get<Runtime::Transform>(entity);
             if (rbc && tc)
-                _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+                _physics->SetBodyTransform(*rbc, tc->position, tc->rotation);
         }
     }
     else if (id == kRigidBodyDesc)
@@ -774,14 +970,14 @@ void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflec
             const auto *tc   = _scene->Get<Runtime::Transform>(entity);
             const auto *desc = _scene->Get<Physics::RigidBodyDescriptor>(entity);
             if (tc && desc && _scene->Get<Physics::RigidBody>(entity) == nullptr)
-                _physics.AddBodyFromDescriptor(*_scene, entity, *tc, *desc);
+                _physics->AddBodyFromDescriptor(*_scene, entity, *tc, *desc);
         }
         else
         {
             // Descriptor removed: tear down its Jolt body + the transient handle
             // (RigidBody is ACOMP(transient), never in the payload).
             if (const auto *rbc = _scene->Get<Physics::RigidBody>(entity))
-                _physics.RemoveBody(*rbc);
+                _physics->RemoveBody(*rbc);
             _scene->Remove<Physics::RigidBody>(entity);
         }
     }
@@ -854,9 +1050,9 @@ void EditorApp::DrawDiagnosticsWindow()
     // Physics collision substeps per fixed step. 1 is a single solve (relies on
     // speculative contacts + per-body CCD, like Unity/Unreal); raising it trades
     // CPU for shallower impact penetration. Watch the CPU ms above as you change it.
-    int collisionSteps = _physics.GetCollisionSteps();
+    int collisionSteps = _physics->GetCollisionSteps();
     if (ImGui::InputInt("Physics collision steps", &collisionSteps))
-        _physics.SetCollisionSteps(collisionSteps);
+        _physics->SetCollisionSteps(collisionSteps);
 
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
@@ -930,6 +1126,10 @@ void EditorApp::OnImGui()
     // inspector raise it below, and the end-of-frame capture sweep reads it.
     _captureEditingActive = false;
 
+    // Same shape, for the physics freeze the Inspector applies while a field is
+    // held (HandlePhysicsEditing). Released at the end of this function.
+    _physicsFreezeRequested = false;
+
     // First: resets ImGuizmo's per-frame state and draws the manipulator over the
     // scene (behind the panels below). Also refreshes IsUsingGizmo() for picking.
     DrawTransformGizmo();
@@ -944,6 +1144,15 @@ void EditorApp::OnImGui()
     DrawHelloImageWindow();
     DrawAssetBrowser();
     DrawStaleResolutionModal();
+
+    // Release the Inspector's physics freeze here rather than inside the panel.
+    // The panel cannot be trusted to observe its own release: DrawInspector
+    // early-returns when nothing is selected, so deselecting (or destroying) the
+    // entity on the same frame the drag ends skipped the restore entirely and left
+    // the body Static for the rest of the session — visibly stuck in mid-air, with
+    // a descriptor that still read dynamic. This runs unconditionally.
+    if (!_physicsFreezeRequested)
+        ThawEditedBody();
 
     // After every panel has drawn (so each open gesture sees its final value):
     // commit finished drags/typing, drop no-ops, abandon dead-entity gestures.

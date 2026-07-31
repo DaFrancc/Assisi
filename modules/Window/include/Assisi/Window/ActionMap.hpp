@@ -26,9 +26,10 @@
 /// @code
 /// _systems.Register(SystemPhase::Update, "PlayerMove",
 ///     [](SystemContext& ctx) {
-///         if (ctx.actions.IsActionDown("MoveForward", ctx.input))
+///         if (ctx.actions->IsActionDown("MoveForward", *ctx.input))
 ///             player.velocity.z -= speed * ctx.dt;
-///     });
+///     })
+///     .ActiveWorldOnly();  // input is single; worlds are many
 /// @endcode
 
 #include <Assisi/Core/StringHash.hpp>

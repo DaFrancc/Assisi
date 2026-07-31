@@ -65,7 +65,7 @@ void EditorApp::StartPlay()
             });
     }
 
-    _playState = PlayState::Playing;
+    SetPlayState(PlayState::Playing);
     Assisi::Core::Log::Info("Play: started (scene snapshotted, {} entities).", _playSnapshot.size());
 }
 
@@ -79,7 +79,7 @@ void EditorApp::ResumePlay()
     // scene and the simulation carries on, but they were never part of the editing
     // history and their undo does not persist).
     _pausedHistory.reset();
-    _playState = PlayState::Playing;
+    SetPlayState(PlayState::Playing);
 }
 
 void EditorApp::PausePlay()
@@ -90,9 +90,14 @@ void EditorApp::PausePlay()
     }
     // Entering Paused: open a fresh scratch history so edits made while paused are
     // undoable *within the pause*, without ever touching the persistent editing
-    // history. Bound to the same scene + rebind hook as the main one.
-    _pausedHistory.emplace(*_scene, MakeEditRebindHook());
-    _playState = PlayState::Paused;
+    // history. Bound to the EDITED world's scene, not whichever world is being
+    // shown: that is the only one edits may be captured against, and the only one
+    // guaranteed to outlive the pause (play-created worlds can be destroyed).
+    if (Assisi::App::World *edited = _worlds.Edited())
+    {
+        _pausedHistory.emplace(edited->scene, MakeEditRebindHook());
+    }
+    SetPlayState(PlayState::Paused);
 }
 
 void EditorApp::StopPlay()
@@ -107,6 +112,17 @@ void EditorApp::StopPlay()
     // below rebuilds entities at their exact pre-play handles, so its stored handles
     // stay valid and the pre-play edits remain undoable.
     _pausedHistory.reset();
+
+    // Everything the session created goes, and the edited world comes back into
+    // view — BEFORE the restore below, which works on `_scene` and must therefore
+    // already be pointed at the authored level rather than wherever play ended up.
+    // A queued "load as new world" from this frame is dropped with it.
+    _pendingWorldLoad.reset();
+    _pendingTravel.reset();
+    _pendingMigrate.reset();
+    _pendingPreload.reset();
+    _pendingPromote = false;
+    DestroyPlayWorlds();
 
     // Runs unconditionally, including for an empty snapshot: entering Play on an
     // empty scene captures nothing, so gating the teardown on a non-empty snapshot
@@ -145,10 +161,10 @@ void EditorApp::StopPlay()
         }
 
         _selectedEntity = Assisi::ECS::NullEntity;
-        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, _physics);
+        Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
     }
 
-    _playState = PlayState::Editing;
+    SetPlayState(PlayState::Editing);
     _playSnapshot.clear();
 
     Assisi::Core::Log::Info("Play: stopped (scene restored at exact identity).");
@@ -245,7 +261,7 @@ void EditorApp::DeleteEntity(Assisi::ECS::Entity entity)
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(e))
         {
-            _physics.RemoveBody(*rbc);
+            _physics->RemoveBody(*rbc);
             _scene->Remove<Assisi::Physics::RigidBody>(e);
         }
         _scene->Destroy(e);
@@ -349,12 +365,181 @@ void EditorApp::DrawGameControlWindow()
     ImGui::Text("State: %s", stateText);
     ImGui::TextDisabled("F5 run  |  F6 pause  |  F7 stop");
 
+    // --- Resident worlds (multi-scene S2) -----------------------------------
+    // A debug control, not a shipping feature: it stands in for the game calling
+    // WorldManager, so several levels can be brought up and watched side by side
+    // from a stock editor. Loading is deferred to the main-thread drain for the
+    // same reason level loads are — it touches GPU resources this frame's draws
+    // may already reference.
+    ImGui::Separator();
+    ImGui::Text("Worlds resident: %zu", _worlds.Count());
+
+    // Only during a session. While Editing there is exactly one world — the edited
+    // one — which is what keeps Play/Stop's snapshot-and-restore unambiguous, and
+    // a second resident level that nothing simulates would have no restore story
+    // anyway (docs/multi-scene-design-notes.md §4, S2).
+    const bool canAddWorld = (playing || paused) && !_levelFiles.empty() && !_pendingWorldLoad.has_value();
+    ImGui::BeginDisabled(!canAddWorld);
+    if (ImGui::Button("Load as new world") && canAddWorld)
+    {
+        _pendingWorldLoad = "levels/" + _levelFiles[static_cast<std::size_t>(_selectedLevel)] + ".alvl";
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("During play only. Loads the level selected in the Levels window into a "
+                          "SECOND world alongside this one; both simulate, and the Entities panel "
+                          "picks which to look at. Stop destroys every world the session created.");
+    }
+
+    // Travel: what the running game does when it changes level. Distinct from the
+    // Levels window's Load, which changes what you are *editing* — this replaces
+    // the world being played and never leaves Play. The edited world goes dormant
+    // so Stop still restores it.
+    ImGui::SameLine();
+    const bool canTravel = (playing || paused) && !_levelFiles.empty() && !_pendingTravel.has_value();
+    ImGui::BeginDisabled(!canTravel);
+    if (ImGui::Button("Travel here") && canTravel)
+    {
+        _pendingTravel = "levels/" + _levelFiles[static_cast<std::size_t>(_selectedLevel)] + ".alvl";
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("During play only. Changes level to the one selected in the Levels window "
+                          "without leaving Play — the world you were in is retired. Stop still "
+                          "returns to the level you were editing, with its undo history.");
+    }
+
+    // Seamless load (S5): background preload, then an instant swap with the assets
+    // already resident (no pop-in). Two steps: 1) "Prepare" starts the load on a
+    // worker while this world keeps simulating; 2) once it reads "READY", "Load
+    // now" swaps instantly. The selected level is the one chosen in the Levels
+    // window.
+    ImGui::SeparatorText("Seamless load");
+
+    const bool  loadingInFlight = _worlds.HasPendingLoad();
+    const bool  preloadReady    = _worlds.PendingLoadReady();
+    const auto  selectedLevel   = _levelFiles.empty()
+                                      ? std::string{}
+                                      : _levelFiles[static_cast<std::size_t>(_selectedLevel)];
+
+    // Step 1 — Prepare. Disabled once a load is already in flight.
+    const bool canPreload =
+        (playing || paused) && !selectedLevel.empty() && !loadingInFlight && !_pendingPreload.has_value();
+    ImGui::BeginDisabled(!canPreload);
+    if (ImGui::Button("Prepare") && canPreload)
+    {
+        _pendingPreload = "levels/" + selectedLevel + ".alvl";
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered())
+    {
+        if (!(playing || paused))
+            ImGui::SetTooltip("Start play first — seamless load is a during-play transition.");
+        else if (selectedLevel.empty())
+            ImGui::SetTooltip("Pick a level in the Levels window first.");
+        else
+            ImGui::SetTooltip("Start loading '%s' in the background. This world keeps running.",
+                              selectedLevel.c_str());
+    }
+
+    // Step 2 — Load now. Prominent and enabled ONLY when the preload is fully
+    // ready (deserialized AND assets streamed in), so pressing it is a clean swap.
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!preloadReady);
+    if (ImGui::Button("Load now") && preloadReady)
+    {
+        _pendingPromote = true; // marshalled: promotion touches GPU state
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered() && !preloadReady)
+    {
+        ImGui::SetTooltip(loadingInFlight ? "Enabled once the preload reaches READY (100%%)."
+                                          : "Press \"Prepare\" first to start a background load.");
+    }
+
+    // Cancel an in-flight/ready preload (throws the loaded world away).
+    if (loadingInFlight)
+    {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Cancel##preload"))
+            _worlds.CancelPendingLoad();
+    }
+
+    // Status line under the buttons: idle / preparing NN% / READY.
+    if (!loadingInFlight)
+    {
+        ImGui::TextDisabled("Status: idle — pick a level, then Prepare.");
+    }
+    else if (preloadReady)
+    {
+        ImGui::TextColored(ImVec4(0.4f, 1.f, 0.4f, 1.f), "Status: READY — press \"Load now\" (%.*s)",
+                           static_cast<int>(_worlds.PendingLoadPath().size()), _worlds.PendingLoadPath().data());
+    }
+    else
+    {
+        const int32_t pct = static_cast<int32_t>(_worlds.PendingLoadProgress() * 100.f + 0.5f);
+        ImGui::Text("Status: preparing %.*s...  %d%%",
+                    static_cast<int>(_worlds.PendingLoadPath().size()), _worlds.PendingLoadPath().data(), pct);
+        // A visual bar under the text for good measure.
+        ImGui::ProgressBar(_worlds.PendingLoadProgress(), ImVec2(-1.f, 0.f));
+    }
+
+    // Destroying the shown world needs a successor to show, and neither role may
+    // be dropped on the floor — so only a non-edited world that isn't the only
+    // one can go.
+    Assisi::App::World *const edited = _worlds.Edited();
+    const bool canDestroy = _worlds.Count() > 1 && _world != edited && edited != nullptr;
+    ImGui::SameLine();
+    ImGui::BeginDisabled(!canDestroy);
+    if (ImGui::Button("Destroy this world") && canDestroy)
+    {
+        const std::string doomed = _world->name;
+        SetActiveWorld(*edited);
+        _worlds.Destroy(doomed);
+    }
+    ImGui::EndDisabled();
+
+    // Entity migration (S4): move the selected entity + its subtree into another
+    // resident world. This is a debug stand-in for what a game does in code
+    // (mark the player/inventory as travelling); it lets you watch a subtree move
+    // between two levels by hand.
+    const bool haveSelection = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity);
+    if (_worlds.Count() > 1 && haveSelection)
+    {
+        ImGui::SeparatorText("Migrate selection");
+        _worlds.ForEach(
+            [this](Assisi::App::World &target)
+            {
+                if (&target == _world)
+                    return; // can't migrate into the world it's already in
+                ImGui::PushID(target.name.c_str());
+                if (ImGui::SmallButton(("-> " + target.name).c_str()))
+                {
+                    _pendingMigrate = target.name;
+                }
+                ImGui::PopID();
+                ImGui::SameLine();
+            });
+        ImGui::NewLine();
+    }
+
     ImGui::End();
 }
 
 void EditorApp::DrawEntityListWindow()
 {
     ImGui::Begin("Entities");
+
+    // Which resident world the panels below describe. Only drawn once a second
+    // world exists.
+    DrawWorldSelector();
+
+    // Every control that mutates the scene is dead while a non-edited world is
+    // shown: those are inspect-only, since the undo history and Save bind to the
+    // edited world alone.
+    ImGui::BeginDisabled(!IsEditable());
 
     // + adds a new (empty) entity in front of the camera and selects it, and asks
     // the list to scroll to its row below so the new entity comes into view.
@@ -383,6 +568,7 @@ void EditorApp::DrawEntityListWindow()
     }
     ImGui::SameLine();
     ImGui::TextDisabled("add / delete entity");
+    ImGui::EndDisabled();
     ImGui::Separator();
 
     // Every alive entity, one selectable row. A single click selects it (the

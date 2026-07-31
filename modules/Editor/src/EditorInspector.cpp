@@ -562,15 +562,15 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
         const auto *rbc  = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity);
         const auto *desc = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
         if (tc && rbc)
-            _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
+            _physics->SetBodyTransform(*rbc, tc->position, tc->rotation);
         if (rbc && desc)
         {
-            _physics.ReshapeBody(*rbc, Assisi::Physics::PhysicsWorld::ColliderShapeDesc{
-                                           .shape       = desc->shape,
-                                           .halfExtents = desc->halfExtents,
-                                           .radius      = desc->radius,
-                                           .halfHeight  = desc->halfHeight});
-            _physics.SetBodyCCD(*rbc, desc->enableCCD);
+            _physics->ReshapeBody(*rbc, Assisi::Physics::PhysicsWorld::ColliderShapeDesc{
+                                            .shape       = desc->shape,
+                                            .halfExtents = desc->halfExtents,
+                                            .radius      = desc->radius,
+                                            .halfHeight  = desc->halfHeight});
+            _physics->SetBodyCCD(*rbc, desc->enableCCD);
         }
     }
 
@@ -581,35 +581,82 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
     // while an Inspector widget is the one being manipulated.
     const bool nowDragging =
         ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows);
-    if (nowDragging != _wasDragging)
-    {
-        const auto *rbc =
-            (_selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity))
-                ? _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity)
-                : nullptr;
+    if (nowDragging)
+        RequestPhysicsFreeze(); // the release is handled at end of frame, not here
+}
 
-        if (rbc)
-        {
-            if (nowDragging)
-            {
-                _physics.SetBodyMotionType(*rbc, Assisi::Physics::BodyMotion::Static);
-            }
-            else
-            {
-                const auto *desc     = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity);
-                const bool  isStatic = desc && desc->isStatic;
-                _physics.SetBodyMotionType(*rbc, isStatic ? Assisi::Physics::BodyMotion::Static
-                                                          : Assisi::Physics::BodyMotion::Dynamic);
-                if (!isStatic)
-                {
-                    const auto *tc = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity);
-                    if (tc)
-                        _physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
-                }
-            }
-        }
+void EditorApp::RequestPhysicsFreeze()
+{
+    // Raise the request every frame the gesture is held. OnImGui thaws whatever is
+    // frozen on the first frame this is *not* raised, so the release survives the
+    // caller not running at all (nothing selected, entity destroyed mid-drag, the
+    // world selector moved to an inspect-only world).
+    _physicsFreezeRequested = true;
+
+    if (_frozenBodyEntity == _selectedEntity)
+        return; // already held, nothing to do
+
+    // Selection moved while a gesture was live: the previous body must be released
+    // before this one is taken, or it stays Static with a descriptor that still
+    // says dynamic — a body stuck in mid-air that nothing in the UI explains.
+    if (_frozenBodyEntity != Assisi::ECS::NullEntity)
+        ThawEditedBody();
+
+    // Everything below goes through _world rather than the _scene/_physics
+    // shortcuts, so the hold is taken out of exactly the world the release will
+    // look up by name. They track the same world today; not depending on that is
+    // cheaper than the class of bug it would otherwise invite.
+    if (_world == nullptr || _selectedEntity == Assisi::ECS::NullEntity ||
+        !_world->scene.IsAlive(_selectedEntity))
+        return;
+
+    const auto *rbc = _world->scene.Get<Assisi::Physics::RigidBody>(_selectedEntity);
+    if (rbc == nullptr)
+        return; // nothing to hold; a body added mid-gesture is picked up next frame
+
+    _world->physics.SetBodyMotionType(*rbc, Assisi::Physics::BodyMotion::Static);
+    _frozenBodyEntity = _selectedEntity;
+    _frozenBodyWorld  = _world->name;
+}
+
+void EditorApp::ThawEditedBody()
+{
+    if (_frozenBodyEntity == Assisi::ECS::NullEntity)
+        return;
+
+    const Assisi::ECS::Entity entity = _frozenBodyEntity;
+    const std::string         worldName = _frozenBodyWorld;
+
+    // Cleared up front: every path below returns having released the freeze, and
+    // the ones that bail (world gone, entity destroyed) must not leave a record
+    // pointing at something that no longer exists.
+    _frozenBodyEntity = Assisi::ECS::NullEntity;
+    _frozenBodyWorld.clear();
+
+    // By name, not by the app's current _scene/_physics: the viewed world can have
+    // changed since the freeze, and thawing against the wrong world would leave
+    // the real body frozen while poking an unrelated one.
+    Assisi::App::World *world = _worlds.Find(worldName);
+    if (world == nullptr || !world->scene.IsAlive(entity))
+        return; // world or entity is gone; its body went with it
+
+    const auto *rbc = world->scene.Get<Assisi::Physics::RigidBody>(entity);
+    if (rbc == nullptr)
+        return; // collider removed during the drag
+
+    // Back to whatever the descriptor authored, not unconditionally Dynamic — the
+    // freeze must be invisible, including for bodies that were Static all along.
+    const auto *desc     = world->scene.Get<Assisi::Physics::RigidBodyDescriptor>(entity);
+    const bool  isStatic = desc && desc->isStatic;
+    world->physics.SetBodyMotionType(*rbc, isStatic ? Assisi::Physics::BodyMotion::Static
+                                                    : Assisi::Physics::BodyMotion::Dynamic);
+    if (!isStatic)
+    {
+        // Land the body on wherever the drag left the Transform, so it resumes
+        // simulating from the pose the author sees rather than the pre-drag one.
+        if (const auto *tc = world->scene.Get<Assisi::Runtime::Transform>(entity))
+            world->physics.SetBodyTransform(*rbc, tc->position, tc->rotation);
     }
-    _wasDragging = nowDragging;
 }
 
 void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMeta &meta)
@@ -665,7 +712,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         if (tc != nullptr && desc != nullptr &&
             _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) == nullptr)
         {
-            _physics.AddBodyFromDescriptor(*_scene, _selectedEntity, *tc, *desc);
+            _physics->AddBodyFromDescriptor(*_scene, _selectedEntity, *tc, *desc);
         }
     }
 
@@ -700,7 +747,7 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
         {
-            _physics.RemoveBody(*rbc);
+            _physics->RemoveBody(*rbc);
         }
         _scene->Remove<Assisi::Physics::RigidBody>(_selectedEntity);
     }
@@ -724,6 +771,12 @@ void EditorApp::DrawInspector()
         ImGui::End();
         return;
     }
+
+    // A non-edited resident world is inspect-only: its fields read, none of them
+    // write. Blanket-disabling the whole panel is deliberate — an edit here could
+    // not be captured (the histories bind the edited world) nor saved.
+    const bool editable = IsEditable();
+    ImGui::BeginDisabled(!editable);
 
     ImGui::Text("Entity [%u:%u]", _selectedEntity.index, _selectedEntity.generation);
 
@@ -850,7 +903,7 @@ void EditorApp::DrawInspector()
     {
         if (ImGui::CollapsingHeader("RigidBody (runtime)", ImGuiTreeNodeFlags_DefaultOpen))
         {
-            const auto [linearVelocity, angularVelocity] = _physics.GetBodyVelocity(*rbc);
+            const auto [linearVelocity, angularVelocity] = _physics->GetBodyVelocity(*rbc);
             // %f takes a double through varargs, so each float is promoted anyway —
             // the casts just make the promotion explicit rather than implicit.
             ImGui::Text("Linear  (m/s):   %.3f, %.3f, %.3f", static_cast<double>(linearVelocity.x),
@@ -858,7 +911,7 @@ void EditorApp::DrawInspector()
             ImGui::Text("Angular (rad/s): %.3f, %.3f, %.3f", static_cast<double>(angularVelocity.x),
                         static_cast<double>(angularVelocity.y), static_cast<double>(angularVelocity.z));
             ImGui::Text("Speed:  %.3f m/s", static_cast<double>(glm::length(linearVelocity)));
-            ImGui::Text("CCD:    %s", _physics.IsBodyCCDEnabled(*rbc) ? "LinearCast (on)" : "Discrete (off)");
+            ImGui::Text("CCD:    %s", _physics->IsBodyCCDEnabled(*rbc) ? "LinearCast (on)" : "Discrete (off)");
         }
     }
 
@@ -1000,7 +1053,11 @@ void EditorApp::DrawInspector()
     if (ImGui::IsAnyItemActive() && ImGui::IsWindowFocused(ImGuiFocusedFlags_RootAndChildWindows))
         _captureEditingActive = true;
 
-    HandlePhysicsEditing(anyFieldEdited);
+    ImGui::EndDisabled();
+    if (editable)
+    {
+        HandlePhysicsEditing(anyFieldEdited);
+    }
     ImGui::End();
 }
 

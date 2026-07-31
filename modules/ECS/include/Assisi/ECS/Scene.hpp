@@ -212,6 +212,28 @@ struct Scene
         return ChangeTick<T>(entity) > sinceTick;
     }
 
+    /// @brief How many entities in this scene carry the component with @p id.
+    ///
+    /// By ComponentId rather than static type so a caller holding only a runtime
+    /// id can ask — notably the system registry's activation gate, which decides
+    /// whether a system has anything to do before calling it
+    /// (docs/world-system-binding-design-notes.md §5). Cheap by construction:
+    /// ids index a bounds-checked array, so this is two loads and a compare, with
+    /// no hashing and no iteration.
+    ///
+    /// A component never added to this scene has no pool and reports 0 — which is
+    /// the same answer as an emptied pool, deliberately, since "nothing to do"
+    /// covers both. Note this counts entities queued for destruction too (they
+    /// leave their pools at FlushDestroyed), so a gate can be one frame late to
+    /// close. That over-runs a system rather than skipping one, which is the safe
+    /// direction.
+    [[nodiscard]] std::size_t ComponentCount(Core::Reflect::ComponentId id) const
+    {
+        if (id >= _pools.size() || !_pools[id].pool || !_pools[id].size)
+            return 0;
+        return _pools[id].size(_pools[id].pool);
+    }
+
     /// @brief Marks the entity's component changed by ComponentId rather than
     /// static type — for generic reflected writers (e.g. the inspector edits a
     /// component through its field offsets, with no compile-time T). No-op for
@@ -301,6 +323,7 @@ struct Scene
         void (*clear)(void *pool)                           = nullptr;
         void (*destroy)(void *pool)                         = nullptr;
         void (*stamp)(void *pool, Entity entity, uint64_t tick) = nullptr; // null unless the pool is tracked
+        std::size_t (*size)(const void *pool)               = nullptr;
     };
 
     template <typename T> static void RemoveFn(void *pool, Entity entity)
@@ -315,6 +338,11 @@ struct Scene
     template <typename T> static void StampFn(void *pool, Entity entity, uint64_t tick)
     {
         static_cast<SparseSet<T> *>(pool)->Stamp(entity, tick);
+    }
+
+    template <typename T> static std::size_t SizeFn(const void *pool)
+    {
+        return static_cast<const SparseSet<T> *>(pool)->Size();
     }
 
     /// @brief Returns a pointer to the pool for T, or nullptr if it has never
@@ -348,7 +376,7 @@ struct Scene
         {
             auto *pool = new SparseSet<T>();
             _registry.RegisterPool(pool);
-            slot = PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>, nullptr};
+            slot = PoolStorage{pool, &RemoveFn<T>, &ClearFn<T>, &DestroyFn<T>, nullptr, &SizeFn<T>};
 
             // Wire change detection for ACOMP(tracked) types. The registry is
             // finalized by the time a component is first added at runtime, so the

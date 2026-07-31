@@ -71,7 +71,35 @@ class Texture
 
     /// @brief Create the GPU texture and upload a decoded mip chain — the
     /// main-thread half (device work). Pairs with DecodeImage.
-    void UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName = nullptr);
+    ///
+    /// When @p sharedList is non-null the upload is *recorded* into that already-open
+    /// command list and NOT executed — the caller batches many uploads into one
+    /// command list and submits it once (see AssetCache's shared upload list), which
+    /// avoids a fresh command list + staging allocation + queue submit per texture.
+    /// When null (the synchronous convenience path) a private command list is
+    /// created, recorded, closed, and executed here as before.
+    void UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName = nullptr,
+                       nvrhi::ICommandList *sharedList = nullptr);
+
+    /// @brief Create the GPU texture object for a decoded image — no upload recorded.
+    /// Free-threaded (nvrhi createTexture is: vkCreateImage + a per-resource memory
+    /// allocation, both internally synchronized), so a decode worker can create the
+    /// target while the main thread only adopts it later (see streaming P1). Pair
+    /// with RecordMips into a command list, then Adopt on the main thread.
+    static nvrhi::TextureHandle CreateImage(nvrhi::IDevice *device, const DecodedImage &image,
+                                            const char *debugName = nullptr);
+
+    /// @brief Record @p image's mip uploads into @p commandList, targeting @p texture
+    /// (from CreateImage). This is where the staging memcpy happens, so recording it
+    /// on a worker moves that cost off the main thread. The command list must be open;
+    /// the caller closes and executes it (submission stays on the main thread).
+    /// Free-threaded per-command-list (each worker records into its own list).
+    static void RecordMips(nvrhi::ICommandList *commandList, nvrhi::ITexture *texture, const DecodedImage &image);
+
+    /// @brief Adopt an already-created GPU texture (from CreateImage) as this
+    /// texture's backing image — the main-thread publish half of the worker-recorded
+    /// upload path. The pixels are uploaded when the worker's command list executes.
+    void Adopt(nvrhi::TextureHandle texture) { _texture = std::move(texture); }
 
     /// @brief Loads an image from a virtual asset path (via stb_image) and uploads it.
     /// Synchronous convenience = DecodeImage + UploadDecoded on the calling thread;
@@ -88,10 +116,11 @@ class Texture
                                                                   ColorSpace colorSpace = ColorSpace::Srgb) noexcept;
 
     /// @brief Uploads a solid 1x1 color — used for default/placeholder textures.
-    /// Single mip level (nothing to downsample).
+    /// Single mip level (nothing to downsample). @p sharedList batches the upload
+    /// like UploadDecoded (null = self-contained, execute here).
     void UploadSolidColor(nvrhi::IDevice *device, unsigned char r, unsigned char g, unsigned char b,
                           unsigned char a, ColorSpace colorSpace = ColorSpace::Srgb,
-                          const char *debugName = nullptr);
+                          const char *debugName = nullptr, nvrhi::ICommandList *sharedList = nullptr);
 
     nvrhi::ITexture *NativeTexture() const { return _texture; }
     bool IsValid() const { return _texture != nullptr; }
