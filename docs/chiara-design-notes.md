@@ -1,9 +1,11 @@
 # Chiara — performance and memory capture (design notes)
 
-**Status:** Planned 2026-07-31, branch `Chiara`. Nothing built yet; this is the
-plan settled before any code, and stage 0 is writing it down.
+**Status:** Planned 2026-07-31, branch `Chiara`. Stage 0 (this document) is the
+only thing built. Everything below is settled before code, deliberately — the
+previous thread on this branch was abandoned because its design changed three
+times mid-implementation.
 
-Supersedes `frame-profiler-design-notes.md` (see §11) and discharges the
+Supersedes `frame-profiler-design-notes.md` (see §12) and discharges the
 "instrumentation is temporary" debt recorded in `streaming-upload-perf-plan.md`.
 
 Named for Clare of Assisi — patron saint of television, because she reportedly
@@ -15,11 +17,8 @@ something you already missed is the whole job.
 The streaming-spike hunt (2026-07-24) was won with instrumentation that was
 never meant to survive it: `Log::Info` calls with hard-coded thresholds in
 `Application::Run`, `Application::RenderFrame`, `VulkanContext`, and
-`AssetCache::PumpPublishes`. They were decisive — they overturned two wrong
-hypotheses and found a cause nothing else would have — and they are scattered,
-always-on, and answer only the question they were cut for. The plan doc that
-introduced them says so outright: they are "to be **removed and replaced by a
-proper performance and memory capture system**."
+`AssetCache::PumpPublishes`. They were decisive, and they are scattered,
+always-on, and answer only the question they were cut for.
 
 Three things made them work, and any replacement that loses one is a
 regression:
@@ -30,48 +29,64 @@ regression:
   ruled out — a *negative* result that saved building the wrong fix.
 - **Deferred-cost visibility.** GPU allocation churn caused in frame N surfaced
   as `runGarbageCollection` cost in a later, unrelated frame. "Neither cost is
-  paid where it is caused" is the sentence the whole design has to answer.
+  paid where it is caused" is the sentence the whole design must answer.
 
 ## 1. Decision
 
-**Chiara is a capture pipeline, not a viewer.** Instrumented code emits fixed
-size binary events into per-thread ring buffers; on demand, a background job
-serializes a recent window to a Chrome JSON trace file; the user opens it in
-**Perfetto** (ui.perfetto.dev). We write no timeline UI. Perfetto is a mature
-local-only trace viewer with zoomable per-thread tracks, counter graphs and
-flow arrows — every display feature the deferred frame-profiler notes wanted,
-none of it ours to build or maintain.
+**Chiara is a capture pipeline. We write no viewer and integrate no profiler.**
 
-The format is a detail we own. If Perfetto ever falls short, the binary event
-model is unchanged and we add a second exporter.
+Instrumented code pushes fixed-size binary events into per-thread ring buffers.
+On demand, a background job serializes a recent window to a trace file. The
+file opens in **Perfetto** (ui.perfetto.dev) — and, because Tracy ships
+`tracy-import-chrome`, in **Tracy** as well. One exporter, two viewers.
+
+That second viewer matters: Perfetto has no capture-diff, and Tracy's Compare
+window does exactly that. We get it without linking Tracy into the engine.
+
+**Nothing third-party goes in the process.** Verified reason, not preference:
+Perfetto's own SDK costs **285–630 ns per event** because it serializes
+protobuf at the call site; Tracy's client is **2.25 ns per zone** because it
+stores a packed POD into a thread-local queue. Our binary-into-a-ring design is
+the second shape and lands near it. Using the Perfetto SDK for convenience
+would break the performance-first rule outright.
 
 **Compiled out unless asked, on every configuration.** `ASSISI_ENABLE_CHIARA`
-defaults **OFF** for debug, dev and ship alike. Every make alias gains a `-c`
-variant (`gd-c`, `gv-c`, `gs-c`, …) that builds the same configuration with
-Chiara compiled in. This matters more than a config-keyed rule would: the
-build worth profiling is the *optimized* one — the streaming hunt's central
-methodological finding was that ~95% of a 66 ms spike was a `-O0` artifact —
-so `make gs-c` (ship + capture) has to be a first-class combination, not a
-workaround.
+defaults **OFF** for debug, dev and ship alike; every make alias gains a `-c`
+variant (`gd-c`, `gv-c`, `gs-c`, …). This matters more than a config-keyed rule
+would: the build worth profiling is the *optimized* one — the streaming hunt's
+central methodological finding was that ~95% of a 66 ms spike was a `-O0`
+artifact — so `make gs-c` has to be first-class.
+
+### Why not Tracy as the profiler
+
+Tracy is better than Perfetto at nearly everything on our list: frame-native
+UI, Find Zone, Statistics, capture comparison, memory with callstacks,
+calibrated Vulkan GPU zones. It loses on exactly one thing, and it is our
+centerpiece: **Tracy has no flow events.** Issue #149 has been open since
+2020-12-17 with no activity since 2022, and the maintainer's stated reason is
+architectural (thread-local queues would need serializing; zone culling breaks
+arrow drawing). Its fibers feature gives a fiber its own lane, not a causal
+link.
+
+Requirement "deferred cost across frames" eliminates every tool except
+Perfetto. That single requirement is what carries this decision — if a year of
+use shows deferred-cost attribution is a once-a-quarter question rather than a
+daily one, switching to Tracy's client becomes the right call.
 
 ## 2. Placement — a module below Core
 
 `modules/Chiara`, added before `modules/Core`, linked **PUBLIC by Core**.
 
-The macro has to be callable from Render, Physics, App — and from Core itself:
+The macro must be callable from Render, Physics, App — and from Core itself:
 `JobSystem::WorkerLoop` is the only place worker-thread identity exists, so it
-must register threads with Chiara. That forces Core → Chiara, and rules out
-putting the collector inside Core.
+must register threads with Chiara. That forces Core → Chiara.
 
-Chiara links **nothing** — standard library only. The event core needs
-`<atomic>`, `<chrono>`, `<thread>`, `<mutex>`; the serializer is flat enough
-for `std::format` and does not want nlohmann. A module with no dependencies
+Chiara links **nothing** — standard library only. A module with no dependencies
 can never be dragged up the stack by one.
 
-Everything that does need the upper layers is glue, and lives where its
-dependencies are: frame-loop scopes and the counter pump in App, the capture
-panel in App (so games get it too, which is the reasoning the old frame
-profiler notes applied to its widget), call-site scopes in each module.
+Glue lives where its dependencies are: frame-loop scopes and the counter pump
+in App, the capture panel in App (so games get it too), call-site scopes in
+each module.
 
     Chiara → Core / Math → Window / Geometry → Render → ECS → Runtime
                          → Physics / Debug → App → Editor → sandbox
@@ -96,31 +111,28 @@ modules/Chiara/
 
 `option(ASSISI_ENABLE_CHIARA "Compile the Chiara capture system in" OFF)`, and
 when ON, `target_compile_definitions(Assisi-Chiara PUBLIC ASSISI_CHIARA_ENABLED=1)`.
-A plain option, deliberately not a `$<CONFIG>` generator expression — the
-configuration and the capture decision are independent.
+A plain option, deliberately not a `$<CONFIG>` genexp — configuration and
+capture are independent decisions.
 
 Nine configure presets `{msvc,gcc,clang}-{debug,dev,ship}-chiara`, each
 inheriting its base and flipping the cache variable, with mirrored build and
-test presets. This follows the sanitizer presets exactly (`gcc-asan` inherits
-`gcc-debug`), and the reason is the same: a separate build directory. The
-define is PUBLIC, so toggling it in place would rebuild the world on every
-flip; separate directories make switching free, and the FetchContent cache is
-shared across them anyway.
+test presets. This copies the sanitizer presets exactly (`gcc-asan` inherits
+`gcc-debug`), for the same reason: a separate build directory. The define is
+PUBLIC, so toggling it in place would rebuild the world on every flip.
 
 The Makefile gains `-c` variants of every alias, configure-and-build in one
 step like the sanitizer targets.
 
-**Excision when OFF** — the whole of `Chiara.cpp` and `Serializer.cpp` sits
-inside `#if defined(ASSISI_CHIARA_ENABLED)`, and the macros expand to the
-`Assert.hpp` house pattern:
+**Excision when OFF** — both .cpp files sit entirely inside
+`#if defined(ASSISI_CHIARA_ENABLED)`, and the macros use the `Assert.hpp` house
+pattern:
 
 ```cpp
 #define ASSISI_PROFILE_SCOPE(name) ((void)sizeof(name))
 ```
 
-Both operands sit under `sizeof`: parsed and type-checked, never evaluated, no
-code emitted. An instrumentation typo cannot bit-rot until someone next builds
-with `-c`.
+Parsed and type-checked, never evaluated, no code emitted. Instrumentation
+cannot bit-rot until someone next builds with `-c`.
 
 There is no compiled-in-but-disabled *build*. Runtime enable/disable within a
 Chiara build is a different thing and does exist — one relaxed atomic load.
@@ -131,6 +143,8 @@ Chiara build is a different thing and does exist — one relaxed atomic load.
 // Profile.hpp — what call sites use
 ASSISI_PROFILE_SCOPE("name")           // RAII scope; name is a literal or interned pointer
 ASSISI_PROFILE_FUNCTION()              // same, using __func__
+ASSISI_PROFILE_ARG_STR("key", str)     // context attached to the innermost open scope
+ASSISI_PROFILE_ARG_U64("key", value)
 ASSISI_PROFILE_COUNTER("group/name", v)
 ASSISI_PROFILE_FLOW_BEGIN("name", id)  // deferred-cost linkage — see §7
 ASSISI_PROFILE_FLOW_END("name", id)
@@ -146,210 +160,260 @@ struct Config
     std::uint32_t otherThreadBufferBytes = 2u << 20;
 };
 
-void Initialize(const Config &config = {});  // idempotent; registers the caller as "main"; sets the epoch
-void Shutdown();                             // stops recording; buffers are not freed (§4)
+struct CaptureStats
+{
+    std::uint64_t totalEventsWritten = 0;
+    std::uint64_t bufferWrapCount    = 0;   // events lost to overwrite
+    std::uint32_t threadCount        = 0;
+    double        mainWindowSeconds  = 0.0; // span the main ring currently covers
+};
+
+void Initialize(const Config &config = {});   // idempotent; registers caller as "main"; starts recording
+void Shutdown();                              // stops recording; never frees (see §4)
 
 void SetRecording(bool enabled);
 [[nodiscard]] bool IsRecording();
 
-void RegisterCurrentThread(const char *name); // Chiara track name + OS thread name
+void RegisterCurrentThread(const char *name); // also sets the OS thread name
 
-std::uint64_t MarkFrame();                    // ++frame id, emits FrameMark
+std::uint64_t MarkFrame();                    // main thread only; returns the new frame index
 [[nodiscard]] std::uint64_t CurrentFrame();
 
-[[nodiscard]] const char *InternString(std::string_view text); // for dynamic names; mutex-guarded, cache the result
+[[nodiscard]] const char *InternString(std::string_view text); // cache the result; never per frame
 [[nodiscard]] std::uint64_t NewFlowId();                       // never returns 0
 
 void EmitCounter(const char *name, double value);
+void EmitArgString(const char *key, std::string_view value);
+void EmitArgU64(const char *key, std::uint64_t value);
 void EmitFlowBegin(const char *name, std::uint64_t flowId);
 void EmitFlowEnd(const char *name, std::uint64_t flowId);
 
-class ScopeTimer
-{
-  public:
-    explicit ScopeTimer(const char *name);
-    ~ScopeTimer();
-    ScopeTimer(const ScopeTimer &) = delete;
-    ScopeTimer &operator=(const ScopeTimer &) = delete;
-  private:
-    const char   *_name;
-    std::uint64_t _startNs;  // 0 means disarmed — recording was off at entry
-};
+/// Async spans for work that starts on one thread and finishes on another —
+/// job continuations, streaming loads. Distinct from ScopeTimer because these
+/// are NOT stack-disciplined; forcing them into a thread's scope stack is a
+/// mistake every profiler that tried it had to undo.
+std::uint64_t BeginAsync(const char *name);
+void EndAsync(const char *name, std::uint64_t asyncId);
 
-struct CaptureStats
-{
-    std::uint64_t totalEventsWritten;
-    std::uint64_t bufferWrapCount;
-    std::uint32_t threadCount;
-    double        mainWindowSeconds;  // time span currently held in the main ring
-};
 [[nodiscard]] CaptureStats GetCaptureStats();
+
+class ScopeTimer { /* see §4 — complete event written at destruction */ };
+class InitGuard  { /* Initialize on construct, Shutdown on destruct */ };
 }
 ```
 
 Every function gets an inline empty stub in the `#else` branch, so glue code
 never needs an `#ifdef`.
 
-**Clock:** `steady_clock`, stored as `uint64_t` nanoseconds since `Initialize`.
-Every existing timing site already uses it, and the vDSO `clock_gettime` is
-~20–25 ns. rdtsc would save maybe 15 ns per read and cost calibration and
-cross-core validity worries; not worth it.
-
-**Cost, stated rather than hidden** (the self-measurement caveat inherited from
-the old notes): while recording, roughly **60–90 ns per scope** — two clock
-reads, one relaxed load, one 32-byte store, one cursor bump. A heavy main
-thread frame at ~350 events is ~25–30 µs, under 0.2% of a 16 ms frame. Not
-recording: one relaxed load and a branch at construction, nothing at
-destruction.
-
 ## 4. Event model
 
 ```cpp
-enum class EventType : std::uint16_t
+enum class EventType : std::uint8_t
 {
-    Scope = 0,      // timestampNs = begin; payload = duration ns
+    Scope = 0,      // timestampTicks = begin; payload = duration in ticks
     Counter = 1,    // payload = bit_cast<uint64_t>(double)
     FlowBegin = 2,  // payload = flow id
     FlowEnd = 3,
     FrameMark = 4,  // payload = frame index
-    Instant = 5,    // reserved
+    ArgString = 5,  // payload = interned string pointer/id; binds to enclosing scope
+    ArgU64 = 6,     // payload = the value
+    AsyncBegin = 7, // payload = async id
+    AsyncEnd = 8,
+    ClockSnapshot = 9, // payload = CLOCK_MONOTONIC_RAW ns matching timestampTicks
+    Instant = 10,
 };
 
 struct Event
 {
-    std::uint64_t timestampNs;
+    std::uint64_t timestampTicks; // raw TSC; converted at serialize time
     std::uint64_t payload;
-    const char   *name;      // interned; resolved only at serialize time
-    std::uint16_t type;
-    std::uint16_t reserved0;
-    std::uint32_t reserved1;
+    const char   *name;           // interned; dereferenced only when serializing
+    std::uint8_t  type;
+    std::uint8_t  reserved0;
+    std::uint16_t reserved1;
+    std::uint32_t reserved2;
 };
 static_assert(sizeof(Event) == 32);
 ```
 
-**Scopes are one event, written at destruction** — begin plus duration, which
-is Chrome's `ph:"X"` complete event. Half the pushes of a begin/end pair, and
-it handles the engine's help-waiting for free: when `Task::Wait` runs other
-tasks inline, the inner scopes are wall-clock-contained inside the waiting
-scope, which is exactly what a complete-event nesting renders. The truth is
-that the thread really did do that work inside that window.
+**Raw TSC ticks, converted at dump.** Cheaper per event than `steady_clock`,
+and it is what the eventual FTF export wants natively (§6). Use bare `rdtsc`
+with no fence, gated on invariant-TSC CPUID bits, `CNTVCT_EL0` on ARM64, with
+`clock_gettime(CLOCK_MONOTONIC_RAW)` as a compile-time fallback. On ARM do
+**not** read `CNTFRQ_EL0` — it can report the wrong frequency; calibrate
+against `clock_gettime` instead.
 
-Events therefore land ordered by *end* time. The Chrome format does not
-require sorted input; Perfetto sorts on import.
+**Clock snapshots** pairing TSC with `CLOCK_MONOTONIC_RAW`, emitted ~1 Hz.
+Free, and the only way GPU timestamps and OS traces stay correlatable later.
+`MONOTONIC_RAW` specifically: NTP adjusting the host clock is a documented
+cause of CPU/GPU drift in other profilers.
 
-**Names are interned pointers, never copied.** Macro sites pass string
-literals, whose lifetime is the program. Dynamic names (asset paths) go
-through `InternString` once and get cached by the caller — never per frame.
-The serializer is the only thing that dereferences a name.
+**Scopes are one event, written at destruction** — begin plus duration. Half
+the pushes of a begin/end pair, and it handles help-waiting for free: when
+`Task::Wait` runs other tasks inline, the inner scopes are wall-clock-contained
+inside the waiting scope, which is what a complete-event nesting renders, and
+it is the truth.
+
+The known cost of complete events is that a scope still open at dump time
+produces nothing — the hang case. Handled by a **live shadow stack** per
+thread (depth, name, begin tick) kept *outside* the ring; at serialize time it
+is walked and synthesized into "still open at window end" slices. That gets the
+hang case without doubling every event.
+
+**Context goes in args, never in the name.** The name is the aggregation key —
+`publish-mesh` — and the asset path is an `ArgString` bound to it. Folding the
+path into the name shatters cross-frame aggregation into thousands of singleton
+buckets, which is the single most common way this kind of system is ruined.
+It is also what makes "click a slice, see the asset" work in Perfetto with no
+custom tooling.
+
+**Names are interned pointers, never copied.** Macro sites pass literals, whose
+lifetime is the program. Dynamic names go through `InternString` once and are
+cached by the caller.
 
 **Per-thread rings, single-producer.** A `thread_local ThreadBuffer *`, a
-power-of-two event array, and a monotonic write cursor incremented with
-release *after* the slot store. The registry (thread list, names) is
-mutex-guarded; the emit path takes no lock. First emit from an unregistered
-thread auto-registers it as `thread-<n>` — that is how a Jolt worker or the
-NVML thread would appear if it ever emits.
+power-of-two event array, a monotonic write cursor incremented with release
+*after* the slot store. The registry is mutex-guarded; the emit path takes no
+lock. First emit from an unregistered thread auto-registers it as `thread-<n>`.
 
-**Drop policy: overwrite oldest.** The spike being chased is always the recent
-one. Wrapping is counted and the per-ring coverage window is reported in
-`CaptureStats` and shown in the panel, so a too-small buffer is visible rather
-than silently truncating history.
+Fixed-size records are why per-event overwrite is safe here: there is no
+variable-length framing to tear, unlike the chunked formats (LTTng, Perfetto)
+whose designs require chunk-granularity overwrite.
+
+**Drop policy: overwrite oldest.** The spike being chased is the recent one.
+Wrapping is counted and per-ring coverage is reported in `CaptureStats`, so a
+too-small buffer is visible rather than silently truncating history.
 
 **Sizing.** 32 MiB main ring = 1,048,576 events. At a heavy ~350 events/frame:
-~21 s at 144 fps, ~55 s at 60 fps. Workers emit little in v1, so 2 MiB is
-hours. Fifteen workers plus main is ~62 MiB — acceptable in a build you opted
-into, and both numbers are in `Config`.
+~21 s at 144 fps, ~55 s at 60 fps. Fifteen workers at 2 MiB each is hours.
+Both numbers are in `Config`. Perfetto's rule of thumb generalizes:
+`window_seconds = buffer_bytes / write_rate`.
 
-**Buffers and the intern table are never freed.** The standard profiler
-pattern, and it makes late-thread teardown ordering (Jolt's pool, the NVML
-worker, static destructors) a non-issue. `Shutdown()` only stops recording.
+**Buffers and the intern table are never freed.** Standard profiler pattern; it
+makes late-thread teardown ordering (Jolt's pool, the NVML worker, static
+destructors) a non-issue. `Shutdown()` only stops recording. Keep the string
+table in a non-wrapping arena so interning is never evicted.
 
 ## 5. Capture model — always recording, dump the last N
 
-Recording starts at `Initialize` and runs continuously. This is settled by the
-use case: by the time you have decided the thing is worth recording, the spike
-already happened. The panel offers *dump the last 5 s / 15 s / everything*,
-plus a pause toggle for A/B experiments. Explicit start/stop is the same
-mechanism and needs no extra API.
+Recording starts at `Initialize` and runs continuously. By the time you decide
+something is worth recording, the spike already happened. The panel offers
+*dump the last 5 s / 15 s / everything*, plus a pause toggle for A/B
+experiments; explicit start/stop is the same mechanism and needs no extra API.
 
-`SerializeCapture(path, lastSeconds)` pauses recording, walks each thread's
-ring newest-first within the window, streams JSON through a buffered
-`ofstream` (no whole-file string in RAM), resumes recording, and returns
-counts. It runs on a JobSystem worker with a `Then(Main, …)` continuation for
-the panel's status, so the frame never hitches on a dump. Capture is blind
-while it writes; acceptable, because a dump happens after the interesting part.
+`SerializeCapture(path, lastSeconds)` pauses recording, walks each ring within
+the window, streams the trace through a buffered `ofstream`, resumes, and
+returns counts. It runs on a JobSystem worker with a `Then(Main, …)`
+continuation for panel status, so the frame never hitches on a dump. Capture is
+blind while it writes — acceptable, because a dump happens after the
+interesting part. A thread mid-push when the cursor is sampled can complete at
+most one straggler past the observed cursor; it is not read.
 
-A thread mid-push when the cursor is sampled can complete at most one straggler
-event past the observed cursor; it simply isn't read.
+## 6. Export format
 
-## 6. Perfetto mapping — Chrome JSON
+**Chrome JSON in v1. Fuchsia Trace Format (FTF) when size hurts. Never
+protobuf.**
 
-The Chrome trace event format, for v1: trivially writable with `std::format`,
-zero dependencies, and Perfetto opens it natively including counters and flow
-arrows. All events use `pid` 1.
+- **Chrome JSON** — ~150 lines to write, zero risk, documented by Perfetto as
+  supporting flow events as connecting arrows, and read by the widest set of
+  tools (Perfetto, Tracy via `tracy-import-chrome`, Firefox Profiler, others).
+  ~120 bytes/event: a 10 s dump is 20–50 MB, a full ring 130–150 MB, within
+  Perfetto's browser budget — and `trace_processor server http trace.json`
+  removes even that ceiling.
+- **FTF** is the natural second exporter and is close to the binary format we
+  were going to invent anyway: 64-bit words, interned strings, flows, counters,
+  typed args, and an initialization record carrying `ticks_per_second` — so
+  **raw TSC ticks go out with no conversion pass**. 3–5× smaller. Perfetto
+  auto-detects it by magic bytes; Tracy imports it too (dropping flows).
+  Caps to know: 32,767 interned strings, 255 table-indexed threads.
+- **Protobuf is rejected.** The reason anyone would reach for it — Perfetto's
+  real frame-timeline UI — is **Android-only**: `frame_timeline_event.proto`
+  requires SurfaceFlinger display-frame tokens, layer names, and Choreographer
+  jank classifications. A desktop app cannot get it, and switching formats does
+  not change that. Protobuf is also the hardest to hand-roll.
+
+Frame-shaped analysis is served by ordinary slices named `Frame` plus
+Perfetto's SQL, which works identically from JSON and FTF.
+
+### Mapping (Chrome JSON)
 
 | Chiara | JSON |
 | --- | --- |
 | File | `{"displayTimeUnit":"ms","traceEvents":[…]}` |
-| Metadata | `ph:"M"` `process_name` = "Assisi"; per thread `thread_name`, plus `thread_sort_index` so main pins to the top |
-| Scope | `ph:"X"` with `ts`/`dur` in fractional microseconds (three decimals keeps ns precision) |
-| Counter | `ph:"C"`, `args:{"v":…}`; names are `group/name` so Perfetto groups the tracks |
-| Flow | `ph:"s"` at the cause, `ph:"f"` with `bp:"e"` at the effect, both emitted inside their enclosing scopes so Perfetto binds them to those slices |
+| Metadata | `ph:"M"` `process_name`, per-thread `thread_name`, `thread_sort_index` (main first) |
+| Scope | `ph:"X"`, `ts`/`dur` in fractional µs (three decimals keeps ns precision) |
+| Args | folded into the owning `X` event's `args` object |
+| Counter | `ph:"C"`, `args:{"v":…}`; `group/name` groups the tracks |
+| Flow | `ph:"s"` at the cause, `ph:"f"` with `bp:"e"` at the effect, both inside their enclosing scopes |
+| Async | `ph:"b"`/`ph:"e"` with `id` |
 | Frame | `ph:"i"` instant plus a monotone `frame` counter |
 
-Frames are also delimited visually by the top-level `"Frame"` scope, which
-matters because Perfetto's dedicated frame-timeline UI is protobuf-only. That
-is the one thing given up by choosing JSON, and it is a fair trade.
-
-**Size.** ~120 bytes per event of JSON. A typical 10 s dump is 20–50 MB; a
-completely full ring is 130–150 MB, which Perfetto handles. If that ever hurts:
-Perfetto reads gzipped JSON, and the protobuf `TrackEvent` exporter is the
-designed second exporter — **neither needs a change to the binary event
-model**, which already carries stable tids, ns timestamps, interned names and
-flow ids.
-
 **Files** land in `captures/chiara-YYYYMMDD-HHMMSS.json` under the AssetSystem
-user root, following the precedent that per-user writable state is not asset
-content (`options.json`).
+user root (the `options.json` precedent: per-user writable state is not asset
+content).
+
+### What Perfetto actually gives us (verified)
+
+- **Worst frames, click-through.** `SELECT id, ts, dur FROM slice WHERE
+  name='Frame' ORDER BY dur DESC LIMIT 20` — query results including `id`
+  link into the timeline; clicking jumps to the slice.
+- **Self vs total time.** stdlib `slices.self_dur` → `slice_self_dur(id, self_dur)`.
+  Also `slices.hierarchy`, `slices.flat_slices`, `slices.with_context`.
+- **Flow traversal, not just arrows.** stdlib `slices.flow` exposes
+  `_slice_following_flow` — transitive reachability over the flow graph. "Given
+  these alloc slices in frame N, find everything downstream" is a query. The UI
+  draws only immediate neighbours; the chain lives in SQL.
+- **Area-selection aggregation** — drag the timeline, get a pivot table over
+  those tracks/timestamps. Still behind a feature flag in stable; press `p`.
+- **Debug tracks** — any SQL result with ts/dur/name becomes a timeline track,
+  optionally pivoted per distinct value. The cheap path to engine-aware views
+  without forking anything.
+- **Deep linking** — `postMessage` an ArrayBuffer plus `visStart`/`visEnd`/
+  `query`/`startupCommands` URL params. The engine could open a capture
+  pre-zoomed to the worst frame with our queries loaded.
+- **No capture diff.** Covered by Tracy's Compare window on the same file.
+  Secondary options: Trace Summarization metrics via
+  `trace_processor_shell summarize` for scripted regression detection, or
+  merging two traces onto one timeline.
+
+**Open spike (30 minutes, before committing to FTF):** hand-write ~20 FTF
+records with one flow and confirm the arrows render in ui.perfetto.dev. The
+parser is confirmed to handle `kFlowBegin/Step/End`; end-to-end UI rendering is
+not. Chrome JSON is the documented fallback and costs nothing.
 
 ## 7. Deferred cost — the GC case, end to end
 
-The centerpiece requirement. Flow events carry it.
+Flow events carry it. Each staging batch parked behind an `EventQuery` in
+`AssetCache` gains a `chiaraFlowId`. Parked inside frame N's `flush-uploads`
+scope — the *cause* — it emits `FLOW_BEGIN("staging-lifetime", id)`. Reclaimed
+in frame N+k inside `recycle-staging` — the *effect* — it emits `FLOW_END`.
+Perfetto draws the arrow. Same shape for an arena `Grow` to the frame whose
+submit retires it.
 
-Each staging batch parked behind an `EventQuery` in `AssetCache` gains a
-`chiaraFlowId`. When it is parked — inside frame N's `flush-uploads` scope,
-the *cause* — the code emits `FLOW_BEGIN("staging-lifetime", id)`. When it is
-reclaimed in frame N+k, inside that frame's `recycle-staging` scope, the
-*effect*, it emits `FLOW_END`. Perfetto draws an arrow from the frame that
-created the work to the frame that paid for its cleanup. The same shape
-applies to any deferred cost: an arena `Grow` to the frame whose submit
-retires it, a pooled command list to its recycle.
-
-**The honest limit.** nvrhi owns its garbage collection and does not tag
-resources per-caller, so Chiara cannot attribute *inside* `runGarbageCollection`.
-What it gives is the `gpu-gc` scope (when, and how much) and the flows
-terminating in or near that frame (what was in flight to release) — which is
-precisely the evidence chain the streaming investigation assembled by hand.
-Chiara automates that chain; it does not pretend to per-resource GC
-attribution.
+**The honest limit:** nvrhi owns its garbage collection and does not tag
+resources per caller, so Chiara cannot attribute *inside* `runGarbageCollection`.
+What it gives is the `gpu-gc` scope (when, how much) and the flows terminating
+near that frame (what was in flight) — precisely the evidence chain the
+streaming investigation assembled by hand.
 
 ## 8. Re-expressing what exists
 
 | Site | Disposition |
 | --- | --- |
-| `Application::Run` phase brackets | **Keep.** They compute `cpuMs` and the counters; reusing them is cheaper than reading back from scopes. Scopes are added alongside for the capture detail. |
-| Slow-frame `Log::Info` | **Shrink** to one line naming the frame id — "dump a capture for the breakdown". The thirteen-figure breakdown is deleted; it *is* the capture now. |
-| `_cpuHistory` / `_gpuHistory` / `_frameTimeHistory` + FPS rollup | **Keep, untouched.** They feed the F11 ImPlot graphs and the Diagnostics window, which remain the live at-a-glance view. Chiara is the deep dive, not a replacement for a glance. |
+| `Application::Run` phase brackets | **Keep.** They compute `cpuMs`; reusing them beats reading back from scopes. Scopes added alongside. |
+| Slow-frame `Log::Info` | **Shrink** to one line naming the frame id — "dump a capture for the breakdown". |
+| `_cpuHistory` / `_gpuHistory` / `_frameTimeHistory` + FPS rollup | **Keep, untouched.** They feed the F11 ImPlot graphs and Diagnostics window, which stay the live at-a-glance view. Chiara is the deep dive, not a replacement for a glance. |
 | `RenderPhaseTimings` struct + brackets | **Delete.** Replaced by scopes. |
-| `GetLastGpuWaitMs` + its three accumulation sites | **Keep** — the `cpuMs` formula and the graphs need it. Scopes added inside the waits. |
-| `_lastGcMs` / `GetLastGcMs` | **Delete.** Its only consumer was the slow-frame log; the `gpu-gc` scope and `render/gc-ms` counter replace it. |
-| `PumpPublishes` ≥2 ms log | **Delete**, re-expressed as always-on scopes and counters. This satisfies R5 of the streaming plan ("the pump diagnostic is the stability regression test's sensor"): the sensor survives, readable from a capture instead of scraped from a log. |
+| `GetLastGpuWaitMs` + 3 accumulation sites | **Keep** — the `cpuMs` formula and the graphs need it. Scopes added inside the waits. |
+| `_lastGcMs` / `GetLastGcMs` | **Delete.** Only consumer was the slow-frame log; `gpu-gc` scope + `render/gc-ms` counter replace it. |
+| `PumpPublishes` ≥2 ms log | **Delete**, re-expressed as always-on scopes and counters. This satisfies R5 of the streaming plan (the pump diagnostic is the regression sensor): the sensor survives, readable from a capture instead of scraped from a log. |
 
 Frame anatomy after integration:
 
 ```
 Frame                       (top-level scope; ASSISI_PROFILE_FRAME at loop top)
   input                     PollEvents + input poll
-  fixed-update              the whole substep loop — N substeps sum, as decided before
+  fixed-update              the whole substep loop — N substeps sum
   drain-main                JobSystem main queue
   update                    OnUpdate
   [pacing sleep]            unscoped: deliberate idle, excluded from cpuMs
@@ -361,126 +425,172 @@ Frame                       (top-level scope; ASSISI_PROFILE_FRAME at loop top)
 
 New instrumentation landing with the same stages:
 
-- **`SystemRegistry::RunPhase`** — a scope per phase and per system. Names are
+- **`SystemRegistry::RunPhase`** — a scope per phase and per system. Names
   interned once at registration into a `const char *` on the entry; never
-  `entry.name.c_str()`, whose backing `std::string` moves when the vector
-  grows. At ~100 ns per system this retires the old notes' plan to gate
-  per-system timing behind an open window. Note `SystemRegistry` is per-world
-  now: several worlds' phases run in sequence on main, which renders correctly;
-  if the tracks read ambiguously, the phase name can intern `world/phase` —
-  decide by looking at a real capture, not in advance.
+  `entry.name.c_str()`, whose backing string moves when the vector grows. At
+  ~100 ns/system this retires the old notes' plan to gate per-system timing
+  behind an open window. **This is the chokepoint that makes instrumentation
+  feel automatic** — every system written from then on is profiled with no
+  further work, which is how Unreal's coverage actually works (framework
+  chokepoints, not function reflection). Note `SystemRegistry` is per-world
+  now; several worlds' phases run in sequence on main, which renders correctly.
+  If tracks read ambiguously, intern `world/phase` — decide from a real
+  capture, not in advance.
 - **`JobSystem`** — worker indices, `RegisterCurrentThread("worker-NN")` at
-  `WorkerLoop` entry (which finally gives the engine OS thread names), and
-  queue-depth accessors for counters. Per-task scopes are *not* v1: tasks are
-  type-erased `std::function`s with no names, and a named-task API is the v2
-  seam.
+  `WorkerLoop` entry (finally giving the engine OS thread names), queue-depth
+  accessors. Per-task scopes are *not* v1: tasks are type-erased
+  `std::function`s with no names. A named-task API is the v2 seam, and it is
+  what `BeginAsync`/`EndAsync` exist to serve.
 - **Jolt** — `JobSystemThreadPool::SetThreadInitFunction` (present in v5.2.0)
   registers `jolt-NN`. **GpuTelemetry** — its NVML worker registers itself.
 
 ## 9. Memory and counters — v1
 
 No `operator new` override and no callstack attribution. That is a real
-profiler subsystem and pretending otherwise is how a half-tool gets built. V1
-memory is byte-source counters, polled once per frame by one App-side
+subsystem, and pretending otherwise is how half-tools get built. V1 memory is
+byte-source counters polled once per frame by an App-side
 `PumpChiaraCounters()`, plus the one allocator hook that is nearly free:
 
 | Track | Source |
 | --- | --- |
-| `mem/process-rss-bytes` | new `Core::Platform::ProcessResidentBytes()` (`/proc/self/statm`, `GetProcessMemoryInfo`); every 15 frames — it is a syscall and sub-frame cadence buys nothing |
-| `mem/vram-used-bytes`, `mem/vram-total-bytes` | `GpuTelemetry` (NVML), emitted only when its `sequence` advances |
-| `mem/arena-vertex-used` / `-capacity`, `mem/arena-index-*` | `GeometryArena` (gains trivial getters), emitted from the pump where they change |
+| `mem/process-rss-bytes` | new `Core::Platform::ProcessResidentBytes()`; every 15 frames — it is a syscall |
+| `mem/vram-used-bytes`, `-total-bytes` | `GpuTelemetry` (NVML), emitted when its `sequence` advances |
+| `mem/arena-vertex-used` / `-capacity`, `mem/arena-index-*` | `GeometryArena` (gains trivial getters) |
 | `mem/staging-parked-bytes` | sum over `AssetCache::_stagingInFlight` |
-| `physics/alloc-count-per-frame`, `physics/alloc-bytes-per-frame` | replace `JPH::RegisterDefaultAllocator()` with counting wrappers. **Churn, not residency** — `JPH::FreeFunction` takes no size, so live-byte tracking would need headers that break aligned allocation. Churn is the perf-relevant signal anyway |
+| `physics/alloc-count-per-frame`, `-bytes-per-frame` | replace `JPH::RegisterDefaultAllocator()` with counting wrappers. **Churn, not residency** — `JPH::FreeFunction` takes no size, so live-byte tracking needs headers that break aligned allocation. Churn is the perf-relevant signal anyway |
 | `jobs/worker-queue-depth`, `jobs/main-queue-depth` | new JobSystem accessors |
-| `stream/pending-publishes`, `stream/pump-bytes`, `-mesh-count`, `-mat-count` | AssetCache |
+| `stream/pending-publishes`, `-pump-bytes`, `-mesh-count`, `-mat-count` | AssetCache |
 | `frame/cpu-ms`, `-gpu-ms`, `-gpu-wait-ms`, `-sleep-ms`, `-unaccounted-ms` | `Application::Run` accounting |
-| `render/gc-ms`, `render/draw-calls` | VulkanContext; the mesh render system accumulates locally and emits once per frame |
+| `render/gc-ms`, `render/draw-calls` | VulkanContext; mesh render system accumulates locally, emits once per frame |
 | `ecs/entity-count`, `chiara/wrap-count` | pump |
+| `ecs/components/<Type>` | **generated by reflectgen** — see below |
 
-`frame/unaccounted-ms` is `cpuMs − Σphases`, clamped at zero — the
-descheduling discriminator, now a track you can scrub instead of a number in a
-log line.
+`frame/unaccounted-ms` is `cpuMs − Σphases`, clamped at zero: the descheduling
+discriminator, now a track you scrub instead of a number in a log line.
+
+**reflectgen-generated component counters.** reflectgen already enumerates
+every `ACOMP` type. It should emit a `Chiara::EmitComponentCounters(scene)`
+that pushes one counter per component type, so pool occupancy over time comes
+free and stays correct as components are added. This is the *right* use of
+reflection here — describing data, not intercepting control flow. (An `AFUNC()`
+that auto-instruments functions is not possible: reflectgen emits side files
+and cannot inject into a function body, and routing calls through a generated
+thunk to time them would cost more than it measures.)
 
 ## 10. Capture control
 
-`App::DrawChiaraPanel()` in `modules/App/src/ChiaraPanel.cpp` — App level, so
-games get it and not just the editor, which is the placement argument the old
-frame-profiler notes made for their widget. It needs only ImGui (via Debug,
-which App already links), Chiara, and AssetSystem for the path.
+`App::DrawChiaraPanel()` in `modules/App/src/ChiaraPanel.cpp` — App level so
+games get it, not just the editor. Needs only ImGui (via Debug, which App
+links), Chiara, and AssetSystem for the path.
 
 Contents: recording toggle; per-ring coverage ("main: 14.2 s held"); wrap
 count; *Dump 5 s / 15 s / all*; a spinner while a serialize job runs; the last
-capture's path and size. Compiled out with everything else; the function has
-an inline no-op stub so call sites are unconditional.
+capture's path and size. Compiled out with everything else; an inline no-op
+stub keeps call sites unconditional.
 
 `Application` gains a `Chiara::InitGuard` as its **first declared member**,
-above `_jobs`, so `Initialize` and main-thread registration happen before any
+above `_jobs`, so Initialize and main-thread registration happen before any
 worker spawns and shutdown runs last.
 
-## 11. Reconciliation with the deferred frame-profiler notes
+## 11. Not building a viewer (and what would change that)
 
-**Carried over:** the `ASSISI_PROFILE_SCOPE` macro name; `SystemRegistry::RunPhase`
-as the per-system chokepoint; FixedUpdate's substeps summing into one phase;
-the self-measurement caveat, now quantified; the insistence that unmeasured
-work be an explicit number rather than blank space ("Other (CPU)" became
-`frame/unaccounted-ms`).
+The ImGui timeline-widget ecosystem is effectively empty: the best flame-graph
+widget is 148 lines with no zoom, pan, or click; the best small profiler widget
+has no depth field, so no nesting. A real zoomable trace timeline is
+~1,500–2,500 lines minimum (Valve's `gpuvis_graph.cpp`, MIT and worth reading,
+is 4,777). Godot 4.6 and Bevy both integrate Tracy/Perfetto and shipped no
+viewer of their own.
 
-**Superseded:** the open question "do we adopt Tracy instead of hand-rolling?"
-is answered — neither. We hand-roll only the capture side and take Perfetto's
-viewer, which is the part Tracy would mostly have been for. The `ImDrawList`
-budget bar, the per-phase drill-down windows, and the smoothing rules all go
-with it: Perfetto is the deep dive, and the F11 ImPlot graphs remain the
-glance. So does the "gate per-system timing behind an open window"
-optimization — always-on scopes are cheap enough that the complexity has no
-buyer.
+The one thing a custom tool would uniquely buy is **engine-aware navigation** —
+click a slice, select that entity in *our* editor. Perfetto can display the
+data as args and pivot debug tracks by it, but cannot link back into the editor.
 
-**Stale in that doc, worth noting:** its ownership section says `SystemRegistry`
-belongs to the app rather than the engine `Application`. Per-world system
-binding (2026-07-28) moved it again — it is per world now.
+If it is ever built, the viewer does not need to be C++ — it is a dev tool, not
+a runtime. Python for anything CLI or analysis-shaped; HTML/JS if it needs a UI
+(which also gives a double-click-to-open artifact and sidesteps picking a GUI
+toolkit). The capture format being ours is what keeps that open.
 
-## 12. Stages
+**Revisit after six months of real use, when three missing views can be named.**
+Things to steal then: puffin's `ProfileView` (recent-frames deque plus two
+parallel sorted sets, so worst frames are queryable by cost and renderable in
+time order); Godot's Category→Item two-level model; Unreal Insights'
+selection-range → aggregation coupling; and **max-reduce, never mean, when the
+frame graph zooms out** — mean-reduction silently destroys worst-frame hunting.
 
-Each stage builds green on `gd`, `gv`, `gs` (all Chiara-off, proving excision)
-and `gd-c`, `gs-c` (compiled in, at both optimization extremes), keeps ctest
-green, and is one commit.
+**Free complement, adopt regardless:** `samply` — sampling profiler, one
+command, no integration, runs on an unmodified binary, Firefox Profiler UI.
+It covers exactly Chiara's blind spot: code nobody instrumented. Also
+`heaptrack` for allocator ground truth, and Nsight/RGP when GPU work gets deep.
+
+## 12. Reconciliation with the deferred frame-profiler notes
+
+**Carried over:** the `ASSISI_PROFILE_SCOPE` name; `SystemRegistry::RunPhase`
+as the chokepoint; FixedUpdate substeps summing into one phase; the
+self-measurement caveat; the insistence that unmeasured work be an explicit
+number ("Other (CPU)" became `frame/unaccounted-ms`).
+
+**Superseded:** "do we adopt Tracy instead of hand-rolling?" is answered —
+neither, we hand-roll capture and take Perfetto's viewer (plus Tracy's as a
+free importer). The `ImDrawList` budget bar, the drill-down windows and the
+smoothing rules go with it. So does gating per-system timing behind an open
+window — always-on scopes are cheap enough that the complexity has no buyer.
+
+**Stale in that doc:** its ownership note says `SystemRegistry` belongs to the
+app rather than `Application`. Per-world system binding (2026-07-28) moved it
+again — it is per world now.
+
+## 13. Stages
+
+Each stage builds green on `gd`, `gv`, `gs` (Chiara off, proving excision) and
+`gd-c`, `gs-c` (compiled in, both optimization extremes), keeps ctest green,
+and is one commit.
 
 0. **Docs.** This file; the superseded note atop the frame-profiler notes.
-1. **Module skeleton and event core.** Rings, registry, intern, scopes,
-   counters, flows, frame mark, stats; the CMake option, the nine presets, the
-   `-c` targets. Tests: layout `static_assert`s, ring wrap and overwrite,
-   nested and interleaved scope containment, disabled-recording emits nothing,
-   eight threads emitting concurrently (also the tsan target), and one
+   *(Done — commit `c8f76d4`, amended after the tooling research.)*
+1. **Module skeleton and event core.** Rings, registry, intern, scopes, args,
+   counters, flows, async spans, frame marks, clock snapshots, shadow stack,
+   stats; the CMake option, nine presets, `-c` targets. Tests: layout
+   `static_assert`s, ring wrap and overwrite, nested and interleaved scope
+   containment, args binding to the enclosing scope, disabled-recording emits
+   nothing, eight threads emitting concurrently (also the tsan target), and one
    unguarded case proving the macros compile to no-ops in a default build.
-2. **Chrome JSON serializer.** Window filtering, metadata, the whole mapping.
-   Tests emit a known scene, serialize, parse with nlohmann and assert the
-   shapes, flow ids and window trim. One manual drag into ui.perfetto.dev.
-3. **Frame loop, threads, render.** InitGuard ordering; the loop and
-   RenderFrame scopes; delete `RenderPhaseTimings`; slim the slow-frame log;
-   the `frame/*` counters; JobSystem registration, depths and OS names;
-   VulkanContext scopes and the `GetLastGcMs` deletion; RunPhase scopes.
-   Verified by eye in Perfetto: named threads, frame slices, unaccounted track.
-4. **Streaming and flows.** AssetCache scopes and counters, the pump log
-   deleted, flow ids through park/recycle, arena getters. Verified by preloading
-   `car_lod` and confirming the arrows cross frames.
-5. **Memory and the counter pump.** `ProcessResidentBytes` and its test, the
-   Jolt allocator hook, `PumpChiaraCounters`, VRAM, entity count, draw calls.
-6. **Capture panel.** The panel, editor wiring, background serialize. Race test:
+2. **Chrome JSON serializer.** Window filtering, metadata, the full mapping,
+   shadow-stack synthesis of still-open scopes. Tests emit a known scene,
+   serialize, parse with nlohmann, assert shapes, arg folding, flow ids and
+   window trim. Manual: one drag into ui.perfetto.dev, and one round-trip
+   through `tracy-import-chrome`.
+3. **Frame loop, threads, render.** InitGuard ordering; loop and RenderFrame
+   scopes; delete `RenderPhaseTimings`; slim the slow-frame log; `frame/*`
+   counters; JobSystem registration, depths and OS names; VulkanContext scopes
+   and the `GetLastGcMs` deletion; RunPhase scopes. Verified by eye in
+   Perfetto: named threads, frame slices, unaccounted track.
+4. **Streaming and flows.** AssetCache scopes, args (asset path as an arg, not
+   a name) and counters; pump log deleted; flow ids through park/recycle; arena
+   getters. Verified by preloading `car_lod` and confirming arrows cross frames.
+5. **Memory and the counter pump.** `ProcessResidentBytes` + test, Jolt
+   allocator hook, `PumpChiaraCounters`, VRAM, entity count, draw calls, and the
+   reflectgen-generated per-component counters.
+6. **Capture panel.** Panel, editor wiring, background serialize. Race test:
    serializing on a worker while main emits, tsan-clean.
 7. **Docs reconcile.** Update the streaming plan's temporary-instrumentation
-   block and R5; sweep §8's table; record the measured per-scope cost from a
-   micro-benchmark rather than leaving §3's estimate unchecked.
+   block and R5; sweep §8's table; record measured per-scope cost from a
+   micro-benchmark rather than leaving an estimate unchecked.
 
-## 13. Decided, not to be re-litigated
+## 14. Decided, not to be re-litigated
 
-- Perfetto as the viewer; no custom viewer app.
-- Off by default everywhere; `-c` targets to opt in.
+- Perfetto as primary viewer; Tracy as a free second viewer via
+  `tracy-import-chrome`; no custom viewer; nothing third-party linked in.
+- Chrome JSON now, FTF later, protobuf never.
+- Off by default on every configuration; `-c` targets to opt in.
 - Always-on recording with dump-the-last-N, not explicit start/stop.
-- Complete events at scope exit, not begin/end pairs.
+- Complete events at scope exit, plus a shadow stack for still-open scopes.
+- Raw TSC ticks stored, converted at dump; clock snapshots at ~1 Hz.
+- Context in args, never in the scope name.
+- Async spans as a distinct type from stack-disciplined scopes.
 - Overwrite-oldest, with wrapping counted and surfaced.
 - The F11 graphs and Diagnostics window stay; Chiara does not replace the
   glance.
 - No callstack or `operator new` tracking in v1.
 - Per-system scopes always on, ungated.
 
-Open, deferred to stage 6: whether the panel earns a global hotkey the way F11
-did.
+Open, deferred to stage 6: whether the panel earns a global hotkey like F11.
