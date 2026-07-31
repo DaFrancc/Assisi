@@ -43,6 +43,21 @@ file opens in **Perfetto** (ui.perfetto.dev) — and, because Tracy ships
 That second viewer matters: Perfetto has no capture-diff, and Tracy's Compare
 window does exactly that. We get it without linking Tracy into the engine.
 
+**Measured cost, now that it is built** (`gcc-ship-chiara`, TestOverhead.cpp,
+200k iterations each):
+
+| | ns |
+| --- | --- |
+| Scope, capture compiled in but **not recording** | **0.24** |
+| Scope, recording | **18.5** |
+| Counter, recording | **10.2** |
+| Scope, capture compiled out | 0 — the macro emits no code |
+
+The not-recording figure is the one that matters for a shipped `-c` build, and
+it is a relaxed load plus a branch the predictor never misses. The recording
+figure lands inside Tracy's realistic 10–50 ns band and about 30× under
+Perfetto's SDK, which is the claim the section below was making on faith.
+
 **Nothing third-party goes in the process.** Measured reason, not preference:
 Perfetto's SDK serializes protobuf at the call site — the best independent
 measurement puts it around **~600 ns per span** (thume.ca, 2023; Perfetto's own
@@ -643,6 +658,20 @@ Each stage builds green on `gd`, `gv`, `gs` (Chiara off, proving excision) and
 `gd-c`, `gs-c` (compiled in, both optimization extremes), keeps ctest green,
 and is one commit.
 
+**Status 2026-07-31: all eight stages built** (`40ab24e`, `9569217`, `6fed6d2`,
+`c686f78`, `58eb05e`, `cf25e55`, and this one). Everything below is verified as
+described *except* the by-eye checks in Perfetto, which need a live window and a
+GPU — those are listed at the end of §13 as the one thing still owed.
+
+Two items were deliberately dropped rather than built, and neither is a silent
+cut. **VRAM counters** (`mem/vram-*`) would have meant moving `GpuTelemetry`
+from `EditorApp` to `Application`; the counters are worth little until something
+is suspected of leaking VRAM, and the refactor is worth more attention than a
+sub-item of a counter stage. **`render/draw-calls`** wants a per-frame
+accumulator in the mesh render system, which is a change to rendering code for a
+number the GPU timer already implies. Both are one-afternoon additions when they
+are actually wanted.
+
 0. **Docs.** This file; the superseded note atop the frame-profiler notes.
    *(Done — commit `c8f76d4`; amended twice, after the tooling research and
    after an adversarial external review.)*
@@ -683,6 +712,28 @@ and is one commit.
 7. **Docs reconcile.** Update the streaming plan's temporary-instrumentation
    block and R5; sweep §8's table; record measured per-scope cost from a
    micro-benchmark rather than leaving an estimate unchecked.
+   *(Done. The numbers are in §1; the micro-benchmark lives in
+   TestOverhead.cpp and prints them on every run, so the figure ages with the
+   code instead of with the document.)*
+
+### Still owed: the by-eye pass
+
+Everything above is verified by tests and by builds. Three things are not, and
+cannot be — they need a window, a GPU, and a person:
+
+- **Stage 3.** Run the sandbox (`shortcuts/Assisi-Sandbox-gcc-ship-chiara`),
+  press F9, dump, open the file in ui.perfetto.dev. Confirm named threads
+  (`main`, `worker-NN`, `jolt-NN`), a nested `Frame` slice per frame, and an
+  `unaccounted` track that sits near zero on a healthy frame. A track pinned
+  high or persistently negative means the phase accounting is wrong.
+- **Stage 4.** With a capture open, preload `car_lod` and confirm the
+  `staging-lifetime` arrows leave `flush-uploads` in one frame and land in
+  `recycle-staging` in a later one. This is the centerpiece requirement; if the
+  arrows do not render, Perfetto's flow support is not what the research said
+  and the format decision needs revisiting.
+- **Stage 2.** Confirm counter tracks group by their `group/name` prefix (the
+  one mapping claim never verified against a real viewer), and round-trip the
+  same file through `tracy-import-chrome` to confirm the second viewer works.
 
 ## 14. Decided, not to be re-litigated
 

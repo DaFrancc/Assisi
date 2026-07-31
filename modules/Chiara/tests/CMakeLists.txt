@@ -7,6 +7,7 @@ add_executable(Assisi-Chiara-Tests
   TestCapture.cpp
   TestEventRing.cpp
   TestMacros.cpp
+  TestOverhead.cpp
   TestSerializer.cpp
   TestThreads.cpp
 )
