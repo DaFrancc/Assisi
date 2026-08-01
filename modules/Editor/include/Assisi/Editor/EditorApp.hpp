@@ -163,6 +163,7 @@ class EditorApp : public Assisi::App::Application
     // --- ImGui panels ---
     void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F11); see EditorOptions.cpp
     void DrawDiagnosticsWindow();
+    void DrawChiaraWindow();  // performance capture (F9); empty without -c builds
     void DrawLevelsWindow();
     void DrawInspector();
     void DrawHelloImageWindow(); // ImGui-texture-display smoke test
@@ -588,6 +589,7 @@ class EditorApp : public Assisi::App::Application
     // Options overlay (frame graph + display/pacing settings), toggled with F11.
     // Owned by the app, not the engine — see DrawOptionsWindow in EditorOptions.cpp.
     bool _showOptions = false;
+    bool _showChiara  = false;
 
     // F11 "Editor overlays" checkbox: per-frame visibility of the selection
     // outline, entity icons, and collider wireframes — for decluttering the

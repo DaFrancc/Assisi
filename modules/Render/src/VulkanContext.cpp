@@ -18,6 +18,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <cstring> // std::strcmp — device-extension and validation-layer name comparisons
 #include <vector>
 
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Platform.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
@@ -97,16 +98,26 @@ VkInstance CreateInstance()
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
+    // VK_EXT_debug_utils carries two unrelated things, and they used to be
+    // enabled together under !NDEBUG: the validation messenger (expensive,
+    // debug-only) and command-buffer labels (free, and what RenderDoc/Nsight
+    // read to show engine pass names instead of anonymous draws). Bundling them
+    // meant an optimized build — the only build worth profiling — silently had
+    // no labels: nvrhi's beginMarker() is a no-op without the extension, so the
+    // markers compiled in and did nothing. They are separated now.
+#if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
+    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+#endif
+
 #ifndef NDEBUG
-    // Enable the Khronos validation layer + debug-utils in debug builds so
-    // spec violations become log messages instead of silent UB. Chaining the
-    // messenger create-info onto pNext also captures issues raised during
+    // Enable the Khronos validation layer in debug builds so spec violations
+    // become log messages instead of silent UB. Chaining the messenger
+    // create-info onto pNext also captures issues raised during
     // vkCreateInstance / vkDestroyInstance themselves.
     VkDebugUtilsMessengerCreateInfoEXT debugInfo = MakeDebugMessengerCreateInfo();
     if (IsValidationLayerAvailable())
     {
         layers.push_back(kValidationLayer);
-        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         createInfo.pNext = &debugInfo;
     }
     else
@@ -501,6 +512,16 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
 
     const char *deviceExtensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
+    // nvrhi does not query the instance for what we enabled — it believes this
+    // list, and gates features on it. beginMarker()/endMarker() check
+    // `extensions.EXT_debug_utils` and silently do nothing when it is unset, so
+    // omitting this makes every GPU marker a no-op with no diagnostic anywhere.
+    // Must stay in step with the extensions CreateInstance() actually enables.
+    std::vector<const char *> instanceExtensions;
+#if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
+    instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+#endif
+
     nvrhi::vulkan::DeviceDesc nvrhiDeviceDesc;
     nvrhiDeviceDesc.instance = context->_instance;
     nvrhiDeviceDesc.physicalDevice = context->_physicalDevice;
@@ -509,6 +530,8 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     nvrhiDeviceDesc.graphicsQueueIndex = static_cast<int>(context->_graphicsQueueFamily);
     nvrhiDeviceDesc.deviceExtensions = deviceExtensions;
     nvrhiDeviceDesc.numDeviceExtensions = 1;
+    nvrhiDeviceDesc.instanceExtensions = instanceExtensions.data();
+    nvrhiDeviceDesc.numInstanceExtensions = instanceExtensions.size();
 
     context->_nvrhiDeviceHandle = nvrhi::vulkan::createDevice(nvrhiDeviceDesc);
     if (!context->_nvrhiDeviceHandle)
@@ -925,6 +948,7 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     _lastGpuWaitMs = 0.0;
     if (_frameQueryPending[slot])
     {
+        ASSISI_PROFILE_SCOPE("wait-frame-slot");
         const std::chrono::steady_clock::time_point waitStart = std::chrono::steady_clock::now();
         _nvrhiDevice->waitEventQuery(_frameQueries[slot]);
         _lastGpuWaitMs =
@@ -944,8 +968,12 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     // in submit/present below). Fold it into _lastGpuWaitMs so it's excluded from
     // the CPU frame-time figure rather than mislabeled as CPU work.
     const std::chrono::steady_clock::time_point acquireStart = std::chrono::steady_clock::now();
-    VkResult acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphores[slot],
-                                                        VK_NULL_HANDLE, &_currentImageIndex);
+    VkResult                                    acquireResult = VK_SUCCESS;
+    {
+        ASSISI_PROFILE_SCOPE("acquire");
+        acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphores[slot],
+                                                  VK_NULL_HANDLE, &_currentImageIndex);
+    }
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - acquireStart).count();
     if (acquireResult == VK_ERROR_OUT_OF_DATE_KHR)
@@ -989,6 +1017,9 @@ void VulkanContext::EndFrame()
     // CPU work, so time it and fold it into _lastGpuWaitMs. GC (below, after this
     // window) is genuine CPU work and stays counted.
     const std::chrono::steady_clock::time_point presentWaitStart = std::chrono::steady_clock::now();
+    VkResult                                    presentResult    = VK_SUCCESS;
+    {
+    ASSISI_PROFILE_SCOPE("submit-present");
 
     _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
     _commandList->close();
@@ -1009,7 +1040,8 @@ void VulkanContext::EndFrame()
     presentInfo.swapchainCount = 1;
     presentInfo.pSwapchains = &_swapchain;
     presentInfo.pImageIndices = &_currentImageIndex;
-    const VkResult presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+    presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+    }
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentWaitStart).count();
     // OUT_OF_DATE/SUBOPTIMAL are expected on resize; they're not errors here.
@@ -1028,12 +1060,21 @@ void VulkanContext::EndFrame()
     }
 
     // Genuine main-thread CPU work: this releases every retired submit's resources,
-    // so destroying large/numerous streaming allocations is paid here. Timed on its
-    // own (not folded into _lastGpuWaitMs) because it is CPU cost, not a GPU stall,
-    // and it is otherwise invisible in a frame breakdown.
-    const std::chrono::steady_clock::time_point gcStart = std::chrono::steady_clock::now();
-    _nvrhiDevice->runGarbageCollection();
-    _lastGcMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gcStart).count();
+    // so destroying large/numerous streaming allocations is paid here. Kept out of
+    // _lastGpuWaitMs because it is CPU cost, not a GPU stall, and it is otherwise
+    // invisible in a frame breakdown.
+    //
+    // This is the frame's most important slice for the case Chiara was built for:
+    // allocation churn caused several frames ago is *paid here*, so the flows that
+    // terminate near it are what name the cause (see design notes §7).
+    {
+        ASSISI_PROFILE_SCOPE("gpu-gc");
+        const std::chrono::steady_clock::time_point gcStart = std::chrono::steady_clock::now();
+        _nvrhiDevice->runGarbageCollection();
+        const double gcMs =
+            std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - gcStart).count();
+        ASSISI_PROFILE_COUNTER("render/gc-ms", gcMs);
+    }
     ++_frameCounter;
 }
 

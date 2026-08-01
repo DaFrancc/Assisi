@@ -7,6 +7,7 @@
 
 #include <Assisi/App/AppConfig.hpp>
 #include <Assisi/App/OptionsConfig.hpp>
+#include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -183,6 +184,12 @@ class Application
     void RenderFrame();
     void ConfigurePostProcess();
 
+    /// Declared first so the capture runtime is up before anything else exists —
+    /// in particular before _jobs spawns its workers, which register themselves
+    /// with it — and so it is torn down last. Inert and empty unless built with
+    /// -c (see docs/chiara-design-notes.md).
+    Chiara::InitGuard _chiara;
+
     AppConfig     _config;
     OptionsConfig _options;
 
@@ -225,19 +232,49 @@ class Application
     int32_t                           _frameHistoryOffset = 0;
     int32_t                           _frameSampleCount = 0;
 
-    // Sub-phase timings (ms) of the most recent RenderFrame, filled there and read
-    // by the slow-frame diagnostic in Run(). RenderFrame is a single opaque phase
-    // in that report, but it is where streaming-correlated spikes actually land, so
-    // it needs its own breakdown to be actionable.
-    struct RenderPhaseTimings
-    {
-        double begin = 0.0; ///< BeginFrame (swapchain acquire).
-        double scene = 0.0; ///< OnRender — the scene pass.
-        double post  = 0.0; ///< PostProcess resolve.
-        double imgui = 0.0; ///< OnImGui + DebugUI begin/end.
-        double end   = 0.0; ///< EndFrame (submit + present).
-    };
-    RenderPhaseTimings _renderPhases{};
+    /// @brief Samples the once-a-frame memory and subsystem counters into the
+    /// capture. Cheap by construction — everything here is an atomic read or a
+    /// scheduled syscall, never a walk of anything.
+    void PumpChiaraCounters();
+
+  public:
+    /// @brief Draws the capture control panel — recording toggle, ring coverage,
+    /// and the dump buttons. Call it from OnImGui inside a window of your own;
+    /// it draws contents, not a window, so a game can put it wherever it likes.
+    /// Draws nothing in a build without the capture system.
+    void DrawChiaraPanel();
+
+    /// @brief Writes the last @p lastSeconds of capture to a timestamped file
+    /// under the user root (0 = everything the rings hold).
+    ///
+    /// Runs on a worker, so the calling frame never waits on it, and ignores the
+    /// request if a dump is already in flight. Does nothing without the capture
+    /// system compiled in.
+    void DumpChiaraCapture(double lastSeconds = 0.0);
+
+    /// @brief Starts streaming a capture to disk and keeps going until stopped.
+    ///
+    /// The counterpart to DumpChiaraCapture: that one reaches backwards into the
+    /// ring for what already happened and is bounded by it; this one records
+    /// forwards for as long as you like, bounded by free disk space instead. Use
+    /// it when you know in advance what you want to capture and it is longer
+    /// than the buffer holds — a level load, a whole play session.
+    void StartChiaraSession();
+
+    /// @brief Ends the session and closes its file. Harmless if none is running.
+    void StopChiaraSession();
+
+  private:
+
+    /// Running Jolt allocation totals as of the previous frame, so the counters
+    /// can report a per-frame rate rather than an ever-climbing total.
+    uint64_t _lastJoltAllocCount = 0;
+    uint64_t _lastJoltAllocBytes = 0;
+
+    // RenderFrame's sub-phase breakdown used to live here as a struct of doubles
+    // scraped into the slow-frame log line. It is now profile scopes inside
+    // RenderFrame — same numbers, but scrubbable, nested under the frame, and
+    // costing nothing in a build without capture.
 };
 
 } // namespace Assisi::App

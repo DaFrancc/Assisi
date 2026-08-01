@@ -4,6 +4,7 @@
 #include "ImGuiQueries.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -626,6 +627,9 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // (an inspector edit or the frozen pose is authoritative then).
     if (IsSimulating())
     {
+        // Runs at display rate over every physics-driven Transform, so it belongs
+        // in the render breakdown rather than being lumped in with physics.
+        ASSISI_PROFILE_SCOPE("physics-interpolate");
         _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha());
     }
 
@@ -642,7 +646,9 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     _sceneRenderer.SetEditorIconsVisible(_showEditorOverlays && _playState != PlayState::Playing);
     if (_showEditorOverlays)
     {
-        // Collider wireframes — queued before Render() consumes them.
+        // Collider wireframes — queued before Render() consumes them. This is the
+        // build half; `overlay-lines` inside Render() is the draw half.
+        ASSISI_PROFILE_SCOPE("collider-wireframes");
         SubmitColliderWireframes();
     }
     // The propagation bookmark comes from the world, not the renderer: one
@@ -684,9 +690,19 @@ void EditorApp::OnFixedUpdate(float dt)
                               {world, dt, &GetInput(), &_actions, GetEvents(),
                                /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
 
-            world.physics.Update(dt);
-            // Snapshot the new poses for render interpolation; OnRender blends them.
-            world.physics.CaptureState();
+            {
+                // Jolt's whole step, including its internal job dispatch. Everything
+                // under `fixed-update` that isn't a named ECS system is this.
+                ASSISI_PROFILE_SCOPE("physics-step");
+                world.physics.Update(dt);
+            }
+            {
+                // Snapshot the new poses for render interpolation; OnRender blends them.
+                // Linear in the body count, and separable from the solve — worth its own
+                // slice so a big scene says which of the two grew.
+                ASSISI_PROFILE_SCOPE("physics-capture");
+                world.physics.CaptureState();
+            }
         });
 }
 
@@ -1057,7 +1073,32 @@ void EditorApp::DrawDiagnosticsWindow()
     ImGui::Separator();
     ImGui::TextDisabled("RMB: look  |  WASD: move  |  Space/Ctrl: up/down");
     ImGui::TextDisabled("Scroll: FOV  |  LMB: select  |  Esc: quit");
-    ImGui::TextDisabled("F11: graphics settings");
+    ImGui::TextDisabled("F11: graphics settings  |  F9: performance capture");
+    ImGui::End();
+}
+
+void EditorApp::DrawChiaraWindow()
+{
+    // F9 toggles it, next to F11's graphics overlay. Handled here rather than in
+    // the engine so the key stays the app's to rebind or drop — same reasoning as
+    // F11. Chiara owns no input of its own.
+    if (GetInput().IsKeyPressed(Assisi::Window::Key::F9))
+    {
+        _showChiara = !_showChiara;
+    }
+
+    if (!_showChiara)
+    {
+        return;
+    }
+
+    ImGui::SetNextWindowSize(ImVec2(380, 260), ImGuiCond_FirstUseEver);
+    if (ImGui::Begin("Performance capture", &_showChiara))
+    {
+        // The panel is App-level so a game gets the same one; the editor only
+        // decides where it lives and what opens it.
+        DrawChiaraPanel();
+    }
     ImGui::End();
 }
 
@@ -1130,20 +1171,29 @@ void EditorApp::OnImGui()
     // held (HandlePhysicsEditing). Released at the end of this function.
     _physicsFreezeRequested = false;
 
-    // First: resets ImGuizmo's per-frame state and draws the manipulator over the
-    // scene (behind the panels below). Also refreshes IsUsingGizmo() for picking.
-    DrawTransformGizmo();
+    // One scope per panel. A closed ImGui window still runs its Draw function (the
+    // Begin() returns false and it early-outs), so a panel that is open and one
+    // that is collapsed are both visible here — which is the point: "the editor UI
+    // costs half a millisecond" is useless, "the asset browser costs half a
+    // millisecond" is actionable.
+    {
+        // First: resets ImGuizmo's per-frame state and draws the manipulator over the
+        // scene (behind the panels below). Also refreshes IsUsingGizmo() for picking.
+        ASSISI_PROFILE_SCOPE("panel/gizmo");
+        DrawTransformGizmo();
+    }
 
-    DrawOptionsWindow();
-    DrawDiagnosticsWindow();
-    DrawGameControlWindow();
-    DrawEntityListWindow();
-    DrawHistoryWindow();
-    DrawLevelsWindow();
-    DrawInspector();
-    DrawHelloImageWindow();
-    DrawAssetBrowser();
-    DrawStaleResolutionModal();
+    { ASSISI_PROFILE_SCOPE("panel/options");      DrawOptionsWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/diagnostics");  DrawDiagnosticsWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/chiara");       DrawChiaraWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/game-control"); DrawGameControlWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/entity-list");  DrawEntityListWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/history");      DrawHistoryWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/levels");       DrawLevelsWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/inspector");    DrawInspector(); }
+    { ASSISI_PROFILE_SCOPE("panel/hello-image");  DrawHelloImageWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
+    { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
 
     // Release the Inspector's physics freeze here rather than inside the panel.
     // The panel cannot be trusted to observe its own release: DrawInspector

@@ -81,14 +81,11 @@ class VulkanContext
     /// CPU-bound).
     [[nodiscard]] double GetLastGpuWaitMs() const { return _lastGpuWaitMs; }
 
-    /// @brief Wall-clock time the last EndFrame() spent in
-    /// `runGarbageCollection()`, in milliseconds. This is real main-thread CPU
-    /// work — it releases the resources of every submit that has retired, so a
-    /// frame that destroys large or numerous GPU allocations (a burst of
-    /// streaming staging buffers or per-load command lists) pays for it here,
-    /// after the present. Broken out because it is otherwise invisible: it sits
-    /// outside the submit/present window folded into GetLastGpuWaitMs().
-    [[nodiscard]] double GetLastGcMs() const { return _lastGcMs; }
+    // GetLastGcMs() used to live here. Garbage collection is still real
+    // main-thread CPU work worth watching — a frame destroying a burst of
+    // streaming allocations pays for it after the present — but it is now a
+    // `gpu-gc` scope and a `render/gc-ms` counter in the capture. The accessor's
+    // only consumer was the slow-frame log line it fed.
 
     [[nodiscard]] nvrhi::IDevice *GetDevice() const { return _nvrhiDevice; }
 
@@ -218,7 +215,6 @@ class VulkanContext
     std::array<nvrhi::TimerQueryHandle, kFramesInFlight> _timerQueries;
     float                                               _lastGpuFrameMs = 0.0f;
     double                                              _lastGpuWaitMs = 0.0;
-    double                                              _lastGcMs = 0.0;
 
     nvrhi::CommandListHandle _commandList;
 

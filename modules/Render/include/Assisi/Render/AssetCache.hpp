@@ -525,6 +525,11 @@ class AssetCache
     {
         nvrhi::EventQueryHandle          query;
         std::vector<nvrhi::BufferHandle> buffers;
+        /// Links the frame that parked this batch to the later, unrelated frame
+        /// that reclaims it. This is the deferred-cost case the capture system
+        /// was built for: the upload is caused here and paid several frames on,
+        /// where nothing in the timeline would otherwise connect the two.
+        std::uint64_t chiaraFlowId = 0;
     };
     std::vector<StagingInFlight> _stagingInFlight;
     /// Staging buffers bound into the batch being assembled by the current pump;

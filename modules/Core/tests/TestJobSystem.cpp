@@ -5,11 +5,14 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <string_view>
 #include <thread>
 #include <vector>
 
+#include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Core/Platform.hpp>
 #include <Assisi/Testing/ThrowOnContractViolation.hpp>
 
 using Assisi::Core::JobSystem;
@@ -321,3 +324,92 @@ TEST_CASE("Many concurrent tasks all complete with the right results")
     }
     CHECK(sum == expected);
 }
+
+TEST_CASE("Resident memory is reported and moves with a real allocation")
+{
+    const uint64_t before = Assisi::Core::ProcessResidentBytes();
+    // A platform with no implementation returns 0, and this suite only runs on
+    // ones that have it — a silent 0 would make the memory graph a flat line
+    // that looks like "nothing is allocating".
+    CHECK(before > 0);
+
+    // Touch the pages: reserving without writing may never fault them in, and
+    // resident set counts what is actually resident.
+    constexpr std::size_t kBytes = 64u << 20;
+    std::vector<uint8_t>  ballast(kBytes, 1);
+    for (std::size_t i = 0; i < kBytes; i += 4096)
+    {
+        ballast[i] = static_cast<uint8_t>(i);
+    }
+
+    CHECK(Assisi::Core::ProcessResidentBytes() > before);
+}
+
+TEST_CASE("Queue depths track what is waiting")
+{
+    // Sampled once a frame to plot backlog, which is what tells "the pool is
+    // saturated" apart from "the pool is idle and the main thread is the problem".
+    JobSystem jobs(1);
+
+    CHECK(jobs.MainQueueDepth() == 0);
+
+    jobs.RunOnMain([] {});
+    jobs.RunOnMain([] {});
+    CHECK(jobs.MainQueueDepth() == 2);
+
+    jobs.DrainMain();
+    CHECK(jobs.MainQueueDepth() == 0);
+}
+
+#if defined(ASSISI_CHIARA_ENABLED)
+
+TEST_CASE("Workers name themselves for the capture")
+{
+    // WorkerLoop is the only place a worker's identity exists, so it is the only
+    // place that can name one. Initialize must precede construction: threads
+    // register as they start, and before Initialize every entry point is a no-op.
+    Assisi::Chiara::Initialize();
+
+    {
+        constexpr int32_t kWorkers = 3;
+        JobSystem         jobs(kWorkers);
+
+        // Poll rather than submit-and-wait: Wait() help-waits, so the main thread
+        // can run the task itself before a single worker has reached its first
+        // statement. What is being tested is that each thread registers when it
+        // starts, not how fast the scheduler gets there.
+        const auto countNamedWorkers = []
+        {
+            int32_t named = 0;
+            for (const Assisi::Chiara::ThreadSnapshot &snapshot : Assisi::Chiara::SnapshotThreads())
+            {
+                if (snapshot.name != nullptr && std::string_view(snapshot.name).starts_with("worker-"))
+                {
+                    ++named;
+                }
+            }
+            return named;
+        };
+
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        while (countNamedWorkers() < kWorkers && std::chrono::steady_clock::now() < deadline)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        CHECK(countNamedWorkers() >= kWorkers);
+    }
+}
+
+TEST_CASE("A JobSystem built with the capture runtime down is harmless")
+{
+    // The case that matters for every headless test and tool in the tree: no
+    // Application, so no InitGuard, so worker registration happens with nothing
+    // initialized. It must behave exactly as it does in a default build.
+    JobSystem jobs(2);
+
+    std::atomic<int32_t> ran{0};
+    jobs.Run(Pool::Worker, [&ran] { ran.fetch_add(1, std::memory_order_relaxed); }).Wait();
+    CHECK(ran.load(std::memory_order_relaxed) == 1);
+}
+
+#endif // ASSISI_CHIARA_ENABLED

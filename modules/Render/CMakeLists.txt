@@ -67,4 +67,11 @@ target_link_libraries(Assisi-Render
     webpdemux
 )
 
+# PUBLIC for the same reason Chiara's gate is: GpuMarker.hpp is header-only, so
+# every translation unit that includes it must agree with this library about
+# whether the marker type exists.
+if (ASSISI_ENABLE_GPU_MARKERS)
+  target_compile_definitions(Assisi-Render PUBLIC ASSISI_ENABLE_GPU_MARKERS=1)
+endif()
+
 add_library(Assisi::Render ALIAS Assisi-Render)

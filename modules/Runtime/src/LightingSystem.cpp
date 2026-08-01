@@ -4,6 +4,8 @@
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
+#include <Assisi/Render/GpuMarker.hpp>
+
 #include <algorithm>
 #include <cstdint>
 
@@ -47,6 +49,8 @@ glm::vec3 LightingSystem::WorldSpotDirection(const glm::mat4 &worldMatrix, const
 
 void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view)
 {
+    ASSISI_PROFILE_GPU_SCOPE(commandList, "lighting");
+
     // Reuse the staging buffers' capacity across frames; clear() keeps storage.
     _pointLights.clear();
     _spotLights.clear();
@@ -67,38 +71,56 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     // A direction is a vector, not a normal, so the plain upper-left 3x3 is the
     // correct transform (no inverse-transpose needed); SafeDirection then
     // renormalises, which also absorbs any scale in that matrix.
-    for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
+    // One scope over all three queries rather than one each: they are the same
+    // CPU-side rebuild-the-staging-arrays work, and the per-type split is already
+    // visible in the counters below.
     {
-        _pointLights.push_back({
-            .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
-            .colorIntensity = {light.color, light.intensity},
-        });
+        ASSISI_PROFILE_SCOPE("light-gather");
+
+        for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
+        {
+            _pointLights.push_back({
+                .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
+                .colorIntensity = {light.color, light.intensity},
+            });
+        }
+
+        for (auto [entity, transform, light] : scene.Query<Transform, SpotLight>())
+        {
+            const float innerCos = glm::cos(glm::radians(light.innerAngle));
+            const float outerCos = glm::cos(glm::radians(light.outerAngle));
+            _spotLights.push_back({
+                .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
+                .directionInner = {WorldSpotDirection(transform.worldMatrix, light.direction), innerCos},
+                .colorIntensity = {light.color, light.intensity},
+                .outerCutoff    = outerCos,
+            });
+        }
+
+        for (auto [entity, light] : scene.Query<DirectionalLight>())
+        {
+            _dirLights.push_back({
+                .directionIntensity = {SafeDirection(light.direction), light.intensity},
+                .colorPad           = {light.color, 0.f},
+            });
+        }
     }
 
-    for (auto [entity, transform, light] : scene.Query<Transform, SpotLight>())
-    {
-        const float innerCos = glm::cos(glm::radians(light.innerAngle));
-        const float outerCos = glm::cos(glm::radians(light.outerAngle));
-        _spotLights.push_back({
-            .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
-            .directionInner = {WorldSpotDirection(transform.worldMatrix, light.direction), innerCos},
-            .colorIntensity = {light.color, light.intensity},
-            .outerCutoff    = outerCos,
-        });
-    }
-
-    for (auto [entity, light] : scene.Query<DirectionalLight>())
-    {
-        _dirLights.push_back({
-            .directionIntensity = {SafeDirection(light.direction), light.intensity},
-            .colorPad           = {light.color, 0.f},
-        });
-    }
+    // The gather is linear in these, so they are what `light-gather` should be read
+    // against — and what says whether a froxel-cull cost is the scene's fault.
+    ASSISI_PROFILE_COUNTER("lights/point", static_cast<double>(_pointLights.size()));
+    ASSISI_PROFILE_COUNTER("lights/spot", static_cast<double>(_spotLights.size()));
+    ASSISI_PROFILE_COUNTER("lights/dir", static_cast<double>(_dirLights.size()));
 
     // Clamped for the same reason CullLights clamps its counts: Upload
     // truncates at capacity and the shader must not read past it.
     _dirLightCount = std::min(static_cast<uint32_t>(_dirLights.size()), Render::ClusterGrid::kMaxDirLights);
-    _grid.CullLights(commandList, _pointLights, _spotLights, _dirLights, view);
+    {
+        // CPU-side this is three buffer uploads plus a dispatch record, so it is
+        // measuring the upload — the cull itself is GPU time and lands in frame/gpu-ms.
+        ASSISI_PROFILE_GPU_SCOPE(commandList, "light-cull");
+        _grid.CullLights(commandList, _pointLights, _spotLights, _dirLights, view);
+    }
 }
 
 } // namespace Assisi::Runtime

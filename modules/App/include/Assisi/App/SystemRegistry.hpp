@@ -241,6 +241,11 @@ class SystemRegistry
             /// otherwise the system runs only while the scene holds at least one
             /// of these components.
             std::vector<Core::Reflect::ComponentId> requireAny;
+            /// @p name interned once at registration, for the profile scope in
+            /// RunPhase. Never `name.c_str()`: entries live in a vector, so that
+            /// pointer moves the moment another system is added, and a capture
+            /// would be naming scopes after freed memory.
+            const char *chiaraName = nullptr;
         };
 
         std::vector<Entry>       entries;
@@ -253,6 +258,11 @@ class SystemRegistry
 
     static std::size_t      Index(SystemPhase phase) { return static_cast<std::size_t>(phase); }
     static std::string_view PhaseName(std::size_t gamePhaseIndex);
+
+    /// @brief The same phase name as a pointer with program lifetime, for the
+    /// profile scope in RunPhase. Separate from PhaseName because a scope name
+    /// must outlive the capture, and a `string_view` promises nothing about that.
+    static const char *PhaseProfileName(std::size_t gamePhaseIndex);
 
     /// @brief Append a system to @p phase and return a handle bound to its slot.
     /// @p supportsActiveOnly is false for the render phase, whose handles reject
@@ -269,9 +279,10 @@ class SystemRegistry
     /// @brief Re-sort @p phase if dirty, then run its systems in dependency order,
     /// omitting active-world-only entries when @p skipActiveOnly and entries whose
     /// RequireAny components are all absent from @p gateScene.
+    /// @p profileName is @p phaseName with program lifetime — see PhaseProfileName.
     template <typename Ctx>
-    void RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx, bool skipActiveOnly,
-                  const ECS::Scene &gateScene);
+    void RunPhase(Phase<Ctx> &phase, std::string_view phaseName, const char *profileName, Ctx &ctx,
+                  bool skipActiveOnly, const ECS::Scene &gateScene);
 
     std::array<Phase<SystemContext>, kGamePhaseCount> _gamePhases;
     Phase<RenderContext>                              _renderPhase;

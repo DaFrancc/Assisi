@@ -1,6 +1,22 @@
-# Frame profiler — design notes (deferred)
+# Frame profiler — design notes (deferred, superseded)
 
-**Status:** Deferred (2026-07-10). Not scheduled. Captured so the thinking isn't lost.
+**Status:** Superseded 2026-07-31 by **`chiara-design-notes.md`**. Kept for the
+reasoning, not as a plan — read Chiara's §12 for what carried over and what did
+not.
+
+Short version: the "adopt Tracy?" question at the bottom is answered *neither* —
+Chiara hand-rolls the capture side and takes Perfetto's viewer, which is the part
+Tracy would mostly have been for. That deletes the budget bar, the drill-down
+windows and the smoothing rules below. What survives is the `ASSISI_PROFILE_SCOPE`
+name, `SystemRegistry::RunPhase` as the chokepoint, substeps summing into one
+phase, the self-measurement caveat, and the insistence that unmeasured work be an
+explicit number (which became the `frame/unaccounted-ms` counter).
+
+One thing below is now factually stale: the ownership note says `SystemRegistry`
+belongs to the app rather than `Application`. Per-world system binding (2026-07-28)
+moved it again — it is per world now.
+
+**Original status:** Deferred (2026-07-10). Not scheduled. Captured so the thinking isn't lost.
 
 ## Why deferred
 

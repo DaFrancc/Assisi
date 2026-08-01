@@ -2,10 +2,16 @@
 
 /// cluster_build.comp
 /// Computes a view-space AABB for each cluster in the 3-D grid.
-/// Dispatch: (gridDim.x, gridDim.y, gridDim.z) workgroups with local_size (1,1,1).
-/// Run once on init and again after every viewport / projection change.
+/// Dispatch: ceil(clusterCount / 64) workgroups of local_size_x = 64, one
+/// cluster per thread. Run once on init and again after every viewport /
+/// projection change.
+///
+/// Was one thread per workgroup, like cluster_cull.comp — see that file for why
+/// that wastes 31 of every 32 lanes. This one runs rarely, so it was never the
+/// cost the cull was; it is widened for the same reason and to keep the two
+/// dispatches reading alike. No shared memory here, so an early return is safe.
 
-layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
 
 struct AABB
 {
@@ -66,10 +72,18 @@ vec3 rayAtZ(vec3 dir, float targetZ)
 
 void main()
 {
-    uvec3 gid     = gl_GlobalInvocationID;
-    uvec3 gridDim = pc.gridDim.xyz;
-    if (any(greaterThanEqual(gid, gridDim)))
+    uvec3 gridDim      = pc.gridDim.xyz;
+    uint  clusterCount = gridDim.x * gridDim.y * gridDim.z;
+    uint  linearIdx    = gl_GlobalInvocationID.x;
+    if (linearIdx >= clusterCount)
         return;
+
+    // Unpack the linear thread index back into grid coordinates. Must be the
+    // exact inverse of the `idx` packing below (and of cube_min.frag's
+    // ClusterIndex()), or the AABBs land in the wrong cluster slots.
+    uvec3 gid = uvec3(linearIdx % gridDim.x,
+                      (linearIdx / gridDim.x) % gridDim.y,
+                      linearIdx / (gridDim.x * gridDim.y));
 
     vec2  screenSize = pc.screenSizeNearFar.xy;
     float nearZ      = pc.screenSizeNearFar.z;

@@ -7,7 +7,9 @@
 // keep World.hpp's own include of this one acyclic); the activation gate reads
 // through it, so the definition is needed here.
 #include <Assisi/App/World.hpp>
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
 #include <cstdint>
 #include <set>
@@ -195,7 +197,8 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
     }
 
     const std::size_t entryIndex = phase.entries.size();
-    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false, {}});
+    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false, {},
+                             Chiara::InternString(name)});
     phase.dirty = true;
 
     // Capture the phase and slot index (not a pointer to the Entry): the entries
@@ -221,9 +224,15 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
 // ---------------------------------------------------------------------------
 
 template <typename Ctx>
-void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx &ctx,
+void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, const char *profileName, Ctx &ctx,
                               bool skipActiveOnly, const ECS::Scene &gateScene)
 {
+    // This is the chokepoint that makes instrumentation feel automatic: a scope
+    // here and one per entry means every system ever written is profiled with no
+    // further work, which is how engines with "magic" coverage actually get it —
+    // dense framework chokepoints, not per-function reflection.
+    ASSISI_PROFILE_SCOPE(profileName);
+
     if (phase.dirty)
     {
         phase.sorted = TopoSort(phase.entries, phaseName);
@@ -254,6 +263,8 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, Ctx
             continue;
         if (!eligible(entry))
             continue;
+
+        ASSISI_PROFILE_SCOPE(entry.chiaraName);
         entry.fn(ctx);
     }
 }
@@ -266,6 +277,12 @@ std::string_view SystemRegistry::PhaseName(std::size_t gamePhaseIndex)
 {
     static constexpr std::string_view kNames[] = {"PreUpdate", "FixedUpdate", "Update",
                                                    "PostUpdate"};
+    return kNames[gamePhaseIndex];
+}
+
+const char *SystemRegistry::PhaseProfileName(std::size_t gamePhaseIndex)
+{
+    static constexpr const char *kNames[] = {"PreUpdate", "FixedUpdate", "Update", "PostUpdate"};
     return kNames[gamePhaseIndex];
 }
 
@@ -284,13 +301,50 @@ SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view nam
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
 {
-    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), ctx,
+    // Pool occupancy, once per world per frame. PreUpdate is simply the first
+    // phase to run, so it is where a world's frame begins — emitting from every
+    // phase would quadruple the samples without adding anything.
+    //
+    // A runtime loop over ComponentRegistry rather than generated code: the
+    // registry already enumerates every ACOMP with a stable name, so this stays
+    // correct as components are added and needs no codegen to do it. Names are
+    // interned once into a static table, since a counter name must outlive the
+    // capture and interning takes a lock.
+    if (phase == SystemPhase::PreUpdate)
+    {
+        ASSISI_PROFILE_COUNTER("ecs/entity-count", static_cast<double>(ctx.world.scene.AliveCount()));
+
+        const std::span<const Core::Reflect::ComponentMeta> metas =
+            Core::Reflect::ComponentRegistry::Instance().All();
+        static const std::vector<const char *> kCounterNames = [&metas]
+        {
+            std::vector<const char *> names;
+            names.reserve(metas.size());
+            for (const Core::Reflect::ComponentMeta &meta : metas)
+            {
+                names.push_back(Chiara::InternString("ecs/components/" + meta.name));
+            }
+            return names;
+        }();
+
+        // Guard rather than assume: a component registered after the first frame
+        // would leave the cached table short, and a mismatched index here would
+        // label one pool with another's name.
+        const std::size_t counted = std::min(kCounterNames.size(), metas.size());
+        for (std::size_t i = 0; i < counted; ++i)
+        {
+            ASSISI_PROFILE_COUNTER(kCounterNames[i],
+                                   static_cast<double>(ctx.world.scene.ComponentCount(metas[i].id)));
+        }
+    }
+
+    RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), PhaseProfileName(Index(phase)), ctx,
              /*skipActiveOnly=*/!ctx.isActiveWorld, ctx.world.scene);
 }
 
 void SystemRegistry::RunRender(RenderContext ctx)
 {
-    RunPhase(_renderPhase, "Render", ctx, /*skipActiveOnly=*/false, ctx.scene);
+    RunPhase(_renderPhase, "Render", "Render", ctx, /*skipActiveOnly=*/false, ctx.scene);
 }
 
 void SystemRegistry::Clear()

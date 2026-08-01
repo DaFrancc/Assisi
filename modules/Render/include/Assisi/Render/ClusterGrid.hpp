@@ -68,6 +68,18 @@ class ClusterGrid
     static constexpr uint32_t kNumZ        = 24u;
     static constexpr uint32_t kNumClusters = kNumX * kNumY * kNumZ; // 3 456
 
+    /// Threads per workgroup in cluster_build.comp / cluster_cull.comp, and the
+    /// batch size the cull streams lights through shared memory in. Both shaders
+    /// hardcode it in their `layout(local_size_x = ...)`, so changing it here
+    /// alone is not enough — grep for CULL_BATCH.
+    static constexpr uint32_t kClusterGroupSize = 64u;
+
+    /// Workgroups needed to cover the grid at one cluster per thread. The
+    /// shaders bounds-check, so a grid size that is not a multiple of the group
+    /// size is safe (the tail threads idle).
+    static constexpr uint32_t kClusterDispatchGroups =
+        (kNumClusters + kClusterGroupSize - 1u) / kClusterGroupSize; // 54
+
     /// Maximum light indices stored in the global list, per light type.
     /// Point indices occupy [0, kMaxLightIndices) and spot indices occupy
     /// [kMaxLightIndices, 2 * kMaxLightIndices) in the same buffer. Must match

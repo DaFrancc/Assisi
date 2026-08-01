@@ -223,13 +223,27 @@ transition (`imgui 10.89`, `gc 0.00` — entirely editor UI, not streaming, and
 absent from a Game build). Cold-pool warm-up is confirmed rather than inferred:
 `gc 4.92` on the first load, `gc 0.00` on every frame after.
 
-> **Instrumentation is temporary.** The slow-frame phase breakdown
-> (Application.cpp), the render sub-phase timings, `VulkanContext::GetLastGcMs`,
-> and `PumpPublishes`'s phase log were added to find this and are deliberately
-> ad-hoc. They are to be **removed and replaced by a proper performance and
-> memory capture system** — see [[project-perf-capture-system]]. Until that
-> exists they stay, because they are the only reason two wrong hypotheses
-> (contention; "the memcpy is the whole cost") were caught.
+> **Instrumentation was temporary, and the debt is paid** (2026-07-31). The
+> slow-frame phase breakdown (Application.cpp), the render sub-phase timings,
+> `VulkanContext::GetLastGcMs` and `PumpPublishes`'s phase log were ad-hoc by
+> design, and every one of them is now gone — replaced by **Chiara**
+> (`docs/chiara-design-notes.md`), the capture system this section called for.
+>
+> What replaced what: the phase breakdown is scopes under a `Frame` slice; the
+> render sub-phases are `begin-frame`/`scene`/`post-process`/`imgui`/`end-frame`;
+> `GetLastGcMs` is the `gpu-gc` scope plus a `render/gc-ms` counter; the pump log
+> is `pump-publishes` and its children with the asset path as an arg. The
+> slow-frame `Log::Info` survives as a single line naming the frame index and
+> pointing at a capture.
+>
+> The two findings that made this hunt work are the two the replacement had to
+> keep, and both are stronger now. The *unaccounted* figure — which is how
+> contention was ruled out — is a scrubbable track rather than a number in a log
+> line, and it is finally correct: the render bracket contains the GPU wait while
+> `cpuMs` excludes it, so the original arithmetic under-reported by the whole
+> wait. And deferred cost, the thing that actually found the culprit, is now
+> drawn: each parked staging batch carries a flow id from the frame that parks it
+> to the later frame that reclaims it.
 
 ## Remaining work, in stability-impact order
 
@@ -361,7 +375,13 @@ Fix shape (design, not yet committed to):
 
 - Keep the pump diagnostic permanently (it is the stability regression test's
   sensor), but treat any `mesh Nx` time that scales with vertex count as a bug
-  after R1 lands.
+  after R1 lands. **Discharged, without weakening it:** the sensor is now the
+  always-on `pump-publishes` / `publish-mesh` / `publish-material` /
+  `flush-uploads` scopes and the `stream/*` counters, readable from any capture.
+  That is strictly more sensitive than the log line it replaces, which only
+  spoke when a pump crossed a 2 ms threshold guessed before anyone knew what
+  normal looked like — a slow drift under that bar was invisible to it and is
+  not invisible to a counter track.
 - When a genuinely enormous single asset appears (a 100 MB mesh), the escape
   hatch still publishes it in one frame — after R1 that publish is O(1) on
   main, so this stops being a stability event. The GPU copy still lands in one

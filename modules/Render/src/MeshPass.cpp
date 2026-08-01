@@ -49,6 +49,18 @@ struct FrameConstants
     glm::uvec4 gridDim;           // xyz used, w unused
     glm::vec4  screenSizeNearFar; // xy = screen size, z = nearZ, w = farZ
     glm::uvec4 lightCounts;       // x = directional light count, y = debug view, zw unused
+    /// World-space camera position, w unused. The fragment shader used to
+    /// recover this per fragment as -transpose(mat3(view)) * view[3] — a mat3
+    /// transpose plus a matrix-vector product, for a value constant across the
+    /// whole frame. Uniforms are not compile-time constants, so nothing hoisted it.
+    glm::vec4 cameraPosition;
+    /// Froxel lookup scale/bias, so cube_min.frag's ClusterIndex() is FMAs and a
+    /// single log instead of three divides and two logs (the Doom-2016 form):
+    ///   xy = gridDim.xy / screenSize        (screen pixel -> cluster column/row)
+    ///   z  = gridDim.z / log(farZ / nearZ)  (log-depth slice scale)
+    ///   w  = -z * log(nearZ)                (matching bias)
+    /// slice = log(|viewZ|) * z + w, which is gridDim.z * log(|viewZ|/nearZ) / log(farZ/nearZ).
+    glm::vec4 clusterScale;
 };
 } // namespace
 
@@ -187,6 +199,24 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm:
     constants.screenSizeNearFar =
         glm::vec4(static_cast<float>(screenWidth), static_cast<float>(screenHeight), nearZ, farZ);
     constants.lightCounts = glm::uvec4(dirLightCount, static_cast<uint32_t>(debugView), 0u, 0u);
+
+    // View is a rigid transform (View = R | t, t = -R * cameraPos), so the camera
+    // position is -R^-1 * t, and R^-1 == transpose(R) because R is orthonormal.
+    // Same derivation the shader used to run per fragment.
+    constants.cameraPosition = glm::vec4(-glm::transpose(glm::mat3(view)) * glm::vec3(view[3]), 0.f);
+
+    // Guard the logs: a zero/negative near or far plane would make these inf/NaN
+    // and poison every cluster lookup. Both come from the camera, which validates
+    // them, so this is belt-and-braces rather than an expected path.
+    const float safeNear = nearZ > 0.f ? nearZ : 0.001f;
+    const float safeFar  = farZ > safeNear ? farZ : safeNear * 2.f;
+    const float logRatio = std::log(safeFar / safeNear);
+    const float sliceScale = static_cast<float>(ClusterGrid::kNumZ) / logRatio;
+    constants.clusterScale =
+        glm::vec4(static_cast<float>(ClusterGrid::kNumX) / static_cast<float>(screenWidth),
+                  static_cast<float>(ClusterGrid::kNumY) / static_cast<float>(screenHeight), sliceScale,
+                  -sliceScale * std::log(safeNear));
+
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }
 

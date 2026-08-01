@@ -52,6 +52,10 @@ target_include_directories(Assisi-Core
 target_link_libraries(Assisi-Core
   PUBLIC
     nlohmann_json::nlohmann_json
+    # Chiara is below Core, not above it: JobSystem registers its workers with
+    # the capture. PUBLIC so every module above Core can use the macros without
+    # linking it again. Inert (and header-only no-ops) unless built with -c.
+    Assisi::Chiara
 )
 
 add_library(Assisi::Core ALIAS Assisi-Core)

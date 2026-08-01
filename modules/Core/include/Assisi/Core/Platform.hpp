@@ -4,6 +4,7 @@
 /// @file Platform.hpp
 /// @brief Small OS-specific helpers that don't warrant a module of their own.
 
+#include <cstdint>
 #include <string_view>
 
 namespace Assisi::Core
@@ -18,5 +19,14 @@ namespace Assisi::Core
 /// the dialog is dismissed or a platform has no native implementation (there it
 /// degrades to just the log line). Text is UTF-8.
 void ShowErrorDialog(std::string_view title, std::string_view message);
+
+/// @brief The process's current resident set size in bytes, or 0 if the platform
+/// cannot report it.
+///
+/// Resident rather than virtual: it is the number that corresponds to memory
+/// actually being occupied, which is what a memory graph should show. This is a
+/// syscall (a /proc read on Linux), so sample it every N frames rather than
+/// every frame — it is the slowest thing the counter pump touches.
+[[nodiscard]] uint64_t ProcessResidentBytes();
 
 } // namespace Assisi::Core

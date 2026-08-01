@@ -167,6 +167,16 @@ class GeometryArena
     nvrhi::IBuffer *IndexBuffer() const { return _indexBuffer; }
     uint32_t VertexStride() const { return _vertexStride; }
 
+    /// Occupancy, for the capture's memory counters. Used against capacity is
+    /// what says whether the next Allocate will trigger a Grow — and a Grow is a
+    /// reallocation plus a GPU copy of the whole prefix, which is exactly the
+    /// kind of cost that shows up in a later frame's garbage collection rather
+    /// than the frame that caused it.
+    [[nodiscard]] uint64_t VertexUsedBytes() const { return _vertexUsed; }
+    [[nodiscard]] uint64_t VertexCapacityBytes() const { return _vertexCapacity; }
+    [[nodiscard]] uint64_t IndexUsedBytes() const { return _indexUsed; }
+    [[nodiscard]] uint64_t IndexCapacityBytes() const { return _indexCapacity; }
+
   private:
     void EnsureVertexCapacity(uint64_t needed, nvrhi::ICommandList *sharedList = nullptr)
     {

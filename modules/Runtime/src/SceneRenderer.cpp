@@ -6,7 +6,9 @@
 #include <cstdint>
 #include <utility>
 
+#include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/Renderer.hpp>
@@ -187,7 +189,10 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // entities whose transform changed since last frame are recomputed; the tick
     // bookmark carries that across frames — and belongs to the scene, not to us
     // (see the header).
-    propagationTick = PropagateTransforms(scene, propagationTick);
+    {
+        ASSISI_PROFILE_SCOPE("propagate-transforms");
+        propagationTick = PropagateTransforms(scene, propagationTick);
+    }
 
     const glm::mat4 projection = ProjectionMatrix(camera, AspectRatio(static_cast<int32_t>(frame.width),
                                                                       static_cast<int32_t>(frame.height)));
@@ -198,12 +203,18 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // it and shows rectangular lighting artifacts.
     if (projection != _clusterProjection)
     {
+        // Scoped even though it is rare: it is a full grid rebuild, so the one
+        // frame that pays it should say so rather than look like a random spike.
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "cluster-rebuild");
         RebuildClusterGrid(static_cast<int32_t>(frame.width), static_cast<int32_t>(frame.height), camera, projection);
     }
 
     _lighting.Update(frame.commandList, scene, view);
-    _meshPass.UpdateFrameConstants(frame.commandList, projection * view, view, frame.width, frame.height, camera.nearZ,
-                                   camera.farZ, _lighting.DirLightCount(), _debugView);
+    {
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
+        _meshPass.UpdateFrameConstants(frame.commandList, projection * view, view, frame.width, frame.height,
+                                       camera.nearZ, camera.farZ, _lighting.DirLightCount(), _debugView);
+    }
     _lastDrawStats = DrawScene(DrawSceneParams{.scene          = scene,
                                                .meshPass       = _meshPass,
                                                .frame          = frame,
@@ -217,32 +228,52 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
                                                .culler         = &_meshCuller,
                                                .cullBuilder    = &_cullBuilder});
 
-    DrawEditorIcons(frame, projection * view, view, cameraTransform.position, scene);
+    // What the frame actually drew, on their own tracks. These are the numbers you
+    // reach for the moment `draw-scene` moves: a jump in batches or draw calls says
+    // the scene grew, a jump with flat counts says the cost is elsewhere.
+    ASSISI_PROFILE_COUNTER("render/draw-calls", static_cast<double>(_lastDrawStats.drawCalls));
+    ASSISI_PROFILE_COUNTER("render/batches", static_cast<double>(_lastDrawStats.batches));
+    ASSISI_PROFILE_COUNTER("render/drawn-items", static_cast<double>(_lastDrawStats.drawnItems));
+    ASSISI_PROFILE_COUNTER("render/culled-meshes", static_cast<double>(_lastDrawStats.culledMeshes));
+
+    {
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "editor-icons");
+        DrawEditorIcons(frame, projection * view, view, cameraTransform.position, scene);
+    }
 
     // Submitted silhouette outlines (the selected object's collider + mesh). Each
     // group is its own edge-detect pass, so a collider and the mesh it wraps outline
     // independently rather than merging into one border. Drawn on top of the scene.
-    if (_outlinePass.IsValid())
     {
-        for (const OutlineGroup &group : _outlineGroups)
+        // One scope for both outline sources (submitted groups + the highlight):
+        // they are the same pass paying the same per-group cost, and splitting them
+        // would only say which caller queued the work, not what it cost.
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "outlines");
+        if (_outlinePass.IsValid())
         {
-            _outlinePass.DrawOutlines(frame, projection * view, group.items, group.color);
+            for (const OutlineGroup &group : _outlineGroups)
+            {
+                _outlinePass.DrawOutlines(frame, projection * view, group.items, group.color);
+            }
         }
-    }
-    _outlineGroups.clear();
+        _outlineGroups.clear();
 
-    DrawHighlightOutline(frame, projection * view, view, scene);
+        DrawHighlightOutline(frame, projection * view, view, scene);
+    }
 
     // Overlay lines (collider wireframes) sit on top of everything else: the
     // depth-tested batch first (occluded by the scene), then the on-top batch
     // (x-ray). Both are cleared afterwards so the caller re-submits each frame.
-    if (_linePass.IsValid())
     {
-        _linePass.Draw(frame, projection * view, _overlayLinesDepthTested, /*onTop=*/false);
-        _linePass.Draw(frame, projection * view, _overlayLinesOnTop, /*onTop=*/true);
+        ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "overlay-lines");
+        if (_linePass.IsValid())
+        {
+            _linePass.Draw(frame, projection * view, _overlayLinesDepthTested, /*onTop=*/false);
+            _linePass.Draw(frame, projection * view, _overlayLinesOnTop, /*onTop=*/true);
+        }
+        _overlayLinesDepthTested.clear();
+        _overlayLinesOnTop.clear();
     }
-    _overlayLinesDepthTested.clear();
-    _overlayLinesOnTop.clear();
     _iconSuppressed.clear();
 }
 
