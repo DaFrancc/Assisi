@@ -18,22 +18,39 @@ git clone https://github.com/DaFrancc/Assisi.git
 ```
 
 ### 2. Install Tools
-- Make
-- CMake 3.28+
-- Ninja
+- [Make](https://www.gnu.org/software/make/)
+- [CMake](https://cmake.org/) 3.28+
+- [Ninja](https://ninja-build.org/)
 
 The following compilers have been tested:
-- Windows — MSVC (Visual Studio 2022+)
-- Linux — GCC, Clang
+- Windows — [MSVC](https://visualstudio.microsoft.com/) (Visual Studio 2022+)
+- Linux — [GCC](https://gcc.gnu.org/), [Clang](https://clang.llvm.org/)
 
-All dependencies are fetched automatically by CMake on first configure — no separate package manager
-required: GLFW (windowing/input), GLM (math), [NVRHI](https://github.com/NVIDIA-RTX/NVRHI) (Vulkan
-render hardware interface), glslang (build-time GLSL→SPIR-V shader compiler), Dear ImGui + ImPlot +
-ImGuizmo (debug UI and the editor's transform gizmo), Jolt Physics, fastgltf (runtime glTF import),
-stb and libwebp (image loading), FreeType (text), nlohmann/json, and doctest (unit tests). Assimp is
-the deferred multi-format mesh backend and stays **off** by default (`ASSISI_ENABLE_ASSIMP`) so its
-heavy build doesn't tax every configure. Rendering is **Vulkan**: a Vulkan-capable GPU and driver are
-required at runtime, but no Vulkan SDK is needed to build (the engine loads Vulkan dynamically).
+**Everything below is fetched and built automatically by CMake on first configure** — there is no
+separate package manager step, and nothing to install by hand:
+
+| Dependency | What it does |
+|---|---|
+| [GLFW](https://github.com/glfw/glfw) | Window creation and input |
+| [GLM](https://github.com/g-truc/glm) | Vector/matrix/quaternion math |
+| [NVRHI](https://github.com/NVIDIA-RTX/NVRHI) | Render hardware interface over Vulkan |
+| [glslang](https://github.com/KhronosGroup/glslang) | Compiles GLSL → SPIR-V at build time |
+| [Dear ImGui](https://github.com/ocornut/imgui) | Immediate-mode UI for the editor and debug panels |
+| [ImPlot](https://github.com/epezent/implot) | Plots and graphs for those panels |
+| [ImGuizmo](https://github.com/CedricGuillemet/ImGuizmo) | The editor's move/rotate/scale gizmo |
+| [Jolt Physics](https://github.com/jrouwe/JoltPhysics) | Rigid-body simulation |
+| [fastgltf](https://github.com/spnda/fastgltf) | glTF mesh/material import |
+| [stb](https://github.com/nothings/stb) | Image decoding (PNG, JPEG, …) |
+| [libwebp](https://github.com/webmproject/libwebp) | WebP decoding, including animated |
+| [FreeType](https://github.com/freetype/freetype) | Font rasterization |
+| [nlohmann/json](https://github.com/nlohmann/json) | JSON for configs and level files |
+| [doctest](https://github.com/doctest/doctest) | Unit-test framework |
+| [Assimp](https://github.com/assimp/assimp) | Multi-format mesh import — **off by default** |
+
+[Assimp](https://github.com/assimp/assimp) is the deferred catch-all import backend (FBX/OBJ/DAE/…) and
+stays off (`ASSISI_ENABLE_ASSIMP`) so its heavy build doesn't tax every configure; fastgltf covers the
+runtime glTF path today. Rendering is **Vulkan**: a Vulkan-capable GPU and driver are required at
+runtime, but no Vulkan SDK is needed to build (the engine loads Vulkan dynamically).
 
 **Minimum CPU:** x86-64 with **AVX2** (Intel Haswell 2013+ / AMD Zen 2015+, and the FMA/F16C/LZCNT/BMI
 extensions that ship alongside it). This is a deliberate baseline — the engine is compiled with these
@@ -66,6 +83,69 @@ chmod +x ./setup.sh && ./setup.sh
 ```
 
 ### 4. Configure & Build
+
+#### Which build should I use?
+
+There are five build *variants*. They differ in how much the compiler optimizes, how much debug
+information is kept, and whether extra runtime checking is compiled in.
+
+| Variant | Speed | Use it when |
+|---|---|---|
+| **debug** | slowest (10–40×) | Stepping through code in a debugger. Asserts on, nothing optimized. |
+| **dev** | fast | **The everyday build.** Optimized, but keeps enough symbols for a usable stack trace. |
+| **ship** | fastest | Releasing, and **any performance measurement**. |
+| **asan** | ~2–3× slower | Chasing a crash, a memory leak, or corrupted-looking data. |
+| **tsan** | ~5–15× slower | Chasing a race — random-looking bugs in threaded code. |
+
+Rules of thumb: **build `dev` day to day**, drop to `debug` only when you need a debugger, and
+**never judge performance from a `debug` build** — it does not merely make everything uniformly
+slower, it changes *which* code looks slow. Reach for `asan`/`tsan` when something is wrong rather
+than routinely; they are diagnostic tools, not a build you live in.
+
+<details>
+<summary><b>More detail on each</b></summary>
+
+**debug** — `CMAKE_BUILD_TYPE=Debug`. No optimization at all: every small function is a real function
+call, and templated math (GLM, the ECS) suffers worst. This is what makes it 10–40× slower than
+`ship`, and why it is misleading to profile: a measured example from this engine had one function take
+0.641 ms in `debug` and 0.017 ms in `ship` — a 37× difference concentrated in one place, which
+reorders the whole profile. Its value is that the debugger shows you every variable and never
+optimizes a line away.
+
+**dev** — `CMAKE_BUILD_TYPE=RelWithDebInfo`. Optimized like a release build but keeps debug info, so
+it runs at roughly shipping speed while a crash still gives a readable stack trace. This is the
+sensible default for ordinary work: fast enough that the editor feels right, debuggable enough that
+you can find out why something broke. Inlining means the debugger will sometimes skip or reorder
+lines.
+
+**ship** — `CMAKE_BUILD_TYPE=Release`. Full optimization, no debug info, and fast-math enabled
+(`ASSISI_ENABLE_FAST_MATH`, on by default). This is what players run, and therefore the only build
+whose performance numbers mean anything. A crash here gives you little to work with, so reproduce in
+`dev` before investigating.
+
+**asan** — `debug` plus **AddressSanitizer and UndefinedBehaviorSanitizer**. Instruments every memory
+access and turns silent corruption into an immediate, precise report: use-after-free, buffer overrun,
+leaks at exit, signed overflow, bad casts. If a bug shows up as "it crashes somewhere unrelated" or
+"this value is nonsense", run it here first — it usually names the exact line. Costs ~2–3× runtime and
+a lot of memory.
+
+**tsan** — `debug` plus **ThreadSanitizer**, which finds *data races*: two threads touching the same
+memory with no synchronization. It reports races even when the run looked fine, which matters because
+races usually do look fine right up until they don't. Relevant to the job system, async asset loading,
+and physics. Very slow, and **mutually exclusive with asan** — the two cannot be combined, so run them
+separately.
+
+**`-chiara` variants** — orthogonal to all of the above. They add the profiler (`ASSISI_ENABLE_CHIARA`)
+and GPU debug markers rather than changing optimization, so `gcc-ship-chiara` is a full shipping build
+that can also record a capture. That combination is the one to profile with.
+
+On Linux, `scripts/run-sanitized.sh` launches the sandbox under a sanitizer build and captures the
+report to a log file, so a diagnostic survives even if the window dies.
+
+</details>
+
+#### Building
+
 After initialization, you can build individual presets or use the all-in-one Makefile targets:
 
 ```bash
@@ -84,6 +164,11 @@ make gcc-ship    # (alias: gs)
 make clang-debug # (alias: cd)
 make clang-dev   # (alias: cv)
 make clang-ship  # (alias: cs)
+
+# Sanitizer builds (no short aliases). ASan is available on MSVC too; TSan is
+# Linux-only, and the two can never be combined in one build.
+make gcc-asan    # AddressSanitizer + UBSan   (also: msvc-asan, clang-asan)
+make gcc-tsan    # ThreadSanitizer            (also: clang-tsan)
 
 # Every preset has a `-chiara` variant that compiles the profiler in (see the
 # Chiara module below). Suffix the alias with `-c`:
