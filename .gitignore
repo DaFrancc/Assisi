@@ -63,3 +63,7 @@ logo/
 
 # Model assets — heavy binary art (glTF .bin + textures), kept local only.
 assets/models/
+# RenderDoc captures (scripts/rdc-capture.sh) and the reports rdc-analyze.py
+# writes beside them. Large binaries, machine-specific, never worth committing.
+captures-rdc/
+*.rdc
