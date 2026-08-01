@@ -40,6 +40,13 @@ option(ASSISI_BUILD_TESTS "Build unit tests" ON)
 # gs-c, …) turn it on; nothing else does.
 option(ASSISI_ENABLE_CHIARA "Compile the Chiara capture system in" OFF)
 
+# Debug-utils labels on the command list, so RenderDoc/Nsight show the engine's
+# own pass names instead of a flat list of anonymous draws (Render/GpuMarker.hpp).
+# Defaults to following Chiara, since the `-chiara` presets are the builds anyone
+# profiles — but it is its own option because the two are independent: a plain
+# Release build handed to RenderDoc still wants labels.
+option(ASSISI_ENABLE_GPU_MARKERS "Emit GPU debug-utils markers for RenderDoc/Nsight" ${ASSISI_ENABLE_CHIARA})
+
 # Assimp is the deferred multi-format catch-all mesh-import backend (FBX/OBJ/DAE/…).
 # The runtime glTF path uses fastgltf; Assimp stays OFF so its heavy build doesn't
 # tax every configure until a second format backend is actually wired. Flip this ON

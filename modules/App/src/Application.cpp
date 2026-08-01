@@ -21,6 +21,7 @@
 #include <Assisi/Core/Platform.hpp>
 #include <Assisi/Debug/DebugUI.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Render/GpuMarker.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 
 // --- Standard ---------------------------------------------------------------
@@ -571,6 +572,19 @@ void Application::PumpChiaraCounters()
     if (Chiara::CurrentFrame() % kRssSampleInterval == 0)
     {
         ASSISI_PROFILE_COUNTER("mem/process-rss-bytes", static_cast<double>(Core::ProcessResidentBytes()));
+
+        // Render resolution, on the same schedule. GPU cost is dominated by
+        // fragment work, so it scales with pixel count — which makes every
+        // frame/gpu-ms number meaningless unless you know the size it was
+        // measured at. A window the compositor sized differently between two
+        // runs is invisible in the numbers and silently invalidates the
+        // comparison; recording it makes a capture self-describing.
+        if (_window != nullptr)
+        {
+            const Window::WindowSize fb = _window->GetFramebufferSize();
+            ASSISI_PROFILE_COUNTER("render/framebuffer-width", static_cast<double>(fb.Width));
+            ASSISI_PROFILE_COUNTER("render/framebuffer-height", static_cast<double>(fb.Height));
+        }
     }
 
     // Physics allocation *churn* per frame, differenced from running totals —
@@ -623,32 +637,51 @@ void Application::RenderFrame()
         sceneFrame.depthTexture = _postProcess.SceneDepthTexture();
     }
 
-    sceneFrame.commandList->clearTextureFloat(
-        sceneFrame.colorTexture, nvrhi::AllSubresources,
-        nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
-    if (sceneFrame.depthTexture)
     {
-        sceneFrame.commandList->clearDepthStencilTexture(sceneFrame.depthTexture, nvrhi::AllSubresources, true, 1.0f,
-                                                          false, 0);
+        // The last unscoped thing inside `render` — small, but an unnamed gap
+        // between two slices is exactly what sends you looking in the wrong place.
+        ASSISI_PROFILE_GPU_SCOPE(sceneFrame.commandList, "clear-targets");
+        sceneFrame.commandList->clearTextureFloat(
+            sceneFrame.colorTexture, nvrhi::AllSubresources,
+            nvrhi::Color(_config.clearColor.r, _config.clearColor.g, _config.clearColor.b, _config.clearColor.a));
+        if (sceneFrame.depthTexture)
+        {
+            sceneFrame.commandList->clearDepthStencilTexture(sceneFrame.depthTexture, nvrhi::AllSubresources, true,
+                                                             1.0f, false, 0);
+        }
     }
 
     {
-        ASSISI_PROFILE_SCOPE("scene");
+        ASSISI_PROFILE_GPU_SCOPE(sceneFrame.commandList, "scene");
         OnRender(sceneFrame);
     }
 
     {
         // No-op if AA is off (the scene already rendered directly into `frame`
         // above); otherwise resolves/FXAA's the offscreen render into it.
-        ASSISI_PROFILE_SCOPE("post-process");
+        ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "post-process");
         _postProcess.Resolve(frame->commandList, *frame);
     }
 
     {
-        ASSISI_PROFILE_SCOPE("imgui");
-        Debug::DebugUI::BeginFrame(*frame);
-        OnImGui();
-        Debug::DebugUI::EndFrame(*frame);
+        // Split three ways because the three costs move for unrelated reasons:
+        // `imgui-begin` is the backend's per-frame setup plus the texture sweep,
+        // `imgui-panels` is the app's own panel code (the part a game controls),
+        // and `imgui-render` is building + recording the draw data, which scales
+        // with how much got drawn rather than with how much code ran.
+        ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui");
+        {
+            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-begin");
+            Debug::DebugUI::BeginFrame(*frame);
+        }
+        {
+            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-panels");
+            OnImGui();
+        }
+        {
+            ASSISI_PROFILE_GPU_SCOPE(frame->commandList, "imgui-render");
+            Debug::DebugUI::EndFrame(*frame);
+        }
     }
 
     {

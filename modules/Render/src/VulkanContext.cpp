@@ -98,16 +98,26 @@ VkInstance CreateInstance()
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
+    // VK_EXT_debug_utils carries two unrelated things, and they used to be
+    // enabled together under !NDEBUG: the validation messenger (expensive,
+    // debug-only) and command-buffer labels (free, and what RenderDoc/Nsight
+    // read to show engine pass names instead of anonymous draws). Bundling them
+    // meant an optimized build — the only build worth profiling — silently had
+    // no labels: nvrhi's beginMarker() is a no-op without the extension, so the
+    // markers compiled in and did nothing. They are separated now.
+#if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
+    extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+#endif
+
 #ifndef NDEBUG
-    // Enable the Khronos validation layer + debug-utils in debug builds so
-    // spec violations become log messages instead of silent UB. Chaining the
-    // messenger create-info onto pNext also captures issues raised during
+    // Enable the Khronos validation layer in debug builds so spec violations
+    // become log messages instead of silent UB. Chaining the messenger
+    // create-info onto pNext also captures issues raised during
     // vkCreateInstance / vkDestroyInstance themselves.
     VkDebugUtilsMessengerCreateInfoEXT debugInfo = MakeDebugMessengerCreateInfo();
     if (IsValidationLayerAvailable())
     {
         layers.push_back(kValidationLayer);
-        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
         createInfo.pNext = &debugInfo;
     }
     else
@@ -502,6 +512,16 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
 
     const char *deviceExtensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
+    // nvrhi does not query the instance for what we enabled — it believes this
+    // list, and gates features on it. beginMarker()/endMarker() check
+    // `extensions.EXT_debug_utils` and silently do nothing when it is unset, so
+    // omitting this makes every GPU marker a no-op with no diagnostic anywhere.
+    // Must stay in step with the extensions CreateInstance() actually enables.
+    std::vector<const char *> instanceExtensions;
+#if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
+    instanceExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+#endif
+
     nvrhi::vulkan::DeviceDesc nvrhiDeviceDesc;
     nvrhiDeviceDesc.instance = context->_instance;
     nvrhiDeviceDesc.physicalDevice = context->_physicalDevice;
@@ -510,6 +530,8 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     nvrhiDeviceDesc.graphicsQueueIndex = static_cast<int>(context->_graphicsQueueFamily);
     nvrhiDeviceDesc.deviceExtensions = deviceExtensions;
     nvrhiDeviceDesc.numDeviceExtensions = 1;
+    nvrhiDeviceDesc.instanceExtensions = instanceExtensions.data();
+    nvrhiDeviceDesc.numInstanceExtensions = instanceExtensions.size();
 
     context->_nvrhiDeviceHandle = nvrhi::vulkan::createDevice(nvrhiDeviceDesc);
     if (!context->_nvrhiDeviceHandle)
