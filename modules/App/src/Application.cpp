@@ -326,6 +326,54 @@ void Application::Run()
         ASSISI_PROFILE_SCOPE("Frame");
         ASSISI_PROFILE_FRAME();
 
+        // Frame pacing happens *first*, before input is polled and before the
+        // frame clock starts.
+        //
+        // Two reasons, and the second is why it is here rather than just before
+        // the render it paces. Input polled after the sleep is acted on
+        // immediately, where sleeping mid-frame left every input up to a whole
+        // pacing interval stale by the time it reached the screen — 5 ms of the
+        // 7 ms frame, on a 144 cap. And sitting above `now` puts the sleep
+        // outside the measured window entirely, so cpuMs no longer has to
+        // subtract it back out; one less term to keep in sync with the code,
+        // which is precisely how the unaccounted figure went wrong before.
+        //
+        // The cost is that render start now jitters with however long input,
+        // fixed-update and update took. That is ~0.16 ms against ~5 ms of
+        // latency saved, so it is not a close call.
+        //
+        // Pacing is exclusive with vsync: only cap in FpsLimit mode with a
+        // finite limit. In VSync mode FIFO present paces us; with an unlimited
+        // cap (fpsLimit < 0) we run as fast as the GPU allows.
+        double sleepMs = 0.0;
+        if (_options.frameSync == FrameSyncMode::FpsLimit && _options.fpsLimit > 0)
+        {
+            ASSISI_PROFILE_SCOPE("pacing-sleep");
+            const Clock::time_point sleepStart = Clock::now();
+            SleepUntil(nextRenderTime);
+            sleepMs = Seconds(Clock::now() - sleepStart).count() * 1000.0;
+
+            // Advance the target rather than restarting it from now. SleepUntil
+            // can only overshoot, so `= now + period` absorbed every overshoot
+            // permanently and the loop ran a hair under the cap forever — a
+            // measured 6.999 ms against a 6.944 ms period, 142.9 fps instead of
+            // 144. Accumulating the period corrects the overshoot on the next
+            // frame instead.
+            const Clock::duration period =
+                std::chrono::duration_cast<Clock::duration>(Seconds(1.0 / _options.fpsLimit));
+            nextRenderTime += period;
+
+            // Unless we have fallen more than a frame behind — after a hitch or
+            // a breakpoint, a target in the past would make the next several
+            // frames skip their sleep entirely to "catch up", which is a burst
+            // of unpaced frames rather than a recovery. Resnap instead.
+            const Clock::time_point resumed = Clock::now();
+            if (nextRenderTime < resumed)
+            {
+                nextRenderTime = resumed + period;
+            }
+        }
+
         const Clock::time_point now   = Clock::now();
         const double            rawDt = Seconds(now - prevTime).count();
         const double            dt    = std::min(rawDt, 0.25);
@@ -382,20 +430,6 @@ void Application::Run()
         }
         const Clock::time_point updateEnd = Clock::now();
 
-        // Frame pacing is exclusive with vsync: only cap here in FpsLimit mode with
-        // a finite limit. In VSync mode FIFO present paces us; with an unlimited cap
-        // (fpsLimit < 0) we run as fast as the GPU allows. The sleep is timed so it
-        // can be excluded from the CPU frame-time figure below.
-        double sleepMs = 0.0;
-        if (_options.frameSync == FrameSyncMode::FpsLimit && _options.fpsLimit > 0)
-        {
-            const Clock::time_point sleepStart = Clock::now();
-            SleepUntil(nextRenderTime);
-            sleepMs = Seconds(Clock::now() - sleepStart).count() * 1000.0;
-            nextRenderTime =
-                Clock::now() + std::chrono::duration_cast<Clock::duration>(Seconds(1.0 / _options.fpsLimit));
-        }
-
         // Reconcile the swapchain's present mode with the frame-sync option HERE,
         // between frames — never inside RenderFrame(), which recreates the
         // swapchain mid command-list and destroys resources the frame still uses.
@@ -405,6 +439,12 @@ void Application::Run()
         Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
         if (vulkanContext)
         {
+            // Scoped because it is the other thing that used to sit between two
+            // scopes and show as a blank gap. Normally a compare and nothing
+            // else; when the user does flip the option it rebuilds the swapchain,
+            // and a multi-millisecond stall with no slice under it is exactly
+            // the kind of hole that sends you hunting in the wrong place.
+            ASSISI_PROFILE_SCOPE("vsync-reconcile");
             vulkanContext->SetVSync(_options.frameSync == FrameSyncMode::VSync);
         }
 
@@ -418,14 +458,19 @@ void Application::Run()
         }
         const Clock::time_point flushEnd = Clock::now();
 
-        // Frame-time accounting. CPU frame time is this loop iteration's wall-clock
-        // minus the two intervals the CPU is deliberately idle: the FPS-limit sleep
-        // above, and the frames-in-flight throttle where BeginFrame() blocks on the
-        // GPU (reported by the context). What's left is the real CPU cost, so
-        // comparing it against the GPU timer-query time shows which side is bound.
+        // Frame-time accounting. CPU frame time is this loop iteration's
+        // wall-clock minus the one interval the CPU is deliberately idle inside
+        // it: the frames-in-flight throttle where BeginFrame() blocks on the GPU
+        // (reported by the context). What's left is the real CPU cost, so
+        // comparing it against the GPU timer-query time shows which side is
+        // bound.
+        //
+        // The pacing sleep used to need subtracting here too. It now happens
+        // above `now`, outside the window this measures, so there is nothing to
+        // correct for — the term that has to agree with code elsewhere in the
+        // loop is simply gone.
         const double gpuWaitMs = vulkanContext ? vulkanContext->GetLastGpuWaitMs() : 0.0;
-        const double cpuMs =
-            std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - sleepMs - gpuWaitMs);
+        const double cpuMs     = std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - gpuWaitMs);
         const double gpuMs = vulkanContext ? static_cast<double>(vulkanContext->GetLastGpuFrameTimeMs()) : 0.0;
 
         // Slow-frame diagnostic. A spike is only actionable if you know which phase
