@@ -115,7 +115,8 @@ void ClusterGrid::BuildClusters(nvrhi::ICommandList *commandList, int32_t width,
     pc.gridDim = glm::uvec4(kNumX, kNumY, kNumZ, 0u);
     pc.screenSizeNearFar = glm::vec4(static_cast<float>(width), static_cast<float>(height), nearZ, farZ);
 
-    _buildShader.Dispatch(commandList, _buildBindingSet, kNumX, kNumY, kNumZ, &pc, sizeof(pc));
+    // One thread per cluster, 64 per workgroup (see cluster_build.comp).
+    _buildShader.Dispatch(commandList, _buildBindingSet, kClusterDispatchGroups, 1u, 1u, &pc, sizeof(pc));
 }
 
 void ClusterGrid::CullLights(nvrhi::ICommandList *commandList, const std::vector<PointLightGPU> &pointLights,
@@ -137,7 +138,8 @@ void ClusterGrid::CullLights(nvrhi::ICommandList *commandList, const std::vector
     pc.lightCounts = glm::uvec4(std::min(static_cast<uint32_t>(pointLights.size()), kMaxPointLights),
                                 std::min(static_cast<uint32_t>(spotLights.size()), kMaxSpotLights), 0u, 0u);
 
-    _cullShader.Dispatch(commandList, _cullBindingSet, kNumX, kNumY, kNumZ, &pc, sizeof(pc));
+    // One thread per cluster, 64 per workgroup (see cluster_cull.comp).
+    _cullShader.Dispatch(commandList, _cullBindingSet, kClusterDispatchGroups, 1u, 1u, &pc, sizeof(pc));
 }
 
 } // namespace Assisi::Render
