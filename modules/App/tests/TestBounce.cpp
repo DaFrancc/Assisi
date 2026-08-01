@@ -18,6 +18,7 @@
 #include <Assisi/Core/EventQueue.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Window/ActionMap.hpp>
 
 using namespace Assisi::App;
 
@@ -196,7 +197,7 @@ TEST_CASE("BounceSystem sends a landing body back up, scaled by rebound")
     {
         // Systems first, then the step — the order OnFixedUpdate uses, so the
         // velocity the system writes is the one the next step simulates.
-        SystemContext ctx{world, kStep, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
 
         const std::span<const Assisi::Physics::Contact> contacts = world.physics.Contacts();
         for (const Assisi::Physics::Contact &contact : contacts)
@@ -245,7 +246,7 @@ TEST_CASE("rebound of zero stops a body dead, and a negative one is clamped to t
 
         for (int32_t i = 0; i < 240 && !bounced; ++i)
         {
-            SystemContext ctx{world, kStep, nullptr, &actions, events, true, &worlds};
+            SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
 
             const bool hadContact = !world.physics.Contacts().empty();
             BounceSystem(ctx);
@@ -292,7 +293,7 @@ TEST_CASE("A body already at rest never launches itself, even at rebound > 1")
     float highest = 0.f;
     for (int32_t i = 0; i < 600; ++i) // ten seconds of lying still
     {
-        SystemContext ctx{world, kStep, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
         BounceSystem(ctx);
         world.physics.Update(kStep);
         world.physics.CaptureState();
@@ -334,7 +335,7 @@ TEST_CASE("What a settling nudge does at rebound > 1 depends on kMinBounceSpeed"
 
     for (int32_t i = 0; i < 600; ++i) // ten seconds — long enough for a runaway to be obvious
     {
-        SystemContext ctx{world, kStep, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
 
         for (const Assisi::Physics::Contact &contact : world.physics.Contacts())
         {
@@ -389,7 +390,7 @@ TEST_CASE("A real impact still bounces at rebound > 1, and gains speed")
 
     for (int32_t i = 0; i < 240 && launchSpeed == 0.f; ++i)
     {
-        SystemContext ctx{world, kStep, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
 
         for (const Assisi::Physics::Contact &contact : world.physics.Contacts())
         {
@@ -433,7 +434,7 @@ TEST_CASE("A body with no Bounce component is left alone")
 
     for (int32_t i = 0; i < 240; ++i)
     {
-        SystemContext ctx{world, kStep, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
         if (!world.physics.Contacts().empty())
             landed = true;
         BounceSystem(ctx);

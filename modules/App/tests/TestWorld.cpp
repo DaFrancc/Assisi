@@ -591,9 +591,9 @@ namespace
 // will. No window, so no input devices — see SystemContext's pointer fields.
 void TickUpdate(World &world, Assisi::Core::EventQueue &events, bool isActiveWorld = true)
 {
-    world.systems.Run(SystemPhase::Update, SystemContext{world, 0.016f, /*input=*/nullptr,
-                                                         /*actions=*/nullptr, events,
-                                                         isActiveWorld});
+    world.systems.Run(SystemPhase::Update, SystemContext{world, 0.016f, /*simTick=*/0,
+                                                         /*input=*/nullptr, /*actions=*/nullptr,
+                                                         events, isActiveWorld});
 }
 } // namespace
 
