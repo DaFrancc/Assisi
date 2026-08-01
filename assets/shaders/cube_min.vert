@@ -41,6 +41,11 @@ layout(binding = 256) uniform FrameConstants
     uvec4 gridDim;
     vec4  screenSizeNearFar;
     uvec4 lightCounts;
+    // Unused here, but the block must mirror Render::FrameConstants (and
+    // cube_min.frag's copy) member for member — a declaration that diverges in
+    // the middle silently shifts every following offset.
+    vec4  cameraPosition;
+    vec4  clusterScale;
 } uFrame;
 
 void main()

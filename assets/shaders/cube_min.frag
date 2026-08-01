@@ -58,6 +58,10 @@ layout(binding = 256) uniform FrameConstants
     uvec4 gridDim;            // xyz used, w unused
     vec4  screenSizeNearFar;  // xy = screen size, z = nearZ, w = farZ
     uvec4 lightCounts;        // x = directional light count, y = debug view mode, zw unused
+    vec4  cameraPosition;     // world-space camera position, w unused
+    // Froxel lookup scale/bias (see Render::FrameConstants): xy = gridDim.xy /
+    // screenSize, z = gridDim.z / log(farZ/nearZ), w = -z * log(nearZ).
+    vec4  clusterScale;
 } uFrame;
 
 // Debug view modes (must match Render::MaterialDebugView). 0 = normal lit render;
@@ -173,58 +177,88 @@ Surface SampleMaterial()
 }
 
 // ---- Cook-Torrance BRDF -------------------------------------------------
+//
+// Algebraically identical to the textbook NDF * G * F / (4 NdotV NdotL) form it
+// replaces, restructured so the per-light inner loop — which runs once per light
+// per fragment, and is therefore the hot path of the whole renderer — issues as
+// few SFU (divide / sqrt / pow) operations as possible. On Ampere those retire at
+// a quarter of the FMA rate.
+//
+// Two rewrites do the work:
+//
+//   * Smith-GGX's height-correlated numerators cancel the specular denominator
+//     exactly. With k = (roughness+1)^2 / 8,
+//         G / (4 NdotV NdotL) = 1 / (4 (NdotV(1-k)+k) (NdotL(1-k)+k))
+//     because the NdotV / NdotL in each GeometrySchlickGGX numerator divide out.
+//     Three divides collapse into one, and the NdotV half is loop-invariant.
+//   * Schlick's pow(x, 5.0) becomes x2*x2*x. The NVIDIA compiler lowers pow() to
+//     LG2 + EX2 rather than expanding a constant integer exponent, so this trades
+//     two SFU ops for two multiplies.
+//
+// Everything invariant across the light loop (k, a2, the view-side visibility
+// term, the diffuse base) is hoisted into BrdfContext, built once per fragment.
 
-float DistributionGGX(vec3 N, vec3 H, float roughness)
+struct BrdfContext
 {
-    float a      = roughness * roughness;
-    float a2     = a * a;
-    float NdotH  = max(dot(N, H), 0.0);
-    float NdotH2 = NdotH * NdotH;
-    float denom  = NdotH2 * (a2 - 1.0) + 1.0;
-    return a2 / (PI * denom * denom);
-}
+    vec3  diffuseBase; // albedo * (1 - metallic) / PI
+    vec3  F0;
+    float a2;          // (roughness^2)^2
+    float oneMinusK;   // 1 - k
+    float k;
+    float visV;        // NdotV * (1-k) + k  — the view half of Smith
+};
 
-float GeometrySchlickGGX(float NdotV, float roughness)
+BrdfContext MakeBrdfContext(vec3 N, vec3 V, vec3 albedo, vec3 F0, float roughness, float metallic)
 {
-    float r = roughness + 1.0;
-    float k = (r * r) / 8.0;
-    return NdotV / (NdotV * (1.0 - k) + k);
-}
+    BrdfContext c;
+    float r     = roughness + 1.0;
+    c.k         = (r * r) / 8.0;
+    c.oneMinusK = 1.0 - c.k;
 
-float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness)
-{
+    float a = roughness * roughness;
+    c.a2    = a * a;
+
     float NdotV = max(dot(N, V), 0.0);
-    float NdotL = max(dot(N, L), 0.0);
-    return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
+    c.visV      = NdotV * c.oneMinusK + c.k;
+
+    c.diffuseBase = albedo * ((1.0 - metallic) / PI);
+    c.F0          = F0;
+    return c;
 }
 
-vec3 FresnelSchlick(float cosTheta, vec3 F0)
-{
-    return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
-
-vec3 CookTorrance(vec3 N, vec3 V, vec3 L, vec3 radiance, vec3 albedo, vec3 F0, float roughness, float metallic)
+vec3 CookTorrance(BrdfContext c, vec3 N, vec3 V, vec3 L, vec3 radiance)
 {
     float NdotL = max(dot(N, L), 0.0);
     if (NdotL == 0.0)
         return vec3(0.0);
 
-    vec3  H        = normalize(V + L);
-    float NDF      = DistributionGGX(N, H, roughness);
-    float G        = GeometrySmith(N, V, L, roughness);
-    vec3  F        = FresnelSchlick(max(dot(H, V), 0.0), F0);
-    vec3  specular = (NDF * G * F) / (4.0 * max(dot(N, V), 0.0) * NdotL + 0.0001);
-    vec3  kD       = (1.0 - F) * (1.0 - metallic);
-    return (kD * albedo / PI + specular) * radiance * NdotL;
+    vec3  H     = normalize(V + L);
+    float NdotH = max(dot(N, H), 0.0);
+    float d     = NdotH * NdotH * (c.a2 - 1.0) + 1.0;
+    float visL  = NdotL * c.oneMinusK + c.k;
+
+    // The old form added 1e-4 to the denominator to avoid a divide by zero at
+    // grazing angles. It is not needed here: roughness is clamped to [0.04, 1]
+    // (SampleMaterial), so k >= 0.135 and both visibility terms are >= k > 0.
+    float spec = (c.a2 * 0.25) / (PI * d * d * c.visV * visL);
+
+    float fc  = clamp(1.0 - max(dot(H, V), 0.0), 0.0, 1.0);
+    float fc2 = fc * fc;
+    vec3  F   = c.F0 + (1.0 - c.F0) * (fc2 * fc2 * fc);
+
+    return (c.diffuseBase * (1.0 - F) + F * spec) * radiance * NdotL;
 }
 
-// Windowed inverse-square attenuation (Frostbite) — 0 at dist >= radius, physically plausible inside.
-float Attenuation(float dist, float radius)
+// Windowed inverse-square attenuation (Frostbite) — 0 at dist >= radius,
+// physically plausible inside. Takes squared distance because nothing here needs
+// the distance itself: (dist/radius)^4 is (d2/r2)^2, and the inverse-square term
+// wants d2 directly. That lets the caller use one inversesqrt for the light
+// direction instead of a length() plus a divide.
+float AttenuationSq(float d2, float radiusSq)
 {
-    float ratio  = dist / radius;
-    float ratio4 = ratio * ratio * ratio * ratio;
-    float numer  = max(1.0 - ratio4, 0.0);
-    return (numer * numer) / (dist * dist + 1.0);
+    float rr    = d2 / radiusSq;          // (dist/radius)^2
+    float numer = max(1.0 - rr * rr, 0.0);
+    return (numer * numer) / (d2 + 1.0);
 }
 
 // ---- Cluster index -------------------------------------------------------
@@ -236,14 +270,17 @@ uint ClusterIndex()
     float nearZ      = uFrame.screenSizeNearFar.z;
     float farZ       = uFrame.screenSizeNearFar.w;
 
-    uint ix = clamp(uint(gl_FragCoord.x / screenSize.x * float(gridDim.x)), 0u, gridDim.x - 1u);
-    uint iy = clamp(uint(gl_FragCoord.y / screenSize.y * float(gridDim.y)), 0u, gridDim.y - 1u);
+    // Scale/bias form: gridDim/screenSize, 1/log(farZ/nearZ) and log(nearZ) are
+    // all frame constants, so what was three divides and two logs per fragment is
+    // now two multiplies and one log. Folded CPU-side into uFrame.clusterScale.
+    uint ix = clamp(uint(gl_FragCoord.x * uFrame.clusterScale.x), 0u, gridDim.x - 1u);
+    uint iy = clamp(uint(gl_FragCoord.y * uFrame.clusterScale.y), 0u, gridDim.y - 1u);
 
     // Logarithmic depth slice (abs because vViewZ is negative for visible geometry).
-    // Fragments nearer than nearZ make the log ratio negative, and converting a
+    // Fragments nearer than nearZ make the slice negative, and converting a
     // negative float to uint is undefined in GLSL — clamp before the cast, not after.
     float viewDepth = abs(vViewZ);
-    float slice     = max(log(viewDepth / nearZ) / log(farZ / nearZ), 0.0) * float(gridDim.z);
+    float slice     = max(log(viewDepth) * uFrame.clusterScale.z + uFrame.clusterScale.w, 0.0);
     uint  iz        = clamp(uint(slice), 0u, gridDim.z - 1u);
 
     return ix + iy * gridDim.x + iz * gridDim.x * gridDim.y;
@@ -284,21 +321,25 @@ void main()
     float roughness = surf.roughness;
     float metallic  = surf.metallic;
 
-    // Recover the camera's world-space position from the view matrix: for a
-    // rigid view transform (View = R | t, t = -R * cameraPos), cameraPos =
-    // -transpose(R) * t, i.e. -R^-1 * t since R is orthonormal.
-    vec3 cameraPos = -transpose(mat3(uFrame.view)) * vec3(uFrame.view[3]);
-    vec3 V = normalize(cameraPos - vWorldPos);
+    // Supplied by the CPU (Render::FrameConstants::cameraPosition). This used to
+    // be recovered here as -transpose(mat3(view)) * view[3] — a mat3 transpose and
+    // a matrix-vector product per fragment, for a value fixed for the whole frame.
+    vec3 V = normalize(uFrame.cameraPosition.xyz - vWorldPos);
 
     vec3 F0 = mix(vec3(0.04), albedo, metallic);
     vec3 Lo = vec3(0.0);
 
+    // Everything the BRDF needs that does not vary per light, computed once.
+    BrdfContext brdf = MakeBrdfContext(N, V, albedo, F0, roughness, metallic);
+
     uint dirLightCount = uFrame.lightCounts.x;
     for (uint i = 0u; i < dirLightCount; i++)
     {
-        vec3 L        = normalize(-dirLights[i].directionIntensity.xyz);
+        // LightingSystem::Update normalises every direction on upload
+        // (SafeDirection), so this only needs the negation.
+        vec3 L        = -dirLights[i].directionIntensity.xyz;
         vec3 radiance = dirLights[i].colorPad.xyz * dirLights[i].directionIntensity.w;
-        Lo += CookTorrance(N, V, L, radiance, albedo, F0, roughness, metallic);
+        Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
     uint clusterIdx  = ClusterIndex();
@@ -315,12 +356,15 @@ void main()
         vec3  lCol = pointLights[li].colorIntensity.xyz;
         float lInt = pointLights[li].colorIntensity.w;
 
+        // One inversesqrt covers both the direction and the attenuation, which
+        // needs only squared distance. The max() guards a fragment sitting exactly
+        // on the light, where toLight is zero.
         vec3  toLight  = lPos - vWorldPos;
-        float dist     = max(length(toLight), 1e-4); // fragment exactly at the light => toLight/0
-        vec3  L        = toLight / dist;
-        vec3  radiance = lCol * lInt * Attenuation(dist, r);
+        float d2       = max(dot(toLight, toLight), 1e-8);
+        vec3  L        = toLight * inversesqrt(d2);
+        vec3  radiance = lCol * lInt * AttenuationSq(d2, r * r);
 
-        Lo += CookTorrance(N, V, L, radiance, albedo, F0, roughness, metallic);
+        Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
     for (uint i = 0u; i < spotCount; i++)
@@ -335,15 +379,19 @@ void main()
         float outer  = spotLights[li].outerCutoff;
 
         vec3  toLight = lPos - vWorldPos;
-        float dist    = max(length(toLight), 1e-4); // fragment exactly at the light => toLight/0
-        vec3  L       = toLight / dist;
+        float d2      = max(dot(toLight, toLight), 1e-8);
+        vec3  L       = toLight * inversesqrt(d2);
 
-        float theta = dot(L, normalize(-lDir));
+        // lDir arrives normalised — LightingSystem::WorldSpotDirection rotates it
+        // into world space and renormalises (SafeDirection), which also absorbs
+        // any scale in the parent's matrix. Re-normalising here cost an
+        // inversesqrt per spot light per fragment for a per-light constant.
+        float theta = dot(L, -lDir);
         // A cone authored with inner == outer makes smoothstep divide by zero.
         float cone  = smoothstep(outer, max(inner, outer + 1e-4), theta);
-        vec3  radiance = lCol * lInt * Attenuation(dist, r) * cone;
+        vec3  radiance = lCol * lInt * AttenuationSq(d2, r * r) * cone;
 
-        Lo += CookTorrance(N, V, L, radiance, albedo, F0, roughness, metallic);
+        Lo += CookTorrance(brdf, N, V, L, radiance);
     }
 
     // Ambient is scaled by the occlusion map (direct light already accounts for
