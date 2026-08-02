@@ -165,7 +165,7 @@ class NetSession
     /// transforms are propagated — an offset applied before the writeback is
     /// simply overwritten by it. A no-op for a host, which is already at server
     /// time by definition.
-    void SmoothView();
+    void SmoothView(float dt);
 
     /// @brief Ask the host to re-anchor this client from the empty baseline.
     /// Client only; a no-op otherwise.

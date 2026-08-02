@@ -486,7 +486,7 @@ void EditorApp::SmoothNetView()
     // then erases. (It used to run in OnUpdate for exactly that reason —
     // interpolated mirrors have no writeback to lose to.)
     if (_netSession)
-        _netSession->SmoothView();
+        _netSession->SmoothView(ImGui::GetIO().DeltaTime);
 }
 
 // ---------------------------------------------------------------------------

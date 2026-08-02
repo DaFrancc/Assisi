@@ -73,8 +73,80 @@ struct BodyQuantization
     bool operator==(const BodyQuantization &) const = default;
 };
 
+/// @brief How a client hides the jump when a correction snaps its simulation.
+///
+/// Purely view-side, and deliberately **not** part of the protocol hash: two
+/// machines that smooth differently still agree about every byte and every
+/// simulated pose. Only the pictures differ, and the picture is a local choice.
+///
+/// **Convergence is bounded in time, not by a per-frame rate**, and that is a
+/// correction to what shipped first. The published state-synchronization
+/// constants (0.95 per frame under 25 cm, 0.85 over 1 m —
+/// https://gafferongames.com/post/state_synchronization/) assume corrections are
+/// *occasional*. They are not always: any source of divergence that reappears
+/// every interval — a contact-rich pile, a bouncing body, a gameplay rule whose
+/// contact instant lands a physics step apart on the two machines — injects a
+/// fresh error every 50 ms while 0.95/frame removes only ~14% of the old one in
+/// that time. The offset converges on several times the per-correction error
+/// instead of on zero, and the body renders steadily behind a simulation that is
+/// perfectly correct underneath. Measured on a bouncing body here: ~0.4 m of
+/// visual lag from a mean divergence of ~0.01 m.
+///
+/// Every shipped system solves this the same way — converge within a fixed
+/// wall-clock window, restarted by each correction:
+///   - Unreal's CharacterMovementComponent smooths the mesh over
+///     `NetworkSimulatedSmoothLocationTime` = 0.1 s (0.033 s for rotation);
+///   - Source smooths prediction error over `cl_smoothtime`, 0.1 s in TF2;
+///   - Unreal's Chaos render interpolation uses a fixed
+///     `ErrorCorrectionDuration`, and its predictive-interpolation physics
+///     replication converges over roughly one send interval.
+/// A deadline at or under the correction interval means the previous offset is
+/// paid off before the next one lands, so steady-state lag collapses from
+/// several times the per-correction error to about one of them.
+///
+/// The decay is also exponential *in dt* rather than per frame, so the feel does
+/// not change between a 30 Hz and a 144 Hz display — a per-frame factor is a
+/// completely different time constant at each (Driscoll, "Frame Rate Independent
+/// Damping Using Lerp").
+struct ViewSmoothing
+{
+    /// Seconds to converge a small position error. Tracks Unreal's
+    /// CharacterMovementComponent and Source's `cl_smoothtime`.
+    float positionCorrectionTime = 0.1f;
+    /// ...and a large one, blended between across the two distances below. The
+    /// time-domain form of the published 0.95/0.85 two-rate split, but **equal to
+    /// the slow window by default**: shortening it is how you turn a large
+    /// correction back into the pop this exists to hide (a 1 m error over a
+    /// 0.05 s window moves a third of a metre in one 60 Hz frame), and anything
+    /// genuinely too far to smooth is caught by `hardSnapDistance` instead. Left
+    /// separately configurable because it costs nothing to leave the lever there.
+    float positionCorrectionTimeFast = 0.1f;
+    float smallErrorDistance         = 0.25f; ///< At or below this, take the slower time.
+    float largeErrorDistance         = 1.0f;  ///< At or above this, the faster one.
+
+    /// Seconds to converge an orientation error. Shorter than position, as
+    /// Unreal's 0.033 s rotation smoothing is.
+    float rotationCorrectionTime = 0.05f;
+
+    /// Below this much divergence, drop the offset instead of smoothing it: the
+    /// correction is too small to see, so hiding it buys nothing and only delays
+    /// convergence. (Unity's Netcode for Entities does the same, smoothing only
+    /// inside a band and snapping below it.)
+    float snapBelowDistance = 0.02f;
+
+    /// Past this, drop the offset and let the correction show. Smoothing a
+    /// teleport reads worse than admitting it.
+    float hardSnapDistance = 2.5f;
+};
+
 /// @brief The parameters this process encodes and decodes body state with.
 [[nodiscard]] const BodyQuantization &Quantization();
+
+/// @brief The view-side smoothing this process applies to corrections.
+[[nodiscard]] const ViewSmoothing &Smoothing();
+
+/// @brief Replace them. Safe at any time — nothing on the wire depends on it.
+void SetSmoothing(const ViewSmoothing &smoothing);
 
 /// @brief Replace them. Process-global and set once at startup, before any
 /// session exists — changing it mid-session would mean the two ends disagreeing
@@ -92,6 +164,14 @@ void SetQuantization(const BodyQuantization &quantization);
 /// more precise (a small arena wants finer position quantization than an open
 /// world) and is more machinery, so it waits until a level actually needs it.
 void LoadQuantizationFromConfig(std::string_view configPath = "game.json");
+
+/// @brief Apply the `smoothing` block of a game config, if it has one. Same
+/// absent-keys-keep-defaults, malformed-block-warns contract as above.
+///
+/// Separate from the quantization loader because the two are separate kinds of
+/// thing: quantization is protocol and both ends must agree on it, smoothing is
+/// presentation and nobody else can tell.
+void LoadSmoothingFromConfig(std::string_view configPath = "game.json");
 
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState

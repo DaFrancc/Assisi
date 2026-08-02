@@ -89,8 +89,11 @@ void EditorApp::OnStart()
     }
 
     // Before any session can exist: the quantization is inside the handshake
-    // hash, so it has to be settled before the first hello is written.
+    // hash, so it has to be settled before the first hello is written. The
+    // smoothing is not — it is purely local — but it reads from the same file
+    // and there is no reason to defer it.
     Assisi::NetSync::LoadQuantizationFromConfig();
+    Assisi::NetSync::LoadSmoothingFromConfig();
 
     // What the manager needs to turn a level file into a running world when the
     // game travels. Installed once; captured by pointer, and all three outlive it.

@@ -18,6 +18,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
@@ -102,7 +103,7 @@ struct PhysicsHarness
         // physics writeback first, then the view-side smoothing *on top of* the
         // pose it just wrote. Reversed, the offset would simply be overwritten.
         clientPhysics.InterpolateTransforms(clientScene, 1.f);
-        client.SmoothView(0.0);
+        client.SmoothView(0.0, kFixedStep);
 
         server.Tick(tick++);
     }
@@ -439,6 +440,100 @@ TEST_CASE("a client body woken by something the server never saw is put back to 
     CHECK(glm::length(afterPosition - restPosition) < 1e-3f);
 }
 
+TEST_CASE("a body moved while it is not simulating still reaches clients")
+{
+    // The editor's gizmo drag, exactly: hold the body Static for the gesture (so
+    // the solver does not fight a teleport into whatever it overlaps), move it
+    // each frame, then restore its authored motion type. Nothing in that
+    // sequence ever makes the body *active* — so a capture that only watches the
+    // active set never notices it moved, and the client keeps rendering the
+    // pre-drag pose forever.
+    //
+    // The same hole swallows an inspector Transform edit, and any gameplay that
+    // teleports a sleeping body.
+    PhysicsHarness harness;
+    harness.Step(4);
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
+                                        /*isStatic=*/false);
+    harness.Step(400);
+
+    const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
+    REQUIRE(authoritative != nullptr);
+    REQUIRE_FALSE(harness.serverPhysics.IsBodyActive(*authoritative)); // settled and asleep
+    REQUIRE(PoseError(harness, entity) < 0.05f);
+
+    // --- the drag ---------------------------------------------------------
+    harness.serverPhysics.SetBodyMotionType(*authoritative, Physics::BodyMotion::Static);
+
+    const auto [startPosition, startRotation] = harness.serverPhysics.GetBodyTransform(*authoritative);
+    for (int step = 1; step <= 20; ++step)
+    {
+        harness.serverPhysics.SetBodyTransform(*authoritative,
+                                               startPosition + glm::vec3{0.1f * static_cast<float>(step), 0.f, 0.f},
+                                               startRotation);
+        harness.Step(3);
+    }
+
+    // Mid-drag the client should already be following, not waiting for the
+    // gesture to end: the author is looking at both windows.
+    CHECK(PoseError(harness, entity) < 0.15f);
+
+    harness.serverPhysics.SetBodyMotionType(*authoritative, Physics::BodyMotion::Dynamic);
+    harness.serverPhysics.SetBodyTransform(*authoritative, startPosition + glm::vec3{2.f, 0.f, 0.f}, startRotation);
+    harness.Step(400); // let it settle again wherever it was dropped
+
+    CHECK(PoseError(harness, entity) < 0.05f);
+}
+
+TEST_CASE("a static replicated body moved by an author reaches clients")
+{
+    // The harder half of the same bug: a static body is *never* active, so
+    // "record it when it stops being active" fires exactly once, at its load
+    // pose, and never again. Moving a replicated wall would be invisible to
+    // every client for the rest of the session — and the keyframe sweep would
+    // not save it either, because the sweep resends the recorded state and the
+    // recorded state is the stale one.
+    PhysicsHarness harness;
+    harness.Step(4);
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity wall = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 0.5f, -2.f},
+                                      /*isStatic=*/true, {2.f, 0.5f, 0.25f});
+    harness.Step(60);
+    REQUIRE(MirrorOf(harness, wall) != ECS::NullEntity);
+    REQUIRE(PoseError(harness, wall) < 0.01f);
+
+    const Physics::RigidBody *body = harness.serverScene.Get<Physics::RigidBody>(wall);
+    REQUIRE(body != nullptr);
+
+    // Exactly what the gizmo does, in the order it does it: write the Transform
+    // through GetMut — which is what stamps the change tick everything downstream
+    // filters on — and then bring the body along. An author who moved only the
+    // Jolt body would be writing through a path that stamps nothing, which is the
+    // same engine-wide rule that governs every other consumer of change ticks.
+    {
+        ECS::Transform *transform = harness.serverScene.GetMut<ECS::Transform>(wall);
+        REQUIRE(transform != nullptr);
+        transform->position += glm::vec3{0.f, 0.f, 4.f};
+        harness.serverPhysics.SetBodyTransform(*body, transform->position, transform->rotation);
+    }
+
+    harness.Step(60);
+
+    // The visual: a static body's pose is authored data, so it travels as an
+    // ordinary Transform delta rather than as body state.
+    const ECS::Entity mirror = MirrorOf(harness, wall);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(glm::distance(harness.clientScene.Get<ECS::Transform>(mirror)->position,
+                        harness.serverScene.Get<ECS::Transform>(wall)->position) < 0.01f);
+
+    // ...and the collider went with it. This is the half that is invisible until
+    // something falls through the wall it can see.
+    CHECK(PoseError(harness, wall) < 0.01f);
+}
+
 TEST_CASE("a mirror destroyed by client-side gameplay comes back, and says so")
 {
     ReplicationConfig config;
@@ -659,7 +754,7 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     harness.clientPhysics.ApplyBodyState(*replica, displaced, restRotation, glm::vec3{0.f}, glm::vec3{0.f},
                                          /*activate=*/false);
     harness.clientPhysics.InterpolateTransforms(harness.clientScene, 1.f);
-    harness.client.SmoothView(0.0);
+    harness.client.SmoothView(0.0, kFixedStep);
     REQUIRE(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - displaced) < 1e-3f);
 
     // Ask for a re-anchor rather than waiting out the sweep.
@@ -674,9 +769,17 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     (void)correctedRotation;
     CHECK(glm::length(correctedPosition - restPosition) < 1e-3f);
 
-    // ...and the picture has not moved yet: the offset absorbed the whole metre.
+    // ...and the picture did not follow it there. What continuity means with a
+    // bounded convergence window is not "the picture is frozen" but "the picture
+    // moved one frame's share of the window", which for a 1 m error over 0.1 s
+    // at 60 Hz is about 17 cm — versus the whole metre a correction without
+    // smoothing would have jumped.
     const glm::vec3 renderedAtCorrection = harness.clientScene.Get<ECS::Transform>(mirror)->position;
-    CHECK(glm::length(renderedAtCorrection - displaced) < 0.15f);
+    const float     movedInOneFrame      = glm::length(renderedAtCorrection - displaced);
+    const float     onFrameShare         = 1.f * (kFixedStep / Smoothing().positionCorrectionTime);
+    CAPTURE(movedInOneFrame);
+    CHECK(movedInOneFrame < onFrameShare * 1.5f);
+    CHECK(movedInOneFrame < 0.35f); // nowhere near the metre it would have popped
 
     // Over the following frames it closes the gap rather than jumping it.
     harness.Step(120);
@@ -685,6 +788,133 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     // And the divergence it found is the number the correction cadence has to be
     // justified by, so it is measured rather than assumed.
     CHECK(harness.client.Corrections().divergenceMax > 0.9f);
+}
+
+TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicating the rule fixes it")
+{
+    // `Test.alvl`'s bouncing cube, and the bug it exposed. `Bounce` was left
+    // unreplicated on the reasoning that "a client-side bounce is a local guess
+    // at what the server's bounce also did" — true, but only if the client *has*
+    // one. Under local simulation the client builds a body and steps it, and a
+    // mirror missing the component simply does not bounce: it falls, rests, and
+    // every correction hauls it back up.
+    //
+    // The corrections keep the *simulation* right, which is why it looked fine
+    // in isolation. What they cannot fix is that the error arrives again every
+    // interval, so the visual offset hiding it never decays to zero — the body
+    // renders steadily behind its own authoritative position. That is the
+    // "simulation is perfect, just severely behind" this reproduces.
+    //
+    // Modelled by applying the rule on one side or both. An impulse is essential:
+    // a *constant* push proves nothing, because the client extrapolates a
+    // constant velocity correctly and never diverges.
+    struct Result
+    {
+        float meanDivergence = 0.f;
+        float worstLag       = 0.f;
+        /// The number that actually characterises the complaint. A *peak* offset
+        /// right after a correction is honest — it is the size of the jump being
+        /// hidden — but a high *mean* is the body sitting behind its own
+        /// simulation frame after frame, which is what someone watching two
+        /// windows sees and calls lag.
+        float meanLag = 0.f;
+    };
+
+    const auto run = [](bool clientRunsTheRule)
+    {
+        PhysicsHarness harness;
+        harness.Step(4);
+        SpawnSharedFloor(harness);
+
+        const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
+                                            /*isStatic=*/false);
+        harness.Step(60);
+
+        const ECS::Entity         mirror        = MirrorOf(harness, entity);
+        const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
+        const Physics::RigidBody *replica       = harness.clientScene.Get<Physics::RigidBody>(mirror);
+        REQUIRE(authoritative != nullptr);
+        REQUIRE(replica != nullptr);
+
+        Result result;
+        double lagSum     = 0.0;
+        int    lagSamples = 0;
+        for (int step = 0; step < 240; ++step)
+        {
+            const auto bounce = [](Physics::PhysicsWorld &world, const Physics::RigidBody &body)
+            {
+                const auto [pose, rotation] = world.GetBodyTransform(body);
+                (void)rotation;
+                if (pose.y < 0.7f)
+                    world.SetBodyLinearVelocity(body, {0.f, 7.f, 0.f});
+            };
+
+            bounce(harness.serverPhysics, *authoritative);
+            if (clientRunsTheRule)
+                bounce(harness.clientPhysics, *replica);
+
+            harness.Step();
+
+            // The rendered pose against the client's own simulated one: their
+            // difference *is* the visual offset, since the writeback wrote the
+            // physics pose and the smoothing then added the offset on top of it.
+            const auto [simulated, simulatedRotation] = harness.clientPhysics.GetBodyTransform(*replica);
+            (void)simulatedRotation;
+            const glm::vec3 rendered = harness.clientScene.Get<ECS::Transform>(mirror)->position;
+            const float     lag      = glm::length(rendered - simulated);
+            result.worstLag          = std::max(result.worstLag, lag);
+            lagSum += static_cast<double>(lag);
+            ++lagSamples;
+        }
+
+        result.meanLag        = static_cast<float>(lagSum / static_cast<double>(lagSamples));
+        result.meanDivergence = harness.client.Corrections().divergenceMean();
+        return result;
+    };
+
+    const Result serverOnly = run(/*clientRunsTheRule=*/false);
+    const Result bothSides  = run(/*clientRunsTheRule=*/true);
+
+    CAPTURE(serverOnly.meanDivergence);
+    CAPTURE(serverOnly.worstLag);
+    CAPTURE(serverOnly.meanLag);
+    CAPTURE(bothSides.meanDivergence);
+    CAPTURE(bothSides.worstLag);
+    CAPTURE(bothSides.meanLag);
+
+    // Running the rule on both sides is what replicating the component buys, and
+    // it is a clear improvement on both halves — but deliberately *not* asserted
+    // as a collapse, because it is not one. A threshold (or contact) rule fires
+    // at a slightly different instant on each side, since the client's body sits
+    // wherever the last correction left it, and from there the trajectories
+    // separate again. This is exactly the amplification §3.1 warns about, and it
+    // is why the design refuses to lean on same-binary determinism.
+    CHECK(bothSides.meanDivergence < serverOnly.meanDivergence * 0.8f);
+    CHECK(bothSides.worstLag < serverOnly.worstLag * 0.8f);
+
+    // And the part the smoothing owns rather than the replication: with the
+    // offset converging over a fixed window (0.1 s by default) rather than at a
+    // per-frame rate, the *typical* frame is close to the simulation and the
+    // peaks are the corrections being smoothed, not a body parked behind.
+    //
+    // Stated against the window rather than as an absolute distance, because it
+    // is the window that bounds it: a body moving at speed v is at most ~v·T
+    // behind while a correction is being paid off. Under the pre-fix per-frame
+    // decay this was ~7x the per-correction error and stayed there indefinitely;
+    // the assertion is deliberately loose because the exact figure depends on
+    // how fast the body happens to be moving.
+    CHECK(bothSides.meanLag < bothSides.worstLag * 0.6f);
+}
+
+TEST_CASE("a gameplay component whose absence would desync a mirror is replicated")
+{
+    // The marking, pinned so it cannot quietly regress. Bounce rewrites a body's
+    // velocity on contact: a client that does not have it runs a different
+    // simulation, which is the case above.
+    const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().ById(
+        Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Physics::Bounce)));
+    REQUIRE(meta != nullptr);
+    CHECK(meta->replicated);
 }
 
 TEST_CASE("a correction past the snap bound is admitted rather than smoothed")

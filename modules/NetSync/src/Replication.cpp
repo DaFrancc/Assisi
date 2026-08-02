@@ -59,18 +59,6 @@ void *EnsureComponent(ECS::Scene &scene, ECS::Entity entity, const Core::Reflect
     return meta.construct(&scene, entity.index, entity.generation);
 }
 
-/// Error-smoothing constants. The decay factors and the small/large thresholds
-/// are the published state-synchronization values
-/// (https://gafferongames.com/post/state_synchronization/); the hard-snap bound
-/// is this design's own choice. They are constants until R6's telemetry gives a
-/// reason to move them, at which point they become config — guessing at them
-/// first and measuring second is how you end up tuning against a bug.
-constexpr float kSmallErrorDistance = 0.25f; ///< Below this, decay gently.
-constexpr float kLargeErrorDistance = 1.0f;  ///< Above this, decay hard.
-constexpr float kSlowDecay          = 0.95f;
-constexpr float kFastDecay          = 0.85f;
-constexpr float kRotationDecay      = 0.1f;  ///< Slerp toward identity per frame.
-constexpr float kHardSnapDistance   = 2.5f;  ///< Past this, admit the jump.
 
 } // namespace
 
@@ -387,6 +375,20 @@ void ReplicationServer::CaptureBodyStates()
         if (body == nullptr)
             continue; // not a simulated entity; its Transform replicates normally
 
+        // Authored geometry is not simulated, whatever its live motion type says:
+        // a static body's pose is *authored data*, and authored data already has
+        // a replication path — the ordinary tracked-Transform delta. Sending it
+        // as body state instead would be the worse choice twice over, since a
+        // static body is never active (so there is nothing to observe) and a
+        // client's static mirror has no solver to apply a correction to.
+        //
+        // Keyed off the descriptor rather than the live motion type on purpose:
+        // the editor holds a *dynamic* body Static for the duration of a gizmo
+        // drag, and that body is still a simulated one being placed.
+        const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
+        if (descriptor != nullptr && descriptor->isStatic)
+            continue;
+
         const auto active = std::find_if(_activeBodies.begin(), _activeBodies.end(),
                                          [entity](const Physics::PhysicsWorld::ActiveBodyState &candidate)
                                          { return candidate.entity == entity; });
@@ -400,18 +402,49 @@ void ReplicationServer::CaptureBodyStates()
             continue;
         }
 
-        // Not active. Two reasons to record it anyway, and neither is "every
-        // tick": it has just gone to sleep (the transition is the change, and
-        // the one whose loss used to be permanent), or this is the first time we
-        // have ever seen it — which is what makes joining an already-settled
-        // world produce sleeping mirrors at the server's rest poses instead of a
-        // client-side re-settle. A body that was already asleep last tick
-        // records nothing, which is where the idle-bandwidth property comes from.
-        if (record.tick == 0 || !record.state.asleep)
+        // Not active. Three reasons to record it anyway, and none of them is
+        // "every tick":
+        //
+        //  - first sighting, which is what makes joining an already-settled
+        //    world produce sleeping mirrors at the server's rest poses rather
+        //    than a client-side re-settle;
+        //  - it has just gone to sleep — the transition is the change, and the
+        //    one whose loss used to be permanent;
+        //  - it *moved while not simulating*. Nothing wakes a body for that, so
+        //    the active set says nothing about it: the editor's gizmo holds a
+        //    body Static for the duration of a drag precisely so the solver
+        //    stops fighting the teleport, an inspector Transform edit does the
+        //    same, gameplay can reposition a sleeping body, and a static body is
+        //    never active at all — so for a replicated wall, "record it when it
+        //    stops being active" fires once, at its load pose, and never again.
+        //
+        // Polling the pose rather than having every mutation site announce
+        // itself is deliberate, and it is the same argument this design already
+        // makes against Unreal's dormancy discipline: correctness that depends
+        // on every call site remembering to flush is correctness that will be
+        // forgotten. The cost is one transform read per resting replicated body
+        // per tick, which is what "the physics world is the truth" is worth.
+        //
+        // A body that is asleep and has not moved records nothing, which is
+        // where the idle-bandwidth property comes from.
         {
-            const bool transition = record.tick != 0; // as opposed to a first sighting
-
             const auto [position, rotation] = _physics->GetBodyTransform(*body);
+
+            const bool firstSighting = record.tick == 0;
+            const bool justSlept     = !firstSighting && !record.state.asleep;
+            // Both poses are frozen while a body rests — nothing integrates them
+            // — so this compares against float noise, not against motion. The
+            // epsilons are well under one quantization step, so a move too small
+            // to survive the encoder cannot trigger a send either.
+            const bool movedAtRest =
+                !firstSighting && record.state.asleep &&
+                (glm::distance(record.state.position, position) > 1e-5f ||
+                 std::abs(glm::dot(record.state.rotation, rotation)) < 1.f - 1e-6f);
+
+            if (!firstSighting && !justSlept && !movedAtRest)
+                continue;
+
+            const bool transition = justSlept;
             record.state = BodyState{netId, position, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/true};
             record.tick  = _bodyStateTick;
 
@@ -484,10 +517,19 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     for (const Core::Reflect::ComponentId id : removed)
         writer.WriteVarUInt32(id);
 
-    // For an entity the physics world owns, motion travels as body state, not as
-    // a Transform. Sending both would double the cost of every moving object and
+    // For an entity the *solver* owns, motion travels as body state, not as a
+    // Transform. Sending both would double the cost of every moving object and
     // hand the client two disagreeing answers about where it is.
-    const bool bodied = _physics != nullptr && _scene.Get<Physics::RigidBody>(entity) != nullptr;
+    //
+    // Authored-static geometry is not that entity, even though it has a body: its
+    // pose is authored data, it is never active for the capture to observe, and a
+    // client's static mirror has no solver to apply a correction to. It keeps the
+    // ordinary Transform path — which is also how a replicated wall dragged in
+    // the editor reaches anyone.
+    const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
+    const bool                          bodied     = _physics != nullptr &&
+                        _scene.Get<Physics::RigidBody>(entity) != nullptr &&
+                        (descriptor == nullptr || !descriptor->isStatic);
 
     for (const Core::Reflect::ComponentId id : _replicatedComponents)
     {
@@ -1089,6 +1131,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
                 ++site;
             }
         }
+
+        // Everything this entity was told about has landed, so its physics body
+        // can be brought in line with it.
+        SyncMirrorBody(netId, entity);
     }
 
     if (!reader.Ok())
@@ -1135,6 +1181,42 @@ void ReplicationClient::DestroyMirrorBody(NetId netId)
     if (_physics != nullptr)
         _physics->RemoveBody(found->second.body);
     _bodies.erase(found);
+}
+
+void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
+{
+    if (_physics == nullptr || !_scene.IsAlive(entity))
+        return;
+
+    const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
+    const ECS::Transform               *transform  = _scene.Get<ECS::Transform>(entity);
+    if (descriptor == nullptr || transform == nullptr)
+        return; // not a physical entity, or not fully described yet
+
+    if (_scene.Get<Physics::RigidBody>(entity) == nullptr)
+    {
+        (void)_physics->AddBodyFromDescriptor(_scene, entity, *transform, *descriptor);
+        const Physics::RigidBody *created = _scene.Get<Physics::RigidBody>(entity);
+        if (created == nullptr)
+            return;
+
+        _bodies[netId].body = *created;
+        // It is a simulated mirror now, not an interpolated one.
+        _transformHistory.erase(netId);
+        return;
+    }
+
+    // A dynamic body is owned by the correction stream from here on; touching it
+    // from the component path would fight it every snapshot.
+    if (!descriptor->isStatic)
+        return;
+
+    // Authored-static geometry moves by being *authored*, so its Transform is
+    // the truth and the collider has to follow it. Without this the client's
+    // visual moves and its collision does not — the worse half of a desync,
+    // because it is invisible until something falls through it.
+    const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
+    _physics->SetBodyTransform(*body, transform->position, transform->rotation);
 }
 
 void ReplicationClient::ApplyBodyState(const BodyState &state)
@@ -1199,13 +1281,38 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     record.positionError = renderedPosition - state.position;
     record.rotationError = glm::normalize(renderedRotation * glm::inverse(state.rotation));
 
-    // Past a certain distance, smoothing reads worse than admitting the jump: a
-    // body sliding half a room to catch up looks like a bug, where a teleport
-    // looks like a teleport.
-    if (glm::length(record.positionError) > kHardSnapDistance)
+    const ViewSmoothing &smoothing = Smoothing();
+    const float          carried   = glm::length(record.positionError);
+
+    // Two ways an offset is not worth carrying. Below the floor the correction
+    // is too small to see, so smoothing it buys nothing and only delays
+    // convergence. Past the ceiling, smoothing reads worse than admitting the
+    // jump: a body sliding half a room to catch up looks like a bug, where a
+    // teleport looks like a teleport.
+    if (carried < smoothing.snapBelowDistance || carried > smoothing.hardSnapDistance)
     {
-        record.positionError = glm::vec3{0.f};
-        record.rotationError = glm::quat{1.f, 0.f, 0.f, 0.f};
+        record.positionError   = glm::vec3{0.f};
+        record.rotationError   = glm::quat{1.f, 0.f, 0.f, 0.f};
+        record.smoothingWindow = 0.f;
+    }
+    else
+    {
+        // A bigger jump gets a shorter window: it is worth being over with
+        // sooner. The time-domain form of the published two-rate split.
+        record.smoothingWindow =
+            carried <= smoothing.smallErrorDistance
+                ? smoothing.positionCorrectionTime
+                : (carried >= smoothing.largeErrorDistance
+                       ? smoothing.positionCorrectionTimeFast
+                       : glm::mix(smoothing.positionCorrectionTime, smoothing.positionCorrectionTimeFast,
+                                  (carried - smoothing.smallErrorDistance) /
+                                      (smoothing.largeErrorDistance - smoothing.smallErrorDistance)));
+
+        // Restarted by every correction, from wherever the picture currently is,
+        // which is what keeps a correction arriving mid-convergence continuous.
+        record.positionErrorStart = record.positionError;
+        record.rotationErrorStart = record.rotationError;
+        record.smoothingElapsed   = 0.f;
     }
 
     record.asleep       = state.asleep;
@@ -1213,13 +1320,15 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     record.restRotation = state.rotation;
 }
 
-void ReplicationClient::SmoothView(double serverTimeTicks)
+void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
 {
     // Non-bodied mirrors: interpolate between received samples, unchanged.
     Interpolate(serverTimeTicks);
 
-    if (_physics == nullptr)
+    if (_physics == nullptr || dt <= 0.f)
         return;
+
+    const ViewSmoothing &smoothing = Smoothing();
 
     for (auto &[netId, record] : _bodies)
     {
@@ -1231,20 +1340,22 @@ void ReplicationClient::SmoothView(double serverTimeTicks)
         if (transform == nullptr)
             continue;
 
-        // Decay first, then apply, so an offset that has reached zero costs one
-        // add of nothing rather than a frame of stale error.
-        const float distance = glm::length(record.positionError);
-        const float decay =
-            distance <= kSmallErrorDistance
-                ? kSlowDecay
-                : (distance >= kLargeErrorDistance
-                       ? kFastDecay
-                       : glm::mix(kSlowDecay, kFastDecay,
-                                  (distance - kSmallErrorDistance) / (kLargeErrorDistance - kSmallErrorDistance)));
+        if (record.smoothingWindow <= 0.f)
+            continue; // nothing to hide
 
-        record.positionError *= decay;
-        record.rotationError =
-            glm::normalize(glm::slerp(record.rotationError, glm::quat{1.f, 0.f, 0.f, 0.f}, kRotationDecay));
+        // Linear over the window, so the offset is gone by the deadline and
+        // moves at a constant on-screen speed until it is. Advancing in *time*
+        // rather than per frame is what keeps the feel identical at 30 and at
+        // 144 Hz.
+        record.smoothingElapsed += dt;
+        const float remaining =
+            1.f - std::min(1.f, record.smoothingElapsed / record.smoothingWindow);
+
+        record.positionError = record.positionErrorStart * remaining;
+        record.rotationError = glm::normalize(
+            glm::slerp(glm::quat{1.f, 0.f, 0.f, 0.f}, record.rotationErrorStart,
+                       // Orientation gets its own, shorter, window.
+                       1.f - std::min(1.f, record.smoothingElapsed / smoothing.rotationCorrectionTime)));
 
         // On top of the physics writeback's pose, which ran just before this.
         transform->position += record.positionError;

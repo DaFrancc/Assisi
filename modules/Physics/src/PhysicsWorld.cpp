@@ -795,24 +795,35 @@ void PhysicsWorld::ApplyBodyState(const RigidBody &body, glm::vec3 position, glm
                                   glm::vec3 linearVelocity, glm::vec3 angularVelocity, bool activate)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
-    if (!bodies.IsAdded(body.bodyId) || bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static)
+    if (!bodies.IsAdded(body.bodyId))
         return;
+
+    // A static body can be *placed*, it just has no motion to place it with —
+    // the same split SetBodyTransform makes. Refusing the whole call for one
+    // would be a trap: a correction for a body the two ends disagree about the
+    // motion type of would silently do nothing, which is the worst available
+    // outcome for a peer that is trying to tell us where something is.
+    const bool isStatic = bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static;
 
     // Normalized for the same reason AddBody and SetBodyTransform do it: a
     // quaternion that crossed a wire (or a level file) is often a hair off unit
     // length, and Jolt asserts IsNormalized() when it rotates with one.
     bodies.SetPositionAndRotation(body.bodyId, JPH::RVec3(position.x, position.y, position.z),
                                   JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(),
-                                  activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+                                  (activate && !isStatic) ? JPH::EActivation::Activate
+                                                          : JPH::EActivation::DontActivate);
 
-    // Before the deactivate below, not after: Jolt ignores velocity written to a
-    // sleeping body, so zeroing an about-to-sleep body has to happen while it is
-    // still awake.
-    bodies.SetLinearVelocity(body.bodyId, JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
-    bodies.SetAngularVelocity(body.bodyId, JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
+    if (!isStatic)
+    {
+        // Before the deactivate below, not after: Jolt ignores velocity written
+        // to a sleeping body, so zeroing an about-to-sleep body has to happen
+        // while it is still awake.
+        bodies.SetLinearVelocity(body.bodyId, JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
+        bodies.SetAngularVelocity(body.bodyId, JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
 
-    if (!activate)
-        bodies.DeactivateBody(body.bodyId);
+        if (!activate)
+            bodies.DeactivateBody(body.bodyId);
+    }
 
     // Collapse both snapshots onto the corrected pose. Without this the next
     // InterpolateTransforms() blends from the pre-correction pose and smears the

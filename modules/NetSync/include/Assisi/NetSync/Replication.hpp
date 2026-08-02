@@ -541,7 +541,11 @@ class ReplicationClient
     /// the only honest thing to do with state nobody is simulating. The visible
     /// consequence — a non-bodied entity the server moves to track a bodied one
     /// lags it — is inherent to running both.
-    void SmoothView(double serverTimeTicks);
+    /// @param dt Seconds since the last call. The offset decays in *time*, not
+    ///   per frame — a constant per frame is a different time constant at every
+    ///   refresh rate, so the same build would feel different on a 60 Hz and a
+    ///   144 Hz display for no reason visible in the code.
+    void SmoothView(double serverTimeTicks, float dt);
 
     /// @brief Corrections applied, and the divergence they found.
     ///
@@ -602,6 +606,17 @@ class ReplicationClient
   private:
     bool ApplySnapshot(Core::BitReader &reader);
     void ApplyBodyState(const BodyState &state);
+
+    /// Bring one mirror's Jolt body in line with the components just applied to
+    /// it: build it if the descriptor has arrived and it has none, and — for
+    /// authored-static geometry, whose pose travels as a Transform rather than
+    /// as body state — move it to wherever that Transform now says.
+    ///
+    /// Without the first half a static mirror would never get a collider at all
+    /// (nothing sends body state for it, and body state is what builds bodies),
+    /// so the client's own dynamic bodies would fall straight through a wall the
+    /// host can see them resting on.
+    void SyncMirrorBody(NetId netId, ECS::Entity entity);
     void SendAck(std::uint64_t serverTick);
     void SendHello();
 
@@ -649,12 +664,27 @@ class ReplicationClient
         glm::vec3          restPosition{};
         glm::quat          restRotation{1.f, 0.f, 0.f, 0.f};
 
-        /// The visual offset that hides the last correction. Added on top of the
-        /// physics writeback's pose every rendered frame and decayed toward
-        /// zero, so the *simulation* is always honest and the *screen* is always
+        /// The visual offset that hides the last correction, as it stands this
+        /// frame. Added on top of the physics writeback's pose every rendered
+        /// frame, so the *simulation* is always honest and the *screen* is always
         /// smooth — two different jobs that a single blended pose cannot do.
         glm::vec3 positionError{0.f};
         glm::quat rotationError{1.f, 0.f, 0.f, 0.f};
+
+        /// ...and what drives it to zero: the offset as it was when the
+        /// correction landed, plus how far through its convergence window we
+        /// are. Linear in that window, so the offset is gone by the deadline and
+        /// travels at a *constant* on-screen speed while it lasts.
+        ///
+        /// A multiplicative decay was tried first and is the wrong shape twice
+        /// over: it is frame-rate dependent, and it spends most of the offset in
+        /// the first frame or two, which is the pop it exists to avoid. Unreal's
+        /// CharacterMovementComponent smooths linearly over
+        /// `NetworkSimulatedSmoothLocationTime` for the same reason.
+        glm::vec3 positionErrorStart{0.f};
+        glm::quat rotationErrorStart{1.f, 0.f, 0.f, 0.f};
+        float     smoothingElapsed = 0.f;
+        float     smoothingWindow  = 0.f; ///< Seconds; 0 = nothing to smooth.
     };
 
     /// Destroy the Jolt body behind a mirror, if it has one. The handle lives in

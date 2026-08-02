@@ -195,14 +195,14 @@ void NetSession::AfterPhysicsStep()
         _client->EnforceSleep();
 }
 
-void NetSession::SmoothView()
+void NetSession::SmoothView(float dt)
 {
     // A host is at server time by definition — it *is* the server — so there is
     // nothing to smooth and nothing to delay.
     if (!_client || !_client->IsSynchronized() || !_clock)
         return;
 
-    _client->SmoothView(_client->RenderTimeFor(static_cast<double>(_clock->EstimatedServerTick())));
+    _client->SmoothView(_client->RenderTimeFor(static_cast<double>(_clock->EstimatedServerTick())), dt);
 }
 
 void NetSession::RequestKeyframe()

@@ -83,6 +83,7 @@ void ServerApp::OnStart()
     // Before any session can exist: the quantization is inside the handshake
     // hash, so it has to be settled before the first hello is written.
     NetSync::LoadQuantizationFromConfig();
+    NetSync::LoadSmoothingFromConfig();
 
     if (!_options.level.empty())
     {
@@ -271,7 +272,7 @@ void ServerApp::OnFixedUpdate(float dt)
         RequestClose();
 }
 
-void ServerApp::OnUpdate(float /*dt*/)
+void ServerApp::OnUpdate(float dt)
 {
     // Write the render pose for remote entities. A headless client renders
     // nothing, but running it here keeps this loop the same shape as a windowed
@@ -281,7 +282,7 @@ void ServerApp::OnUpdate(float /*dt*/)
     // for a bodied mirror this adds a decaying cosmetic offset on top of the
     // physics pose, and the physics pose is the one that is authoritative.
     if (_session)
-        _session->SmoothView();
+        _session->SmoothView(dt);
 
     ReportStatus();
 }

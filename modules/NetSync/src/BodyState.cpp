@@ -24,6 +24,7 @@ namespace
 /// a per-session copy because it is inside the protocol hash: two ends that
 /// disagree refuse to pair, so "which session is this" never comes up.
 BodyQuantization gQuantization;
+ViewSmoothing    gSmoothing;
 
 /// Bits for the smallest-three quaternion: two to say which component was
 /// dropped, then nine each for the rest.
@@ -89,6 +90,10 @@ const BodyQuantization &Quantization() { return gQuantization; }
 
 void SetQuantization(const BodyQuantization &quantization) { gQuantization = quantization; }
 
+const ViewSmoothing &Smoothing() { return gSmoothing; }
+
+void SetSmoothing(const ViewSmoothing &smoothing) { gSmoothing = smoothing; }
+
 void LoadQuantizationFromConfig(std::string_view configPath)
 {
     const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(configPath);
@@ -138,6 +143,58 @@ void LoadQuantizationFromConfig(std::string_view configPath)
                     static_cast<double>(loaded.positionExtent), loaded.positionBits,
                     static_cast<double>(loaded.linearVelocityMax), loaded.linearVelocityBits,
                     static_cast<double>(loaded.angularVelocityMax), loaded.angularVelocityBits);
+}
+
+void LoadSmoothingFromConfig(std::string_view configPath)
+{
+    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(configPath);
+    if (!text)
+        return;
+
+    ViewSmoothing loaded = gSmoothing;
+    try
+    {
+        const nlohmann::json json = nlohmann::json::parse(*text);
+        if (!json.contains("smoothing"))
+            return;
+
+        const nlohmann::json &block     = json.at("smoothing");
+        loaded.positionCorrectionTime   = block.value("positionCorrectionTime", loaded.positionCorrectionTime);
+        loaded.positionCorrectionTimeFast =
+            block.value("positionCorrectionTimeFast", loaded.positionCorrectionTimeFast);
+        loaded.smallErrorDistance    = block.value("smallErrorDistance", loaded.smallErrorDistance);
+        loaded.largeErrorDistance    = block.value("largeErrorDistance", loaded.largeErrorDistance);
+        loaded.rotationCorrectionTime = block.value("rotationCorrectionTime", loaded.rotationCorrectionTime);
+        loaded.snapBelowDistance     = block.value("snapBelowDistance", loaded.snapBelowDistance);
+        loaded.hardSnapDistance      = block.value("hardSnapDistance", loaded.hardSnapDistance);
+    }
+    catch (const std::exception &error)
+    {
+        Core::Log::Warn("NetSync: cannot read the 'smoothing' block of '{}' ({}) — keeping the defaults.",
+                        configPath, error.what());
+        return;
+    }
+
+    // A zero or negative convergence time would divide by zero in the decay; a
+    // large-error distance under the small one inverts the blend. Refuse the
+    // config rather than render something nobody can explain.
+    if (loaded.positionCorrectionTime <= 0.f || loaded.positionCorrectionTimeFast <= 0.f ||
+        loaded.rotationCorrectionTime <= 0.f || loaded.largeErrorDistance <= loaded.smallErrorDistance)
+    {
+        Core::Log::Warn("NetSync: the 'smoothing' block of '{}' is out of range (times must be positive, "
+                        "largeErrorDistance must exceed smallErrorDistance) — keeping the defaults.",
+                        configPath);
+        return;
+    }
+
+    gSmoothing = loaded;
+    Core::Log::Info("NetSync: correction smoothing — converge over {:g}s (fast {:g}s), rotation {:g}s, snap "
+                    "below {:g} m and beyond {:g} m.",
+                    static_cast<double>(loaded.positionCorrectionTime),
+                    static_cast<double>(loaded.positionCorrectionTimeFast),
+                    static_cast<double>(loaded.rotationCorrectionTime),
+                    static_cast<double>(loaded.snapBelowDistance),
+                    static_cast<double>(loaded.hardSnapDistance));
 }
 
 void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
