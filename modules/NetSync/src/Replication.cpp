@@ -2,6 +2,7 @@
 
 #include <Assisi/NetSync/Replication.hpp>
 
+#include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -9,8 +10,11 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <glm/gtc/quaternion.hpp>
+#include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <expected>
+#include <string>
 #include <utility>
 
 namespace Assisi::NetSync
@@ -62,6 +66,54 @@ void *EnsureComponent(ECS::Scene &scene, ECS::Entity entity, const Core::Reflect
 
 } // namespace
 
+std::vector<std::string> LoadNeverReplicateFromConfig(std::string_view configPath)
+{
+    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(configPath);
+    if (!text)
+        return {}; // no config is not a problem; replicating everything capable is a complete answer
+
+    try
+    {
+        const nlohmann::json json = nlohmann::json::parse(*text);
+        if (!json.contains("networking"))
+            return {};
+
+        const nlohmann::json &block = json.at("networking");
+        if (!block.contains("neverReplicate"))
+            return {};
+
+        const nlohmann::json &list = block.at("neverReplicate");
+        if (!list.is_array())
+        {
+            Core::Log::Warn("NetSync: 'networking.neverReplicate' in '{}' must be an array of component names — "
+                            "ignoring it.",
+                            configPath);
+            return {};
+        }
+
+        std::vector<std::string> names;
+        for (const nlohmann::json &element : list)
+        {
+            if (element.is_string())
+                names.push_back(element.get<std::string>());
+            else
+                Core::Log::Warn("NetSync: 'networking.neverReplicate' entries must be component names — skipping "
+                                "a '{}'.",
+                                element.type_name());
+        }
+        return names;
+    }
+    catch (const std::exception &error)
+    {
+        // A malformed config must not be able to silently *widen* what a game
+        // sends, so say so rather than falling through quietly.
+        Core::Log::Warn("NetSync: cannot read 'networking.neverReplicate' from '{}' ({}) — replicating every "
+                        "capable component.",
+                        configPath, error.what());
+        return {};
+    }
+}
+
 // ===========================================================================
 // ReplicationServer
 // ===========================================================================
@@ -101,11 +153,43 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     // these a given entity actually sends is narrowed later — by the game's
     // neverReplicate list and by each entity's own exclusion mask.
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
+
+    // The game's veto, resolved once. A name nobody registered is a typo or a
+    // renamed type, and silently ignoring it would leave the author believing
+    // something is off the wire when it is not — the exact class of quiet
+    // wrongness this design exists to remove.
+    std::vector<Core::Reflect::ComponentId> vetoed;
+    for (const std::string &name : _config.neverReplicate)
+    {
+        const Core::Reflect::ComponentMeta *meta = registry.Find(name);
+        if (meta == nullptr)
+        {
+            Core::Log::Warn("NetSync: 'neverReplicate' names '{}', which no registered component matches — "
+                            "ignoring it. Was the type renamed?",
+                            name);
+            continue;
+        }
+        if (!meta->replicable)
+        {
+            Core::Log::Info("NetSync: 'neverReplicate' names '{}', which is not ACOMP(replicable) anyway — it was "
+                            "never going to be sent.",
+                            name);
+            continue;
+        }
+        vetoed.push_back(meta->id);
+    }
+    std::sort(vetoed.begin(), vetoed.end());
+
     for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
     {
         if (!meta->replicable)
             continue;
+        if (std::binary_search(vetoed.begin(), vetoed.end(), meta->id))
+            continue; // the game says never, so it is not even a candidate
         _replicatedComponents.push_back(meta->id);
+        // Ordinals stay the *registry's*, not this list's index: the exclusion
+        // masks authored in level files are indexed by the registry's numbering,
+        // and a game filter must not silently renumber them.
         _replicatedOrdinals.push_back(registry.ReplicableOrdinalOf(meta->id));
     }
 

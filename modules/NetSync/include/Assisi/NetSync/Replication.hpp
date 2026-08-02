@@ -91,7 +91,43 @@ struct ReplicationConfig
 
     /// Bounds a command must satisfy before the simulation sees it.
     InputLimits inputLimits;
+
+    /// Component type names this *game* never replicates, whatever the engine
+    /// says they are capable of.
+    ///
+    /// The third gate, between the type's capability and each entity's own
+    /// exclusion mask, and the one that answers the incident this design came
+    /// from: an engine module marks something replicable to serve one use, and a
+    /// game that does not want it should be able to say so **once**, rather than
+    /// on every entity that happens to carry it.
+    ///
+    /// Names rather than ids, because ids are alphabetical and dense and would
+    /// rot the moment any component is added. Names that resolve to nothing warn
+    /// and are ignored.
+    ///
+    /// Deliberately **not** part of the protocol hash. Quantization is hashed
+    /// because it changes how bytes *decode* — a mismatch there is silent
+    /// corruption, the one thing a handshake exists to prevent — while this only
+    /// changes which self-describing blocks are *sent*. A client applies whatever
+    /// arrives regardless of its own list, so two builds differing only here pair
+    /// fine and the server's list governs. Hashing it would make a config edit
+    /// refuse connections for no correctness gain.
+    ///
+    /// Filled by whoever owns the session (from game.json), never read from the
+    /// filesystem by the server itself — so a test can set it without a file.
+    std::vector<std::string> neverReplicate;
 };
+
+/// @brief Read the `networking.neverReplicate` array of a game config.
+///
+/// Absent key yields an empty list and a malformed one warns and yields empty —
+/// the same contract as the quantization loader. Call at session start; the
+/// value goes into ReplicationConfig::neverReplicate.
+///
+/// Per session rather than per process (unlike quantization, which is fixed at
+/// startup because it is inside the handshake hash): editing this and hosting
+/// again takes effect, which is safe precisely because it is not hashed.
+[[nodiscard]] std::vector<std::string> LoadNeverReplicateFromConfig(std::string_view configPath = "game.json");
 
 /// @brief Per-connection counters, for debug overlays and tests.
 struct ConnectionDiagnostics

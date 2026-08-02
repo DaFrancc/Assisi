@@ -6,13 +6,24 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <format>
+#include <utility>
 
 namespace Assisi::NetSync
 {
 
 NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, ReplicationConfig config)
-    : _scene(scene), _physics(physics), _config(config)
+    : _scene(scene), _physics(physics), _config(std::move(config))
 {
+    // The game's never-replicate list, read here rather than inside the server:
+    // the server takes its whole configuration as a value, so a test can set the
+    // list without a filesystem, and the layer that owns the session is the one
+    // that knows where the game config lives.
+    //
+    // Only when the caller has not already supplied one — an explicitly
+    // configured session (every test, and any embedder with its own policy
+    // source) must not have game.json silently override it.
+    if (_config.neverReplicate.empty())
+        _config.neverReplicate = LoadNeverReplicateFromConfig();
 }
 
 NetSession::~NetSession() { Disconnect(); }

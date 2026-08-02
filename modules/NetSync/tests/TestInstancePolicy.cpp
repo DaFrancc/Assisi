@@ -333,3 +333,111 @@ TEST_CASE("excluding a component stops costing bandwidth for it")
     CAPTURE(withoutHealth);
     CHECK(withoutHealth < withHealth);
 }
+
+// ── Game-scope policy (P3) ──────────────────────────────────────────────────
+//
+// The gate between a type's capability and an entity's own exclusion mask: a
+// game says once that it never sends something, instead of saying it on every
+// entity that happens to carry it. This is the direct answer to the incident
+// that started the plan — an engine module marking Physics::Bounce replicable to
+// serve one test level, and thereby setting policy for every game.
+
+TEST_CASE("a game-vetoed component never reaches any client")
+{
+    ReplicationConfig config;
+    config.neverReplicate = {"Health"};
+    Harness harness(config);
+
+    SpawnRich(harness.serverScene);
+    harness.Step(16);
+
+    const ECS::Entity mirror = SoleMirror(harness);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror) == nullptr);
+    // The veto is per component, not a switch on the session.
+    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) != nullptr);
+}
+
+TEST_CASE("a game veto outranks an entity that would happily send")
+{
+    // The two gates are an intersection, not alternatives: an entity with an
+    // empty exclusion mask still cannot override its game.
+    ReplicationConfig config;
+    config.neverReplicate = {"Health"};
+    Harness harness(config);
+
+    const ECS::Entity entity = SpawnRich(harness.serverScene);
+    REQUIRE(harness.serverScene.Get<Replicated>(entity)->excluded.Empty());
+
+    harness.Step(16);
+    CHECK(harness.clientScene.Get<Test::Health>(SoleMirror(harness)) == nullptr);
+}
+
+TEST_CASE("naming the same component in both gates is harmless")
+{
+    ReplicationConfig config;
+    config.neverReplicate = {"Health"};
+    Harness harness(config);
+
+    Core::Reflect::ComponentMask excluded;
+    excluded.Set(OrdinalOf(typeid(Test::Health)));
+    SpawnRich(harness.serverScene, excluded);
+
+    harness.Step(16);
+    const ECS::Entity mirror = SoleMirror(harness);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror) == nullptr);
+    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) != nullptr);
+}
+
+TEST_CASE("an unresolvable veto name changes nothing")
+{
+    // A typo must not quietly widen or narrow what a game sends. It warns (the
+    // author is told) and is otherwise inert.
+    ReplicationConfig config;
+    config.neverReplicate = {"NoSuchComponentAnywhere"};
+    Harness harness(config);
+
+    SpawnRich(harness.serverScene);
+    harness.Step(16);
+
+    const ECS::Entity mirror = SoleMirror(harness);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
+    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) != nullptr);
+}
+
+TEST_CASE("an empty veto list is exactly today's behaviour")
+{
+    ReplicationConfig config; // neverReplicate default-empty
+    Harness harness(config);
+
+    SpawnRich(harness.serverScene);
+    harness.Step(16);
+
+    const ECS::Entity mirror = SoleMirror(harness);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
+    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) != nullptr);
+}
+
+TEST_CASE("a game veto does not renumber the ordinals level files are authored against")
+{
+    // The subtle one. Exclusion masks in level files index the *registry's*
+    // replicable numbering, so if the game filter renumbered the server's view,
+    // every authored exclusion would silently re-aim at a different component.
+    ReplicationConfig config;
+    config.neverReplicate = {"Health"};
+    Harness harness(config);
+
+    // Transform's ordinal is whatever the registry says, veto or no veto — and
+    // excluding it must still exclude Transform rather than something else.
+    Core::Reflect::ComponentMask excluded;
+    excluded.Set(OrdinalOf(typeid(ECS::Transform)));
+    SpawnRich(harness.serverScene, excluded);
+
+    harness.Step(16);
+    const ECS::Entity mirror = SoleMirror(harness);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) == nullptr);
+}

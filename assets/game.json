@@ -12,6 +12,8 @@
     },
     "networking": {
         "_comment": "How body-state corrections are packed. Both ends must agree — these are inside the handshake hash, so a mismatched pair refuses to connect rather than silently decoding each other's bytes into the wrong numbers. Round-to-nearest cannot accumulate across corrections, so this is a bandwidth/quality knob, not a correctness one.",
+        "_neverReplicateComment": "Component types this game never sends, whatever the engine says they are capable of. The middle gate: the type's ACOMP(replicable) grants a capability, this narrows it once for the whole game, and each entity's Replicated.excluded narrows it again per instance. Names, because component ids are alphabetical and dense and would rot the moment anything is added; a name nobody registered warns and is ignored. NOT in the handshake hash — unlike quantization above, this only changes which self-describing blocks are sent, never how bytes decode, so two builds that differ here still pair and the server's list governs. Takes effect on the next hosted session, no restart.",
+        "neverReplicate": [],
         "positionExtent": 256.0,
         "positionBits": 18,
         "linearVelocityMax": 128.0,
