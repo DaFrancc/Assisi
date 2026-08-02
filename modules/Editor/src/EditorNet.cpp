@@ -23,10 +23,12 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/App/ChildProcess.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
@@ -278,6 +280,143 @@ void EditorApp::BuildJoinedWorld()
     _joinPhase = JoinPhase::Live;
     _netError.clear();
     Assisi::Core::Log::Info("Editor: joined — built '{}' and answered the handshake.", level.path);
+}
+
+// ---------------------------------------------------------------------------
+// Play in editor
+// ---------------------------------------------------------------------------
+
+bool EditorApp::WritePieTempLevel(Assisi::NetSync::LevelIdentity &outLevel)
+{
+    if (_scene == nullptr)
+        return false;
+
+    // Under the user root rather than the asset root: this is a transient of one
+    // play session, not content, and it must not appear in the asset browser or
+    // pick up a GUID sidecar. The clients address it absolutely, so where it
+    // lives is nobody else's business.
+    const auto resolved = Assisi::Core::AssetSystem::ResolveUser("pie-host-level.alvl");
+    if (!resolved)
+    {
+        Assisi::Core::Log::Error("PIE: cannot resolve a temp level path under the user root.");
+        return false;
+    }
+
+    const Assisi::Runtime::LevelHeader header{.profile = _world != nullptr ? _world->profile : std::string{}};
+    if (!Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header))
+    {
+        Assisi::Core::Log::Error("PIE: could not write the temp level '{}'.", resolved->string());
+        return false;
+    }
+
+    const std::optional<std::uint64_t> hash = HashFileBytes(*resolved);
+    if (!hash)
+    {
+        Assisi::Core::Log::Error("PIE: could not read back the temp level '{}'.", resolved->string());
+        return false;
+    }
+
+    _pieTempLevel        = *resolved;
+    outLevel.addressing  = Assisi::NetSync::LevelAddressing::AbsolutePath;
+    outLevel.path        = resolved->string();
+    outLevel.contentHash = *hash;
+    return true;
+}
+
+void EditorApp::SpawnPieClients(std::int32_t count)
+{
+    if (count <= 0)
+        return;
+
+    const std::optional<std::filesystem::path> exe = Assisi::Core::AssetSystem::ExecutablePath();
+    if (!exe)
+    {
+        Assisi::Core::Log::Error("PIE: cannot find this executable's path; no clients launched.");
+        return;
+    }
+
+    const std::string endpoint = std::string(_netAddress.data()) + ":" + std::to_string(_netPort);
+
+    for (std::int32_t i = 0; i < count; ++i)
+    {
+        // Each child gets its own user root. That is the whole of the
+        // "no shared-file writes" rule for per-user state: options.json, the
+        // log, and any capture land in the child's own directory instead of
+        // over the parent's. The asset root stays shared and is opened
+        // read-only on the child's side.
+        std::filesystem::path userRoot = std::filesystem::temp_directory_path() /
+                                         ("assisi-pie-client-" + std::to_string(i));
+        std::error_code ec;
+        std::filesystem::create_directories(userRoot, ec);
+
+        std::vector<std::string> args{"--pie-client", "--connect", endpoint};
+        std::vector<std::string> env{"ASSISI_USER_ROOT=" + userRoot.string()};
+
+        Assisi::App::ChildProcess child;
+        if (!child.Spawn(*exe, args, env, exe->parent_path()))
+        {
+            Assisi::Core::Log::Error("PIE: failed to launch client {} of {}.", i + 1, count);
+            break;
+        }
+        _pieClients.push_back(std::move(child));
+    }
+
+    Assisi::Core::Log::Info("PIE: {} client(s) launched against {}.", _pieClients.size(), endpoint);
+}
+
+void EditorApp::ShutdownPieClients()
+{
+    for (Assisi::App::ChildProcess &child : _pieClients)
+        child.Terminate();
+    _pieClients.clear();
+
+    if (!_pieTempLevel.empty())
+    {
+        std::error_code ec;
+        std::filesystem::remove(_pieTempLevel, ec);
+        _pieTempLevel.clear();
+    }
+}
+
+void EditorApp::FrameJoinedWorldOnce()
+{
+    if (_joinCameraFramed || _scene == nullptr || _netSession == nullptr)
+        return;
+
+    const Assisi::NetSync::ReplicationClient *client = _netSession->Client();
+    if (client == nullptr || !client->IsWorldComplete())
+        return;
+
+    // A viewer window that opens staring at nothing undermines the one-click
+    // demo it exists for. The first mirrored entity is a crude choice and a
+    // deliberate one: it is *the host's world*, which is the thing this window
+    // was opened to look at, and any cleverer framing would be guessing at
+    // which part of it matters.
+    Assisi::ECS::Entity target = Assisi::ECS::NullEntity;
+    _scene->ForEachEntity(
+        [&](Assisi::ECS::Entity entity)
+        {
+            if (target == Assisi::ECS::NullEntity && _scene->Has<Assisi::NetSync::Mirrored>(entity) &&
+                _scene->Get<Assisi::ECS::Transform>(entity) != nullptr)
+            {
+                target = entity;
+            }
+        });
+
+    _joinCameraFramed = true; // once, whether or not there was anything to look at
+    if (target != Assisi::ECS::NullEntity)
+        FocusCameraOn(target);
+}
+
+void EditorApp::OnShutdown()
+{
+    // Closing the window is a way of ending a play session, and the two things
+    // that outlive this process if nobody says otherwise are a socket and a
+    // fleet of viewer windows. Deliberately *not* a full StopPlay: the scene
+    // restore it runs re-resolves assets against a renderer that is on its way
+    // down, and nothing is going to look at the result.
+    ShutdownNetSession();
+    ShutdownPieClients();
 }
 
 void EditorApp::ShutdownNetSession()

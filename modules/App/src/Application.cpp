@@ -230,7 +230,8 @@ bool Application::InitializePresentation()
         return false;
     }
 
-    Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext());
+    Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext(),
+                               /*persistLayout=*/!_restrictedViewer);
 
     _input = std::make_unique<Window::InputContext>(*_window);
 

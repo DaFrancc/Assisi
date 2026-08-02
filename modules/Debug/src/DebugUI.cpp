@@ -227,7 +227,8 @@ void LoadLoadingSpinnerWebp(nvrhi::IDevice *device)
 }
 } // namespace
 
-void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::VulkanContext &vulkanContext)
+void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::VulkanContext &vulkanContext,
+                         bool persistLayout)
 {
     s_vkDevice = vulkanContext.GetVkDevice();
 
@@ -236,6 +237,8 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     ImPlot::CreateContext();
 
     ImGuiIO &io = ImGui::GetIO();
+    if (!persistLayout)
+        io.IniFilename = nullptr;
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
     io.ConfigFlags |= ImGuiConfigFlags_DockingEnable;
     // No ImGuiConfigFlags_ViewportsEnable: floating ImGui windows outside the

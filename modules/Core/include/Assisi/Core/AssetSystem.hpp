@@ -190,6 +190,17 @@ class AssetSystem
     static const std::filesystem::path &GetUserRoot() noexcept;
 
     /**
+     * @brief Absolute path of the running executable, or nullopt if the
+     * platform would not say.
+     *
+     * For relaunching *this* build as a second process — the editor spawning
+     * play-in-editor clients. argv[0] is not a substitute: it is whatever the
+     * caller typed, which may be a bare name resolved through PATH, a relative
+     * path from a working directory that has since changed, or a symlink.
+     */
+    [[nodiscard]] static std::optional<std::filesystem::path> ExecutablePath() noexcept;
+
+    /**
      * @brief Resolves a virtual path against the writable user root.
      *
      * Same normalization and escape protection as Resolve(); the target need

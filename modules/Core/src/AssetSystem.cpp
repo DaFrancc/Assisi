@@ -39,10 +39,8 @@ static bool gUserRootInitialized = false;
 
 namespace
 {
-/* Absolute directory containing the running executable, if it can be found.
-   CWD-independent, so both root discovery and the user-root default anchor
-   here rather than on wherever the process happened to be launched from. */
-std::optional<fs::path> ExeDir() noexcept
+/* Absolute path of the running executable, if it can be found. */
+std::optional<fs::path> ExePath() noexcept
 {
     try
     {
@@ -50,14 +48,14 @@ std::optional<fs::path> ExeDir() noexcept
         std::array<wchar_t, MAX_PATH> buf = {};
         if (GetModuleFileNameW(nullptr, buf.data(), MAX_PATH) != 0)
         {
-            return fs::path(buf.data()).parent_path();
+            return fs::path(buf.data());
         }
 #else
         std::array<char, 4096> buf = {};
         const ssize_t len = readlink("/proc/self/exe", buf.data(), buf.size() - 1);
         if (len > 0)
         {
-            return fs::path(std::string(buf.data(), static_cast<size_t>(len))).parent_path();
+            return fs::path(std::string(buf.data(), static_cast<size_t>(len)));
         }
 #endif
     }
@@ -65,6 +63,26 @@ std::optional<fs::path> ExeDir() noexcept
     {
     }
     return std::nullopt;
+}
+
+/* Absolute directory containing the running executable, if it can be found.
+   CWD-independent, so both root discovery and the user-root default anchor
+   here rather than on wherever the process happened to be launched from. */
+std::optional<fs::path> ExeDir() noexcept
+{
+    const std::optional<fs::path> exe = ExePath();
+    if (!exe)
+    {
+        return std::nullopt;
+    }
+    try
+    {
+        return exe->parent_path();
+    }
+    catch (const std::exception &)
+    {
+        return std::nullopt;
+    }
 }
 
 /* Reads an ASSISI_* env var as a path, returning it only when it names a directory. */
@@ -359,6 +377,8 @@ const fs::path &AssetSystem::GetUserRoot() noexcept
     EnsureUserRoot();
     return gUserRoot;
 }
+
+std::optional<fs::path> AssetSystem::ExecutablePath() noexcept { return ExePath(); }
 
 PathResult AssetSystem::ResolveUser(std::string_view vpath) noexcept
 {

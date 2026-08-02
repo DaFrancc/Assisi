@@ -15,6 +15,7 @@
 ///   - EditorLevels.cpp     level scan/save/load + the Levels window
 
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/ChildProcess.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -44,6 +45,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -113,6 +115,21 @@ struct EditorConfig
     /// Core::AssetSystem; a missing/typo'd path warns and starts empty.
     std::string startupLevel;
 
+    /// Endpoint ("address" or "address:port") to join automatically once the
+    /// editor has started. Empty = none.
+    ///
+    /// What makes a play-in-editor client a client: the process is a full
+    /// editor, launched by another one, that enters Play as a joiner the moment
+    /// it is up. Nothing else about it is special — which is the point, since a
+    /// PIE client that ran a different code path would stop being a test of the
+    /// thing it is meant to test.
+    std::string autoJoinEndpoint;
+
+    /// Run as a restricted viewer: no writes to anything the editor that
+    /// spawned this process also owns (see Application::SetRestrictedViewer and
+    /// Core::RebuildMode::ReadOnly). Set for a play-in-editor client.
+    bool restrictedViewer = false;
+
     /// Build the SceneRenderer's editor overlay passes (selection outline,
     /// entity icons, collider wireframes). On by default — this exists so the
     /// renderer's off-path (what a Game build runs: passes never built, no
@@ -125,7 +142,12 @@ struct EditorConfig
 class EditorApp : public Assisi::App::Application
 {
   public:
-    explicit EditorApp(EditorConfig config = {}) : _editorConfig(std::move(config)) {}
+    explicit EditorApp(EditorConfig config = {}) : _editorConfig(std::move(config))
+    {
+        // Application reads this during Initialize(), which runs before OnStart,
+        // so it cannot wait for a hook — hence the constructor body.
+        SetRestrictedViewer(_editorConfig.restrictedViewer);
+    }
 
     /// @brief Transform-gizmo handle set. Public so the free helpers in
     /// EditorGizmo.cpp can map it to ImGuizmo's operation enum.
@@ -144,6 +166,7 @@ class EditorApp : public Assisi::App::Application
     void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
+    void OnShutdown() override;
 
   private:
     // --- Setup ---
@@ -233,6 +256,33 @@ class EditorApp : public Assisi::App::Application
     /// panel shows it, the log keeps it, and the session ends through the same
     /// Stop as everything else.
     void FailJoin(std::string reason);
+
+    // --- Play in editor (§3.6) ---------------------------------------------
+    // "Host + N clients" launches N more copies of this executable, each of
+    // which joins the listen server this one just started. It exists because
+    // every later milestone is verified by *looking* at two worlds agreeing,
+    // and two-window choreography by hand is the difference between checking
+    // that ten times and checking it once.
+
+    /// @brief Snapshot the live scene to a temp level file and describe it as
+    /// an absolute-path LevelIdentity.
+    ///
+    /// This is what makes PIE immune to the unsaved-edits problem that hosting
+    /// across machines has to prompt about: the clients load the scene as it is
+    /// *right now*, not as it was last saved. Returns false (and logs) if the
+    /// file could not be written.
+    bool WritePieTempLevel(Assisi::NetSync::LevelIdentity &outLevel);
+
+    /// @brief Launch @p count play-in-editor clients against the local host.
+    void SpawnPieClients(std::int32_t count);
+
+    /// @brief Terminate and reap every play-in-editor client, then delete the
+    /// temp level. Safe to call when there are none.
+    void ShutdownPieClients();
+
+    /// @brief Point the camera at something once a joined world has arrived, so
+    /// a viewer window does not open staring into empty space.
+    void FrameJoinedWorldOnce();
 
     /// @brief Diagnostic (end of OnImGui): warns with full ImGui internal state
     /// when a widget holds ActiveId for seconds with no mouse button down and no
@@ -555,6 +605,22 @@ class EditorApp : public Assisi::App::Application
     /// the play scene with the *host's* level, so both have to be put back.
     std::string _prePlayLevelPath;
     std::string _prePlayProfile;
+
+    /// The Play control's net mode, as an index into the dropdown. Sticky for
+    /// the process and reset at launch: it is a per-session testing choice
+    /// ("this time, host with two viewers"), not a preference worth persisting
+    /// into options.json and then being surprised by tomorrow.
+    std::int32_t _playNetSelection = 0;
+    /// How many play-in-editor clients the next Host launches. 0 = none, which
+    /// is also what a plain "Host" (the cross-machine case) means.
+    std::int32_t _pieClientCount = 0;
+    /// The launched clients. Destroying one terminates it, so losing track of
+    /// this vector is not a way to leak a window.
+    std::vector<Assisi::App::ChildProcess> _pieClients;
+    /// The temp level a PIE host wrote for its clients to load. Deleted at Stop.
+    std::filesystem::path _pieTempLevel;
+    /// Whether this (client) editor has already framed the world it joined.
+    bool _joinCameraFramed = false;
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;

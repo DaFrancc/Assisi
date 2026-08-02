@@ -179,6 +179,34 @@ void EditorApp::OnStart()
         }
     }
 
+    // A play-in-editor client: enter Play as a joiner straight away. Nothing
+    // about this process is otherwise special — which is the point, since a
+    // viewer that took a different code path would stop being a test of the
+    // path it exists to test. The world it ends up showing is the host's, built
+    // from the handshake (BuildJoinedWorld); whatever level was loaded above is
+    // discarded on the way, and Stop brings it back.
+    if (!_editorConfig.autoJoinEndpoint.empty())
+    {
+        std::string   address = "127.0.0.1";
+        std::uint16_t port    = static_cast<std::uint16_t>(_netPort);
+        const std::string_view endpoint = _editorConfig.autoJoinEndpoint;
+        if (const std::size_t colon = endpoint.rfind(':'); colon != std::string_view::npos)
+        {
+            address = std::string(endpoint.substr(0, colon));
+            const std::string portText(endpoint.substr(colon + 1));
+            if (const int32_t parsed = std::atoi(portText.c_str()); parsed > 0 && parsed <= 65535)
+                port = static_cast<std::uint16_t>(parsed);
+        }
+        else
+        {
+            address = std::string(endpoint);
+        }
+
+        std::snprintf(_netAddress.data(), _netAddress.size(), "%s", address.c_str());
+        _netPort = static_cast<int32_t>(port);
+        StartPlay(NetIntent::Join);
+    }
+
     // --- Systems ---
     _systems.Register(Assisi::App::SystemPhase::Update, "EntityPicking",
                       [this](Assisi::App::SystemContext &) { HandleEntityPicking(); });
@@ -200,13 +228,20 @@ void EditorApp::OnStart()
 
 void EditorApp::ReimportAssets()
 {
-    const std::expected<std::size_t, Assisi::Core::AssetError> result = _assetDatabase.Rebuild();
+    // A restricted viewer shares one asset tree with the editor that spawned it,
+    // and two processes minting ids into the same directory is a race whose
+    // loser silently gets a different id for the same file. It indexes what is
+    // already there and writes nothing.
+    const Assisi::Core::RebuildMode mode = IsRestrictedViewer() ? Assisi::Core::RebuildMode::ReadOnly
+                                                                : Assisi::Core::RebuildMode::Reconcile;
+    const std::expected<std::size_t, Assisi::Core::AssetError> result = _assetDatabase.Rebuild(mode);
     if (!result)
     {
         Assisi::Core::Log::Warn("Asset reimport failed: asset root unavailable.");
         return;
     }
-    Assisi::Core::Log::Info("Asset reimport: {} assets indexed (GUID sidecars reconciled).", *result);
+    Assisi::Core::Log::Info("Asset reimport: {} assets indexed ({}).", *result,
+                            IsRestrictedViewer() ? "read-only scan" : "GUID sidecars reconciled");
 
     // Wire the (rebuilt) database into serialization's path hint and the asset
     // cache's id↔path translation. The resolvers capture the database by
@@ -220,7 +255,9 @@ void EditorApp::ReimportAssets()
     // (only when something changed — steady state does nothing). The hint
     // resolver is already installed above, so written `.amat` channels carry
     // regenerated path hints (D2).
-    if (ReconcileMeshMaterials())
+    // ...and never in a restricted viewer, which is the writing half this whole
+    // pass exists to do.
+    if (!IsRestrictedViewer() && ReconcileMeshMaterials())
     {
         if (const std::expected<std::size_t, Assisi::Core::AssetError> rescan = _assetDatabase.Rebuild(); rescan)
             Assisi::Core::Log::Info("Asset reimport: {} assets indexed after material reconcile.", *rescan);
@@ -860,6 +897,10 @@ void EditorApp::OnUpdate(float dt)
             Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
         }
     }
+
+    // A viewer window that opens staring at nothing undermines the one-click
+    // demo it exists for. Once, when the joined world has arrived.
+    FrameJoinedWorldOnce();
 
     // Smooth mirrored entities into the scene before anything reads transforms
     // this frame. A no-op unless this editor is a connected client.

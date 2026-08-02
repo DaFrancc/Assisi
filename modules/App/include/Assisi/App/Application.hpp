@@ -70,6 +70,20 @@ class Application
     /// reflects the config file.
     [[nodiscard]] bool IsHeadless() const { return _headless; }
 
+    /// @brief Run as a viewer that must not write anything a sibling process on
+    /// this machine also owns. Must be called before Initialize().
+    ///
+    /// The play-in-editor client: a second window of the same executable,
+    /// launched from the same directory, sharing one asset tree with the editor
+    /// that spawned it. Here it means ImGui keeps no `imgui.ini` (that path is
+    /// resolved against the working directory, so the two processes would fight
+    /// over one file and the last to exit would rearrange the other's panels).
+    /// Per-user state — options, logs, captures — is separated by pointing the
+    /// child at its own user root instead, which needs no flag.
+    void SetRestrictedViewer(bool restricted) { _restrictedViewer = restricted; }
+
+    [[nodiscard]] bool IsRestrictedViewer() const { return _restrictedViewer; }
+
     /// @brief Brings up the engine (asset system, window, renderer, ImGui,
     /// input, post-process). Must be called once, after construction and before
     /// Run(). In headless mode only the simulation half is brought up.
@@ -246,6 +260,7 @@ class Application
     bool                _initialized = false;
 
     bool _headless = false;
+    bool _restrictedViewer = false;
     /// Tracks the presentation half specifically: teardown of DebugUI /
     /// PostProcess / RenderSystem must be gated on *that* having been brought
     /// up, not on Initialize() having succeeded — headless satisfies the latter

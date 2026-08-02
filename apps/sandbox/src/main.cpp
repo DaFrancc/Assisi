@@ -43,7 +43,11 @@ constexpr const char *kUsage =
     "  --server                run headless: no window, renderer, input or debug\n"
     "                          UI — just the fixed-step simulation (see ServerApp)\n"
     "  --host [port]           --server + replicate to clients (default port 27015)\n"
-    "  --connect <addr[:port]> --server + join a host and mirror its world\n"
+    "  --connect <addr[:port]> join a host and mirror its world. Headless by\n"
+    "                          default; with --pie-client it is a windowed editor\n"
+    "  --pie-client            play-in-editor client: a windowed editor that joins\n"
+    "                          --connect at startup and writes nothing the editor\n"
+    "                          that spawned it also owns. Launched by \"Host + N\"\n"
     "  --spawn <n>             --host only: spawn n moving replicated entities\n"
     "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
     "                          until interrupted, the default)\n"
@@ -80,7 +84,7 @@ bool ParseAddress(std::string_view text, std::string &outAddress, std::uint16_t 
 }
 
 bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &server,
-               Sandbox::ServerOptions &serverOptions, bool &shouldExit)
+               Sandbox::ServerOptions &serverOptions, bool &pieClient, bool &shouldExit)
 {
     for (int i = 1; i < argc; ++i)
     {
@@ -130,6 +134,10 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
                 serverOptions.port = static_cast<std::uint16_t>(port);
             }
         }
+        else if (arg == "--pie-client")
+        {
+            pieClient = true;
+        }
         else if (arg == "--connect")
         {
             if (i + 1 >= argc)
@@ -137,7 +145,6 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
                 std::fprintf(stderr, "--connect requires an address\n\n%s", kUsage);
                 return false;
             }
-            server             = true;
             serverOptions.role = Sandbox::ServerRole::Client;
             if (!ParseAddress(argv[++i], serverOptions.address, serverOptions.port))
             {
@@ -284,15 +291,36 @@ int main(int argc, char **argv)
     std::string_view      startupLevel;
     bool                  editorVisuals = true;
     bool                  server        = false;
+    bool                  pieClient     = false;
     bool                  shouldExit    = false;
     Sandbox::ServerOptions serverOptions;
-    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, shouldExit))
+    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, pieClient, shouldExit))
     {
         return EXIT_FAILURE;
     }
     if (shouldExit)
     {
         return EXIT_SUCCESS;
+    }
+
+    // --connect on its own means the headless test client; --connect with
+    // --pie-client means a windowed editor that joins. The flag rather than a
+    // separate verb, because everything else about a PIE client is an ordinary
+    // editor, and giving it its own entry point would make it a different
+    // program that only resembles the one it is meant to exercise.
+    std::string autoJoinEndpoint;
+    if (pieClient)
+    {
+        if (serverOptions.role != Sandbox::ServerRole::Client)
+        {
+            std::fprintf(stderr, "--pie-client requires --connect <addr[:port]>\n\n%s", kUsage);
+            return EXIT_FAILURE;
+        }
+        autoJoinEndpoint = serverOptions.address + ":" + std::to_string(serverOptions.port);
+    }
+    else if (serverOptions.role == Sandbox::ServerRole::Client)
+    {
+        server = true;
     }
 
     // The dedicated server is a different program, not the editor with its
@@ -313,6 +341,8 @@ int main(int argc, char **argv)
     Assisi::Editor::EditorApp app({.registerGameSystems = &RegisterDemoSystems,
                                    .registerProfiles    = &RegisterDemoProfiles,
                                    .startupLevel        = std::string(startupLevel),
+                                   .autoJoinEndpoint    = autoJoinEndpoint,
+                                   .restrictedViewer    = pieClient,
                                    .enableEditorVisuals = editorVisuals});
     if (!app.Initialize())
     {

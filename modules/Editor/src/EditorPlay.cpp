@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -42,9 +43,16 @@ void EditorApp::StartPlay(NetIntent intent)
         return;
     }
 
+    // Play-in-editor hosting sidesteps both gates below, structurally rather
+    // than by exception: its clients load a temp snapshot of the scene as it is
+    // *right now*, so "the level was never saved" and "the level on disk is not
+    // what you are looking at" both stop being true. That is the whole reason
+    // PIE needs no equivalent of the cross-machine save prompt.
+    const bool playInEditor = intent == NetIntent::Host && _pieClientCount > 0;
+
     // Two host-side gates, checked before anything is snapshotted so a refusal
     // leaves the editor exactly where it was.
-    if (intent == NetIntent::Host)
+    if (intent == NetIntent::Host && !playInEditor)
     {
         // Clients load the level from disk by path. A level that has never been
         // saved has no path, and a host advertising `None` is a join that fails
@@ -106,6 +114,21 @@ void EditorApp::StartPlay(NetIntent intent)
     if (intent == NetIntent::Standalone)
         return;
 
+    // What clients are told to load. PIE hands them a snapshot of this scene;
+    // a plain host hands them the saved level's virtual path.
+    Assisi::NetSync::LevelIdentity hostLevel;
+    if (intent == NetIntent::Host)
+    {
+        if (playInEditor && !WritePieTempLevel(hostLevel))
+        {
+            _netError = "could not write the temp level for play-in-editor clients.";
+            StopPlay();
+            return;
+        }
+        if (!playInEditor)
+            hostLevel = HostLevelIdentity();
+    }
+
     // The session binds the scene it replicates by reference at construction,
     // and that scene is now the play scene — the one the editor already treats
     // as disposable.
@@ -113,7 +136,7 @@ void EditorApp::StartPlay(NetIntent intent)
     const auto port = static_cast<std::uint16_t>(_netPort);
 
     const bool started = intent == NetIntent::Host
-                             ? _netSession->Host(port, HostLevelIdentity())
+                             ? _netSession->Host(port, std::move(hostLevel))
                              // Deferred: the ClientHello waits until this editor
                              // has built the host's level, because a snapshot
                              // applied against a world that does not exist yet
@@ -130,7 +153,16 @@ void EditorApp::StartPlay(NetIntent intent)
 
     _netError.clear();
     if (intent == NetIntent::Join)
-        _joinPhase = JoinPhase::Connecting;
+    {
+        _joinPhase        = JoinPhase::Connecting;
+        _joinCameraFramed = false;
+    }
+    else if (playInEditor)
+    {
+        // After Host() succeeded, never before: a client that connects to a
+        // port nothing is listening on fails immediately and confusingly.
+        SpawnPieClients(_pieClientCount);
+    }
 }
 
 void EditorApp::ResumePlay()
@@ -185,10 +217,16 @@ void EditorApp::StopPlay()
     // rebuilds the editing scene underneath them, and so a host stops
     // replicating a scene that is about to be torn down and rebuilt.
     ShutdownNetSession();
+    // Every client this session launched goes with it, and so does the temp
+    // level they were loading — "connections do not outlive the level" is the
+    // price PIE pays for needing no level-transfer protocol, and a viewer left
+    // running against a dead server is the worst version of paying it.
+    ShutdownPieClients();
     _netIntent        = NetIntent::Standalone;
     _joinPhase        = JoinPhase::None;
     _pendingJoinBuild = false;
     _pendingStopPlay  = false;
+    _joinCameraFramed = false;
 
     // Discard the scratch pause-history first (whatever the pause let you undo dies
     // with the pause). The editing history is deliberately NOT cleared — the restore
@@ -373,6 +411,40 @@ void EditorApp::DeleteEntity(Assisi::ECS::Entity entity)
 
 void EditorApp::DrawGameControlWindow()
 {
+    // What Run does on the network. Host and Join share this one surface
+    // deliberately: both halves of the same feature, so "where do I join from?"
+    // is answered "the same place you host from". The Network panel is the
+    // detail/stats view, not a second place sessions start.
+    struct NetModeEntry
+    {
+        const char  *label;
+        NetIntent    intent;
+        std::int32_t clients;
+    };
+    static constexpr std::array<NetModeEntry, 6> kNetModes{{
+        {"Standalone", NetIntent::Standalone, 0},
+        {"Host", NetIntent::Host, 0},
+        {"Host + 1 client", NetIntent::Host, 1},
+        {"Host + 2 clients", NetIntent::Host, 2},
+        {"Host + 3 clients", NetIntent::Host, 3},
+        {"Join…", NetIntent::Join, 0},
+    }};
+    _playNetSelection = std::clamp(_playNetSelection, 0, static_cast<std::int32_t>(kNetModes.size()) - 1);
+    const NetModeEntry &netMode = kNetModes[static_cast<std::size_t>(_playNetSelection)];
+
+    // The one place a play session starts, so the key and the button cannot
+    // drift into meaning different things.
+    const auto runOrResume = [this, &netMode]
+    {
+        if (_playState == PlayState::Paused)
+        {
+            ResumePlay();
+            return;
+        }
+        _pieClientCount = netMode.clients;
+        StartPlay(netMode.intent);
+    };
+
     // F5 run/resume, F6 pause, F7 stop — handled here so the keys live with the
     // window that owns them (same pattern as F11 in DrawOptionsWindow). Each
     // transition method no-ops unless the current state allows it, so a keypress
@@ -383,14 +455,7 @@ void EditorApp::DrawGameControlWindow()
         Assisi::Window::InputContext &input = GetInput();
         if (input.IsKeyPressed(Assisi::Window::Key::F5))
         {
-            if (_playState == PlayState::Paused)
-            {
-                ResumePlay();
-            }
-            else
-            {
-                StartPlay();
-            }
+            runOrResume();
         }
         if (input.IsKeyPressed(Assisi::Window::Key::F6))
         {
@@ -426,16 +491,46 @@ void EditorApp::DrawGameControlWindow()
     ImGui::BeginDisabled(!(editing || paused));
     if (ImGui::Button("Run"))
     {
-        if (paused)
-        {
-            ResumePlay();
-        }
-        else
-        {
-            StartPlay();
-        }
+        runOrResume();
     }
     ImGui::EndDisabled();
+
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(150.f);
+    ImGui::BeginDisabled(!editing);
+    if (ImGui::BeginCombo("##netmode", netMode.label))
+    {
+        for (std::int32_t i = 0; i < static_cast<std::int32_t>(kNetModes.size()); ++i)
+        {
+            const bool selected = i == _playNetSelection;
+            if (ImGui::Selectable(kNetModes[static_cast<std::size_t>(i)].label, selected))
+                _playNetSelection = i;
+            if (selected)
+                ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        ImGui::SetTooltip("What Run does on the network. \"Host + N\" opens N more windows of this build "
+                          "that join automatically — they load a snapshot of the scene as it is now, "
+                          "unsaved edits included. Stop closes them.");
+    }
+
+    // The endpoint, shown only for Join: an address field that is dead weight in
+    // every other mode.
+    if (netMode.intent == NetIntent::Join)
+    {
+        ImGui::SetNextItemWidth(130.f);
+        ImGui::BeginDisabled(!editing);
+        ImGui::InputText("##joinaddr", _netAddress.data(), _netAddress.size());
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.f);
+        ImGui::InputInt("Join at", &_netPort, 0, 0);
+        _netPort = std::clamp(_netPort, 1, 65535);
+        ImGui::EndDisabled();
+    }
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!playing || networked);
