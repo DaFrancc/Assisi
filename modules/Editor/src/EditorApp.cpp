@@ -17,6 +17,7 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -797,7 +798,8 @@ void EditorApp::OnUpdate(float dt)
     // Delete edits text there instead). Same safe mutation point as the undo above.
     if (Assisi::Editor::EditHistory *history = ActiveHistory();
         history != nullptr && !ImGui::GetIO().WantTextInput && _selectedEntity != Assisi::ECS::NullEntity &&
-        _scene->IsAlive(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity) &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
         DeleteEntity(_selectedEntity);
     }
@@ -995,6 +997,13 @@ Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
     { ApplyEditRebind(entity, id, present); };
 }
+
+bool EditorApp::IsMirrored(Assisi::ECS::Entity entity) const
+{
+    return _scene != nullptr && _scene->IsAlive(entity) && _scene->Has<Assisi::NetSync::Mirrored>(entity);
+}
+
+bool EditorApp::IsEditable(Assisi::ECS::Entity entity) const { return IsEditable() && !IsMirrored(entity); }
 
 bool EditorApp::IsEditable() const
 {

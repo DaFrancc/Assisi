@@ -493,6 +493,51 @@ void EditorApp::SmoothNetView()
 // Panels
 // ---------------------------------------------------------------------------
 
+void EditorApp::DrawHostAuthoringWarnings()
+{
+    if (_scene == nullptr)
+        return;
+
+    // Both of these are about a mismatch between what the author marked and what
+    // the clients will actually see, and both are otherwise discovered by
+    // watching a second window and wondering.
+    std::size_t marked          = 0;
+    std::size_t unmarkedDynamic = 0;
+    _scene->ForEachEntity(
+        [&](Assisi::ECS::Entity entity)
+        {
+            const bool replicated = _scene->Has<Assisi::NetSync::Replicated>(entity);
+            if (replicated)
+                ++marked;
+
+            const auto *descriptor = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(entity);
+            if (!replicated && descriptor != nullptr && !descriptor->isStatic)
+                ++unmarkedDynamic;
+        });
+
+    if (marked == 0)
+    {
+        ImGui::TextColored(kWarnColor, "Nothing in this level is marked Replicated — clients will connect to a "
+                                       "world that never changes.");
+    }
+
+    if (unmarkedDynamic > 0)
+    {
+        ImGui::TextColored(kWarnColor, "%zu unmarked dynamic bod%s", unmarkedDynamic,
+                           unmarkedDynamic == 1 ? "y" : "ies");
+        // The drift is the obvious half and the contacts are the half that
+        // actually bites: a cosmetic crate rolling against a *sleeping mirror*
+        // fights the client's sleep enforcement, and can jitter or come to rest
+        // at a pose the host never saw.
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("These simulate locally as cosmetic physics — they will settle differently on "
+                              "every client, and their collisions with replicated bodies happen only on the "
+                              "machine they are on. Mark them Replicated to synchronize.");
+        }
+    }
+}
+
 void EditorApp::DrawHostUnsavedModal()
 {
     static constexpr const char *kTitle = "Host with unsaved edits?";
@@ -618,6 +663,16 @@ void EditorApp::DrawNetworkWindow()
     {
         LabelledValue("Level", _world != nullptr && !_world->levelPath.empty() ? _world->levelPath : "<unsaved>");
     }
+
+    // Where this session actually is. "It says Hosting" and "a client can reach
+    // it at this address" are different claims, and only the second one is what
+    // someone on the other machine needs typed into their Join field.
+    LabelledValue("Endpoint", _netSession->IsHost()
+                                  ? std::format("listening on :{}", _netPort)
+                                  : std::format("{}:{}", _netAddress.data(), _netPort));
+
+    if (_netSession->IsHost())
+        DrawHostAuthoringWarnings();
 
     ImGui::TextUnformatted("Ping");
     ImGui::SameLine(180.f);

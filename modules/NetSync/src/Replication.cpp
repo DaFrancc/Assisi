@@ -1427,6 +1427,16 @@ ECS::Entity ReplicationClient::EntityOf(NetId netId) const
     return it == _entityByNetId.end() ? ECS::NullEntity : it->second;
 }
 
+NetId ReplicationClient::NetIdOf(ECS::Entity entity) const
+{
+    for (const auto &[netId, mirror] : _entityByNetId)
+    {
+        if (mirror == entity)
+            return netId;
+    }
+    return InvalidNetId;
+}
+
 void ReplicationClient::Reset()
 {
     for (const auto &[netId, entity] : _entityByNetId)

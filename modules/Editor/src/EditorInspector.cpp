@@ -6,8 +6,10 @@
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 
 #include <imgui.h>
@@ -26,6 +28,14 @@
 
 namespace Assisi::Editor
 {
+namespace
+{
+constexpr ImVec4 kWarnColor{0.9f, 0.8f, 0.3f, 1.f};
+constexpr ImVec4 kWireColor{0.45f, 0.8f, 0.95f, 1.f};
+/// A plug, from the editor's Nerd Font. Small, and not a word, so it does not
+/// compete with the component name it sits beside.
+constexpr const char *kWireGlyph = "\xef\x87\xa6"; // U+F1E6
+} // namespace
 
 namespace
 {
@@ -183,6 +193,14 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         if (field.transient)
             continue;
         anyEditable = true;
+
+        // AFIELD(norep): saved to disk like anything else, never sent. Dimmed
+        // rather than disabled — it is authored data, and the author is the one
+        // person who *should* be editing it; what they need is to know it stays
+        // here.
+        const bool serverOnly = field.norep;
+        if (serverOnly)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
 
         // AFIELD(radio) listeners follow a sibling enum: hide or grey them when
         // that enum isn't at one of the field's active values.
@@ -468,6 +486,17 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         if (greyed)
         {
             ImGui::EndDisabled();
+        }
+        if (serverOnly)
+        {
+            ImGui::PopStyleColor();
+            ImGui::SameLine();
+            ImGui::TextDisabled("(server-only)");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("AFIELD(norep): saved with the level, never sent to clients. Every client "
+                                  "holds this field's default.");
+            }
         }
         anyFieldEdited |= edited;
         ImGui::PopID();
@@ -761,6 +790,123 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
         history->CommitGesture(_selectedEntity, meta.id);
 }
 
+void EditorApp::DrawReplicationSection(bool mirrored)
+{
+    using namespace Assisi::Core::Reflect;
+
+    const bool isReplicated = _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity);
+
+    // One click, no code: the marker is an ordinary component, so adding and
+    // removing it goes through the same undoable path as any other.
+    bool checkbox = isReplicated;
+    if (ImGui::Checkbox("Replicated", &checkbox))
+    {
+        const ComponentMeta *meta = ComponentRegistry::Instance().Find("Replicated");
+        if (meta != nullptr)
+        {
+            if (checkbox)
+                AddComponentToSelected(*meta);
+            else
+                RemoveComponentFromSelected(*meta);
+        }
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Send this entity to clients. Most of a level is scenery both machines already have "
+                          "from the file; marking that would spend bandwidth restating what nobody changes.");
+    }
+
+    // The session-scoped identity, on whichever side is looking. Worth showing
+    // because it is the only name the two machines share — an entity handle is
+    // meaningless across a connection, so "which one is this on the other
+    // screen" has no other answer.
+    if (_netSession != nullptr && _netSession->IsActive())
+    {
+        Assisi::NetSync::NetId netId = Assisi::NetSync::InvalidNetId;
+        if (const Assisi::NetSync::ReplicationServer *server = _netSession->Server())
+            netId = server->NetIdOf(_selectedEntity);
+        else if (const Assisi::NetSync::ReplicationClient *client = _netSession->Client())
+            netId = client->NetIdOf(_selectedEntity);
+
+        if (netId != Assisi::NetSync::InvalidNetId)
+            ImGui::TextDisabled("NetId %u", netId);
+    }
+
+    if (mirrored)
+    {
+        ImGui::TextColored(ImVec4{0.55f, 0.75f, 1.f, 1.f}, "Mirrored — the host owns this entity.");
+
+        // Which of the two client timelines this entity is on. The
+        // discriminator is a replicated RigidBodyDescriptor, which is invisible
+        // in the world, so "why do these two lag differently" would otherwise
+        // cost a debugging session instead of a glance.
+        const bool bodied = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr;
+        ImGui::TextDisabled("Replication path: %s", bodied ? "body-corrected" : "interpolated");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(bodied ? "Simulated locally and re-anchored by the host's corrections. Renders at "
+                                       "host time minus transit."
+                                     : "No local simulation, so it is interpolated between received snapshots — "
+                                       "about two snapshot intervals behind.");
+        }
+    }
+
+    if (!isReplicated)
+    {
+        ImGui::Separator();
+        return;
+    }
+
+    // --- what will actually happen to this entity --------------------------
+    // Every warning here is about a mismatch between what the author marked and
+    // what the wire will do with it, and every one of them is otherwise found by
+    // watching a client and wondering.
+
+    // Nothing to send. Transform is replicated and almost everything has one, so
+    // this fires on genuinely empty entities — which look fine locally.
+    bool anyReplicatedComponent = false;
+    for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
+    {
+        if (meta->replicated && meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation))
+        {
+            anyReplicatedComponent = true;
+            break;
+        }
+    }
+    if (!anyReplicatedComponent)
+    {
+        ImGui::TextColored(kWarnColor,
+                           "Marked Replicated, but none of its components are — clients get an empty entity.");
+    }
+
+    // Hierarchy is not replicated in v1 (the EntityRef machinery works; the
+    // *semantics* — mirrored children of local parents, transform spaces, world
+    // -space body state under a parent-relative Transform — are unsolved). So a
+    // marked entity in a hierarchy loses the hierarchy, on both ends.
+    if (_scene->Get<Assisi::Runtime::Parent>(_selectedEntity) != nullptr)
+    {
+        ImGui::TextColored(kWarnColor, "Parented — mirrors are flat in v1, so clients see this at world space.");
+    }
+
+    bool hasChildren = false;
+    _scene->ForEachEntity(
+        [&](Assisi::ECS::Entity candidate)
+        {
+            if (hasChildren)
+                return;
+            const auto *parent = _scene->Get<Assisi::Runtime::Parent>(candidate);
+            hasChildren        = parent != nullptr && parent->parent == _selectedEntity;
+        });
+    if (hasChildren)
+    {
+        ImGui::TextColored(kWarnColor,
+                           "Has children — a joining client strips this entity from its copy of the level, and "
+                           "its children lose their parent link.");
+    }
+
+    ImGui::Separator();
+}
+
 void EditorApp::DrawInspector()
 {
     using namespace Assisi::Core::Reflect;
@@ -777,11 +923,14 @@ void EditorApp::DrawInspector()
 
     // A non-edited resident world is inspect-only: its fields read, none of them
     // write. Blanket-disabling the whole panel is deliberate — an edit here could
-    // not be captured (the histories bind the edited world) nor saved.
-    const bool editable = IsEditable();
+    // not be captured (the histories bind the edited world) nor saved. A mirror
+    // is the same answer for a different reason: the host owns it.
+    const bool mirrored = IsMirrored(_selectedEntity);
+    const bool editable = IsEditable(_selectedEntity);
     ImGui::BeginDisabled(!editable);
 
     ImGui::Text("Entity [%u:%u]", _selectedEntity.index, _selectedEntity.generation);
+    DrawReplicationSection(mirrored);
 
     // Rename field: every entity gets an always-available name box. It reads the
     // optional Name component and creates one on first edit, so naming an entity
@@ -793,7 +942,12 @@ void EditorApp::DrawInspector()
         // Record-before-write for the rename: capture the Name state (present or
         // absent) before the field can change it, so the first-keystroke *creation*
         // of the Name component is captured as absent -> present.
-        if (Assisi::Editor::EditHistory *history = ActiveHistory())
+        //
+        // Not for a mirror. The disabled widget above already makes the edit
+        // impossible and the end-of-frame sweep would drop the no-op anyway, but
+        // "a mirror never enters edit history" is a rule worth enforcing where it
+        // is stated rather than inferring from two other mechanisms.
+        if (Assisi::Editor::EditHistory *history = editable ? ActiveHistory() : nullptr)
             history->RecordBefore(_selectedEntity,
                                   Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Name>(),
                                   EditLabel("Rename", _selectedEntity), _selectedEntity);
@@ -871,16 +1025,43 @@ void EditorApp::DrawInspector()
         }
 
         ImGui::SameLine();
-        if (ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen))
+        const bool headerOpen = ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+
+        // Which components actually travel is otherwise invisible: it is a
+        // property of the *type*, decided in a header, and nothing on screen
+        // says so. The glyph marks the ones that do.
+        if (meta->replicated)
+        {
+            ImGui::SameLine();
+            ImGui::TextColored(kWireColor, "%s", kWireGlyph);
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Replicated — this component travels to clients.");
+        }
+
+        if (headerOpen)
         {
             // Record-before-write: snapshot this component's pre-edit JSON before its
             // widgets (which write in-place). Idempotent across a drag; the sweep at
             // end of frame commits or drops it. See EditHistory.hpp §5. The gizmo
             // shares this same (entity, Transform) gesture, so a gizmo drag and an
             // inspector Transform edit are one coalesced transaction, not two.
-            if (Assisi::Editor::EditHistory *history = ActiveHistory())
+            // Never for a mirror — see the rename field above.
+            if (Assisi::Editor::EditHistory *history = editable ? ActiveHistory() : nullptr)
                 history->RecordBefore(_selectedEntity, meta->id, EditLabel("Edit " + meta->name, _selectedEntity),
                                       _selectedEntity);
+
+            // Only worth saying on an entity that is *trying* to replicate; on a
+            // local entity every component is unreplicated and the note would be
+            // noise on every row.
+            if (!meta->replicated && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
+            {
+                ImGui::TextDisabled("not replicated — type lacks ACOMP(replicated)");
+                if (ImGui::IsItemHovered())
+                {
+                    ImGui::SetTooltip("Clients will never see this component's values. Replication is opt-in "
+                                      "per type, in the component's header, not per entity.");
+                }
+            }
 
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
             // Field edits write component memory by offset, bypassing Scene::GetMut's

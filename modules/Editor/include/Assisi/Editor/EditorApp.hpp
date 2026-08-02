@@ -198,6 +198,10 @@ class EditorApp : public Assisi::App::Application
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
     void DrawNetworkWindow();     // negotiated level + live net stats; see EditorNet.cpp
     void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"; see EditorNet.cpp
+    /// @brief The two host-side authoring warnings: a level with nothing marked
+    /// Replicated, and dynamic bodies that will run as cosmetic local physics.
+    /// Both describe a gap between what was marked and what clients will see.
+    void DrawHostAuthoringWarnings();
     void ShutdownNetSession();    // tear down and forget; safe to call with no session
     void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
     void TickNetSession();        // end of the fixed step: snapshots (host) or input (client)
@@ -326,6 +330,11 @@ class EditorApp : public Assisi::App::Application
 
     // --- Inspector helpers ---
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
+    /// @brief The inspector's replication block: the Replicated checkbox, the
+    /// session-scoped NetId, which of the two client timelines a mirror is on,
+    /// and the warnings that catch an entity that will not replicate the way its
+    /// author expects. Drawn under the entity id. See EditorInspector.cpp.
+    void DrawReplicationSection(bool mirrored);
     /// @brief Draws one editable row per material slot of @p mrc's resolved mesh
     /// (labelled by the imported material name), each a `.amat` path + browse
     /// button writing into `materialOverrides[slot]`. @p fieldOffset is the offset
@@ -435,6 +444,24 @@ class EditorApp : public Assisi::App::Application
     /// shown is the edited world. Other residents are inspect-only, so the panels
     /// disable their editing controls.
     [[nodiscard]] bool IsEditable() const;
+
+    /// @brief True when @p entity may be edited: the world allows it *and* the
+    /// entity is not a mirror of somebody else's.
+    ///
+    /// One predicate, gating the inspector, the gizmo, the Delete key, and the
+    /// hierarchy actions together — because a guard applied to three of the four
+    /// is a guard nobody can reason about. The scope shrank when the
+    /// session-viewer mode was cut (it protects a disposable play scene now, not
+    /// the editing scene), but it stays for two reasons: a gizmo fighting the
+    /// correction stream is a confusing artifact even in a world about to be
+    /// thrown away, and the server only resends what *changes* — so an edit to a
+    /// static replicated field would sit visibly wrong until the next keyframe
+    /// sweep, which is exactly the class of quiet wrongness this design spends
+    /// machinery to avoid.
+    [[nodiscard]] bool IsEditable(Assisi::ECS::Entity entity) const;
+
+    /// @brief Whether @p entity is a mirror the server owns.
+    [[nodiscard]] bool IsMirrored(Assisi::ECS::Entity entity) const;
     /// @brief The resident-world dropdown drawn at the top of the Entities panel.
     void DrawWorldSelector();
 

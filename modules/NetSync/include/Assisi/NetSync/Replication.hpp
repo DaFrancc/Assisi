@@ -469,6 +469,14 @@ class ReplicationClient
     /// @brief The local entity mirroring @p netId, or NullEntity.
     [[nodiscard]] ECS::Entity EntityOf(NetId netId) const;
 
+    /// @brief Inverse of EntityOf: the wire identity of a local mirror, or
+    /// InvalidNetId if this entity is not one.
+    ///
+    /// A linear scan, deliberately — the only caller is an inspector asking
+    /// about one selected entity, and a second map maintained for that would
+    /// cost more to keep correct than it saves.
+    [[nodiscard]] NetId NetIdOf(ECS::Entity entity) const;
+
     [[nodiscard]] std::size_t ReplicatedEntityCount() const { return _entityByNetId.size(); }
 
     /// @brief Bumped every time an applied snapshot changed the *shape* of the

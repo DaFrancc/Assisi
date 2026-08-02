@@ -10,6 +10,7 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/InputContext.hpp>
@@ -362,6 +363,15 @@ std::vector<Assisi::ECS::Entity> EditorApp::GatherSubtree(Assisi::ECS::Entity ro
 void EditorApp::DeleteEntity(Assisi::ECS::Entity entity)
 {
     if (_scene == nullptr || !_scene->IsAlive(entity))
+    {
+        return;
+    }
+    // A mirror is not ours to delete: the server would simply send it again, and
+    // the round trip would show up as a mysterious flicker rather than as a
+    // refusal. (The client *can* destroy one — gameplay runs over the play world
+    // — and the apply path survives it; that is a different thing from the
+    // editor offering it as an authoring action.)
+    if (!IsEditable(entity))
     {
         return;
     }
@@ -766,7 +776,8 @@ void EditorApp::DrawEntityListWindow()
     // Delete removes the selected entity and its subtree (undoable). Disabled when
     // nothing is selected. Also on the Delete key (see OnUpdate).
     ImGui::SameLine();
-    const bool canDelete = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity);
+    const bool canDelete = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
+                           IsEditable(_selectedEntity);
     ImGui::BeginDisabled(!canDelete);
     if (ImGui::Button("-"))
     {
@@ -801,6 +812,12 @@ void EditorApp::DrawEntityListWindow()
                 std::snprintf(label, sizeof(label), "Entity [%u:%u]", entity.index, entity.generation);
 
             ImGui::PushID(static_cast<int32_t>(entity.index));
+            // Mirrors are tinted, because "why can't I move this one" should be
+            // answerable by looking rather than by clicking.
+            const bool mirrored = _scene->Has<Assisi::NetSync::Mirrored>(entity);
+            if (mirrored)
+                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.55f, 0.75f, 1.f, 1.f});
+
             const bool selected = (entity == _selectedEntity);
             if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowDoubleClick))
             {
@@ -812,6 +829,13 @@ void EditorApp::DrawEntityListWindow()
                     focusRequest = entity;
                 }
             }
+            if (mirrored)
+            {
+                ImGui::PopStyleColor();
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("Mirrored — the host owns this entity. Read-only here.");
+            }
+
             // Bring a just-created entity into view (once), centred in the list.
             if (entity == _scrollToEntity)
             {
