@@ -18,6 +18,7 @@ add_executable(Assisi-NetSync-Tests
   TestInputCommand.cpp
   TestNetClock.cpp
   TestNetSession.cpp
+  TestBodyReplication.cpp
   TestReplication.cpp
 )
 
@@ -45,6 +46,7 @@ target_link_libraries(Assisi-NetSync-Tests
 target_sources(Assisi-NetSync-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-NetSync-Generated>
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
+  $<TARGET_OBJECTS:Assisi-Physics-Generated>
   $<TARGET_OBJECTS:Assisi-NetSync-TestComponents-Generated>
 )
 

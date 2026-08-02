@@ -757,6 +757,13 @@ void EditorApp::OnFixedUpdate(float dt)
             });
     }
 
+    // Between the step and the snapshot. A mirrored body woken by a contact the
+    // server never had — client poses differ by whatever the last correction has
+    // not yet removed, and Jolt wakes by island — has to be put back before
+    // anything reads it, and before this frame's render writeback picks it up.
+    if (_netSession)
+        _netSession->AfterPhysicsStep();
+
     // Last: a snapshot describes the world at the *end* of the tick it is
     // stamped with, so it has to be built after everything that moves it.
     TickNetSession();

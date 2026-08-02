@@ -745,6 +745,84 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
     }
 }
 
+void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
+{
+    out.clear();
+
+    JPH::BodyIDVector active;
+    _impl->physicsSystem.GetActiveBodies(JPH::EBodyType::RigidBody, active);
+    if (active.empty())
+        return;
+
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    out.reserve(active.size());
+    for (const JPH::BodyID &id : active)
+    {
+        const ECS::Entity entity = _impl->EntityFor(id);
+        if (entity == ECS::NullEntity)
+            continue; // a raw AddBody body: nothing a caller could name it by
+
+        const JPH::RVec3 position = bodies.GetPosition(id);
+        const JPH::Quat  rotation = bodies.GetRotation(id);
+        const JPH::Vec3  linear   = bodies.GetLinearVelocity(id);
+        const JPH::Vec3  angular  = bodies.GetAngularVelocity(id);
+
+        out.push_back(ActiveBodyState{
+            entity,
+            glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
+            glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
+            glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
+            glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+        });
+    }
+}
+
+bool PhysicsWorld::IsBodyActive(const RigidBody &body) const
+{
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    return bodies.IsAdded(body.bodyId) && bodies.IsActive(body.bodyId);
+}
+
+void PhysicsWorld::DeactivateBody(const RigidBody &body)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+        return;
+    bodies.DeactivateBody(body.bodyId);
+}
+
+void PhysicsWorld::ApplyBodyState(const RigidBody &body, glm::vec3 position, glm::quat rotation,
+                                  glm::vec3 linearVelocity, glm::vec3 angularVelocity, bool activate)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId) || bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static)
+        return;
+
+    // Normalized for the same reason AddBody and SetBodyTransform do it: a
+    // quaternion that crossed a wire (or a level file) is often a hair off unit
+    // length, and Jolt asserts IsNormalized() when it rotates with one.
+    bodies.SetPositionAndRotation(body.bodyId, JPH::RVec3(position.x, position.y, position.z),
+                                  JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(),
+                                  activate ? JPH::EActivation::Activate : JPH::EActivation::DontActivate);
+
+    // Before the deactivate below, not after: Jolt ignores velocity written to a
+    // sleeping body, so zeroing an about-to-sleep body has to happen while it is
+    // still awake.
+    bodies.SetLinearVelocity(body.bodyId, JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
+    bodies.SetAngularVelocity(body.bodyId, JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
+
+    if (!activate)
+        bodies.DeactivateBody(body.bodyId);
+
+    // Collapse both snapshots onto the corrected pose. Without this the next
+    // InterpolateTransforms() blends from the pre-correction pose and smears the
+    // jump across a frame — which the view-side error smoothing is *also* trying
+    // to absorb, so the two double-count into a wobble at every correction.
+    const auto it = _impl->snapshots.find(body.bodyId.GetIndexAndSequenceNumber());
+    if (it != _impl->snapshots.end())
+        it->second = Impl::MotionSnapshot{position, rotation, position, rotation};
+}
+
 std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBody &body) const
 {
     const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();

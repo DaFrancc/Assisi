@@ -82,7 +82,13 @@ class NetSession
     ///   (client). Captured by reference and must outlive the session — which
     ///   is why an application that swaps scenes should destroy the session
     ///   first rather than try to rebind it.
-    explicit NetSession(ECS::Scene &scene, ReplicationConfig config = {});
+    /// @param physics That scene's physics world, on the same terms. Both sides
+    ///   need it: the host reads authoritative body state from it, and the
+    ///   client builds, corrects, and sleeps real bodies in it. Null keeps the
+    ///   pre-body behaviour — motion as replicated Transforms, rendered by
+    ///   interpolation.
+    explicit NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics = nullptr,
+                        ReplicationConfig config = {});
     ~NetSession();
 
     NetSession(const NetSession &)            = delete;
@@ -144,6 +150,11 @@ class NetSession
     /// server time by definition.
     void Interpolate();
 
+    /// @brief Re-assert the server's sleep verdict on mirrored bodies. Call once
+    /// per fixed step, immediately after the local physics step and before
+    /// Tick(). A no-op for a host and for a session with no physics world.
+    void AfterPhysicsStep();
+
     /// @brief Take the input command a connected client sent for @p tick, or
     /// null. Host only; call once per client per tick from the simulation.
     const InputCommand *ConsumeInput(Net::ConnectionId client, std::uint64_t tick);
@@ -174,8 +185,9 @@ class NetSession
   private:
     void EnsureTransport();
 
-    ECS::Scene       &_scene;
-    ReplicationConfig _config;
+    ECS::Scene            &_scene;
+    Physics::PhysicsWorld *_physics = nullptr;
+    ReplicationConfig      _config;
 
     /// Created on the first Host()/Join() and destroyed on Disconnect(), so an
     /// offline process never initializes the networking library at all.

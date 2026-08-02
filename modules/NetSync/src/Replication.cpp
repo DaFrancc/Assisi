@@ -65,8 +65,9 @@ void *EnsureComponent(ECS::Scene &scene, ECS::Entity entity, const Core::Reflect
 // ReplicationServer
 // ===========================================================================
 
-ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &scene, ReplicationConfig config)
-    : _transport(transport), _scene(scene), _config(config)
+ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &scene,
+                                     Physics::PhysicsWorld *physics, ReplicationConfig config)
+    : _transport(transport), _scene(scene), _physics(physics), _config(config)
 {
     // Clamp the snapshot rate to a divisor of the tick rate. A rate that does
     // not divide evenly makes the send interval alternate between two tick
@@ -99,6 +100,8 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
         if (meta->replicated)
             _replicatedComponents.push_back(meta->id);
     }
+
+    _transformComponentId = Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(ECS::Transform));
 }
 
 bool ReplicationServer::IsSnapshotTick(std::uint64_t simTick) const { return simTick % _snapshotDiv == 0; }
@@ -341,6 +344,58 @@ void ReplicationServer::ReconcileNetIds()
     }
 }
 
+void ReplicationServer::CaptureBodyStates()
+{
+    if (_physics == nullptr)
+        return;
+
+    ++_bodyStateTick;
+    _physics->GetActiveBodyStates(_activeBodies);
+
+    for (const NetId netId : _liveNetIds)
+    {
+        const ECS::Entity entity = EntityOf(netId);
+        if (entity == ECS::NullEntity)
+            continue;
+
+        const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
+        if (body == nullptr)
+            continue; // not a simulated entity; its Transform replicates normally
+
+        const auto active = std::find_if(_activeBodies.begin(), _activeBodies.end(),
+                                         [entity](const Physics::PhysicsWorld::ActiveBodyState &candidate)
+                                         { return candidate.entity == entity; });
+
+        BodyRecord &record = _bodyStates[netId];
+        if (active != _activeBodies.end())
+        {
+            record.state = BodyState{netId,   active->position,        active->rotation,
+                                     active->linearVelocity, active->angularVelocity, /*asleep=*/false};
+            record.tick  = _bodyStateTick;
+            continue;
+        }
+
+        // Not active. Two reasons to record it anyway, and neither is "every
+        // tick": it has just gone to sleep (the transition is the change, and
+        // the one whose loss used to be permanent), or this is the first time we
+        // have ever seen it — which is what makes joining an already-settled
+        // world produce sleeping mirrors at the server's rest poses instead of a
+        // client-side re-settle. A body that was already asleep last tick
+        // records nothing, which is where the idle-bandwidth property comes from.
+        if (record.tick == 0 || !record.state.asleep)
+        {
+            const auto [position, rotation] = _physics->GetBodyTransform(*body);
+            record.state = BodyState{netId, position, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/true};
+            record.tick  = _bodyStateTick;
+        }
+    }
+
+    // Retired NetIds take their records with them.
+    std::erase_if(_bodyStates,
+                  [this](const auto &entry)
+                  { return !std::binary_search(_liveNetIds.begin(), _liveNetIds.end(), entry.first); });
+}
+
 void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, std::uint64_t sinceChangeTick,
                                               const Connection &connection, Core::BitWriter &writer,
                                               std::vector<std::uint64_t> &outComponents)
@@ -390,6 +445,11 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     for (const Core::Reflect::ComponentId id : removed)
         writer.WriteVarUInt32(id);
 
+    // For an entity the physics world owns, motion travels as body state, not as
+    // a Transform. Sending both would double the cost of every moving object and
+    // hand the client two disagreeing answers about where it is.
+    const bool bodied = _physics != nullptr && _scene.Get<Physics::RigidBody>(entity) != nullptr;
+
     for (const Core::Reflect::ComponentId id : _replicatedComponents)
     {
         const Core::Reflect::ComponentMeta *meta = registry.ById(id);
@@ -406,9 +466,81 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         if (sinceChangeTick != 0 && !_scene.ChangedById(entity, id, sinceChangeTick))
             continue;
 
+        // ...and on that empty baseline a bodied entity's Transform still goes,
+        // because it carries scale and the initial placement the client builds
+        // its body at. Afterwards it is suppressed. The honest cost: a *non-pose*
+        // Transform edit on a live body — a runtime scale change — reaches
+        // clients only at the next keyframe sweep. Accepted for v1, because a
+        // scale change on a live body needs a collider reshape the engine does
+        // not do yet either (docs/replication-plan-v4.md §5).
+        if (bodied && sinceChangeTick != 0 && id == _transformComponentId)
+            continue;
+
         writer.WriteBool(true);
         Core::Reflect::WriteComponent(*meta, component, writer, Core::Reflect::kAllFields, &context);
     }
+    writer.WriteBool(false);
+}
+
+void ReplicationServer::WriteBodyStates(Connection &connection, Core::BitWriter &writer, SentSnapshot &record,
+                                        std::size_t writtenFromComponents)
+{
+    // Bool-chained like the entity blocks above, rather than the count-prefixed
+    // form the design sketch shows. A count has to be known before the first
+    // record is written, which means predicting the budget cut instead of
+    // discovering it — and the bool chain is cheaper anyway (one bit per record
+    // plus a terminator, against a varint).
+    if (_physics == nullptr)
+    {
+        writer.WriteBool(false);
+        return;
+    }
+
+    const auto prefixEnd = record.written.begin() + static_cast<std::ptrdiff_t>(writtenFromComponents);
+
+    for (const NetId netId : _liveNetIds)
+    {
+        if (writer.BytesWritten() >= _config.maxSnapshotBytes)
+            break; // the rest keep their baselines and go next snapshot
+
+        const auto found = _bodyStates.find(netId);
+        if (found == _bodyStates.end() || found->second.tick == 0)
+            continue;
+
+        const auto baseline = connection.baselines.find(netId);
+        if (baseline != connection.baselines.end() && found->second.tick <= baseline->second.bodyTick)
+            continue; // already delivered
+
+        // The gate: a body state is only useful to a client that has something
+        // to apply it to. Without it, an entity whose spawn block was cut for
+        // budget would ship a body state the client has no mirror — and no
+        // descriptor to build a body from — to receive it.
+        //
+        // `record.netIds` is this snapshot's entity set in ascending order, and
+        // holds both the entities written here and the known ones the budget
+        // skipped; the skipped ones are acked by definition, so testing against
+        // it is exactly "acked, or written into this same snapshot".
+        if (!std::binary_search(connection.acked.begin(), connection.acked.end(), netId) &&
+            !std::binary_search(record.netIds.begin(), record.netIds.end(), netId))
+        {
+            continue;
+        }
+
+        writer.WriteBool(true);
+        WriteBodyState(found->second.state, writer);
+
+        // Record the delivery against this entity. It may already have an entry
+        // from the component pass; if not, componentTick stays 0 and the ack's
+        // max() leaves whatever component baseline it had untouched.
+        const auto slot = std::lower_bound(record.written.begin(), prefixEnd, netId,
+                                           [](const WrittenEntity &entry, NetId value)
+                                           { return entry.netId < value; });
+        if (slot != prefixEnd && slot->netId == netId)
+            slot->ticks.bodyTick = found->second.tick;
+        else
+            record.written.push_back(WrittenEntity{netId, EntityBaseline{0, found->second.tick}});
+    }
+
     writer.WriteBool(false);
 }
 
@@ -503,9 +635,21 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     }
     writer.WriteBool(false);
 
-    // All three are built in _liveNetIds order, which is sorted — keep the
-    // invariant explicit, since the ack path binary-searches them.
+    // netIds is built in _liveNetIds order, which is sorted; the body pass below
+    // binary-searches it, so make that explicit before it runs.
     std::sort(record.netIds.begin(), record.netIds.end());
+
+    // Motion, for everything the physics world owns. After the entity blocks so
+    // ordering with a spawn in the same packet is free: the entity and its
+    // descriptor exist by the time the body state lands, and the client's body
+    // starts at the authoritative state rather than re-settling from the level
+    // file's pose.
+    const std::size_t writtenFromComponents = record.written.size();
+    WriteBodyStates(connection, writer, record, writtenFromComponents);
+
+    // All three are built in ascending order — except `written`, which the body
+    // pass may have appended to — so keep the invariant explicit, since the ack
+    // path binary-searches them.
     std::sort(record.components.begin(), record.components.end());
     std::sort(record.written.begin(), record.written.end(),
               [](const WrittenEntity &lhs, const WrittenEntity &rhs) { return lhs.netId < rhs.netId; });
@@ -535,6 +679,7 @@ void ReplicationServer::Tick(std::uint64_t simTick)
     // Once per tick, before any connection is served, so every client sees the
     // same world rather than a per-connection view of it.
     ReconcileNetIds();
+    CaptureBodyStates();
 
     if (!IsSnapshotTick(simTick))
         return;
@@ -564,8 +709,9 @@ void ReplicationServer::Tick(std::uint64_t simTick)
 // ReplicationClient
 // ===========================================================================
 
-ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &scene, Net::ConnectionId connection)
-    : _transport(transport), _scene(scene), _connection(connection)
+ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &scene, Net::ConnectionId connection,
+                                     Physics::PhysicsWorld *physics)
+    : _transport(transport), _scene(scene), _physics(physics), _connection(connection)
 {
 }
 
@@ -717,6 +863,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         {
             _scene.Destroy(it->second);
             _entityByNetId.erase(it);
+            DestroyMirrorBody(netId);
             ++_structureRevision;
         }
     }
@@ -765,6 +912,25 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         }
 
         auto it = _entityByNetId.find(netId);
+        if (it != _entityByNetId.end() && !_scene.IsAlive(it->second))
+        {
+            // A client system destroyed this mirror — gameplay runs over the
+            // play world, mirrors included, and that is the decision taken
+            // seriously rather than fenced off. Drop the dead mapping and let
+            // the unknown-NetId path below build a fresh one, rather than
+            // dereferencing a handle whose slot may since have been reused.
+            _entityByNetId.erase(it);
+            DestroyMirrorBody(netId);
+            it = _entityByNetId.end();
+            if (_mirrorsResurrected == 0)
+            {
+                Core::Log::Warn("NetSync: a mirrored entity was destroyed locally and has been recreated. "
+                                "Client-side systems may push mirrors, but destroying one only lasts until "
+                                "the server next mentions it.");
+            }
+            ++_mirrorsResurrected;
+        }
+
         if (it == _entityByNetId.end())
         {
             // Treat an unknown id as a spawn even when the server called it a
@@ -854,6 +1020,20 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     if (!reader.Ok())
         return false;
 
+    // Motion, for everything the server's physics world owns. After the entity
+    // blocks by construction: the entity and its descriptor exist by now, so a
+    // body built here starts at the authoritative state rather than re-settling
+    // from the level file's pose.
+    while (reader.Ok() && reader.ReadBool())
+    {
+        BodyState state;
+        if (!ReadBodyState(reader, state))
+            return false;
+        ApplyBodyState(state);
+    }
+    if (!reader.Ok())
+        return false;
+
     ResolvePendingRefs();
 
     CaptureTransforms(header.serverTick);
@@ -865,6 +1045,90 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
     SendAck(header.serverTick);
     return true;
+}
+
+void ReplicationClient::DestroyMirrorBody(NetId netId)
+{
+    const auto found = _bodies.find(netId);
+    if (found == _bodies.end())
+        return;
+
+    // Without this the Jolt body outlives its entity and keeps colliding — an
+    // invisible obstacle in the middle of the world, which is a worse bug than
+    // the one that produced it.
+    if (_physics != nullptr)
+        _physics->RemoveBody(found->second.body);
+    _bodies.erase(found);
+}
+
+void ReplicationClient::ApplyBodyState(const BodyState &state)
+{
+    if (_physics == nullptr)
+        return;
+
+    const auto it = _entityByNetId.find(state.netId);
+    if (it == _entityByNetId.end() || !_scene.IsAlive(it->second))
+        return; // a body record for an entity we do not have: benign under loss
+
+    const ECS::Entity entity = it->second;
+    if (_scene.Get<Physics::RigidBody>(entity) == nullptr)
+    {
+        // First state for this mirror: build the body the server described.
+        // Both halves have to have arrived — the descriptor says what to build,
+        // the Transform says where — and if either has not, this record is
+        // dropped and the next one (the delta path resends until acked) does it.
+        const ECS::Transform               *transform  = _scene.Get<ECS::Transform>(entity);
+        const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
+        if (transform == nullptr || descriptor == nullptr)
+            return;
+
+        (void)_physics->AddBodyFromDescriptor(_scene, entity, *transform, *descriptor);
+        const Physics::RigidBody *created = _scene.Get<Physics::RigidBody>(entity);
+        if (created == nullptr)
+            return;
+        _bodies[state.netId].body = *created;
+
+        // It is a simulated mirror now, not an interpolated one.
+        _transformHistory.erase(state.netId);
+    }
+
+    const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
+
+    // The simulation is snapped hard, with no smoothing: extrapolation has to
+    // proceed from a valid physics state, and a half-applied correction is not
+    // one. Hiding the jump is the *view's* job (R6), not the simulation's.
+    _physics->ApplyBodyState(*body, state.position, state.rotation, state.linearVelocity, state.angularVelocity,
+                             /*activate=*/!state.asleep);
+
+    MirrorBody &record  = _bodies[state.netId];
+    record.asleep       = state.asleep;
+    record.restPosition = state.position;
+    record.restRotation = state.rotation;
+}
+
+void ReplicationClient::EnforceSleep()
+{
+    if (_physics == nullptr)
+        return;
+
+    for (const auto &[netId, record] : _bodies)
+    {
+        if (!record.asleep)
+            continue;
+
+        const auto it = _entityByNetId.find(netId);
+        if (it == _entityByNetId.end() || !_scene.IsAlive(it->second))
+            continue;
+
+        const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(it->second);
+        if (body == nullptr || !_physics->IsBodyActive(*body))
+            continue;
+
+        // Woken by something the server never saw. Put it back and hold it there
+        // — the server's own correction is the only thing allowed to wake it.
+        _physics->ApplyBodyState(*body, record.restPosition, record.restRotation, glm::vec3{0.f}, glm::vec3{0.f},
+                                 /*activate=*/false);
+    }
 }
 
 void ReplicationClient::ResolvePendingRefs()
@@ -905,6 +1169,14 @@ void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
 {
     for (const auto &[netId, entity] : _entityByNetId)
     {
+        // A bodied mirror leaves the interpolation path entirely: it has a real
+        // dynamic body stepped by the local physics and corrected by the wire,
+        // and buffering poses for it would mean rendering it two snapshot
+        // intervals in the past *as well* — the delay local simulation exists to
+        // remove.
+        if (_bodies.contains(netId))
+            continue;
+
         const ECS::Transform *transform = _scene.Get<ECS::Transform>(entity);
         if (transform == nullptr)
             continue;
@@ -1006,6 +1278,13 @@ void ReplicationClient::Reset()
     if (!_entityByNetId.empty())
         ++_structureRevision;
     _entityByNetId.clear();
+
+    if (_physics != nullptr)
+    {
+        for (const auto &[netId, record] : _bodies)
+            _physics->RemoveBody(record.body);
+    }
+    _bodies.clear();
     _transformHistory.clear();
     _pendingRefs.clear();
     _feedback          = ClockFeedback{};

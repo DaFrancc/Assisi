@@ -18,9 +18,11 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Net/NetTransport.hpp>
+#include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/NetClock.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
+#include <Assisi/Physics/PhysicsWorld.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -115,7 +117,12 @@ struct ConnectionDiagnostics
 class ReplicationServer
 {
   public:
-    ReplicationServer(Net::NetTransport &transport, ECS::Scene &scene, ReplicationConfig config = {});
+    /// @param physics The world whose bodies are the authority on motion. Null
+    ///   keeps the pre-body behaviour exactly — Transforms replicate as ordinary
+    ///   components and no body state is sent — which is what every test with no
+    ///   physics world in scope wants.
+    ReplicationServer(Net::NetTransport &transport, ECS::Scene &scene, Physics::PhysicsWorld *physics = nullptr,
+                      ReplicationConfig config = {});
 
     ReplicationServer(const ReplicationServer &)            = delete;
     ReplicationServer &operator=(const ReplicationServer &) = delete;
@@ -273,6 +280,24 @@ class ReplicationServer
     /// connection sees the same world.
     void ReconcileNetIds();
 
+    /// Refresh `_bodyStates` from the physics world. Once per tick, before any
+    /// snapshot is built, for the same reason as ReconcileNetIds.
+    ///
+    /// Three cases, and the second is the one worth naming: a body that just
+    /// *stopped* being active has to have its rest state recorded and its tick
+    /// bumped, because the sleep transition is itself a change and it is the one
+    /// whose loss used to be permanent. (The first is an awake body, recorded
+    /// every tick. The third is a NetId seen for the first time, recorded
+    /// whatever its state — so joining a world that settled before anyone
+    /// connected produces sleeping mirrors at the server's rest poses instead of
+    /// a client-side re-settle.)
+    void CaptureBodyStates();
+
+    /// Write the snapshot's body-state section for @p connection, returning the
+    /// per-entity ticks it wrote so the ack can fold them in.
+    void WriteBodyStates(Connection &connection, Core::BitWriter &writer, SentSnapshot &record,
+                         std::size_t writtenFromComponents);
+
     /// Write one entity's removed-component list and then its changed-component
     /// blocks. @p sinceChangeTick of 0 means "send everything" — the
     /// empty-baseline case that spawn and late-join share with an ordinary
@@ -282,10 +307,31 @@ class ReplicationServer
                                const Connection &connection, Core::BitWriter &writer,
                                std::vector<std::uint64_t> &outComponents);
 
-    Net::NetTransport &_transport;
-    ECS::Scene        &_scene;
-    ReplicationConfig  _config;
-    LevelIdentity      _level;
+    Net::NetTransport     &_transport;
+    ECS::Scene            &_scene;
+    Physics::PhysicsWorld *_physics = nullptr;
+    ReplicationConfig      _config;
+    LevelIdentity          _level;
+
+    /// The last state captured for a replicated body, and when.
+    struct BodyRecord
+    {
+        BodyState     state;
+        std::uint64_t tick = 0; ///< 0 = never captured.
+    };
+
+    /// Per-NetId body state, refreshed once per tick by CaptureBodyStates.
+    std::unordered_map<NetId, BodyRecord> _bodyStates;
+
+    /// Monotonic, bumped once per capture. Its own counter rather than the
+    /// scene's change tick, because the scene's only advances when someone
+    /// touches a component — and the whole point of reading the physics world
+    /// directly is that a moving body no longer does.
+    std::uint64_t _bodyStateTick = 0;
+
+    /// Scratch for CaptureBodyStates, kept so a tick that captures a hundred
+    /// bodies does not allocate a hundred times a second.
+    std::vector<Physics::PhysicsWorld::ActiveBodyState> _activeBodies;
 
     std::unordered_map<Net::ConnectionId, Connection> _connections;
 
@@ -301,13 +347,22 @@ class ReplicationServer
     /// reflected component except the marker itself. Cached because it is walked
     /// per entity per snapshot.
     std::vector<Core::Reflect::ComponentId> _replicatedComponents;
+
+    /// Resolved once, so the per-entity write loop can suppress the Transform of
+    /// a bodied entity without a registry lookup per component per entity.
+    Core::Reflect::ComponentId _transformComponentId = Core::Reflect::kInvalidComponentId;
 };
 
 /// @brief The receiving half. Applies snapshots into a local scene.
 class ReplicationClient
 {
   public:
-    ReplicationClient(Net::NetTransport &transport, ECS::Scene &scene, Net::ConnectionId connection);
+    /// @param physics The world this client simulates its mirrors in. Null keeps
+    ///   the pre-body behaviour exactly — every mirror is rendered by
+    ///   interpolation and no body is ever built — which is what a headless
+    ///   convergence test with no physics world in scope wants.
+    ReplicationClient(Net::NetTransport &transport, ECS::Scene &scene, Net::ConnectionId connection,
+                      Physics::PhysicsWorld *physics = nullptr);
 
     ReplicationClient(const ReplicationClient &)            = delete;
     ReplicationClient &operator=(const ReplicationClient &) = delete;
@@ -431,12 +486,37 @@ class ReplicationClient
         return estimatedServerTick - _interpolationDelayTicks;
     }
 
+    /// @brief Re-assert the server's sleep verdict on every mirror it applies to.
+    /// Call once per fixed step, immediately after the local physics step.
+    ///
+    /// The local wake-cascade is why this exists. Client-side poses differ from
+    /// the server's by whatever the last correction has not yet removed, so a
+    /// settling pile can produce contacts the server never had — and Jolt wakes
+    /// bodies by island, so one spurious local contact wakes a mirror the server
+    /// will never speak of again. Left alone that body drifts forever on nobody's
+    /// authority.
+    ///
+    /// The legitimate wake path is the server's: a correction with `asleep =
+    /// false` activates the body, and until one arrives the mirror holds still.
+    /// That costs one transit time of hesitation, which is the trade.
+    void EnforceSleep();
+
+    /// @brief Mirrors that were destroyed locally and had to be recreated when
+    /// the server next mentioned them.
+    ///
+    /// Counted rather than silent, because from the gameplay chair "Destroy
+    /// didn't destroy" is spooky, and a client-side cleanup system running over
+    /// mirrors (a kill-Z volume, a timed despawner) would otherwise produce a
+    /// quiet destroy/respawn churn loop with no signal anywhere.
+    [[nodiscard]] std::uint64_t MirrorsResurrected() const { return _mirrorsResurrected; }
+
     /// @brief Drop every replicated entity and forget the session. v1's
     /// reconnect is a full rejoin, which starts here.
     void Reset();
 
   private:
     bool ApplySnapshot(Core::BitReader &reader);
+    void ApplyBodyState(const BodyState &state);
     void SendAck(std::uint64_t serverTick);
     void SendHello();
 
@@ -472,11 +552,32 @@ class ReplicationClient
     /// authoritative poses rather than previously interpolated ones.
     void CaptureTransforms(std::uint64_t serverTick);
 
-    Net::NetTransport &_transport;
-    ECS::Scene        &_scene;
-    Net::ConnectionId  _connection;
+    /// The last authoritative verdict about one mirrored body.
+    ///
+    /// The rest pose is kept, not just the bit: enforcing sleep means putting the
+    /// body back where the server left it, and by the time a spurious local
+    /// contact has woken it, where it *is* is no longer that.
+    struct MirrorBody
+    {
+        Physics::RigidBody body;   ///< Kept so the body can be removed after its entity is gone.
+        bool               asleep = false;
+        glm::vec3          restPosition{};
+        glm::quat          restRotation{1.f, 0.f, 0.f, 0.f};
+    };
+
+    /// Destroy the Jolt body behind a mirror, if it has one. The handle lives in
+    /// `_bodies` rather than being read back off the entity because the two
+    /// cases that need it — a despawn and a locally-destroyed mirror — have both
+    /// already lost the entity by the time anyone notices.
+    void DestroyMirrorBody(NetId netId);
+
+    Net::NetTransport     &_transport;
+    ECS::Scene            &_scene;
+    Physics::PhysicsWorld *_physics = nullptr;
+    Net::ConnectionId      _connection;
 
     std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
+    std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
     std::vector<PendingRef>                              _pendingRefs;
 
@@ -494,6 +595,7 @@ class ReplicationClient
     std::uint64_t _snapshotsApplied   = 0;
     std::uint64_t _snapshotsRejected  = 0;
     std::uint64_t _structureRevision  = 0;
+    std::uint64_t _mirrorsResurrected = 0;
     std::uint32_t _tickRateHz         = 60;
     std::uint32_t _snapshotHz         = 20;
     bool          _synchronized       = false;

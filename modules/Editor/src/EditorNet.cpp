@@ -623,6 +623,27 @@ void EditorApp::DrawNetworkWindow()
 
     if (_netSession->IsHost())
     {
+        // A minimal authoritative disturbance, so "does the correction stream
+        // actually work" is one click rather than a level built for the purpose.
+        // Host-side by construction: there is no client→server state channel in
+        // this design, and this is the server acting on its own world.
+        const bool canNudge = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
+                              _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr &&
+                              _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity);
+        ImGui::BeginDisabled(!canNudge);
+        if (ImGui::Button("Nudge selected body") && canNudge)
+        {
+            constexpr glm::vec3 kNudge{2.f, 6.f, 0.f};
+            _physics->SetBodyLinearVelocity(*_scene->Get<Assisi::Physics::RigidBody>(_selectedEntity), kNudge);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip(canNudge ? "Throw the selected replicated body. Every client should follow within a "
+                                         "correction interval."
+                                       : "Select a replicated entity with a rigid body.");
+        }
+
         LabelledValue("Clients", std::format("{}", stats.clientCount));
         LabelledValue("Replicated entities", std::format("{}", stats.replicatedEntities));
         LabelledValue("Snapshots sent", std::format("{}", stats.snapshotsSent));

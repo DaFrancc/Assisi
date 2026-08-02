@@ -132,7 +132,7 @@ void EditorApp::StartPlay(NetIntent intent)
     // The session binds the scene it replicates by reference at construction,
     // and that scene is now the play scene — the one the editor already treats
     // as disposable.
-    _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene);
+    _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene, _physics);
     const auto port = static_cast<std::uint16_t>(_netPort);
 
     const bool started = intent == NetIntent::Host

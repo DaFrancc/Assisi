@@ -10,7 +10,10 @@
 namespace Assisi::NetSync
 {
 
-NetSession::NetSession(ECS::Scene &scene, ReplicationConfig config) : _scene(scene), _config(config) {}
+NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, ReplicationConfig config)
+    : _scene(scene), _physics(physics), _config(config)
+{
+}
 
 NetSession::~NetSession() { Disconnect(); }
 
@@ -33,7 +36,7 @@ bool NetSession::Host(std::uint16_t port, LevelIdentity level)
         return false;
     }
 
-    _server = std::make_unique<ReplicationServer>(*_transport, _scene, _config);
+    _server = std::make_unique<ReplicationServer>(*_transport, _scene, _physics, _config);
     // Before any connection can arrive, since it is carried in every hello.
     _server->SetLevelIdentity(std::move(level));
     _role = SessionRole::Host;
@@ -58,7 +61,7 @@ bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHa
         return false;
     }
 
-    _client = std::make_unique<ReplicationClient>(*_transport, _scene, _connection);
+    _client = std::make_unique<ReplicationClient>(*_transport, _scene, _connection, _physics);
     // Before the first Poll: a hello that arrives and is answered immediately
     // cannot be un-answered.
     _client->SetDeferHandshake(deferHandshake);
@@ -184,6 +187,12 @@ void NetSession::Tick(std::uint64_t simTick, const InputCommand *localInput)
     command.tick         = _clock->CommandTick();
     _inputBuffer.Push(command);
     _client->SendInput(_inputBuffer);
+}
+
+void NetSession::AfterPhysicsStep()
+{
+    if (_client)
+        _client->EnforceSleep();
 }
 
 void NetSession::Interpolate()

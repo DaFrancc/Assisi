@@ -61,7 +61,7 @@ struct Harness
     /// it may answer — the editor's join. Off by default, which is every other
     /// case here.
     explicit Harness(ReplicationConfig config = {}, bool deferHandshake = false, LevelIdentity level = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, config),
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
           client(transport, clientScene, pair.second)
     {
         client.SetDeferHandshake(deferHandshake);
@@ -1043,7 +1043,7 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     REQUIRE(Net::NetTransport::SetSimulatedConditions(conditions));
 
     const auto        pair = transport.CreateLoopbackPair(true);
-    ReplicationServer server(transport, serverScene, ReplicationConfig{});
+    ReplicationServer server(transport, serverScene, /*physics=*/nullptr, ReplicationConfig{});
     ReplicationClient client(transport, clientScene, pair.second);
     server.AddConnection(pair.first);
 

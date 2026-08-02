@@ -103,7 +103,7 @@ void ServerApp::OnStart()
 
     NetSync::ReplicationConfig config;
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
-    _session          = std::make_unique<NetSync::NetSession>(_scene, config);
+    _session          = std::make_unique<NetSync::NetSession>(_scene, &_physics, config);
 
     if (_options.role == ServerRole::Host)
     {
@@ -240,6 +240,11 @@ void ServerApp::OnFixedUpdate(float dt)
     }
 
     _physics.Update(dt);
+
+    // Immediately after the step, before the snapshot below: a mirror woken by a
+    // contact the server never had has to be put back before anything reads it.
+    if (_session)
+        _session->AfterPhysicsStep();
 
     // Move the demo world. Writes go through GetMut because that is what stamps
     // the change tick the delta is computed from — a write through a plain
