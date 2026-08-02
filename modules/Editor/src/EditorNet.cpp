@@ -72,23 +72,39 @@ void LabelledValue(const char *label, const std::string &value)
     ImGui::TextUnformatted(value.c_str());
 }
 
-/// FNV-1a over a file's raw bytes, or nullopt if it could not be read.
+/// FNV-1a over a level file, with CRLF folded to LF first, or nullopt if it
+/// could not be read.
 ///
-/// Binary, not text: both ends must agree on the number, and a text-mode read
-/// would translate line endings on one platform and not the other — turning a
-/// perfectly matched pair of files into a refused join. (Which also means the
-/// check is only as portable as the checkout: a CRLF working copy hashes
-/// differently from an LF one. Same-platform is the v1 target; a normalised
-/// hash is the fix when cross-platform pairing becomes real.)
-std::optional<std::uint64_t> HashFileBytes(const std::filesystem::path &path)
+/// Read in binary so the platform translates nothing behind our back, then
+/// normalise explicitly. A level is JSON text, and text reaches disk through two
+/// different line-ending translations: git checks `* text=auto` out as CRLF on
+/// Windows and LF everywhere else, and a text-mode write on Windows expands
+/// every newline on the way out. Either one produces a byte-different but
+/// semantically identical file, and hashing raw bytes turned that into a refused
+/// join between a Windows and a Linux machine sitting on the same level.
+///
+/// Folding CR before LF is enough, because that is the only transformation
+/// either path applies. It does mean a lone "\r\n" inside a JSON string value
+/// would collide with "\n" — no level file has one, since the strings here are
+/// asset paths and entity names.
+std::optional<std::uint64_t> HashLevelFile(const std::filesystem::path &path)
 {
     std::ifstream file(path, std::ios::binary);
     if (!file.is_open())
         return std::nullopt;
 
-    const std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
     if (!file.good() && !file.eof())
         return std::nullopt;
+
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < bytes.size(); ++i)
+    {
+        if (bytes[i] == '\r' && i + 1 < bytes.size() && bytes[i + 1] == '\n')
+            continue;
+        bytes[kept++] = bytes[i];
+    }
+    bytes.resize(kept);
 
     return Assisi::Core::ContentHash64(std::as_bytes(std::span{bytes.data(), bytes.size()}));
 }
@@ -117,7 +133,7 @@ Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
     if (!resolved)
         return identity;
 
-    const std::optional<std::uint64_t> hash = HashFileBytes(*resolved);
+    const std::optional<std::uint64_t> hash = HashLevelFile(*resolved);
     if (!hash)
         return identity;
 
@@ -222,7 +238,7 @@ void EditorApp::BuildJoinedWorld()
         break;
     }
 
-    const std::optional<std::uint64_t> localHash = HashFileBytes(file);
+    const std::optional<std::uint64_t> localHash = HashLevelFile(file);
     if (!localHash)
     {
         FailJoin("cannot read '" + file.string() + "'.");
@@ -309,7 +325,7 @@ bool EditorApp::WritePieTempLevel(Assisi::NetSync::LevelIdentity &outLevel)
         return false;
     }
 
-    const std::optional<std::uint64_t> hash = HashFileBytes(*resolved);
+    const std::optional<std::uint64_t> hash = HashLevelFile(*resolved);
     if (!hash)
     {
         Assisi::Core::Log::Error("PIE: could not read back the temp level '{}'.", resolved->string());

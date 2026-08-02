@@ -404,7 +404,12 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
 bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path &path,
                                  const LevelHeader &header)
 {
-    std::ofstream f(path);
+    // Binary, so the newlines written are the newlines that land on disk. A
+    // text-mode write expands every '\n' to "\r\n" on Windows and leaves it
+    // alone elsewhere, which makes the same level two different files depending
+    // on who saved it — noise in every diff, and a refused join for the network
+    // session's content-hash check.
+    std::ofstream f(path, std::ios::binary);
     if (!f.is_open())
     {
         Core::Log::Error("SceneSerializer: cannot open '{}' for writing", path.string());

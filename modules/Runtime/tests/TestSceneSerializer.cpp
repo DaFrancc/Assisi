@@ -195,6 +195,36 @@ TEST_CASE("SceneSerializer: save/load through a file round-trips")
     CHECK(t->position.x == doctest::Approx(8.f));
 }
 
+TEST_CASE("SceneSerializer: a saved level is LF on every platform")
+{
+    // Levels are content-hashed to decide whether two machines are running the
+    // same world, so the bytes have to be a function of the scene and nothing
+    // else. A text-mode write expands '\n' to "\r\n" on Windows only, which made
+    // a Windows and a Linux editor refuse to pair over a level neither had
+    // touched. This fails on Windows the moment SaveToFile drops std::ios::binary
+    // — the point of asserting on raw bytes rather than on a round-trip, which
+    // would keep passing either way.
+    namespace fs            = std::filesystem;
+    const fs::path root     = fs::temp_directory_path() / "assisi_serializer_eol_test";
+    fs::create_directories(root);
+    REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
+
+    ECS::Scene       scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{.position = {1.f, 2.f, 3.f}}) != nullptr);
+
+    const fs::path file = root / "eol.alvl";
+    REQUIRE(SceneSerializer::SaveToFile(scene, file));
+
+    std::ifstream in(file, std::ios::binary);
+    REQUIRE(in.is_open());
+    const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+
+    // Pretty-printed JSON, so there are newlines to get wrong in the first place.
+    CHECK(bytes.find('\n') != std::string::npos);
+    CHECK(bytes.find('\r') == std::string::npos);
+}
+
 TEST_CASE("SceneSerializer: malformed and missing files fail cleanly, not fatally")
 {
     namespace fs = std::filesystem;
