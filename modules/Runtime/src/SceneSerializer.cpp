@@ -419,6 +419,31 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
     return true;
 }
 
+bool SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
+                                   const ProgressFn &onProgress, LevelHeader *header)
+{
+    std::ifstream file(path);
+    if (!file.is_open())
+    {
+        Core::Log::Error("SceneSerializer: cannot open '{}' for reading", path.string());
+        return false;
+    }
+
+    try
+    {
+        Load(scene, nlohmann::json::parse(file), onProgress, header);
+        return true;
+    }
+    catch (const std::exception &ex)
+    {
+        // Same contract as LoadFromFile below: a failed load yields an empty
+        // scene rather than a half-populated one.
+        Core::Log::Error("SceneSerializer: failed to load '{}': {}", path.string(), ex.what());
+        scene.Clear();
+        return false;
+    }
+}
+
 bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
                                    const ProgressFn &onProgress, LevelHeader *header)
 {

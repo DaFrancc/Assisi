@@ -173,11 +173,66 @@ class EditorApp : public Assisi::App::Application
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see EditorPlay.cpp
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See EditorApp.cpp
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
-    void DrawNetworkWindow();     // Host/Join/Disconnect + live net stats; see EditorNet.cpp
+    void DrawNetworkWindow();     // negotiated level + live net stats; see EditorNet.cpp
+    void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"; see EditorNet.cpp
     void ShutdownNetSession();    // tear down and forget; safe to call with no session
-    void PollNetSession();        // top of the fixed step: connection events + messages
+    void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
     void TickNetSession();        // end of the fixed step: snapshots (host) or input (client)
     void InterpolateNetSession(); // once per frame: smooth mirrored entities
+
+    // --- Networked play (docs/replication-plan-v4.md §3.6) ------------------
+    // One rule the rest falls out of: **a network session exists only inside a
+    // play session.** Hosting starts by entering Play; a client joins by
+    // entering Play with a join target; Stop — either side, any reason — tears
+    // the session down. That is what lets the join build its world inside the
+    // *play* scene, which the editor already treats as disposable, so nearly
+    // every guard an "editing while joined" mode would need is machinery the
+    // play snapshot/restore already provides.
+
+    /// @brief What the current (or next) play session does on the network.
+    enum class NetIntent : std::uint8_t
+    {
+        Standalone, ///< Ordinary Play. No transport is created at all.
+        Host,       ///< Play-and-listen: this scene is the replicated one.
+        Join,       ///< Play as a client of someone else's world.
+    };
+
+    /// @brief How far a joining client has got. Distinct from the session's own
+    /// state because "connected" and "has a world to put the snapshots in" are
+    /// two different things, and only the editor knows the second.
+    enum class JoinPhase : std::uint8_t
+    {
+        None,       ///< Not joining.
+        Connecting, ///< Transport up, waiting for the host's ServerHello.
+        Building,   ///< Hello received; loading and stripping the host's level.
+        Live,       ///< Handshake answered; snapshots are being applied.
+    };
+
+    /// @brief True while a session exists and is not Offline.
+    [[nodiscard]] bool IsNetSessionActive() const;
+
+    /// @brief What this editor would advertise as its level: the edited world's
+    /// saved path plus a content hash of the file as it currently sits on disk.
+    /// Addressing is `None` when the level has never been saved — which is what
+    /// makes "save the level to host" a check rather than a suggestion.
+    [[nodiscard]] Assisi::NetSync::LevelIdentity HostLevelIdentity() const;
+
+    /// @brief Build the joined world from the host's handshake: resolve the
+    /// level, verify its content hash, load it into the play scene, strip the
+    /// entities the host owns, then answer the handshake. Marshalled to the
+    /// frame's safe point — it frees and re-resolves GPU assets.
+    void BuildJoinedWorld();
+
+    /// @brief Destroy every entity carrying `Replicated` and clear the dangling
+    /// `Parent` of anything that was under one. Those entities are the host's;
+    /// they arrive as mirrors, and keeping the file's copies too would double
+    /// the world.
+    void StripReplicatedEntities();
+
+    /// @brief Abort a join in progress with a reason a human can act on: the
+    /// panel shows it, the log keeps it, and the session ends through the same
+    /// Stop as everything else.
+    void FailJoin(std::string reason);
 
     /// @brief Diagnostic (end of OnImGui): warns with full ImGui internal state
     /// when a widget holds ActiveId for seconds with no mouse button down and no
@@ -345,7 +400,14 @@ class EditorApp : public Assisi::App::Application
     // --- Play control (F5 run / F6 pause / F7 stop) ---
     /// @brief Enters play from the editing state: snapshots the scene so Stop can
     /// restore it, then begins simulating. No-op unless currently Editing.
-    void StartPlay();
+    ///
+    /// @p intent selects what the session does on the network. Host refuses
+    /// (with a message) unless the level has been saved, and prompts when the
+    /// scene has unsaved edits — clients load the last *saved* file, so hosting
+    /// past that point means correcting bodies against geometry no client can
+    /// see. Join enters Play immediately and builds its world when the host's
+    /// handshake names one.
+    void StartPlay(NetIntent intent = NetIntent::Standalone);
     /// @brief Resumes a paused simulation in place. No-op unless currently Paused.
     void ResumePlay();
     /// @brief Freezes simulation where it stands — physics, and any game-logic
@@ -465,6 +527,34 @@ class EditorApp : public Assisi::App::Application
     /// Why the last Host/Join failed. Held here rather than read back off the
     /// session, because a failed attempt destroys the session that knows.
     std::string _netError;
+
+    // Networked play. `_netIntent` is the role this play session was entered
+    // for; `_joinPhase` tracks a client through connect -> build -> live.
+    NetIntent _netIntent = NetIntent::Standalone;
+    JoinPhase _joinPhase = JoinPhase::None;
+    /// Seconds spent waiting for a host's ServerHello. A join that never gets
+    /// one would otherwise sit in Play forever with an empty world and no
+    /// explanation.
+    float                  _joinElapsed         = 0.f;
+    static constexpr float kJoinTimeoutSeconds  = 10.f;
+    /// Marshalled to OnUpdate: BuildJoinedWorld frees and re-resolves GPU
+    /// assets, which must not happen from the fixed step mid-frame.
+    bool _pendingJoinBuild = false;
+    /// Marshalled likewise: a host that vanished, or a failed join, ends the
+    /// play session at the frame's safe point rather than under the pump.
+    bool _pendingStopPlay = false;
+    /// The unsaved-edits host prompt (§3.6): a modal, not a warning, because
+    /// the consequence surfaces minutes later on someone else's screen.
+    bool _hostPromptOpen  = false;
+    bool _hostIgnoreDirty = false; ///< Set by "Host last-saved" for one attempt.
+    /// The mirrored world's structure revision this editor last resolved assets
+    /// against. Mirrors arrive with authored asset ids and null GPU pointers;
+    /// this is what tells the frame loop to look again.
+    std::uint64_t _netStructureRevision = 0;
+    /// The edited world's level identity as it was before Play. A join replaces
+    /// the play scene with the *host's* level, so both have to be put back.
+    std::string _prePlayLevelPath;
+    std::string _prePlayProfile;
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;

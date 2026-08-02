@@ -1,22 +1,46 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file EditorNet.cpp
-/// @brief The editor's network panel: Host / Join / Disconnect, and the live
-/// numbers you need to tell "it works" from "it looks like it works".
+/// @brief The editor's half of a networked play session: the join sequence, the
+/// host-time guards, and the panel that shows what is going on.
 ///
-/// Hosting from here *is* the listen server — the scene the editor is already
-/// simulating and rendering is the one being replicated, with no second scene
-/// and no self-interpolation for the host player (see NetSession.hpp for why
-/// the design's loopback-pair framing is not what this does).
+/// **A network session exists only inside a play session** (docs/
+/// replication-plan-v4.md §3.6). Hosting starts by entering Play; a client joins
+/// by entering Play with a join target; Stop — either side, any reason — tears
+/// the session down. Hosting from here is the listen server: the scene the
+/// editor is already simulating and rendering is the one being replicated, with
+/// no second scene and no self-interpolation for the host player (see
+/// NetSession.hpp for why the design's loopback-pair framing is not what this
+/// does).
+///
+/// The reason the rule is worth having is what it deletes. A joined client is in
+/// Play, so its world is the *play* scene, which the editor already treats as
+/// disposable: Save is already gated on Editing, the play snapshot already
+/// preserves the editing scene exactly, and Stop already restores it with its
+/// undo history intact. What is left here is only what is genuinely new —
+/// negotiating which level to load, proving both sides have the same bytes, and
+/// stripping the entities the host owns.
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Runtime/AssetResolve.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <imgui.h>
 
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <optional>
+#include <string>
+#include <vector>
 
 namespace Assisi::Editor
 {
@@ -36,6 +60,9 @@ ImVec4 PingColor(std::int32_t pingMs)
     return ImVec4{0.9f, 0.4f, 0.4f, 1.f};
 }
 
+constexpr ImVec4 kWarnColor{0.9f, 0.8f, 0.3f, 1.f};
+constexpr ImVec4 kErrorColor{0.9f, 0.4f, 0.4f, 1.f};
+
 void LabelledValue(const char *label, const std::string &value)
 {
     ImGui::TextUnformatted(label);
@@ -43,7 +70,326 @@ void LabelledValue(const char *label, const std::string &value)
     ImGui::TextUnformatted(value.c_str());
 }
 
+/// FNV-1a over a file's raw bytes, or nullopt if it could not be read.
+///
+/// Binary, not text: both ends must agree on the number, and a text-mode read
+/// would translate line endings on one platform and not the other — turning a
+/// perfectly matched pair of files into a refused join. (Which also means the
+/// check is only as portable as the checkout: a CRLF working copy hashes
+/// differently from an LF one. Same-platform is the v1 target; a normalised
+/// hash is the fix when cross-platform pairing becomes real.)
+std::optional<std::uint64_t> HashFileBytes(const std::filesystem::path &path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open())
+        return std::nullopt;
+
+    const std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    if (!file.good() && !file.eof())
+        return std::nullopt;
+
+    return Assisi::Core::ContentHash64(std::as_bytes(std::span{bytes.data(), bytes.size()}));
+}
+
+/// "levels/Materials.alvl" -> "Materials". The Levels UI works in bare stems.
+std::string LevelStem(const std::string &virtualPath)
+{
+    return std::filesystem::path(virtualPath).stem().string();
+}
+
 } // namespace
+
+// ---------------------------------------------------------------------------
+// Session lifecycle
+// ---------------------------------------------------------------------------
+
+bool EditorApp::IsNetSessionActive() const { return _netSession && _netSession->IsActive(); }
+
+Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
+{
+    Assisi::NetSync::LevelIdentity identity;
+    if (_world == nullptr || _world->levelPath.empty())
+        return identity; // never saved: addressing stays None, and hosting refuses
+
+    const auto resolved = Assisi::Core::AssetSystem::Resolve(_world->levelPath);
+    if (!resolved)
+        return identity;
+
+    const std::optional<std::uint64_t> hash = HashFileBytes(*resolved);
+    if (!hash)
+        return identity;
+
+    identity.addressing  = Assisi::NetSync::LevelAddressing::Virtual;
+    identity.path        = _world->levelPath;
+    identity.contentHash = *hash;
+    return identity;
+}
+
+void EditorApp::FailJoin(std::string reason)
+{
+    _netError = reason;
+    Assisi::Core::Log::Error("Editor: join failed — {}", reason);
+    if (_netSession)
+        _netSession->AbortJoin(std::move(reason));
+    _joinPhase = JoinPhase::None;
+    // Out through the same door as everything else. "How do I get out of a bad
+    // join" should have exactly one answer, and it is the button that was
+    // already there.
+    _pendingStopPlay = true;
+}
+
+void EditorApp::StripReplicatedEntities()
+{
+    if (_scene == nullptr)
+        return;
+
+    // The host owns these; they arrive as mirrors. The level file's copies are
+    // the host's authored originals, so keeping both would double every
+    // replicated object in the world.
+    std::vector<Assisi::ECS::Entity> doomed;
+    _scene->ForEachEntity(
+        [&](Assisi::ECS::Entity entity)
+        {
+            if (_scene->Has<Assisi::NetSync::Replicated>(entity))
+                doomed.push_back(entity);
+        });
+
+    for (const Assisi::ECS::Entity entity : doomed)
+    {
+        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
+        {
+            _physics->RemoveBody(*body);
+            _scene->Remove<Assisi::Physics::RigidBody>(entity);
+        }
+        _scene->Destroy(entity);
+    }
+    _scene->FlushDestroyed();
+
+    // Anything that was parented to a stripped entity now points at a dead
+    // handle. Left alone it dangles into the transform propagation, which reads
+    // the child as a root and draws it at its *local* pose — a decoration
+    // detached from the thing it decorated, in a world that otherwise looks
+    // right. Dropping the link says the same thing honestly.
+    std::vector<Assisi::ECS::Entity> orphans;
+    _scene->ForEachEntity(
+        [&](Assisi::ECS::Entity entity)
+        {
+            const auto *parent = _scene->Get<Assisi::Runtime::Parent>(entity);
+            if (parent != nullptr && !_scene->IsAlive(parent->parent))
+                orphans.push_back(entity);
+        });
+    for (const Assisi::ECS::Entity entity : orphans)
+        _scene->Remove<Assisi::Runtime::Parent>(entity);
+
+    if (!doomed.empty() || !orphans.empty())
+    {
+        Assisi::Core::Log::Info("Editor: join stripped {} replicated entit{} from the level ({} orphan link{}).",
+                                doomed.size(), doomed.size() == 1 ? "y" : "ies", orphans.size(),
+                                orphans.size() == 1 ? "" : "s");
+    }
+}
+
+void EditorApp::BuildJoinedWorld()
+{
+    if (!_netSession || !_netSession->IsAwaitingLevel() || _scene == nullptr)
+        return;
+
+    const Assisi::NetSync::ServerHello  *hello = _netSession->Handshake();
+    const Assisi::NetSync::LevelIdentity level = hello->level;
+
+    // --- Which file, and is it the same file? -------------------------------
+    std::filesystem::path file;
+    switch (level.addressing)
+    {
+    case Assisi::NetSync::LevelAddressing::None:
+        FailJoin("the host is not running a level file, so there is no world to build here.");
+        return;
+    case Assisi::NetSync::LevelAddressing::Virtual:
+    {
+        const auto resolved = Assisi::Core::AssetSystem::Resolve(level.path);
+        if (!resolved)
+        {
+            FailJoin("this build has no '" + level.path + "'; get the level from the host and retry.");
+            return;
+        }
+        file = *resolved;
+        break;
+    }
+    case Assisi::NetSync::LevelAddressing::AbsolutePath:
+        file = level.path;
+        break;
+    }
+
+    const std::optional<std::uint64_t> localHash = HashFileBytes(file);
+    if (!localHash)
+    {
+        FailJoin("cannot read '" + file.string() + "'.");
+        return;
+    }
+    if (*localHash != level.contentHash)
+    {
+        // The two numbers only answer "are they different", which the failure
+        // already announced — so they go to the log, and the message says the
+        // thing the player can act on.
+        Assisi::Core::Log::Error("Editor: level content hash mismatch for '{}' — host {}, local {}.", level.path,
+                                 Assisi::Core::ToHex64(level.contentHash), Assisi::Core::ToHex64(*localHash));
+        FailJoin("your copy of '" + level.path + "' differs from the host's; sync the file from the host and retry.");
+        return;
+    }
+
+    // --- Build it -----------------------------------------------------------
+    // Straight into the play scene. The pre-play snapshot already holds the
+    // editing scene, so there is nothing here to preserve and no confirmation to
+    // ask for — the thing v3.5 spent a rule on is simply not a hazard once the
+    // join happens inside Play.
+    Assisi::Runtime::LevelHeader header;
+    const auto                   reset = _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep
+                                                             : Assisi::App::AssetCacheReset::ClearFirst;
+    const bool loaded = level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
+                            ? Assisi::App::LoadLevelFile(*_scene, file, _assetCache, _assetDatabase, *_physics,
+                                                         _sceneRenderer, reset, &header)
+                            : Assisi::App::LoadLevel(*_scene, level.path, _assetCache, _assetDatabase, *_physics,
+                                                     _sceneRenderer, reset, &header);
+    if (!loaded)
+    {
+        FailJoin("'" + level.path + "' failed to load.");
+        return;
+    }
+
+    // The world is the host's level for the duration; StopPlay puts the edited
+    // world's identity and profile back.
+    _world->levelPath = level.addressing == Assisi::NetSync::LevelAddressing::Virtual ? level.path : std::string{};
+    _worlds.ApplyProfile(*_world, header.profile);
+
+    StripReplicatedEntities();
+
+    // A load rebuilds entity identity from scratch, so anything holding a handle
+    // from the pre-join scene now aliases a live but unrelated entity.
+    _selectedEntity     = Assisi::ECS::NullEntity;
+    _eyedropperArmed    = false;
+    _eyedropperEntity   = Assisi::ECS::NullEntity;
+    _eyedropperMeta     = nullptr;
+    _assetBrowserOpen   = false;
+    _assetBrowserEntity = Assisi::ECS::NullEntity;
+    _assetBrowserMeta   = nullptr;
+
+    // Only now: from here a NetId has somewhere to land.
+    _netSession->ConfirmLevelReady();
+    _joinPhase = JoinPhase::Live;
+    _netError.clear();
+    Assisi::Core::Log::Info("Editor: joined — built '{}' and answered the handshake.", level.path);
+}
+
+void EditorApp::ShutdownNetSession()
+{
+    if (!_netSession)
+        return;
+
+    // Disconnect() drops a client's mirrored entities; flush so they are gone
+    // before anything iterates the scene again.
+    _netSession->Disconnect();
+    if (_scene)
+        _scene->FlushDestroyed();
+    _netSession.reset();
+    Assisi::Core::Log::Info("Editor: network session closed.");
+}
+
+void EditorApp::PollNetSession(float dt)
+{
+    if (!_netSession)
+        return;
+
+    _netSession->Poll();
+
+    if (_netIntent == NetIntent::Standalone)
+        return;
+
+    // A host that went away, a rejected handshake, a transport fault: Poll turns
+    // all of them into an Offline session. The play session goes with it — the
+    // client's world *was* the host's world, and there is nothing left to look
+    // at once the stream stops.
+    if (!_netSession->IsActive())
+    {
+        if (_netError.empty())
+            _netError = _netSession->LastError().empty() ? "the session ended" : _netSession->LastError();
+        _pendingStopPlay = true;
+        return;
+    }
+
+    if (_joinPhase == JoinPhase::Connecting)
+    {
+        if (_netSession->IsAwaitingLevel())
+        {
+            // Marshalled, not done here: building the world frees and re-resolves
+            // GPU assets this frame's draws may already reference.
+            _joinPhase        = JoinPhase::Building;
+            _pendingJoinBuild = true;
+            return;
+        }
+
+        _joinElapsed += dt;
+        if (_joinElapsed >= kJoinTimeoutSeconds)
+            FailJoin("no answer from the host — check the address and that it is hosting.");
+    }
+}
+
+void EditorApp::TickNetSession()
+{
+    if (_netSession)
+        _netSession->Tick(GetSimTick());
+}
+
+void EditorApp::InterpolateNetSession()
+{
+    if (_netSession)
+        _netSession->Interpolate();
+}
+
+// ---------------------------------------------------------------------------
+// Panels
+// ---------------------------------------------------------------------------
+
+void EditorApp::DrawHostUnsavedModal()
+{
+    static constexpr const char *kTitle = "Host with unsaved edits?";
+
+    if (_hostPromptOpen && !ImGui::IsPopupOpen(kTitle))
+        ImGui::OpenPopup(kTitle);
+    if (!ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+        return;
+
+    ImGui::TextWrapped("Clients load this level from disk, so they will see the last SAVED version — not the "
+                       "edits you have made since. Replicated bodies then get corrected against geometry the "
+                       "clients cannot see, which shows up much later as objects bouncing off nothing.");
+    ImGui::Separator();
+
+    const auto close = [this]
+    {
+        _hostPromptOpen = false;
+        ImGui::CloseCurrentPopup();
+    };
+
+    if (ImGui::Button("Save and host"))
+    {
+        close();
+        if (_world != nullptr && !_world->levelPath.empty())
+            SaveLevel(LevelStem(_world->levelPath));
+        StartPlay(NetIntent::Host);
+    }
+    ImGui::SetItemDefaultFocus();
+    ImGui::SameLine();
+    if (ImGui::Button("Host last-saved"))
+    {
+        close();
+        _hostIgnoreDirty = true; // one attempt only
+        StartPlay(NetIntent::Host);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel"))
+        close();
+
+    ImGui::EndPopup();
+}
 
 void EditorApp::DrawNetworkWindow()
 {
@@ -57,21 +403,17 @@ void EditorApp::DrawNetworkWindow()
     // once at the top. The buttons below can destroy it *during this frame*,
     // and a cached "is it active" flag then describes a session that no longer
     // exists — which is precisely how the Disconnect button used to segfault.
-    const auto active = [this] { return _netSession && _netSession->IsActive(); };
+    const auto active = [this] { return IsNetSessionActive(); };
 
     // ---- status line -------------------------------------------------------
-    if (_netSession)
-    {
-        const std::string status = _netSession->StatusText();
-        ImGui::TextUnformatted(status.c_str());
-    }
-    else
-    {
-        ImGui::TextUnformatted("Offline");
-    }
+    ImGui::TextUnformatted(_netSession ? _netSession->StatusText().c_str() : "Offline");
     ImGui::Separator();
 
     // ---- controls ----------------------------------------------------------
+    // Host and Join enter Play. They are the same gesture as pressing Run, with
+    // a role attached — which is the whole of §3.6 in two buttons. (R3 moves
+    // both into the Play control's dropdown so one surface answers "where do I
+    // host?" and "where do I join?"; this panel then keeps the detail view.)
     ImGui::SetNextItemWidth(140.f);
     ImGui::InputText("Address", _netAddress.data(), _netAddress.size(),
                      active() ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
@@ -80,55 +422,36 @@ void EditorApp::DrawNetworkWindow()
     ImGui::InputInt("Port", &_netPort, 0, 0, active() ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
     _netPort = std::clamp(_netPort, 1, 65535);
 
-    ImGui::BeginDisabled(active() || !_scene);
+    const bool editing = _playState == PlayState::Editing;
+    ImGui::BeginDisabled(!editing || _scene == nullptr);
     if (ImGui::Button("Host"))
-    {
-        // Bound to the scene that exists right now. A level load replaces the
-        // scene wholesale, which is why the session is torn down there rather
-        // than left holding a dangling reference.
-        _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene);
-        if (!_netSession->Host(static_cast<std::uint16_t>(_netPort)))
-        {
-            // Copy the reason out before dropping the session that holds it,
-            // or a failed Host reports nothing at all.
-            _netError = _netSession->LastError();
-            _netSession.reset();
-        }
-        else
-        {
-            _netError.clear();
-        }
-    }
+        StartPlay(NetIntent::Host);
     ImGui::SameLine();
     if (ImGui::Button("Join"))
-    {
-        _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene);
-        if (!_netSession->Join(_netAddress.data(), static_cast<std::uint16_t>(_netPort)))
-        {
-            _netError = _netSession->LastError();
-            _netSession.reset();
-        }
-        else
-        {
-            _netError.clear();
-        }
-    }
+        StartPlay(NetIntent::Join);
     ImGui::EndDisabled();
+    if (!editing && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Stop first — a session runs inside a play session, so hosting or joining "
+                          "*is* pressing Play.");
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!active());
     if (ImGui::Button("Disconnect"))
-        ShutdownNetSession();
+        StopPlay();
     ImGui::EndDisabled();
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        ImGui::SetTooltip("Ends the play session too — same as Stop.");
 
     if (!_netError.empty())
-        ImGui::TextColored(ImVec4{0.9f, 0.4f, 0.4f, 1.f}, "%s", _netError.c_str());
+        ImGui::TextColored(kErrorColor, "%s", _netError.c_str());
 
     // Re-checked, not the value from the top of the function: Disconnect above
     // may have just torn the session down.
     if (!active())
     {
         ImGui::Separator();
+        if (editing && HostLevelIdentity().addressing == Assisi::NetSync::LevelAddressing::None)
+            ImGui::TextColored(kWarnColor, "Save the level before hosting — clients load it from disk.");
         ImGui::TextDisabled("Hosting replicates this scene; entities need a Replicated component to travel.");
         ImGui::End();
         return;
@@ -138,6 +461,20 @@ void EditorApp::DrawNetworkWindow()
     const Assisi::NetSync::SessionStats stats = _netSession->Stats();
 
     ImGui::Separator();
+
+    // Which level the two ends agreed on. Worth a line of its own: everything
+    // that goes wrong with a join goes wrong here first, and "which level do
+    // they think we are on" is otherwise unanswerable from inside the editor.
+    if (const Assisi::NetSync::ServerHello *hello = _netSession->Handshake();
+        hello != nullptr && _netSession->IsClient())
+    {
+        LabelledValue("Level", hello->level.path.empty() ? "<none>" : hello->level.path);
+    }
+    else if (_netSession->IsHost())
+    {
+        LabelledValue("Level", _world != nullptr && !_world->levelPath.empty() ? _world->levelPath : "<unsaved>");
+    }
+
     ImGui::TextUnformatted("Ping");
     ImGui::SameLine(180.f);
     ImGui::TextColored(PingColor(stats.pingMs), "%d ms", stats.pingMs);
@@ -164,58 +501,26 @@ void EditorApp::DrawNetworkWindow()
         // the transport did not catch or a protocol bug. Make it loud.
         ImGui::TextUnformatted("Snapshots rejected");
         ImGui::SameLine(180.f);
-        ImGui::TextColored(stats.snapshotsRejected > 0 ? ImVec4{0.9f, 0.4f, 0.4f, 1.f}
-                                                       : ImVec4{0.6f, 0.6f, 0.6f, 1.f},
-                           "%llu", static_cast<unsigned long long>(stats.snapshotsRejected));
+        ImGui::TextColored(stats.snapshotsRejected > 0 ? kErrorColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%llu",
+                           static_cast<unsigned long long>(stats.snapshotsRejected));
 
         // Buffer depth is the honest health signal for the clock: zero means the
         // server ran out of our input, which the player feels as dropped input.
         ImGui::TextUnformatted("Input buffer");
         ImGui::SameLine(180.f);
-        ImGui::TextColored(stats.inputBufferDepth == 0 ? ImVec4{0.9f, 0.8f, 0.3f, 1.f}
-                                                       : ImVec4{0.4f, 0.9f, 0.4f, 1.f},
-                           "%u command%s", stats.inputBufferDepth, stats.inputBufferDepth == 1 ? "" : "s");
+        ImGui::TextColored(stats.inputBufferDepth == 0 ? kWarnColor : ImVec4{0.4f, 0.9f, 0.4f, 1.f}, "%u command%s",
+                           stats.inputBufferDepth, stats.inputBufferDepth == 1 ? "" : "s");
 
         LabelledValue("Clock lead", std::format("{} ticks", stats.clockLead));
         LabelledValue("Clock corrections", std::format("{}", stats.clockCorrections));
 
-        if (!stats.worldComplete)
-            ImGui::TextColored(ImVec4{0.9f, 0.8f, 0.3f, 1.f}, "Still receiving the initial world...");
+        if (_joinPhase == JoinPhase::Connecting)
+            ImGui::TextColored(kWarnColor, "Joining — waiting for the host (%.0f s)...", _joinElapsed);
+        else if (!stats.worldComplete)
+            ImGui::TextColored(kWarnColor, "Still receiving the initial world...");
     }
 
     ImGui::End();
-}
-
-void EditorApp::ShutdownNetSession()
-{
-    if (!_netSession)
-        return;
-
-    // Disconnect() drops a client's mirrored entities; flush so they are gone
-    // before anything iterates the scene again.
-    _netSession->Disconnect();
-    if (_scene)
-        _scene->FlushDestroyed();
-    _netSession.reset();
-    Core::Log::Info("Editor: network session closed.");
-}
-
-void EditorApp::PollNetSession()
-{
-    if (_netSession)
-        _netSession->Poll();
-}
-
-void EditorApp::TickNetSession()
-{
-    if (_netSession)
-        _netSession->Tick(GetSimTick());
-}
-
-void EditorApp::InterpolateNetSession()
-{
-    if (_netSession)
-        _netSession->Interpolate();
 }
 
 } // namespace Assisi::Editor

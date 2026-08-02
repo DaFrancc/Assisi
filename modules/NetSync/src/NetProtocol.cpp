@@ -2,6 +2,11 @@
 
 #include <Assisi/NetSync/NetProtocol.hpp>
 
+#include <Assisi/Core/ContentHash.hpp>
+#include <Assisi/Core/Reflect/BinaryCodec.hpp>
+
+#include <format>
+
 namespace Assisi::NetSync
 {
 namespace
@@ -15,7 +20,32 @@ constexpr std::uint32_t kMessageTypeBits = 5;
 /// a hostile handshake from asking us to allocate megabytes before we have
 /// decided to trust the peer at all.
 constexpr std::size_t kMaxSummaryBytes = 512;
+
+/// Same reasoning for the handshake's level path: it is read before the peer has
+/// been trusted, and no legitimate path is anywhere near this long.
+constexpr std::size_t kMaxLevelPathBytes = 512;
 } // namespace
+
+std::uint64_t NetProtocolHash()
+{
+    // FNV-1a continued over the framing version, so a framing change the
+    // component table cannot see still refuses to pair. Continuing the same hash
+    // rather than mixing with XOR keeps one avalanche, and reuses the primitive
+    // Core already ships instead of introducing a second one.
+    std::uint64_t hash = Core::Reflect::ProtocolHash();
+    for (std::uint32_t shift = 0; shift < 32; shift += 8)
+    {
+        hash ^= (kNetProtocolVersion >> shift) & 0xFFu;
+        hash *= Core::kFnvPrime;
+    }
+    return hash;
+}
+
+std::string NetProtocolSummary()
+{
+    return std::format("{} net={} hash={}", Core::Reflect::ProtocolSummary(), kNetProtocolVersion,
+                       Core::ToHex64(NetProtocolHash()));
+}
 
 void WriteMessageType(MessageType type, Core::BitWriter &writer)
 {
@@ -42,6 +72,9 @@ void WriteServerHello(const ServerHello &hello, Core::BitWriter &writer)
     writer.WriteVarUInt32(hello.tickRateHz);
     writer.WriteVarUInt32(hello.snapshotHz);
     writer.WriteVarUInt64(hello.serverTick);
+    writer.WriteBits(static_cast<std::uint32_t>(hello.level.addressing), 8);
+    writer.WriteString(hello.level.path);
+    writer.WriteUInt64(hello.level.contentHash);
 }
 
 bool ReadServerHello(Core::BitReader &reader, ServerHello &outHello)
@@ -53,14 +86,22 @@ bool ReadServerHello(Core::BitReader &reader, ServerHello &outHello)
     hello.snapshotHz      = reader.ReadVarUInt32();
     hello.serverTick      = reader.ReadVarUInt64();
 
+    const std::uint32_t addressing = reader.ReadBits(8);
+    hello.level.path               = reader.ReadString(kMaxLevelPathBytes);
+    hello.level.contentHash        = reader.ReadUInt64();
+
     // A zero rate would make the client's clock arithmetic divide by zero, and
     // a snapshot rate above the tick rate is nonsense. Reject rather than
     // sanitize: this is the message that establishes whether we trust the peer.
-    if (!reader.Ok() || hello.tickRateHz == 0 || hello.snapshotHz == 0 || hello.snapshotHz > hello.tickRateHz)
+    // An addressing mode we do not know is the same call: guessing how to read
+    // the path is exactly the sniffing the tag exists to avoid.
+    if (!reader.Ok() || hello.tickRateHz == 0 || hello.snapshotHz == 0 || hello.snapshotHz > hello.tickRateHz ||
+        addressing > static_cast<std::uint32_t>(LevelAddressing::AbsolutePath))
     {
         reader.Invalidate();
         return false;
     }
+    hello.level.addressing = static_cast<LevelAddressing>(addressing);
 
     outHello = std::move(hello);
     return true;

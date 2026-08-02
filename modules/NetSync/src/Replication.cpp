@@ -143,11 +143,12 @@ void ReplicationServer::SendHello(Connection &connection)
     WriteMessageType(MessageType::ServerHello, writer);
 
     ServerHello hello;
-    hello.protocolHash    = Core::Reflect::ProtocolHash();
-    hello.protocolSummary = Core::Reflect::ProtocolSummary();
+    hello.protocolHash    = NetProtocolHash();
+    hello.protocolSummary = NetProtocolSummary();
     hello.tickRateHz      = _config.tickRateHz;
     hello.snapshotHz      = _config.snapshotHz;
     hello.serverTick      = _simTick;
+    hello.level           = _level;
     WriteServerHello(hello, writer);
 
     // Reliable: a lost handshake would leave the client waiting forever with
@@ -160,7 +161,7 @@ void ReplicationServer::SendReject(Connection &connection, RejectReason reason)
     Core::BitWriter writer;
     WriteMessageType(MessageType::Reject, writer);
     writer.WriteBits(static_cast<std::uint32_t>(reason), 8);
-    writer.WriteString(Core::Reflect::ProtocolSummary());
+    writer.WriteString(NetProtocolSummary());
     _transport.Send(connection.id, writer.Data(), Net::SendMode::Reliable, Net::Lane::Control);
 }
 
@@ -193,7 +194,7 @@ void ReplicationServer::HandleClientHello(Connection &connection, Core::BitReade
     if (!ReadClientHello(reader, hello))
         return;
 
-    if (hello.protocolHash != Core::Reflect::ProtocolHash())
+    if (hello.protocolHash != NetProtocolHash())
     {
         // Two builds that disagree on component layout would corrupt each
         // other's state silently, which is far worse than not connecting.
@@ -515,10 +516,27 @@ void ReplicationClient::SendHello()
     WriteMessageType(MessageType::ClientHello, writer);
 
     ClientHello hello;
-    hello.protocolHash = Core::Reflect::ProtocolHash();
+    hello.protocolHash = NetProtocolHash();
     WriteClientHello(hello, writer);
 
     _transport.Send(_connection, writer.Data(), Net::SendMode::Reliable, Net::Lane::Control);
+}
+
+void ReplicationClient::ConfirmLevelReady()
+{
+    if (_synchronized)
+        return;
+
+    _awaitingLevel = false;
+    SendHello();
+    _synchronized = true;
+}
+
+void ReplicationClient::AbortJoin(std::string reason)
+{
+    _awaitingLevel = false;
+    _rejectMessage = std::move(reason);
+    Core::Log::Error("NetSync: join aborted — {}", _rejectMessage);
 }
 
 void ReplicationClient::SendAck(std::uint64_t serverTick)
@@ -565,7 +583,7 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
         // latency the player sees on everyone else's position.
         _interpolationDelayTicks =
             hello.snapshotHz > 0 ? 2.0 * static_cast<double>(hello.tickRateHz) / hello.snapshotHz : 6.0;
-        if (hello.protocolHash != Core::Reflect::ProtocolHash())
+        if (hello.protocolHash != NetProtocolHash())
         {
             // Say so locally too. The server also refuses, but a client that
             // only ever sees "disconnected" cannot tell a version mismatch from
@@ -574,8 +592,17 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
             Core::Log::Error("NetSync: {}\n  server: {}", _rejectMessage, hello.protocolSummary);
             return;
         }
-        SendHello();
-        _synchronized = true;
+
+        _handshake = std::move(hello);
+        if (_deferHandshake)
+        {
+            // Answer later. Until the local world exists there is nothing for a
+            // NetId to map onto, and a snapshot applied against the wrong world
+            // is silently wrong rather than loudly broken.
+            _awaitingLevel = true;
+            break;
+        }
+        ConfirmLevelReady();
         break;
     }
 
@@ -631,6 +658,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         {
             _scene.Destroy(it->second);
             _entityByNetId.erase(it);
+            ++_structureRevision;
         }
     }
 
@@ -692,6 +720,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             // needs to tell "the server's crate" from "our crate".
             (void)_scene.Add<Mirrored>(entity, Mirrored{});
             it = _entityByNetId.emplace(netId, entity).first;
+            ++_structureRevision;
         }
         else if (isSpawn)
         {
@@ -717,6 +746,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             if (!reader.Ok())
                 return false;
             _scene.RemoveById(entity, componentId);
+            ++_structureRevision;
         }
 
         while (reader.Ok() && reader.ReadBool())
@@ -738,6 +768,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             void *component = EnsureComponent(_scene, entity, *meta);
             if (component == nullptr || !Core::Reflect::ReadComponent(*meta, component, reader, nullptr, &context))
                 return false;
+            // Component data landed. A presentation layer has to re-resolve
+            // whatever it derives from that data — MeshRenderer's GPU pointers
+            // above all — and this counter is the only signal it gets.
+            ++_structureRevision;
 
             // Pair the recorded references with the component's EntityRef
             // fields, in the same order the codec visited them.
@@ -910,16 +944,23 @@ void ReplicationClient::Reset()
         if (_scene.IsAlive(entity))
             _scene.Destroy(entity);
     }
+    if (!_entityByNetId.empty())
+        ++_structureRevision;
     _entityByNetId.clear();
     _transformHistory.clear();
     _pendingRefs.clear();
     _feedback          = ClockFeedback{};
+    _handshake         = ServerHello{};
     _lastAppliedTick   = 0;
     _snapshotsApplied  = 0;
     _snapshotsRejected = 0;
     _synchronized      = false;
     _worldComplete     = false;
+    _awaitingLevel     = false;
     _rejectMessage.clear();
+    // _structureRevision deliberately survives: it is a monotonic "something
+    // changed" counter a consumer compares against its own last-acted-on value,
+    // and resetting it to 0 would make a rejoin look like no change at all.
 }
 
 } // namespace Assisi::NetSync

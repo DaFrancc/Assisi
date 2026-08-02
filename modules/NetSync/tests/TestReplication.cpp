@@ -16,6 +16,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
@@ -56,10 +57,15 @@ struct Harness
 
     std::uint64_t tick = 0;
 
-    explicit Harness(ReplicationConfig config = {})
+    /// @p deferHandshake models an application that has a world to build before
+    /// it may answer — the editor's join. Off by default, which is every other
+    /// case here.
+    explicit Harness(ReplicationConfig config = {}, bool deferHandshake = false, LevelIdentity level = {})
         : pair(transport.CreateLoopbackPair()), server(transport, serverScene, config),
           client(transport, clientScene, pair.second)
     {
+        client.SetDeferHandshake(deferHandshake);
+        server.SetLevelIdentity(std::move(level));
         server.AddConnection(pair.first);
     }
 
@@ -176,6 +182,102 @@ TEST_CASE("only entities marked Replicated cross the wire")
     harness.Step(12);
 
     CHECK(harness.client.ReplicatedEntityCount() == 1);
+}
+
+TEST_CASE("the handshake carries which level the host is running, and its content hash")
+{
+    LevelIdentity level;
+    level.addressing  = LevelAddressing::Virtual;
+    level.path        = "levels/Materials.alvl";
+    level.contentHash = 0xFEEDFACECAFEBEEDull;
+
+    Harness harness(ReplicationConfig{}, /*deferHandshake=*/true, level);
+    harness.Step(4);
+
+    // Deferred: connected, told which level, and deliberately not synchronized.
+    // A client that answered here would start receiving snapshots against a
+    // world it has not built, mapping the host's NetIds onto whatever local
+    // entities happen to occupy those slots.
+    REQUIRE(harness.client.IsAwaitingLevel());
+    CHECK_FALSE(harness.client.IsSynchronized());
+
+    const ServerHello &hello = harness.client.Handshake();
+    CHECK(hello.level.addressing == LevelAddressing::Virtual);
+    CHECK(hello.level.path == "levels/Materials.alvl");
+    CHECK(hello.level.contentHash == 0xFEEDFACECAFEBEEDull);
+    CHECK(hello.tickRateHz == harness.server.Config().tickRateHz);
+
+    // Nothing arrives while it holds off, however long the world runs.
+    SpawnReplicated(harness.serverScene, {1.f, 2.f, 3.f});
+    harness.Step(20);
+    CHECK(harness.client.ReplicatedEntityCount() == 0);
+    CHECK(harness.client.SnapshotsApplied() == 0);
+
+    harness.client.ConfirmLevelReady();
+    harness.Step(12);
+
+    CHECK(harness.client.IsSynchronized());
+    CHECK_FALSE(harness.client.IsAwaitingLevel());
+    CHECK(harness.client.ReplicatedEntityCount() == 1);
+    CHECK(Converged(harness));
+}
+
+TEST_CASE("a host with no level advertises none, and an aborted join says why")
+{
+    Harness harness(ReplicationConfig{}, /*deferHandshake=*/true);
+    harness.Step(4);
+
+    REQUIRE(harness.client.IsAwaitingLevel());
+    // The default. An editor client treats it as a clean abort rather than
+    // guessing at a world it cannot build.
+    CHECK(harness.client.Handshake().level.addressing == LevelAddressing::None);
+
+    harness.client.AbortJoin("the host is not running a level file");
+    CHECK_FALSE(harness.client.IsAwaitingLevel());
+    CHECK_FALSE(harness.client.IsSynchronized());
+    CHECK(harness.client.RejectMessage() == "the host is not running a level file");
+
+    harness.Step(20);
+    CHECK(harness.client.SnapshotsApplied() == 0);
+}
+
+TEST_CASE("message framing is inside the handshake hash, not just the component table")
+{
+    // The component table cannot see a field added to ServerHello or a new
+    // section in a snapshot, and two builds that disagree about either would
+    // pair up and then misparse each other silently.
+    CHECK(NetProtocolHash() != Core::Reflect::ProtocolHash());
+    CHECK(NetProtocolHash() == NetProtocolHash());
+    CHECK(NetProtocolSummary().find("net=") != std::string::npos);
+}
+
+TEST_CASE("the structure revision moves when the mirrored world's shape does, and rests when it does not")
+{
+    Harness harness;
+    harness.Step(4);
+
+    const std::uint64_t atRest = harness.client.StructureRevision();
+    harness.Step(20);
+    // An idle world writes nothing, so nothing needs re-resolving.
+    CHECK(harness.client.StructureRevision() == atRest);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {0.f, 0.f, 0.f});
+    harness.Step(12);
+    const std::uint64_t afterSpawn = harness.client.StructureRevision();
+    CHECK(afterSpawn > atRest);
+
+    // A component arriving is a shape change too: it is the case that matters,
+    // since a MeshRenderer's resolved GPU pointers are derived from data the
+    // wire just wrote and nothing else in a frame loop knows to look.
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{5, 0});
+    harness.Step(12);
+    const std::uint64_t afterComponent = harness.client.StructureRevision();
+    CHECK(afterComponent > afterSpawn);
+
+    harness.serverScene.Destroy(entity);
+    harness.serverScene.FlushDestroyed();
+    harness.Step(12);
+    CHECK(harness.client.StructureRevision() > afterComponent);
 }
 
 TEST_CASE("a component type that is not ACOMP(replicated) never crosses the wire")

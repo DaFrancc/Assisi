@@ -69,6 +69,13 @@ class ServerApp final : public Assisi::App::Application
   private:
     void ReportStatus();
 
+    /// Client only: build the world the host's handshake names — resolve the
+    /// level, check its content hash, load it, and strip the entities the host
+    /// owns — then answer the handshake. The headless twin of the editor's
+    /// join (EditorNet.cpp), and the reason a headless client is worth having:
+    /// it exercises the whole hello-gated sequence with no window in the way.
+    void BuildJoinedWorld();
+
     ServerOptions _options;
 
     Assisi::ECS::Scene            _scene;

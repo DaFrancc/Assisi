@@ -94,6 +94,16 @@ class ReplicationServer
     ReplicationServer(const ReplicationServer &)            = delete;
     ReplicationServer &operator=(const ReplicationServer &) = delete;
 
+    /// @brief Declare which level this server is running.
+    ///
+    /// Carried in every subsequent `ServerHello`, so set it before the first
+    /// connection arrives. A server that leaves it unset advertises
+    /// `LevelAddressing::None`, which a joining editor treats as a clean abort
+    /// — better than letting it join a world whose static half it cannot build.
+    void SetLevelIdentity(LevelIdentity level) { _level = std::move(level); }
+
+    [[nodiscard]] const LevelIdentity &Level() const { return _level; }
+
     /// @brief Register a connection the transport has reported as Connected.
     /// Sends the handshake; the client is not eligible for snapshots until it
     /// answers with a matching protocol hash.
@@ -204,6 +214,7 @@ class ReplicationServer
     Net::NetTransport &_transport;
     ECS::Scene        &_scene;
     ReplicationConfig  _config;
+    LevelIdentity      _level;
 
     std::unordered_map<Net::ConnectionId, Connection> _connections;
 
@@ -229,6 +240,36 @@ class ReplicationClient
 
     ReplicationClient(const ReplicationClient &)            = delete;
     ReplicationClient &operator=(const ReplicationClient &) = delete;
+
+    /// @brief Hold the `ClientHello` until the local world has been built.
+    ///
+    /// Off by default, which is exactly today's behaviour: answer the handshake
+    /// the moment it arrives. A client that loads a level first must turn it on
+    /// *before* the first Poll, because the ordering hazard is real — snapshots
+    /// arriving against a world that has not been built yet map the server's
+    /// NetIds onto whichever local entities happen to occupy those slots, and
+    /// the resulting scene is wrong in a way nothing later corrects.
+    ///
+    /// With it set the sequence is: ServerHello arrives → IsAwaitingLevel() goes
+    /// true and Handshake() names the level → the application builds its world →
+    /// ConfirmLevelReady() (or AbortJoin() with a reason a human can act on).
+    void SetDeferHandshake(bool defer) { _deferHandshake = defer; }
+
+    /// @brief True between a verified `ServerHello` and ConfirmLevelReady() /
+    /// AbortJoin(). Only reachable with SetDeferHandshake(true).
+    [[nodiscard]] bool IsAwaitingLevel() const { return _awaitingLevel; }
+
+    /// @brief The handshake the server sent, valid once one has arrived. Its
+    /// `level` is what a deferred client builds its world from.
+    [[nodiscard]] const ServerHello &Handshake() const { return _handshake; }
+
+    /// @brief Answer the handshake: the local world is built and NetIds may now
+    /// be mapped onto it. No-op unless awaiting.
+    void ConfirmLevelReady();
+
+    /// @brief Give up on a deferred join, recording @p reason for the UI. The
+    /// client stays unsynchronized; the caller tears the session down.
+    void AbortJoin(std::string reason);
 
     /// @brief Handle one received message.
     void HandleMessage(std::span<const std::byte> payload);
@@ -272,6 +313,18 @@ class ReplicationClient
     [[nodiscard]] ECS::Entity EntityOf(NetId netId) const;
 
     [[nodiscard]] std::size_t ReplicatedEntityCount() const { return _entityByNetId.size(); }
+
+    /// @brief Bumped every time an applied snapshot changed the *shape* of the
+    /// mirrored world — an entity spawned or despawned, a component added or
+    /// removed, or component data written.
+    ///
+    /// The hook a presentation layer needs and cannot derive: a mirror arrives
+    /// carrying a `MeshRenderer` whose asset ids are authored data and whose
+    /// resolved GPU pointers are null, and nothing else in the frame loop knows
+    /// to re-resolve it — which is precisely why the first live two-editor test
+    /// replicated a world that drew nothing. Compare against the value you last
+    /// acted on; re-resolve when it moves.
+    [[nodiscard]] std::uint64_t StructureRevision() const { return _structureRevision; }
 
     /// @brief The server's advertised timing, valid once synchronized.
     [[nodiscard]] std::uint32_t ServerTickRateHz() const { return _tickRateHz; }
@@ -363,15 +416,19 @@ class ReplicationClient
     double _interpolationDelayTicks = 6.0; ///< Replaced at handshake from snapshotHz.
 
     ClockFeedback _feedback;
+    ServerHello   _handshake;
     std::string   _rejectMessage;
 
-    std::uint64_t _lastAppliedTick   = 0;
-    std::uint64_t _snapshotsApplied  = 0;
-    std::uint64_t _snapshotsRejected = 0;
-    std::uint32_t _tickRateHz        = 60;
-    std::uint32_t _snapshotHz        = 20;
-    bool          _synchronized      = false;
-    bool          _worldComplete     = false;
+    std::uint64_t _lastAppliedTick    = 0;
+    std::uint64_t _snapshotsApplied   = 0;
+    std::uint64_t _snapshotsRejected  = 0;
+    std::uint64_t _structureRevision  = 0;
+    std::uint32_t _tickRateHz         = 60;
+    std::uint32_t _snapshotHz         = 20;
+    bool          _synchronized       = false;
+    bool          _worldComplete      = false;
+    bool          _deferHandshake     = false;
+    bool          _awaitingLevel      = false;
 };
 
 } // namespace Assisi::NetSync

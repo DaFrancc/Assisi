@@ -35,12 +35,39 @@ namespace Assisi::Editor
 // Play state (Run / Pause / Stop)
 // ---------------------------------------------------------------------------
 
-void EditorApp::StartPlay()
+void EditorApp::StartPlay(NetIntent intent)
 {
     if (_playState != PlayState::Editing || _scene == nullptr)
     {
         return;
     }
+
+    // Two host-side gates, checked before anything is snapshotted so a refusal
+    // leaves the editor exactly where it was.
+    if (intent == NetIntent::Host)
+    {
+        // Clients load the level from disk by path. A level that has never been
+        // saved has no path, and a host advertising `None` is a join that fails
+        // on the other machine for a reason nobody can act on from there.
+        if (HostLevelIdentity().addressing == Assisi::NetSync::LevelAddressing::None)
+        {
+            _netError = "save the level to host — clients load it from disk, so it has to be there.";
+            Assisi::Core::Log::Warn("Editor: refusing to host — {}", _netError);
+            return;
+        }
+
+        // Unsaved edits are a modal rather than a warning, because the failure
+        // they cause is remote and delayed: the client's wall is somewhere else,
+        // replicated bodies get corrected against geometry it cannot see, and
+        // "objects bouncing off nothing" ten minutes later never gets traced
+        // back to an amber label glanced past at host time.
+        if (IsSceneDirty() && !_hostIgnoreDirty)
+        {
+            _hostPromptOpen = true;
+            return;
+        }
+    }
+    _hostIgnoreDirty = false;
 
     // Snapshot the whole scene so Stop can restore it exactly, discarding whatever
     // play mode changes (physics settling, spawns, etc.). Unlike a Save()/Load()
@@ -65,8 +92,45 @@ void EditorApp::StartPlay()
             });
     }
 
+    // The edited world's level identity, so Stop can put it back: a join
+    // replaces the play scene with the *host's* level and retargets both.
+    _prePlayLevelPath = _world != nullptr ? _world->levelPath : std::string{};
+    _prePlayProfile   = _world != nullptr ? _world->profile : std::string{};
+
     SetPlayState(PlayState::Playing);
+    _netIntent   = intent;
+    _joinPhase   = JoinPhase::None;
+    _joinElapsed = 0.f;
     Assisi::Core::Log::Info("Play: started (scene snapshotted, {} entities).", _playSnapshot.size());
+
+    if (intent == NetIntent::Standalone)
+        return;
+
+    // The session binds the scene it replicates by reference at construction,
+    // and that scene is now the play scene — the one the editor already treats
+    // as disposable.
+    _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene);
+    const auto port = static_cast<std::uint16_t>(_netPort);
+
+    const bool started = intent == NetIntent::Host
+                             ? _netSession->Host(port, HostLevelIdentity())
+                             // Deferred: the ClientHello waits until this editor
+                             // has built the host's level, because a snapshot
+                             // applied against a world that does not exist yet
+                             // maps NetIds onto whatever is in those slots.
+                             : _netSession->Join(_netAddress.data(), port, /*deferHandshake=*/true);
+    if (!started)
+    {
+        // Copy the reason out before dropping the session that holds it.
+        _netError = _netSession->LastError();
+        _netSession.reset();
+        StopPlay();
+        return;
+    }
+
+    _netError.clear();
+    if (intent == NetIntent::Join)
+        _joinPhase = JoinPhase::Connecting;
 }
 
 void EditorApp::ResumePlay()
@@ -88,6 +152,15 @@ void EditorApp::PausePlay()
     {
         return;
     }
+    // Not while a session is up, either role: pausing a host stops the server
+    // ticking under connected clients, and pausing a client stops correction
+    // application under a live stream. Neither is a state this design defines,
+    // and un-pausing semantics for a networked session are a deferred design
+    // rather than something to improvise here.
+    if (IsNetSessionActive())
+    {
+        return;
+    }
     // Entering Paused: open a fresh scratch history so edits made while paused are
     // undoable *within the pause*, without ever touching the persistent editing
     // history. Bound to the EDITED world's scene, not whichever world is being
@@ -106,6 +179,16 @@ void EditorApp::StopPlay()
     {
         return;
     }
+
+    // The session belongs to the play session — both roles, every reason for
+    // stopping. First, so a client's mirrors are dropped before the restore
+    // rebuilds the editing scene underneath them, and so a host stops
+    // replicating a scene that is about to be torn down and rebuilt.
+    ShutdownNetSession();
+    _netIntent        = NetIntent::Standalone;
+    _joinPhase        = JoinPhase::None;
+    _pendingJoinBuild = false;
+    _pendingStopPlay  = false;
 
     // Discard the scratch pause-history first (whatever the pause let you undo dies
     // with the pause). The editing history is deliberately NOT cleared — the restore
@@ -162,6 +245,15 @@ void EditorApp::StopPlay()
 
         _selectedEntity = Assisi::ECS::NullEntity;
         Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
+    }
+
+    // A joined session loaded the *host's* level into this world and retargeted
+    // both its identity and its systems. The entities are back; put those back
+    // too, or Save would write the editing scene out over the host's filename.
+    if (_world != nullptr && (_world->levelPath != _prePlayLevelPath || _world->profile != _prePlayProfile))
+    {
+        _world->levelPath = _prePlayLevelPath;
+        _worlds.ApplyProfile(*_world, _prePlayProfile);
     }
 
     SetPlayState(PlayState::Editing);
@@ -315,6 +407,18 @@ void EditorApp::DrawGameControlWindow()
     const bool editing = _playState == PlayState::Editing;
     const bool playing = _playState == PlayState::Playing;
     const bool paused  = _playState == PlayState::Paused;
+    // Every world-structure control below is dead while a session is up. The
+    // session binds its scene by reference at construction, so a host-side
+    // Travel would either dangle that reference or keep replicating a retired
+    // world, and a client-side one detonates the join contract outright. v1
+    // disables them; mid-session level change is a deferred renegotiation of
+    // the ServerHello level contract, not a v1 casualty.
+    const bool networked = IsNetSessionActive();
+    const auto netTooltip = [networked](const char *text)
+    {
+        if (networked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            ImGui::SetTooltip("%s", text);
+    };
 
     // Run starts (from editing) or resumes (from paused); greyed while playing.
     // Pause is live only while playing. Stop is live whenever a session is (playing
@@ -334,12 +438,15 @@ void EditorApp::DrawGameControlWindow()
     ImGui::EndDisabled();
 
     ImGui::SameLine();
-    ImGui::BeginDisabled(!playing);
+    ImGui::BeginDisabled(!playing || networked);
     if (ImGui::Button("Pause"))
     {
         PausePlay();
     }
     ImGui::EndDisabled();
+    netTooltip("Not while a network session is up: pausing a host stops the server ticking under "
+               "connected clients, and pausing a client stops correction application under a live "
+               "stream. Stop instead.");
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!(playing || paused));
@@ -378,14 +485,17 @@ void EditorApp::DrawGameControlWindow()
     // one — which is what keeps Play/Stop's snapshot-and-restore unambiguous, and
     // a second resident level that nothing simulates would have no restore story
     // anyway (docs/multi-scene-design-notes.md §4, S2).
-    const bool canAddWorld = (playing || paused) && !_levelFiles.empty() && !_pendingWorldLoad.has_value();
+    const bool canAddWorld =
+        (playing || paused) && !networked && !_levelFiles.empty() && !_pendingWorldLoad.has_value();
     ImGui::BeginDisabled(!canAddWorld);
     if (ImGui::Button("Load as new world") && canAddWorld)
     {
         _pendingWorldLoad = "levels/" + _levelFiles[static_cast<std::size_t>(_selectedLevel)] + ".alvl";
     }
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered())
+    netTooltip("Not while a network session is up — the session replicates one scene, bound by "
+               "reference when it started.");
+    if (!networked && ImGui::IsItemHovered())
     {
         ImGui::SetTooltip("During play only. Loads the level selected in the Levels window into a "
                           "SECOND world alongside this one; both simulate, and the Entities panel "
@@ -397,14 +507,17 @@ void EditorApp::DrawGameControlWindow()
     // the world being played and never leaves Play. The edited world goes dormant
     // so Stop still restores it.
     ImGui::SameLine();
-    const bool canTravel = (playing || paused) && !_levelFiles.empty() && !_pendingTravel.has_value();
+    const bool canTravel =
+        (playing || paused) && !networked && !_levelFiles.empty() && !_pendingTravel.has_value();
     ImGui::BeginDisabled(!canTravel);
     if (ImGui::Button("Travel here") && canTravel)
     {
         _pendingTravel = "levels/" + _levelFiles[static_cast<std::size_t>(_selectedLevel)] + ".alvl";
     }
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered())
+    netTooltip("Not while a network session is up. A host changing level under connected clients is a "
+               "renegotiation of the level the handshake agreed on; that is a deferred design.");
+    if (!networked && ImGui::IsItemHovered())
     {
         ImGui::SetTooltip("During play only. Changes level to the one selected in the Levels window "
                           "without leaving Play — the world you were in is retired. Stop still "
@@ -425,15 +538,16 @@ void EditorApp::DrawGameControlWindow()
                                       : _levelFiles[static_cast<std::size_t>(_selectedLevel)];
 
     // Step 1 — Prepare. Disabled once a load is already in flight.
-    const bool canPreload =
-        (playing || paused) && !selectedLevel.empty() && !loadingInFlight && !_pendingPreload.has_value();
+    const bool canPreload = (playing || paused) && !networked && !selectedLevel.empty() && !loadingInFlight &&
+                            !_pendingPreload.has_value();
     ImGui::BeginDisabled(!canPreload);
     if (ImGui::Button("Prepare") && canPreload)
     {
         _pendingPreload = "levels/" + selectedLevel + ".alvl";
     }
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered())
+    netTooltip("Not while a network session is up — a seamless swap is still a level change.");
+    if (!networked && ImGui::IsItemHovered())
     {
         if (!(playing || paused))
             ImGui::SetTooltip("Start play first — seamless load is a during-play transition.");
@@ -447,13 +561,14 @@ void EditorApp::DrawGameControlWindow()
     // Step 2 — Load now. Prominent and enabled ONLY when the preload is fully
     // ready (deserialized AND assets streamed in), so pressing it is a clean swap.
     ImGui::SameLine();
-    ImGui::BeginDisabled(!preloadReady);
-    if (ImGui::Button("Load now") && preloadReady)
+    ImGui::BeginDisabled(!preloadReady || networked);
+    if (ImGui::Button("Load now") && preloadReady && !networked)
     {
         _pendingPromote = true; // marshalled: promotion touches GPU state
     }
     ImGui::EndDisabled();
-    if (ImGui::IsItemHovered() && !preloadReady)
+    netTooltip("Not while a network session is up — a seamless swap is still a level change.");
+    if (!networked && ImGui::IsItemHovered() && !preloadReady)
     {
         ImGui::SetTooltip(loadingInFlight ? "Enabled once the preload reaches READY (100%%)."
                                           : "Press \"Prepare\" first to start a background load.");
@@ -490,7 +605,7 @@ void EditorApp::DrawGameControlWindow()
     // be dropped on the floor — so only a non-edited world that isn't the only
     // one can go.
     Assisi::App::World *const edited = _worlds.Edited();
-    const bool canDestroy = _worlds.Count() > 1 && _world != edited && edited != nullptr;
+    const bool canDestroy = _worlds.Count() > 1 && _world != edited && edited != nullptr && !networked;
     ImGui::SameLine();
     ImGui::BeginDisabled(!canDestroy);
     if (ImGui::Button("Destroy this world") && canDestroy)
@@ -500,13 +615,14 @@ void EditorApp::DrawGameControlWindow()
         _worlds.Destroy(doomed);
     }
     ImGui::EndDisabled();
+    netTooltip("Not while a network session is up — the session holds one of these worlds by reference.");
 
     // Entity migration (S4): move the selected entity + its subtree into another
     // resident world. This is a debug stand-in for what a game does in code
     // (mark the player/inventory as travelling); it lets you watch a subtree move
     // between two levels by hand.
     const bool haveSelection = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity);
-    if (_worlds.Count() > 1 && haveSelection)
+    if (_worlds.Count() > 1 && haveSelection && !networked)
     {
         ImGui::SeparatorText("Migrate selection");
         _worlds.ForEach(

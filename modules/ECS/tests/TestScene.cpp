@@ -160,6 +160,41 @@ TEST_CASE("Scene: ReviveAt restores an exact handle and lets components be re-ad
     CHECK(scene.Get<Position>(a)->x == doctest::Approx(4.0f));
 }
 
+TEST_CASE("Scene: ReviveAt restores exact handles across a Clear")
+{
+    // The play/stop restore spans a level load once a joining editor builds the
+    // host's world in the play scene, and a load Clears — which leaves the
+    // registry with no slots at all. The snapshot's handles must still land
+    // exactly, or every stored handle in the undo history dangles.
+    Scene        scene;
+    const Entity first  = scene.Create();
+    scene.Create();
+    scene.Create();
+    const Entity fourth = scene.Create();
+    REQUIRE(scene.Add<Position>(fourth, {3.0f}) != nullptr);
+
+    scene.Clear();
+    REQUIRE(scene.AliveCount() == 0);
+    REQUIRE_FALSE(scene.IsAlive(fourth));
+
+    // Out of order, and past the end of a table that no longer exists.
+    scene.ReviveAt(fourth);
+    scene.ReviveAt(first);
+
+    CHECK(scene.IsAlive(fourth));
+    CHECK(scene.IsAlive(first));
+    CHECK(scene.EntityAt(fourth.index) == fourth);
+    CHECK(scene.AliveCount() == 2);
+    REQUIRE(scene.Add<Position>(fourth, {9.0f}) != nullptr);
+    CHECK(scene.Get<Position>(fourth)->x == doctest::Approx(9.0f));
+
+    // The slots skipped on the way are free, not lost: the next Create fills one
+    // of them rather than allocating past the whole range.
+    const Entity next = scene.Create();
+    CHECK(next.index < fourth.index);
+    CHECK(next != first);
+}
+
 TEST_CASE("Scene: ReviveAt cancels a pending deferred Destroy")
 {
     Scene scene;

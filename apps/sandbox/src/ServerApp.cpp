@@ -3,14 +3,22 @@
 #include "ServerApp.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <format>
+#include <fstream>
+#include <optional>
+#include <span>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace Sandbox
 {
@@ -33,6 +41,24 @@ double NowSeconds()
 
 /// How often a headless process prints a "still alive, here is the rate" line.
 constexpr double kReportIntervalSeconds = 5.0;
+
+/// FNV-1a over a level file's raw bytes, or nullopt if it cannot be read.
+/// Binary, not text, and the same on both ends: a text-mode read would translate
+/// line endings on one platform and not the other, turning a matched pair of
+/// files into a refused join.
+std::optional<std::uint64_t> HashLevelFile(const std::string &virtualPath)
+{
+    const auto resolved = Assisi::Core::AssetSystem::Resolve(virtualPath);
+    if (!resolved)
+        return std::nullopt;
+
+    std::ifstream file(*resolved, std::ios::binary);
+    if (!file.is_open())
+        return std::nullopt;
+
+    const std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+    return Assisi::Core::ContentHash64(std::as_bytes(std::span{bytes.data(), bytes.size()}));
+}
 
 } // namespace
 
@@ -81,7 +107,21 @@ void ServerApp::OnStart()
 
     if (_options.role == ServerRole::Host)
     {
-        if (!_session->Host(_options.port))
+        // What joining clients are told to load. A host with no level file
+        // advertises None, which a client treats as a clean abort — it has no
+        // way to build the static half of the world.
+        NetSync::LevelIdentity level;
+        if (!_options.level.empty())
+        {
+            if (const std::optional<std::uint64_t> hash = HashLevelFile(_options.level))
+            {
+                level.addressing  = NetSync::LevelAddressing::Virtual;
+                level.path        = _options.level;
+                level.contentHash = *hash;
+            }
+        }
+
+        if (!_session->Host(_options.port, std::move(level)))
         {
             RequestClose();
             return;
@@ -102,10 +142,77 @@ void ServerApp::OnStart()
 
         Log::Info("Server: listening on port {} ({} replicated entities).", _options.port, _moving.size());
     }
-    else if (!_session->Join(_options.address, _options.port))
+    // Deferred, exactly like the editor's join: this process has a level to load
+    // before a NetId has anywhere to land.
+    else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/true))
     {
         RequestClose();
     }
+}
+
+void ServerApp::BuildJoinedWorld()
+{
+    const NetSync::ServerHello *hello = _session->Handshake();
+    if (hello == nullptr)
+        return;
+
+    const auto fail = [this](std::string reason)
+    {
+        Log::Error("Client: join failed — {}", reason);
+        _session->AbortJoin(std::move(reason));
+        RequestClose();
+    };
+
+    if (hello->level.addressing == NetSync::LevelAddressing::None)
+    {
+        fail("the host is not running a level file, so there is no world to build here.");
+        return;
+    }
+    // The headless client only speaks virtual paths: an absolute one is a
+    // play-in-editor temp snapshot, which belongs to the process that wrote it.
+    if (hello->level.addressing != NetSync::LevelAddressing::Virtual)
+    {
+        fail("the host advertised a path this process cannot resolve.");
+        return;
+    }
+
+    const std::optional<std::uint64_t> localHash = HashLevelFile(hello->level.path);
+    if (!localHash)
+    {
+        fail("this build has no '" + hello->level.path + "'.");
+        return;
+    }
+    if (*localHash != hello->level.contentHash)
+    {
+        Log::Error("Client: level content hash mismatch for '{}' — host {}, local {}.", hello->level.path,
+                   Assisi::Core::ToHex64(hello->level.contentHash), Assisi::Core::ToHex64(*localHash));
+        fail("your copy of '" + hello->level.path + "' differs from the host's; sync it and retry.");
+        return;
+    }
+
+    if (!Assisi::App::LoadLevelSim(_scene, hello->level.path, _physics))
+    {
+        fail("'" + hello->level.path + "' failed to load.");
+        return;
+    }
+
+    // The host owns these; they arrive as mirrors. The file's copies are the
+    // host's authored originals, and keeping both would double the world.
+    std::vector<ECS::Entity> doomed;
+    _scene.ForEachEntity(
+        [&](ECS::Entity entity)
+        {
+            if (_scene.Has<NetSync::Replicated>(entity))
+                doomed.push_back(entity);
+        });
+    for (const ECS::Entity entity : doomed)
+        _scene.Destroy(entity);
+    _scene.FlushDestroyed();
+    _physics.RebuildSceneBodies(_scene);
+
+    _session->ConfirmLevelReady();
+    Log::Info("Client: built '{}' ({} replicated entities stripped) and answered the handshake.",
+              hello->level.path, doomed.size());
 }
 
 void ServerApp::OnFixedUpdate(float dt)
@@ -113,7 +220,24 @@ void ServerApp::OnFixedUpdate(float dt)
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
     if (_session)
+    {
         _session->Poll();
+
+        // The handshake named a level; build it before answering. Nothing here
+        // is GPU-bound, so unlike the editor this needs no marshalling.
+        if (_session->IsAwaitingLevel())
+            BuildJoinedWorld();
+
+        // A host that went away, or a rejected handshake: Poll turns both into
+        // an Offline session, and a client with no stream has nothing to do.
+        if (_options.role == ServerRole::Client && !_session->IsActive())
+        {
+            Log::Warn("Client: session ended ({}).",
+                      _session->LastError().empty() ? "closed by the host" : _session->LastError());
+            RequestClose();
+            return;
+        }
+    }
 
     _physics.Update(dt);
 

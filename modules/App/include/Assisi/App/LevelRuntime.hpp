@@ -25,6 +25,7 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <string_view>
 
 namespace Assisi::Runtime
@@ -99,6 +100,20 @@ bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCac
                Runtime::SceneRenderer &sceneRenderer,
                AssetCacheReset reset = AssetCacheReset::ClearFirst,
                Runtime::LevelHeader *header = nullptr);
+
+/// @brief LoadLevel from an absolute filesystem path instead of a virtual one.
+///
+/// Same safe-point rules, same everything — the only difference is where the
+/// bytes come from. It exists for levels that are not assets: the temp snapshot
+/// a play-in-editor host writes so its client processes can load the scene it is
+/// actually simulating, unsaved edits included. Asset *references inside* the
+/// level still resolve through the asset system as usual; it is only the level
+/// file itself that lives outside it.
+bool LoadLevelFile(ECS::Scene &scene, const std::filesystem::path &path, Render::AssetCache &cache,
+                   const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
+                   Runtime::SceneRenderer &sceneRenderer,
+                   AssetCacheReset reset = AssetCacheReset::ClearFirst,
+                   Runtime::LevelHeader *header = nullptr);
 
 /// @brief The simulation half of LoadLevel: deserialize the level and rebuild
 /// its physics bodies, with no asset cache and no renderer involved.

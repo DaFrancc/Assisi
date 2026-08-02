@@ -64,12 +64,66 @@ enum class RejectReason : std::uint8_t
     ServerFull       = 2,
 };
 
+/// @brief Framing version for the messages in this file.
+///
+/// The component table is hashed by `Core::Reflect::ProtocolHash`, and covers
+/// everything the codec carries — but not the shape of the messages *around* the
+/// component blocks. A field added to `ServerHello`, a new section in a snapshot,
+/// a different varint form: all invisible to the component table and all fatal to
+/// a mismatched pair. Bump this when any Write*/Read* pair here changes.
+inline constexpr std::uint32_t kNetProtocolVersion = 2;
+
+/// @brief The hash exchanged at handshake: the reflection protocol hash with
+/// this module's framing version folded in.
+///
+/// Use this rather than `Core::Reflect::ProtocolHash()` directly anywhere a
+/// handshake is written or checked; the reflection hash alone would let two
+/// builds with identical components but different message framing pair up and
+/// then misparse each other silently.
+[[nodiscard]] std::uint64_t NetProtocolHash();
+
+/// @brief `Core::Reflect::ProtocolSummary()` plus the framing version — the
+/// human-readable companion to NetProtocolHash.
+[[nodiscard]] std::string NetProtocolSummary();
+
+/// @brief How a `ServerHello`'s level path should be read.
+enum class LevelAddressing : std::uint8_t
+{
+    /// The host is running no level file at all. A joining editor treats this as
+    /// a load failure and aborts cleanly rather than guessing.
+    None = 0,
+    /// A virtual path under the asset root, e.g. "levels/Materials.alvl". Both
+    /// machines resolve it through their own asset system.
+    Virtual = 1,
+    /// An absolute filesystem path. Play-in-editor only, where host and client
+    /// are processes on one machine and the level is a temp snapshot the editor
+    /// wrote — which is how PIE hosts unsaved edits without a transfer protocol.
+    AbsolutePath = 2,
+};
+
+/// @brief What level the host is running, and which bytes it was built from.
+///
+/// Tagged, never sniffed: "does this look absolute?" is a guess that differs by
+/// platform, and the failure it produces (a client loading the wrong file, or
+/// none) surfaces minutes later as physics against invisible geometry.
+struct LevelIdentity
+{
+    LevelAddressing addressing = LevelAddressing::None;
+    std::string     path; ///< Interpreted per `addressing`; empty when None.
+    /// `Core::ContentHash64` of the level file as saved. A client that resolves
+    /// the path to different bytes refuses the join: everything downstream —
+    /// static geometry, unmarked dynamics, the entities that get stripped —
+    /// assumes both sides loaded the same file.
+    std::uint64_t contentHash = 0;
+};
+
 /// @brief Server → client handshake.
 struct ServerHello
 {
-    /// Hash of the component layout and codec version. Two builds that disagree
-    /// here cannot exchange component data safely, and the failure would be
-    /// silent corruption rather than an error — so the connection is refused.
+    /// Hash of the component layout, codec version, and message framing. Two
+    /// builds that disagree here cannot exchange component data safely, and the
+    /// failure would be silent corruption rather than an error — so the
+    /// connection is refused. See NetProtocolHash.
     std::uint64_t protocolHash = 0;
     /// Human-readable companion to the hash, so a rejection says *what* differs
     /// instead of just that something does.
@@ -80,6 +134,11 @@ struct ServerHello
     std::uint32_t snapshotHz = 20;
     /// The tick the server is on right now, so the client can start its clock.
     std::uint64_t serverTick = 0;
+    /// Which level the client must load before it answers. The client builds its
+    /// world from this and *then* sends its ClientHello — snapshots that arrived
+    /// against a world it had not built yet would map NetIds onto whatever
+    /// entities happened to occupy those slots.
+    LevelIdentity level;
 };
 
 /// @brief Client → server handshake.

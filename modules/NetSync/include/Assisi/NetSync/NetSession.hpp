@@ -90,11 +90,35 @@ class NetSession
 
     /// @brief Start hosting on @p port. In a windowed process this is the
     /// listen server: the scene being rendered is the one being replicated.
+    ///
+    /// @p level is what joining clients are told to load. Leaving it at its
+    /// default advertises `LevelAddressing::None`, which an editor client
+    /// refuses — correct for a host with no level file, since there is no way
+    /// for the client to build the static half of the world.
     /// @return false with LastError() set if the port could not be bound.
-    bool Host(std::uint16_t port);
+    bool Host(std::uint16_t port, LevelIdentity level = {});
 
     /// @brief Connect to a host. @p address is an IP literal (no DNS).
-    bool Join(std::string_view address, std::uint16_t port);
+    ///
+    /// @p deferHandshake holds the ClientHello until ConfirmLevelReady(), so a
+    /// caller that must load the host's level first can do so before any
+    /// snapshot is applied. A caller with nothing to build (the headless
+    /// sandbox client, the tests) leaves it false and handshakes immediately.
+    bool Join(std::string_view address, std::uint16_t port, bool deferHandshake = false);
+
+    /// @brief True when a deferred join is waiting for the local world.
+    [[nodiscard]] bool IsAwaitingLevel() const;
+
+    /// @brief The handshake the host sent — notably which level to load. Null
+    /// unless this is a client that has received one.
+    [[nodiscard]] const ServerHello *Handshake() const;
+
+    /// @brief Tell a deferred join that the local world is built.
+    void ConfirmLevelReady();
+
+    /// @brief Give up on a deferred join; @p reason lands in LastError() and in
+    /// the client's reject message, so the UI can name the cause.
+    void AbortJoin(std::string reason);
 
     /// @brief Tear the session down and return to Offline. A client also drops
     /// the entities it was mirroring — they belonged to the session, not to the

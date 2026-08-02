@@ -57,9 +57,25 @@ void Registry::Destroy(Entity entity)
 
 void Registry::ReviveAt(Entity entity)
 {
-    ASSISI_ASSERT(entity.index < _generations.size(),
-                  "ReviveAt: slot index is out of range — the slot must have existed before "
-                  "(ReviveAt restores a freed handle, it does not grow the table).");
+    /* Grow the slot table when the target sits past its end. The invariant that
+       matters is "no live handle for this slot", not "the slot existed a moment
+       ago": a scene that has been Clear()ed has no slots at all, and a restore
+       spanning a reset — the editor's play/stop round trip once a joining client
+       loads the host's level into the play scene — must still land every entity
+       on its exact handle. Slots skipped on the way in are created free, so the
+       next Create() fills them instead of allocating past them. */
+    if (entity.index >= _generations.size())
+    {
+        for (auto index = static_cast<uint32_t>(_generations.size()); index < entity.index; ++index)
+        {
+            _generations.push_back(0);
+            _alive.push_back(false);
+            _freeSlots.push_back(index);
+        }
+        _generations.push_back(0);
+        _alive.push_back(false); // made live by the common path below
+    }
+
     ASSISI_ASSERT(!_alive[entity.index],
                   "ReviveAt: slot is already live — reviving over a live occupant would alias two "
                   "entities onto one slot. Only a freed slot may be revived (linear-history invariant).");

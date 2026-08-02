@@ -660,17 +660,18 @@ void EditorApp::OnFixedUpdate(float dt)
 {
     if (!_scene)
         return;
-    // The network runs whether or not the simulation does, and deliberately so.
-    // A session is not a play session: an editor can host while in Editing mode
-    // and have a collaborator watch entities move under the gizmo, and a client
-    // must keep applying what the host sends even though its own physics is
-    // frozen. Gating this on IsSimulating() would make hosting silently do
-    // nothing until someone pressed Play — which is exactly the bug this
-    // comment exists to stop someone reintroducing.
+    // The pump runs unconditionally even though a session now only exists inside
+    // a play session (docs/replication-plan-v4.md §3.6). The two facts are not in
+    // tension: `IsSimulating()` is false while Paused and during the frames a
+    // join spends building its world, and both are states where the wire must
+    // still be read — a join that stops polling never receives the handshake it
+    // is waiting for, and a session whose host vanished must notice. Gating this
+    // on IsSimulating() would deadlock the join and silently strand the other.
     //
     // Poll first: a command that arrived for this tick should be applied on this
-    // tick, not the next one.
-    PollNetSession();
+    // tick, not the next one. It also advances the join state machine, which is
+    // why it takes dt.
+    PollNetSession(dt);
 
     // **In the editor, the play state is a flat switch: while it is not Playing,
     // nothing steps anywhere.** Not "the world you are looking at is frozen" —
@@ -746,6 +747,21 @@ void EditorApp::OnUpdate(float dt)
         _scene->IsAlive(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
         DeleteEntity(_selectedEntity);
+    }
+
+    // A joining client builds the host's level here, for the same reason: the
+    // load frees the old asset set and re-resolves, and the fixed step that
+    // noticed the handshake runs mid-frame. A failure inside sets _pendingStopPlay,
+    // which the next block picks up on this same frame.
+    if (_pendingJoinBuild)
+    {
+        _pendingJoinBuild = false;
+        BuildJoinedWorld();
+    }
+    if (_pendingStopPlay)
+    {
+        _pendingStopPlay = false;
+        StopPlay();
     }
 
     // A world requested from the Game panel is created here, at the frame's safe
@@ -827,6 +843,23 @@ void EditorApp::OnUpdate(float dt)
                         Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
                                                             world.streamingPending);
                     });
+
+    // A mirror arrives carrying authored asset ids and null resolved pointers,
+    // and nothing else in this loop knows to look at it: UpgradeStreamingAssets
+    // above only runs while the *cache* has loads in flight, which a spawn
+    // arriving over the wire is not. This was v2's third integration gap — the
+    // world replicated correctly and drew nothing. The client's structure
+    // revision is the signal; resolving is idempotent, so acting on it late
+    // costs a frame of billboard and never correctness.
+    if (_netSession != nullptr && _netSession->Client() != nullptr)
+    {
+        if (const std::uint64_t revision = _netSession->Client()->StructureRevision();
+            revision != _netStructureRevision)
+        {
+            _netStructureRevision = revision;
+            Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
+        }
+    }
 
     // Smooth mirrored entities into the scene before anything reads transforms
     // this frame. A no-op unless this editor is a connected client.
@@ -1217,6 +1250,7 @@ void EditorApp::OnImGui()
     { ASSISI_PROFILE_SCOPE("panel/hello-image");  DrawHelloImageWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
     { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
+    { ASSISI_PROFILE_SCOPE("panel/host-modal");   DrawHostUnsavedModal(); }
 
     // Release the Inspector's physics freeze here rather than inside the panel.
     // The panel cannot be trusted to observe its own release: DrawInspector

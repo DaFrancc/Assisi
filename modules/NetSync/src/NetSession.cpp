@@ -20,7 +20,7 @@ void NetSession::EnsureTransport()
         _transport = std::make_unique<Net::NetTransport>();
 }
 
-bool NetSession::Host(std::uint16_t port)
+bool NetSession::Host(std::uint16_t port, LevelIdentity level)
 {
     Disconnect();
     EnsureTransport();
@@ -34,13 +34,17 @@ bool NetSession::Host(std::uint16_t port)
     }
 
     _server = std::make_unique<ReplicationServer>(*_transport, _scene, _config);
-    _role   = SessionRole::Host;
+    // Before any connection can arrive, since it is carried in every hello.
+    _server->SetLevelIdentity(std::move(level));
+    _role = SessionRole::Host;
     _lastError.clear();
-    Core::Log::Info("NetSession: hosting on port {} (snapshots at {} Hz).", port, _server->Config().snapshotHz);
+    Core::Log::Info("NetSession: hosting on port {} (snapshots at {} Hz, level '{}').", port,
+                    _server->Config().snapshotHz,
+                    _server->Level().path.empty() ? "<none>" : _server->Level().path);
     return true;
 }
 
-bool NetSession::Join(std::string_view address, std::uint16_t port)
+bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHandshake)
 {
     Disconnect();
     EnsureTransport();
@@ -55,11 +59,31 @@ bool NetSession::Join(std::string_view address, std::uint16_t port)
     }
 
     _client = std::make_unique<ReplicationClient>(*_transport, _scene, _connection);
-    _clock  = std::make_unique<NetClock>(_config.tickRateHz);
-    _role   = SessionRole::Client;
+    // Before the first Poll: a hello that arrives and is answered immediately
+    // cannot be un-answered.
+    _client->SetDeferHandshake(deferHandshake);
+    _clock = std::make_unique<NetClock>(_config.tickRateHz);
+    _role  = SessionRole::Client;
     _lastError.clear();
     Core::Log::Info("NetSession: connecting to {}:{}...", address, port);
     return true;
+}
+
+bool NetSession::IsAwaitingLevel() const { return _client && _client->IsAwaitingLevel(); }
+
+const ServerHello *NetSession::Handshake() const { return _client ? &_client->Handshake() : nullptr; }
+
+void NetSession::ConfirmLevelReady()
+{
+    if (_client)
+        _client->ConfirmLevelReady();
+}
+
+void NetSession::AbortJoin(std::string reason)
+{
+    _lastError = reason;
+    if (_client)
+        _client->AbortJoin(std::move(reason));
 }
 
 void NetSession::Disconnect()
@@ -190,6 +214,8 @@ std::string NetSession::StatusText() const
     case SessionRole::Client:
         if (!_client->RejectMessage().empty())
             return std::format("Rejected — {}", _client->RejectMessage());
+        if (_client->IsAwaitingLevel())
+            return std::format("Loading the host's level ({})...", _client->Handshake().level.path);
         if (!_client->IsSynchronized())
             return "Connecting...";
         if (!_client->IsWorldComplete())
