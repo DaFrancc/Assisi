@@ -279,27 +279,31 @@ TEST_CASE("message framing is inside the handshake hash, not just the component 
     CHECK(NetProtocolSummary().find("net=") != std::string::npos);
 }
 
-TEST_CASE("the protocol hash is pinned across the replicable rename")
+TEST_CASE("replication policy is part of the protocol description")
 {
-    // A **temporary scaffold**, and deliberately brittle. The opt-in rework
-    // (docs/replication-optin-plan-v1.md) renames the capability flag, and that
-    // flag is a hash input by v4's R1 decision (BinaryCodec.cpp emits
-    // " replicated"/" local" per component into the hashed layout text). A
-    // rename that accidentally changed the *emitted* spelling would silently
-    // repartition every deployed build into incompatible pairs, so P0 pins the
-    // value captured before the rename and proves it did not move.
+    // The successor to P0's hash pin, which has been retired now that it has
+    // done its job. That pin held one measured constant (6593563864785826454)
+    // across the ACOMP(replicated) -> ACOMP(replicable) rename, proving the
+    // rename did not disturb the *emitted* layout text and therefore could not
+    // repartition deployed builds into incompatible pairs. P2a then moved the
+    // hash deliberately, by giving `Replicated` its exclusion mask.
     //
-    // Retire or re-pin this at P2a, which changes the hash *on purpose*:
-    // `Replicated` gains its exclusion mask, and a serializable component
-    // gaining a wire field adds a line to the hashed description. Builds
-    // straddling that stage refuse to pair, which is correct — this constant is
-    // how that stops being a mystery.
-    //
-    // It is also sensitive to the registry contents of this binary: adding a
-    // reflected component to any module the NetSync tests link will move it.
-    // Acceptable for a scaffold with a two-stage lifetime.
-    constexpr std::uint64_t kPinnedHash = 6593563864785826454ull;
-    CHECK(NetProtocolHash() == kPinnedHash);
+    // Carrying the constant forward would have been worse than useless: it is
+    // sensitive to every reflected component in this binary, so any unrelated
+    // addition trips it, and the reflex that teaches is "bump the number" — the
+    // opposite of the scrutiny a protocol change deserves. What is worth pinning
+    // is the *property*, and it needs no magic number.
+    const std::string description = Core::Reflect::ProtocolLayoutDescription();
+
+    // The marker's policy field is inside the hash, so two builds that disagree
+    // about what an entity may withhold refuse to pair rather than silently
+    // sending each other different component sets.
+    CHECK(description.find("excluded") != std::string::npos);
+    // ...and the capability flag still is too — the v4 R1 decision this all
+    // rests on. (TestBinaryCodec proves flipping it changes the hash; this
+    // proves the real registry actually carries it.)
+    CHECK(description.find(" replicated") != std::string::npos);
+    CHECK(NetProtocolHash() == NetProtocolHash());
 }
 
 TEST_CASE("the structure revision moves when the mirrored world's shape does, and rests when it does not")

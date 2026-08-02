@@ -4,6 +4,7 @@
 /// @file NetComponents.hpp
 /// @brief ECS components that mark what participates in replication.
 
+#include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Prelude.hpp>
 
 #include <cstdint>
@@ -34,11 +35,31 @@ struct Replicated
     /// @brief Relative send priority. Higher means "prefer this when a snapshot
     /// does not fit in one packet".
     ///
-    /// Unused in v1 — every changed entity is sent every snapshot — but the
-    /// send loop is already shaped as a sortable list, so the Tribes-style
-    /// accumulator drops in later with no protocol change. Authored now so that
-    /// change, when it comes, needs no level-file migration.
+    /// Drives the Tribes-style accumulator in the send loop: every live entity
+    /// gains max(priority, eps) each snapshot tick, entities drain highest-first
+    /// into the byte budget, and only the ones that actually went reset — so the
+    /// ones that missed keep climbing and cannot starve.
     AFIELD(min = 0.0, max = 100.0) float priority = 1.f;
+
+    /// @brief Capable component types this entity declines to send.
+    ///
+    /// **The policy half of the split.** `ACOMP(replicable)` on a type grants a
+    /// capability — this *can* cross the wire — and this decides, per entity,
+    /// which of those capabilities are actually used. An engine module can no
+    /// longer set network policy for a game by editing one of its own headers,
+    /// which is the whole point (docs/replication-optin-plan-v1.md).
+    ///
+    /// Empty by default, meaning "send every capable component present". That
+    /// polarity is Unity's, and it is deliberate: `Transform`, `Name`,
+    /// `MeshRenderer`, and `RigidBodyDescriptor` are wanted on essentially every
+    /// replicated entity, so requiring each level author to restate them would
+    /// manufacture boilerplate and, worse, silent under-replication when someone
+    /// forgets.
+    ///
+    /// Read live by the server every snapshot — there is no cache to invalidate,
+    /// which is why this component does not need `tracked`. Edit it through any
+    /// path; the next snapshot sees it.
+    AFIELD() Assisi::Core::Reflect::ComponentMask excluded;
 };
 
 /// @brief Marks a locally-created *mirror* of a remote entity: this machine

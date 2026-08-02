@@ -374,10 +374,21 @@ class ReplicationServer
     std::uint64_t _simTick     = 0;
     std::uint64_t _snapshotDiv = 3; ///< tickRateHz / snapshotHz, at least 1.
 
-    /// Component ids the protocol replicates, resolved once: every serializable
-    /// reflected component except the marker itself. Cached because it is walked
-    /// per entity per snapshot.
+    /// Component ids this server *may* send: every ACOMP(replicable) type,
+    /// resolved once. Capability, not policy — what an individual entity
+    /// actually sends is this set minus its own `Replicated::excluded`.
+    /// Cached because it is walked per entity per snapshot.
     std::vector<Core::Reflect::ComponentId> _replicatedComponents;
+
+    /// Replicable ordinal of each entry above, in the same order — the bit index
+    /// to test in an entity's exclusion mask. Resolved alongside the ids rather
+    /// than looked up per component per entity per snapshot.
+    ///
+    /// Stored explicitly rather than assumed equal to the index: both sequences
+    /// happen to be in ascending id order today, so they coincide, but the game
+    /// filter removes entries from *this* list only — and a coincidence that
+    /// silently becomes false would misaim every exclusion at once.
+    std::vector<std::size_t> _replicatedOrdinals;
 
     /// Resolved once, so the per-entity write loop can suppress the Transform of
     /// a bodied entity without a registry lookup per component per entity.

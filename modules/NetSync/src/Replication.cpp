@@ -100,13 +100,35 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     // Capability, not policy: this is what *may* travel, not what does. Which of
     // these a given entity actually sends is narrowed later — by the game's
     // neverReplicate list and by each entity's own exclusion mask.
-    for (const Core::Reflect::ComponentMeta *meta : Core::Reflect::ComponentRegistry::Instance().SerializableComponents())
+    const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
+    for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
     {
-        if (meta->replicable)
-            _replicatedComponents.push_back(meta->id);
+        if (!meta->replicable)
+            continue;
+        _replicatedComponents.push_back(meta->id);
+        _replicatedOrdinals.push_back(registry.ReplicableOrdinalOf(meta->id));
     }
 
-    _transformComponentId = Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(ECS::Transform));
+    // Say what this session can send, once, where someone will see it. The
+    // residual risk of default-send policy is that a future engine module marks
+    // a new type replicable and every marked entity quietly starts carrying it;
+    // a capability surface you are shown is the cheap fence against that.
+    {
+        std::string names;
+        for (const Core::Reflect::ComponentId id : _replicatedComponents)
+        {
+            if (const Core::Reflect::ComponentMeta *meta = registry.ById(id))
+            {
+                if (!names.empty())
+                    names += ", ";
+                names += meta->name;
+            }
+        }
+        Core::Log::Info("NetSync: replicable components ({}): {}", _replicatedComponents.size(),
+                        names.empty() ? "none" : names);
+    }
+
+    _transformComponentId = registry.IdOf(typeid(ECS::Transform));
 }
 
 bool ReplicationServer::IsSnapshotTick(std::uint64_t simTick) const { return simTick % _snapshotDiv == 0; }
@@ -488,12 +510,29 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
 
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    // What this entity has right now, in the same packed, sorted form as the
-    // acked baseline — _replicatedComponents is registry order, which is
-    // ascending by id, so this comes out sorted without a sort.
+    // This entity's own policy, read live. There is deliberately no cache: the
+    // mask is a plain value on a component we already have to look up, so
+    // caching would buy a hash lookup and cost an invalidation problem — which
+    // is also why `Replicated` needs no change tracking.
+    Core::Reflect::ComponentMask excluded;
+    if (const Replicated *marker = _scene.Get<Replicated>(entity))
+        excluded = marker->excluded;
+
+    // What this entity has right now *and* is willing to send, in the same
+    // packed, sorted form as the acked baseline — _replicatedComponents is
+    // registry order, which is ascending by id, so this comes out sorted without
+    // a sort.
+    //
+    // Excluded components are absent from this list, which is what makes the
+    // rest fall out for free: the removal diff below sees them disappear from
+    // the client's acked slice and sends removals, and D11 sees them reappear
+    // and force-sends. One filter, both directions.
     const std::size_t componentsBegin = outComponents.size();
-    for (const Core::Reflect::ComponentId id : _replicatedComponents)
+    for (std::size_t slot = 0; slot < _replicatedComponents.size(); ++slot)
     {
+        if (excluded.Test(_replicatedOrdinals[slot]))
+            continue;
+        const Core::Reflect::ComponentId    id   = _replicatedComponents[slot];
         const Core::Reflect::ComponentMeta *meta = registry.ById(id);
         if (meta != nullptr && meta->getByEntity(&_scene, entity.index, entity.generation) != nullptr)
             outComponents.push_back(PackComponentRef(netId, id));
@@ -535,8 +574,12 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
                         _scene.Get<Physics::RigidBody>(entity) != nullptr &&
                         (descriptor == nullptr || !descriptor->isStatic);
 
-    for (const Core::Reflect::ComponentId id : _replicatedComponents)
+    for (std::size_t slot = 0; slot < _replicatedComponents.size(); ++slot)
     {
+        if (excluded.Test(_replicatedOrdinals[slot]))
+            continue; // this entity declines to send it
+
+        const Core::Reflect::ComponentId     id   = _replicatedComponents[slot];
         const Core::Reflect::ComponentMeta *meta = registry.ById(id);
         if (meta == nullptr)
             continue;
@@ -545,10 +588,24 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         if (component == nullptr)
             continue;
 
+        // D11, the removal diff's dual: the client does not have this component,
+        // so send its full state regardless of what the change tick says.
+        //
+        // The change tick answers "did this value change since the client last
+        // saw it", which is the wrong question whenever the *presence* changed
+        // instead. Re-including an excluded component is exactly that case —
+        // policy moved, the component did not, so its tick still predates the
+        // baseline and the gate below would skip it until the next keyframe
+        // sweep, up to several seconds of a mirror the server believes is whole.
+        // It also covers the general case of a component the client lost while
+        // the server has nothing new to stamp on it.
+        const bool clientHasIt =
+            std::binary_search(ackedLow, ackedHigh, PackComponentRef(netId, id));
+
         // sinceChangeTick == 0 is the empty baseline: spawn, late join, and a
         // client that has acked nothing all take this path, which is the whole
         // point of not having a separate full-state message.
-        if (sinceChangeTick != 0 && !_scene.ChangedById(entity, id, sinceChangeTick))
+        if (sinceChangeTick != 0 && clientHasIt && !_scene.ChangedById(entity, id, sinceChangeTick))
             continue;
 
         // ...and on that empty baseline a bodied entity's Transform still goes,
@@ -558,7 +615,11 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         // clients only at the next keyframe sweep. Accepted for v1, because a
         // scale change on a live body needs a collider reshape the engine does
         // not do yet either (docs/replication-plan-v4.md §5).
-        if (bodied && sinceChangeTick != 0 && id == _transformComponentId)
+        //
+        // Suppression yields to D11 for the same reason the change gate does: a
+        // client that has never received this Transform has nowhere to build its
+        // body from, so "the body owns motion" has nothing to be true about yet.
+        if (bodied && sinceChangeTick != 0 && clientHasIt && id == _transformComponentId)
             continue;
 
         writer.WriteBool(true);

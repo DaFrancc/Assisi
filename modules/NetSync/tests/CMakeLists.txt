@@ -20,6 +20,7 @@ add_executable(Assisi-NetSync-Tests
   TestNetSession.cpp
   TestBodyReplication.cpp
   TestComponentMaskCodec.cpp
+  TestInstancePolicy.cpp
   TestReplication.cpp
 )
 
