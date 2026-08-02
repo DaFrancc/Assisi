@@ -1165,7 +1165,12 @@ void EditorApp::DrawInspector()
         }
 
         ImGui::SameLine();
-        const bool headerOpen = ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
+        // AllowOverlap because a CollapsingHeader spans the full row width, so
+        // anything drawn over it with SameLine() is *visible* but never gets the
+        // click — the header's hit box swallows it first. The send-toggle glyph
+        // below sits exactly there.
+        const bool headerOpen = ImGui::CollapsingHeader(
+            meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen | ImGuiTreeNodeFlags_AllowOverlap);
 
         // The per-component send toggle, on the header where you are already
         // looking. Shown only on an entity that replicates at all: on a local
@@ -1182,16 +1187,19 @@ void EditorApp::DrawInspector()
             const bool sends    = SelectedEntitySends(*meta);
 
             ImGui::SameLine();
-            // A button, not a label: it reads as clickable and gives hover and
-            // press feedback. The frame is transparent so it still looks like a
-            // glyph sitting beside the header.
+            // A button, not a label. Idle frame is transparent so it still reads
+            // as a glyph beside the header, but hover and active are visible —
+            // without them nothing signals that it can be clicked, which is
+            // exactly how the first version of this failed.
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.f, 0.f, 0.f, 0.f});
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4{1.f, 1.f, 1.f, 0.20f});
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4{1.f, 1.f, 1.f, 0.35f});
             ImGui::PushStyleColor(ImGuiCol_Text, sends ? kWireColor : kWireOffColor);
             ImGui::BeginDisabled(gameVeto || !editable);
             if (ImGui::SmallButton(kWireGlyph))
                 SetSelectedEntitySends(*meta, !sends);
             ImGui::EndDisabled();
-            ImGui::PopStyleColor(2);
+            ImGui::PopStyleColor(4);
 
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
