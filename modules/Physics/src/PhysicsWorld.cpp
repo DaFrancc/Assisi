@@ -719,29 +719,49 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
 
         const Impl::MotionSnapshot &s = it->second;
 
-        // Taken once, after the skips: every mutable access through the proxy
-        // stamps, so binding the reference here costs one tick per body that
-        // actually moves rather than one per field written — and bodies that were
-        // skipped above are never marked changed at all.
-        Assisi::ECS::Transform &t = transform.GetMut();
-
         // A body settling toward sleep produces consecutive step poses that differ
         // by a hair; blending them with a per-frame-varying alpha makes the render
         // pose wobble (~0.001 rad). Below the rest deltas, snap to the current step
         // so it renders stable. Snapping still tracks a slow creep exactly (it
         // writes curPosition/curRotation every frame) — it only drops the blend.
         const glm::vec3 positionDelta = s.curPosition - s.prevPosition;
-        t.position = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
-                         ? s.curPosition
-                         : glm::mix(s.prevPosition, s.curPosition, alpha);
+        const glm::vec3 targetPosition = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
+                                             ? s.curPosition
+                                             : glm::mix(s.prevPosition, s.curPosition, alpha);
 
         // 1 - |dot(prev, cur)| is ~0 for near-identical orientations; abs folds the
         // quaternion q/-q double cover. slerp keeps angular speed constant across
         // the blend and is renormalised since the result feeds the render matrix.
-        const float rotationDelta = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
-        t.rotation = rotationDelta < kRestRotationDelta
-                         ? s.curRotation
-                         : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
+        const float     rotationDelta  = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
+        const glm::quat targetRotation = rotationDelta < kRestRotationDelta
+                                             ? s.curRotation
+                                             : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
+
+        // Nothing moved: skip the write entirely rather than stamp a change tick
+        // for a pose identical to the one already there.
+        //
+        // Every mutable access through the proxy stamps, and a resting body would
+        // otherwise be marked changed on every single frame for the rest of the
+        // session — a permanent false positive that PropagateTransforms pays for
+        // in dirty-subtree work and that replication pays for in bandwidth, since
+        // a visual-only mirror (one whose descriptor its entity declines to send)
+        // has no body channel and travels by Transform delta.
+        //
+        // Exact comparison is right here rather than epsilon'd: a resting body's
+        // snapshot poses are frozen — nothing integrates them — so the computed
+        // target is bit-identical frame to frame, and the rest-snap branches above
+        // already absorbed the near-rest jitter that would otherwise need a
+        // tolerance. Anything genuinely in motion differs in the low bits and is
+        // written.
+        const Assisi::ECS::Transform &current = transform.Get();
+        if (current.position == targetPosition && current.rotation == targetRotation)
+            continue;
+
+        // Taken once, after every skip: binding the reference costs one tick per
+        // body that actually moves rather than one per field written.
+        Assisi::ECS::Transform &t = transform.GetMut();
+        t.position                = targetPosition;
+        t.rotation                = targetRotation;
     }
 }
 

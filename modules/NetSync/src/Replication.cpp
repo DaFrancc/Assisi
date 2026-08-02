@@ -129,6 +129,8 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     }
 
     _transformComponentId = registry.IdOf(typeid(ECS::Transform));
+    _transformOrdinal     = registry.ReplicableOrdinalOf(_transformComponentId);
+    _descriptorOrdinal    = registry.ReplicableOrdinalOf(registry.IdOf(typeid(Physics::RigidBodyDescriptor)));
 }
 
 bool ReplicationServer::IsSnapshotTick(std::uint64_t simTick) const { return simTick % _snapshotDiv == 0; }
@@ -383,6 +385,45 @@ void ReplicationServer::ReconcileNetIds()
     }
 }
 
+Core::Reflect::ComponentMask ReplicationServer::ExclusionMaskOf(ECS::Entity entity) const
+{
+    if (const Replicated *marker = _scene.Get<Replicated>(entity))
+        return marker->excluded;
+    return Core::Reflect::ComponentMask{};
+}
+
+bool ReplicationServer::ReplicatesAsBody(ECS::Entity entity, const Core::Reflect::ComponentMask &excluded) const
+{
+    if (_physics == nullptr || _scene.Get<Physics::RigidBody>(entity) == nullptr)
+        return false;
+
+    // Authored geometry is not simulated, whatever its live motion type says: a
+    // static body's pose is *authored data* and already has a replication path,
+    // the ordinary tracked-Transform delta. Keyed off the descriptor rather than
+    // the live motion type on purpose — the editor holds a *dynamic* body Static
+    // for the duration of a gizmo drag, and that body is still a simulated one
+    // being placed.
+    const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
+    if (descriptor == nullptr || descriptor->isStatic)
+        return false;
+
+    // Policy: the client will never build a body it was never sent a descriptor
+    // for, so correcting one would be talking to nobody. Its Transform replicates
+    // normally instead and the mirror becomes an interpolated visual — "show this
+    // moving, don't simulate it", which is a useful thing to be able to author.
+    if (excluded.Test(_descriptorOrdinal))
+        return false;
+
+    // ...and both client-side body builders require a Transform, so a bodied
+    // entity withholding one can never have a body built either. Sending body
+    // state it must drop on arrival is pure waste; treat it as non-bodied and let
+    // the editor's warning explain that the mirror will sit at its load pose.
+    if (excluded.Test(_transformOrdinal))
+        return false;
+
+    return true;
+}
+
 void ReplicationServer::CaptureBodyStates()
 {
     if (_physics == nullptr)
@@ -401,19 +442,20 @@ void ReplicationServer::CaptureBodyStates()
         if (body == nullptr)
             continue; // not a simulated entity; its Transform replicates normally
 
-        // Authored geometry is not simulated, whatever its live motion type says:
-        // a static body's pose is *authored data*, and authored data already has
-        // a replication path — the ordinary tracked-Transform delta. Sending it
-        // as body state instead would be the worse choice twice over, since a
-        // static body is never active (so there is nothing to observe) and a
-        // client's static mirror has no solver to apply a correction to.
-        //
-        // Keyed off the descriptor rather than the live motion type on purpose:
-        // the editor holds a *dynamic* body Static for the duration of a gizmo
-        // drag, and that body is still a simulated one being placed.
-        const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
-        if (descriptor != nullptr && descriptor->isStatic)
+        // One predicate for every "does motion travel as body state" question in
+        // this file — see ReplicatesAsBody for the four cases it rules out.
+        if (!ReplicatesAsBody(entity, ExclusionMaskOf(entity)))
+        {
+            // Erasing is not tidiness. The retirement sweep at the bottom only
+            // drops records for *retired* NetIds, so a record left behind by an
+            // entity that stopped being bodied would keep its nonzero tick — and
+            // that tick beats every post-sweep empty baseline, so the stale state
+            // would be resent to every client after every keyframe sweep, for the
+            // rest of the session. It would also suppress the first-sighting
+            // capture if the entity ever became bodied again.
+            _bodyStates.erase(netId);
             continue;
+        }
 
         const auto active = std::find_if(_activeBodies.begin(), _activeBodies.end(),
                                          [entity](const Physics::PhysicsWorld::ActiveBodyState &candidate)
@@ -564,15 +606,10 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     // Transform. Sending both would double the cost of every moving object and
     // hand the client two disagreeing answers about where it is.
     //
-    // Authored-static geometry is not that entity, even though it has a body: its
-    // pose is authored data, it is never active for the capture to observe, and a
-    // client's static mirror has no solver to apply a correction to. It keeps the
-    // ordinary Transform path — which is also how a replicated wall dragged in
-    // the editor reaches anyone.
-    const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
-    const bool                          bodied     = _physics != nullptr &&
-                        _scene.Get<Physics::RigidBody>(entity) != nullptr &&
-                        (descriptor == nullptr || !descriptor->isStatic);
+    // The same predicate the capture uses, and it must be: an entity one of them
+    // considers bodied and the other does not gets its Transform suppressed *and*
+    // no body state, leaving the mirror frozen at its load pose.
+    const bool bodied = ReplicatesAsBody(entity, excluded);
 
     for (std::size_t slot = 0; slot < _replicatedComponents.size(); ++slot)
     {
@@ -894,6 +931,9 @@ ReplicationClient::ReplicationClient(Net::NetTransport &transport, ECS::Scene &s
                                      Physics::PhysicsWorld *physics)
     : _transport(transport), _scene(scene), _physics(physics), _connection(connection)
 {
+    const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
+    _descriptorComponentId                          = registry.IdOf(typeid(Physics::RigidBodyDescriptor));
+    _rigidBodyComponentId                           = registry.IdOf(typeid(Physics::RigidBody));
 }
 
 void ReplicationClient::SendHello()
@@ -1151,6 +1191,21 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             const auto componentId = static_cast<Core::Reflect::ComponentId>(reader.ReadVarUInt32());
             if (!reader.Ok())
                 return false;
+
+            // Losing the descriptor is not an ordinary component removal: this
+            // mirror stops being body-corrected and becomes an interpolated
+            // visual, so its Jolt body has to go with it. Without this the body
+            // outlives its authority and keeps colliding — an invisible obstacle
+            // in the middle of the world, which is a worse bug than the one that
+            // produced it. The stale transient RigidBody would also block any
+            // future rebuild, since SyncMirrorBody keys off its presence.
+            if (_physics != nullptr && componentId == _descriptorComponentId &&
+                _scene.Get<Physics::RigidBody>(entity) != nullptr)
+            {
+                DestroyMirrorBody(netId);
+                _scene.RemoveById(entity, _rigidBodyComponentId);
+            }
+
             _scene.RemoveById(entity, componentId);
             ++_structureRevision;
         }

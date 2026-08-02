@@ -17,6 +17,8 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Core/Reflect/ComponentMask.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
@@ -298,6 +300,31 @@ class ReplicationServer
     /// connection sees the same world.
     void ReconcileNetIds();
 
+    /// This entity's authored exclusion policy, or an empty mask if it has no
+    /// marker. Read live — see `Replicated::excluded` for why nothing caches it.
+    [[nodiscard]] Core::Reflect::ComponentMask ExclusionMaskOf(ECS::Entity entity) const;
+
+    /// Whether this entity's motion travels as *body state* rather than as an
+    /// ordinary replicated Transform.
+    ///
+    /// One predicate, consulted by all four places that used to ask the question
+    /// separately (the capture, the body-state write, and the Transform
+    /// suppression in the component write). They must agree: an entity the
+    /// capture treats as bodied but the component pass does not would have its
+    /// Transform suppressed *and* no body state sent — a mirror frozen at its
+    /// load pose, which is the worst of both paths.
+    ///
+    /// False in four cases, and the last two are policy:
+    ///  - no physics world, or no RigidBody — nothing to observe;
+    ///  - an authored-static descriptor, whose pose is authored data and travels
+    ///    as a Transform (docs/replication-plan-v4.md);
+    ///  - the descriptor is *excluded*, so the client will never build a body to
+    ///    correct — the visual-only mirror of D6;
+    ///  - the Transform is excluded on a bodied entity, so the client could
+    ///    never build a body even if it wanted to (both build paths need a
+    ///    Transform), and sending body state it must drop would be pure waste.
+    [[nodiscard]] bool ReplicatesAsBody(ECS::Entity entity, const Core::Reflect::ComponentMask &excluded) const;
+
     /// Refresh `_bodyStates` from the physics world. Once per tick, before any
     /// snapshot is built, for the same reason as ReconcileNetIds.
     ///
@@ -393,6 +420,11 @@ class ReplicationServer
     /// Resolved once, so the per-entity write loop can suppress the Transform of
     /// a bodied entity without a registry lookup per component per entity.
     Core::Reflect::ComponentId _transformComponentId = Core::Reflect::kInvalidComponentId;
+
+    /// Exclusion-mask bit indices for the two components whose absence changes
+    /// how an entity replicates at all, resolved once for the same reason.
+    std::size_t _transformOrdinal  = Core::Reflect::ComponentRegistry::kInvalidOrdinal;
+    std::size_t _descriptorOrdinal = Core::Reflect::ComponentRegistry::kInvalidOrdinal;
 };
 
 /// @brief The receiving half. Applies snapshots into a local scene.
@@ -708,6 +740,13 @@ class ReplicationClient
     ECS::Scene            &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
     Net::ConnectionId      _connection;
+
+    /// Resolved once. A descriptor *removal* is the one component removal with a
+    /// side effect — the mirror stops being body-corrected, so its Jolt body and
+    /// the transient RigidBody handle must go too — and the removal path sees
+    /// only ids, never types.
+    Core::Reflect::ComponentId _descriptorComponentId = Core::Reflect::kInvalidComponentId;
+    Core::Reflect::ComponentId _rigidBodyComponentId  = Core::Reflect::kInvalidComponentId;
 
     std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
     std::unordered_map<NetId, MirrorBody>                _bodies;

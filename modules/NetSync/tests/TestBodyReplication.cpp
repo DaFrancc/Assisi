@@ -947,3 +947,212 @@ TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
     // No decay period: the rendered pose is already the corrected one.
     CHECK(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - restPosition) < 0.01f);
 }
+
+// ── Per-entity policy and the body channel (P2b) ─────────────────────────────
+//
+// Excluding RigidBodyDescriptor means "replicate this as a visual, don't
+// simulate it on clients": no body state, no client-side Jolt body, and the
+// Transform travels normally so the mirror interpolates. It is a useful thing to
+// be able to author — debris the server simulates but clients only watch — and
+// it needs the whole body pipeline to agree, or the mirror ends up with its
+// Transform suppressed *and* no corrections, frozen at its load pose.
+
+namespace
+{
+
+std::size_t OrdinalOfType(const std::type_info &type)
+{
+    const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
+    return registry.ReplicableOrdinalOf(registry.IdOf(std::type_index(type)));
+}
+
+void ExcludeDescriptor(ECS::Scene &scene, ECS::Entity entity)
+{
+    Replicated *marker = scene.GetMut<Replicated>(entity);
+    REQUIRE(marker != nullptr);
+    marker->excluded.Set(OrdinalOfType(typeid(Physics::RigidBodyDescriptor)));
+}
+
+} // namespace
+
+TEST_CASE("a descriptor-excluded entity becomes a visual-only mirror")
+{
+    PhysicsHarness harness;
+    harness.runRenderWriteback = true; // a windowed host, so the Transform tracks the sim
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity falling = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 6.f, 0.f},
+                                         /*isStatic=*/false);
+    ExcludeDescriptor(harness.serverScene, falling);
+
+    harness.Step(40);
+
+    const ECS::Entity mirror = MirrorOf(harness, falling);
+    REQUIRE(mirror != ECS::NullEntity);
+
+    // No descriptor arrived, so the client never built a body — the mirror is
+    // rendered by interpolation, not corrected by the solver.
+    CHECK(harness.clientScene.Get<Physics::RigidBodyDescriptor>(mirror) == nullptr);
+    CHECK(harness.clientScene.Get<Physics::RigidBody>(mirror) == nullptr);
+
+    // ...and its Transform is *not* suppressed, which is the half that would be
+    // easy to get wrong: the body channel normally owns motion for a bodied
+    // entity, so without the policy check the mirror would receive neither.
+    const ECS::Transform *mirrored = harness.clientScene.Get<ECS::Transform>(mirror);
+    REQUIRE(mirrored != nullptr);
+    CHECK(mirrored->position.y < 5.f); // it visibly fell rather than sitting at its spawn pose
+}
+
+TEST_CASE("a descriptor-excluded entity costs no body-state bytes")
+{
+    PhysicsHarness harness;
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity falling = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 6.f, 0.f},
+                                         /*isStatic=*/false);
+    ExcludeDescriptor(harness.serverScene, falling);
+
+    harness.Step(60);
+    // The correction channel is silent for it: nothing was ever applied, because
+    // nothing was ever sent.
+    CHECK(harness.client.Corrections().applied == 0);
+}
+
+TEST_CASE("a resting visual-only mirror stops costing bandwidth")
+{
+    // The cost model D6 has to honour. On a windowed host the writeback used to
+    // stamp every dynamic body's Transform every frame, sleeping ones included —
+    // so a visual-only mirror, which has no body channel and travels by Transform
+    // delta, would have resent its pose forever. Suppressing the no-op write at
+    // the source fixes it for this case and removes a false dirty for every
+    // resting body engine-wide.
+    PhysicsHarness harness;
+    harness.runRenderWriteback = true;
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 2.f, 0.f},
+                                       /*isStatic=*/false);
+    ExcludeDescriptor(harness.serverScene, crate);
+
+    harness.Step(240); // fall, land, settle, sleep
+
+    const ConnectionDiagnostics *diagnostics = harness.server.Diagnostics(harness.serverSide());
+    REQUIRE(diagnostics != nullptr);
+    const std::uint64_t settled = diagnostics->bytesSent;
+
+    harness.Step(120);
+    const std::uint64_t idle = diagnostics->bytesSent - settled;
+
+    // Snapshot headers still go out every tick; what must not is a Transform
+    // block per snapshot for a body that has not moved in two seconds.
+    //
+    // The threshold sits between two measured values rather than being guessed:
+    // 440 bytes with the writeback's no-op suppression (empty-snapshot framing,
+    // ~11 bytes per snapshot) against 2080 without it (the same framing plus a
+    // Transform block every time). Anything under a kilobyte here means the
+    // resting body is contributing nothing.
+    CAPTURE(idle);
+    CHECK(idle < 1000);
+}
+
+TEST_CASE("excluding a descriptor mid-session tears the mirror's body down")
+{
+    // The invisible-obstacle bug class: without the teardown the Jolt body
+    // outlives the authority that justified it and keeps colliding, and the
+    // stale transient RigidBody blocks any future rebuild.
+    PhysicsHarness harness;
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 3.f, 0.f},
+                                       /*isStatic=*/false);
+    harness.Step(30);
+
+    const ECS::Entity mirror = MirrorOf(harness, crate);
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.clientScene.Get<Physics::RigidBody>(mirror) != nullptr);
+
+    ExcludeDescriptor(harness.serverScene, crate);
+    harness.Step(30);
+
+    CHECK(harness.clientScene.Get<Physics::RigidBodyDescriptor>(mirror) == nullptr);
+    // Both halves: the component is gone *and* the body behind it, or the world
+    // keeps an obstacle nobody can see.
+    CHECK(harness.clientScene.Get<Physics::RigidBody>(mirror) == nullptr);
+    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) != nullptr);
+}
+
+TEST_CASE("re-including a descriptor rebuilds the body at the authoritative pose")
+{
+    // Rides D11: policy moved, the descriptor did not, so its change tick still
+    // predates the baseline and only the force-send delivers it.
+    ReplicationConfig config;
+    config.keyframeIntervalTicks = 0; // no sweep to rescue it
+    PhysicsHarness harness(config);
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 3.f, 0.f},
+                                       /*isStatic=*/false);
+    ExcludeDescriptor(harness.serverScene, crate);
+    harness.Step(40);
+
+    const ECS::Entity mirror = MirrorOf(harness, crate);
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.clientScene.Get<Physics::RigidBody>(mirror) == nullptr);
+
+    Replicated *marker = harness.serverScene.GetMut<Replicated>(crate);
+    REQUIRE(marker != nullptr);
+    marker->excluded = Core::Reflect::ComponentMask{};
+
+    harness.Step(40);
+    REQUIRE(harness.clientScene.Get<Physics::RigidBodyDescriptor>(mirror) != nullptr);
+    REQUIRE(harness.clientScene.Get<Physics::RigidBody>(mirror) != nullptr);
+    // Built from the correction stream, so it starts where the server says rather
+    // than re-settling from the level pose.
+    CHECK(PoseError(harness, crate) < 0.2f);
+}
+
+TEST_CASE("a stale body record cannot outlive the exclusion that ended it")
+{
+    // CaptureBodyStates erases on exclusion. Without that the record keeps its
+    // nonzero tick, which beats every post-sweep empty baseline — so the stale
+    // state would be resent to every client after every keyframe sweep for the
+    // rest of the session.
+    ReplicationConfig config;
+    config.keyframeIntervalTicks = 20; // sweep often, so a leak shows quickly
+    PhysicsHarness harness(config);
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 3.f, 0.f},
+                                       /*isStatic=*/false);
+    harness.Step(40);
+    ExcludeDescriptor(harness.serverScene, crate);
+    harness.Step(60); // several sweeps
+
+    const std::uint64_t appliedBefore = harness.client.Corrections().applied;
+    harness.Step(120);                // several more
+    CHECK(harness.client.Corrections().applied == appliedBefore);
+}
+
+TEST_CASE("a bodied entity that withholds its Transform sends no body state either")
+{
+    // D9. Both client-side body builders require a Transform, so one can never be
+    // built — and body states it must drop on arrival are pure waste. The editor
+    // warns about this shape; the server simply does not spend bandwidth on it.
+    PhysicsHarness harness;
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 4.f, 0.f},
+                                       /*isStatic=*/false);
+    {
+        Replicated *marker = harness.serverScene.GetMut<Replicated>(crate);
+        REQUIRE(marker != nullptr);
+        marker->excluded.Set(OrdinalOfType(typeid(ECS::Transform)));
+    }
+
+    harness.Step(60);
+
+    const ECS::Entity mirror = MirrorOf(harness, crate);
+    REQUIRE(mirror != ECS::NullEntity);
+    CHECK(harness.clientScene.Get<ECS::Transform>(mirror) == nullptr);
+    CHECK(harness.client.Corrections().applied == 0);
+}
