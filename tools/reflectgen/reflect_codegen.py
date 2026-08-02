@@ -4,9 +4,12 @@
 Consumes the parsed model (reflect_parser) and the type table (reflect_types) and
 produces the C++ that registers each component/asset with the reflection
 registries. This is also where default-deny lives: generate_cpp refuses (raises)
-on any non-transient field it cannot serialize, on an EntityRef in an AASSET, or
-on out-of-range AFIELD bounds — a silently dropped field would lose data on every
-save, which is worse than a build error.
+on any non-transient field it cannot serialize, on an EntityRef in an AASSET, on
+out-of-range AFIELD bounds, or on a replication annotation that could not mean
+anything (ACOMP(replicated, transient), AFIELD(norep) outside a replicated
+component) — a silently dropped field would lose data on every save, and a
+silently ignored wire annotation would leak or withhold state, both of which are
+worse than a build error.
 """
 
 from typing import Optional
@@ -96,6 +99,7 @@ def _gen_field_meta(f: FieldInfo) -> str:
     tc        = _field_tc(f)
     ftype     = f'Assisi::Core::Reflect::FieldType::{tc.enum_value}' if tc else 'Assisi::Core::Reflect::FieldType::Unknown'
     transient = 'true' if f.args.has('transient') else 'false'
+    norep     = 'true' if f.args.has('norep') else 'false'
     vmin, vmax = _validate_bounds(f, tc)
 
     bounds_active   = vmin is not None or vmax is not None
@@ -134,8 +138,35 @@ def _gen_field_meta(f: FieldInfo) -> str:
             f'Assisi::Core::Reflect::RadioBehavior::{f.radio.behavior}',
         ]
 
-    base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}'
+    base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, {norep}'
     return base + ' }' if not tail else base + ', ' + ', '.join(tail) + ' }'
+
+
+def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
+    """The trailing bool flags of a ComponentMeta initializer: serializable, then
+    tracksChanges and replicated when the annotations ask for them.
+
+    They are positional and defaulted, so a later flag forces every earlier one
+    to be emitted — and an unannotated component stays at the short, one-line
+    form the golden output pins. ACOMP(replicated) implies tracked (an untracked
+    component's change tick reads as "unchanged" forever, so it would replicate
+    once at spawn and then go silent); the implication lives here rather than in
+    the parser so the annotation stays the single source of truth.
+    """
+    values = ['true' if serializable else 'false']
+    names  = ['serializable']
+    if comp.args.has('tracked') or comp.args.has('replicated'):
+        values.append('true')
+        names.append('tracksChanges')
+    if comp.args.has('replicated'):
+        values.append('true')
+        names.append('replicated')
+
+    lines = []
+    for index, (value, name) in enumerate(zip(values, names)):
+        text = value + (',' if index + 1 < len(values) else '')
+        lines.append(text.ljust(11) + f'// {name}')
+    return '\n        '.join(lines)
 
 
 def _is_serializable(f: FieldInfo) -> bool:
@@ -208,6 +239,45 @@ def _check_asset_fields(components: list[ComponentInfo], header_name: str) -> No
                     f"resolve against). Remove it or mark it AFIELD(transient).")
 
 
+def _check_replication(components: list[ComponentInfo], header_name: str) -> None:
+    """Reject annotation combinations that would silently mean nothing.
+
+    Wire gating is opt-in, so every mistake here fails the same way — the field
+    or component quietly does not replicate — which is exactly the failure a
+    generator should refuse to emit rather than leave for a live session to
+    reveal. AFIELD(norep) outside a replicated component is the poster child: it
+    reads as "keep this off the wire" while nothing about the type is on the wire
+    to begin with.
+    """
+    for comp in components:
+        where = f"{header_name}: {'asset' if comp.is_asset else 'component'} '{comp.name}'"
+
+        if comp.args.has('replicated'):
+            if comp.is_asset:
+                raise ValueError(
+                    f"{where} is marked AASSET(replicated), but assets do not replicate — "
+                    f"replication is a per-entity, per-component protocol. Remove the flag.")
+            if comp.args.has('transient'):
+                raise ValueError(
+                    f"{where} is marked ACOMP(replicated, transient). A transient component "
+                    f"registers for a ComponentId only and has no serialization hooks, so "
+                    f"there is nothing to put on the wire. Pick one.")
+
+        for f in comp.fields:
+            if not f.args.has('norep'):
+                continue
+            field_where = f"{header_name}: field '{comp.name}::{f.name}'"
+            if f.args.has('transient'):
+                raise ValueError(
+                    f"{field_where} is marked AFIELD(transient, norep). A transient field is "
+                    f"already excluded from every codec; norep says nothing further. Drop norep.")
+            if not comp.args.has('replicated'):
+                raise ValueError(
+                    f"{field_where} is marked AFIELD(norep), but '{comp.name}' is not "
+                    f"ACOMP(replicated) — nothing about it crosses the wire, so the annotation "
+                    f"would silently do nothing. Mark the component replicated, or drop norep.")
+
+
 def _gen_asset_block(comp: ComponentInfo) -> str:
     fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
     var_name = f'_reflectgen_{comp.name}'
@@ -248,6 +318,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
     # unserializable field rather than silently dropping it.
     _check_unsupported(components, include_path)
     _check_asset_fields(components, include_path)
+    _check_replication(components, include_path)
 
     component_infos = [c for c in components if not c.is_asset]
     asset_infos     = [c for c in components if c.is_asset]
@@ -312,15 +383,8 @@ namespace
         fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
         var_name = f'_reflectgen_{comp.name}'
 
-        # ACOMP(tracked): opt this component into change detection by emitting a
-        # trailing tracksChanges arg. Omitted otherwise so the field defaults to
-        # false and the golden output for untracked components is unchanged. The
-        # serializable literal grows a trailing comma (on the code side, before
-        # its // comment) when the extra arg follows it.
-        _tracked   = comp.args.has('tracked')
-        _tail      = '\n        true       // tracksChanges' if _tracked else ''
-        serial_yes = ('true,' if _tracked else 'true').ljust(11) + '// serializable' + _tail
-        serial_no  = ('false,' if _tracked else 'false').ljust(11) + '// serializable' + _tail
+        serial_yes = _gen_flag_tail(True, comp)
+        serial_no  = _gen_flag_tail(False, comp)
 
         # ACOMP(transient): register only to receive a stable ComponentId (so a
         # Scene can store the type) with no serialization hooks. serializable is

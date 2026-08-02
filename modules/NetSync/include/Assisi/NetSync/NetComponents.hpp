@@ -23,6 +23,11 @@ namespace Assisi::NetSync
 /// Carries no id: the NetId↔Entity mapping is per-session runtime state owned
 /// by ReplicationServer / ReplicationClient. Baking a session id into a level
 /// file would be meaningless the next time it loaded.
+///
+/// Deliberately *not* ACOMP(replicated) itself: it says only *that* an entity
+/// replicates, which the client learns from the spawn, so putting it on the wire
+/// would be pure overhead. The client adds its own copy to every mirror it
+/// creates.
 ACOMP()
 struct Replicated
 {
@@ -34,6 +39,25 @@ struct Replicated
     /// accumulator drops in later with no protocol change. Authored now so that
     /// change, when it comes, needs no level-file migration.
     AFIELD(min = 0.0, max = 100.0) float priority = 1.f;
+};
+
+/// @brief Marks a locally-created *mirror* of a remote entity: this machine
+/// receives it, it does not own it.
+///
+/// The counterpart of Replicated, and the exact inverse of who may write:
+/// Replicated says "the server sends this"; Mirrored says "the server sends me
+/// this". Everything a client shows in a session carries both — the marker
+/// because it arrived through replication, this because it is not authoritative
+/// here.
+///
+/// ACOMP(transient) by construction. A mirror is session state: it exists
+/// because a connection is up, and saving one into a level file would bake a
+/// stranger's entity into the level. It is also why the editor's read-only guard
+/// can key off it — the tag cannot survive a save and reappear as authorable
+/// data.
+ACOMP(transient)
+struct Mirrored
+{
 };
 
 } // namespace Assisi::NetSync

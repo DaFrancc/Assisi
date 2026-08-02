@@ -51,7 +51,13 @@ enum class ColliderShape : std::uint8_t
 /// underlying Jolt body. `shape` is a radio source: each dimension field lists
 /// the shapes it applies to and vanishes from the inspector for the others (only
 /// the fields that shape uses matter — a Sphere ignores `halfExtents`/`halfHeight`).
-ACOMP()
+///
+/// Replicated, and load-bearing: under local simulation a client builds a real
+/// dynamic body for every mirrored entity, and this descriptor is what it builds
+/// it from. It is also the discriminator between the client's two kinds of
+/// mirror — an entity with one is body-corrected, an entity without one is
+/// interpolated (docs/replication-plan-v4.md §3.5).
+ACOMP(replicated)
 struct RigidBodyDescriptor
 {
     AFIELD(radioBroadcast) ColliderShape shape = ColliderShape::Box; ///< Collision primitive to build.

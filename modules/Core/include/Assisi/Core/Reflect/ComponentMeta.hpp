@@ -105,6 +105,20 @@ struct ComponentMeta
     /// it does not opt into.
     bool tracksChanges = false;
 
+    /// @brief Whether this component travels over the network (ACOMP(replicated)).
+    ///
+    /// Opt-in, and deliberately so: replication is the one consumer that pays for
+    /// a component by default rather than by request, and "everything
+    /// serializable travels" shipped a `Camera` whose `isActive` could hijack the
+    /// receiving client's view. A replicated component is always also tracked —
+    /// reflectgen implies `tracked` from `replicated`, because an untracked
+    /// component's change tick reads as 0 ("unchanged") and would transmit once
+    /// at spawn and then never again.
+    ///
+    /// False for ACOMP(transient) components by construction: reflectgen rejects
+    /// `replicated` together with `transient`, since there is nothing to encode.
+    bool replicated = false;
+
     /// @brief Alphabetical dense id, assigned by ComponentRegistry after startup
     /// (see ComponentRegistry::IdOf). kInvalidComponentId until the registry
     /// finalizes. Placed last and defaulted so generated positional aggregate

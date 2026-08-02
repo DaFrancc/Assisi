@@ -63,6 +63,20 @@ struct FieldMeta
     std::size_t offset    = 0;
     bool        transient = false; ///< If true, excluded from serialization.
 
+    /// @brief AFIELD(norep): saved to disk, never sent over the network.
+    ///
+    /// The sibling of `transient`, one layer in: a transient field is excluded
+    /// from *every* codec, a norep field only from the binary one. It is how a
+    /// replicated component keeps server-only bookkeeping — a spawn cooldown, an
+    /// aggro table — without either splitting the component in two or leaking
+    /// the value to every client. Legal only on an ACOMP(replicated) component
+    /// (reflectgen rejects it elsewhere, where it would silently mean nothing),
+    /// and mutually exclusive with `transient`.
+    ///
+    /// Like `transient`, it shifts every later field's codec index, so it is
+    /// part of the protocol hash — see BinaryCodec's IsWireField.
+    bool norep = false;
+
     // Editor hints from AFIELD(min=..., max=...): inclusive bounds an editor
     // must clamp numeric edits to (e.g. a light radius that must not go
     // negative). Hints only — serialization does not enforce them.

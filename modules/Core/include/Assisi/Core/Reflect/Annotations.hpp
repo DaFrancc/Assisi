@@ -9,9 +9,22 @@
 ///
 /// Both accept a comma-separated list of flags and key=value pairs:
 ///   ACOMP()
+///   ACOMP(tracked)               -- opts into ECS change detection
+///   ACOMP(transient)             -- id-only registration, never serialized
+///   ACOMP(replicated)            -- travels over the network (implies tracked)
 ///   AFIELD()
 ///   AFIELD(transient)            -- excluded from serialization
+///   AFIELD(norep)                -- saved to disk, never sent over the network
 ///   AFIELD(min=0.0, max=100.0)   -- editor clamp hints
+///
+/// Wire gating (ACOMP(replicated) / AFIELD(norep)) is opt-in: a reflected
+/// component replicates because someone said so, not because it happened to be
+/// serializable. `replicated` implies `tracked`, because an untracked component
+/// reports change tick 0 forever — it would replicate once at spawn and then go
+/// silent. reflectgen hard-fails on ACOMP(replicated, transient) (nothing to
+/// encode), on AASSET(replicated) (assets are not entities), on
+/// AFIELD(transient, norep) (redundant), and on AFIELD(norep) in a component
+/// that is not replicated (the annotation would mean nothing).
 ///
 /// Radio (declarative editor visibility driven by a sibling enum's value):
 ///   AFIELD(radioBroadcast)       -- marks an AENUM enum field as a broadcaster

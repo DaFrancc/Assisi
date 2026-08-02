@@ -15,9 +15,10 @@
 /// @code
 ///   [ ComponentId varint ][ field-changed bitmask ][ payloads of set fields ]
 /// @endcode
-/// The bitmask carries exactly one bit per *non-transient* field, in declaration
-/// order — so its width is part of the protocol hash, and a field flipping to
-/// `transient` is a protocol change, correctly.
+/// The bitmask carries exactly one bit per *wire* field — non-transient and
+/// non-`norep`, in declaration order — so its width is part of the protocol
+/// hash, and a field flipping to `transient` or `norep` is a protocol change,
+/// correctly.
 ///
 /// **There is no separate "full snapshot" format.** Full state is a delta against
 /// the empty baseline: pass `kAllFields`. That is the Quake 3 unification — spawn,
@@ -56,12 +57,23 @@
 namespace Assisi::Core::Reflect
 {
 
-/// @brief One bit per non-transient field, in declaration order.
+/// @brief One bit per wire field, in declaration order.
 ///
-/// Bit N corresponds to the N-th field that survives the `transient` filter — not
-/// to `meta.fields[N]`. Use FieldMaskBit()/CountCodecFields() rather than
+/// Bit N corresponds to the N-th field that survives the IsWireField filter —
+/// not to `meta.fields[N]`. Use FieldMaskBit()/CountCodecFields() rather than
 /// counting by hand.
 using FieldMask = std::uint64_t;
+
+/// @brief Whether @p field occupies a slot in the wire's field mask.
+///
+/// Two exclusions, for two different reasons: `transient` fields are runtime-only
+/// and serialize nowhere, `norep` fields serialize to disk but never to the
+/// network (see FieldMeta::norep). Both shift every later codec index, which is
+/// why both are folded into the protocol hash.
+[[nodiscard]] constexpr bool IsWireField(const FieldMeta &field)
+{
+    return !field.transient && !field.norep;
+}
 
 /// @brief Every field set — a full-state block (a delta against the empty
 /// baseline). Bits past the component's field count are ignored.

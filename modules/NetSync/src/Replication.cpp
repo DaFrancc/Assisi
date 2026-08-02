@@ -87,15 +87,16 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
         _config.snapshotHz = effectiveHz;
     }
 
-    // Resolve the replicated component set once. Everything serializable
-    // replicates except the marker itself, which only says *that* an entity
-    // replicates and would be pure overhead on the wire — the client learns it
-    // from the spawn.
-    const Core::Reflect::ComponentId markerId =
-        Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Replicated));
+    // Resolve the replicated component set once: exactly the types annotated
+    // ACOMP(replicated). Opt-in, and the opt-in is the point — "everything
+    // serializable travels" shipped a `Camera` with every marked entity, whose
+    // isActive could take over the receiving client's view, and would have put
+    // every future gameplay-local component on the wire by default. The
+    // Replicated marker is not in the set for a different reason: it says only
+    // *that* an entity replicates, which the client learns from the spawn.
     for (const Core::Reflect::ComponentMeta *meta : Core::Reflect::ComponentRegistry::Instance().SerializableComponents())
     {
-        if (meta->id != markerId)
+        if (meta->replicated)
             _replicatedComponents.push_back(meta->id);
     }
 }
@@ -685,6 +686,11 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             // entity permanently, while creating it costs one extra full state.
             const ECS::Entity entity = _scene.Create();
             (void)_scene.Add<Replicated>(entity, Replicated{});
+            // Mirrored is what everything downstream keys off to know this
+            // entity is not ours to write: the editor's read-only guard, the
+            // inspector's replication-path line, and any gameplay system that
+            // needs to tell "the server's crate" from "our crate".
+            (void)_scene.Add<Mirrored>(entity, Mirrored{});
             it = _entityByNetId.emplace(netId, entity).first;
         }
         else if (isSpawn)

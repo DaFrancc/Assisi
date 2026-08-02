@@ -27,7 +27,12 @@ namespace Assisi::ECS
 /// by PropagateTransforms only when this entity's local TRS or an ancestor changed
 /// (PropagateTransforms writes it via a plain Get, so that write does not itself
 /// re-mark the Transform changed).
-ACOMP(tracked)
+///
+/// `replicated` as well: pose is the one thing every mirrored entity needs. The
+/// `tracked` is spelled out beside it rather than left to `replicated`'s
+/// implication, because change detection here predates the network by a long way
+/// and PropagateTransforms depends on it.
+ACOMP(replicated, tracked)
 struct Transform
 {
     AFIELD() glm::vec3 position{0.f, 0.f, 0.f};

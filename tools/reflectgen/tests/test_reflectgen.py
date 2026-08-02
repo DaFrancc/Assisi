@@ -75,7 +75,8 @@ class ParseTest(unittest.TestCase):
         # GhostComponent lives inside a // comment and must not be parsed.
         self.assertEqual(
             [c.name for c in self.components],
-            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient", "SampleRadio"],
+            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient", "SampleRadio",
+             "SampleReplicated"],
         )
         self.assertNotIn("GhostComponent", self.by_name)
 
@@ -211,11 +212,11 @@ class CodegenTest(unittest.TestCase):
         )
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
         # min-only: hasMin, hasMax, minValue, maxValue appended.
-        self.assertIn('offsetof(T, radius), false, true, false, 0.0f, 0.f', cpp)
+        self.assertIn('offsetof(T, radius), false, false, true, false, 0.0f, 0.f', cpp)
         # min and max together.
-        self.assertIn('offsetof(T, bias), false, true, true, -1.0f, 1.0f', cpp)
+        self.assertIn('offsetof(T, bias), false, false, true, true, -1.0f, 1.0f', cpp)
         # Unannotated fields keep the short (golden-stable) initializer.
-        self.assertIn('offsetof(T, plain), false }', cpp)
+        self.assertIn('offsetof(T, plain), false, false }', cpp)
 
     def test_non_numeric_bound_is_a_hard_error(self):
         components = _parse_source(
@@ -229,7 +230,7 @@ class CodegenTest(unittest.TestCase):
             "namespace N {\nACOMP()\nstruct C { AFIELD(min = 0, max = 100) int32_t count = 1; };\n}\n"
         )
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
-        self.assertIn("offsetof(T, count), false, true, true, 0.0f, 100.0f", cpp)
+        self.assertIn("offsetof(T, count), false, false, true, true, 0.0f, 100.0f", cpp)
 
     def _assert_bound_rejected(self, field_decl: str):
         components = _parse_source(
@@ -320,7 +321,7 @@ class ParserEdgeCaseTest(unittest.TestCase):
 
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
         # In the metadata table (unknown type, transient), but never (de)serialized.
-        self.assertIn("offsetof(T, cache), true", cpp)
+        self.assertIn("offsetof(T, cache), true, false", cpp)
         self.assertNotIn("c.cache", cpp)
         self.assertNotIn("comp.cache", cpp)
 
@@ -438,6 +439,67 @@ class AssetTypeTest(unittest.TestCase):
         cpp = reflectgen.generate_cpp(_parse_source(src), "N/Mixed.hpp")
         self.assertIn("ComponentRegistry", cpp)
         self.assertIn("AssetTypeRegistry", cpp)
+
+
+class ReplicationAnnotationTest(unittest.TestCase):
+    """ACOMP(replicated) / AFIELD(norep) — the wire gate.
+
+    Every rejection here has the same motive: the mistake's natural failure mode
+    is silence (a component that quietly does not replicate, a field that quietly
+    does), which a live session reveals late and confusingly, so the generator
+    refuses instead.
+    """
+
+    def _sample(self):
+        return reflectgen.parse_header(FIXTURES / "Sample.hpp")
+
+    def test_replicated_component_emits_tracks_changes_and_replicated(self):
+        cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
+        # replicated implies tracked, so both trailing flags are emitted — the
+        # implication is what stops a replicated component reporting change tick
+        # 0 forever and going silent after its spawn.
+        self.assertIn("true,      // serializable\n"
+                      "        true,      // tracksChanges\n"
+                      "        true       // replicated", cpp)
+
+    def test_unmarked_component_emits_neither_flag(self):
+        cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
+        # SampleRef is plain ACOMP(): its registration keeps the short form.
+        self.assertIn("true       // serializable", cpp)
+
+    def test_norep_field_is_flagged_but_still_serialized_to_disk(self):
+        cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
+        # In the metadata table with norep = true (transient = false)...
+        self.assertIn('{ "serverOnly", Assisi::Core::Reflect::FieldType::Int32, '
+                      'offsetof(T, serverOnly), false, true }', cpp)
+        # ...and in both JSON bodies, because norep is a *wire* exclusion only.
+        self.assertIn("c.serverOnly", cpp)
+        self.assertIn("comp.serverOnly", cpp)
+
+    def test_replicated_with_transient_is_rejected(self):
+        src = "namespace N {\nACOMP(replicated, transient)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("nothing to put on the wire", str(caught.exception))
+
+    def test_replicated_on_an_asset_is_rejected(self):
+        src = "namespace N {\nAASSET(replicated)\nstruct A { AFIELD() float b = 0.f; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/A.hpp")
+        self.assertIn("assets do not replicate", str(caught.exception))
+
+    def test_norep_outside_a_replicated_component_is_rejected(self):
+        src = "namespace N {\nACOMP()\nstruct C { AFIELD(norep) int32_t a = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("silently do nothing", str(caught.exception))
+
+    def test_norep_with_transient_is_rejected(self):
+        src = ("namespace N {\nACOMP(replicated)\n"
+               "struct C { AFIELD(transient, norep) int32_t a = 0; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("Drop norep", str(caught.exception))
 
 
 class EnumTest(unittest.TestCase):
@@ -577,14 +639,14 @@ class RadioTest(unittest.TestCase):
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
         # Non-enum listener: defaulted bounds + empty enum block (size 0), then the trio.
         self.assertIn(
-            'offsetof(T, n), false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 1, 2 }, '
+            'offsetof(T, n), false, false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 1, 2 }, '
             "Assisi::Core::Reflect::RadioBehavior::Grey",
             cpp,
         )
         # The broadcaster enum stays an ordinary enum field (no radio members),
         # now carrying its width (default int -> 4, signed).
         self.assertIn(
-            'offsetof(T, mode), false, false, false, 0.f, 0.f, '
+            'offsetof(T, mode), false, false, false, false, 0.f, 0.f, '
             '{ { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 4, true }',
             cpp,
         )
@@ -596,7 +658,7 @@ class RadioTest(unittest.TestCase):
             "AFIELD(radioBroadcast, radioListen = {source = mode, value = High, behavior = vanish}) Sub sub = Sub::A;"
         )), "N/C.hpp")
         self.assertIn(
-            'offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, '
+            'offsetof(T, sub), false, false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, '
             '"mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish',
             cpp,
         )
@@ -607,7 +669,7 @@ class RadioTest(unittest.TestCase):
             "AFIELD(min = 0, radioListen = {source = mode, value = High, behavior = vanish}) int32_t n = 0;"
         )), "N/C.hpp")
         self.assertIn(
-            'offsetof(T, n), false, true, false, 0.0f, 0.f, {}, 0, false, "mode", { 2 }, '
+            'offsetof(T, n), false, false, true, false, 0.0f, 0.f, {}, 0, false, "mode", { 2 }, '
             "Assisi::Core::Reflect::RadioBehavior::Vanish",
             cpp,
         )

@@ -50,7 +50,12 @@ using ECS::Transform;
 ///     resources must outlive the component. `materials` holds one resolved
 ///     Material per mesh slot (override or mesh default); a slot with no entry
 ///     draws with the cache's fallback material.
-ACOMP()
+///
+/// Replicated: a mirror with no mesh reference draws nothing, which is exactly
+/// how the first live two-editor test failed. Only the durable GUID layer
+/// travels — the transient resolved pointers are local to whichever process
+/// owns them, and every machine resolves its own from the same ids.
+ACOMP(replicated)
 struct MeshRenderer
 {
     AFIELD() Assisi::Core::AssetId mesh;

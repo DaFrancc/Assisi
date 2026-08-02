@@ -54,6 +54,7 @@ from reflect_codegen import (  # noqa: F401
     generate_cpp,
     _check_unsupported,
     _check_asset_fields,
+    _check_replication,
     _field_tc,
     NUMERIC_BOUND_RANGES,
 )
@@ -82,22 +83,27 @@ def main():
         include_path = args.include_path or _detect_include_path(header)
 
         print(f'reflectgen: {header.name} -> {include_path}')
+        # generate_cpp runs inside the try because it is where the rest of
+        # default-deny lives (asset EntityRefs, the replication annotations): a
+        # rejected header should print the reason it was rejected, not a Python
+        # traceback with the reason buried at the bottom.
         try:
             components = parse_header(header)
             _check_unsupported(components, header.name)
+
+            if not components:
+                print(f'  (no ACOMP annotations found, skipping)')
+                continue
+
+            for comp in components:
+                print(f'  found: {comp.name} ({len(comp.fields)} field(s))')
+
+            cpp = generate_cpp(components, include_path)
         except Exception as e:
             print(f'  error: {e}', file=sys.stderr)
             ok = False
             continue
 
-        if not components:
-            print(f'  (no ACOMP annotations found, skipping)')
-            continue
-
-        for comp in components:
-            print(f'  found: {comp.name} ({len(comp.fields)} field(s))')
-
-        cpp = generate_cpp(components, include_path)
         out = args.outdir / (header.stem + '.generated.cpp')
         out.write_text(cpp, encoding='utf-8')
         print(f'  wrote: {out}')

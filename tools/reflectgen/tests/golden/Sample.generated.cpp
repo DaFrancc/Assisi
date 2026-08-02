@@ -17,23 +17,23 @@ static const bool _reflectgen_SampleAllTypes = []() -> bool
         "SampleAllTypes",
         typeid(T),
         {
-            { "f", Assisi::Core::Reflect::FieldType::Float, offsetof(T, f), false },
-            { "d", Assisi::Core::Reflect::FieldType::Double, offsetof(T, d), false },
-            { "i32", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, i32), false },
-            { "u32", Assisi::Core::Reflect::FieldType::UInt32, offsetof(T, u32), false },
-            { "i64", Assisi::Core::Reflect::FieldType::Int64, offsetof(T, i64), false },
-            { "u64", Assisi::Core::Reflect::FieldType::UInt64, offsetof(T, u64), false },
-            { "flag", Assisi::Core::Reflect::FieldType::Bool, offsetof(T, flag), false },
-            { "shape", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, shape), false, false, false, 0.f, 0.f, { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, 4, false },
-            { "v2", Assisi::Core::Reflect::FieldType::Vec2, offsetof(T, v2), false },
-            { "v3", Assisi::Core::Reflect::FieldType::Vec3, offsetof(T, v3), false },
-            { "v4", Assisi::Core::Reflect::FieldType::Vec4, offsetof(T, v4), false },
-            { "q", Assisi::Core::Reflect::FieldType::Quat, offsetof(T, q), false },
-            { "m", Assisi::Core::Reflect::FieldType::Mat4, offsetof(T, m), false },
-            { "assetPath", Assisi::Core::Reflect::FieldType::AssetPath, offsetof(T, assetPath), false },
-            { "label", Assisi::Core::Reflect::FieldType::String, offsetof(T, label), false },
-            { "paths", Assisi::Core::Reflect::FieldType::AssetPathVector, offsetof(T, paths), false },
-            { "runtimeCache", Assisi::Core::Reflect::FieldType::Float, offsetof(T, runtimeCache), true }
+            { "f", Assisi::Core::Reflect::FieldType::Float, offsetof(T, f), false, false },
+            { "d", Assisi::Core::Reflect::FieldType::Double, offsetof(T, d), false, false },
+            { "i32", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, i32), false, false },
+            { "u32", Assisi::Core::Reflect::FieldType::UInt32, offsetof(T, u32), false, false },
+            { "i64", Assisi::Core::Reflect::FieldType::Int64, offsetof(T, i64), false, false },
+            { "u64", Assisi::Core::Reflect::FieldType::UInt64, offsetof(T, u64), false, false },
+            { "flag", Assisi::Core::Reflect::FieldType::Bool, offsetof(T, flag), false, false },
+            { "shape", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, shape), false, false, false, false, 0.f, 0.f, { { "Box", 0 }, { "Sphere", 1 }, { "Capsule", 5 }, { "Cylinder", 6 } }, 4, false },
+            { "v2", Assisi::Core::Reflect::FieldType::Vec2, offsetof(T, v2), false, false },
+            { "v3", Assisi::Core::Reflect::FieldType::Vec3, offsetof(T, v3), false, false },
+            { "v4", Assisi::Core::Reflect::FieldType::Vec4, offsetof(T, v4), false, false },
+            { "q", Assisi::Core::Reflect::FieldType::Quat, offsetof(T, q), false, false },
+            { "m", Assisi::Core::Reflect::FieldType::Mat4, offsetof(T, m), false, false },
+            { "assetPath", Assisi::Core::Reflect::FieldType::AssetPath, offsetof(T, assetPath), false, false },
+            { "label", Assisi::Core::Reflect::FieldType::String, offsetof(T, label), false, false },
+            { "paths", Assisi::Core::Reflect::FieldType::AssetPathVector, offsetof(T, paths), false, false },
+            { "runtimeCache", Assisi::Core::Reflect::FieldType::Float, offsetof(T, runtimeCache), true, false }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -125,7 +125,7 @@ static const bool _reflectgen_SampleRef = []() -> bool
         "SampleRef",
         typeid(T),
         {
-            { "target", Assisi::Core::Reflect::FieldType::EntityRef, offsetof(T, target), false }
+            { "target", Assisi::Core::Reflect::FieldType::EntityRef, offsetof(T, target), false, false }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -265,10 +265,10 @@ static const bool _reflectgen_SampleRadio = []() -> bool
         "SampleRadio",
         typeid(T),
         {
-            { "mode", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, mode), false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 1, false },
-            { "intensity", Assisi::Core::Reflect::FieldType::Float, offsetof(T, intensity), false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { "sub", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, "mode", { 1, 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
-            { "level", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, level), false, true, false, 0.0f, 0.f, {}, 0, false, "sub", { 1 }, Assisi::Core::Reflect::RadioBehavior::Grey }
+            { "mode", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, mode), false, false, false, false, 0.f, 0.f, { { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 1, false },
+            { "intensity", Assisi::Core::Reflect::FieldType::Float, offsetof(T, intensity), false, false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { "sub", Assisi::Core::Reflect::FieldType::Enum, offsetof(T, sub), false, false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, "mode", { 1, 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish },
+            { "level", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, level), false, false, true, false, 0.0f, 0.f, {}, 0, false, "sub", { 1 }, Assisi::Core::Reflect::RadioBehavior::Grey }
         },
         [](const void* ptr) -> nlohmann::json
         {
@@ -323,6 +323,72 @@ static const bool _reflectgen_SampleRadio = []() -> bool
             return scene.GetMut<T>(Assisi::ECS::Entity{entity_index, entity_gen});
         },
         true       // serializable
+    });
+    return true;
+}();
+
+// ── SampleReplicated ──────────────────────────────────────────────────────────
+static const bool _reflectgen_SampleReplicated = []() -> bool
+{
+    using T = Assisi::Runtime::SampleReplicated;
+    Assisi::Core::Reflect::ComponentRegistry::Instance().Register({
+        "SampleReplicated",
+        typeid(T),
+        {
+            { "shared", Assisi::Core::Reflect::FieldType::Float, offsetof(T, shared), false, false },
+            { "serverOnly", Assisi::Core::Reflect::FieldType::Int32, offsetof(T, serverOnly), false, true }
+        },
+        [](const void* ptr) -> nlohmann::json
+        {
+            const auto& c = *static_cast<const T*>(ptr);
+            return nlohmann::json{
+                { "shared", c.shared },
+                { "serverOnly", c.serverOnly },
+            };
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            T comp{};
+            if (j.contains("shared")) comp.shared = j.at("shared").get<float>();
+            if (j.contains("serverOnly")) comp.serverOnly = j.at("serverOnly").get<int32_t>();
+            (void)scene.Add(e, comp);
+        },
+        [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            for (auto [e, comp] : scene.Query<T>())
+                cb(e.index, e.generation, &comp);
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> const void*
+        {
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.Get<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // Scene::Add rejects a duplicate rather than replacing it, so an
+            // entity that already has this component is reset in place. Both
+            // paths stamp the change tick for a tracked type.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            Assisi::ECS::Entity e{entity_index, entity_gen};
+            if (T* existing = scene.GetMut<T>(e))
+            {
+                *existing = T{};
+                return existing;
+            }
+            return scene.Add<T>(e, T{});
+        },
+        [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen) -> void*
+        {
+            // GetMut, not Get: this is the writing accessor, so it stamps.
+            auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
+            return scene.GetMut<T>(Assisi::ECS::Entity{entity_index, entity_gen});
+        },
+        true,      // serializable
+        true,      // tracksChanges
+        true       // replicated
     });
     return true;
 }();

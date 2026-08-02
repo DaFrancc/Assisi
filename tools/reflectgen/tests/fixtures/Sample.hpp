@@ -3,9 +3,10 @@
 
 // Fixture header for reflectgen's golden tests. Deliberately exercises every
 // supported field type, a transient field, a tracked (change-detection)
-// component, an empty component, namespaced components, comment stripping,
-// nested-brace initializers, and EntityRef include emission. If you change this
-// header, regenerate the golden output:
+// component, a replicated component with a norep field, an empty component,
+// namespaced components, comment stripping, nested-brace initializers, and
+// EntityRef include emission. If you change this header, regenerate the golden
+// output:
 //   REFLECTGEN_UPDATE_GOLDEN=1 python tools/reflectgen/tests/test_reflectgen.py
 
 #include <cstdint>
@@ -116,6 +117,17 @@ struct SampleRadio
     AFIELD(radioBroadcast, radioListen = {source = mode, value = {Low, High}, behavior = vanish})
     SampleSub sub = SampleSub::A;
     AFIELD(min = 0, radioListen = {source = sub, value = B, behavior = grey}) int32_t level = 0;
+};
+
+// ACOMP(replicated): opts into the network wire, which implies tracked — so its
+// registration carries tracksChanges *and* replicated. `serverOnly` is
+// AFIELD(norep): saved to disk like any other field, excluded from the binary
+// codec, which is the one place the two serializers deliberately disagree.
+ACOMP(replicated)
+struct SampleReplicated
+{
+    AFIELD() float shared = 0.0f;
+    AFIELD(norep) int32_t serverOnly = 0;
 };
 
 } // namespace Assisi::Runtime

@@ -402,7 +402,7 @@ std::size_t CountCodecFields(const ComponentMeta &meta)
 {
     std::size_t count = 0;
     for (const FieldMeta &field : meta.fields)
-        if (!field.transient)
+        if (IsWireField(field))
             ++count;
     return count;
 }
@@ -421,8 +421,8 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     const std::size_t fieldCount = CountCodecFields(meta);
     if (fieldCount > kMaxCodecFields)
     {
-        ASSISI_ASSERT(false, "WriteComponent: more non-transient fields than the change mask can address");
-        Log::Error("BinaryCodec: '{}' has {} non-transient fields, over the {}-field limit", meta.name, fieldCount,
+        ASSISI_ASSERT(false, "WriteComponent: more wire fields than the change mask can address");
+        Log::Error("BinaryCodec: '{}' has {} wire fields, over the {}-field limit", meta.name, fieldCount,
                    kMaxCodecFields);
         return false;
     }
@@ -438,7 +438,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     std::size_t codecIndex = 0;
     for (const FieldMeta &field : meta.fields)
     {
-        if (field.transient)
+        if (!IsWireField(field))
             continue;
 
         if ((mask & FieldMaskBit(codecIndex)) != 0)
@@ -477,7 +477,7 @@ bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader
     const std::size_t fieldCount = CountCodecFields(meta);
     if (fieldCount > kMaxCodecFields)
     {
-        Log::Error("BinaryCodec: '{}' has {} non-transient fields, over the {}-field limit", meta.name, fieldCount,
+        Log::Error("BinaryCodec: '{}' has {} wire fields, over the {}-field limit", meta.name, fieldCount,
                    kMaxCodecFields);
         return false;
     }
@@ -489,7 +489,7 @@ bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader
     std::size_t codecIndex = 0;
     for (const FieldMeta &field : meta.fields)
     {
-        if (field.transient)
+        if (!IsWireField(field))
             continue;
 
         if ((mask & FieldMaskBit(codecIndex)) != 0)
@@ -530,15 +530,20 @@ std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
         text += std::to_string(meta.id);
         text += ' ';
         text += meta.name;
+        // Whether the component replicates at all is wire semantics, not layout:
+        // two builds that disagree about it exchange different component sets
+        // while every field description matches, so nothing else here would
+        // catch it.
+        text += meta.replicated ? " replicated" : " local";
         text += '\n';
 
-        // Only non-transient fields, and their codec index — so making a field
-        // transient shifts every later index and changes the hash, which is
+        // Only wire fields, and their codec index — so making a field transient
+        // or norep shifts every later index and changes the hash, which is
         // correct: it changes the mask width and the payload order.
         std::size_t codecIndex = 0;
         for (const FieldMeta &field : meta.fields)
         {
-            if (field.transient)
+            if (!IsWireField(field))
                 continue;
 
             text += "  ";

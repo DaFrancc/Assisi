@@ -16,6 +16,7 @@
 
 #include <doctest/doctest.h>
 
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
@@ -175,6 +176,148 @@ TEST_CASE("only entities marked Replicated cross the wire")
     harness.Step(12);
 
     CHECK(harness.client.ReplicatedEntityCount() == 1);
+}
+
+TEST_CASE("a component type that is not ACOMP(replicated) never crosses the wire")
+{
+    Harness harness;
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{42, 0});
+    (void)harness.serverScene.Add<Test::LocalOnly>(entity, Test::LocalOnly{9});
+
+    harness.Step(12);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+
+    // The marked component arrives...
+    REQUIRE(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 42);
+
+    // ...and the unmarked one does not exist on the client at all. Before wire
+    // gating this was the other way round for *every* serializable component,
+    // which is how a marked entity shipped a Camera that could take over the
+    // receiving client's view.
+    CHECK(harness.clientScene.Get<Test::LocalOnly>(mirror) == nullptr);
+
+    // Mutating it later is still nobody else's business.
+    harness.serverScene.GetMut<Test::LocalOnly>(entity)->value = 11;
+    harness.Step(12);
+    CHECK(harness.clientScene.Get<Test::LocalOnly>(mirror) == nullptr);
+    CHECK(harness.client.SnapshotsRejected() == 0);
+}
+
+TEST_CASE("a norep field holds its client-side default while its siblings update")
+{
+    Harness harness;
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {0.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{75, 1234});
+    harness.Step(12);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+    const Test::Health *replica = harness.clientScene.Get<Test::Health>(mirror);
+    REQUIRE(replica != nullptr);
+    CHECK(replica->value == 75);
+    CHECK(replica->secret == Test::Health{}.secret); // its own default, never the server's
+
+    // Both fields change; only one is on the wire. Nothing about `secret` is
+    // recoverable from the packet, so the client's copy cannot drift toward the
+    // server's value by accident.
+    {
+        Test::Health *authoritative = harness.serverScene.GetMut<Test::Health>(entity);
+        REQUIRE(authoritative != nullptr);
+        authoritative->value  = 30;
+        authoritative->secret = 4321;
+    }
+    harness.Step(12);
+
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 30);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->secret == Test::Health{}.secret);
+    CHECK(harness.client.SnapshotsRejected() == 0);
+}
+
+TEST_CASE("a norep field still round-trips to disk")
+{
+    // norep is a *wire* exclusion, not a serialization one. The JSON codec is
+    // untouched, which is what makes it usable for authored server-side data
+    // rather than only for runtime scratch (that is what transient is for).
+    const Core::Reflect::ComponentMeta *meta =
+        Core::Reflect::ComponentRegistry::Instance().ById(
+            Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Test::Health)));
+    REQUIRE(meta != nullptr);
+    REQUIRE(meta->replicated);
+
+    const Test::Health   source{55, 8888};
+    const nlohmann::json json = meta->serialize(&source);
+    CHECK(json.contains("value"));
+    CHECK(json.contains("secret"));
+
+    ECS::Scene        scene;
+    const ECS::Entity entity = scene.Create();
+    meta->addToScene(&scene, entity.index, entity.generation, json);
+
+    const Test::Health *loaded = scene.Get<Test::Health>(entity);
+    REQUIRE(loaded != nullptr);
+    CHECK(loaded->value == 55);
+    CHECK(loaded->secret == 8888);
+}
+
+TEST_CASE("a replicated component that never said `tracked` still deltas after spawn")
+{
+    // ACOMP(replicated) implies ACOMP(tracked), and this is why: an untracked
+    // pool has no change-tick lane, ChangeTickById returns 0, and 0 reads as
+    // "unchanged" — so the component would transmit once at spawn and then go
+    // permanently silent no matter what the server did to it. MeshRenderer and
+    // Name were both live instances of that bug; Test::Health stands in for them
+    // here because NetSync deliberately does not link Runtime.
+    Harness harness;
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {0.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{1, 0});
+    harness.Step(12);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.clientScene.Get<Test::Health>(mirror)->value == 1);
+
+    for (int32_t i = 2; i <= 5; ++i)
+    {
+        harness.serverScene.GetMut<Test::Health>(entity)->value = i;
+        harness.Step(12);
+        CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == i);
+    }
+}
+
+TEST_CASE("a mirror is tagged Mirrored; the authoritative entity is not")
+{
+    Harness harness;
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {1.f, 2.f, 3.f});
+    harness.Step(12);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+
+    // The tag is how everything downstream — the editor's read-only guard, the
+    // inspector's replication-path line — tells "the server's crate" from "our
+    // crate" without asking the session.
+    CHECK(harness.clientScene.Has<Mirrored>(mirror));
+    CHECK_FALSE(harness.serverScene.Has<Mirrored>(entity));
+
+    // Transient: it registers for a ComponentId and nothing else, so it can
+    // never be saved into a level file and reappear as authorable data.
+    const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().ById(
+        Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Mirrored)));
+    REQUIRE(meta != nullptr);
+    CHECK_FALSE(meta->serializable);
+    CHECK_FALSE(meta->replicated);
 }
 
 TEST_CASE("a moved entity converges, and an unmoved one stops costing bandwidth")

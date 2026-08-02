@@ -118,14 +118,45 @@ template <typename T, typename M> std::size_t OffsetOf(M T::*member)
                                     reinterpret_cast<const std::byte *>(&prototype));
 }
 
-FieldMeta Field(const char *name, FieldType type, std::size_t offset, bool transient = false)
+FieldMeta Field(const char *name, FieldType type, std::size_t offset, bool transient = false, bool norep = false)
 {
     FieldMeta field;
     field.name      = name;
     field.type      = type;
     field.offset    = offset;
     field.transient = transient;
+    field.norep     = norep;
     return field;
+}
+
+/// A replicated component with one field held back from the wire — the shape
+/// AFIELD(norep) exists for: server-side bookkeeping living inside a component
+/// that otherwise replicates, without splitting the component in two.
+struct Gated
+{
+    std::int32_t shared = 0;
+    std::int32_t secret = 0;
+
+    bool operator==(const Gated &) const = default;
+};
+
+ComponentMeta MakeGatedMeta()
+{
+    ComponentMeta meta{.name            = "Gated",
+                       .typeIndex       = std::type_index(typeid(Gated)),
+                       .fields          = {},
+                       .serialize       = {},
+                       .addToScene      = {},
+                       .iterateEntities = {},
+                       .getByEntity     = {},
+                       .serializable    = true,
+                       .tracksChanges   = true,
+                       .replicated      = true,
+                       .id              = 5};
+
+    meta.fields.push_back(Field("shared", FieldType::Int32, OffsetOf(&Gated::shared)));
+    meta.fields.push_back(Field("secret", FieldType::Int32, OffsetOf(&Gated::secret), false, true));
+    return meta;
 }
 
 /// The descriptor reflectgen would emit for AllTypes. Built once per call so a
@@ -142,6 +173,7 @@ ComponentMeta MakeAllTypesMeta()
                        .getByEntity     = {},
                        .serializable    = true,
                        .tracksChanges   = true,
+                       .replicated      = true,
                        .id              = 3};
 
     meta.fields.push_back(Field("floatValue", FieldType::Float, OffsetOf(&AllTypes::floatValue)));
@@ -529,6 +561,17 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
     {
         CHECK(hashWith([](ComponentMeta &m) { m.fields[1].transient = true; }) != base);
     }
+    SUBCASE("a field turning norep — the mask width changes the same way")
+    {
+        CHECK(hashWith([](ComponentMeta &m) { m.fields[1].norep = true; }) != base);
+    }
+    SUBCASE("a component that stops replicating")
+    {
+        // Nothing about the field descriptions moves, so this is the one wire
+        // difference the layout text has to state outright: the two builds would
+        // simply exchange different component sets.
+        CHECK(hashWith([](ComponentMeta &m) { m.replicated = false; }) != base);
+    }
     SUBCASE("a changed quantization bound — the silent-corruption case")
     {
         CHECK(hashWith(
@@ -559,6 +602,36 @@ TEST_CASE("BinaryCodec: the protocol hash ignores things the wire does not carry
     std::array<ComponentMeta, 1> withoutTransient{MakeAllTypesMeta()};
     withoutTransient[0].fields.pop_back();
     CHECK(ProtocolHash(withoutTransient) == base);
+
+    // Same for a norep field: it is saved to disk, never sent, so gaining one
+    // does not change what two builds must agree on.
+    std::array<ComponentMeta, 1> withNorep{MakeAllTypesMeta()};
+    withNorep[0].fields.push_back(Field("serverOnly", FieldType::Int32, 0, false, true));
+    CHECK(ProtocolHash(withNorep) == base);
+}
+
+TEST_CASE("BinaryCodec: a norep field occupies no mask bit and never leaves the sender")
+{
+    const ComponentMeta meta = MakeGatedMeta();
+
+    // One wire field of two: the mask narrows, which is why norep is inside the
+    // protocol hash.
+    CHECK(Assisi::Core::Reflect::CountCodecFields(meta) == 1);
+
+    const Gated source{7, 1234};
+    BitWriter   writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
+
+    Gated     destination{0, -1};
+    BitReader reader(writer.Data());
+    REQUIRE(ReadComponentId(reader) == meta.id);
+    REQUIRE(ReadComponent(meta, &destination, reader));
+
+    CHECK(destination.shared == 7);
+    // Untouched — the receiver keeps whatever it had, which for a real client is
+    // the field's default. Nothing about the sender's value is recoverable from
+    // the bytes.
+    CHECK(destination.secret == -1);
 }
 
 TEST_CASE("BinaryCodec: the protocol summary is human-readable and carries the hash")
@@ -576,6 +649,12 @@ TEST_CASE("BinaryCodec: the protocol summary is human-readable and carries the h
     CHECK(description.find("AllTypes") != std::string::npos);
     CHECK(description.find("uint64Value") != std::string::npos);
     CHECK(description.find("notReplicated") == std::string::npos); // transient: not part of the protocol
+    CHECK(description.find("AllTypes replicated") != std::string::npos);
+
+    const std::array<ComponentMeta, 1> gated{MakeGatedMeta()};
+    const std::string                  gatedText = ProtocolLayoutDescription(gated);
+    CHECK(gatedText.find("shared") != std::string::npos);
+    CHECK(gatedText.find("secret") == std::string::npos); // norep: not part of the protocol either
 }
 
 // ── Fuzzing the decoder ───────────────────────────────────────────────────────
