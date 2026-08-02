@@ -3,6 +3,7 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/ReplicableLimits.hpp>
 
 #include <algorithm>
 #include <utility>
@@ -88,15 +89,50 @@ void ComponentRegistry::EnsureFinalized() const
     _idByType.clear();
     _idByType.reserve(_metas.size());
     _serializable.clear();
+    _replicable.clear();
+    _replicableOrdinal.assign(_metas.size(), kInvalidOrdinal);
     for (ComponentId i = 0; i < _metas.size(); ++i)
     {
         _metas[i].id = i;
         _idByType.emplace(_metas[i].typeIndex, i);
         if (_metas[i].serializable)
             _serializable.push_back(&_metas[i]);
+        // Ordinal is position among the replicable types, in the same ascending
+        // id order — so the sequence and the index agree by construction.
+        if (_metas[i].replicable)
+        {
+            _replicableOrdinal[i] = _replicable.size();
+            _replicable.push_back(&_metas[i]);
+        }
+    }
+
+    // The aggregator-vs-reality check. reflectgen counts ACOMP(replicable) types
+    // across the tree at build time and sizes ComponentMask from it, so this can
+    // only trip if a module's headers escaped that scan — the single way the
+    // count can be wrong. Failing loudly here beats writing exclusion bits past
+    // the end of the mask, which would be silent and would corrupt an unrelated
+    // component's policy.
+    if (_replicable.size() > kReplicableComponentCount)
+    {
+        Core::Log::Error("ComponentRegistry: {} replicable components registered but ComponentMask was sized "
+                         "for {}. A module's headers are missing from the reflectgen scan — every reflected "
+                         "header must be passed to assisi_reflect().",
+                         _replicable.size(), kReplicableComponentCount);
     }
 
     _finalized = true;
+}
+
+std::span<const ComponentMeta *const> ComponentRegistry::ReplicableComponents() const
+{
+    EnsureFinalized();
+    return _replicable;
+}
+
+std::size_t ComponentRegistry::ReplicableOrdinalOf(ComponentId id) const
+{
+    EnsureFinalized();
+    return id < _replicableOrdinal.size() ? _replicableOrdinal[id] : kInvalidOrdinal;
 }
 
 const ComponentMeta *ComponentRegistry::Find(std::string_view name) const

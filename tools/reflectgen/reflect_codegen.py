@@ -24,7 +24,7 @@ from typing import Optional
 
 from reflect_parser import FieldInfo, ComponentInfo
 from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES,
-                           _ASSET_ID_TYPES, _ENTITY_REF_TYPES)
+                           _ASSET_ID_TYPES, _COMPONENT_MASK_TYPES, _ENTITY_REF_TYPES)
 
 
 def _indent(text: str, spaces: int) -> str:
@@ -368,6 +368,16 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
         if not f.args.has('transient')
     )
 
+    # Likewise ComponentMask fields, which route through the Core mask helpers
+    # that own the bit <-> component-name translation.
+    has_component_masks = any(
+        f.cpp_type in _COMPONENT_MASK_TYPES
+        for comp in components
+        if not comp.args.has('transient')
+        for f in comp.fields
+        if not f.args.has('transient')
+    )
+
     # Enum fields (de)serialize through a std::int64_t cast, which needs <cstdint>.
     has_enums = any(
         f.enum_info is not None
@@ -390,6 +400,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
+    if has_component_masks:
+        includes.append('#include <Assisi/Core/Reflect/ComponentMaskJson.hpp>')
     if has_enums:
         includes.append('#include <cstdint>')
     includes.append(f'#include <{include_path}>')

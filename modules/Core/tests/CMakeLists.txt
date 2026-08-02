@@ -15,6 +15,7 @@ add_executable(Assisi-Core-Tests
   TestAssetPath.cpp
   TestAssetSystem.cpp
   TestBinaryCodec.cpp
+  TestComponentMask.cpp
   TestBitStream.cpp
   TestComponentRegistry.cpp
   TestContentHash.cpp

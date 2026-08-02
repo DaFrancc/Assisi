@@ -847,6 +847,15 @@ if (ASSISI_BUILD_TESTS)
     add_subdirectory(tools/reflectgen)
 endif()
 
+# Must be last: it counts ACOMP(replicable) types across every header that has
+# passed through assisi_reflect(), and that set is only complete once every
+# module — tests included — has been added. Test-support components are counted
+# too, so a test build's ComponentMask can be wider than a release build's. That
+# is correct rather than a bug (those types really do register and really do need
+# ordinals) and it is harmless because the width never serializes: masks are
+# arrays of component names on disk and on the wire alike.
+assisi_generate_replicable_limits()
+
 # Notes for module CMakeLists:
 # - Each module target should link:
 #     Assisi::Options, Assisi::Warnings, Assisi::Perf, Assisi::Deps

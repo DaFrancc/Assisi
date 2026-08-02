@@ -33,6 +33,11 @@ enum class FieldType
     AssetPathVector, ///< std::vector<Core::AssetPath> — serialized as a JSON array of strings.
     AssetId,         ///< Core::AssetId — a stable GUID reference, serialized as { guid, path-hint }.
     AssetIdVector,   ///< std::vector<Core::AssetId> — serialized as a JSON array of { guid, path-hint }.
+    /// Reflect::ComponentMask — a set of replicable component types. A bitset in
+    /// memory; an array of component *names* in every codec, because the bit
+    /// index (a replicable ordinal) is not stable across builds. Appended to this
+    /// enum rather than inserted, so no existing value shifts.
+    ComponentMask,
     Unknown,
 };
 

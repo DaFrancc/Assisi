@@ -17,6 +17,7 @@
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
 
@@ -245,6 +246,31 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
             writer.WriteString(path.View());
         return true;
     }
+    case FieldType::ComponentMask:
+    {
+        // Names, not the bytes underneath — even here, where a raw copy would be
+        // smaller and this data never actually crosses the wire (the only mask
+        // lives on the Replicated marker, which is not itself replicable). Bit
+        // index is a *replicable ordinal*, and the protocol hash covers
+        // serializable component layouts rather than the whole registry, so two
+        // builds can hash equal and still number their ordinals differently —
+        // one id-only registration apart is enough. Raw bits would silently
+        // re-aim; names cannot.
+        const auto                                 &mask       = *reinterpret_cast<const ComponentMask *>(address);
+        const std::span<const ComponentMeta *const> replicable = ComponentRegistry::Instance().ReplicableComponents();
+
+        std::size_t count = 0;
+        for (std::size_t ordinal = 0; ordinal < replicable.size(); ++ordinal)
+            count += mask.Test(ordinal) ? 1u : 0u;
+
+        writer.WriteVarUInt64(count);
+        for (std::size_t ordinal = 0; ordinal < replicable.size(); ++ordinal)
+        {
+            if (mask.Test(ordinal))
+                writer.WriteString(replicable[ordinal]->name);
+        }
+        return true;
+    }
     case FieldType::AssetId:
         writer.WriteBytes(std::as_bytes(std::span{reinterpret_cast<const AssetId *>(address)->bytes}));
         return true;
@@ -334,6 +360,40 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
             ReadTrivialString(reader, path);
         return true;
     }
+    case FieldType::ComponentMask:
+    {
+        std::size_t count = 0;
+        // A name is a length-prefixed string, so it cannot occupy fewer bits than
+        // an AssetPath does — reuse that floor to bound a hostile count against
+        // the bits actually remaining, rather than trusting the varint.
+        if (!ReadElementCount(reader, kMinAssetPathBits, count))
+            return true; // the reader carries the failure
+
+        auto &mask = *reinterpret_cast<ComponentMask *>(address);
+        mask       = ComponentMask{};
+
+        const ComponentRegistry &registry = ComponentRegistry::Instance();
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            const std::string name = reader.ReadString();
+            if (!reader.Ok())
+                return true;
+
+            // A name this build does not know, or knows but does not consider
+            // replicable, has no bit to land in. Dropped silently here rather
+            // than warned: unlike the JSON path (which reads authored files and
+            // where a typo deserves a shout), this decodes a peer's bytes, and a
+            // capability-set difference is exactly what the handshake already
+            // refuses to pair over.
+            const ComponentMeta *meta = registry.Find(name);
+            if (meta == nullptr)
+                continue;
+            const std::size_t ordinal = registry.ReplicableOrdinalOf(meta->id);
+            if (ordinal != ComponentRegistry::kInvalidOrdinal)
+                mask.Set(ordinal);
+        }
+        return true;
+    }
     case FieldType::AssetId:
         reader.ReadBytes(std::as_writable_bytes(std::span{reinterpret_cast<AssetId *>(address)->bytes}));
         return true;
@@ -381,6 +441,7 @@ const char *FieldTypeName(FieldType type)
     case FieldType::AssetPathVector: return "assetpath[]";
     case FieldType::AssetId: return "assetid";
     case FieldType::AssetIdVector: return "assetid[]";
+    case FieldType::ComponentMask: return "compmask";
     case FieldType::Unknown: break;
     }
     return "unknown";

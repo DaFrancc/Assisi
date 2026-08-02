@@ -71,6 +71,12 @@ function(assisi_reflect)
         )
 
         list(APPEND _generated_sources "${_out}")
+
+        # Accumulate for the whole-tree replicable count (see
+        # assisi_generate_replicable_limits). Every reflected header in the tree
+        # routes through this function, so coverage is automatic rather than a
+        # list someone has to remember to maintain.
+        set_property(GLOBAL APPEND PROPERTY ASSISI_REFLECTED_HEADERS "${_abs}")
     endforeach()
 
     # Compile generated sources as a separate OBJECT library.
@@ -106,6 +112,51 @@ function(assisi_reflect)
     # Register this OBJECT library globally so assisi_link_reflections()
     # can gather all of them.
     set_property(GLOBAL APPEND PROPERTY ASSISI_REFLECT_OBJECT_TARGETS "${_obj_target}")
+endfunction()
+
+# Emit the generated header that fixes ComponentMask's width, counted from every
+# header that has passed through assisi_reflect().
+#
+# Call once, from the top level, *after* every add_subdirectory() — the property
+# it reads is only complete once every module has registered its headers.
+#
+# The scan is text-only, so nothing here waits on a compile and no target cycle
+# exists even though the scanned headers live in modules that link Core: the
+# dependency is on header *files*.
+#
+# copy_if_different is load-bearing rather than tidiness. Every header edit
+# re-runs the scan, but the output only *changes* when the replicable count
+# crosses a byte boundary; below that the file is byte-identical and nothing
+# downstream rebuilds. Without the guard, editing any reflected header anywhere
+# would rebuild everything that includes ComponentMask.
+function(assisi_generate_replicable_limits)
+    get_property(_headers GLOBAL PROPERTY ASSISI_REFLECTED_HEADERS)
+    if (NOT _headers)
+        message(FATAL_ERROR
+            "assisi_generate_replicable_limits: no reflected headers registered. "
+            "Call this after the add_subdirectory() calls that invoke assisi_reflect().")
+    endif()
+
+    set(_dir "${CMAKE_BINARY_DIR}/generated/Assisi/Core/Reflect")
+    set(_out "${_dir}/ReplicableLimits.hpp")
+    set(_tmp "${_out}.tmp")
+
+    add_custom_command(
+        OUTPUT  "${_out}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_dir}"
+        COMMAND Python3::Interpreter "${_ASSISI_REFLECTGEN}" ${_headers} --count-replicable "${_tmp}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_tmp}" "${_out}"
+        DEPENDS ${_headers} "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
+        COMMENT "reflectgen: counting replicable components"
+        VERBATIM
+    )
+
+    add_custom_target(Assisi-ReplicableLimits DEPENDS "${_out}")
+
+    # Core owns the ComponentMask declaration, so it is what must wait for the
+    # header and what publishes the include path onward.
+    add_dependencies(Assisi-Core Assisi-ReplicableLimits)
+    target_include_directories(Assisi-Core PUBLIC "${CMAKE_BINARY_DIR}/generated")
 endfunction()
 
 # Call once on each final executable (or shared library) to force-include

@@ -12,6 +12,7 @@ target_sources(Assisi-Core
     "src/Assert.cpp"
     "src/BinaryCodec.cpp"
     "src/BitStream.cpp"
+    "src/ComponentMask.cpp"
     "src/ComponentRegistry.cpp"
     "src/JobSystem.cpp"
     "src/LooseFileProvider.cpp"
