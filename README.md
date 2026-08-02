@@ -45,12 +45,17 @@ separate package manager step, and nothing to install by hand:
 | [FreeType](https://github.com/freetype/freetype) | Font rasterization |
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON for configs and level files |
 | [doctest](https://github.com/doctest/doctest) | Unit-test framework |
+| [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) | UDP transport for the networking modules — reliability, fragmentation, connection state |
+| [protobuf](https://github.com/protocolbuffers/protobuf) | Pulled in by GameNetworkingSockets |
 | [Assimp](https://github.com/assimp/assimp) | Multi-format mesh import — **off by default** |
 
 [Assimp](https://github.com/assimp/assimp) is the deferred catch-all import backend (FBX/OBJ/DAE/…) and
 stays off (`ASSISI_ENABLE_ASSIMP`) so its heavy build doesn't tax every configure; fastgltf covers the
-runtime glTF path today. Rendering is **Vulkan**: a Vulkan-capable GPU and driver are required at
-runtime, but no Vulkan SDK is needed to build (the engine loads Vulkan dynamically).
+runtime glTF path today. Networking is on by default but can be turned off with
+`ASSISI_ENABLE_NETWORKING=OFF`, which drops GameNetworkingSockets and protobuf — a noticeable chunk of
+first-configure time if you are not building a multiplayer game. Rendering is **Vulkan**: a
+Vulkan-capable GPU and driver are required at runtime, but no Vulkan SDK is needed to build (the engine
+loads Vulkan dynamically).
 
 **Minimum CPU:** x86-64 with **AVX2** (Intel Haswell 2013+ / AMD Zen 2015+, and the FMA/F16C/LZCNT/BMI
 extensions that ship alongside it). This is a deliberate baseline — the engine is compiled with these
@@ -205,7 +210,8 @@ the `Logger` (console and file sinks), `AssetSystem` (a virtual filesystem with 
 and a writable per-user root, returning `std::expected`), error types, `Prelude.hpp` (common includes),
 and the `EventQueue` (a per-frame typed event bus for decoupled inter-system communication). It also
 houses the **reflection** system — `ACOMP()`/`AFIELD()` annotations and a `ComponentRegistry` that the
-`reflectgen` build tool (`tools/reflectgen`) turns into (de)serialization and inspector code — and
+`reflectgen` build tool (`tools/reflectgen`) turns into (de)serialization, inspector, and network-codec
+code (`ACOMP(replicable)`, `AFIELD(norep)`; see NetSync) — and
 `JobSystem`, the engine's task pool (worker threads plus a main-thread queue for work that has to land
 at a safe point in the frame).
 
@@ -264,6 +270,46 @@ It exposes `PhysicsWorld` (manages the simulation, body creation, stepping, and 
 and `RigidBodyDescriptor` (a serializable description of a body's shape and static/dynamic flags).
 Call `PhysicsWorld::Clear()` before loading a new level to destroy all tracked bodies.
 
+### Net
+The Net module is the transport, and nothing above it. It wraps
+[GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) behind `NetTransport`,
+which owns connection lifecycle, per-message reliability (`SendMode::Reliable` / `Unreliable`), and
+lanes so a bulk transfer cannot head-of-line-block a snapshot. `CreateLoopbackPair()` returns both ends
+of an in-process connection, which is what lets the replication tests exercise the shipping path rather
+than a test-only stub. It knows nothing about entities or components.
+
+### NetSync
+The NetSync module is replication: turning one machine's scene into another's. The model is **local
+simulation with authoritative correction** — both machines run the same Jolt physics at 60 Hz, and the
+server periodically re-anchors the client rather than streaming it poses, so a mirror renders at
+host-time-minus-transit instead of two snapshot intervals in the past.
+
+State travels as **delta snapshots against a per-connection acked baseline**: each client is sent what
+changed since the snapshot it last acknowledged, so a lost packet is never retransmitted, only
+superseded — loss degrades into bandwidth, never into desync. `ReplicationServer` / `ReplicationClient`
+are the two halves; `BodyState` carries quantized physics corrections (smallest-three quaternions,
+~2 mm position resolution) with view-side smoothing that hides the snap without lagging the simulation;
+`NetClock` keeps the client's tick estimate honest. A handshake exchanges a **protocol hash** covering
+component layout, framing, and quantization, so two builds that disagree refuse to pair rather than
+silently decoding each other's bytes into the wrong fields.
+
+What replicates is an intersection of gates, each owned by whoever should decide it:
+
+| Gate | Scope | Mechanism |
+|---|---|---|
+| Capability | component type | `ACOMP(replicable)` — this type *can* travel |
+| Game policy | game | `game.json` → `networking.neverReplicate` |
+| Entity | entity instance | presence of the `Replicated` component |
+| Instance policy | entity instance | `Replicated::excluded` — a per-component mask |
+| Field | field | `AFIELD(norep)` — saved to disk, never sent |
+
+The split is the point: an engine module can grant a *capability* but cannot set a game's *policy*, so
+marking a component in some engine header does not silently put it on every game's wire. The editor's
+inspector exposes the per-entity half — a clickable glyph on each component header plus a checklist,
+both rendering the same mask. Design and rationale in
+[`docs/replication-optin-plan-v1.md`](docs/replication-optin-plan-v1.md) and
+[`docs/replication-plan-v4.md`](docs/replication-plan-v4.md).
+
 ### Debug
 The Debug module wraps [Dear ImGui](https://github.com/ocornut/imgui) and
 [ImPlot](https://github.com/epezent/implot) with a GLFW + **Vulkan** backend.
@@ -298,7 +344,9 @@ The Editor module is the level editor, built **as a library** rather than baked 
 game and its editor are two thin targets over the same code. `EditorApp` derives from `App::Application`
 and adds the fly camera, entity list, reflected-component inspector, transform gizmo, asset browser,
 collider wireframes, play/pause/stop, and `.alvl` level load/save. `EditHistory` is the undo/redo system
-(Ctrl-Z), which captures at every edit site and survives entering and leaving play mode. `apps/sandbox`
+(Ctrl-Z), which captures at every edit site and survives entering and leaving play mode. Play can start
+as a host or a client, and **Host + N play-in-editor clients** spawn as child processes from one click,
+so verifying a networked session does not mean launching binaries by hand. `apps/sandbox`
 is a few hundred lines on top of it. Editor overlays are opt-in at the renderer level
 (`enableEditorVisuals`), so a game build never creates those pipelines or loads editor assets.
 
@@ -321,7 +369,14 @@ comments in the headers. Design notes and the rolling code-review docket live in
 including the architecture notes for [clustered lighting](docs/light-culling-design-notes.md),
 [GPU-driven rendering](docs/gpu-driven-rendering-design-notes.md),
 [multi-scene worlds](docs/multi-scene-design-notes.md), the [job system](docs/job-system-design-notes.md),
-[asset streaming](docs/asset-streaming-design-notes.md) and [Chiara](docs/chiara-design-notes.md).
+[asset streaming](docs/asset-streaming-design-notes.md), [replication](docs/replication-plan-v4.md) and
+its [opt-in model](docs/replication-optin-plan-v1.md), and [Chiara](docs/chiara-design-notes.md).
+
+The replication docs come with [a survey of how other ECS engines solve the same
+problem](docs/replication-research-ecs-survey.md) — Unity NetCode, bevy_replicon, lightyear, Flecs,
+EnTT, Unreal (classic/Iris/Mass), Photon Quantum, Overwatch, SpatialOS and Godot — with a source beside
+every claim and the unverifiable ones marked as such. It is the evidence the design argues from,
+including the two places it deliberately departs from the majority.
 
 Two practical guides:
 - [`docs/gpu-profiling-guide.md`](docs/gpu-profiling-guide.md) — capturing and reading a frame with
