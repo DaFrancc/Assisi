@@ -394,35 +394,21 @@ void EditorApp::ShutdownPieClients()
     }
 }
 
-void EditorApp::FrameJoinedWorldOnce()
-{
-    if (_joinCameraFramed || _scene == nullptr || _netSession == nullptr)
-        return;
-
-    const Assisi::NetSync::ReplicationClient *client = _netSession->Client();
-    if (client == nullptr || !client->IsWorldComplete())
-        return;
-
-    // A viewer window that opens staring at nothing undermines the one-click
-    // demo it exists for. The first mirrored entity is a crude choice and a
-    // deliberate one: it is *the host's world*, which is the thing this window
-    // was opened to look at, and any cleverer framing would be guessing at
-    // which part of it matters.
-    Assisi::ECS::Entity target = Assisi::ECS::NullEntity;
-    _scene->ForEachEntity(
-        [&](Assisi::ECS::Entity entity)
-        {
-            if (target == Assisi::ECS::NullEntity && _scene->Has<Assisi::NetSync::Mirrored>(entity) &&
-                _scene->Get<Assisi::ECS::Transform>(entity) != nullptr)
-            {
-                target = entity;
-            }
-        });
-
-    _joinCameraFramed = true; // once, whether or not there was anything to look at
-    if (target != Assisi::ECS::NullEntity)
-        FocusCameraOn(target);
-}
+// Joining deliberately leaves the camera exactly where the author left it.
+//
+// Nothing here has to preserve it: the fly camera is plain EditorApp state
+// (_cameraTransform), not an entity, so the level load below rebuilds the scene
+// without the camera noticing. What had to go was code that moved it on purpose.
+//
+// That code focused the first mirrored entity, on the theory that a viewer window
+// opening onto nothing undermines the one-click demo. But "first mirrored entity"
+// means whichever one happened to arrive first, and in a level of falling crates
+// that is a crate, mid-fall — so the camera was flung somewhere that depended on
+// how long the join took, and the later you joined the further underground you
+// ended up. Framing on join is a guess about what the author wants to look at,
+// and the author already told us by pointing the camera before they joined.
+// Someone who does want to go somewhere specific can double-click an entity in
+// the list, which is the deliberate version of the same thing.
 
 void EditorApp::OnShutdown()
 {

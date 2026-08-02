@@ -923,10 +923,6 @@ void EditorApp::OnUpdate(float dt)
         }
     }
 
-    // A viewer window that opens staring at nothing undermines the one-click
-    // demo it exists for. Once, when the joined world has arrived.
-    FrameJoinedWorldOnce();
-
     // Worlds that simulate but are not drawn get neither the pose write-back nor
     // the transform propagation the render path does for the world it draws. Give
     // them both, in that order — see App::SyncUnrenderedWorld. Skipped entirely

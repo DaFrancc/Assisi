@@ -161,8 +161,7 @@ void EditorApp::StartPlay(NetIntent intent)
     _netError.clear();
     if (intent == NetIntent::Join)
     {
-        _joinPhase        = JoinPhase::Connecting;
-        _joinCameraFramed = false;
+        _joinPhase = JoinPhase::Connecting;
     }
     else if (playInEditor)
     {
@@ -233,7 +232,6 @@ void EditorApp::StopPlay()
     _joinPhase        = JoinPhase::None;
     _pendingJoinBuild = false;
     _pendingStopPlay  = false;
-    _joinCameraFramed = false;
 
     // Discard the scratch pause-history first (whatever the pause let you undo dies
     // with the pause). The editing history is deliberately NOT cleared — the restore

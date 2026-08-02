@@ -284,10 +284,6 @@ class EditorApp : public Assisi::App::Application
     /// temp level. Safe to call when there are none.
     void ShutdownPieClients();
 
-    /// @brief Point the camera at something once a joined world has arrived, so
-    /// a viewer window does not open staring into empty space.
-    void FrameJoinedWorldOnce();
-
     /// @brief Diagnostic (end of OnImGui): warns with full ImGui internal state
     /// when a widget holds ActiveId for seconds with no mouse button down and no
     /// text edit — the "UI stops responding until a new window opens" wedge.
@@ -685,8 +681,6 @@ class EditorApp : public Assisi::App::Application
     std::vector<Assisi::App::ChildProcess> _pieClients;
     /// The temp level a PIE host wrote for its clients to load. Deleted at Stop.
     std::filesystem::path _pieTempLevel;
-    /// Whether this (client) editor has already framed the world it joined.
-    bool _joinCameraFramed = false;
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;
