@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
+#include <Assisi/NetSync/BodyState.hpp>
 
 #include <format>
 
@@ -26,16 +27,48 @@ constexpr std::size_t kMaxSummaryBytes = 512;
 constexpr std::size_t kMaxLevelPathBytes = 512;
 } // namespace
 
+namespace
+{
+
+/// The quantization parameters, as the text the handshake hash is taken over.
+///
+/// Readable on purpose, and the same reason `ProtocolLayoutDescription` is: when
+/// two builds refuse to pair, diffing two descriptions names the field, where a
+/// 64-bit mismatch never could.
+std::string QuantizationDescription()
+{
+    const BodyQuantization &q = Quantization();
+    return std::format("body positionExtent={:g} positionBits={} linearMax={:g} linearBits={} "
+                       "angularMax={:g} angularBits={}",
+                       static_cast<double>(q.positionExtent), q.positionBits,
+                       static_cast<double>(q.linearVelocityMax), q.linearVelocityBits,
+                       static_cast<double>(q.angularVelocityMax), q.angularVelocityBits);
+}
+
+} // namespace
+
 std::uint64_t NetProtocolHash()
 {
-    // FNV-1a continued over the framing version, so a framing change the
-    // component table cannot see still refuses to pair. Continuing the same hash
-    // rather than mixing with XOR keeps one avalanche, and reuses the primitive
-    // Core already ships instead of introducing a second one.
+    // FNV-1a continued over the framing version and the quantization, so a change
+    // the component table cannot see still refuses to pair. Continuing the same
+    // hash rather than mixing with XOR keeps one avalanche, and reuses the
+    // primitive Core already ships instead of introducing a second one.
+    //
+    // The quantization has to be in here: two builds packing the same position
+    // over different ranges corrupt each other *silently*, decoding perfectly
+    // well into the wrong numbers, which is the one failure mode a handshake
+    // exists to prevent.
     std::uint64_t hash = Core::Reflect::ProtocolHash();
     for (std::uint32_t shift = 0; shift < 32; shift += 8)
     {
         hash ^= (kNetProtocolVersion >> shift) & 0xFFu;
+        hash *= Core::kFnvPrime;
+    }
+
+    const std::string quantization = QuantizationDescription();
+    for (const char byte : quantization)
+    {
+        hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(byte));
         hash *= Core::kFnvPrime;
     }
     return hash;
@@ -43,8 +76,11 @@ std::uint64_t NetProtocolHash()
 
 std::string NetProtocolSummary()
 {
-    return std::format("{} net={} hash={}", Core::Reflect::ProtocolSummary(), kNetProtocolVersion,
-                       Core::ToHex64(NetProtocolHash()));
+    // The quantization goes in the summary, not just the hash: a refused
+    // connection should say which field the two builds disagree about, and this
+    // string is what a rejection carries.
+    return std::format("{} net={} {} hash={}", Core::Reflect::ProtocolSummary(), kNetProtocolVersion,
+                       QuantizationDescription(), Core::ToHex64(NetProtocolHash()));
 }
 
 void WriteMessageType(MessageType type, Core::BitWriter &writer)

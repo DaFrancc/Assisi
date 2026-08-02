@@ -10,6 +10,15 @@
     "timing": {
         "physicsHz": 60
     },
+    "networking": {
+        "_comment": "How body-state corrections are packed. Both ends must agree — these are inside the handshake hash, so a mismatched pair refuses to connect rather than silently decoding each other's bytes into the wrong numbers. Round-to-nearest cannot accumulate across corrections, so this is a bandwidth/quality knob, not a correctness one.",
+        "positionExtent": 256.0,
+        "positionBits": 18,
+        "linearVelocityMax": 128.0,
+        "linearVelocityBits": 12,
+        "angularVelocityMax": 64.0,
+        "angularVelocityBits": 11
+    },
     "input": {
         "actions": {
             "MoveForward":  [{"key": "W"}, {"key": "Up"}],

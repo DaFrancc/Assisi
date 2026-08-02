@@ -80,6 +80,10 @@ void ServerApp::OnStart()
     Log::Info("Server: headless {}, {} Hz fixed step{}.", roleName, GetConfig().physicsHz,
               _options.tickLimit > 0 ? std::format(", stopping after {} ticks", _options.tickLimit) : std::string{});
 
+    // Before any session can exist: the quantization is inside the handshake
+    // hash, so it has to be settled before the first hello is written.
+    NetSync::LoadQuantizationFromConfig();
+
     if (!_options.level.empty())
     {
         // LoadLevelSim, not LoadLevel: no asset cache, no scene renderer,

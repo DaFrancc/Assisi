@@ -88,6 +88,10 @@ void EditorApp::OnStart()
         }
     }
 
+    // Before any session can exist: the quantization is inside the handshake
+    // hash, so it has to be settled before the first hello is written.
+    Assisi::NetSync::LoadQuantizationFromConfig();
+
     // What the manager needs to turn a level file into a running world when the
     // game travels. Installed once; captured by pointer, and all three outlive it.
     _worlds.SetServices({.cache    = &_assetCache,

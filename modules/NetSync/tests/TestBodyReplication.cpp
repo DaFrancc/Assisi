@@ -248,6 +248,162 @@ TEST_CASE("a settled world stops costing bandwidth, with physics running")
     CHECK((diagnostics->bytesSent - bytesBefore) / idleSnapshots < 24);
 }
 
+TEST_CASE("a quantized body record is at least 2.5x smaller than the whole-value one")
+{
+    // The measurement R8 exists to make, against the encoding R5 actually
+    // shipped: a varint id, the at-rest bit, and then every value as a raw
+    // 32-bit float — three for the position, *four* for the quaternion, and six
+    // more for the velocities when awake.
+    const auto wholeValueBits = [](bool asleep, std::size_t netIdBits)
+    { return netIdBits + 1 + 32 * 3 + 32 * 4 + (asleep ? 0 : 32 * 6); };
+
+    BodyState awake;
+    awake.netId           = 7; // one varint byte, same on both sides of the ratio
+    awake.position        = {12.5f, -3.25f, 100.125f};
+    awake.rotation        = glm::normalize(glm::quat{0.3f, 0.5f, -0.2f, 0.8f});
+    awake.linearVelocity  = {-4.5f, 12.25f, 0.f};
+    awake.angularVelocity = {1.5f, -0.25f, 3.f};
+
+    Core::BitWriter awakeWriter;
+    WriteBodyState(awake, awakeWriter);
+    const double awakeRatio =
+        static_cast<double>(wholeValueBits(false, 8)) / static_cast<double>(awakeWriter.BitsWritten());
+    CAPTURE(awakeWriter.BitsWritten());
+    CHECK(awakeRatio >= 2.5);
+
+    BodyState resting = awake;
+    resting.asleep    = true;
+    Core::BitWriter restingWriter;
+    WriteBodyState(resting, restingWriter);
+    const double restingRatio =
+        static_cast<double>(wholeValueBits(true, 8)) / static_cast<double>(restingWriter.BitsWritten());
+    CAPTURE(restingWriter.BitsWritten());
+    CHECK(restingRatio >= 2.5);
+}
+
+TEST_CASE("the correction stream shrinks with the encoding")
+{
+    // The record-level ratio above is exact; this is the one that matters in
+    // practice, where the stream also carries framing and ids. Two runs of the
+    // same falling pile, one at the shipping resolution and one at 32 bits a
+    // component. (The quaternion is smallest-three in both — there is no way to
+    // ask for the old four-float form any more — so this ratio is *lower* than
+    // the record-level one by construction, not a contradiction of it.)
+    const BodyQuantization defaults = Quantization();
+
+    BodyQuantization wide    = defaults;
+    wide.positionBits        = 32;
+    wide.linearVelocityBits  = 32;
+    wide.angularVelocityBits = 32;
+
+    const auto run = [](const BodyQuantization &quantization)
+    {
+        SetQuantization(quantization);
+
+        PhysicsHarness harness;
+        harness.Step(4);
+        SpawnSharedFloor(harness);
+        for (int i = 0; i < 6; ++i)
+            SpawnBox(harness.serverScene, harness.serverPhysics,
+                     {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.15f, 0.f},
+                     /*isStatic=*/false);
+
+        // While it is falling: the correction stream is the whole cost, and a
+        // settled world would measure nothing.
+        harness.Step(30);
+        const std::uint64_t before = harness.client.Corrections().bytesApplied;
+        harness.Step(150);
+        return harness.client.Corrections().bytesApplied - before;
+    };
+
+    const std::uint64_t wideBytes      = run(wide);
+    const std::uint64_t quantizedBytes = run(defaults);
+    SetQuantization(defaults);
+
+    REQUIRE(wideBytes > 0);
+    REQUIRE(quantizedBytes > 0);
+    CAPTURE(wideBytes);
+    CAPTURE(quantizedBytes);
+    CHECK(static_cast<double>(wideBytes) / static_cast<double>(quantizedBytes) >= 1.9);
+}
+
+TEST_CASE("quantized body state round-trips within a quantum")
+{
+    // Round-to-nearest, so error does not accumulate across corrections: each
+    // re-anchor lands within half a quantum of the truth, independently of the
+    // last. That is what makes precision a display-quality knob rather than a
+    // correctness one.
+    const BodyQuantization &q = Quantization();
+
+    BodyState source;
+    source.netId           = 42;
+    source.position        = {12.5f, -3.25f, 100.125f};
+    source.rotation        = glm::normalize(glm::quat{0.3f, 0.5f, -0.2f, 0.8f});
+    source.linearVelocity  = {-4.5f, 12.25f, 0.f};
+    source.angularVelocity = {1.5f, -0.25f, 3.f};
+    source.asleep          = false;
+
+    Core::BitWriter writer;
+    WriteBodyState(source, writer);
+
+    BodyState       decoded;
+    Core::BitReader reader(writer.Data());
+    REQUIRE(ReadBodyState(reader, decoded));
+
+    CHECK(decoded.netId == source.netId);
+    CHECK_FALSE(decoded.asleep);
+
+    const float positionQuantum = (2.f * q.positionExtent) / static_cast<float>(1u << q.positionBits);
+    CHECK(glm::length(decoded.position - source.position) < positionQuantum * 2.f);
+
+    // Smallest-three drops the largest component and reconstructs it from the
+    // unit-length constraint, so the comparison is on the rotation, not the
+    // four numbers (q and -q are the same rotation).
+    CHECK(std::abs(glm::dot(decoded.rotation, source.rotation)) > 0.999f);
+
+    const float linearQuantum = (2.f * q.linearVelocityMax) / static_cast<float>(1u << q.linearVelocityBits);
+    CHECK(glm::length(decoded.linearVelocity - source.linearVelocity) < linearQuantum * 2.f);
+
+    // An asleep record carries no velocities at all, and is much smaller for it.
+    BodyState resting = source;
+    resting.asleep    = true;
+    Core::BitWriter restingWriter;
+    WriteBodyState(resting, restingWriter);
+    CHECK(restingWriter.BitsWritten() < writer.BitsWritten());
+}
+
+TEST_CASE("two builds that quantize differently refuse to pair, and the summary says which field")
+{
+    // The failure a handshake exists to prevent: identical component tables,
+    // identical framing, and every position silently decoded into the wrong
+    // number because one side thought the world was twice as wide.
+    const BodyQuantization defaults = Quantization();
+    const std::uint64_t    baseline = NetProtocolHash();
+
+    BodyQuantization wider  = defaults;
+    wider.positionExtent    = defaults.positionExtent * 2.f;
+    SetQuantization(wider);
+    const std::uint64_t widerHash    = NetProtocolHash();
+    const std::string   widerSummary = NetProtocolSummary();
+
+    BodyQuantization coarser    = defaults;
+    coarser.positionBits        = defaults.positionBits - 1;
+    SetQuantization(coarser);
+    const std::uint64_t coarserHash = NetProtocolHash();
+
+    SetQuantization(defaults);
+
+    CHECK(widerHash != baseline);
+    CHECK(coarserHash != baseline);
+    CHECK(widerHash != coarserHash);
+    CHECK(NetProtocolHash() == baseline);
+
+    // Diffing two summaries has to name the offending field; a 64-bit mismatch
+    // never could.
+    CHECK(widerSummary.find("positionExtent=512") != std::string::npos);
+    CHECK(widerSummary.find("positionBits=") != std::string::npos);
+}
+
 TEST_CASE("a client body woken by something the server never saw is put back to sleep")
 {
     // The local wake-cascade. Client poses differ from the server's by whatever
