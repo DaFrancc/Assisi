@@ -134,6 +134,12 @@ void EditorApp::StartPlay(NetIntent intent)
     // and that scene is now the play scene — the one the editor already treats
     // as disposable.
     _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene, _physics);
+
+    // Cached for the inspector, which renders a game-vetoed component as a
+    // disabled checkbox with a reason. Read here rather than per frame: the list
+    // is fixed for the life of a session, and the inspector redraws constantly.
+    _netVetoedComponentNames = Assisi::NetSync::LoadNeverReplicateFromConfig();
+
     const auto port = static_cast<std::uint16_t>(_netPort);
 
     const bool started = intent == NetIntent::Host

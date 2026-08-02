@@ -849,6 +849,30 @@ void EditorApp::DrawReplicationSection(bool mirrored)
                                      : "No local simulation, so it is interpolated between received snapshots — "
                                        "about two snapshot intervals behind.");
         }
+
+        // What this mirror is actually receiving, derived from the components
+        // that arrived — **not** from its local Replicated marker.
+        //
+        // That distinction matters and is easy to get wrong: a mirror's marker is
+        // default-constructed by the client when it creates the entity, and the
+        // host's real one was stripped from the joined world. Rendering its
+        // exclusion mask would display fabricated data — an always-empty policy —
+        // dressed up as the host's. Observed presence is the only thing a client
+        // truthfully knows.
+        if (ImGui::TreeNode("Receiving"))
+        {
+            for (const ComponentMeta *meta : ComponentRegistry::Instance().ReplicableComponents())
+            {
+                const bool present =
+                    meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr;
+                if (present)
+                    ImGui::BulletText("%s", meta->name.c_str());
+                else
+                    ImGui::TextDisabled("    %s — not sent", meta->name.c_str());
+            }
+            ImGui::TextDisabled("Policy is the host's; a joined client cannot author it.");
+            ImGui::TreePop();
+        }
     }
 
     if (!isReplicated)
@@ -904,7 +928,107 @@ void EditorApp::DrawReplicationSection(bool mirrored)
                            "its children lose their parent link.");
     }
 
+    // Excluding Transform is legal — a pure-data entity carrying replicated
+    // game state has no spatial meaning to send — but on an entity that is
+    // *placed*, it produces a mirror stuck at whatever pose the level file had.
+    // The server honours the authored policy either way; this says why the
+    // result will look wrong, rather than quietly overriding what someone wrote.
+    if (const auto *marker = _scene->Get<Assisi::NetSync::Replicated>(_selectedEntity))
+    {
+        const std::size_t transformOrdinal =
+            ComponentRegistry::Instance().ReplicableOrdinalOf(ComponentIdOf<Assisi::ECS::Transform>());
+        const bool placementDependent =
+            _scene->Get<Assisi::Runtime::MeshRenderer>(_selectedEntity) != nullptr ||
+            _scene->Get<Assisi::Physics::RigidBodyDescriptor>(_selectedEntity) != nullptr;
+
+        if (marker->excluded.Test(transformOrdinal) && placementDependent)
+        {
+            ImGui::TextColored(kWarnColor,
+                               "Transform is unticked, but this entity is placed — mirrors will sit at the "
+                               "level file's pose and never move.");
+        }
+    }
+
+    // --- per-component policy ----------------------------------------------
+    // The capability/policy split, made authorable. Every capable component this
+    // entity carries gets a checkbox; unticking one authors an exclusion. The
+    // default is everything ticked, which is what an empty mask means.
+    if (!mirrored)
+        DrawReplicationPolicy();
+
     ImGui::Separator();
+}
+
+void EditorApp::DrawReplicationPolicy()
+{
+    using namespace Assisi::Core::Reflect;
+
+    Assisi::NetSync::Replicated *marker = _scene->Get<Assisi::NetSync::Replicated>(_selectedEntity);
+    if (marker == nullptr)
+        return;
+
+    if (!ImGui::TreeNode("Sends"))
+        return;
+
+    const ComponentRegistry &registry = ComponentRegistry::Instance();
+
+    // The game's veto, so a component it forbids renders as a dead switch with a
+    // reason rather than a live one that does nothing. An author toggling a
+    // checkbox that cannot matter is worse than not offering it.
+    const std::vector<std::string> &vetoed = _netVetoedComponentNames;
+
+    bool changed = false;
+    for (const ComponentMeta *meta : registry.ReplicableComponents())
+    {
+        // Only what this entity actually has: a checkbox for a component it does
+        // not carry would be asking about something that cannot be sent anyway.
+        if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) == nullptr)
+            continue;
+
+        const std::size_t ordinal = registry.ReplicableOrdinalOf(meta->id);
+        const bool        gameVeto =
+            std::find(vetoed.begin(), vetoed.end(), meta->name) != vetoed.end();
+
+        bool sends = !marker->excluded.Test(ordinal);
+
+        ImGui::BeginDisabled(gameVeto);
+        if (gameVeto)
+            sends = false;
+        if (ImGui::Checkbox(meta->name.c_str(), &sends))
+        {
+            // Through the undo path like any other edit — a policy change is an
+            // edit, and Ctrl-Z should mean the same thing here as anywhere else.
+            if (Assisi::Editor::EditHistory *history = ActiveHistory())
+            {
+                history->RecordBefore(_selectedEntity, ComponentIdOf<Assisi::NetSync::Replicated>(),
+                                      EditLabel("Replication policy", _selectedEntity), _selectedEntity);
+            }
+            if (Assisi::NetSync::Replicated *writable =
+                    _scene->GetMut<Assisi::NetSync::Replicated>(_selectedEntity))
+            {
+                writable->excluded.Set(ordinal, !sends);
+            }
+            changed = true;
+        }
+        ImGui::EndDisabled();
+
+        if (gameVeto)
+        {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(filtered by game.json)");
+        }
+    }
+    (void)changed;
+
+    ImGui::TextDisabled("Unticked components stay on this machine.");
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("The component's header says it *can* replicate; this says whether this entity "
+                          "actually sends it. Clients never receive an unticked component, and one already "
+                          "delivered is removed from their mirrors.");
+    }
+
+    ImGui::TreePop();
 }
 
 void EditorApp::DrawInspector()

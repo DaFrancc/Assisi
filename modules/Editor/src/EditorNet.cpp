@@ -706,6 +706,27 @@ void EditorApp::DrawNetworkWindow()
 
         LabelledValue("Clients", std::format("{}", stats.clientCount));
         LabelledValue("Replicated entities", std::format("{}", stats.replicatedEntities));
+
+        // What this session is *capable* of sending, shown rather than inferred.
+        // Default-send polarity means a future engine module marking a new type
+        // replicable would quietly add it to every marked entity; a capability
+        // surface you can read is the cheap fence against noticing that months
+        // later on a bandwidth graph.
+        if (ImGui::TreeNode("Replicable components"))
+        {
+            for (const Assisi::Core::Reflect::ComponentMeta *meta :
+                 Assisi::Core::Reflect::ComponentRegistry::Instance().ReplicableComponents())
+            {
+                const bool vetoed = std::find(_netVetoedComponentNames.begin(), _netVetoedComponentNames.end(),
+                                              meta->name) != _netVetoedComponentNames.end();
+                if (vetoed)
+                    ImGui::TextDisabled("%s — vetoed by game.json", meta->name.c_str());
+                else
+                    ImGui::BulletText("%s", meta->name.c_str());
+            }
+            ImGui::TextDisabled("Per-entity: untick components in the inspector's Sends list.");
+            ImGui::TreePop();
+        }
         LabelledValue("Snapshots sent", std::format("{}", stats.snapshotsSent));
         LabelledValue("Bytes sent", std::format("{}", stats.bytesSent));
         if (stats.snapshotsSent > 0)

@@ -335,6 +335,17 @@ class EditorApp : public Assisi::App::Application
     /// and the warnings that catch an entity that will not replicate the way its
     /// author expects. Drawn under the entity id. See EditorInspector.cpp.
     void DrawReplicationSection(bool mirrored);
+
+    /// Per-component send policy for the selected authoring entity: one checkbox
+    /// per capable component it carries, writing `Replicated::excluded`.
+    /// Authoring entities only — a mirror's marker is client-fabricated, so
+    /// showing its mask would display data the host never sent.
+    void DrawReplicationPolicy();
+
+    /// Component names the game config vetoes, cached at session start so the
+    /// policy checkboxes can render a forbidden component as a disabled switch
+    /// with a reason rather than a live one that silently does nothing.
+    std::vector<std::string> _netVetoedComponentNames;
     /// @brief Draws one editable row per material slot of @p mrc's resolved mesh
     /// (labelled by the imported material name), each a `.amat` path + browse
     /// button writing into `materialOverrides[slot]`. @p fieldOffset is the offset
