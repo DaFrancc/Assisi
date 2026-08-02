@@ -36,7 +36,7 @@ TEST_CASE("before any feedback the clock is free-running")
 TEST_CASE("the first snapshot adopts the target lead outright")
 {
     NetClock clock(kTickRate);
-    for (int i = 0; i < 500; ++i)
+    for (int32_t i = 0; i < 500; ++i)
         clock.Tick(); // free-running counter is at an arbitrary value
 
     // 100 ms RTT at 60 Hz: ~3 ticks each way, plus a command frame, plus the
@@ -83,7 +83,7 @@ TEST_CASE("a starved server queue grows the lead")
     // client is not far enough ahead.
     ClockFeedback starving = Healthy(110, 0);
     starving.starvedTicks  = 3;
-    for (int i = 0; i < 10; ++i)
+    for (int32_t i = 0; i < 10; ++i)
         clock.Tick();
     clock.OnSnapshot(starving, 30);
 
@@ -101,9 +101,9 @@ TEST_CASE("an overfull server queue shrinks the lead — gradually")
 
     // Sitting on far more cushion than needed is pure added latency.
     std::uint64_t serverTick = 100;
-    for (int round = 0; round < 3; ++round)
+    for (int32_t round = 0; round < 3; ++round)
     {
-        for (int i = 0; i < 10; ++i)
+        for (int32_t i = 0; i < 10; ++i)
             clock.Tick();
         serverTick += 10;
         clock.OnSnapshot(Healthy(serverTick, 8), 60);
@@ -126,9 +126,9 @@ TEST_CASE("a stable connection tracks without snapping")
 
     // Both clocks advance at the same rate and the connection stays healthy;
     // nothing here should ever justify a snap.
-    for (int round = 0; round < 20; ++round)
+    for (int32_t round = 0; round < 20; ++round)
     {
-        for (int i = 0; i < 3; ++i)
+        for (int32_t i = 0; i < 3; ++i)
             clock.Tick();
         serverTick += 3;
         clock.OnSnapshot(Healthy(serverTick), 50);
@@ -146,7 +146,7 @@ TEST_CASE("a large drift snaps the clock and is counted")
 
     // The client ran for a long time with no snapshot (a stall), so it is now
     // far further ahead than it should be.
-    for (int i = 0; i < 120; ++i)
+    for (int32_t i = 0; i < 120; ++i)
         clock.Tick();
     clock.OnSnapshot(Healthy(1010), 50);
 
@@ -160,7 +160,7 @@ TEST_CASE("the estimated server tick advances between snapshots")
     clock.OnSnapshot(Healthy(500), 40);
     CHECK(clock.EstimatedServerTick() == 500);
 
-    for (int i = 0; i < 5; ++i)
+    for (int32_t i = 0; i < 5; ++i)
         clock.Tick();
     // No new snapshot: the server is assumed to have advanced at the same rate.
     CHECK(clock.EstimatedServerTick() == 505);
@@ -174,7 +174,7 @@ TEST_CASE("Reset returns the clock to its pre-handshake state")
 {
     NetClock clock(kTickRate);
     clock.OnSnapshot(Healthy(700), 80);
-    for (int i = 0; i < 10; ++i)
+    for (int32_t i = 0; i < 10; ++i)
         clock.Tick();
 
     clock.Reset();

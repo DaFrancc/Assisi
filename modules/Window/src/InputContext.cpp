@@ -30,13 +30,13 @@ void InputContext::Poll()
     // GLFW key tokens start at Space (32, mirrored by Key::Space); querying
     // codes below that raises GLFW_INVALID_ENUM on every poll. The skipped
     // low entries stay false.
-    for (int k = static_cast<int>(Key::Space); k < kKeyCount; ++k)
+    for (int32_t k = static_cast<int32_t>(Key::Space); k < kKeyCount; ++k)
     {
         _currKeys[static_cast<std::size_t>(k)] = glfwGetKey(_window, k) == GLFW_PRESS;
     }
 
     _prevButtons = _currButtons;
-    for (int b = 0; b < kButtonCount; ++b)
+    for (int32_t b = 0; b < kButtonCount; ++b)
     {
         _currButtons[static_cast<std::size_t>(b)] = glfwGetMouseButton(_window, b) == GLFW_PRESS;
     }

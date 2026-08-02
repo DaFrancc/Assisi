@@ -841,7 +841,11 @@ void EditorApp::DrawNetworkWindow()
         LabelledValue("Clock corrections", std::format("{}", stats.clockCorrections));
 
         if (_joinPhase == JoinPhase::Connecting)
-            ImGui::TextColored(kWarnColor, "Joining — waiting for the host (%.0f s)...", _joinElapsed);
+            // Explicit widening: %f consumes a double through varargs, so the
+            // float would promote anyway — saying so silences -Wdouble-promotion
+            // without changing a byte of behaviour.
+            ImGui::TextColored(kWarnColor, "Joining — waiting for the host (%.0f s)...",
+                               static_cast<double>(_joinElapsed));
         else if (!stats.worldComplete)
             ImGui::TextColored(kWarnColor, "Still receiving the initial world...");
     }

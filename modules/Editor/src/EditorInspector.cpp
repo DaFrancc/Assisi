@@ -794,27 +794,12 @@ void EditorApp::DrawReplicationSection(bool mirrored)
 {
     using namespace Assisi::Core::Reflect;
 
+    // Presence of the marker is the gate, and it is the *only* gate — there is
+    // deliberately no checkbox here duplicating it. The marker is an ordinary
+    // component, so it is added and removed through the same Add Component menu
+    // and the same undoable path as anything else; a second control that meant
+    // the same thing would be a second place for the two to disagree.
     const bool isReplicated = _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity);
-
-    // One click, no code: the marker is an ordinary component, so adding and
-    // removing it goes through the same undoable path as any other.
-    bool checkbox = isReplicated;
-    if (ImGui::Checkbox("Replicated", &checkbox))
-    {
-        const ComponentMeta *meta = ComponentRegistry::Instance().Find("Replicated");
-        if (meta != nullptr)
-        {
-            if (checkbox)
-                AddComponentToSelected(*meta);
-            else
-                RemoveComponentFromSelected(*meta);
-        }
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Send this entity to clients. Most of a level is scenery both machines already have "
-                          "from the file; marking that would spend bandwidth restating what nobody changes.");
-    }
 
     // The session-scoped identity, on whichever side is looking. Worth showing
     // because it is the only name the two machines share — an entity handle is

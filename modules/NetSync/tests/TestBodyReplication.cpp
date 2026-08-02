@@ -186,7 +186,7 @@ TEST_CASE("a pile settles on the server, and the client's own bodies settle to t
     SpawnSharedFloor(harness);
 
     std::vector<ECS::Entity> pile;
-    for (int i = 0; i < 5; ++i)
+    for (int32_t i = 0; i < 5; ++i)
         pile.push_back(SpawnBox(harness.serverScene, harness.serverPhysics,
                                 {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.2f, 0.f},
                                 /*isStatic=*/false));
@@ -231,7 +231,7 @@ TEST_CASE("a settled world stops costing bandwidth, with physics running")
     harness.Step(4);
     SpawnSharedFloor(harness);
 
-    for (int i = 0; i < 5; ++i)
+    for (int32_t i = 0; i < 5; ++i)
         SpawnBox(harness.serverScene, harness.serverPhysics,
                  {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.2f, 0.f}, /*isStatic=*/false);
 
@@ -304,7 +304,7 @@ TEST_CASE("the correction stream shrinks with the encoding")
         PhysicsHarness harness;
         harness.Step(4);
         SpawnSharedFloor(harness);
-        for (int i = 0; i < 6; ++i)
+        for (int32_t i = 0; i < 6; ++i)
             SpawnBox(harness.serverScene, harness.serverPhysics,
                      {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.15f, 0.f},
                      /*isStatic=*/false);
@@ -468,7 +468,7 @@ TEST_CASE("a body moved while it is not simulating still reaches clients")
     harness.serverPhysics.SetBodyMotionType(*authoritative, Physics::BodyMotion::Static);
 
     const auto [startPosition, startRotation] = harness.serverPhysics.GetBodyTransform(*authoritative);
-    for (int step = 1; step <= 20; ++step)
+    for (int32_t step = 1; step <= 20; ++step)
     {
         harness.serverPhysics.SetBodyTransform(*authoritative,
                                                startPosition + glm::vec3{0.1f * static_cast<float>(step), 0.f, 0.f},
@@ -606,14 +606,14 @@ TEST_CASE("a client joining a world that settled before it connected gets the re
     SpawnSharedFloor(harness);
 
     std::vector<ECS::Entity> pile;
-    for (int i = 0; i < 4; ++i)
+    for (int32_t i = 0; i < 4; ++i)
         pile.push_back(SpawnBox(harness.serverScene, harness.serverPhysics,
                                 {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.2f, 0.f},
                                 /*isStatic=*/false));
 
     // Let it settle with nobody connected: the server ticks, the client is not
     // yet ready, so no snapshot describes any of this.
-    for (int i = 0; i < 500; ++i)
+    for (int32_t i = 0; i < 500; ++i)
     {
         harness.serverPhysics.Update(kFixedStep);
         harness.serverPhysics.CaptureState();
@@ -665,14 +665,14 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     SpawnBox(clientScene, clientPhysics, {0.f, -1.f, 0.f}, true, {20.f, 1.f, 20.f}, false);
 
     std::vector<ECS::Entity> pile;
-    for (int i = 0; i < 6; ++i)
+    for (int32_t i = 0; i < 6; ++i)
         pile.push_back(SpawnBox(serverScene, serverPhysics,
                                 {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.1f, 0.f}, false));
 
     // Real time has to pass for GNS's induced latency to elapse, so this sleeps
     // rather than spins.
     std::uint64_t tick = 0;
-    for (int step = 0; step < 260; ++step)
+    for (int32_t step = 0; step < 260; ++step)
     {
         std::vector<Net::NetEvent> events;
         transport.Poll(events);
@@ -760,7 +760,7 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     // Ask for a re-anchor rather than waiting out the sweep.
     const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
     harness.client.RequestKeyframe();
-    for (int i = 0; i < 30 && harness.client.Corrections().applied == correctionsBefore; ++i)
+    for (int32_t i = 0; i < 30 && harness.client.Corrections().applied == correctionsBefore; ++i)
         harness.Step();
     REQUIRE(harness.client.Corrections().applied > correctionsBefore);
 
@@ -837,9 +837,9 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
         REQUIRE(replica != nullptr);
 
         Result result;
-        double lagSum     = 0.0;
-        int    lagSamples = 0;
-        for (int step = 0; step < 240; ++step)
+        double  lagSum     = 0.0;
+        int32_t lagSamples = 0;
+        for (int32_t step = 0; step < 240; ++step)
         {
             const auto bounce = [](Physics::PhysicsWorld &world, const Physics::RigidBody &body)
             {
@@ -940,7 +940,7 @@ TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
 
     const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
     harness.client.RequestKeyframe();
-    for (int i = 0; i < 30 && harness.client.Corrections().applied == correctionsBefore; ++i)
+    for (int32_t i = 0; i < 30 && harness.client.Corrections().applied == correctionsBefore; ++i)
         harness.Step();
     REQUIRE(harness.client.Corrections().applied > correctionsBefore);
 

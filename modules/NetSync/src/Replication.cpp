@@ -38,8 +38,9 @@ std::uint64_t PackComponentRef(NetId netId, Core::Reflect::ComponentId component
     return (static_cast<std::uint64_t>(netId) << 32) | static_cast<std::uint64_t>(componentId);
 }
 
-NetId NetIdOfRef(std::uint64_t packed) { return static_cast<NetId>(packed >> 32); }
-
+/// The component half of a packed ref. There is deliberately no NetId half: the
+/// only consumer is the removal diff, which already knows the entity it is
+/// diffing and needs the component out of each pair.
 Core::Reflect::ComponentId ComponentIdOfRef(std::uint64_t packed)
 {
     return static_cast<Core::Reflect::ComponentId>(packed & 0xFFFFFFFFull);

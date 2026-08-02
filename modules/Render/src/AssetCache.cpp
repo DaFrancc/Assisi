@@ -211,10 +211,15 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
     // decode at once and starve the main thread. The path enters _meshLoading now
     // (queued counts as pending) so the re-resolve loop won't re-request it.
     _meshLoading.insert(path);
-    _pendingLoads.push_back(PendingLoad{.isMaterial = false,
-                                        .path       = path,
-                                        .epoch      = _loadEpoch.load(std::memory_order_relaxed),
-                                        .pathToId   = _pathToId}); // copy: the worker must not touch cache state
+    // The material-only members are named and left empty rather than omitted:
+    // PendingLoad is a poor-man's variant, so "unset" is meaningful here and
+    // spelling it out is what distinguishes it from a field someone forgot.
+    _pendingLoads.push_back(PendingLoad{.isMaterial   = false,
+                                        .path         = path,
+                                        .epoch        = _loadEpoch.load(std::memory_order_relaxed),
+                                        .pathToId     = _pathToId, // copy: the worker must not touch cache state
+                                        .materialData = {},
+                                        .channelPaths = {}});
     PumpLoadQueue();
 
     return nullptr; // loading — placeholder for now
@@ -542,6 +547,7 @@ const Material *AssetCache::ResolveMaterialPath(const Core::AssetPath &path)
     _pendingLoads.push_back(PendingLoad{.isMaterial   = true,
                                         .path         = path,
                                         .epoch        = _loadEpoch.load(std::memory_order_relaxed),
+                                        .pathToId     = {}, // mesh-only
                                         .materialData = std::move(*data),
                                         .channelPaths = channelPaths});
     PumpLoadQueue();
@@ -660,8 +666,12 @@ void AssetCache::OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
     // makes it resident, so HasPendingLoads / re-resolve keep treating it as pending.
     const std::size_t bytes = static_cast<std::size_t>(imported->vertexCount) * sizeof(Geometry::Vertex) +
                               static_cast<std::size_t>(imported->indexCount) * sizeof(uint32_t);
-    _pendingPublishes.push_back(PendingPublish{
-        .isMaterial = false, .path = path, .epoch = epoch, .byteSize = bytes, .mesh = std::move(*imported)});
+    _pendingPublishes.push_back(PendingPublish{.isMaterial = false,
+                                               .path       = path,
+                                               .epoch      = epoch,
+                                               .byteSize   = bytes,
+                                               .mesh       = std::move(*imported),
+                                               .material   = {}}); // material-only
 }
 
 AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
@@ -746,6 +756,7 @@ void AssetCache::OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, Mat
                                                .path       = path,
                                                .epoch      = epoch,
                                                .byteSize   = bundle.decodedBytes,
+                                               .mesh       = {}, // mesh-only
                                                .material   = std::move(bundle)});
 }
 
@@ -989,16 +1000,14 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
     const auto elapsedMsSince = [](Clock::time_point t)
     { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); };
 
-    // Per-phase timing to localize the streaming CPU spike (which of the remaining
-    // main-thread costs dominates): mesh arena writeBuffer memcpy vs material publish
-    // (adopt + bindless descriptor writes) vs the batched submit. Only logged when a
-    // pump is expensive (see below), so it stays silent in the normal case.
-    const Clock::time_point start = Clock::now();
+    // `start` drives the pump's time budget. Per-phase *timing* is no longer
+    // accumulated here: the profile scopes below give the same mesh/material/flush
+    // split, scrubbable and nested under the frame, so hand-summed milliseconds
+    // would be a second set of numbers to keep honest for no extra information.
+    const Clock::time_point start     = Clock::now();
     std::size_t             bytes     = 0;
     std::size_t             meshCount = 0;
     std::size_t             matCount  = 0;
-    double                  meshMs    = 0.0;
-    double                  matMs     = 0.0;
     bool                    any       = false;
     while (!_pendingPublishes.empty())
     {
@@ -1020,8 +1029,7 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
         if (publish.epoch != _loadEpoch.load(std::memory_order_relaxed))
             continue;
 
-        const std::size_t       publishBytes = publish.byteSize;
-        const Clock::time_point publishStart = Clock::now();
+        const std::size_t publishBytes = publish.byteSize;
         if (publish.isMaterial)
         {
             // The scope name is the aggregation key and stays constant; which
@@ -1033,7 +1041,6 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
             ASSISI_PROFILE_ARG_U64("bytes", static_cast<std::uint64_t>(publishBytes));
 
             PublishMaterial(std::move(publish));
-            matMs += elapsedMsSince(publishStart);
             ++matCount;
         }
         else
@@ -1043,7 +1050,6 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
             ASSISI_PROFILE_ARG_U64("bytes", static_cast<std::uint64_t>(publishBytes));
 
             PublishMesh(std::move(publish));
-            meshMs += elapsedMsSince(publishStart);
             ++meshCount;
         }
         bytes += publishBytes;
@@ -1051,13 +1057,8 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
     }
 
     // One submit for the whole batch (P0): draws in the frame that follows see it.
-    double flushMs = 0.0;
     if (any)
-    {
-        const Clock::time_point flushStart = Clock::now();
         FlushUploads();
-        flushMs = elapsedMsSince(flushStart);
-    }
 
     // The ≥2 ms log line that used to live here is a capture now. It was the
     // regression sensor the streaming plan called permanent (R5), and it stays
@@ -1065,7 +1066,6 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
     // material = descriptor writes, flush = submit, all-low-but-total-high = the
     // main thread was preempted), except scrubbable, nested under the frame, and
     // without a threshold that has to be guessed in advance.
-    (void)flushMs;
     ASSISI_PROFILE_COUNTER("stream/pending-publishes", static_cast<double>(_pendingPublishes.size()));
     ASSISI_PROFILE_COUNTER("stream/pump-bytes", static_cast<double>(bytes));
     ASSISI_PROFILE_COUNTER("stream/mesh-count", static_cast<double>(meshCount));

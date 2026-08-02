@@ -488,7 +488,7 @@ TEST_CASE("a moved entity converges, and an unmoved one stops costing bandwidth"
 
     // Move it authoritatively. GetMut is what stamps the change tick, which is
     // what the delta is computed from.
-    for (int i = 1; i <= 5; ++i)
+    for (int32_t i = 1; i <= 5; ++i)
     {
         ECS::Transform *transform = harness.serverScene.GetMut<ECS::Transform>(entity);
         REQUIRE(transform != nullptr);
@@ -570,7 +570,7 @@ TEST_CASE("a late-joining client converges on a world already in motion")
     Harness harness;
     harness.Step(4);
 
-    for (int i = 0; i < 8; ++i)
+    for (int32_t i = 0; i < 8; ++i)
         SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f});
     harness.Step(12);
     REQUIRE(Converged(harness));
@@ -618,7 +618,7 @@ TEST_CASE("a world too big for one packet still converges, over several snapshot
     Harness harness(config);
     harness.Step(4);
 
-    for (int i = 0; i < 40; ++i)
+    for (int32_t i = 0; i < 40; ++i)
         SpawnReplicated(harness.serverScene, {static_cast<float>(i), 1.f, 2.f});
 
     harness.Step(120);
@@ -643,7 +643,7 @@ TEST_CASE("an entity whose final change lands in a budget-starved snapshot still
     harness.Step(4);
 
     std::vector<ECS::Entity> entities;
-    for (int i = 0; i < 16; ++i)
+    for (int32_t i = 0; i < 16; ++i)
         entities.push_back(SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f}));
 
     harness.Step(300);
@@ -777,7 +777,7 @@ TEST_CASE("a despawned entity's baseline entry is gone once the despawn is acked
     harness.Step(4);
 
     std::vector<ECS::Entity> entities;
-    for (int i = 0; i < 6; ++i)
+    for (int32_t i = 0; i < 6; ++i)
         entities.push_back(SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f}));
     harness.Step(20);
 
@@ -814,7 +814,7 @@ TEST_CASE("under budget pressure, priority decides who is corrected more often â
     harness.Step(4);
 
     std::vector<ECS::Entity> entities;
-    for (int i = 0; i < 8; ++i)
+    for (int32_t i = 0; i < 8; ++i)
         entities.push_back(SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f}));
 
     // First and last of the list, so neither can win by NetId order.
@@ -827,7 +827,7 @@ TEST_CASE("under budget pressure, priority decides who is corrected more often â
     // Keep the whole world moving and integrate how far each mirror lags. A
     // correction that arrives more often keeps a smaller error.
     std::vector<double> laggedError(entities.size(), 0.0);
-    for (int step = 0; step < 400; ++step)
+    for (int32_t step = 0; step < 400; ++step)
     {
         for (std::size_t i = 0; i < entities.size(); ++i)
             harness.serverScene.GetMut<ECS::Transform>(entities[i])->position.y = static_cast<float>(step) * 0.1f;
@@ -991,7 +991,7 @@ TEST_CASE("the client is told when its initial world is complete")
     Harness harness(config);
     harness.Step(4);
 
-    for (int i = 0; i < 40; ++i)
+    for (int32_t i = 0; i < 40; ++i)
         SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f});
 
     // Mid-download: synchronized, but the world is demonstrably not all here.
@@ -1030,7 +1030,7 @@ TEST_CASE("interpolation renders between snapshots rather than stepping at the s
     // predicting it: the pipeline delay between "server sends" and "client
     // applies" is not something this test should be encoding.
     std::vector<std::pair<std::uint64_t, float>> samples;
-    for (int i = 1; i <= 6; ++i)
+    for (int32_t i = 1; i <= 6; ++i)
     {
         ECS::Transform *transform = harness.serverScene.GetMut<ECS::Transform>(entity);
         REQUIRE(transform != nullptr);
@@ -1133,13 +1133,13 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     server.AddConnection(pair.first);
 
     std::vector<ECS::Entity> entities;
-    for (int i = 0; i < 16; ++i)
+    for (int32_t i = 0; i < 16; ++i)
         entities.push_back(SpawnReplicated(serverScene, {static_cast<float>(i), 0.f, 0.f}));
 
     // Real time has to pass for GNS's induced latency to elapse, so this loop
     // sleeps rather than spinning. ~4 s of wall clock at 60 Hz.
     std::uint64_t tick = 0;
-    for (int step = 0; step < 240; ++step)
+    for (int32_t step = 0; step < 240; ++step)
     {
         std::vector<Net::NetEvent> events;
         transport.Poll(events);
@@ -1167,7 +1167,7 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
 
     // Let the last snapshots drain without further mutation, so the comparison
     // is against a settled world rather than one still in flight.
-    for (int step = 0; step < 60; ++step)
+    for (int32_t step = 0; step < 60; ++step)
     {
         std::vector<Net::NetEvent> events;
         transport.Poll(events);
