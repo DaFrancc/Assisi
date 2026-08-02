@@ -32,6 +32,10 @@ namespace
 {
 constexpr ImVec4 kWarnColor{0.9f, 0.8f, 0.3f, 1.f};
 constexpr ImVec4 kWireColor{0.45f, 0.8f, 0.95f, 1.f};
+/// The same glyph, withheld: dim enough to read as "off" at a glance without
+/// becoming invisible, since its absence already means something different
+/// (the entity does not replicate at all).
+constexpr ImVec4 kWireOffColor{0.42f, 0.42f, 0.46f, 1.f};
 /// A plug, from the editor's Nerd Font. Small, and not a word, so it does not
 /// compete with the component name it sits beside.
 constexpr const char *kWireGlyph = "\xef\x87\xa6"; // U+F1E6
@@ -944,57 +948,85 @@ void EditorApp::DrawReplicationSection(bool mirrored)
     ImGui::Separator();
 }
 
+bool EditorApp::IsComponentGameVetoed(const Assisi::Core::Reflect::ComponentMeta &meta) const
+{
+    return std::find(_netVetoedComponentNames.begin(), _netVetoedComponentNames.end(), meta.name) !=
+           _netVetoedComponentNames.end();
+}
+
+bool EditorApp::SelectedEntitySends(const Assisi::Core::Reflect::ComponentMeta &meta) const
+{
+    if (!meta.replicable || IsComponentGameVetoed(meta))
+        return false;
+
+    const auto *marker = _scene->Get<Assisi::NetSync::Replicated>(_selectedEntity);
+    if (marker == nullptr)
+        return false; // the entity does not replicate at all
+
+    const std::size_t ordinal = Assisi::Core::Reflect::ComponentRegistry::Instance().ReplicableOrdinalOf(meta.id);
+    return !marker->excluded.Test(ordinal);
+}
+
+void EditorApp::SetSelectedEntitySends(const Assisi::Core::Reflect::ComponentMeta &meta, bool sends)
+{
+    const std::size_t ordinal = Assisi::Core::Reflect::ComponentRegistry::Instance().ReplicableOrdinalOf(meta.id);
+    if (ordinal == Assisi::Core::Reflect::ComponentRegistry::kInvalidOrdinal)
+        return;
+
+    // Through the undo path like any other edit — a policy change *is* an edit,
+    // and Ctrl-Z should mean the same thing here as anywhere else.
+    if (Assisi::Editor::EditHistory *history = ActiveHistory())
+    {
+        history->RecordBefore(_selectedEntity,
+                              Assisi::Core::Reflect::ComponentIdOf<Assisi::NetSync::Replicated>(),
+                              EditLabel("Replication policy", _selectedEntity), _selectedEntity);
+    }
+
+    if (Assisi::NetSync::Replicated *marker = _scene->GetMut<Assisi::NetSync::Replicated>(_selectedEntity))
+        marker->excluded.Set(ordinal, !sends);
+}
+
 void EditorApp::DrawReplicationPolicy()
 {
     using namespace Assisi::Core::Reflect;
 
-    Assisi::NetSync::Replicated *marker = _scene->Get<Assisi::NetSync::Replicated>(_selectedEntity);
-    if (marker == nullptr)
+    if (_scene->Get<Assisi::NetSync::Replicated>(_selectedEntity) == nullptr)
         return;
 
-    if (!ImGui::TreeNode("Sends"))
-        return;
-
-    const ComponentRegistry &registry = ComponentRegistry::Instance();
-
-    // The game's veto, so a component it forbids renders as a dead switch with a
-    // reason rather than a live one that does nothing. An author toggling a
-    // checkbox that cannot matter is worse than not offering it.
-    const std::vector<std::string> &vetoed = _netVetoedComponentNames;
-
-    bool changed = false;
-    for (const ComponentMeta *meta : registry.ReplicableComponents())
+    // Gathered from the live component set every frame, so adding or removing a
+    // component is reflected immediately — nothing is cached that could go stale.
+    // It is also why this list and the glyph button on each component header
+    // cannot disagree: both render the same mask through SelectedEntitySends,
+    // and both write it through SetSelectedEntitySends.
+    //
+    // Only what this entity actually carries: a checkbox for a component it does
+    // not have would be asking about something that cannot be sent.
+    std::vector<const ComponentMeta *> present;
+    for (const ComponentMeta *meta : ComponentRegistry::Instance().ReplicableComponents())
     {
-        // Only what this entity actually has: a checkbox for a component it does
-        // not carry would be asking about something that cannot be sent anyway.
-        if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) == nullptr)
-            continue;
+        if (meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation) != nullptr)
+            present.push_back(meta);
+    }
 
-        const std::size_t ordinal = registry.ReplicableOrdinalOf(meta->id);
-        const bool        gameVeto =
-            std::find(vetoed.begin(), vetoed.end(), meta->name) != vetoed.end();
+    // Nothing to list. The empty case already has a louder home — the warning
+    // above says clients get an empty entity — so an empty tree node here would
+    // only be a second voice saying it worse.
+    if (present.empty())
+        return;
 
-        bool sends = !marker->excluded.Test(ordinal);
+    if (!ImGui::TreeNodeEx("Replicable components", ImGuiTreeNodeFlags_DefaultOpen))
+        return;
 
+    for (const ComponentMeta *meta : present)
+    {
+        const bool gameVeto = IsComponentGameVetoed(*meta);
+        bool       sends    = SelectedEntitySends(*meta);
+
+        // A component the game forbids gets a dead switch with a reason rather
+        // than a live one that silently does nothing.
         ImGui::BeginDisabled(gameVeto);
-        if (gameVeto)
-            sends = false;
         if (ImGui::Checkbox(meta->name.c_str(), &sends))
-        {
-            // Through the undo path like any other edit — a policy change is an
-            // edit, and Ctrl-Z should mean the same thing here as anywhere else.
-            if (Assisi::Editor::EditHistory *history = ActiveHistory())
-            {
-                history->RecordBefore(_selectedEntity, ComponentIdOf<Assisi::NetSync::Replicated>(),
-                                      EditLabel("Replication policy", _selectedEntity), _selectedEntity);
-            }
-            if (Assisi::NetSync::Replicated *writable =
-                    _scene->GetMut<Assisi::NetSync::Replicated>(_selectedEntity))
-            {
-                writable->excluded.Set(ordinal, !sends);
-            }
-            changed = true;
-        }
+            SetSelectedEntitySends(*meta, sends);
         ImGui::EndDisabled();
 
         if (gameVeto)
@@ -1003,7 +1035,6 @@ void EditorApp::DrawReplicationPolicy()
             ImGui::TextDisabled("(filtered by game.json)");
         }
     }
-    (void)changed;
 
     ImGui::TextDisabled("Unticked components stay on this machine.");
     if (ImGui::IsItemHovered())
@@ -1136,15 +1167,44 @@ void EditorApp::DrawInspector()
         ImGui::SameLine();
         const bool headerOpen = ImGui::CollapsingHeader(meta->name.c_str(), ImGuiTreeNodeFlags_DefaultOpen);
 
-        // Which components actually travel is otherwise invisible: it is a
-        // property of the *type*, decided in a header, and nothing on screen
-        // says so. The glyph marks the ones that do.
-        if (meta->replicable)
+        // The per-component send toggle, on the header where you are already
+        // looking. Shown only on an entity that replicates at all: on a local
+        // entity nothing travels regardless, so a glyph there would be answering
+        // a question nobody asked — and its *absence* is then meaningful.
+        //
+        // The other half of this control is the "Replicable components" checklist
+        // in the replication section. Neither owns any state: both read
+        // SelectedEntitySends and write SetSelectedEntitySends, so they are two
+        // renderings of one mask rather than two copies to keep in step.
+        if (meta->replicable && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
         {
+            const bool gameVeto = IsComponentGameVetoed(*meta);
+            const bool sends    = SelectedEntitySends(*meta);
+
             ImGui::SameLine();
-            ImGui::TextColored(kWireColor, "%s", kWireGlyph);
-            if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Replicated — this component travels to clients.");
+            // A button, not a label: it reads as clickable and gives hover and
+            // press feedback. The frame is transparent so it still looks like a
+            // glyph sitting beside the header.
+            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4{0.f, 0.f, 0.f, 0.f});
+            ImGui::PushStyleColor(ImGuiCol_Text, sends ? kWireColor : kWireOffColor);
+            ImGui::BeginDisabled(gameVeto || !editable);
+            if (ImGui::SmallButton(kWireGlyph))
+                SetSelectedEntitySends(*meta, !sends);
+            ImGui::EndDisabled();
+            ImGui::PopStyleColor(2);
+
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                if (gameVeto)
+                    ImGui::SetTooltip("Never sent — game.json's neverReplicate list forbids this component type.");
+                else if (!editable)
+                    ImGui::SetTooltip(sends ? "Sent to clients." : "Withheld — stays on this machine.");
+                else if (sends)
+                    ImGui::SetTooltip("Sent to clients. Click to withhold it — mirrors that already have it "
+                                      "will drop it.");
+                else
+                    ImGui::SetTooltip("Withheld: stays on this machine. Click to send it.");
+            }
         }
 
         if (headerOpen)

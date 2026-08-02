@@ -337,10 +337,28 @@ class EditorApp : public Assisi::App::Application
     void DrawReplicationSection(bool mirrored);
 
     /// Per-component send policy for the selected authoring entity: one checkbox
-    /// per capable component it carries, writing `Replicated::excluded`.
+    /// per capable component it *carries*, writing `Replicated::excluded`.
     /// Authoring entities only — a mirror's marker is client-fabricated, so
     /// showing its mask would display data the host never sent.
+    ///
+    /// The list is rebuilt from the entity's live component set every frame, so
+    /// adding or removing a component changes it immediately; there is nothing
+    /// cached that could go stale.
     void DrawReplicationPolicy();
+
+    /// Does this entity currently send @p meta to clients?
+    ///
+    /// The single *read* both policy surfaces use — the glyph button on each
+    /// component header and the Sends checklist. Neither keeps state of its own,
+    /// so they cannot disagree: they are two renderings of one mask.
+    [[nodiscard]] bool SelectedEntitySends(const Assisi::Core::Reflect::ComponentMeta &meta) const;
+
+    /// ...and the single *write*, undo-recorded. Same reason.
+    void SetSelectedEntitySends(const Assisi::Core::Reflect::ComponentMeta &meta, bool sends);
+
+    /// Whether the game config forbids @p meta outright, in which case a
+    /// per-entity control for it would be a switch that cannot matter.
+    [[nodiscard]] bool IsComponentGameVetoed(const Assisi::Core::Reflect::ComponentMeta &meta) const;
 
     /// Component names the game config vetoes, cached at session start so the
     /// policy checkboxes can render a forbidden component as a disabled switch
