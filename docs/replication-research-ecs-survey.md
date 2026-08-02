@@ -546,3 +546,55 @@ in single-player exactly as in multiplayer.
 choices" are now one choice at the bottom — lightyear 0.27 switched its
 replication backend to bevy_replicon, keeping only prediction, interpolation,
 authority transfer, and rooms as its own layer.
+
+---
+
+## Postscript: what Assisi chose, and from whom
+
+Written after the fact (2026-08-02), once docs/replication-optin-plan-v1.md was
+built. Each choice names the entry above that informed it — including the two
+where the survey majority lost.
+
+**Capability on the type, policy on the instance** — Unity NetCode, Overwatch,
+and SpatialOS, which converged on this split independently. `ACOMP(replicable)`
+grants a capability; `Replicated::excluded` and `networking.neverReplicate`
+decide policy. The defect this fixed was Godot-shaped in reverse: not fusing
+policy *into* the instance, but fusing it into the type, so an engine module
+setting a flag set network policy for every game on the engine.
+
+**Opt-in at the type, opt-out per instance** — G1 follows the universal opt-in
+polarity, and SpatialOS's migration *to* it after blanket generation failed to
+scale was the deciding evidence. G4 follows Unity's inverse polarity for the
+same reason Unity has it: a capable component replicates unless an override
+removes it, because the four universally-wanted types would otherwise be
+restated on every entity.
+
+**Names, not indices, in anything persisted** — SpatialOS's schema components
+and Godot's property `NodePath`s both persist names. Assisi's masks are bits in
+memory and component names on disk and wire, converted at the codec boundary.
+
+**Change ticks, with the false-positive class acknowledged** — the same tier as
+bevy_replicon, and it inherits the same flaw: a mutable dereference that writes
+nothing still sends. P2b removed the worst instance (the physics writeback
+stamping every resting body every frame) rather than adopting Unity's
+value-compare pass or Overwatch's during-simulation dirty sets. The Iris model —
+quantize once, share across connections, diff there — remains the answer if
+bandwidth ever demands one.
+
+**Where the majority lost, twice.**
+
+*The tri-state.* SpatialOS's `SpatialType`/`NotSpatialType`/neither was drafted
+in and then cut. Its only consumer was a lint on undeclared components, and
+silencing that lint requires annotating every legitimately-local type on every
+replicated entity — declaring your negatives, which is the anti-pattern opt-in
+polarity exists to avoid. On a real entity the local components outnumber the
+replicated ones severalfold. Two-state opt-in, with silence meaning no, is what
+Unity, replicon, Unreal and Overwatch all do.
+
+*Relevancy.* Every system here except Quantum filters, and Assisi does not.
+Deliberate, and named as a non-goal with its seam specified: at PIE and co-op
+scale the entity count times the client count is nothing, and Iris's filter
+stack (owner / connection / group / dynamic, filters strictly before
+prioritizers) is the reference shape for when it stops being nothing. The
+architecture does not preclude it — nothing in the five gates touches
+per-connection state.

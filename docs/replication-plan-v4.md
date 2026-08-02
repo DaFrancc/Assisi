@@ -887,6 +887,17 @@ Strictly serial, each ending in something a human watches work — R4's
 in place. R-numbers, so nobody confuses them with v3.5's M-numbers or v2's
 N-stages.
 
+> **R1's opt-in model is superseded by docs/replication-optin-plan-v1.md**
+> (built, 2026-08-02). What changed: `ACOMP(replicated)` is now
+> `ACOMP(replicable)` and grants a *capability* rather than declaring a policy,
+> with policy moved to the game's `neverReplicate` list and each entity's
+> `Replicated::excluded` mask. The defect R1 shipped with was fusing the two —
+> marking `Physics::Bounce` to serve one test level made it wire traffic for
+> every game on this engine, from inside a physics module that cannot know any
+> game's policy. Everything else in R1 (the flags in the metas, the hash folding
+> them in, the server filtering on them, the `Mirrored` tag) stands unchanged,
+> and the rest of this document remains the plan of record for R2–R9.
+
 **R1 — Wire gating.** reflectgen learns `ACOMP(replicated)` (implies
 `tracked`; `replicated`+`transient` is a generation error) and
 `AFIELD(norep)` (error outside a replicated type; error with `transient`);

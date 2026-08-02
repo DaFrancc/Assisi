@@ -17,27 +17,59 @@
 ///   AFIELD(norep)                -- saved to disk, never sent over the network
 ///   AFIELD(min=0.0, max=100.0)   -- editor clamp hints
 ///
-/// Wire gating (ACOMP(replicable) / AFIELD(norep)) is opt-in: a reflected
-/// component can replicate because someone said so, not because it happened to
-/// be serializable.
+/// ── Replication: five gates, three mechanisms ───────────────────────────────
 ///
-/// `replicable` grants a **capability, not a policy** — it says this type has a
-/// wire form, while whether a given entity actually sends it is decided by the
-/// `Replicated` marker's exclusion mask and the game's `neverReplicate` list.
-/// The old spelling `replicated` fused the two and is rejected by name.
+/// A field value crosses the wire only if it passes *all* of these. Each lives
+/// at the scope that owns the decision, which is the point: an engine module can
+/// touch G1 and G5 and nothing else, so it cannot set a game's network policy by
+/// editing one of its own headers.
 ///
-/// `replicable` implies `tracked`, because an untracked component reports change
-/// tick 0 forever — it would replicate once at spawn and then go silent. Writing
-/// both is legal and *not* redundant: there is one change-tick lane with two
-/// readers, so the implication serves replication while an explicit `tracked`
-/// records that a local system needs the ticks too — which is what keeps them if
-/// `replicable` is ever removed. (No build output says this; it would print
-/// forever on correct code. `ECS::Transform` is the live example.)
+///   G1  capability   component type   ACOMP(replicable)              opt-in
+///   G2  game policy  game             game.json networking.neverReplicate
+///   G3  entity gate  entity instance  the NetSync::Replicated marker opt-in
+///   G4  instance     entity instance  Replicated::excluded (a mask)  opt-out
+///   G5  field gate   field            AFIELD(norep)                  opt-out
+///
+/// Plus the two dynamic gates that always applied: the entity has the component,
+/// and the acked baseline says the client does not already hold this value.
+///
+/// **`replicable` grants a capability, not a policy.** It says this type *has* a
+/// wire form; whether a given entity actually sends it is G2 and G4. The retired
+/// spelling `replicated` fused the two, and reflectgen rejects it by name rather
+/// than ignoring it — an unknown flag would parse as nothing and silently
+/// un-replicate a component that used to travel.
+///
+/// **Polarity is deliberate in both directions.** G1 is opt-in because a type
+/// should not acquire a wire form by accident (SpatialOS migrated to opt-in
+/// after blanket schema generation failed to scale). G4 is opt-out because
+/// Transform, Name, MeshRenderer and RigidBodyDescriptor are wanted on
+/// essentially every replicated entity, and making each level author restate
+/// that would manufacture boilerplate and silent under-replication.
+///
+/// **`replicable` implies `tracked`**, because an untracked component reports
+/// change tick 0 forever — it would replicate once at spawn and then go silent.
+/// Writing both is legal and *not* redundant: there is one change-tick lane with
+/// two readers, so the implication serves replication while an explicit
+/// `tracked` records that a local system needs the ticks too — which is what
+/// keeps them if `replicable` is ever removed. `ECS::Transform` is the live
+/// example (PropagateTransforms predates the network by a long way). Nothing is
+/// emitted at build time to say this, deliberately: a note printed forever on
+/// correct code teaches people to skim build output.
+///
+/// A type that simply does not replicate says so by *not* being marked. Where
+/// that silence is a decision rather than an oversight — `Runtime::Camera`,
+/// whose mirrored `isActive` would hand a client a view it did not choose — the
+/// reason belongs in that type's header comment, where every other design
+/// rationale in this codebase lives.
 ///
 /// reflectgen hard-fails on ACOMP(replicable, transient) (nothing to encode), on
 /// AASSET(replicable) (assets are not entities), on AFIELD(transient, norep)
 /// (redundant), and on AFIELD(norep) in a component that is not replicable (the
 /// annotation would mean nothing).
+///
+/// Full rationale, alternatives weighed, and the survey of how other ECS engines
+/// answer this: docs/replication-optin-plan-v1.md and
+/// docs/replication-research-ecs-survey.md.
 ///
 /// Radio (declarative editor visibility driven by a sibling enum's value):
 ///   AFIELD(radioBroadcast)       -- marks an AENUM enum field as a broadcaster

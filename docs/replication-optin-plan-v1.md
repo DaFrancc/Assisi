@@ -1,6 +1,17 @@
 # Replication opt-in plan v1 — capability, policy, intent
 
-**Status: PROPOSED — review passes folded in (see §7).**
+**Status: PLAN OF RECORD, and BUILT — P0 through P5 landed 2026-08-02
+(`a11cd80`, `f4eba34`, `bad6c9d`, `9f3f1ba`, `48e7bf6`, `04c1e3d`). Supersedes
+the *opt-in model* of docs/replication-plan-v4.md R1 only; v4 remains
+authoritative for R2–R9 and for everything about transport, snapshots,
+baselines, and body state.**
+
+**Owed:** the eyes-on pass on P4's editor behaviour (checkbox round-trip through
+save/reload, undo of a policy edit, the disabled-veto rendering), alongside the
+R1–R9 eyes-on pass already outstanding from v4 §4a.
+
+Where implementation departed from this document, the section says so inline and
+§8 lists them.
 
 This plan replaces the *opt-in model* of docs/replication-plan-v4.md (R1–R9,
 built and green). It does not touch the transport, snapshot, baseline, or
@@ -868,3 +879,48 @@ unresolvable name cannot survive a load→save round-trip. P1 retargeted from
 StringVector to ComponentMask, gaining the registry capacity fence and the
 names-not-bits binary form (hash-equal builds may differ in id-only
 registrations, so raw bits could misalign; names cannot).
+
+---
+
+## 8. What implementation changed
+
+Recorded because a plan that quietly disagrees with the code is worse than no
+plan. Four departures, all decided at the keyboard with the reason visible in
+the commit that made them.
+
+**The tri-state's last trace is gone from D8's mapping.** With D2 settled
+two-state, `BinaryCodec`'s hash emission was already exactly two-state, so P0's
+job shrank to renaming the flag it reads. The hash text stayed byte-identical
+and the pin proved it.
+
+**The P0 hash pin was retired rather than re-pinned at P2a.** D8 said "re-pin";
+implementation retired it and replaced it with a property test. The pin held one
+measured constant (`6593563864785826454`) across the rename and proved the
+rename could not repartition deployed builds — a job that cannot be repeated,
+since P0 is history. Carried forward it would trip on any unrelated reflected
+component and teach the reflex "bump the number", which is the opposite of the
+scrutiny a protocol change deserves. What replaced it needs no magic number: the
+exclusion field and the capability flag both appear in the hashed layout
+description, so builds that disagree about either refuse to pair.
+
+**P1's tests split across two binaries, for a reason worth keeping.** Core links
+no `ACOMP(replicable)` component and cannot — reflectgen's output for any
+component includes `ECS::Scene`, which sits above Core — so round-trip tests
+written in the Core suite resolved nothing, skipped their own bodies, and
+reported success. The cases needing a real component name live in NetSync
+(`TestComponentMaskCodec.cpp`), which links the whole engine and opens with a
+guard that fails if the replicable set is ever empty. Core keeps what it can
+genuinely exercise.
+
+**D6's writeback remedy was taken, and it was not optional.** The plan offered a
+fallback (document the resend cost if a consumer depended on the every-frame
+stamp). No consumer did, and the measurement made the choice easy: a resting
+visual-only mirror costs 440 bytes over 120 idle ticks with the no-op
+suppression and 2080 without. The fix removes a permanent false-positive dirty
+for *every* resting body engine-wide, not only replicated ones —
+`PropagateTransforms` was paying for it too.
+
+Two things the plan predicted and implementation confirmed exactly: the mask
+width came out at one byte for six replicable types, and adding three probe
+components moved it to two at the eight-type boundary while `copy_if_different`
+left the generated header untouched for edits that did not change the count.
