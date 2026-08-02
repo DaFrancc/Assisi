@@ -6,6 +6,7 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <cstddef>
 #include <filesystem>
 #include <string>
@@ -498,8 +499,21 @@ TEST_CASE("Async travel loads in the background then swaps instantly")
     // The current world keeps stepping while the load runs on a worker — this is
     // where a worker building bodies would collide with the main thread if the
     // per-world isolation were wrong.
-    start.simulate = true;
-    for (int32_t i = 0; i < 200 && !worlds.PendingLoadReady(); ++i)
+    //
+    // Bounded by wall time rather than by a step count. What the worker needs in
+    // order to finish is time and disk bandwidth, and a fixed number of
+    // main-thread iterations only tracks that on an idle machine: the same 200
+    // steps elapse just as quickly when the disk is busy, so the budget runs out
+    // while the load is still legitimately in flight. That is a flake, and it
+    // showed up as one — a cold cache, or a scan of just-built binaries, is
+    // enough. The deadline is long enough that only a genuine hang reaches it,
+    // and costs nothing on the passing path, which still leaves the instant the
+    // load reports ready.
+    constexpr std::chrono::seconds kLoadDeadline{10};
+
+    start.simulate                                   = true;
+    const std::chrono::steady_clock::time_point stop = std::chrono::steady_clock::now() + kLoadDeadline;
+    while (!worlds.PendingLoadReady() && std::chrono::steady_clock::now() < stop)
     {
         start.physics.Update(1.f / 60.f);
         start.physics.CaptureState();
