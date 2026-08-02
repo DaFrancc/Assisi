@@ -61,6 +61,25 @@ struct ReplicationConfig
     /// and the oldest is dropped so the memory is bounded.
     std::size_t maxInFlightSnapshots = 32;
 
+    /// How often, in ticks, to re-anchor every connection from the empty
+    /// baseline. 0 disables it. Default 512 — about 8.5 s at 60 Hz.
+    ///
+    /// **Insurance, not a pillar.** Delivery is already guaranteed by the acked
+    /// baseline: every state change, including a body's final rest pose, is
+    /// resent until the client confirms it, and a lost despawn self-heals
+    /// through the acked-set diff. What no delivery guarantee can fix is what
+    /// happens *after* delivery — state that arrived, was acked, and then went
+    /// wrong locally. This sweep is the answer to that class, which is exactly
+    /// the class nobody designs for.
+    ///
+    /// Turning it off saves almost nothing (~64 entities × ~80 bytes spread over
+    /// 8.5 s ≈ 0.6 kB/s) and, for any client-side system that writes replicated
+    /// fields on mirrors, converts "wrong until the next sweep" into "wrong
+    /// forever" — the delta path never resends a field the server is not
+    /// re-stamping. A knob that saves that little and removes that much has to
+    /// say so where it is flipped.
+    std::uint64_t keyframeIntervalTicks = 512;
+
     /// Ceiling on input packets accepted per connection per second. A client
     /// that exceeds it is flooding, and the excess is dropped before the codec
     /// runs — the cheapest possible place to say no.
@@ -79,6 +98,13 @@ struct ConnectionDiagnostics
     std::uint64_t inputPacketsDropped = 0; ///< Rate limit or malformed.
     std::uint64_t commandsClamped    = 0;  ///< Tripped ClampInputCommand.
     std::uint32_t inFlightSnapshots  = 0;
+    /// Entities this connection holds a delta baseline for. Should track the
+    /// live replicated count; a value that climbs without bound is a retired
+    /// NetId that never left the map.
+    std::uint32_t baselineEntries    = 0;
+    /// How many times this connection has been re-anchored from the empty
+    /// baseline by the keyframe sweep.
+    std::uint64_t keyframeSweeps     = 0;
 };
 
 /// @brief The authoritative half. Owns NetId assignment and snapshot sending.
@@ -147,14 +173,37 @@ class ReplicationServer
     [[nodiscard]] const ReplicationConfig &Config() const { return _config; }
 
   private:
+    /// How much of one entity a connection is known to have.
+    ///
+    /// Per entity rather than one tick per connection, and that distinction is
+    /// the whole fix for a real bug in the shipped core: an entity skipped for
+    /// byte budget was still recorded in the in-flight snapshot, whose *global*
+    /// change tick became the baseline on ack — so the skipped entity's pending
+    /// changes were retroactively declared delivered and never sent again. Here,
+    /// "included in the record" and "delivered at tick X" are separate facts,
+    /// and an entity the budget skipped simply keeps its old baseline.
+    struct EntityBaseline
+    {
+        std::uint64_t componentTick = 0; ///< Component state delivered up to here.
+        std::uint64_t bodyTick      = 0; ///< Body state delivered up to here (R5 fills this).
+    };
+
+    /// What one entity was written at inside one snapshot. Only entities the
+    /// snapshot *actually wrote* get an entry — that is the point.
+    struct WrittenEntity
+    {
+        NetId          netId = InvalidNetId;
+        EntityBaseline ticks;
+    };
+
     /// One in-flight snapshot's worth of "what the client would know if it acks
     /// this". The entity set is what makes spawn and despawn fall out of the
-    /// same comparison, and the change tick is the delta baseline.
+    /// same comparison, and the per-entity ticks are the delta baselines.
     struct SentSnapshot
     {
-        std::uint64_t      serverTick      = 0;
-        std::uint64_t      sceneChangeTick = 0;
-        std::vector<NetId> netIds; ///< Sorted ascending.
+        std::uint64_t              serverTick = 0;
+        std::vector<WrittenEntity> written; ///< Sorted ascending by netId.
+        std::vector<NetId>         netIds;  ///< Sorted ascending.
 
         /// Which components each of those entities had, as sorted
         /// `(netId << 32) | componentId` pairs.
@@ -175,12 +224,18 @@ class ReplicationServer
         std::deque<SentSnapshot> inFlight;
 
         /// The acked baseline: the entity set the client is known to have, the
-        /// components those entities had, and the scene change tick it all
-        /// corresponds to.
+        /// components those entities had, and — per entity — how far its state
+        /// has been delivered.
         std::vector<NetId>         acked;
         std::vector<std::uint64_t> ackedComponents;
-        std::uint64_t              ackedTick       = 0;
-        std::uint64_t              ackedChangeTick = 0;
+        std::uint64_t              ackedTick = 0;
+
+        /// One entry per entity this connection has acked. Erased when its
+        /// despawn acks: NetIds are never reused, so without that this grows
+        /// with every entity that has *ever* replicated — unbounded under
+        /// projectile-style churn. Two uint64s per live entity per connection
+        /// otherwise, which is noise at the target scale.
+        std::unordered_map<NetId, EntityBaseline> baselines;
 
         InputCommandQueue     input;
         ConnectionDiagnostics diagnostics;
@@ -193,6 +248,22 @@ class ReplicationServer
     void SendHello(Connection &connection);
     void SendReject(Connection &connection, RejectReason reason);
     void SendSnapshot(Connection &connection);
+
+    /// Re-anchor @p connection from the empty baseline: forget every per-entity
+    /// tick, and clear the in-flight ring with them.
+    ///
+    /// The ring clear is not tidiness. An ack for a pre-sweep snapshot arriving
+    /// *after* the sweep would fold that record's per-entity ticks back into the
+    /// baselines and silently cancel the re-anchor for exactly the entities it
+    /// covered. With the ring cleared, a late ack finds no record and is ignored
+    /// — at the cost of one over-full resend, which is the correct direction to
+    /// be wrong in.
+    ///
+    /// The acked entity and component *sets* are deliberately untouched: this
+    /// resets what the client is known to have *seen*, not what it is known to
+    /// *hold*, and clearing the sets would turn every entity into a spawn and
+    /// break despawn detection.
+    static void ResetBaselines(Connection &connection);
     void HandleClientHello(Connection &connection, Core::BitReader &reader);
     void HandleAck(Connection &connection, Core::BitReader &reader);
     void HandleInput(Connection &connection, Core::BitReader &reader);

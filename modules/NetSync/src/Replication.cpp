@@ -225,11 +225,38 @@ void ReplicationServer::HandleAck(Connection &connection, Core::BitReader &reade
     connection.acked           = std::move(record->netIds);
     connection.ackedComponents = std::move(record->components);
     connection.ackedTick       = record->serverTick;
-    connection.ackedChangeTick = record->sceneChangeTick;
     ++connection.diagnostics.acksReceived;
+
+    // Fold in exactly the entities this snapshot *wrote*. One skipped for byte
+    // budget has no entry here and keeps whatever baseline it had, which is the
+    // whole point: "we mentioned it in the record" and "we delivered its state"
+    // are different facts.
+    for (const WrittenEntity &entity : record->written)
+    {
+        EntityBaseline &baseline = connection.baselines[entity.netId];
+        baseline.componentTick   = std::max(baseline.componentTick, entity.ticks.componentTick);
+        baseline.bodyTick        = std::max(baseline.bodyTick, entity.ticks.bodyTick);
+    }
+
+    // A NetId that has left the acked set is gone for good — they are never
+    // reused, so a straggler ack cannot resurrect one. Without this the map
+    // grows with every entity that has ever replicated.
+    std::erase_if(connection.baselines,
+                  [&connection](const auto &entry) {
+                      return !std::binary_search(connection.acked.begin(), connection.acked.end(), entry.first);
+                  });
+    connection.diagnostics.baselineEntries = static_cast<std::uint32_t>(connection.baselines.size());
 
     // Everything at or before the acked tick is settled.
     connection.inFlight.erase(connection.inFlight.begin(), record + 1);
+}
+
+void ReplicationServer::ResetBaselines(Connection &connection)
+{
+    connection.baselines.clear();
+    connection.inFlight.clear();
+    connection.diagnostics.baselineEntries = 0;
+    ++connection.diagnostics.keyframeSweeps;
 }
 
 void ReplicationServer::HandleInput(Connection &connection, Core::BitReader &reader)
@@ -417,9 +444,15 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     // A per-connection priority accumulator slots into the sort step later with
     // no change to anything on the wire.
     SentSnapshot record;
-    record.serverTick      = _simTick;
-    record.sceneChangeTick = _scene.CurrentChangeTick();
+    record.serverTick = _simTick;
     record.netIds.reserve(_liveNetIds.size());
+    record.written.reserve(_liveNetIds.size());
+
+    // Sampled once, before anything is written, and stamped onto every entity
+    // this snapshot writes. Nothing mutates the scene while a snapshot is being
+    // built, so one reading is honest for all of them — and taking it up front
+    // means a change made after this point cannot be mistaken for delivered.
+    const std::uint64_t captureTick = _scene.CurrentChangeTick();
 
     for (const NetId netId : _liveNetIds)
     {
@@ -450,20 +483,32 @@ void ReplicationServer::SendSnapshot(Connection &connection)
             continue;
         }
 
+        // The delta baseline is this entity's own. A missing entry reads as 0,
+        // which is the empty baseline — spawn, late join, and a post-sweep
+        // re-anchor all arrive here, and all take the one full-state path.
+        std::uint64_t sinceChangeTick = 0;
+        if (known)
+        {
+            if (const auto baseline = connection.baselines.find(netId); baseline != connection.baselines.end())
+                sinceChangeTick = baseline->second.componentTick;
+        }
+
         writer.WriteBool(true);
         writer.WriteVarUInt32(netId);
         writer.WriteBool(!known); // isSpawn
 
-        WriteEntityComponents(netId, entity, known ? connection.ackedChangeTick : 0, connection, writer,
-                              record.components);
+        WriteEntityComponents(netId, entity, sinceChangeTick, connection, writer, record.components);
         record.netIds.push_back(netId);
+        record.written.push_back(WrittenEntity{netId, EntityBaseline{captureTick, 0}});
     }
     writer.WriteBool(false);
 
-    // Both baselines are built in _liveNetIds order, which is sorted — keep the
+    // All three are built in _liveNetIds order, which is sorted — keep the
     // invariant explicit, since the ack path binary-searches them.
     std::sort(record.netIds.begin(), record.netIds.end());
     std::sort(record.components.begin(), record.components.end());
+    std::sort(record.written.begin(), record.written.end(),
+              [](const WrittenEntity &lhs, const WrittenEntity &rhs) { return lhs.netId < rhs.netId; });
 
     connection.inFlight.push_back(std::move(record));
     while (connection.inFlight.size() > _config.maxInFlightSnapshots)
@@ -493,6 +538,20 @@ void ReplicationServer::Tick(std::uint64_t simTick)
 
     if (!IsSnapshotTick(simTick))
         return;
+
+    // The keyframe sweep, which is not a third mechanism: it is the delta path
+    // with its filter reset. Every entity's baseline goes back to zero, the
+    // existing empty-baseline code path sends full state, and the byte budget
+    // paginates it over as many snapshots as it needs — no new machinery, and
+    // nothing on the wire that spawn and late-join do not already exercise.
+    if (_config.keyframeIntervalTicks != 0 && simTick != 0 && simTick % _config.keyframeIntervalTicks == 0)
+    {
+        for (auto &[id, connection] : _connections)
+        {
+            if (connection.ready)
+                ResetBaselines(connection);
+        }
+    }
 
     for (auto &[id, connection] : _connections)
     {

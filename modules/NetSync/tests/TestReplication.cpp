@@ -72,6 +72,18 @@ struct Harness
     [[nodiscard]] Net::ConnectionId serverSide() const { return pair.first; }
     [[nodiscard]] Net::ConnectionId clientSide() const { return pair.second; }
 
+    /// While set, client→server messages (acks, input) are buffered instead of
+    /// delivered — the only way to put an ack *in flight across* a server-side
+    /// event, which is what the keyframe sweep's ring-clear has to survive.
+    bool holdClientMessages = false;
+
+    /// While set, server→client messages are dropped on the floor. Together with
+    /// the above this makes the two directions independently stoppable, which is
+    /// what it takes to test a rule about ordering rather than about delivery.
+    bool dropServerMessages = false;
+
+    std::vector<std::vector<std::byte>> heldClientMessages;
+
     /// One full network step: deliver everything in flight, then advance the
     /// server a tick. Messages are routed by which end they arrived on.
     void Step()
@@ -83,12 +95,28 @@ struct Harness
             if (event.type != Net::NetEvent::Type::Message)
                 continue;
             if (event.connection == serverSide())
-                server.HandleMessage(serverSide(), event.payload);
-            else if (event.connection == clientSide())
+            {
+                if (holdClientMessages)
+                    heldClientMessages.emplace_back(event.payload.begin(), event.payload.end());
+                else
+                    server.HandleMessage(serverSide(), event.payload);
+            }
+            else if (event.connection == clientSide() && !dropServerMessages)
+            {
                 client.HandleMessage(event.payload);
+            }
         }
 
         server.Tick(tick++);
+    }
+
+    /// Deliver everything Step() held, oldest first.
+    void ReleaseHeldMessages()
+    {
+        holdClientMessages = false;
+        for (const std::vector<std::byte> &payload : heldClientMessages)
+            server.HandleMessage(serverSide(), payload);
+        heldClientMessages.clear();
     }
 
     void Step(std::uint32_t times)
@@ -571,6 +599,178 @@ TEST_CASE("a world too big for one packet still converges, over several snapshot
     CHECK(harness.client.ReplicatedEntityCount() == 40);
     CHECK(Converged(harness));
     CHECK(harness.client.SnapshotsRejected() == 0);
+}
+
+TEST_CASE("an entity whose final change lands in a budget-starved snapshot still converges")
+{
+    // The bug this pins: the in-flight record's *global* scene change tick used
+    // to become the connection's baseline when acked, including for entities the
+    // budget had skipped. Their pending changes were then older than the
+    // baseline, so "changed since" said no and they were never resent — stale
+    // until something happened to touch them again. A continuously-moving world
+    // re-stamps itself every tick, which is why nothing noticed; an entity whose
+    // *last* change lands in a starved snapshot has nothing to re-stamp it.
+    ReplicationConfig config;
+    config.maxSnapshotBytes = 160; // room for a few transforms, not sixteen
+    Harness harness(config);
+    harness.Step(4);
+
+    std::vector<ECS::Entity> entities;
+    for (int i = 0; i < 16; ++i)
+        entities.push_back(SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f}));
+
+    harness.Step(300);
+    REQUIRE(Converged(harness));
+
+    // One burst of movement, far larger than a snapshot can carry, and then
+    // stillness. Every entity's final change is inside that burst.
+    for (std::size_t i = 0; i < entities.size(); ++i)
+        harness.serverScene.GetMut<ECS::Transform>(entities[i])->position.y = 5.f + static_cast<float>(i);
+
+    harness.Step(300);
+    CHECK(Converged(harness));
+    CHECK(harness.client.SnapshotsRejected() == 0);
+}
+
+TEST_CASE("the keyframe sweep re-anchors state that went wrong after it was delivered")
+{
+    // What the sweep is *for*. Delivery is already guaranteed — the acked
+    // baseline resends every change until the client confirms it — so the
+    // failure class left over is state that arrived, was acknowledged, and then
+    // went wrong locally. Nothing about the delta path can notice that, because
+    // from the server's side nothing has changed.
+    ReplicationConfig config;
+    config.keyframeIntervalTicks = 30;
+    Harness harness(config);
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{42, 0});
+    harness.Step(12);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.clientScene.Get<Test::Health>(mirror)->value == 42);
+
+    // Client-side damage the server has no way to know about.
+    harness.clientScene.GetMut<Test::Health>(mirror)->value = 999;
+    harness.Step(12);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 999); // the delta path says nothing
+
+    harness.Step(60); // past a sweep
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 42);
+
+    const ConnectionDiagnostics *diagnostics = harness.server.Diagnostics(harness.serverSide());
+    REQUIRE(diagnostics != nullptr);
+    CHECK(diagnostics->keyframeSweeps > 0);
+}
+
+TEST_CASE("the sweep is off when the interval is zero")
+{
+    ReplicationConfig config;
+    config.keyframeIntervalTicks = 0;
+    Harness harness(config);
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{42, 0});
+    harness.Step(12);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+    harness.clientScene.GetMut<Test::Health>(mirror)->value = 999;
+
+    // "Wrong until the next sweep" becomes "wrong forever" — which is exactly
+    // what the config comment warns about, pinned so the warning stays true.
+    harness.Step(600);
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 999);
+    CHECK(harness.server.Diagnostics(harness.serverSide())->keyframeSweeps == 0);
+}
+
+TEST_CASE("a late ack for a pre-sweep snapshot does not cancel the sweep")
+{
+    // The ring clear, which is the half of the sweep that is easy to leave out.
+    // An ack for a snapshot sent *before* the sweep would otherwise fold that
+    // record's per-entity ticks straight back into the baselines and silently
+    // un-do the re-anchor for exactly the entities it covered.
+    ReplicationConfig config;
+    config.keyframeIntervalTicks = 60;
+    Harness harness(config);
+    harness.Step(4);
+
+    const ECS::Entity entity = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
+    (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{7, 0});
+    harness.Step(20);
+
+    const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entity));
+    REQUIRE(mirror != ECS::NullEntity);
+    REQUIRE(harness.clientScene.Get<Test::Health>(mirror)->value == 7);
+
+    // Damage the mirror, then stop the wire in stages. First hold the acks while
+    // snapshots keep flowing, so a batch of *pre-sweep* acks accumulates (the
+    // client only acks what it applies). The deltas are empty — the server's
+    // copy has not changed — so nothing repairs the mirror on the way.
+    harness.clientScene.GetMut<Test::Health>(mirror)->value = 999;
+    harness.holdClientMessages = true;
+    harness.Step(10);
+    REQUIRE(!harness.heldClientMessages.empty());
+
+    // Then drop snapshots too, and run to the sweep. Without this the sweep's
+    // own full-state resend would reach the client before the late acks could do
+    // any damage, and the test would pass for the wrong reason — it is a test
+    // about ordering, so both directions have to be controlled.
+    harness.dropServerMessages       = true;
+    const std::uint64_t sweepsBefore = harness.server.Diagnostics(harness.serverSide())->keyframeSweeps;
+    while (harness.server.Diagnostics(harness.serverSide())->keyframeSweeps == sweepsBefore)
+        harness.Step();
+
+    // Two more steps with snapshots still dropped, to discard the sweep's own
+    // full-state resend: it went out on the very tick the sweep fired, so it is
+    // still in the transport when the loop above exits.
+    harness.Step(2);
+    REQUIRE(harness.clientScene.Get<Test::Health>(mirror)->value == 999);
+
+    // The late acks arrive after the sweep. Their records are gone from the
+    // ring, so they find nothing and are ignored — had the ring survived, they
+    // would have folded their per-entity ticks straight back in and the client
+    // would be left holding 999 with nothing left to correct it.
+    harness.ReleaseHeldMessages();
+    harness.dropServerMessages = false;
+    harness.Step(30);
+
+    CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 7);
+}
+
+TEST_CASE("a despawned entity's baseline entry is gone once the despawn is acked")
+{
+    // NetIds are never reused, so a baseline map that is not pruned grows with
+    // every entity that has *ever* replicated — unbounded under projectile-style
+    // churn, and invisible until a long session runs out of memory.
+    Harness harness;
+    harness.Step(4);
+
+    std::vector<ECS::Entity> entities;
+    for (int i = 0; i < 6; ++i)
+        entities.push_back(SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f}));
+    harness.Step(20);
+
+    const ConnectionDiagnostics *diagnostics = harness.server.Diagnostics(harness.serverSide());
+    REQUIRE(diagnostics != nullptr);
+    CHECK(diagnostics->baselineEntries == 6);
+
+    for (const ECS::Entity entity : entities)
+        harness.serverScene.Destroy(entity);
+    harness.serverScene.FlushDestroyed();
+    harness.Step(20);
+
+    CHECK(diagnostics->baselineEntries == 0);
+    CHECK(harness.client.ReplicatedEntityCount() == 0);
+
+    // And a fresh one starts a fresh entry rather than inheriting a retired id's.
+    SpawnReplicated(harness.serverScene, {9.f, 0.f, 0.f});
+    harness.Step(20);
+    CHECK(diagnostics->baselineEntries == 1);
+    CHECK(Converged(harness));
 }
 
 TEST_CASE("input flows the other way and is bounded on arrival")
