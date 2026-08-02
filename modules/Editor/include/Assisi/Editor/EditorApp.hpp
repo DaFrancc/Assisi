@@ -201,7 +201,7 @@ class EditorApp : public Assisi::App::Application
     void ShutdownNetSession();    // tear down and forget; safe to call with no session
     void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
     void TickNetSession();        // end of the fixed step: snapshots (host) or input (client)
-    void InterpolateNetSession(); // once per frame: smooth mirrored entities
+    void SmoothNetView();         // once per frame, AFTER the physics writeback: interpolation + correction smoothing
 
     // --- Networked play (docs/replication-plan-v4.md §3.6) ------------------
     // One rule the rest falls out of: **a network session exists only inside a
@@ -597,6 +597,16 @@ class EditorApp : public Assisi::App::Application
     /// the consequence surfaces minutes later on someone else's screen.
     bool _hostPromptOpen  = false;
     bool _hostIgnoreDirty = false; ///< Set by "Host last-saved" for one attempt.
+    // Correction-rate sampling for the Network panel. Rates rather than totals:
+    // a total that keeps climbing only says the session is still running, which
+    // is already visible. Sampled over a second so a frame-rate stutter does not
+    // read as a bandwidth spike.
+    float         _netSampleSeconds         = 0.f;
+    std::uint64_t _lastCorrectionBytes      = 0;
+    std::uint64_t _lastCorrectionsApplied   = 0;
+    float         _correctionBytesPerSecond = 0.f;
+    float         _correctionsPerSecond     = 0.f;
+
     /// The mirrored world's structure revision this editor last resolved assets
     /// against. Mirrors arrive with authored asset ids and null GPU pointers;
     /// this is what tells the frame loop to look again.

@@ -73,6 +73,18 @@ struct SessionStats
     std::uint32_t inputBufferDepth  = 0;
     std::uint32_t clockCorrections  = 0;
     std::uint32_t clockLead         = 0;
+
+    // Correction stream (client). Totals, not rates: a rate needs a clock and a
+    // window, and whoever is drawing this already has both.
+    std::uint64_t correctionsApplied = 0;
+    std::uint64_t correctionBytes    = 0;
+    float         divergenceMean     = 0.f; ///< Metres, averaged over every correction so far.
+    float         divergenceMax      = 0.f; ///< Metres, worst since the session began.
+    std::uint64_t mirrorsResurrected = 0;
+
+    // Host.
+    std::uint32_t dirtyBacklog  = 0; ///< Entities that had something to send and did not fit.
+    std::uint64_t keyframeSweeps = 0;
 };
 
 class NetSession
@@ -145,10 +157,19 @@ class NetSession
     ///   ignores this — its own input needs no round trip.
     void Tick(std::uint64_t simTick, const InputCommand *localInput = nullptr);
 
-    /// @brief Smooth remote entities into the scene for rendering. Call once
-    /// per frame, after Poll/Tick. A no-op for a host, which is already at
-    /// server time by definition.
-    void Interpolate();
+    /// @brief Write this frame's rendered pose for every mirror: interpolation
+    /// for the ones nothing simulates, decaying visual offsets for the ones the
+    /// local physics owns.
+    ///
+    /// Call once per rendered frame, **after** the physics writeback and before
+    /// transforms are propagated — an offset applied before the writeback is
+    /// simply overwritten by it. A no-op for a host, which is already at server
+    /// time by definition.
+    void SmoothView();
+
+    /// @brief Ask the host to re-anchor this client from the empty baseline.
+    /// Client only; a no-op otherwise.
+    void RequestKeyframe();
 
     /// @brief Re-assert the server's sleep verdict on mirrored bodies. Call once
     /// per fixed step, immediately after the local physics step and before

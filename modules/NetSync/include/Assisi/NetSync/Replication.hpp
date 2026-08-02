@@ -105,8 +105,13 @@ struct ConnectionDiagnostics
     /// NetId that never left the map.
     std::uint32_t baselineEntries    = 0;
     /// How many times this connection has been re-anchored from the empty
-    /// baseline by the keyframe sweep.
+    /// baseline by the keyframe sweep, or by a client asking for one.
     std::uint64_t keyframeSweeps     = 0;
+    /// Entities that had something to send and did not fit in the last
+    /// snapshot. Zero is the normal state; a number that stays high means the
+    /// byte budget is binding and correction *frequency* is degrading — which
+    /// the priority accumulator makes fair, not free.
+    std::uint32_t dirtyBacklog       = 0;
 };
 
 /// @brief The authoritative half. Owns NetId assignment and snapshot sending.
@@ -244,6 +249,19 @@ class ReplicationServer
         /// otherwise, which is noise at the target scale.
         std::unordered_map<NetId, EntityBaseline> baselines;
 
+        /// The Tribes-lineage send priority, per entity. Each snapshot tick every
+        /// entity with something to send gains `max(Replicated::priority, eps)`;
+        /// entities drain highest-first into the byte budget, and **only the
+        /// drained reset**, so the ones that missed keep climbing and cannot
+        /// starve.
+        ///
+        /// Inert when the budget is not binding: everything dirty goes every
+        /// tick and every accumulator resets. Under pressure it degrades
+        /// correction *frequency* smoothly, per object, steered by an authored
+        /// number — the debris pile at priority 0.5 yields to the door at 10
+        /// precisely when bandwidth forces the choice.
+        std::unordered_map<NetId, float> priority;
+
         InputCommandQueue     input;
         ConnectionDiagnostics diagnostics;
 
@@ -319,6 +337,19 @@ class ReplicationServer
         BodyState     state;
         std::uint64_t tick = 0; ///< 0 = never captured.
     };
+
+    /// The priority bump a sleep transition earns.
+    ///
+    /// Deliberately large. Every other update is superseded by the next one; the
+    /// final rest pose is the one whose delay is *permanently* visible, because
+    /// after it the server has nothing more to say about that body.
+    static constexpr float kSleepTransitionBoost = 100.f;
+
+    /// Floor on the per-tick priority gain. `Replicated::priority` is authored
+    /// down to 0.0, and a raw gain of zero means a zero-priority entity never
+    /// climbs — silently starved forever under budget pressure. With the clamp,
+    /// 0 means "last in line", never "never".
+    static constexpr float kMinPriorityGain = 1.f / 64.f;
 
     /// Per-NetId body state, refreshed once per tick by CaptureBodyStates.
     std::unordered_map<NetId, BodyRecord> _bodyStates;
@@ -486,6 +517,52 @@ class ReplicationClient
         return estimatedServerTick - _interpolationDelayTicks;
     }
 
+    /// @brief Write this frame's rendered pose for every mirror: interpolate the
+    /// ones with no local simulation, and decay the visual offset of the ones
+    /// that have it.
+    ///
+    /// Call once per rendered frame, **after** the physics writeback and before
+    /// transforms are propagated. The order is not incidental: the writeback
+    /// overwrites a bodied mirror's Transform from its physics pose, so an offset
+    /// applied before it is simply erased.
+    ///
+    /// Two timelines coexist here, and that is the design rather than an
+    /// oversight. A bodied mirror renders at server-time-minus-transit, because
+    /// it is being simulated locally; a non-bodied one renders ~two snapshot
+    /// intervals in the past, because interpolating between received samples is
+    /// the only honest thing to do with state nobody is simulating. The visible
+    /// consequence — a non-bodied entity the server moves to track a bodied one
+    /// lags it — is inherent to running both.
+    void SmoothView(double serverTimeTicks);
+
+    /// @brief Corrections applied, and the divergence they found.
+    ///
+    /// `divergence` is measured *before* the snap, between the client's own
+    /// simulated pose and the authoritative one — i.e. how far the two
+    /// simulations had drifted apart in the interval since the last correction.
+    /// It is the number the correction cadence has to be justified by; there is
+    /// no determinism argument available to justify it instead (§3.1).
+    struct CorrectionStats
+    {
+        std::uint64_t applied      = 0;
+        std::uint64_t bytesApplied = 0;
+        double        divergenceSum = 0.0;
+        float         divergenceMax = 0.f;
+        float         divergenceMean() const
+        {
+            return applied == 0 ? 0.f : static_cast<float>(divergenceSum / static_cast<double>(applied));
+        }
+    };
+
+    [[nodiscard]] const CorrectionStats &Corrections() const { return _corrections; }
+
+    /// @brief Ask the server to re-anchor this client from the empty baseline.
+    ///
+    /// For the case the protocol cannot see and a human can: something is
+    /// visibly wrong on screen and nobody wants to wait out a sweep to find out
+    /// whether it heals. Costs one over-full snapshot.
+    void RequestKeyframe();
+
     /// @brief Re-assert the server's sleep verdict on every mirror it applies to.
     /// Call once per fixed step, immediately after the local physics step.
     ///
@@ -563,6 +640,13 @@ class ReplicationClient
         bool               asleep = false;
         glm::vec3          restPosition{};
         glm::quat          restRotation{1.f, 0.f, 0.f, 0.f};
+
+        /// The visual offset that hides the last correction. Added on top of the
+        /// physics writeback's pose every rendered frame and decayed toward
+        /// zero, so the *simulation* is always honest and the *screen* is always
+        /// smooth — two different jobs that a single blended pose cannot do.
+        glm::vec3 positionError{0.f};
+        glm::quat rotationError{1.f, 0.f, 0.f, 0.f};
     };
 
     /// Destroy the Jolt body behind a mirror, if it has one. The handle lives in
@@ -587,9 +671,10 @@ class ReplicationClient
 
     double _interpolationDelayTicks = 6.0; ///< Replaced at handshake from snapshotHz.
 
-    ClockFeedback _feedback;
-    ServerHello   _handshake;
-    std::string   _rejectMessage;
+    ClockFeedback   _feedback;
+    ServerHello     _handshake;
+    CorrectionStats _corrections;
+    std::string     _rejectMessage;
 
     std::uint64_t _lastAppliedTick    = 0;
     std::uint64_t _snapshotsApplied   = 0;

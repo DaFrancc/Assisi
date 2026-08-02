@@ -59,6 +59,19 @@ void *EnsureComponent(ECS::Scene &scene, ECS::Entity entity, const Core::Reflect
     return meta.construct(&scene, entity.index, entity.generation);
 }
 
+/// Error-smoothing constants. The decay factors and the small/large thresholds
+/// are the published state-synchronization values
+/// (https://gafferongames.com/post/state_synchronization/); the hard-snap bound
+/// is this design's own choice. They are constants until R6's telemetry gives a
+/// reason to move them, at which point they become config — guessing at them
+/// first and measuring second is how you end up tuning against a bug.
+constexpr float kSmallErrorDistance = 0.25f; ///< Below this, decay gently.
+constexpr float kLargeErrorDistance = 1.0f;  ///< Above this, decay hard.
+constexpr float kSlowDecay          = 0.95f;
+constexpr float kFastDecay          = 0.85f;
+constexpr float kRotationDecay      = 0.1f;  ///< Slerp toward identity per frame.
+constexpr float kHardSnapDistance   = 2.5f;  ///< Past this, admit the jump.
+
 } // namespace
 
 // ===========================================================================
@@ -184,6 +197,16 @@ void ReplicationServer::HandleMessage(Net::ConnectionId connection, std::span<co
     case MessageType::ClientHello: HandleClientHello(it->second, reader); break;
     case MessageType::Ack:         HandleAck(it->second, reader); break;
     case MessageType::Input:       HandleInput(it->second, reader); break;
+    case MessageType::RequestKeyframe:
+        // No payload to validate, and nothing a hostile client gains: the worst
+        // it can do is ask for its own full state repeatedly, which costs it
+        // bandwidth it is already receiving.
+        if (it->second.ready)
+        {
+            Core::Log::Info("NetSync: connection {} asked for a full re-anchor.", connection);
+            ResetBaselines(it->second);
+        }
+        break;
     default:
         // Server-to-client messages arriving from a client are not a case to
         // handle; they are a client that is confused or lying.
@@ -244,10 +267,10 @@ void ReplicationServer::HandleAck(Connection &connection, Core::BitReader &reade
     // A NetId that has left the acked set is gone for good — they are never
     // reused, so a straggler ack cannot resurrect one. Without this the map
     // grows with every entity that has ever replicated.
-    std::erase_if(connection.baselines,
-                  [&connection](const auto &entry) {
-                      return !std::binary_search(connection.acked.begin(), connection.acked.end(), entry.first);
-                  });
+    const auto retired = [&connection](const auto &entry)
+    { return !std::binary_search(connection.acked.begin(), connection.acked.end(), entry.first); };
+    std::erase_if(connection.baselines, retired);
+    std::erase_if(connection.priority, retired);
     connection.diagnostics.baselineEntries = static_cast<std::uint32_t>(connection.baselines.size());
 
     // Everything at or before the acked tick is settled.
@@ -258,6 +281,8 @@ void ReplicationServer::ResetBaselines(Connection &connection)
 {
     connection.baselines.clear();
     connection.inFlight.clear();
+    // Priorities are deliberately kept: they describe who is owed a turn, which
+    // a re-anchor does not change.
     connection.diagnostics.baselineEntries = 0;
     ++connection.diagnostics.keyframeSweeps;
 }
@@ -384,9 +409,23 @@ void ReplicationServer::CaptureBodyStates()
         // records nothing, which is where the idle-bandwidth property comes from.
         if (record.tick == 0 || !record.state.asleep)
         {
+            const bool transition = record.tick != 0; // as opposed to a first sighting
+
             const auto [position, rotation] = _physics->GetBodyTransform(*body);
             record.state = BodyState{netId, position, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/true};
             record.tick  = _bodyStateTick;
+
+            // Every other update is superseded by the next one; the final rest
+            // pose is the one whose delay is permanently visible, because after
+            // it the server has nothing more to say about this body.
+            if (transition)
+            {
+                for (auto &[id, connection] : _connections)
+                {
+                    (void)id;
+                    connection.priority[netId] += kSleepTransitionBoost;
+                }
+            }
         }
     }
 
@@ -571,10 +610,13 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     for (const NetId netId : despawns)
         writer.WriteVarUInt32(netId);
 
-    // The send loop is deliberately shaped as "collect, optionally order, drain
-    // to a budget" even though v1 orders nothing and sends everything that fits.
-    // A per-connection priority accumulator slots into the sort step later with
-    // no change to anything on the wire.
+    // Collect, order, drain to a budget. The ordering is a Tribes-style priority
+    // accumulator: every live entity gains max(Replicated::priority, eps) each
+    // snapshot tick, entities go out highest-first, and only the ones that
+    // actually went reset. Under no budget pressure this is inert — everything
+    // dirty goes every tick and everything resets. Under pressure, correction
+    // *frequency* degrades smoothly and per object, steered by an authored
+    // number, instead of by whichever NetId happened to be lowest.
     SentSnapshot record;
     record.serverTick = _simTick;
     record.netIds.reserve(_liveNetIds.size());
@@ -586,8 +628,32 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     // means a change made after this point cannot be mistaken for delivered.
     const std::uint64_t captureTick = _scene.CurrentChangeTick();
 
+    std::vector<std::pair<float, NetId>> order;
+    order.reserve(_liveNetIds.size());
     for (const NetId netId : _liveNetIds)
     {
+        const ECS::Entity entity = EntityOf(netId);
+        if (entity == ECS::NullEntity)
+            continue;
+
+        float authored = 1.f;
+        if (const Replicated *marker = _scene.Get<Replicated>(entity))
+            authored = marker->priority;
+
+        float &accumulator = connection.priority[netId];
+        accumulator += std::max(authored, kMinPriorityGain);
+        order.emplace_back(accumulator, netId);
+    }
+    // Highest first; NetId breaks ties so the order is stable rather than
+    // whatever the float comparison happened to do.
+    std::sort(order.begin(), order.end(),
+              [](const auto &lhs, const auto &rhs)
+              { return lhs.first != rhs.first ? lhs.first > rhs.first : lhs.second < rhs.second; });
+
+    std::uint32_t backlog = 0;
+    for (const auto &[accumulated, netId] : order)
+    {
+        (void)accumulated;
         const ECS::Entity entity = EntityOf(netId);
         if (entity == ECS::NullEntity)
             continue;
@@ -596,6 +662,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
 
         if (writer.BytesWritten() >= _config.maxSnapshotBytes)
         {
+            ++backlog;
             // Out of room. An entity the client already has simply misses this
             // update and stays in the record — its baseline is unaffected. One
             // it does not have must be left out of the record entirely, so the
@@ -632,12 +699,19 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         WriteEntityComponents(netId, entity, sinceChangeTick, connection, writer, record.components);
         record.netIds.push_back(netId);
         record.written.push_back(WrittenEntity{netId, EntityBaseline{captureTick, 0}});
+
+        // It went out, so its turn is over. The ones that did not go keep what
+        // they accumulated — which is the whole anti-starvation property.
+        connection.priority[netId] = 0.f;
     }
     writer.WriteBool(false);
+    connection.diagnostics.dirtyBacklog = backlog;
 
-    // netIds is built in _liveNetIds order, which is sorted; the body pass below
-    // binary-searches it, so make that explicit before it runs.
+    // Priority order is not NetId order, and both the body pass and the ack path
+    // binary-search these.
     std::sort(record.netIds.begin(), record.netIds.end());
+    std::sort(record.written.begin(), record.written.end(),
+              [](const WrittenEntity &lhs, const WrittenEntity &rhs) { return lhs.netId < rhs.netId; });
 
     // Motion, for everything the physics world owns. After the entity blocks so
     // ordering with a spawn in the same packet is free: the entity and its
@@ -1024,6 +1098,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     // blocks by construction: the entity and its descriptor exist by now, so a
     // body built here starts at the authoritative state rather than re-settling
     // from the level file's pose.
+    const std::size_t bodySectionStart = reader.BitsRead();
     while (reader.Ok() && reader.ReadBool())
     {
         BodyState state;
@@ -1033,6 +1108,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     }
     if (!reader.Ok())
         return false;
+    _corrections.bytesApplied += (reader.BitsRead() - bodySectionStart + 7u) / 8u;
 
     ResolvePendingRefs();
 
@@ -1092,18 +1168,101 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
         _transformHistory.erase(state.netId);
     }
 
-    const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
+    const Physics::RigidBody *body   = _scene.Get<Physics::RigidBody>(entity);
+    MirrorBody               &record = _bodies[state.netId];
+
+    // How far the two simulations drifted apart since the last correction. Taken
+    // before the snap, against the *physics* pose rather than the rendered one:
+    // this is the number the correction cadence has to be justified by, and
+    // folding the previous frame's cosmetic offset into it would flatter it.
+    const auto [simulatedPosition, simulatedRotation] = _physics->GetBodyTransform(*body);
+    const float divergence                            = glm::length(simulatedPosition - state.position);
+
+    ++_corrections.applied;
+    _corrections.divergenceSum += static_cast<double>(divergence);
+    _corrections.divergenceMax = std::max(_corrections.divergenceMax, divergence);
+
+    // The rendered pose right now, which the correction must not change: the
+    // sim is snapped, and the offset absorbs the whole difference so the screen
+    // sees nothing happen at this instant. Successive corrections accumulate
+    // into the same offset, which is what keeps a stream of small ones smooth
+    // rather than each one fighting the last.
+    const glm::vec3 renderedPosition = simulatedPosition + record.positionError;
+    const glm::quat renderedRotation = record.rotationError * simulatedRotation;
 
     // The simulation is snapped hard, with no smoothing: extrapolation has to
     // proceed from a valid physics state, and a half-applied correction is not
-    // one. Hiding the jump is the *view's* job (R6), not the simulation's.
+    // one. Hiding the jump belongs to the view.
     _physics->ApplyBodyState(*body, state.position, state.rotation, state.linearVelocity, state.angularVelocity,
                              /*activate=*/!state.asleep);
 
-    MirrorBody &record  = _bodies[state.netId];
+    record.positionError = renderedPosition - state.position;
+    record.rotationError = glm::normalize(renderedRotation * glm::inverse(state.rotation));
+
+    // Past a certain distance, smoothing reads worse than admitting the jump: a
+    // body sliding half a room to catch up looks like a bug, where a teleport
+    // looks like a teleport.
+    if (glm::length(record.positionError) > kHardSnapDistance)
+    {
+        record.positionError = glm::vec3{0.f};
+        record.rotationError = glm::quat{1.f, 0.f, 0.f, 0.f};
+    }
+
     record.asleep       = state.asleep;
     record.restPosition = state.position;
     record.restRotation = state.rotation;
+}
+
+void ReplicationClient::SmoothView(double serverTimeTicks)
+{
+    // Non-bodied mirrors: interpolate between received samples, unchanged.
+    Interpolate(serverTimeTicks);
+
+    if (_physics == nullptr)
+        return;
+
+    for (auto &[netId, record] : _bodies)
+    {
+        const auto entity = _entityByNetId.find(netId);
+        if (entity == _entityByNetId.end() || !_scene.IsAlive(entity->second))
+            continue;
+
+        ECS::Transform *transform = _scene.GetMut<ECS::Transform>(entity->second);
+        if (transform == nullptr)
+            continue;
+
+        // Decay first, then apply, so an offset that has reached zero costs one
+        // add of nothing rather than a frame of stale error.
+        const float distance = glm::length(record.positionError);
+        const float decay =
+            distance <= kSmallErrorDistance
+                ? kSlowDecay
+                : (distance >= kLargeErrorDistance
+                       ? kFastDecay
+                       : glm::mix(kSlowDecay, kFastDecay,
+                                  (distance - kSmallErrorDistance) / (kLargeErrorDistance - kSmallErrorDistance)));
+
+        record.positionError *= decay;
+        record.rotationError =
+            glm::normalize(glm::slerp(record.rotationError, glm::quat{1.f, 0.f, 0.f, 0.f}, kRotationDecay));
+
+        // On top of the physics writeback's pose, which ran just before this.
+        transform->position += record.positionError;
+        transform->rotation = record.rotationError * transform->rotation;
+    }
+}
+
+void ReplicationClient::RequestKeyframe()
+{
+    if (!_synchronized)
+        return;
+
+    Core::BitWriter writer;
+    WriteMessageType(MessageType::RequestKeyframe, writer);
+    // Reliable: the point of asking is that something is already wrong, and an
+    // unreliable request that gets dropped looks exactly like a button that does
+    // nothing.
+    _transport.Send(_connection, writer.Data(), Net::SendMode::Reliable, Net::Lane::Control);
 }
 
 void ReplicationClient::EnforceSleep()
@@ -1289,6 +1448,7 @@ void ReplicationClient::Reset()
     _pendingRefs.clear();
     _feedback          = ClockFeedback{};
     _handshake         = ServerHello{};
+    _corrections       = CorrectionStats{};
     _lastAppliedTick   = 0;
     _snapshotsApplied  = 0;
     _snapshotsRejected = 0;

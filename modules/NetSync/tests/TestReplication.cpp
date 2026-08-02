@@ -773,6 +773,64 @@ TEST_CASE("a despawned entity's baseline entry is gone once the despawn is acked
     CHECK(Converged(harness));
 }
 
+TEST_CASE("under budget pressure, priority decides who is corrected more often — and nobody starves")
+{
+    // The Tribes-lineage accumulator. When bandwidth is not binding there is no
+    // reason to correct less often than every snapshot tick, so this does
+    // nothing; when it binds, fairness needs *some* order, and per-entity
+    // priority makes that order an authored decision instead of whichever NetId
+    // happened to be lowest. The debris pile yields to the door.
+    ReplicationConfig config;
+    config.maxSnapshotBytes      = 120; // room for a couple of transforms
+    config.keyframeIntervalTicks = 0;   // a sweep would flatten the comparison
+    Harness harness(config);
+    harness.Step(4);
+
+    std::vector<ECS::Entity> entities;
+    for (int i = 0; i < 8; ++i)
+        entities.push_back(SpawnReplicated(harness.serverScene, {static_cast<float>(i), 0.f, 0.f}));
+
+    // First and last of the list, so neither can win by NetId order.
+    harness.serverScene.GetMut<Replicated>(entities.front())->priority = 10.f;
+    harness.serverScene.GetMut<Replicated>(entities.back())->priority  = 0.f; // the clamp's job
+
+    harness.Step(300);
+    REQUIRE(harness.client.ReplicatedEntityCount() == entities.size());
+
+    // Keep the whole world moving and integrate how far each mirror lags. A
+    // correction that arrives more often keeps a smaller error.
+    std::vector<double> laggedError(entities.size(), 0.0);
+    for (int step = 0; step < 400; ++step)
+    {
+        for (std::size_t i = 0; i < entities.size(); ++i)
+            harness.serverScene.GetMut<ECS::Transform>(entities[i])->position.y = static_cast<float>(step) * 0.1f;
+
+        harness.Step();
+
+        for (std::size_t i = 0; i < entities.size(); ++i)
+        {
+            const ECS::Entity mirror = harness.client.EntityOf(harness.server.NetIdOf(entities[i]));
+            if (mirror == ECS::NullEntity)
+                continue;
+            const ECS::Transform *truth = harness.serverScene.Get<ECS::Transform>(entities[i]);
+            const ECS::Transform *shown = harness.clientScene.Get<ECS::Transform>(mirror);
+            if (truth != nullptr && shown != nullptr)
+                laggedError[i] += static_cast<double>(std::abs(truth->position.y - shown->position.y));
+        }
+    }
+
+    CHECK(laggedError.front() < laggedError.back());
+
+    // ...and the loser is behind, not abandoned. Only the entities that actually
+    // went out reset their accumulators, so the ones that missed keep climbing
+    // and eventually win a turn — which is why a priority of exactly 0.0 means
+    // "last in line" rather than "never".
+    for (std::size_t i = 0; i < entities.size(); ++i)
+        harness.serverScene.GetMut<ECS::Transform>(entities[i])->position.y = 99.f;
+    harness.Step(400);
+    CHECK(Converged(harness));
+}
+
 TEST_CASE("input flows the other way and is bounded on arrival")
 {
     Harness harness;

@@ -53,6 +53,17 @@ enum class MessageType : std::uint8_t
     Ack = 5,
     /// Client → server, every tick: the redundant input command window.
     Input = 6,
+    /// Client → server: "re-anchor me from nothing". Zeroes that connection's
+    /// per-entity baselines and clears its in-flight ring — the same path the
+    /// periodic keyframe sweep takes, on demand.
+    ///
+    /// Carries no payload: the only thing it can say is *that* the client wants
+    /// a full re-anchor, and a client asking for one it does not need costs one
+    /// over-full snapshot. It exists because "something is visibly wrong on my
+    /// screen" is a state a human can see and the protocol cannot, and waiting
+    /// out an 8.5-second sweep to find out whether it heals is a bad debugging
+    /// loop.
+    RequestKeyframe = 7,
 
     Count
 };
@@ -71,7 +82,7 @@ enum class RejectReason : std::uint8_t
 /// component blocks. A field added to `ServerHello`, a new section in a snapshot,
 /// a different varint form: all invisible to the component table and all fatal to
 /// a mismatched pair. Bump this when any Write*/Read* pair here changes.
-inline constexpr std::uint32_t kNetProtocolVersion = 2;
+inline constexpr std::uint32_t kNetProtocolVersion = 3;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

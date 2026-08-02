@@ -98,6 +98,12 @@ struct PhysicsHarness
         // Immediately after the client's own step, before anything reads it.
         client.EnforceSleep();
 
+        // The client's render path, in the order a windowed one runs it: the
+        // physics writeback first, then the view-side smoothing *on top of* the
+        // pose it just wrote. Reversed, the offset would simply be overwritten.
+        clientPhysics.InterpolateTransforms(clientScene, 1.f);
+        client.SmoothView(0.0);
+
         server.Tick(tick++);
     }
 
@@ -465,4 +471,93 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
         (void)shownRotation;
         CHECK(glm::length(truth - shown) < 0.2f);
     }
+}
+
+TEST_CASE("a correction moves the simulation at once and the picture gradually")
+{
+    // The two jobs the design refuses to conflate. The *simulation* is snapped
+    // hard, because extrapolation has to proceed from a valid physics state; the
+    // *view* absorbs the whole jump into an offset and decays it, because a body
+    // teleporting on screen reads as a bug. Both, at the same instant, from one
+    // correction.
+    PhysicsHarness harness;
+    harness.Step(4);
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
+                                        /*isStatic=*/false);
+    harness.Step(400);
+
+    const ECS::Entity mirror = MirrorOf(harness, entity);
+    REQUIRE(mirror != ECS::NullEntity);
+    const Physics::RigidBody *replica = harness.clientScene.Get<Physics::RigidBody>(mirror);
+    REQUIRE(replica != nullptr);
+    REQUIRE_FALSE(harness.clientPhysics.IsBodyActive(*replica));
+
+    const auto [restPosition, restRotation] = harness.clientPhysics.GetBodyTransform(*replica);
+
+    // Client-side damage: shove the mirror a metre off and leave it asleep, so
+    // sleep enforcement has nothing to notice and the delta path has nothing to
+    // say. Exactly what the editor's "corrupt selected mirror" poke does.
+    const glm::vec3 displaced = restPosition + glm::vec3{0.f, 0.f, 1.f};
+    harness.clientPhysics.ApplyBodyState(*replica, displaced, restRotation, glm::vec3{0.f}, glm::vec3{0.f},
+                                         /*activate=*/false);
+    harness.clientPhysics.InterpolateTransforms(harness.clientScene, 1.f);
+    harness.client.SmoothView(0.0);
+    REQUIRE(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - displaced) < 1e-3f);
+
+    // Ask for a re-anchor rather than waiting out the sweep.
+    const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
+    harness.client.RequestKeyframe();
+    for (int i = 0; i < 30 && harness.client.Corrections().applied == correctionsBefore; ++i)
+        harness.Step();
+    REQUIRE(harness.client.Corrections().applied > correctionsBefore);
+
+    // The simulation is back where the server said, immediately...
+    const auto [correctedPosition, correctedRotation] = harness.clientPhysics.GetBodyTransform(*replica);
+    (void)correctedRotation;
+    CHECK(glm::length(correctedPosition - restPosition) < 1e-3f);
+
+    // ...and the picture has not moved yet: the offset absorbed the whole metre.
+    const glm::vec3 renderedAtCorrection = harness.clientScene.Get<ECS::Transform>(mirror)->position;
+    CHECK(glm::length(renderedAtCorrection - displaced) < 0.15f);
+
+    // Over the following frames it closes the gap rather than jumping it.
+    harness.Step(120);
+    CHECK(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - restPosition) < 0.02f);
+
+    // And the divergence it found is the number the correction cadence has to be
+    // justified by, so it is measured rather than assumed.
+    CHECK(harness.client.Corrections().divergenceMax > 0.9f);
+}
+
+TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
+{
+    // Smoothing a teleport reads worse than admitting it: a body sliding half a
+    // room to catch up looks like a bug, where a teleport looks like a teleport.
+    PhysicsHarness harness;
+    harness.Step(4);
+    SpawnSharedFloor(harness);
+
+    const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
+                                        /*isStatic=*/false);
+    harness.Step(400);
+
+    const ECS::Entity         mirror  = MirrorOf(harness, entity);
+    const Physics::RigidBody *replica = harness.clientScene.Get<Physics::RigidBody>(mirror);
+    REQUIRE(replica != nullptr);
+    const auto [restPosition, restRotation] = harness.clientPhysics.GetBodyTransform(*replica);
+
+    // Well past the 2.5 m bound.
+    harness.clientPhysics.ApplyBodyState(*replica, restPosition + glm::vec3{0.f, 0.f, 8.f}, restRotation,
+                                         glm::vec3{0.f}, glm::vec3{0.f}, /*activate=*/false);
+
+    const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
+    harness.client.RequestKeyframe();
+    for (int i = 0; i < 30 && harness.client.Corrections().applied == correctionsBefore; ++i)
+        harness.Step();
+    REQUIRE(harness.client.Corrections().applied > correctionsBefore);
+
+    // No decay period: the rendered pose is already the corrected one.
+    CHECK(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - restPosition) < 0.01f);
 }

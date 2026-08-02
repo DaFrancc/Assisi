@@ -269,11 +269,15 @@ void ServerApp::OnFixedUpdate(float dt)
 
 void ServerApp::OnUpdate(float /*dt*/)
 {
-    // Smooth remote entities for rendering. A headless client renders nothing,
-    // but running it here keeps this loop the same shape as a windowed one —
-    // and it is the only place a bug in it would show up in a soak.
+    // Write the render pose for remote entities. A headless client renders
+    // nothing, but running it here keeps this loop the same shape as a windowed
+    // one — and it is the only place a bug in it would show up in a soak.
+    //
+    // Its *convergence* assertions must never read these Transforms, though:
+    // for a bodied mirror this adds a decaying cosmetic offset on top of the
+    // physics pose, and the physics pose is the one that is authoritative.
     if (_session)
-        _session->Interpolate();
+        _session->SmoothView();
 
     ReportStatus();
 }

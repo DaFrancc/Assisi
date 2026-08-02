@@ -478,10 +478,15 @@ void EditorApp::TickNetSession()
         _netSession->Tick(GetSimTick());
 }
 
-void EditorApp::InterpolateNetSession()
+void EditorApp::SmoothNetView()
 {
+    // Called from OnRender, immediately after the physics writeback: it decays a
+    // bodied mirror's visual offset onto the pose the writeback just wrote, so
+    // running before the writeback would mean writing an offset the writeback
+    // then erases. (It used to run in OnUpdate for exactly that reason —
+    // interpolated mirrors have no writeback to lose to.)
     if (_netSession)
-        _netSession->Interpolate();
+        _netSession->SmoothView();
 }
 
 // ---------------------------------------------------------------------------
@@ -650,12 +655,97 @@ void EditorApp::DrawNetworkWindow()
         LabelledValue("Bytes sent", std::format("{}", stats.bytesSent));
         if (stats.snapshotsSent > 0)
             LabelledValue("Avg snapshot", std::format("{} B", stats.bytesSent / stats.snapshotsSent));
+
+        // Zero is the normal state. A number that stays high means the byte
+        // budget is binding, and correction *frequency* is degrading — which the
+        // priority accumulator makes fair, not free.
+        ImGui::TextUnformatted("Dirty backlog");
+        ImGui::SameLine(180.f);
+        ImGui::TextColored(stats.dirtyBacklog > 0 ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%u entit%s",
+                           stats.dirtyBacklog, stats.dirtyBacklog == 1 ? "y" : "ies");
+        LabelledValue("Keyframe sweeps", std::format("{}", stats.keyframeSweeps));
     }
     else
     {
         LabelledValue("Server tick", std::format("{}", stats.serverTick));
         LabelledValue("Mirrored entities", std::format("{}", stats.replicatedEntities));
         LabelledValue("Snapshots applied", std::format("{}", stats.snapshotsApplied));
+
+        // --- the correction stream ------------------------------------------
+        // Rates, not totals: a total that keeps climbing tells you the session is
+        // still running, which you could already see. Sampled over a second so a
+        // frame-rate stutter does not read as a bandwidth spike.
+        _netSampleSeconds += ImGui::GetIO().DeltaTime;
+        if (_netSampleSeconds >= 1.f)
+        {
+            _correctionBytesPerSecond =
+                static_cast<float>(stats.correctionBytes - _lastCorrectionBytes) / _netSampleSeconds;
+            _correctionsPerSecond =
+                static_cast<float>(stats.correctionsApplied - _lastCorrectionsApplied) / _netSampleSeconds;
+            _lastCorrectionBytes      = stats.correctionBytes;
+            _lastCorrectionsApplied   = stats.correctionsApplied;
+            _netSampleSeconds         = 0.f;
+        }
+
+        ImGui::SeparatorText("Corrections");
+        LabelledValue("Corrections/s", std::format("{:.1f}", _correctionsPerSecond));
+        LabelledValue("Correction bytes/s", std::format("{:.0f} B/s", _correctionBytesPerSecond));
+
+        // Divergence is the measurement the correction cadence has to be
+        // justified by. There is no determinism argument available to justify it
+        // instead: the client starts from state that crossed a wire, applies
+        // corrections the server never applies, and adds bodies on a different
+        // schedule, so "same binary" buys nothing here.
+        LabelledValue("Divergence (mean)", std::format("{:.1f} mm", stats.divergenceMean * 1000.f));
+        ImGui::TextUnformatted("Divergence (max)");
+        ImGui::SameLine(180.f);
+        ImGui::TextColored(stats.divergenceMax > 0.5f ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%.1f mm",
+                           static_cast<double>(stats.divergenceMax) * 1000.0);
+
+        // Silent churn otherwise: a client-side cleanup system running over
+        // mirrors would destroy and re-receive them forever with no signal.
+        if (stats.mirrorsResurrected > 0)
+        {
+            ImGui::TextColored(kWarnColor, "Mirrors resurrected: %llu",
+                               static_cast<unsigned long long>(stats.mirrorsResurrected));
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("A local system destroyed a mirrored entity. Clients may push mirrors, but "
+                                  "destroying one only lasts until the host next mentions it.");
+            }
+        }
+
+        // Two debug affordances that only make sense together: one to break the
+        // mirror, one to heal it. A resync button with nothing to heal proves
+        // nothing about whether it works.
+        if (ImGui::Button("Force full resync"))
+            _netSession->RequestKeyframe();
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Ask the host to re-send everything from scratch, without waiting for the "
+                              "periodic sweep.");
+
+        ImGui::SameLine();
+        const bool canScramble = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
+                                 _scene->Has<Assisi::NetSync::Mirrored>(_selectedEntity) &&
+                                 _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr;
+        ImGui::BeginDisabled(!canScramble);
+        if (ImGui::Button("Corrupt selected mirror") && canScramble)
+        {
+            // Client-side damage the host has no way to know about — the exact
+            // failure class the keyframe sweep exists for.
+            const Assisi::Physics::RigidBody *body = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity);
+            const auto [position, rotation]        = _physics->GetBodyTransform(*body);
+            _physics->ApplyBodyState(*body, position + glm::vec3{0.f, 3.f, 1.5f}, rotation, glm::vec3{0.f},
+                                     glm::vec3{0.f}, /*activate=*/false);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip(canScramble ? "Shove this mirror somewhere the host never put it. Nothing in the "
+                                            "delta path can notice; only a resync (or the sweep) heals it."
+                                          : "Select a mirrored entity with a body.");
+        }
+        ImGui::SeparatorText("Clock");
 
         // A nonzero rejection count is never normal: it means either corruption
         // the transport did not catch or a protocol bug. Make it loud.

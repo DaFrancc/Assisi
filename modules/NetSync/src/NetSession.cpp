@@ -195,14 +195,20 @@ void NetSession::AfterPhysicsStep()
         _client->EnforceSleep();
 }
 
-void NetSession::Interpolate()
+void NetSession::SmoothView()
 {
     // A host is at server time by definition — it *is* the server — so there is
     // nothing to smooth and nothing to delay.
     if (!_client || !_client->IsSynchronized() || !_clock)
         return;
 
-    _client->Interpolate(_client->RenderTimeFor(static_cast<double>(_clock->EstimatedServerTick())));
+    _client->SmoothView(_client->RenderTimeFor(static_cast<double>(_clock->EstimatedServerTick())));
+}
+
+void NetSession::RequestKeyframe()
+{
+    if (_client)
+        _client->RequestKeyframe();
 }
 
 const InputCommand *NetSession::ConsumeInput(Net::ConnectionId client, std::uint64_t tick)
@@ -248,6 +254,10 @@ SessionStats NetSession::Stats() const
             {
                 stats.snapshotsSent += diagnostics->snapshotsSent;
                 stats.bytesSent += diagnostics->bytesSent;
+                // Worst case across clients, like the ping below: a mean hides
+                // the one connection that is actually struggling.
+                stats.dirtyBacklog  = std::max(stats.dirtyBacklog, diagnostics->dirtyBacklog);
+                stats.keyframeSweeps = std::max(stats.keyframeSweeps, diagnostics->keyframeSweeps);
             }
             Net::ConnectionStats transportStats;
             if (_transport->GetConnectionStats(client, transportStats))
@@ -277,6 +287,13 @@ SessionStats NetSession::Stats() const
         stats.serverTick        = _client->LastAppliedTick();
         stats.inputBufferDepth  = _client->Feedback().inputBufferDepth;
         stats.replicatedEntities = _client->ReplicatedEntityCount();
+
+        const ReplicationClient::CorrectionStats &corrections = _client->Corrections();
+        stats.correctionsApplied = corrections.applied;
+        stats.correctionBytes    = corrections.bytesApplied;
+        stats.divergenceMean     = corrections.divergenceMean();
+        stats.divergenceMax      = corrections.divergenceMax;
+        stats.mirrorsResurrected = _client->MirrorsResurrected();
         if (_clock)
         {
             stats.clockCorrections = _clock->CorrectionCount();

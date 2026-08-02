@@ -670,6 +670,15 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha());
     }
 
+    // Immediately after the writeback and before Render() propagates world
+    // matrices: a bodied mirror's visual offset is *added on top of* the pose
+    // the writeback just wrote, so this cannot run before it. A no-op unless
+    // this editor is a connected client.
+    {
+        ASSISI_PROFILE_SCOPE("net-smooth-view");
+        SmoothNetView();
+    }
+
     // Refresh the editor camera's world matrix from its TRS before the view
     // matrix is derived from it; SceneRenderer propagates the game scene it draws.
     RefreshCameraMatrix();
@@ -908,10 +917,6 @@ void EditorApp::OnUpdate(float dt)
     // A viewer window that opens staring at nothing undermines the one-click
     // demo it exists for. Once, when the joined world has arrived.
     FrameJoinedWorldOnce();
-
-    // Smooth mirrored entities into the scene before anything reads transforms
-    // this frame. A no-op unless this editor is a connected client.
-    InterpolateNetSession();
 
     // Worlds that simulate but are not drawn get neither the pose write-back nor
     // the transform propagation the render path does for the world it draws. Give

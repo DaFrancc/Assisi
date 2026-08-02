@@ -58,7 +58,7 @@ void Pump(NetSession &host, NetSession &client, std::uint64_t &tick, std::int32_
         client.Poll();
         host.Tick(tick);
         client.Tick(tick);
-        client.Interpolate();
+        client.SmoothView();
         ++tick;
         std::this_thread::sleep_for(std::chrono::milliseconds{2});
     }
@@ -191,7 +191,7 @@ TEST_CASE("an offline session is inert")
     // should not have to guard each one on "am I networked".
     session.Poll();
     session.Tick(0);
-    session.Interpolate();
+    session.SmoothView();
     CHECK(session.ConsumeInput(1, 0) == nullptr);
     CHECK(session.Stats().role == SessionRole::Offline);
     CHECK(session.StatusText() == "Offline");
