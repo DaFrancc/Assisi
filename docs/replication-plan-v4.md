@@ -1,5 +1,12 @@
 # Replication Plan v4 — Local Simulation with Authoritative Correction
 
+> **Build status, 2026-08-01: R1–R8 implemented and committed on `networking`;
+> R9 partly done.** Everything with a library-level definition of done is green
+> — 73 NetSync cases, 13/13 ctest targets, optimized build clean — and the
+> headless half of R9's matrix has been run over real UDP. What has *not* been
+> checked is everything whose DoD says "by eye" or needs two editor windows;
+> that list is §4a below, and it is the honest remainder of this plan.
+
 Status: **planned, not started**. This replaces `replication-authoring-plan.md`
 (v3.5), which stays in the tree as the historical record. v4 is written from
 scratch rather than amended into v3.5 because two of that plan's foundations
@@ -1047,6 +1054,48 @@ block, `remaining-work.md` §1, and the project memory; v3.5 gets a one-line
 header pointing here.
 *DoD:* the matrix passes end to end in one sitting, and the docs say what is
 actually true.
+
+## 4a. What is verified, and what still needs eyes
+
+Written 2026-08-01, after R1-R8 landed. The split is not "tested vs untested" —
+it is **what a terminal can decide vs what a person has to look at**, and
+keeping those apart is the only way "done" stays a claim rather than a hope.
+
+**Verified, and how.** Every library-level DoD in R1, R4, R5, R6 and R8 has a
+test, and the two that pin *fixes* were confirmed to fail against the old code
+before the fix went in (the budget-staleness regression, and the sweep's
+in-flight ring clear). Over real UDP, headlessly: a host/client pair negotiates
+`levels/NetPile.alvl`, verifies its content hash, strips the six authored
+copies, and mirrors them with zero rejects; a one-byte edit to the client's copy
+aborts the join with both hashes logged; a headless client and a windowed
+`--pie-client` join the same host simultaneously; a client disconnects and
+rejoins a live host; and the correction stream falls from ~52 to ~35 bytes per
+snapshot with quantization on, settling to headers once the pile sleeps.
+`App::ChildProcess` is tested against real processes, including the case where
+a child exits on its own and the case where the executable does not exist.
+
+**Not verified, and it needs a person.** All of it is either a by-eye judgement
+or a two-window sequence:
+
+- **R2** — editor A hosts in Play, editor B joins from both starting states
+  (nothing open / same level open); B's editing scene and unsaved edits come
+  back on Stop; A's Stop ends B's session; the disabled Pause / Travel /
+  Load-as-new-world / seamless-load / Destroy-this-world / Migrate controls and
+  their tooltips; the unsaved-edits host modal and its three buttons.
+- **R3** — the Play control's net dropdown; "Host + 1" opening a window that
+  auto-joins and shows unsaved edits; Stop closing it; three repeats with no
+  zombies (`ps`) and no port clash; "Host + 3"; the client's camera framing.
+  (The *absolute-path* temp-snapshot branch of the join is reachable only this
+  way — the headless client speaks virtual paths only, so that branch has been
+  compiled but never executed.)
+- **R5** — PIE Host + 1 on `levels/NetPile.alvl`: both windows settling to the
+  same arrangement, and the panel's "Nudge selected body" pushing a crate that
+  the client follows within a correction interval.
+- **R6** — the judgement the whole milestone exists for: under 150 ms / 5 %
+  simulated conditions, a disturbed pile shows no visible pops at correction
+  arrival. Also the panel's divergence figures moving plausibly with latency,
+  and "corrupt selected mirror" → "force full resync" healing on screen.
+- **R7** — every item; it is all UI.
 
 ## 5. Explicitly deferred
 

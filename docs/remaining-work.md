@@ -20,6 +20,14 @@ built, tested and green on Linux.** Stage 7 (prediction, lag compensation,
 interest management, NAT-traversal production infra) remains deferred and is
 excluded here.
 
+**Updated 2026-08-01.** The replication *model* moved on: the plan of record is
+`docs/replication-plan-v4.md` — local simulation with authoritative correction
+— and its milestones R1–R8 are built on branch `networking`. Three items that
+were open in this section are closed by it, and are marked below. What v4 adds
+that is *not* yet verified is the by-eye and two-window half of its own DoDs;
+that list lives in v4 §4, not here, because it is verification of new work
+rather than a backlog of old.
+
 ### Built
 
 - **N0 — GNS build integration.** protobuf v35.1 (+ force-fetched abseil) and
@@ -50,6 +58,14 @@ excluded here.
 Suites: NetSync 45 cases / 375 assertions, Net 4 / 166, plus a 5 s soak through
 150 ms RTT and 5% loss. All 11 ctest targets green.
 
+**Since v4 (2026-08-01):** NetSync 73 cases, including a second soak with real
+physics on both sides; 13 ctest targets green. Two latent defects in the shipped
+core, documented in v4 §2, are fixed: a snapshot that hit the byte budget marked
+an undelivered entity as delivered (R4, per-entity baselines), and replication
+read the render-side Transform rather than the physics world — so a headless
+host replicated stale poses and a windowed one never stopped replicating
+sleeping bodies (R5, body-state capture).
+
 ### Remaining in this milestone
 
 - **Windows.** The GNS dependency chain has never been built there, and the
@@ -58,10 +74,12 @@ Suites: NetSync 45 cases / 375 assertions, Net 4 / 166, plus a 5 s soak through
   defaults **ON** and forces `CMAKE_MSVC_RUNTIME_LIBRARY` to the static CRT for
   itself *and* abseil, which will not match this tree's default dynamic CRT —
   expect to force it OFF.
-- **Snapshot quantization.** `BitWriter` is bit-capable and
-  `WriteFloatQuantized` exists with a round-trip test, but no field encoder uses
-  it: v1 sends whole-value floats. This is the lever if 32-player listen servers
-  on home upload ever matter (see the bandwidth envelope in the design notes).
+- ~~**Snapshot quantization.**~~ **Closed 2026-08-01 by v4 R8** — body-state
+  corrections pack through `WriteFloatQuantized` plus a smallest-three
+  quaternion, parameters in `game.json`'s `networking` block and inside the
+  handshake hash. An awake record went 425 bits → 161. Component blocks are
+  still whole-value; that is the remaining half of this lever, and it is
+  unmeasured because corrections, not components, are what a moving world costs.
 - **Sub-tick evaluation.** `InputCommand::subTickFraction` is on the wire and
   ignored, by design.
 - **`ScopedRawEntityContext` relocation** out of Runtime (open decision 3) —

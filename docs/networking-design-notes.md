@@ -5,6 +5,21 @@ review (4 independent researchers — engine case studies, transport-library
 survey, replication theory, codebase fit/ops — cross-checked by 2 adversarial
 reviewers, then synthesized; full cited reports in `docs/research/networking/`).
 
+> **Superseded in part, 2026-08-01.** This document is the v2 record and stays
+> as written. The *replication model* it describes — snapshot interpolation,
+> mirrors as passive ghosts rendered two snapshot intervals in the past — was
+> replaced by **`docs/replication-plan-v4.md`**, which is the plan of record:
+> both machines simulate the same Jolt world at 60 Hz and the wire carries
+> periodic authoritative *corrections* rather than a stream of poses. Milestones
+> R1-R8 of that plan are built and committed on branch `networking`.
+>
+> Everything below the model is unchanged and still accurate: the transport
+> choice, the two-module split, the acked-baseline delta core, the bit codec,
+> the clock, and the input path all survived v4 untouched. Where this document
+> says "mirrors are interpolated", read: *non-bodied* mirrors still are, and
+> that path is intact; entities with a replicated `RigidBodyDescriptor` are
+> simulated locally and corrected instead (v4 §3.5).
+
 **Implementation status (2026-07-22): stages 0-6 are built, tested and
 committed on Linux.** The plan below is left as written — it is the design
 record, and the stage text is what the code was built against. Where the

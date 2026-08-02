@@ -1,5 +1,12 @@
 # Replication Authoring & Editor Integration Plan
 
+> **Superseded 2026-08-01 by `docs/replication-plan-v4.md`**, which is the plan
+> of record and is built through R8. Kept as the historical record: v4 reverses
+> two of this document's foundations (mirrors get real dynamic bodies, and
+> joining is Play-bound rather than a session-viewer mode), and v4 §3.6 shows
+> which of §2's ten mechanisms collapsed into the editor's existing play
+> snapshot/restore and which were genuinely needed.
+
 Status: **planned, not started**. This is the v3 networking plan, revised after a
 two-reviewer design round. It exists because v2 (networking-design-notes.md)
 built a working transport and delta-snapshot backend but shipped no usable
