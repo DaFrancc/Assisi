@@ -28,11 +28,12 @@ namespace Assisi::ECS
 /// (PropagateTransforms writes it via a plain Get, so that write does not itself
 /// re-mark the Transform changed).
 ///
-/// `replicated` as well: pose is the one thing every mirrored entity needs. The
-/// `tracked` is spelled out beside it rather than left to `replicated`'s
+/// `replicable` as well: pose is the one thing every mirrored entity needs. The
+/// `tracked` is spelled out beside it rather than left to `replicable`'s
 /// implication, because change detection here predates the network by a long way
-/// and PropagateTransforms depends on it.
-ACOMP(replicated, tracked)
+/// and PropagateTransforms depends on it — so if this type ever stopped being
+/// replicable, the explicit word is what keeps its ticks.
+ACOMP(replicable, tracked)
 struct Transform
 {
     AFIELD() glm::vec3 position{0.f, 0.f, 0.f};

@@ -867,7 +867,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
     bool anyReplicatedComponent = false;
     for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
     {
-        if (meta->replicated && meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation))
+        if (meta->replicable && meta->getByEntity(_scene, _selectedEntity.index, _selectedEntity.generation))
         {
             anyReplicatedComponent = true;
             break;
@@ -1030,7 +1030,7 @@ void EditorApp::DrawInspector()
         // Which components actually travel is otherwise invisible: it is a
         // property of the *type*, decided in a header, and nothing on screen
         // says so. The glyph marks the ones that do.
-        if (meta->replicated)
+        if (meta->replicable)
         {
             ImGui::SameLine();
             ImGui::TextColored(kWireColor, "%s", kWireGlyph);
@@ -1053,9 +1053,9 @@ void EditorApp::DrawInspector()
             // Only worth saying on an entity that is *trying* to replicate; on a
             // local entity every component is unreplicated and the note would be
             // noise on every row.
-            if (!meta->replicated && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
+            if (!meta->replicable && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
             {
-                ImGui::TextDisabled("not replicated — type lacks ACOMP(replicated)");
+                ImGui::TextDisabled("not replicated — type lacks ACOMP(replicable)");
                 if (ImGui::IsItemHovered())
                 {
                     ImGui::SetTooltip("Clients will never see this component's values. Replication is opt-in "

@@ -57,7 +57,7 @@ enum class ColliderShape : std::uint8_t
 /// it from. It is also the discriminator between the client's two kinds of
 /// mirror — an entity with one is body-corrected, an entity without one is
 /// interpolated (docs/replication-plan-v4.md §3.5).
-ACOMP(replicated)
+ACOMP(replicable)
 struct RigidBodyDescriptor
 {
     AFIELD(radioBroadcast) ColliderShape shape = ColliderShape::Box; ///< Collision primitive to build.
@@ -93,7 +93,7 @@ struct RigidBodyDescriptor
 /// stream keeps papering over, which reads on screen as a body lagging its own
 /// authoritative position. The component is authored data that changes ~never;
 /// only its *effect* is local.
-ACOMP(replicated)
+ACOMP(replicable)
 struct Bounce
 {
     /// Fraction of speed carried back out of an impact: 0 stops the body dead,

@@ -105,19 +105,34 @@ struct ComponentMeta
     /// it does not opt into.
     bool tracksChanges = false;
 
-    /// @brief Whether this component travels over the network (ACOMP(replicated)).
+    /// @brief Whether this component *can* travel over the network
+    /// (ACOMP(replicable)).
+    ///
+    /// A **capability, not a policy**, and the distinction is load-bearing. This
+    /// flag says the type has a defined wire form; whether any particular entity
+    /// actually sends it is decided elsewhere — by the `Replicated` marker's
+    /// exclusion mask (per entity) and the game's `neverReplicate` list (per
+    /// game). Fusing the two is what let a one-word edit inside a *physics*
+    /// module become network policy for every game built on this engine; an
+    /// engine module cannot know a game's policy, so it is no longer able to set
+    /// one. See docs/replication-optin-plan-v1.md.
     ///
     /// Opt-in, and deliberately so: replication is the one consumer that pays for
     /// a component by default rather than by request, and "everything
     /// serializable travels" shipped a `Camera` whose `isActive` could hijack the
-    /// receiving client's view. A replicated component is always also tracked —
-    /// reflectgen implies `tracked` from `replicated`, because an untracked
-    /// component's change tick reads as 0 ("unchanged") and would transmit once
-    /// at spawn and then never again.
+    /// receiving client's view.
+    ///
+    /// A replicable component is always also tracked — reflectgen implies
+    /// `tracked` from `replicable`, because an untracked component's change tick
+    /// reads as 0 ("unchanged") and would transmit once at spawn and then never
+    /// again. Writing both is legal and not redundant: the implication serves
+    /// replication, while an explicit `tracked` records that a *local* system
+    /// needs the ticks too, so removing `replicable` later cannot silently strip
+    /// tracking from it.
     ///
     /// False for ACOMP(transient) components by construction: reflectgen rejects
-    /// `replicated` together with `transient`, since there is nothing to encode.
-    bool replicated = false;
+    /// `replicable` together with `transient`, since there is nothing to encode.
+    bool replicable = false;
 
     /// @brief Alphabetical dense id, assigned by ComponentRegistry after startup
     /// (see ComponentRegistry::IdOf). kInvalidComponentId until the registry

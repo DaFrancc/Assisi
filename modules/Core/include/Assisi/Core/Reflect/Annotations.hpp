@@ -11,20 +11,33 @@
 ///   ACOMP()
 ///   ACOMP(tracked)               -- opts into ECS change detection
 ///   ACOMP(transient)             -- id-only registration, never serialized
-///   ACOMP(replicated)            -- travels over the network (implies tracked)
+///   ACOMP(replicable)            -- *can* travel over the network (implies tracked)
 ///   AFIELD()
 ///   AFIELD(transient)            -- excluded from serialization
 ///   AFIELD(norep)                -- saved to disk, never sent over the network
 ///   AFIELD(min=0.0, max=100.0)   -- editor clamp hints
 ///
-/// Wire gating (ACOMP(replicated) / AFIELD(norep)) is opt-in: a reflected
-/// component replicates because someone said so, not because it happened to be
-/// serializable. `replicated` implies `tracked`, because an untracked component
-/// reports change tick 0 forever — it would replicate once at spawn and then go
-/// silent. reflectgen hard-fails on ACOMP(replicated, transient) (nothing to
-/// encode), on AASSET(replicated) (assets are not entities), on
-/// AFIELD(transient, norep) (redundant), and on AFIELD(norep) in a component
-/// that is not replicated (the annotation would mean nothing).
+/// Wire gating (ACOMP(replicable) / AFIELD(norep)) is opt-in: a reflected
+/// component can replicate because someone said so, not because it happened to
+/// be serializable.
+///
+/// `replicable` grants a **capability, not a policy** — it says this type has a
+/// wire form, while whether a given entity actually sends it is decided by the
+/// `Replicated` marker's exclusion mask and the game's `neverReplicate` list.
+/// The old spelling `replicated` fused the two and is rejected by name.
+///
+/// `replicable` implies `tracked`, because an untracked component reports change
+/// tick 0 forever — it would replicate once at spawn and then go silent. Writing
+/// both is legal and *not* redundant: there is one change-tick lane with two
+/// readers, so the implication serves replication while an explicit `tracked`
+/// records that a local system needs the ticks too — which is what keeps them if
+/// `replicable` is ever removed. (No build output says this; it would print
+/// forever on correct code. `ECS::Transform` is the live example.)
+///
+/// reflectgen hard-fails on ACOMP(replicable, transient) (nothing to encode), on
+/// AASSET(replicable) (assets are not entities), on AFIELD(transient, norep)
+/// (redundant), and on AFIELD(norep) in a component that is not replicable (the
+/// annotation would mean nothing).
 ///
 /// Radio (declarative editor visibility driven by a sibling enum's value):
 ///   AFIELD(radioBroadcast)       -- marks an AENUM enum field as a broadcaster

@@ -67,9 +67,9 @@ struct FieldMeta
     ///
     /// The sibling of `transient`, one layer in: a transient field is excluded
     /// from *every* codec, a norep field only from the binary one. It is how a
-    /// replicated component keeps server-only bookkeeping — a spawn cooldown, an
+    /// replicable component keeps server-only bookkeeping — a spawn cooldown, an
     /// aggro table — without either splitting the component in two or leaking
-    /// the value to every client. Legal only on an ACOMP(replicated) component
+    /// the value to every client. Legal only on an ACOMP(replicable) component
     /// (reflectgen rejects it elsewhere, where it would silently mean nothing),
     /// and mutually exclusive with `transient`.
     ///

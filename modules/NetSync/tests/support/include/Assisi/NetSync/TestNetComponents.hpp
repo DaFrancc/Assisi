@@ -10,9 +10,9 @@
 /// replicated away needs a second, ordinary component that exists only here.
 ///
 /// The gating milestone added two more jobs: a component that is reflected,
-/// serializable, and deliberately *not* marked replicated (so "unmarked types
+/// serializable, and deliberately *not* marked replicable (so "unmarked types
 /// never travel" has something to be true about), and a norep field inside a
-/// replicated one (so "saved to disk, never sent" has something to be true
+/// replicable one (so "saved to disk, never sent" has something to be true
 /// about).
 
 #include <Assisi/Prelude.hpp>
@@ -24,7 +24,7 @@ namespace Assisi::NetSync::Test
 
 /// @brief An ordinary replicable component: removable without ending the
 /// entity, and carrying one field that must never leave the server.
-ACOMP(replicated)
+ACOMP(replicable)
 struct Health
 {
     AFIELD() int32_t value = 100;

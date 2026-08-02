@@ -19,6 +19,14 @@
 namespace Assisi::Runtime
 {
 
+// None of the three light types is ACOMP(replicable), and that is a decision
+// rather than an omission. Lighting is authored data both machines already hold
+// from the level file, so replicating it would spend bandwidth restating what
+// nobody is changing — and a mirrored light whose intensity the host animates is
+// a feature no game here has asked for yet. Granting the capability later is one
+// word plus a regen, with one caveat worth knowing: the flag is a protocol-hash
+// input, so builds either side of that change refuse to pair.
+
 /// @brief Infinite-distance directional light (sun / moon).
 ///
 /// No position, no falloff.  Multiple directional lights are supported.

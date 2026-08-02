@@ -18,11 +18,11 @@ namespace Assisi::Runtime
 /// trivially copyable and heap-free. Serialized with the level like any other
 /// reflected component, so names persist across saves.
 ///
-/// Replicated so a joining client's entity list reads the same as the host's —
+/// Replicable so a joining client's entity list reads the same as the host's —
 /// debugging a session against `[14:1]` on one screen and `Crate` on the other
 /// is needless friction. Cheap: a name changes about never, so after the spawn
 /// it costs nothing until it does.
-ACOMP(replicated)
+ACOMP(replicable)
 struct Name
 {
     AFIELD() Assisi::Core::ShortString value;

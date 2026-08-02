@@ -914,7 +914,7 @@ TEST_CASE("a gameplay component whose absence would desync a mirror is replicate
     const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().ById(
         Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Physics::Bounce)));
     REQUIRE(meta != nullptr);
-    CHECK(meta->replicated);
+    CHECK(meta->replicable);
 }
 
 TEST_CASE("a correction past the snap bound is admitted rather than smoothed")

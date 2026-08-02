@@ -279,6 +279,29 @@ TEST_CASE("message framing is inside the handshake hash, not just the component 
     CHECK(NetProtocolSummary().find("net=") != std::string::npos);
 }
 
+TEST_CASE("the protocol hash is pinned across the replicable rename")
+{
+    // A **temporary scaffold**, and deliberately brittle. The opt-in rework
+    // (docs/replication-optin-plan-v1.md) renames the capability flag, and that
+    // flag is a hash input by v4's R1 decision (BinaryCodec.cpp emits
+    // " replicated"/" local" per component into the hashed layout text). A
+    // rename that accidentally changed the *emitted* spelling would silently
+    // repartition every deployed build into incompatible pairs, so P0 pins the
+    // value captured before the rename and proves it did not move.
+    //
+    // Retire or re-pin this at P2a, which changes the hash *on purpose*:
+    // `Replicated` gains its exclusion mask, and a serializable component
+    // gaining a wire field adds a line to the hashed description. Builds
+    // straddling that stage refuse to pair, which is correct — this constant is
+    // how that stops being a mystery.
+    //
+    // It is also sensitive to the registry contents of this binary: adding a
+    // reflected component to any module the NetSync tests link will move it.
+    // Acceptable for a scaffold with a two-stage lifetime.
+    constexpr std::uint64_t kPinnedHash = 6593563864785826454ull;
+    CHECK(NetProtocolHash() == kPinnedHash);
+}
+
 TEST_CASE("the structure revision moves when the mirrored world's shape does, and rests when it does not")
 {
     Harness harness;
@@ -308,7 +331,7 @@ TEST_CASE("the structure revision moves when the mirrored world's shape does, an
     CHECK(harness.client.StructureRevision() > afterComponent);
 }
 
-TEST_CASE("a component type that is not ACOMP(replicated) never crosses the wire")
+TEST_CASE("a component type that is not ACOMP(replicable) never crosses the wire")
 {
     Harness harness;
     harness.Step(4);
@@ -380,7 +403,7 @@ TEST_CASE("a norep field still round-trips to disk")
         Core::Reflect::ComponentRegistry::Instance().ById(
             Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Test::Health)));
     REQUIRE(meta != nullptr);
-    REQUIRE(meta->replicated);
+    REQUIRE(meta->replicable);
 
     const Test::Health   source{55, 8888};
     const nlohmann::json json = meta->serialize(&source);
@@ -399,7 +422,7 @@ TEST_CASE("a norep field still round-trips to disk")
 
 TEST_CASE("a replicated component that never said `tracked` still deltas after spawn")
 {
-    // ACOMP(replicated) implies ACOMP(tracked), and this is why: an untracked
+    // ACOMP(replicable) implies ACOMP(tracked), and this is why: an untracked
     // pool has no change-tick lane, ChangeTickById returns 0, and 0 reads as
     // "unchanged" — so the component would transmit once at spawn and then go
     // permanently silent no matter what the server did to it. MeshRenderer and
@@ -447,7 +470,7 @@ TEST_CASE("a mirror is tagged Mirrored; the authoritative entity is not")
         Core::Reflect::ComponentRegistry::Instance().IdOf(typeid(Mirrored)));
     REQUIRE(meta != nullptr);
     CHECK_FALSE(meta->serializable);
-    CHECK_FALSE(meta->replicated);
+    CHECK_FALSE(meta->replicable);
 }
 
 TEST_CASE("a moved entity converges, and an unmoved one stops costing bandwidth")

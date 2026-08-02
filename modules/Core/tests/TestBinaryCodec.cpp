@@ -129,7 +129,7 @@ FieldMeta Field(const char *name, FieldType type, std::size_t offset, bool trans
     return field;
 }
 
-/// A replicated component with one field held back from the wire — the shape
+/// A replicable component with one field held back from the wire — the shape
 /// AFIELD(norep) exists for: server-side bookkeeping living inside a component
 /// that otherwise replicates, without splitting the component in two.
 struct Gated
@@ -151,7 +151,7 @@ ComponentMeta MakeGatedMeta()
                        .getByEntity     = {},
                        .serializable    = true,
                        .tracksChanges   = true,
-                       .replicated      = true,
+                       .replicable      = true,
                        .id              = 5};
 
     meta.fields.push_back(Field("shared", FieldType::Int32, OffsetOf(&Gated::shared)));
@@ -173,7 +173,7 @@ ComponentMeta MakeAllTypesMeta()
                        .getByEntity     = {},
                        .serializable    = true,
                        .tracksChanges   = true,
-                       .replicated      = true,
+                       .replicable      = true,
                        .id              = 3};
 
     meta.fields.push_back(Field("floatValue", FieldType::Float, OffsetOf(&AllTypes::floatValue)));
@@ -570,7 +570,7 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
         // Nothing about the field descriptions moves, so this is the one wire
         // difference the layout text has to state outright: the two builds would
         // simply exchange different component sets.
-        CHECK(hashWith([](ComponentMeta &m) { m.replicated = false; }) != base);
+        CHECK(hashWith([](ComponentMeta &m) { m.replicable = false; }) != base);
     }
     SUBCASE("a changed quantization bound — the silent-corruption case")
     {

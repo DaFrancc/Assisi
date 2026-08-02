@@ -40,8 +40,8 @@ TEST_CASE("the components a mirror needs to exist and to draw are replicated")
         const Assisi::Core::Reflect::ComponentMeta *meta = MetaOf(*type);
         REQUIRE(meta != nullptr);
         CAPTURE(meta->name);
-        CHECK(meta->replicated);
-        // ACOMP(replicated) implies ACOMP(tracked). Without it the pool has no
+        CHECK(meta->replicable);
+        // ACOMP(replicable) implies ACOMP(tracked). Without it the pool has no
         // change-tick lane, every query reports "unchanged", and the component
         // would be sent once at spawn and then never again — which is exactly
         // what MeshRenderer and Name did before they were marked.
@@ -56,7 +56,7 @@ TEST_CASE("Camera does not replicate")
     // meant the host could hand a client a different view than the one it chose.
     const Assisi::Core::Reflect::ComponentMeta *meta = MetaOf(typeid(Assisi::Runtime::Camera));
     REQUIRE(meta != nullptr);
-    CHECK_FALSE(meta->replicated);
+    CHECK_FALSE(meta->replicable);
 }
 
 TEST_CASE("MeshRenderer puts its durable ids on the wire and its resolved pointers nowhere")

@@ -6,10 +6,18 @@ produces the C++ that registers each component/asset with the reflection
 registries. This is also where default-deny lives: generate_cpp refuses (raises)
 on any non-transient field it cannot serialize, on an EntityRef in an AASSET, on
 out-of-range AFIELD bounds, or on a replication annotation that could not mean
-anything (ACOMP(replicated, transient), AFIELD(norep) outside a replicated
+anything (ACOMP(replicable, transient), AFIELD(norep) outside a replicable
 component) — a silently dropped field would lose data on every save, and a
 silently ignored wire annotation would leak or withhold state, both of which are
 worse than a build error.
+
+The spelling is `replicable`, not `replicated`, and the difference is the whole
+point: the annotation grants a *capability* (this type has a wire form), while
+whether any given entity actually sends it is policy decided elsewhere — the
+Replicated marker's exclusion mask, and the game's neverReplicate list. See
+docs/replication-optin-plan-v1.md. The old spelling is rejected by name rather
+than ignored, because "unknown flag" and "this flag changed meaning" are
+different problems for a reader to debug.
 """
 
 from typing import Optional
@@ -144,23 +152,29 @@ def _gen_field_meta(f: FieldInfo) -> str:
 
 def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
     """The trailing bool flags of a ComponentMeta initializer: serializable, then
-    tracksChanges and replicated when the annotations ask for them.
+    tracksChanges and replicable when the annotations ask for them.
 
     They are positional and defaulted, so a later flag forces every earlier one
     to be emitted — and an unannotated component stays at the short, one-line
-    form the golden output pins. ACOMP(replicated) implies tracked (an untracked
+    form the golden output pins. ACOMP(replicable) implies tracked (an untracked
     component's change tick reads as "unchanged" forever, so it would replicate
     once at spawn and then go silent); the implication lives here rather than in
     the parser so the annotation stays the single source of truth.
+
+    Writing both — ACOMP(replicable, tracked) — is legal and not redundant. The
+    implication says replication needs the ticks; the explicit word says some
+    *local* system needs them too, so that dropping `replicable` later cannot
+    silently strip tracking out from under it. Transform is the live case:
+    PropagateTransforms wants its ticks whether or not anything is networked.
     """
     values = ['true' if serializable else 'false']
     names  = ['serializable']
-    if comp.args.has('tracked') or comp.args.has('replicated'):
+    if comp.args.has('tracked') or comp.args.has('replicable'):
         values.append('true')
         names.append('tracksChanges')
-    if comp.args.has('replicated'):
+    if comp.args.has('replicable'):
         values.append('true')
-        names.append('replicated')
+        names.append('replicable')
 
     lines = []
     for index, (value, name) in enumerate(zip(values, names)):
@@ -245,21 +259,34 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
     Wire gating is opt-in, so every mistake here fails the same way — the field
     or component quietly does not replicate — which is exactly the failure a
     generator should refuse to emit rather than leave for a live session to
-    reveal. AFIELD(norep) outside a replicated component is the poster child: it
+    reveal. AFIELD(norep) outside a replicable component is the poster child: it
     reads as "keep this off the wire" while nothing about the type is on the wire
     to begin with.
+
+    The retired `replicated` spelling is rejected here by name. It would
+    otherwise parse as an unknown flag and be ignored, silently un-replicating a
+    component that used to travel — the worst possible outcome for a rename whose
+    entire purpose was to stop conflating capability with policy.
     """
     for comp in components:
         where = f"{header_name}: {'asset' if comp.is_asset else 'component'} '{comp.name}'"
 
         if comp.args.has('replicated'):
+            raise ValueError(
+                f"{where} is marked '{'AASSET' if comp.is_asset else 'ACOMP'}(replicated)', which "
+                f"was renamed to 'replicable'. The flag grants a capability — this type *can* "
+                f"cross the wire — while whether a given entity sends it is policy, held by the "
+                f"Replicated marker's exclusion mask and the game's neverReplicate list. Write "
+                f"'replicable'. See docs/replication-optin-plan-v1.md.")
+
+        if comp.args.has('replicable'):
             if comp.is_asset:
                 raise ValueError(
-                    f"{where} is marked AASSET(replicated), but assets do not replicate — "
+                    f"{where} is marked AASSET(replicable), but assets do not replicate — "
                     f"replication is a per-entity, per-component protocol. Remove the flag.")
             if comp.args.has('transient'):
                 raise ValueError(
-                    f"{where} is marked ACOMP(replicated, transient). A transient component "
+                    f"{where} is marked ACOMP(replicable, transient). A transient component "
                     f"registers for a ComponentId only and has no serialization hooks, so "
                     f"there is nothing to put on the wire. Pick one.")
 
@@ -271,11 +298,11 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
                 raise ValueError(
                     f"{field_where} is marked AFIELD(transient, norep). A transient field is "
                     f"already excluded from every codec; norep says nothing further. Drop norep.")
-            if not comp.args.has('replicated'):
+            if not comp.args.has('replicable'):
                 raise ValueError(
                     f"{field_where} is marked AFIELD(norep), but '{comp.name}' is not "
-                    f"ACOMP(replicated) — nothing about it crosses the wire, so the annotation "
-                    f"would silently do nothing. Mark the component replicated, or drop norep.")
+                    f"ACOMP(replicable) — nothing about it crosses the wire, so the annotation "
+                    f"would silently do nothing. Mark the component replicable, or drop norep.")
 
 
 def _gen_asset_block(comp: ComponentInfo) -> str:

@@ -442,7 +442,7 @@ class AssetTypeTest(unittest.TestCase):
 
 
 class ReplicationAnnotationTest(unittest.TestCase):
-    """ACOMP(replicated) / AFIELD(norep) — the wire gate.
+    """ACOMP(replicable) / AFIELD(norep) — the wire gate.
 
     Every rejection here has the same motive: the mistake's natural failure mode
     is silence (a component that quietly does not replicate, a field that quietly
@@ -453,14 +453,32 @@ class ReplicationAnnotationTest(unittest.TestCase):
     def _sample(self):
         return reflectgen.parse_header(FIXTURES / "Sample.hpp")
 
-    def test_replicated_component_emits_tracks_changes_and_replicated(self):
+    def test_replicable_component_emits_tracks_changes_and_replicable(self):
         cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
-        # replicated implies tracked, so both trailing flags are emitted — the
-        # implication is what stops a replicated component reporting change tick
+        # replicable implies tracked, so both trailing flags are emitted — the
+        # implication is what stops a replicable component reporting change tick
         # 0 forever and going silent after its spawn.
         self.assertIn("true,      // serializable\n"
                       "        true,      // tracksChanges\n"
-                      "        true       // replicated", cpp)
+                      "        true       // replicable", cpp)
+
+    def test_replicable_with_explicit_tracked_is_accepted(self):
+        # Not redundancy: one change-tick lane, two readers. The implication
+        # serves replication; the explicit word records that a local system wants
+        # the ticks too, so dropping `replicable` later cannot silently strip
+        # them. ECS::Transform is the live case.
+        src = ("namespace N {\nACOMP(replicable, tracked)\n"
+               "struct C { AFIELD() int32_t a = 0; };\n}\n")
+        cpp = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("true       // replicable", cpp)
+
+    def test_the_retired_replicated_spelling_is_rejected_by_name(self):
+        # It would otherwise parse as an unknown flag and be silently ignored,
+        # un-replicating a component that used to travel.
+        src = "namespace N {\nACOMP(replicated)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("renamed to 'replicable'", str(caught.exception))
 
     def test_unmarked_component_emits_neither_flag(self):
         cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
@@ -476,26 +494,26 @@ class ReplicationAnnotationTest(unittest.TestCase):
         self.assertIn("c.serverOnly", cpp)
         self.assertIn("comp.serverOnly", cpp)
 
-    def test_replicated_with_transient_is_rejected(self):
-        src = "namespace N {\nACOMP(replicated, transient)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
+    def test_replicable_with_transient_is_rejected(self):
+        src = "namespace N {\nACOMP(replicable, transient)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
         self.assertIn("nothing to put on the wire", str(caught.exception))
 
-    def test_replicated_on_an_asset_is_rejected(self):
-        src = "namespace N {\nAASSET(replicated)\nstruct A { AFIELD() float b = 0.f; };\n}\n"
+    def test_replicable_on_an_asset_is_rejected(self):
+        src = "namespace N {\nAASSET(replicable)\nstruct A { AFIELD() float b = 0.f; };\n}\n"
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp(_parse_source(src), "N/A.hpp")
         self.assertIn("assets do not replicate", str(caught.exception))
 
-    def test_norep_outside_a_replicated_component_is_rejected(self):
+    def test_norep_outside_a_replicable_component_is_rejected(self):
         src = "namespace N {\nACOMP()\nstruct C { AFIELD(norep) int32_t a = 0; };\n}\n"
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
         self.assertIn("silently do nothing", str(caught.exception))
 
     def test_norep_with_transient_is_rejected(self):
-        src = ("namespace N {\nACOMP(replicated)\n"
+        src = ("namespace N {\nACOMP(replicable)\n"
                "struct C { AFIELD(transient, norep) int32_t a = 0; };\n}\n")
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")

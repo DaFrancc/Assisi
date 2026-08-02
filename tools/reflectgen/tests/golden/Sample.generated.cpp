@@ -388,7 +388,7 @@ static const bool _reflectgen_SampleReplicated = []() -> bool
         },
         true,      // serializable
         true,      // tracksChanges
-        true       // replicated
+        true       // replicable
     });
     return true;
 }();

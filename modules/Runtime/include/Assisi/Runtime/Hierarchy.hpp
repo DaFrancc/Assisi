@@ -30,6 +30,14 @@ namespace Assisi::Runtime
 /// *parent link* changes (attach or reparent), not only when its Transform changes.
 /// Tracking Parent lets Add/GetMut stamp a change tick the propagation can observe;
 /// mutate the link through GetMut<Parent> (not the non-stamping Get) for it to take.
+///
+/// Tracked but **not** replicable, deliberately. Replicating a parent link means
+/// replicating the hierarchy itself — ordering guarantees so a child never
+/// arrives before its parent, cycle rejection on hostile input, and a decision
+/// about whether a mirrored child's pose is its own or its parent's. That is a
+/// project, not a flag; docs/replication-plan-v4.md stripped hierarchy semantics
+/// for exactly this reason, and marking this type would quietly promise all of
+/// it.
 ACOMP(tracked)
 struct Parent
 {

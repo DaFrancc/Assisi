@@ -3,7 +3,7 @@
 
 // Fixture header for reflectgen's golden tests. Deliberately exercises every
 // supported field type, a transient field, a tracked (change-detection)
-// component, a replicated component with a norep field, an empty component,
+// component, a replicable component with a norep field, an empty component,
 // namespaced components, comment stripping, nested-brace initializers, and
 // EntityRef include emission. If you change this header, regenerate the golden
 // output:
@@ -119,11 +119,12 @@ struct SampleRadio
     AFIELD(min = 0, radioListen = {source = sub, value = B, behavior = grey}) int32_t level = 0;
 };
 
-// ACOMP(replicated): opts into the network wire, which implies tracked — so its
-// registration carries tracksChanges *and* replicated. `serverOnly` is
+// ACOMP(replicable): grants the capability to cross the wire, which implies
+// tracked — so its registration carries tracksChanges *and* replicable.
+// `serverOnly` is
 // AFIELD(norep): saved to disk like any other field, excluded from the binary
 // codec, which is the one place the two serializers deliberately disagree.
-ACOMP(replicated)
+ACOMP(replicable)
 struct SampleReplicated
 {
     AFIELD() float shared = 0.0f;

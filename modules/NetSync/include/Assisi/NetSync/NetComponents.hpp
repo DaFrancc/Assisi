@@ -24,7 +24,7 @@ namespace Assisi::NetSync
 /// by ReplicationServer / ReplicationClient. Baking a session id into a level
 /// file would be meaningless the next time it loaded.
 ///
-/// Deliberately *not* ACOMP(replicated) itself: it says only *that* an entity
+/// Deliberately *not* ACOMP(replicable) itself: it says only *that* an entity
 /// replicates, which the client learns from the spawn, so putting it on the wire
 /// would be pure overhead. The client adds its own copy to every mirror it
 /// creates.

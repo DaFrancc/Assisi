@@ -534,7 +534,12 @@ std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
         // two builds that disagree about it exchange different component sets
         // while every field description matches, so nothing else here would
         // catch it.
-        text += meta.replicated ? " replicated" : " local";
+        // The emitted spelling is deliberately *not* renamed alongside the flag:
+        // this text is hashed, and changing a word here would repartition every
+        // deployed build into incompatible pairs for no semantic reason. The
+        // flag is `replicable` in C++; the wire calls it what it always called
+        // it. TestReplication pins the hash across the rename to prove it.
+        text += meta.replicable ? " replicated" : " local";
         text += '\n';
 
         // Only wire fields, and their codec index — so making a field transient

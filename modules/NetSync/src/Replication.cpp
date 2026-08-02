@@ -89,16 +89,20 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
         _config.snapshotHz = effectiveHz;
     }
 
-    // Resolve the replicated component set once: exactly the types annotated
-    // ACOMP(replicated). Opt-in, and the opt-in is the point — "everything
+    // Resolve the *capable* component set once: exactly the types annotated
+    // ACOMP(replicable). Opt-in, and the opt-in is the point — "everything
     // serializable travels" shipped a `Camera` with every marked entity, whose
     // isActive could take over the receiving client's view, and would have put
     // every future gameplay-local component on the wire by default. The
     // Replicated marker is not in the set for a different reason: it says only
     // *that* an entity replicates, which the client learns from the spawn.
+    //
+    // Capability, not policy: this is what *may* travel, not what does. Which of
+    // these a given entity actually sends is narrowed later — by the game's
+    // neverReplicate list and by each entity's own exclusion mask.
     for (const Core::Reflect::ComponentMeta *meta : Core::Reflect::ComponentRegistry::Instance().SerializableComponents())
     {
-        if (meta->replicated)
+        if (meta->replicable)
             _replicatedComponents.push_back(meta->id);
     }
 
