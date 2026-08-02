@@ -249,9 +249,34 @@ endif()
 # ------------------------------------------------------------
 include(FetchContent)
 
-# Share git clones across all presets so sources are only downloaded once.
-# Build artifacts still live per-preset in ${CMAKE_BINARY_DIR}/_deps/.
-set(FETCHCONTENT_BASE_DIR "${CMAKE_SOURCE_DIR}/out/deps" CACHE PATH "")
+# Keep the dependency tree inside this build directory, spelled the way CMake
+# spells that directory *now* rather than the way it was spelled the day the
+# cache was created.
+#
+# include(FetchContent) above already seeds FETCHCONTENT_BASE_DIR into the cache,
+# so a plain (non-FORCE) set() here can never change it again — whatever path the
+# very first configure recorded is permanent. That first spelling is the path
+# cmake was invoked with; every later configure resolves the directory's real
+# on-disk case instead. On Windows the two disagree whenever the tree was ever
+# configured through a differently-cased path ("C:/Dev/assisi" for a directory
+# actually named "C:/Dev/Assisi"), and nothing complains, because both spellings
+# open the same directory.
+#
+# Ninja is where it stops being harmless: it compares paths as case-sensitive
+# strings, so the two spellings are two unrelated nodes. Any dependency that
+# *generates* a source under _deps — GameNetworkingSockets running protoc is the
+# one in this tree — then declares the output under one spelling and compiles it
+# under the other:
+#
+#   ninja: error: '.../steamnetworkingsockets_messages_certs.pb.cc', needed by
+#   '.../steamnetworkingsockets_messages_certs.pb.cc.obj', missing and no known
+#   rule to make it
+#
+# FORCE keeps the cached value tracking CMAKE_BINARY_DIR, so the two spellings
+# cannot drift apart. It also means -DFETCHCONTENT_BASE_DIR= is not honoured;
+# deps are per-build-directory by design here, and sharing one base dir between
+# presets would make them fight over the <name>-build subdirectories anyway.
+set(FETCHCONTENT_BASE_DIR "${CMAKE_BINARY_DIR}/_deps" CACHE PATH "" FORCE)
 # Skip remote update checks on subsequent configures (fast reconfigure).
 set(FETCHCONTENT_UPDATES_DISCONNECTED ON CACHE BOOL "" FORCE)
 
@@ -637,6 +662,23 @@ if (ASSISI_ENABLE_NETWORKING)
     set(protobuf_BUILD_EXAMPLES       OFF CACHE BOOL "" FORCE)
     set(protobuf_BUILD_CONFORMANCE    OFF CACHE BOOL "" FORCE)
     set(protobuf_WITH_ZLIB            OFF CACHE BOOL "" FORCE)
+    # Keep protobuf on the *dynamic* CRT, like the rest of this tree.
+    #
+    # protobuf defaults this to ON whenever it is built static (which it is here),
+    # and a static-CRT protobuf is not a private detail: protobuf's CMakeLists
+    # pushes CMAKE_MSVC_RUNTIME_LIBRARY to MultiThreaded[Debug] for its own
+    # targets, forwards the same choice to abseil, and GNS then matches whatever
+    # it sees. Everything else we build uses the default /MD, and MSVC will not
+    # link the two together:
+    #
+    #   libcpmt.lib(...) : error LNK2038: mismatch detected for 'RuntimeLibrary':
+    #   value 'MT_StaticRelease' doesn't match value 'MD_DynamicRelease'
+    #   ... : fatal error LNK1319: 150 mismatches detected
+    #
+    # Mixing CRTs is not something to paper over with /NODEFAULTLIB either — two
+    # heaps and two copies of the locale/iostream state in one image is a genuine
+    # crash, not a linker technicality. OFF is the setting that matches the tree.
+    set(protobuf_MSVC_STATIC_RUNTIME  OFF CACHE BOOL "" FORCE)
     # protoc is a build-time tool: GNS runs it to generate its .pb.cc sources.
     # libupb has to stay ON with it: protoc links the libupb target, and with the
     # target absent CMake does not error — it degrades the dependency to a plain
