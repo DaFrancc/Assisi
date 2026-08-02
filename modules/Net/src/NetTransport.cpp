@@ -16,6 +16,15 @@
 #include <unordered_map>
 #include <vector>
 
+// Only for the address-family probe behind HostSupportsIPv6(); see Listen().
+#ifdef _WIN32
+#    include <winsock2.h>
+#else
+#    include <netinet/in.h>
+#    include <sys/socket.h>
+#    include <unistd.h>
+#endif
+
 namespace Assisi::Net
 {
 namespace
@@ -39,6 +48,34 @@ constexpr std::array<int, LaneCount> kLanePriorities{
 /// be the one that owns library lifetime.
 std::mutex   g_libraryMutex;
 std::int32_t g_libraryRefs = 0;
+
+/// Does this host have IPv6 at all?
+///
+/// Listen() needs this to tell two very different situations apart, both of
+/// which surface identically as "GNS bound IPv4 only". Asked once and cached:
+/// the answer cannot change while the process runs, and the probe is a syscall
+/// we would otherwise repeat on every Host().
+bool HostSupportsIPv6()
+{
+    static const bool supported = []
+    {
+#ifdef _WIN32
+        // Safe without our own WSAStartup: this is only ever reached after GNS
+        // has opened a listen socket, so Winsock is already initialised.
+        const SOCKET probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+        if (probe == INVALID_SOCKET)
+            return false;
+        ::closesocket(probe);
+#else
+        const int probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+        if (probe < 0)
+            return false;
+        ::close(probe);
+#endif
+        return true;
+    }();
+    return supported;
+}
 
 } // namespace
 
@@ -302,6 +339,42 @@ bool NetTransport::Listen(std::uint16_t port)
         _impl->lastError = "failed to bind listen socket";
         return false;
     }
+
+    // A valid handle is not proof the port was free.
+    //
+    // We asked for the all-zero address, which GNS reads as "auto": it binds
+    // IPv6 dual stack, and *silently falls back to IPv4* if that bind fails —
+    // without ever looking at why it failed. The fallback exists for hosts
+    // without IPv6, but EADDRINUSE takes the same path, so a port already held
+    // by a dual-stack socket still yields a live listen socket bound to
+    // 0.0.0.0. On Windows that second bind is permitted, because IPv4 and IPv6
+    // keep separate wildcard port spaces and an existing dual-stack bind does
+    // not reserve the plain-IPv4 slot. It is not a harmless duplicate either:
+    // the IPv4-only latecomer takes delivery of the IPv4 traffic, so a second
+    // Host() on a busy port would quietly steal the first server's clients.
+    //
+    // GNS documents the tell (isteamnetworkingsockets.h): ::0 back means "any
+    // IPv4 or IPv6", ::ffff:0:0 means "any IPv4". So getting IPv4 when we asked
+    // for both means the dual-stack bind lost — to a conflict if this host has
+    // IPv6, which is the case we must reject, or legitimately if it does not,
+    // which we must keep working. Hence the capability probe.
+    //
+    // Linux is unaffected in practice: there a dual-stack [::] bind does own
+    // the IPv4 port too, so a duplicate fails both attempts and we returned
+    // above. This is the same postcondition on both platforms; only Windows
+    // ever reaches it. If the readback itself fails we accept the socket rather
+    // than refuse to host on an unproven suspicion.
+    SteamNetworkingIPAddr bound{};
+    bound.Clear();
+    if (_impl->sockets->GetListenSocketAddress(_impl->listenSocket, &bound) && bound.IsIPv4() &&
+        HostSupportsIPv6())
+    {
+        _impl->sockets->CloseListenSocket(_impl->listenSocket);
+        _impl->listenSocket = k_HSteamListenSocket_Invalid;
+        _impl->lastError    = "port already in use";
+        return false;
+    }
+
     _impl->lastError.clear();
     return true;
 }
