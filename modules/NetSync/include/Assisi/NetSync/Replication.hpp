@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <memory>
 #include <span>
 #include <string>
 #include <unordered_map>
@@ -129,6 +130,83 @@ struct ReplicationConfig
 /// startup because it is inside the handshake hash): editing this and hosting
 /// again takes effect, which is safe precisely because it is not hashed.
 [[nodiscard]] std::vector<std::string> LoadNeverReplicateFromConfig(std::string_view configPath = "game.json");
+
+class ReplicationServer;
+
+/// @brief One connection's situation, handed to a relevancy provider once per
+/// snapshot.
+///
+/// Everything a provider could reasonably need and nothing it could use to
+/// reach back into the protocol: it answers a question, it does not participate
+/// in sending.
+struct RelevancyQuery
+{
+    /// Who is asking. Providers that key policy off the participant — a
+    /// spectator seeing more than a player — read this.
+    ClientId client;
+
+    /// The entities this connection views the world from. Usually one; empty
+    /// for a connection that has not been given any, which is the fail-open
+    /// case a distance provider must handle by returning everything.
+    std::span<const ECS::Entity> anchors;
+
+    /// Every replicated entity, sorted ascending. The candidate set, and the
+    /// only NetIds a provider may legitimately name.
+    std::span<const NetId> live;
+
+    /// Read-only scene access, for providers that measure something about
+    /// entities. Never null.
+    const ECS::Scene *scene = nullptr;
+
+    /// For `EntityOf` / `NetIdOf`. Never null.
+    const ReplicationServer *server = nullptr;
+
+    /// The tick this snapshot is being built at, for providers that keep
+    /// per-pair state over time (hysteresis dwell counters, for instance).
+    std::uint64_t simTick = 0;
+};
+
+/// @brief Decides which entities one connection is told about at all.
+///
+/// The pluggable half of relevancy: the engine owns the *set* and the guarantee
+/// that follows from it — an entity outside a connection's set contributes zero
+/// bytes to that connection — while the provider owns the policy that fills it.
+/// That split is what makes a game-side information boundary (line of sight,
+/// fog of war) a provider rather than an engine feature: the guarantee is what
+/// makes the provider sufficient.
+///
+/// **No provider is the default, and it is not a provider.** A server with none
+/// tells every connection about everything, skipping the intersection entirely,
+/// so the mechanism costs exactly nothing when unused. A provider that returns
+/// the live set verbatim produces byte-identical output — pinned by test — and
+/// exists only as the reference the zero-cost path is measured against.
+///
+/// Providers run server-side at snapshot cadence. The engine consumes the set,
+/// never the method: a provider free to compute it event-driven, from a spatial
+/// grid, or from a game-specific visibility structure is free to do so.
+class RelevancyProvider
+{
+  public:
+    virtual ~RelevancyProvider() = default;
+
+    RelevancyProvider()                                     = default;
+    RelevancyProvider(const RelevancyProvider &)            = delete;
+    RelevancyProvider &operator=(const RelevancyProvider &) = delete;
+
+    /// @brief Fill @p out with the NetIds @p query's connection should be told
+    /// about, **sorted ascending and without duplicates**.
+    ///
+    /// @p out arrives empty. Naming a NetId that is not live is harmless — the
+    /// engine intersects with the live set regardless — and naming none is a
+    /// complete answer meaning "this connection sees nothing", which explicit
+    /// grants and the implicit controlled-entity grant may still add to.
+    virtual void Compute(const RelevancyQuery &query, std::vector<NetId> &out) = 0;
+
+    /// @brief Forget whatever per-pair state @p client accumulated. Called when
+    /// a connection leaves, so a provider keeping dwell counters or last-known
+    /// distances does not leak them for the life of the session.
+    virtual void ForgetClient(ClientId client) { (void)client; }
+};
 
 /// @brief Per-connection counters, for debug overlays and tests.
 struct ConnectionDiagnostics
@@ -233,6 +311,37 @@ class ReplicationServer
 
     /// @brief Who controls @p entity, or InvalidClientId.
     [[nodiscard]] ClientId ControllerOf(ECS::Entity entity) const;
+
+    /// @brief Install the provider that decides who is told about what, or
+    /// null to tell everyone about everything.
+    ///
+    /// Null is the default and is *not* a provider that returns everything: the
+    /// intersection is skipped outright, so relevancy costs nothing at all in
+    /// the games that do not use it. See RelevancyProvider.
+    void SetRelevancyProvider(std::unique_ptr<RelevancyProvider> provider);
+
+    [[nodiscard]] RelevancyProvider *Relevancy() const { return _relevancy.get(); }
+
+    /// @brief Pin @p netId into @p connection's set regardless of what the
+    /// provider says. Idempotent.
+    ///
+    /// The escape hatch every surveyed system ships in some form: spectator
+    /// tooling, quest markers, an entity a game wants one particular player to
+    /// keep seeing. Merged *after* the provider, so a grant always wins.
+    void GrantRelevance(Net::ConnectionId connection, NetId netId);
+
+    /// @brief Undo a GrantRelevance. The entity may still be relevant for
+    /// another reason — the provider, or the implicit grant below.
+    void RevokeRelevance(Net::ConnectionId connection, NetId netId);
+
+    /// @brief Whether @p netId was in @p connection's set as of the last
+    /// snapshot. False for connections we do not have.
+    [[nodiscard]] bool IsRelevant(Net::ConnectionId connection, NetId netId) const;
+
+    /// @brief @p connection's set as of the last snapshot, sorted. Empty for a
+    /// connection that has not been sent one yet; the whole live set when no
+    /// provider is installed.
+    [[nodiscard]] std::span<const NetId> RelevantSet(Net::ConnectionId connection) const;
 
     /// @brief Every entity @p client controls, in NetId-agnostic scene order.
     ///
@@ -357,6 +466,23 @@ class ReplicationServer
         /// precisely when bandwidth forces the choice.
         std::unordered_map<NetId, float> priority;
 
+        /// The effective set as of the last snapshot: `live ∩ R(c)`, sorted.
+        ///
+        /// Kept rather than recomputed because it is what "did this entity just
+        /// re-enter?" is asked against — the question whose wrong answer builds
+        /// a corrupt half-mirror (see the re-entry rule in SendSnapshot).
+        /// Untouched, and unread, while no provider is installed.
+        std::vector<NetId> relevant;
+
+        /// Entities pinned into this connection's set by GrantRelevance,
+        /// sorted. Merged after the provider, so a grant always wins.
+        std::vector<NetId> grants;
+
+        /// Scratch for the per-snapshot set algebra, kept so a filtering server
+        /// does not allocate twice per connection per snapshot.
+        std::vector<NetId> effectiveScratch;
+        std::vector<NetId> mergeScratch;
+
         InputCommandQueue     input;
         ConnectionDiagnostics diagnostics;
 
@@ -368,6 +494,27 @@ class ReplicationServer
     void SendHello(Connection &connection);
     void SendReject(Connection &connection, RejectReason reason);
     void SendSnapshot(Connection &connection);
+
+    /// This connection's `live ∩ R(c)`, computed once per snapshot and used by
+    /// every downstream pass.
+    ///
+    /// Returns `_liveNetIds` itself when no provider is installed — not a copy,
+    /// not an intersection, the same object today's code already walks. That
+    /// identity is the performance-first contract, and it is pinned by a test
+    /// that compares wire bytes against an identity-filter run.
+    const std::vector<NetId> &ComputeEffective(Connection &connection);
+
+    /// Make @p netId's next appearance a full state rather than a delta, by
+    /// forgetting that @p connection ever had it.
+    ///
+    /// The revoke → re-grant-within-one-round-trip case. The server's acked set
+    /// still lists the entity, so the ordinary path would send a *delta*; but
+    /// the client destroyed its mirror when the despawn landed and would build a
+    /// fresh entity out of whatever partial block that delta happened to carry.
+    /// Forgetting is the fix, and it must reach the in-flight ring too — a late
+    /// ack for a pre-revoke snapshot would otherwise restore the entity to the
+    /// acked set and resurrect exactly the bug.
+    static void ForgetAcked(Connection &connection, NetId netId);
 
     /// Re-anchor @p connection from the empty baseline: forget every per-entity
     /// tick, and clear the in-flight ring with them.
@@ -447,8 +594,15 @@ class ReplicationServer
 
     /// Write the snapshot's body-state section for @p connection, returning the
     /// per-entity ticks it wrote so the ack can fold them in.
-    void WriteBodyStates(Connection &connection, Core::BitWriter &writer, SentSnapshot &record,
-                         std::size_t writtenFromComponents);
+    ///
+    /// @p effective is this connection's relevancy set, and it is not optional:
+    /// this pass is a *fourth* independent walk of the live set, and its own
+    /// gate is acked-based. Left to itself it would keep shipping body state for
+    /// an entity that has left the set, every tick, until the despawn acks —
+    /// which is the zero-bytes guarantee failing exactly during the window it
+    /// most needs to hold.
+    void WriteBodyStates(Connection &connection, const std::vector<NetId> &effective, Core::BitWriter &writer,
+                         SentSnapshot &record, std::size_t writtenFromComponents);
 
     /// Write one entity's removed-component list and then its changed-component
     /// blocks. @p sinceChangeTick of 0 means "send everything" — the
@@ -511,6 +665,14 @@ class ReplicationServer
     /// and only ever climbs — see ClientId on why reuse is not worth its
     /// ambiguity.
     std::uint32_t _nextClientId = kFirstRemoteClientId;
+
+    /// Who decides what each connection is told about. Null — the default —
+    /// means everyone is told everything, on today's exact code path.
+    std::unique_ptr<RelevancyProvider> _relevancy;
+
+    /// Scratch for one provider's output, reused across connections within a
+    /// snapshot tick.
+    std::vector<NetId> _providerScratch;
 
     std::unordered_map<NetId, ECS::Entity>      _entityByNetId;
     std::unordered_map<std::uint64_t, NetId>    _netIdByEntity; ///< Keyed by the entity's packed handle.

@@ -296,6 +296,12 @@ void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
         _controlledByClient.erase(controlled);
     }
 
+    // A provider keeping per-pair state (dwell counters, last-known distances)
+    // would otherwise hold it for the life of the session against an id that
+    // will never be handed out again.
+    if (_relevancy != nullptr)
+        _relevancy->ForgetClient(client);
+
     _connectionByClient.erase(client.value);
     _connections.erase(it);
 }
@@ -369,6 +375,183 @@ std::span<const ECS::Entity> ReplicationServer::ControlledEntities(ClientId clie
 {
     const auto it = _controlledByClient.find(client.value);
     return it == _controlledByClient.end() ? std::span<const ECS::Entity>{} : std::span<const ECS::Entity>{it->second};
+}
+
+void ReplicationServer::SetRelevancyProvider(std::unique_ptr<RelevancyProvider> provider)
+{
+    _relevancy = std::move(provider);
+
+    // Every connection's remembered set describes a world the old provider
+    // believed in. Clearing it makes the next snapshot treat whatever the new
+    // provider names as a re-entry, which resends full state — over-sending
+    // once, which is the correct direction to be wrong in when the policy
+    // deciding who sees what has just been replaced under everyone.
+    for (auto &[id, connection] : _connections)
+    {
+        (void)id;
+        connection.relevant.clear();
+    }
+}
+
+void ReplicationServer::GrantRelevance(Net::ConnectionId connection, NetId netId)
+{
+    const auto it = _connections.find(connection);
+    if (it == _connections.end() || netId == InvalidNetId)
+        return;
+
+    std::vector<NetId> &grants = it->second.grants;
+    const auto          slot   = std::lower_bound(grants.begin(), grants.end(), netId);
+    if (slot == grants.end() || *slot != netId)
+        grants.insert(slot, netId);
+}
+
+void ReplicationServer::RevokeRelevance(Net::ConnectionId connection, NetId netId)
+{
+    const auto it = _connections.find(connection);
+    if (it == _connections.end())
+        return;
+
+    std::vector<NetId> &grants = it->second.grants;
+    const auto          slot   = std::lower_bound(grants.begin(), grants.end(), netId);
+    if (slot != grants.end() && *slot == netId)
+        grants.erase(slot);
+}
+
+bool ReplicationServer::IsRelevant(Net::ConnectionId connection, NetId netId) const
+{
+    const auto it = _connections.find(connection);
+    if (it == _connections.end())
+        return false;
+    if (_relevancy == nullptr)
+        return std::binary_search(_liveNetIds.begin(), _liveNetIds.end(), netId);
+    return std::binary_search(it->second.relevant.begin(), it->second.relevant.end(), netId);
+}
+
+std::span<const NetId> ReplicationServer::RelevantSet(Net::ConnectionId connection) const
+{
+    const auto it = _connections.find(connection);
+    if (it == _connections.end())
+        return {};
+    return _relevancy == nullptr ? std::span<const NetId>{_liveNetIds} : std::span<const NetId>{it->second.relevant};
+}
+
+const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connection)
+{
+    // The identity case, and it is deliberately not "a provider that returns
+    // everything": no call, no copy, no intersection — the same vector the
+    // pre-relevancy code walked. A test pins that the wire bytes are identical
+    // to an identity-filter run, which is what makes this claim checkable
+    // rather than asserted.
+    if (_relevancy == nullptr)
+        return _liveNetIds;
+
+    _providerScratch.clear();
+    const RelevancyQuery query{
+        connection.clientId,
+        // Anchors are session state that M2 fills; a provider seeing none is
+        // being told this connection has no viewpoint, and fail-open is its
+        // job, not the engine's.
+        std::span<const ECS::Entity>{},
+        std::span<const NetId>{_liveNetIds},
+        &_scene,
+        this,
+        _simTick,
+    };
+    _relevancy->Compute(query, _providerScratch);
+
+    // Everything the provider named, plus what policy adds to it regardless of
+    // what the provider thinks.
+    std::vector<NetId> &merged = connection.mergeScratch;
+    merged.assign(_providerScratch.begin(), _providerScratch.end());
+    merged.insert(merged.end(), connection.grants.begin(), connection.grants.end());
+
+    // The implicit grant: a connection is always told about the entities it
+    // controls. Every surveyed system pins this, and the failure without it is
+    // absurd on its face — a player's own pawn drifting out of its own radius
+    // because the view anchor was set somewhere else. It is also the precondition
+    // for any future prediction, which needs the controller to always hold its
+    // subject.
+    if (const auto controlled = _controlledByClient.find(connection.clientId.value);
+        controlled != _controlledByClient.end())
+    {
+        for (const ECS::Entity entity : controlled->second)
+        {
+            const NetId netId = NetIdOf(entity);
+            if (netId != InvalidNetId)
+                merged.push_back(netId);
+        }
+    }
+
+    std::sort(merged.begin(), merged.end());
+    merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+
+    // A provider may name whatever it likes; only live entities exist.
+    std::vector<NetId> &effective = connection.effectiveScratch;
+    effective.clear();
+    std::set_intersection(merged.begin(), merged.end(), _liveNetIds.begin(), _liveNetIds.end(),
+                          std::back_inserter(effective));
+
+    // Re-entry inside one round trip. An entity that is in the set now, was not
+    // last snapshot, and is still in the acked set has an unacked despawn in
+    // flight: the ordinary path would send it a delta, and the client — which
+    // destroyed its mirror when that despawn landed — would build a fresh entity
+    // out of whichever components the delta happened to carry. Forgetting it
+    // sends full state instead.
+    //
+    // Reachable through the grant API, through teleports, and through plain
+    // oscillation at a provider's boundary, so it is not a corner worth leaving
+    // to chance.
+    for (const NetId netId : effective)
+    {
+        if (std::binary_search(connection.relevant.begin(), connection.relevant.end(), netId))
+            continue; // never left
+        if (!std::binary_search(connection.acked.begin(), connection.acked.end(), netId))
+            continue; // already forgotten — the empty-baseline path has it covered
+        ForgetAcked(connection, netId);
+    }
+
+    connection.relevant = effective;
+    return effective;
+}
+
+void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
+{
+    if (const auto slot = std::lower_bound(connection.acked.begin(), connection.acked.end(), netId);
+        slot != connection.acked.end() && *slot == netId)
+    {
+        connection.acked.erase(slot);
+    }
+
+    const auto low  = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
+                                       PackComponentRef(netId, 0));
+    const auto high = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
+                                       PackComponentRef(netId + 1, 0));
+    connection.ackedComponents.erase(low, high);
+
+    connection.baselines.erase(netId);
+    connection.diagnostics.baselineEntries = static_cast<std::uint32_t>(connection.baselines.size());
+
+    // ...and the ring, because HandleAck installs a record's entity set
+    // wholesale. A late ack for a snapshot sent before the revoke would
+    // otherwise put the entity straight back into the acked set, with its old
+    // baseline, and the next snapshot would send the delta this call exists to
+    // prevent.
+    for (SentSnapshot &record : connection.inFlight)
+    {
+        if (const auto slot = std::lower_bound(record.netIds.begin(), record.netIds.end(), netId);
+            slot != record.netIds.end() && *slot == netId)
+        {
+            record.netIds.erase(slot);
+        }
+
+        std::erase_if(record.written, [netId](const WrittenEntity &entry) { return entry.netId == netId; });
+
+        const auto recordLow  = std::lower_bound(record.components.begin(), record.components.end(),
+                                                 PackComponentRef(netId, 0));
+        const auto recordHigh = std::lower_bound(record.components.begin(), record.components.end(),
+                                                 PackComponentRef(netId + 1, 0));
+        record.components.erase(recordLow, recordHigh);
+    }
 }
 
 void ReplicationServer::RebuildControlIndex()
@@ -913,7 +1096,8 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     writer.WriteBool(false);
 }
 
-void ReplicationServer::WriteBodyStates(Connection &connection, Core::BitWriter &writer, SentSnapshot &record,
+void ReplicationServer::WriteBodyStates(Connection &connection, const std::vector<NetId> &effective,
+                                        Core::BitWriter &writer, SentSnapshot &record,
                                         std::size_t writtenFromComponents)
 {
     // Bool-chained like the entity blocks above, rather than the count-prefixed
@@ -929,7 +1113,12 @@ void ReplicationServer::WriteBodyStates(Connection &connection, Core::BitWriter 
 
     const auto prefixEnd = record.written.begin() + static_cast<std::ptrdiff_t>(writtenFromComponents);
 
-    for (const NetId netId : _liveNetIds)
+    // The effective set, not the live one. This loop is an independent walk with
+    // its own acked-based gate, and that gate does *not* imply relevancy: an
+    // entity that has left the set is still acked until its despawn round-trips,
+    // so walking `_liveNetIds` here would ship body state for it every tick of
+    // that window. Zero bytes has to mean zero.
+    for (const NetId netId : effective)
     {
         if (writer.BytesWritten() >= _config.maxSnapshotBytes)
             break; // the rest keep their baselines and go next snapshot
@@ -977,6 +1166,13 @@ void ReplicationServer::WriteBodyStates(Connection &connection, Core::BitWriter 
 
 void ReplicationServer::SendSnapshot(Connection &connection)
 {
+    // `live ∩ R(c)`, once, and every pass below uses it instead of the live set.
+    // Four passes, not three: the body-state section walks the set on its own
+    // (see WriteBodyStates). Filtering happens strictly here, before priority —
+    // the ordering every scaled system converged on, because a prioritizer that
+    // also filters is two axes fused into one number.
+    const std::vector<NetId> &effective = ComputeEffective(connection);
+
     Core::BitWriter writer;
     WriteMessageType(MessageType::Snapshot, writer);
 
@@ -985,18 +1181,22 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     header.baselineTick     = connection.ackedTick;
     header.inputBufferDepth = static_cast<std::uint32_t>(connection.input.Depth());
     header.starvedTicks     = static_cast<std::uint32_t>(connection.input.StarvedTicks());
-    // Complete when the acked set already covers every live entity. Computed
-    // against the *previous* ack rather than this snapshot, because that is the
+    // Complete when the acked set already covers everything this connection is
+    // *told* about — which is what "am I done joining?" means for a filtered
+    // connection, and what it has always meant for an unfiltered one. Computed
+    // against the previous ack rather than this snapshot, because that is the
     // only thing the client has actually confirmed receiving.
-    header.worldComplete = std::includes(connection.acked.begin(), connection.acked.end(), _liveNetIds.begin(),
-                                         _liveNetIds.end());
+    header.worldComplete =
+        std::includes(connection.acked.begin(), connection.acked.end(), effective.begin(), effective.end());
     WriteSnapshotHeader(header, writer);
 
-    // Despawns: everything the client is known to have that no longer exists.
-    // Falls straight out of comparing the acked entity set against the live one
-    // — no separate bookkeeping to get out of step with reality.
+    // Despawns: everything the client is known to have that it should no longer
+    // have. Falls straight out of the same set difference that already found
+    // destroyed entities — which is why leaving relevancy is not a second
+    // mechanism. A revoke is a despawn, resent until acked, with the baseline
+    // and priority entries erased when it lands.
     std::vector<NetId> despawns;
-    std::set_difference(connection.acked.begin(), connection.acked.end(), _liveNetIds.begin(), _liveNetIds.end(),
+    std::set_difference(connection.acked.begin(), connection.acked.end(), effective.begin(), effective.end(),
                         std::back_inserter(despawns));
     writer.WriteVarUInt32(static_cast<std::uint32_t>(despawns.size()));
     for (const NetId netId : despawns)
@@ -1011,8 +1211,8 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     // number, instead of by whichever NetId happened to be lowest.
     SentSnapshot record;
     record.serverTick = _simTick;
-    record.netIds.reserve(_liveNetIds.size());
-    record.written.reserve(_liveNetIds.size());
+    record.netIds.reserve(effective.size());
+    record.written.reserve(effective.size());
 
     // Sampled once, before anything is written, and stamped onto every entity
     // this snapshot writes. Nothing mutates the scene while a snapshot is being
@@ -1021,8 +1221,8 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     const std::uint64_t captureTick = _scene.CurrentChangeTick();
 
     std::vector<std::pair<float, NetId>> order;
-    order.reserve(_liveNetIds.size());
-    for (const NetId netId : _liveNetIds)
+    order.reserve(effective.size());
+    for (const NetId netId : effective)
     {
         const ECS::Entity entity = EntityOf(netId);
         if (entity == ECS::NullEntity)
@@ -1111,7 +1311,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     // starts at the authoritative state rather than re-settling from the level
     // file's pose.
     const std::size_t writtenFromComponents = record.written.size();
-    WriteBodyStates(connection, writer, record, writtenFromComponents);
+    WriteBodyStates(connection, effective, writer, record, writtenFromComponents);
 
     // All three are built in ascending order — except `written`, which the body
     // pass may have appended to — so keep the invariant explicit, since the ack
