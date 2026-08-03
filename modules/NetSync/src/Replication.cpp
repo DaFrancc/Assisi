@@ -216,6 +216,33 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     _transformComponentId = registry.IdOf(typeid(ECS::Transform));
     _transformOrdinal     = registry.ReplicableOrdinalOf(_transformComponentId);
     _descriptorOrdinal    = registry.ReplicableOrdinalOf(registry.IdOf(typeid(Physics::RigidBodyDescriptor)));
+
+    // Session start. Whatever claims this scene arrived carrying, they were made
+    // in a session that is over.
+    StripAuthoredControl();
+}
+
+void ReplicationServer::StripAuthoredControl()
+{
+    // Collected first, then removed: mutating a component pool while a query
+    // over it is running is the documented hazard in Scene.hpp, and this is
+    // exactly the shape it warns about.
+    std::vector<ECS::Entity> authored;
+    for (auto [entity, controlled] : _scene.Query<ControlledBy>())
+    {
+        (void)controlled;
+        authored.push_back(entity);
+    }
+
+    for (const ECS::Entity entity : authored)
+        _scene.Remove<ControlledBy>(entity);
+
+    if (!authored.empty())
+    {
+        Core::Log::Info("NetSync: stripped {} authored ControlledBy component{} at session start — control is "
+                        "assigned at runtime, never saved.",
+                        authored.size(), authored.size() == 1 ? "" : "s");
+    }
 }
 
 bool ReplicationServer::IsSnapshotTick(std::uint64_t simTick) const { return simTick % _snapshotDiv == 0; }
@@ -225,10 +252,140 @@ void ReplicationServer::AddConnection(Net::ConnectionId connection)
     Connection &entry = _connections[connection];
     entry.id          = connection;
     entry.ready       = false;
+    // Only if this is genuinely a new connection. Re-registering a live one must
+    // not renumber it — every ControlledBy already on the wire names the old id.
+    if (!entry.clientId.IsValid())
+    {
+        entry.clientId = ClientId{_nextClientId++};
+        _connectionByClient.emplace(entry.clientId.value, connection);
+    }
     SendHello(entry);
 }
 
-void ReplicationServer::RemoveConnection(Net::ConnectionId connection) { _connections.erase(connection); }
+void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
+{
+    const auto it = _connections.find(connection);
+    if (it == _connections.end())
+        return;
+
+    const ClientId client = it->second.clientId;
+
+    // Refreshed rather than trusted: control can be assigned between two ticks,
+    // and a disconnect is not obliged to wait for one. The index is one entry
+    // per controlled entity, so this costs nothing worth saving.
+    RebuildControlIndex();
+
+    if (const auto controlled = _controlledByClient.find(client.value); controlled != _controlledByClient.end())
+    {
+        for (const ECS::Entity entity : controlled->second)
+        {
+            if (!_scene.IsAlive(entity))
+                continue;
+            const ControlledBy *claim = _scene.Get<ControlledBy>(entity);
+            if (claim == nullptr || claim->client != client.value)
+                continue; // control moved on since the index was built
+
+            // Both outcomes already have a wire path: a despawn rides NetId
+            // retirement through the acked-set diff, and a component removal
+            // rides the presence diff. Nothing new travels for either.
+            if (claim->despawnOnDisconnect)
+                _scene.Destroy(entity);
+            else
+                _scene.Remove<ControlledBy>(entity);
+        }
+        _controlledByClient.erase(controlled);
+    }
+
+    _connectionByClient.erase(client.value);
+    _connections.erase(it);
+}
+
+ClientId ReplicationServer::ClientIdOf(Net::ConnectionId connection) const
+{
+    const auto it = _connections.find(connection);
+    return it == _connections.end() ? InvalidClientId : it->second.clientId;
+}
+
+Net::ConnectionId ReplicationServer::ConnectionOf(ClientId client) const
+{
+    const auto it = _connectionByClient.find(client.value);
+    return it == _connectionByClient.end() ? Net::InvalidConnection : it->second;
+}
+
+void ReplicationServer::SetControl(ECS::Entity entity, ClientId client, bool despawnOnDisconnect)
+{
+    if (!_scene.IsAlive(entity))
+        return;
+
+    if (!client.IsValid())
+    {
+        ClearControl(entity);
+        return;
+    }
+
+    // Through GetMut so the write stamps a change tick. A transfer that does not
+    // stamp is a transfer the delta path never sends — the component would sit
+    // correct on the server and stale on every client until a keyframe sweep.
+    if (ControlledBy *claim = _scene.GetMut<ControlledBy>(entity))
+    {
+        if (claim->client != client.value)
+        {
+            if (const auto it = _controlledByClient.find(claim->client); it != _controlledByClient.end())
+                std::erase(it->second, entity);
+        }
+        claim->client              = client.value;
+        claim->despawnOnDisconnect = despawnOnDisconnect;
+    }
+    else
+    {
+        (void)_scene.Add<ControlledBy>(entity, ControlledBy{client.value, despawnOnDisconnect});
+    }
+
+    std::vector<ECS::Entity> &controlled = _controlledByClient[client.value];
+    if (std::find(controlled.begin(), controlled.end(), entity) == controlled.end())
+        controlled.push_back(entity);
+}
+
+void ReplicationServer::ClearControl(ECS::Entity entity)
+{
+    if (!_scene.IsAlive(entity))
+        return;
+    if (const ControlledBy *claim = _scene.Get<ControlledBy>(entity))
+    {
+        if (const auto it = _controlledByClient.find(claim->client); it != _controlledByClient.end())
+            std::erase(it->second, entity);
+        _scene.Remove<ControlledBy>(entity);
+    }
+}
+
+ClientId ReplicationServer::ControllerOf(ECS::Entity entity) const
+{
+    if (const ControlledBy *claim = _scene.Get<ControlledBy>(entity))
+        return ClientId{claim->client};
+    return InvalidClientId;
+}
+
+std::span<const ECS::Entity> ReplicationServer::ControlledEntities(ClientId client) const
+{
+    const auto it = _controlledByClient.find(client.value);
+    return it == _controlledByClient.end() ? std::span<const ECS::Entity>{} : std::span<const ECS::Entity>{it->second};
+}
+
+void ReplicationServer::RebuildControlIndex()
+{
+    for (auto &[client, entities] : _controlledByClient)
+    {
+        (void)client;
+        entities.clear(); // keep the buckets; only the contents are per-tick truth
+    }
+
+    for (auto [entity, controlled] : _scene.Query<ControlledBy>())
+    {
+        if (controlled.client == InvalidClientId.value)
+            continue; // claims nobody, so it indexes under nobody
+        _controlledByClient[controlled.client].push_back(entity);
+    }
+}
 
 bool ReplicationServer::IsReady(Net::ConnectionId connection) const
 {
@@ -265,6 +422,7 @@ void ReplicationServer::SendHello(Connection &connection)
     hello.tickRateHz      = _config.tickRateHz;
     hello.snapshotHz      = _config.snapshotHz;
     hello.serverTick      = _simTick;
+    hello.clientId        = connection.clientId;
     hello.level           = _level;
     WriteServerHello(hello, writer);
 
@@ -468,6 +626,11 @@ void ReplicationServer::ReconcileNetIds()
             ++it;
         }
     }
+
+    // Here rather than anywhere incremental: this is the one point per tick that
+    // has already accepted the scene as it is, including whatever came back from
+    // the dead since the last one.
+    RebuildControlIndex();
 }
 
 Core::Reflect::ComponentMask ReplicationServer::ExclusionMaskOf(ECS::Entity entity) const
@@ -1741,6 +1904,14 @@ ECS::Entity ReplicationClient::EntityOf(NetId netId) const
 {
     const auto it = _entityByNetId.find(netId);
     return it == _entityByNetId.end() ? ECS::NullEntity : it->second;
+}
+
+bool ReplicationClient::ControlsEntity(ECS::Entity entity) const
+{
+    if (!_handshake.clientId.IsValid())
+        return false;
+    const ControlledBy *claim = _scene.Get<ControlledBy>(entity);
+    return claim != nullptr && claim->client == _handshake.clientId.value;
 }
 
 NetId ReplicationClient::NetIdOf(ECS::Entity entity) const

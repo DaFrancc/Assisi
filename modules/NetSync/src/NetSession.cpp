@@ -227,6 +227,45 @@ const InputCommand *NetSession::ConsumeInput(Net::ConnectionId client, std::uint
     return _server ? _server->ConsumeInput(client, tick) : nullptr;
 }
 
+ClientId NetSession::LocalClientId() const
+{
+    if (_server)
+        return HostClientId;
+    if (_client)
+        return _client->LocalClientId();
+    return InvalidClientId;
+}
+
+void NetSession::SetControl(ECS::Entity entity, ClientId client, bool despawnOnDisconnect)
+{
+    if (_server)
+        _server->SetControl(entity, client, despawnOnDisconnect);
+}
+
+void NetSession::ClearControl(ECS::Entity entity)
+{
+    if (_server)
+        _server->ClearControl(entity);
+}
+
+ClientId NetSession::ControllerOf(ECS::Entity entity) const
+{
+    if (const ControlledBy *claim = const_cast<ECS::Scene &>(_scene).Get<ControlledBy>(entity))
+        return ClientId{claim->client};
+    return InvalidClientId;
+}
+
+bool NetSession::ControlsEntity(ECS::Entity entity) const
+{
+    const ClientId local = LocalClientId();
+    return local.IsValid() && ControllerOf(entity) == local;
+}
+
+ClientId NetSession::ClientIdOf(Net::ConnectionId client) const
+{
+    return _server ? _server->ClientIdOf(client) : InvalidClientId;
+}
+
 std::string NetSession::StatusText() const
 {
     switch (_role)

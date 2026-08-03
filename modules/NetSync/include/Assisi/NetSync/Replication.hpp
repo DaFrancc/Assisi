@@ -30,6 +30,7 @@
 #include <cstdint>
 #include <deque>
 #include <functional>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -183,11 +184,64 @@ class ReplicationServer
     /// @brief Register a connection the transport has reported as Connected.
     /// Sends the handshake; the client is not eligible for snapshots until it
     /// answers with a matching protocol hash.
+    ///
+    /// Allocates this connection's `ClientId` — monotonic from
+    /// kFirstRemoteClientId, never reused within the session — and carries it in
+    /// the hello. Allocation is at *assignment*; the id becomes meaningful when
+    /// the handshake completes, which is a distinction with no observable
+    /// consequence beyond a gap in the numbering if a joiner is rejected.
     void AddConnection(Net::ConnectionId connection);
 
     /// @brief Forget a connection. Its NetIds stay allocated — they belong to
     /// the entities, not to whoever was watching them.
+    ///
+    /// What does *not* stay is whatever that client controlled: each entity in
+    /// its control set is despawned or loses its `ControlledBy`, per that
+    /// component's own `despawnOnDisconnect`. The sweep runs **before** the
+    /// connection's bookkeeping is erased, because it needs the leaving
+    /// client's id to know what to sweep.
     void RemoveConnection(Net::ConnectionId connection);
+
+    /// @brief This connection's session identity, or InvalidClientId if it is
+    /// not one of ours.
+    [[nodiscard]] ClientId ClientIdOf(Net::ConnectionId connection) const;
+
+    /// @brief Inverse of ClientIdOf. `Net::InvalidConnection` for the host
+    /// (which is not a connection) and for ids that have left.
+    [[nodiscard]] Net::ConnectionId ConnectionOf(ClientId client) const;
+
+    /// @brief Give @p client control of @p entity, replacing whatever held it.
+    ///
+    /// The one way control is established: a component write on the server,
+    /// replicated to every client like any other component. Transfer is this
+    /// same call with a different id — one write, one propagation delay, rather
+    /// than the five simultaneous semantic changes a fused ownership pointer
+    /// makes of it.
+    ///
+    /// @param despawnOnDisconnect What happens to @p entity when @p client
+    ///   leaves. True — despawn — is right for a player-spawned pawn; false for
+    ///   a world object someone is temporarily driving.
+    ///
+    /// Passing InvalidClientId is the same as ClearControl(). An entity that
+    /// does not replicate can still be given control (nothing forbids it), but
+    /// no client will ever hear about it.
+    void SetControl(ECS::Entity entity, ClientId client, bool despawnOnDisconnect = true);
+
+    /// @brief Remove @p entity's `ControlledBy`, if it has one. The entity
+    /// survives; only the claim on it ends.
+    void ClearControl(ECS::Entity entity);
+
+    /// @brief Who controls @p entity, or InvalidClientId.
+    [[nodiscard]] ClientId ControllerOf(ECS::Entity entity) const;
+
+    /// @brief Every entity @p client controls, in NetId-agnostic scene order.
+    ///
+    /// Served from an index rebuilt once per tick in ReconcileNetIds rather
+    /// than maintained incrementally: the editor's play/stop restore and
+    /// undo-revive both resurrect entities outside any incremental hook, and an
+    /// index that misses those is an index that is wrong exactly when someone
+    /// is debugging.
+    [[nodiscard]] std::span<const ECS::Entity> ControlledEntities(ClientId client) const;
 
     /// @brief Handle one received message. Everything that arrives from a client
     /// goes through here, and everything here treats its input as hostile.
@@ -270,6 +324,9 @@ class ReplicationServer
     struct Connection
     {
         Net::ConnectionId     id    = Net::InvalidConnection;
+        /// Assigned at AddConnection, monotonic, never reused. What
+        /// `ControlledBy` names and what directed messages address.
+        ClientId              clientId;
         bool                  ready = false; ///< Handshake completed.
         std::deque<SentSnapshot> inFlight;
 
@@ -335,6 +392,20 @@ class ReplicationServer
     /// that are gone. Run once per tick, before any snapshot is built, so every
     /// connection sees the same world.
     void ReconcileNetIds();
+
+    /// Rebuild the client → controlled-entities index from the scene.
+    ///
+    /// Rebuilt rather than maintained, for the reason ControlledEntities()
+    /// gives: entities come back from the dead through paths no incremental
+    /// hook sees. Cheap by construction — the index is one entry per
+    /// *controlled* entity, which is roughly one per player.
+    void RebuildControlIndex();
+
+    /// Strip every `ControlledBy` the scene was loaded with. Control is
+    /// session-scoped state assigned at runtime; a level file carrying it is
+    /// carrying a claim from a session that ended. See the component's own
+    /// header comment.
+    void StripAuthoredControl();
 
     /// This entity's authored exclusion policy, or an empty mask if it has no
     /// marker. Read live — see `Replicated::excluded` for why nothing caches it.
@@ -429,6 +500,18 @@ class ReplicationServer
 
     std::unordered_map<Net::ConnectionId, Connection> _connections;
 
+    /// ClientId → the connection carrying it. The host has no entry: it is not
+    /// a connection, which is the whole reason the two id spaces are separate.
+    std::unordered_map<std::uint32_t, Net::ConnectionId> _connectionByClient;
+
+    /// ClientId → the entities it controls. Rebuilt each ReconcileNetIds.
+    std::unordered_map<std::uint32_t, std::vector<ECS::Entity>> _controlledByClient;
+
+    /// The next id a joining connection gets. Starts past the reserved values
+    /// and only ever climbs — see ClientId on why reuse is not worth its
+    /// ambiguity.
+    std::uint32_t _nextClientId = kFirstRemoteClientId;
+
     std::unordered_map<NetId, ECS::Entity>      _entityByNetId;
     std::unordered_map<std::uint64_t, NetId>    _netIdByEntity; ///< Keyed by the entity's packed handle.
     std::vector<NetId>                          _liveNetIds;    ///< Sorted; rebuilt each ReconcileNetIds.
@@ -516,6 +599,19 @@ class ReplicationClient
 
     /// @brief Whether the handshake succeeded and snapshots are being applied.
     [[nodiscard]] bool IsSynchronized() const { return _synchronized; }
+
+    /// @brief Who this client is, per the server's hello. InvalidClientId until
+    /// one has arrived.
+    ///
+    /// The value to compare a mirror's `ControlledBy::client` against to answer
+    /// "is this one mine?" — which is what input binding, prediction, and every
+    /// bit of local UI that says "you" will ask.
+    [[nodiscard]] ClientId LocalClientId() const { return _handshake.clientId; }
+
+    /// @brief Whether @p entity is a mirror this client controls. False for
+    /// anything uncontrolled, anything someone else controls, and everything
+    /// before the handshake.
+    [[nodiscard]] bool ControlsEntity(ECS::Entity entity) const;
 
     /// @brief True once the server has confirmed we hold its whole world.
     ///

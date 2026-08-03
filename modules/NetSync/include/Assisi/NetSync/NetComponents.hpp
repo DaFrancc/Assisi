@@ -62,6 +62,49 @@ struct Replicated
     AFIELD() Assisi::Core::Reflect::ComponentMask excluded;
 };
 
+/// @brief Which connection's player this entity is.
+///
+/// Absent on everything uncontrolled — AI, props, the world — which is the
+/// default and costs nothing. Deliberately named for what it *is* rather than
+/// "Owner": the survey behind
+/// docs/replication-messaging-relevancy-plan-v1.md found that "ownership" in
+/// shipping engines is up to five unrelated jobs fused onto one pointer, and
+/// the systems with the fewest ownership bugs are the ones whose names refuse
+/// to say the word. This component does exactly three of those jobs — input
+/// binding, directed-message addressing, and disconnect cleanup — and state
+/// authority is not one of them. The server writes everything, always.
+///
+/// **Written only by the server's session layer, never authored.** A client id
+/// is session-scoped: baking `client = 3` into a level file would bind that
+/// entity to whoever happens to draw the id 3 in some future session, which is
+/// a bug that only shows up with three players in the room. The server strips
+/// every loaded instance when a session starts (ReplicationServer's
+/// constructor) and the inspector does not offer authoring it. A stale instance
+/// in a sessionless world is inert — nothing reads it without a session.
+///
+/// Replicates to everyone rather than to its controller alone: clients
+/// legitimately want to know who controls what (name tags, team colours), the
+/// payload is five bytes, and a per-connection field condition would be a whole
+/// new mechanism with one consumer. A game that must hide it has
+/// `Replicated::excluded`, per entity, already.
+ACOMP(replicable)
+struct ControlledBy
+{
+    /// @brief The controlling client's session id — a `NetSync::ClientId`
+    /// value. 0 claims nothing, 1 is the host, 2+ are remote clients.
+    ///
+    /// A plain integer rather than the wrapper type because reflection fields
+    /// are described by their storage, and the wire form of the wrapper *is*
+    /// this integer. Compare against `ClientId::value`.
+    AFIELD() uint32_t client = 0;
+
+    /// @brief What becomes of this entity when that client disconnects:
+    /// despawn (the player-spawned default) or merely lose the component — a
+    /// world object someone was temporarily driving, which should still be
+    /// there afterwards.
+    AFIELD() bool despawnOnDisconnect = true;
+};
+
 /// @brief Marks a locally-created *mirror* of a remote entity: this machine
 /// receives it, it does not own it.
 ///

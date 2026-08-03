@@ -180,6 +180,33 @@ class NetSession
     /// null. Host only; call once per client per tick from the simulation.
     const InputCommand *ConsumeInput(Net::ConnectionId client, std::uint64_t tick);
 
+    /// @brief Who *this process* is on the network: `HostClientId` when
+    /// hosting, the server-assigned id when joined, InvalidClientId offline or
+    /// before the handshake lands.
+    ///
+    /// The value to compare `ControlledBy::client` against for "is this mine?",
+    /// and it answers the same question in both roles — which is the point of
+    /// the host having an id at all.
+    [[nodiscard]] ClientId LocalClientId() const;
+
+    /// @brief Give @p client control of @p entity. Host only; a no-op
+    /// otherwise, because control is a fact the authority establishes.
+    void SetControl(ECS::Entity entity, ClientId client, bool despawnOnDisconnect = true);
+
+    /// @brief End whatever claim @p entity carries. Host only.
+    void ClearControl(ECS::Entity entity);
+
+    /// @brief Who controls @p entity, in either role — read from the component,
+    /// which is authoritative on the host and mirrored on a client.
+    [[nodiscard]] ClientId ControllerOf(ECS::Entity entity) const;
+
+    /// @brief Whether @p entity is controlled by this process. True on the host
+    /// for what it gave itself, on a client for what it was given.
+    [[nodiscard]] bool ControlsEntity(ECS::Entity entity) const;
+
+    /// @brief The session id of a connected client. Host only.
+    [[nodiscard]] ClientId ClientIdOf(Net::ConnectionId client) const;
+
     [[nodiscard]] SessionRole Role() const { return _role; }
     [[nodiscard]] bool        IsActive() const { return _role != SessionRole::Offline; }
     [[nodiscard]] bool        IsHost() const { return _role == SessionRole::Host; }

@@ -35,6 +35,46 @@ using NetId = std::uint32_t;
 /// @brief The never-valid NetId. Zero, so a value-initialized NetId is invalid.
 inline constexpr NetId InvalidNetId = 0;
 
+/// @brief Session-scoped identity for a *participant*: the thing `ControlledBy`
+/// names, directed messages address, and logs blame.
+///
+/// Distinct from `Net::ConnectionId` on purpose, and a wrapper type rather than
+/// an alias so the compiler enforces it. A ConnectionId is a transport handle —
+/// meaningful only inside the server process, meaningless on any other machine
+/// — and the two id spaces are one honest mistake apart. Replicating a
+/// ConnectionId would be replicating a pointer.
+///
+/// Conventions, matching the uniform zero-means-invalid rule the rest of the
+/// module already follows (`InvalidNetId`, `Net::InvalidConnection`):
+///
+///  - **0 = nobody.** A default-constructed id claims nothing, which is what
+///    makes a default-constructed `ControlledBy` harmless.
+///  - **1 = the host itself** — the listen server's own player, which is not a
+///    connection and never will be (see NetSession.hpp on why there is no
+///    loopback client).
+///  - **2… = remote clients**, assigned monotonically as connections arrive and
+///    **never reused within a session**. Reuse would make "who did this"
+///    ambiguous in a log line or a late-arriving message, and saves nothing.
+struct ClientId
+{
+    std::uint32_t value = 0;
+
+    [[nodiscard]] constexpr bool IsValid() const { return value != 0; }
+
+    friend constexpr bool operator==(ClientId, ClientId)  = default;
+    friend constexpr auto operator<=>(ClientId, ClientId) = default;
+};
+
+/// @brief The never-valid ClientId. Claims nothing, controls nothing.
+inline constexpr ClientId InvalidClientId{0};
+
+/// @brief The listen server's own player. Not a connection — see ClientId.
+inline constexpr ClientId HostClientId{1};
+
+/// @brief The first id handed to a remote client. Everything below it is
+/// reserved, which is what keeps `0` and the host out of the assignable range.
+inline constexpr std::uint32_t kFirstRemoteClientId = 2;
+
 /// @brief What a message is. First field of every packet.
 enum class MessageType : std::uint8_t
 {
@@ -82,7 +122,15 @@ enum class RejectReason : std::uint8_t
 /// component blocks. A field added to `ServerHello`, a new section in a snapshot,
 /// a different varint form: all invisible to the component table and all fatal to
 /// a mismatched pair. Bump this when any Write*/Read* pair here changes.
-inline constexpr std::uint32_t kNetProtocolVersion = 3;
+///
+/// This constant is the *only* route by which a framing change reaches
+/// NetProtocolHash() (see NetProtocol.cpp) — which is why "bump it" is a rule
+/// rather than a courtesy. A framing change without a bump produces two
+/// hash-equal builds that pair happily and then misparse each other, silently:
+/// exactly the failure the handshake exists to prevent.
+///
+///  - 3 → 4: `ServerHello.clientId` (docs/replication-messaging-relevancy-plan-v1.md M0).
+inline constexpr std::uint32_t kNetProtocolVersion = 4;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.
@@ -145,6 +193,11 @@ struct ServerHello
     std::uint32_t snapshotHz = 20;
     /// The tick the server is on right now, so the client can start its clock.
     std::uint64_t serverTick = 0;
+    /// Who this client *is* for the rest of the session: the id `ControlledBy`
+    /// names, directed messages address, and the client compares against to know
+    /// which entities are its own. Always ≥ kFirstRemoteClientId — the host
+    /// never handshakes with itself.
+    ClientId clientId;
     /// Which level the client must load before it answers. The client builds its
     /// world from this and *then* sends its ClientHello — snapshots that arrived
     /// against a world it had not built yet would map NetIds onto whatever

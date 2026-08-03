@@ -108,6 +108,7 @@ void WriteServerHello(const ServerHello &hello, Core::BitWriter &writer)
     writer.WriteVarUInt32(hello.tickRateHz);
     writer.WriteVarUInt32(hello.snapshotHz);
     writer.WriteVarUInt64(hello.serverTick);
+    writer.WriteVarUInt32(hello.clientId.value);
     writer.WriteBits(static_cast<std::uint32_t>(hello.level.addressing), 8);
     writer.WriteString(hello.level.path);
     writer.WriteUInt64(hello.level.contentHash);
@@ -121,6 +122,7 @@ bool ReadServerHello(Core::BitReader &reader, ServerHello &outHello)
     hello.tickRateHz      = reader.ReadVarUInt32();
     hello.snapshotHz      = reader.ReadVarUInt32();
     hello.serverTick      = reader.ReadVarUInt64();
+    hello.clientId        = ClientId{reader.ReadVarUInt32()};
 
     const std::uint32_t addressing = reader.ReadBits(8);
     hello.level.path               = reader.ReadString(kMaxLevelPathBytes);
@@ -131,7 +133,13 @@ bool ReadServerHello(Core::BitReader &reader, ServerHello &outHello)
     // sanitize: this is the message that establishes whether we trust the peer.
     // An addressing mode we do not know is the same call: guessing how to read
     // the path is exactly the sniffing the tag exists to avoid.
+    //
+    // A clientId below kFirstRemoteClientId is the same class of answer: 0 is
+    // "nobody" and 1 is the host, so a joiner told it is either one has been
+    // handed an identity it cannot act on — it would compare its own id against
+    // every ControlledBy and match the wrong entities, or none.
     if (!reader.Ok() || hello.tickRateHz == 0 || hello.snapshotHz == 0 || hello.snapshotHz > hello.tickRateHz ||
+        hello.clientId.value < kFirstRemoteClientId ||
         addressing > static_cast<std::uint32_t>(LevelAddressing::AbsolutePath))
     {
         reader.Invalidate();
