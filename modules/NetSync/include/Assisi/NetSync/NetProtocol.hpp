@@ -104,6 +104,14 @@ enum class MessageType : std::uint8_t
     /// out an 8.5-second sweep to find out whether it heals is a bad debugging
     /// loop.
     RequestKeyframe = 7,
+    /// Client → server: one `AMSG(intent, …)`, tick-stamped.
+    ///
+    /// The only thing a client may say beyond its input window and its acks,
+    /// and it arrives at exactly one place. That is the design rather than an
+    /// implementation detail: every documented exploit in the RPC survey was
+    /// attacker-shaped messages meeting hand-written parsing spread across many
+    /// receive sites, and one validated door is the only structural answer.
+    Intent = 8,
 
     Count
 };
@@ -130,7 +138,8 @@ enum class RejectReason : std::uint8_t
 /// exactly the failure the handshake exists to prevent.
 ///
 ///  - 3 → 4: `ServerHello.clientId` (docs/replication-messaging-relevancy-plan-v1.md M0).
-inline constexpr std::uint32_t kNetProtocolVersion = 4;
+///  - 4 → 5: `MessageType::Intent` and its envelope (same plan, M4).
+inline constexpr std::uint32_t kNetProtocolVersion = 5;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

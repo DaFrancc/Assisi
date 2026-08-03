@@ -887,6 +887,80 @@ class MessageGrammarTest(unittest.TestCase):
         self.assertIn("using T = N::Go;", cpp)
 
 
+class ControlledFieldTest(unittest.TestCase):
+    """AFIELD(controlled): "the sender must control this entity".
+
+    It marks the *subject* of an intent, as distinct from any other entity the
+    message merely mentions. Without the distinction the dispatch site could
+    either check nothing or check every reference, and checking every reference
+    would forbid a client from ever naming an entity it does not own — which is
+    most of them.
+    """
+
+    def test_controlled_reaches_the_field_metadata(self):
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Go { AFIELD(controlled) Assisi::ECS::Entity pawn; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Go.hpp", messages)
+        # Emitted last in FieldMeta's positional tail, which forces every earlier
+        # block to its default — so the presence of the trailing `true` is what
+        # the dispatch site reads.
+        self.assertIn('offsetof(T, pawn), false, false, false, false, 0.f, 0.f, {}, 0, false, "", {}, '
+                      'Assisi::Core::Reflect::RadioBehavior::None, true', cpp)
+
+    def test_controlled_on_an_event_is_rejected(self):
+        # The sender of an event is the server, which controls everything by
+        # definition, so the annotation could not mean anything.
+        src = ("namespace N {\nAMSG(event, reliable)\n"
+               "struct Boom { AFIELD(controlled) Assisi::ECS::Entity what; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("is an event", str(caught.exception))
+
+    def test_controlled_on_a_non_entity_field_is_rejected(self):
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Go { AFIELD(controlled) int32_t pawn = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Go.hpp", messages)
+        self.assertIn("Only an EntityRef field", str(caught.exception))
+
+    def test_controlled_on_a_component_is_rejected(self):
+        # A component has no sender, so there would be nothing to enforce the
+        # rule against — and an annotation that reads like a rule while
+        # enforcing nothing is worse than no annotation.
+        src = ("namespace N {\nACOMP()\n"
+               "struct C { AFIELD(controlled) Assisi::ECS::Entity e; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("a component has no sender", str(caught.exception))
+
+
+class MessageTraitsTest(unittest.TestCase):
+    """The compile-time facts that make a wrong-direction send a build error."""
+
+    def test_traits_carry_the_grammar(self):
+        src = ("namespace N {\nAMSG(event, reliable, independent)\n"
+               "struct Boom { AFIELD() uint32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        traits = reflectgen.gen_message_traits(messages[0])
+        self.assertIn("MessageTraits<::N::Boom>", traits)
+        self.assertIn("MessageDirection::Event", traits)
+        self.assertIn("MessageReliability::Reliable", traits)
+        self.assertIn("independent = true", traits)
+
+    def test_the_type_is_forward_declared_at_global_scope(self):
+        # Forward-declared rather than included, because specializing on an
+        # incomplete type is legal and including the real header would close a
+        # cycle through the dispatch header.
+        src = ("namespace A { namespace B {\nAMSG(intent, unreliable)\n"
+               "struct Go { AFIELD() uint32_t t = 0; };\n} }\n")
+        _, messages, _ = _parse_full(src)
+        self.assertEqual(reflectgen.gen_message_forward(messages[0]),
+                         "namespace A { namespace B { struct Go; } }")
+
+
 class MessageHandlerTest(unittest.TestCase):
     """AMSG_HANDLER() declarations, and the binding they generate."""
 

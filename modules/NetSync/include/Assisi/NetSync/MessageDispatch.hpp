@@ -61,6 +61,10 @@
 
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/MessageRegistry.hpp>
+// Generated: every AMSG type's direction and reliability as compile-time
+// constants, which is what lets a send call refuse the wrong direction at the
+// call site instead of dropping a packet at the far end.
+#include <Assisi/Core/Reflect/MessageTraits.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
 
 #include <typeindex>
@@ -126,16 +130,31 @@ class MessageDispatch
         BindErased(typeid(T), &DecodeAndInvoke<T>, reinterpret_cast<ErasedFn>(handler));
     }
 
+    /// @brief Judge a decoded message before its handler sees it.
+    ///
+    /// The seam that keeps validation at one site instead of one per handler.
+    /// Returning false drops the message; the callback owns the counting,
+    /// because only it knows *which* rule refused.
+    using ValidateFn = bool (*)(const Core::Reflect::MessageMeta &meta, const void *message, void *userData);
+
     /// @brief Decode one message body and hand it to its handler.
     ///
-    /// @param meta   The message type, already resolved from the wire id.
-    /// @param reader Positioned at the message's length prefix.
+    /// @param meta     The message type, already resolved from the wire id.
+    /// @param reader   Positioned at the message's length prefix.
+    /// @param validate Optional gate run on the decoded value, before the
+    ///   handler. This is where range and control checks live: they need the
+    ///   decoded value, and putting them in each handler would be the
+    ///   hand-written-validation pattern that every documented exploit in the
+    ///   survey came out of.
     /// @return false when no handler is bound — the body is left unread, so the
     ///   caller can skip it and count the drop. A message nobody handles is a
     ///   normal condition, not an error: the sender's build may simply care
-    ///   about something this one does not.
+    ///   about something this one does not. A message the validator refuses
+    ///   returns *true*: it was dispatched to, and refused, which is a different
+    ///   fact from nobody being home.
     bool Dispatch(const Core::Reflect::MessageMeta &meta, NetContext &context, Core::BitReader &reader,
-                  const Core::Reflect::CodecContext *codec = nullptr) const;
+                  const Core::Reflect::CodecContext *codec = nullptr, ValidateFn validate = nullptr,
+                  void *userData = nullptr) const;
 
     /// @brief Whether anything handles @p meta's type.
     [[nodiscard]] bool HasHandler(const Core::Reflect::MessageMeta &meta) const;
@@ -151,21 +170,24 @@ class MessageDispatch
     MessageDispatch() = default;
 
     using InvokeFn = void (*)(NetContext &, Core::BitReader &, const Core::Reflect::MessageMeta &,
-                              const Core::Reflect::CodecContext *, ErasedFn);
+                              const Core::Reflect::CodecContext *, ValidateFn, void *, ErasedFn);
 
     /// The concrete trampoline, instantiated once per message type. It is what
     /// knows the type well enough to make one on the stack, fill it from the
-    /// wire, and pass it by const reference.
+    /// wire, judge it, and pass it by const reference.
     template <typename T>
     static void DecodeAndInvoke(NetContext &context, Core::BitReader &reader,
                                 const Core::Reflect::MessageMeta &meta,
-                                const Core::Reflect::CodecContext *codec, ErasedFn handler)
+                                const Core::Reflect::CodecContext *codec, ValidateFn validate,
+                                void *userData, ErasedFn handler)
     {
         // Value-initialized, then filled: a message has no baseline to patch, so
         // any field the sender omitted reads as that field's default rather than
         // as whatever the last message left behind.
         T message{};
         if (!Core::Reflect::ReadMessage(meta, &message, reader, codec))
+            return;
+        if (validate != nullptr && !validate(meta, &message, userData))
             return;
         reinterpret_cast<void (*)(NetContext &, const T &)>(handler)(context, message);
     }

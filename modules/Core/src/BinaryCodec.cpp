@@ -679,6 +679,43 @@ bool ReadMessage(const MessageMeta &meta, void *message, BitReader &reader, cons
     return !reader.Failed();
 }
 
+bool FieldsWithinBounds(std::span<const FieldMeta> fields, const void *object, std::string *outField)
+{
+    for (const FieldMeta &field : fields)
+    {
+        if (!field.hasMin && !field.hasMax)
+            continue;
+
+        // Bounds are only ever attached to numeric fields — reflectgen refuses
+        // them elsewhere — so anything else here is a field that simply has no
+        // range to be outside of.
+        double value = 0.0;
+        const void *address = FieldAddress(object, field.offset);
+        switch (field.type)
+        {
+        case FieldType::Float:  value = *static_cast<const float *>(address); break;
+        case FieldType::Double: value = *static_cast<const double *>(address); break;
+        case FieldType::Int32:  value = *static_cast<const std::int32_t *>(address); break;
+        case FieldType::UInt32: value = *static_cast<const std::uint32_t *>(address); break;
+        case FieldType::Int64:  value = static_cast<double>(*static_cast<const std::int64_t *>(address)); break;
+        case FieldType::UInt64: value = static_cast<double>(*static_cast<const std::uint64_t *>(address)); break;
+        default: continue;
+        }
+
+        // NaN fails both comparisons, which is the answer we want: a value that
+        // is not ordered against the bounds is not within them.
+        const bool belowMin = field.hasMin && !(value >= static_cast<double>(field.minValue));
+        const bool aboveMax = field.hasMax && !(value <= static_cast<double>(field.maxValue));
+        if (belowMin || aboveMax)
+        {
+            if (outField != nullptr)
+                *outField = field.name;
+            return false;
+        }
+    }
+    return true;
+}
+
 bool SkipMessageBody(BitReader &reader)
 {
     const std::uint32_t bodyBits = reader.ReadVarUInt32();

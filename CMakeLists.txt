@@ -903,6 +903,7 @@ assisi_generate_replicable_limits()
 # to be complete before it can be written. Gated on networking because the table
 # it produces calls into NetSync.
 if (ASSISI_ENABLE_NETWORKING)
+    assisi_generate_message_traits()
     assisi_check_message_handlers()
 endif()
 

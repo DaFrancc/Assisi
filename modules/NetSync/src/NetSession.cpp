@@ -54,6 +54,8 @@ bool NetSession::Host(std::uint16_t port, LevelIdentity level)
     }
 
     _server = std::make_unique<ReplicationServer>(*_transport, _scene, _physics, _config);
+    // So a handler's NetContext can reach back out to send further messages.
+    _server->SetOwningSession(this);
     // Before any connection can arrive, since it is carried in every hello.
     _server->SetLevelIdentity(std::move(level));
     _role = SessionRole::Host;

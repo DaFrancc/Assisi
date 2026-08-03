@@ -24,11 +24,17 @@ namespace
 {
 
 /// Entity handles are (index, generation); the maps here want one integer key.
-/// Packing is local-only — this value never reaches the wire, where NetId is the
-/// sole identity.
+///
+/// **The layout matches `BinaryCodec`'s exactly — index low, generation high.**
+/// That is not tidiness: the codec hands `entityToWire`/`entityFromWire` a
+/// handle it packed itself, so a second convention here silently swaps the two
+/// halves of every entity reference that crosses the wire. It read correctly
+/// only for handles whose index happens to equal their generation — which
+/// includes `{0, 0}`, the first entity in any scene, and is exactly why nothing
+/// noticed until a message referenced a second one.
 std::uint64_t PackEntity(ECS::Entity entity)
 {
-    return (static_cast<std::uint64_t>(entity.index) << 32) | static_cast<std::uint64_t>(entity.generation);
+    return static_cast<std::uint64_t>(entity.index) | (static_cast<std::uint64_t>(entity.generation) << 32);
 }
 
 /// `(netId, componentId)` as one sortable integer. The component-set diff that
@@ -49,7 +55,7 @@ Core::Reflect::ComponentId ComponentIdOfRef(std::uint64_t packed)
 
 ECS::Entity UnpackEntity(std::uint64_t packed)
 {
-    return ECS::Entity{static_cast<std::uint32_t>(packed >> 32), static_cast<std::uint32_t>(packed & 0xFFFFFFFFull)};
+    return ECS::Entity{static_cast<std::uint32_t>(packed & 0xFFFFFFFFull), static_cast<std::uint32_t>(packed >> 32)};
 }
 
 /// Ensure @p entity has the component @p meta describes, and hand back a
@@ -806,6 +812,13 @@ void ReplicationServer::HandleMessage(Net::ConnectionId connection, std::span<co
     case MessageType::ClientHello: HandleClientHello(it->second, reader); break;
     case MessageType::Ack:         HandleAck(it->second, reader); break;
     case MessageType::Input:       HandleInput(it->second, reader); break;
+    case MessageType::Intent:
+        // Only from a client that has proved it speaks our protocol. Before the
+        // handshake completes we do not know that the bytes mean what they
+        // appear to, and dispatching them would be acting on a guess.
+        if (it->second.ready)
+            HandleIntent(it->second, reader);
+        break;
     case MessageType::RequestKeyframe:
         // No payload to validate, and nothing a hostile client gains: the worst
         // it can do is ask for its own full state repeatedly, which costs it
@@ -933,6 +946,184 @@ const InputCommand *ReplicationServer::ConsumeInput(Net::ConnectionId connection
 {
     const auto it = _connections.find(connection);
     return it == _connections.end() ? nullptr : it->second.input.Consume(tick);
+}
+
+namespace
+{
+
+/// What the validation gate needs to say no, and to say which rule said it.
+struct IntentGate
+{
+    ReplicationServer    *server      = nullptr;
+    ECS::Scene           *scene       = nullptr;
+    ClientId              sender;
+    ConnectionDiagnostics *diagnostics = nullptr;
+};
+
+/// Steps 6 and 7 of the dispatch order, on the decoded value.
+///
+/// Both live here rather than in each handler on purpose: hand-written
+/// validation spread across receive sites is the exact shape every documented
+/// exploit in the RPC survey came out of, and the single site is the feature.
+bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message, void *userData)
+{
+    IntentGate &gate = *static_cast<IntentGate *>(userData);
+
+    // Step 6 — range. Reject, never clamp: the input path clamps because a
+    // stick can legitimately saturate, while an out-of-range intent field means
+    // the client is lying or the builds disagree, and clamping would convert a
+    // detectable attack into a silently accepted one.
+    std::string offending;
+    if (!Core::Reflect::FieldsWithinBounds(meta.fields, message, &offending))
+    {
+        ++gate.diagnostics->intentsOutOfRange;
+        Core::Log::Warn("NetSync: dropping '{}' from client {} — field '{}' is outside its declared range.",
+                        meta.name, gate.sender.value, offending);
+        return false;
+    }
+
+    // Step 7 — control. Only fields the author marked as the intent's *subject*;
+    // checking every entity reference would forbid a client from ever naming an
+    // entity it does not own, which is most of them.
+    for (const Core::Reflect::FieldMeta &field : meta.fields)
+    {
+        if (!field.controlled || field.type != Core::Reflect::FieldType::EntityRef)
+            continue;
+
+        const std::uint64_t packed =
+            *reinterpret_cast<const std::uint64_t *>(static_cast<const std::byte *>(message) + field.offset);
+        const ECS::Entity entity = UnpackEntity(packed);
+        if (entity == ECS::NullEntity)
+            continue; // named nothing, which is a claim about nothing
+
+        if (gate.server->ControllerOf(entity) != gate.sender)
+        {
+            // Counted, not treated as an attack: control transfer has a
+            // propagation delay, so an honest client can send one of these.
+            ++gate.diagnostics->intentsNotYours;
+            return false;
+        }
+    }
+
+    return true;
+}
+
+} // namespace
+
+void ReplicationServer::HandleIntent(Connection &connection, Core::BitReader &reader)
+{
+    // Step 1 — envelope. Fixed-size, bounded, and read before anything decides
+    // whether to care.
+    const std::uint64_t             clientTick = reader.ReadVarUInt64();
+    const Core::Reflect::MessageId  messageId  = Core::Reflect::ReadMessageId(reader);
+    if (!reader.Ok() || messageId == Core::Reflect::kInvalidMessageId)
+    {
+        ++connection.diagnostics.intentsMalformed;
+        return;
+    }
+
+    const Core::Reflect::MessageMeta *meta = Core::Reflect::MessageRegistry::Instance().ById(messageId);
+    if (meta == nullptr)
+    {
+        // An id this build does not know. The length prefix means we could step
+        // over it, but there is nothing after it in an intent packet, so the
+        // count is the whole response.
+        ++connection.diagnostics.intentsMalformed;
+        return;
+    }
+
+    // Step 2 — direction. Free, and first among the semantic checks: the
+    // vocabulary itself says a client does not speak events.
+    if (meta->direction != Core::Reflect::MessageDirection::Intent)
+    {
+        ++connection.diagnostics.intentsWrongWay;
+        Core::Log::Warn("NetSync: client {} sent '{}', which is an event. Clients do not speak events.",
+                        connection.clientId.value, meta->name);
+        return;
+    }
+
+    // Step 3 — rate, per connection per type, *before any payload work*, so a
+    // flood costs a comparison rather than a parse.
+    const std::uint64_t window = _simTick / std::max<std::uint64_t>(1, _config.tickRateHz);
+    if (window != connection.intentWindowTick)
+    {
+        connection.intentWindowTick = window;
+        connection.intentsInWindow.clear();
+    }
+    if (++connection.intentsInWindow[messageId] > _config.maxIntentsPerTypePerSecond)
+    {
+        ++connection.diagnostics.intentsRateLimited;
+        return;
+    }
+
+    // Step 4 — staleness. Load-bearing for unreliable intents, where
+    // out-of-order arrival is normal and a late map ping must not time-travel
+    // into a world that has moved past it.
+    const std::uint64_t oldest = _simTick > _config.intentStaleWindowTicks
+                                     ? _simTick - _config.intentStaleWindowTicks
+                                     : 0;
+    if (clientTick < oldest || clientTick > _simTick + _config.intentLeadWindowTicks)
+    {
+        ++connection.diagnostics.intentsStale;
+        return;
+    }
+
+    // Steps 5 through 8.
+    DispatchIntent(connection.clientId, connection.diagnostics, *meta, reader);
+}
+
+void ReplicationServer::DispatchIntent(ClientId sender, ConnectionDiagnostics &diagnostics,
+                                       const Core::Reflect::MessageMeta &meta, Core::BitReader &reader)
+{
+    IntentGate gate{this, &_scene, sender, &diagnostics};
+    NetContext context{sender, _session, &_scene};
+
+    // Entity references arrive as NetIds and have to become local handles before
+    // a handler — or the control check — can do anything with them.
+    Core::Reflect::CodecContext codec;
+    codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
+    { return PackEntity(EntityOf(static_cast<NetId>(wire))); };
+
+    const std::uint64_t before = diagnostics.intentsOutOfRange + diagnostics.intentsNotYours;
+
+    // Step 5 (decode), 6 and 7 (the gate), 8 (the handler) all happen inside,
+    // because the gate needs the decoded value and the handler needs it after.
+    if (!MessageDispatch::Instance().Dispatch(meta, context, reader, &codec, &ValidateIntent, &gate))
+    {
+        ++diagnostics.intentsUnhandled;
+        return;
+    }
+
+    if (diagnostics.intentsOutOfRange + diagnostics.intentsNotYours == before)
+        ++diagnostics.intentsAccepted;
+}
+
+void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index type)
+{
+    const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
+    const Core::Reflect::MessageMeta     *meta     = registry.ById(registry.IdOf(type));
+    if (meta == nullptr)
+        return;
+
+    // The host has no connection, so it has no ConnectionDiagnostics either.
+    // One kept here means its intents are counted like everyone else's rather
+    // than being invisible.
+    Core::BitWriter writer;
+    Core::Reflect::CodecContext codec;
+    codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
+    { return static_cast<std::uint64_t>(NetIdOf(UnpackEntity(packed))); };
+    if (!Core::Reflect::WriteMessage(*meta, intent, writer, &codec))
+        return;
+
+    Core::BitReader reader(writer.Data());
+    (void)Core::Reflect::ReadMessageId(reader); // the id we already have
+
+    // Entering at step 5 rather than step 1: there is no envelope to read, no
+    // transport to rate-limit, and no clock skew to be stale against — the host
+    // *is* the clock. Everything from decoding onwards is identical, including
+    // the range and control checks, because the host being trusted is not the
+    // same as the host being correct.
+    DispatchIntent(HostClientId, _hostDiagnostics, *meta, reader);
 }
 
 void ReplicationServer::ReconcileNetIds()
@@ -1634,6 +1825,45 @@ void ReplicationClient::SendInput(const InputCommandBuffer &buffer)
     WriteMessageType(MessageType::Input, writer);
     buffer.WritePacket(writer);
     _transport.Send(_connection, writer.Data(), Net::SendMode::Unreliable, Net::Lane::Snapshot);
+}
+
+bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type, std::uint64_t clientTick,
+                                        bool reliable)
+{
+    if (!_synchronized)
+        return false;
+
+    const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
+    const Core::Reflect::MessageMeta     *meta     = registry.ById(registry.IdOf(type));
+    if (meta == nullptr)
+    {
+        // Unreachable through SendIntent, whose static_assert needs a
+        // MessageTraits specialization that only a registered message has. Kept
+        // because the type-erased entry point is reachable from elsewhere, and
+        // silently sending nothing is the worst possible answer.
+        Core::Log::Error("NetSync: refusing to send an intent of an unregistered type — is it AMSG?");
+        return false;
+    }
+
+    Core::BitWriter writer;
+    WriteMessageType(MessageType::Intent, writer);
+    writer.WriteVarUInt64(clientTick);
+
+    // Local entity handles mean nothing on the server; references travel as
+    // NetIds, exactly as they do inside a component block.
+    Core::Reflect::CodecContext codec;
+    codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
+    { return static_cast<std::uint64_t>(NetIdOf(UnpackEntity(packed))); };
+
+    if (!Core::Reflect::WriteMessage(*meta, intent, writer, &codec))
+        return false;
+
+    // Reliability is the type's, never the call site's. Both forms ride
+    // Lane::Control: an intent is a statement about the world's future, and it
+    // must not be reordered behind a snapshot the way the input window is.
+    _transport.Send(_connection, writer.Data(),
+                    reliable ? Net::SendMode::Reliable : Net::SendMode::Unreliable, Net::Lane::Control);
+    return true;
 }
 
 void ReplicationClient::HandleMessage(std::span<const std::byte> payload)

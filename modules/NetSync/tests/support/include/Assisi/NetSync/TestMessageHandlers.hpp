@@ -22,6 +22,8 @@
 #include <Assisi/NetSync/MessageDispatch.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
 
+#include <Assisi/ECS/Entity.hpp>
+
 #include <cstdint>
 
 namespace Assisi::NetSync::Test
@@ -37,10 +39,13 @@ struct HandlerLog
 
     /// The last payload each handler saw, so a round trip is checked all the way
     /// through dispatch rather than only through the codec.
+    std::uint32_t movePawnCalls = 0;
+
     TestPlaceMarker lastPlaceMarker;
     TestPing        lastPing;
     TestBurst       lastBurst;
     TestAnnounce    lastAnnounce;
+    TestMovePawn    lastMovePawn;
 
     /// Who the dispatch site said sent the last intent.
     ClientId lastSender;
@@ -57,6 +62,7 @@ struct HandlerLog
 AMSG_HANDLER() void HandlePlaceMarker(NetContext &ctx, const TestPlaceMarker &msg);
 AMSG_HANDLER() void HandleTestBurst(NetContext &ctx, const TestBurst &msg);
 AMSG_HANDLER() void HandleTestAnnounce(NetContext &ctx, const TestAnnounce &msg);
+AMSG_HANDLER() void HandleMovePawn(NetContext &ctx, const TestMovePawn &msg);
 
 inline void HandlePlaceMarker(NetContext &ctx, const TestPlaceMarker &msg)
 {
@@ -80,6 +86,14 @@ inline void HandleTestAnnounce(NetContext &ctx, const TestAnnounce &msg)
     HandlerLog &log = HandlerLog::Instance();
     ++log.announceCalls;
     log.lastAnnounce = msg;
+}
+
+inline void HandleMovePawn(NetContext &ctx, const TestMovePawn &msg)
+{
+    HandlerLog &log = HandlerLog::Instance();
+    ++log.movePawnCalls;
+    log.lastMovePawn = msg;
+    log.lastSender   = ctx.sender;
 }
 
 /// A second namespace declaring a *same-named* handler for a different message.

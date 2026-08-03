@@ -22,9 +22,12 @@
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
+#include <Assisi/NetSync/MessageDispatch.hpp>
 #include <Assisi/NetSync/NetClock.hpp>
 #include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+
+#include <typeindex>
 
 #include <cstddef>
 #include <cstdint>
@@ -142,6 +145,25 @@ struct ReplicationConfig
     /// that exceeds it is flooding, and the excess is dropped before the codec
     /// runs — the cheapest possible place to say no.
     std::uint32_t maxInputPacketsPerSecond = 200;
+
+    /// Ceiling on intents of *one message type* accepted per connection per
+    /// second. Per type so a flood of one cannot starve another.
+    ///
+    /// Generous by default: an intent is a deliberate act, and the shapes that
+    /// legitimately repeat — map pings, look-here markers — still do not repeat
+    /// sixty times a second. Checked before the payload is decoded, so exceeding
+    /// it costs a comparison.
+    std::uint32_t maxIntentsPerTypePerSecond = 60;
+
+    /// How far behind the server an intent's client tick may be before it is
+    /// dropped as stale, and how far ahead before it is dropped as impossible.
+    ///
+    /// Load-bearing for *unreliable* intents, where out-of-order arrival is
+    /// normal: without a window, a map ping that arrived late would time-travel
+    /// into a world that has moved on. The input queue's stale-drop is the same
+    /// idea one layer down.
+    std::uint32_t intentStaleWindowTicks = 120; ///< Two seconds at 60 Hz.
+    std::uint32_t intentLeadWindowTicks  = 60;  ///< One second of client lead.
 
     /// Bounds a command must satisfy before the simulation sees it.
     InputLimits inputLimits;
@@ -304,6 +326,35 @@ struct ConnectionDiagnostics
     /// for.
     std::uint64_t relevancyEnters    = 0;
     std::uint64_t relevancyExits     = 0;
+
+    // ── Intents ──────────────────────────────────────────────────────────────
+    // One counter per way an intent can be refused, because "intents dropped"
+    // is not a diagnosis. A rate-limited client is misbehaving, a stale one has
+    // a clock problem, an out-of-range one is lying or mismatched, and an
+    // unhandled one means somebody forgot to write a handler — four different
+    // conversations.
+
+    /// Intents that made it to a handler.
+    std::uint64_t intentsAccepted    = 0;
+    /// Rejected because the type is an event, which a client may not speak.
+    std::uint64_t intentsWrongWay    = 0;
+    /// Rejected by the per-type rate limit, before any payload work.
+    std::uint64_t intentsRateLimited = 0;
+    /// Rejected because the client's tick was outside the accepted window.
+    std::uint64_t intentsStale       = 0;
+    /// Rejected because a field was outside its declared range — the client is
+    /// lying, or the two builds disagree. Never clamped: see FieldsWithinBounds.
+    std::uint64_t intentsOutOfRange  = 0;
+    /// Rejected because the sender does not control the entity it named.
+    /// Reachable by an honest client during a control transfer, which is why it
+    /// is counted rather than treated as an attack.
+    std::uint64_t intentsNotYours    = 0;
+    /// Dropped because nothing handles the type. Normal — the sender's build
+    /// may care about something this one does not.
+    std::uint64_t intentsUnhandled   = 0;
+    /// Dropped because the bytes did not decode: truncated, malformed, or an id
+    /// this build has never heard of.
+    std::uint64_t intentsMalformed   = 0;
 };
 
 /// @brief The authoritative half. Owns NetId assignment and snapshot sending.
@@ -457,6 +508,32 @@ class ReplicationServer
     /// Call once per connection per tick, from the simulation.
     const InputCommand *ConsumeInput(Net::ConnectionId connection, std::uint64_t tick);
 
+    /// @brief Submit an intent from the *host's own* player.
+    ///
+    /// A listen server's player is not a connection — there is no loopback
+    /// client by design (NetSession.hpp) — so without this the person hosting
+    /// would be the one participant who cannot speak. It enters the same
+    /// dispatch site as a remote intent, with sender = HostClientId, and passes
+    /// the same checks minus the transport framing there is none of. One door
+    /// means one, including for the host.
+    template <typename T>
+    void SubmitLocalIntent(const T &intent)
+    {
+        static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
+                      "SubmitLocalIntent takes an AMSG(intent, ...). An event is the authority speaking, "
+                      "and the host is the authority — send it, do not submit it.");
+        DispatchLocalIntent(&intent, typeid(T));
+    }
+
+    /// @brief The scene the session is bound to. Handlers reach the world
+    /// through the context rather than through a global.
+    [[nodiscard]] ECS::Scene &Scene() { return _scene; }
+
+    /// @brief The session this server belongs to, for handler contexts. Set by
+    /// NetSession at construction; null in the tests that drive the server
+    /// directly, which is why every consumer treats it as optional.
+    void SetOwningSession(NetSession *session) { _session = session; }
+
     /// @brief The NetId assigned to @p entity, or InvalidNetId. Assigned lazily
     /// on the first Tick() that sees the entity, so an entity created this tick
     /// has no id until then.
@@ -472,6 +549,13 @@ class ReplicationServer
     [[nodiscard]] bool IsReady(Net::ConnectionId connection) const;
 
     [[nodiscard]] const ConnectionDiagnostics *Diagnostics(Net::ConnectionId connection) const;
+
+    /// @brief Counters for the host's own submissions.
+    ///
+    /// The host has no connection and therefore no ConnectionDiagnostics, which
+    /// would make its intents the one traffic nobody could see. Only the intent
+    /// counters are meaningful here — there is no snapshot to send itself.
+    [[nodiscard]] const ConnectionDiagnostics &HostDiagnostics() const { return _hostDiagnostics; }
 
     /// @brief True when @p simTick is one the config says to send state on.
     [[nodiscard]] bool IsSnapshotTick(std::uint64_t simTick) const;
@@ -591,6 +675,17 @@ class ReplicationServer
         /// Sliding one-second window for the input rate limit.
         std::uint64_t rateWindowTick   = 0;
         std::uint32_t packetsInWindow  = 0;
+
+        /// The same window, per *message type*, for intents.
+        ///
+        /// Per type rather than one bucket for all of them: a client spamming
+        /// map pings must not be able to squeeze out its own weapon-fire
+        /// intents, and a game that adds a chatty message type must not
+        /// silently shrink the budget of every existing one. Unreal retrofitted
+        /// FRPCDoSDetection onto a design that had neither; the shape is known
+        /// in advance here.
+        std::unordered_map<Core::Reflect::MessageId, std::uint32_t> intentsInWindow;
+        std::uint64_t intentWindowTick = 0;
     };
 
     void SendHello(Connection &connection);
@@ -636,6 +731,32 @@ class ReplicationServer
     void HandleClientHello(Connection &connection, Core::BitReader &reader);
     void HandleAck(Connection &connection, Core::BitReader &reader);
     void HandleInput(Connection &connection, Core::BitReader &reader);
+
+    /// The single validated door every intent comes through, in the order the
+    /// steps have to be in: envelope, direction, rate, staleness, decode, range,
+    /// control, dispatch.
+    ///
+    /// The ordering is not cosmetic. Rate limiting precedes decoding so a flood
+    /// costs a comparison instead of a parse; the direction check precedes
+    /// everything expensive because the vocabulary itself already says a client
+    /// cannot speak events; and range validation follows decoding because it is
+    /// the first step that needs a value.
+    void HandleIntent(Connection &connection, Core::BitReader &reader);
+
+    /// The tail shared by a remote and a host-local intent: decode, validate,
+    /// dispatch. Everything before it is transport.
+    void DispatchIntent(ClientId sender, ConnectionDiagnostics &diagnostics,
+                        const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
+
+    /// Encode and re-decode the host's own intent so it travels the identical
+    /// path a remote one does.
+    ///
+    /// A round trip through the codec for a message that never leaves the
+    /// process looks wasteful, and it is — deliberately. The alternative is a
+    /// second dispatch path that skips decoding, and a second path is exactly
+    /// what "one validated door" is a promise against: the host's intents would
+    /// be the ones no fuzz test ever covered.
+    void DispatchLocalIntent(const void *intent, std::type_index type);
 
     /// Assign NetIds to newly-replicated entities and drop mappings for entities
     /// that are gone. Run once per tick, before any snapshot is built, so every
@@ -718,6 +839,7 @@ class ReplicationServer
     Net::NetTransport     &_transport;
     ECS::Scene            &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
+    NetSession            *_session = nullptr; ///< For handler contexts; null in direct-drive tests.
     ReplicationConfig      _config;
     LevelIdentity          _level;
 
@@ -775,6 +897,9 @@ class ReplicationServer
     /// Scratch for one provider's output, reused across connections within a
     /// snapshot tick.
     std::vector<NetId> _providerScratch;
+
+    /// Where the host's own intent counters go — see HostDiagnostics().
+    ConnectionDiagnostics _hostDiagnostics;
 
     /// The escape classes, resolved once per tick in ReconcileNetIds rather
     /// than per connection: both lists are tiny (an entity opting out of the
@@ -871,6 +996,31 @@ class ReplicationClient
     /// @brief Send this tick's input window. Call once per fixed step, after
     /// sampling.
     void SendInput(const InputCommandBuffer &buffer);
+
+    /// @brief Ask the server for something. The only thing a client may say
+    /// besides its input and its acks.
+    ///
+    /// One call shape for every intent: the destination is implicit (there is
+    /// nowhere else to send one) and the reliability comes from the type's own
+    /// declaration, so a `reliable` intent must arrive and an `unreliable` one
+    /// is fire-and-forget. Both are equally *untrusted* — reliability is about
+    /// delivery, not about belief.
+    ///
+    /// Sending an event fails to compile: the direction is part of the type.
+    ///
+    /// @param clientTick The tick this intent is about, normally the clock's
+    ///   command tick. The server drops intents outside its accepted window,
+    ///   which is what keeps a late unreliable one from time-travelling.
+    template <typename T>
+    bool SendIntent(const T &intent, std::uint64_t clientTick)
+    {
+        static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
+                      "A client may only send AMSG(intent, ...). An event is the authority's word about "
+                      "what happened, and a client is not the authority.");
+        return SendIntentBytes(&intent, typeid(T), clientTick,
+                               Core::Reflect::MessageTraits<T>::reliability ==
+                                   Core::Reflect::MessageReliability::Reliable);
+    }
 
     /// @brief Whether the handshake succeeded and snapshots are being applied.
     [[nodiscard]] bool IsSynchronized() const { return _synchronized; }
@@ -1083,6 +1233,10 @@ class ReplicationClient
     };
 
     void ResolvePendingRefs();
+
+    /// The type-erased half of SendIntent, so the template stays a two-line
+    /// static_assert and everything that needs a .cpp lives in one.
+    bool SendIntentBytes(const void *intent, std::type_index type, std::uint64_t clientTick, bool reliable);
 
     /// One entity's pose at one server tick. Only the transform is buffered:
     /// it is the only component whose value between two snapshots is

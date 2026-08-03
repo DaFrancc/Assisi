@@ -47,13 +47,14 @@ bool MessageDispatch::HasHandler(const Core::Reflect::MessageMeta &meta) const
 }
 
 bool MessageDispatch::Dispatch(const Core::Reflect::MessageMeta &meta, NetContext &context,
-                               Core::BitReader &reader, const Core::Reflect::CodecContext *codec) const
+                               Core::BitReader &reader, const Core::Reflect::CodecContext *codec,
+                               ValidateFn validate, void *userData) const
 {
     const Binding *binding = Find(meta.typeIndex);
     if (binding == nullptr)
         return false;
 
-    binding->invoke(context, reader, meta, codec, binding->handler);
+    binding->invoke(context, reader, meta, codec, validate, userData, binding->handler);
     return true;
 }
 

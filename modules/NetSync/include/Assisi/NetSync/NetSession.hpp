@@ -207,6 +207,38 @@ class NetSession
     /// @brief The session id of a connected client. Host only.
     [[nodiscard]] ClientId ClientIdOf(Net::ConnectionId client) const;
 
+    /// @brief Ask the authority for something.
+    ///
+    /// The same call in both roles, which is the point: a client sends it over
+    /// the wire, and a host — whose player is not a connection and never will be
+    /// — submits it locally, where it enters the identical dispatch site with
+    /// sender = HostClientId and passes the identical checks. One door means
+    /// one, including for the person hosting.
+    ///
+    /// Sending an event fails to compile; direction is part of the type.
+    ///
+    /// @return false when offline, or before a client's handshake completes.
+    template <typename T>
+    bool SendIntent(const T &intent)
+    {
+        static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Intent,
+                      "SendIntent takes an AMSG(intent, ...). An event is the authority's word about what "
+                      "happened — send those from the server.");
+        if (_server)
+        {
+            _server->SubmitLocalIntent(intent);
+            return true;
+        }
+        if (_client)
+        {
+            // Stamped with the *clock's* command tick, not the local sim tick,
+            // for the same reason input is: the clock's whole job is to run far
+            // enough ahead that this lands just before the server simulates it.
+            return _client->SendIntent(intent, _clock ? _clock->CommandTick() : _simTick);
+        }
+        return false;
+    }
+
     [[nodiscard]] SessionRole Role() const { return _role; }
     [[nodiscard]] bool        IsActive() const { return _role != SessionRole::Offline; }
     [[nodiscard]] bool        IsHost() const { return _role == SessionRole::Host; }

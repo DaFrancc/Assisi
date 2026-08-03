@@ -221,6 +221,21 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
 bool ReadMessage(const MessageMeta &meta, void *message, BitReader &reader,
                  const CodecContext *context = nullptr);
 
+/// @brief Whether every `AFIELD(min=/max=)` bound on @p fields holds for the
+/// value at @p object.
+///
+/// **Reject, do not clamp.** The input path clamps its commands, because a stick
+/// can legitimately saturate and the honest reading of an out-of-range axis is
+/// "all the way". A message is the opposite: an out-of-range field means the
+/// sender is lying or the two builds disagree, and clamping converts a
+/// detectable attack into a silently accepted one. So this reports, and the
+/// caller drops.
+///
+/// @param outField Optionally receives the name of the first field that failed,
+///   so the log line says which one rather than only that something did.
+[[nodiscard]] bool FieldsWithinBounds(std::span<const FieldMeta> fields, const void *object,
+                                      std::string *outField = nullptr);
+
 /// @brief Step over the body of a message whose id this build does not know.
 ///
 /// Reads the length prefix and advances past that many bits, leaving the reader

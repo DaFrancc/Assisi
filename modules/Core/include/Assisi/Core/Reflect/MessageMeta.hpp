@@ -107,4 +107,15 @@ struct MessageMeta
     std::function<void(const nlohmann::json &j, void *out_ptr)> deserialize;
 };
 
+/// @brief The same three facts as MessageMeta's grammar fields, available at
+/// compile time. Specialized by generated code, once per `AMSG` type.
+///
+/// Undefined for anything else, on purpose: it is what turns "you sent an event
+/// from a client" into a compile error at the send site instead of a dropped
+/// packet at the receive site, and it makes passing a struct that was never
+/// declared a message fail with an incomplete type rather than silently
+/// encoding nothing.
+template <typename T>
+struct MessageTraits;
+
 } // namespace Assisi::Core::Reflect

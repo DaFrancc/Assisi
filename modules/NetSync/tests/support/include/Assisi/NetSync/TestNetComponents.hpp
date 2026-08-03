@@ -15,6 +15,7 @@
 /// replicable one (so "saved to disk, never sent" has something to be true
 /// about).
 
+#include <Assisi/ECS/Entity.hpp>
 #include <Assisi/Prelude.hpp>
 
 #include <cstdint>
@@ -66,11 +67,28 @@ struct TestPlaceMarker
 
 /// @brief Client → server, freshest wins. The spammy case, where a resent stale
 /// message is worse than a lost one.
+///
+/// The bounded fields are the reject-don't-clamp case: an out-of-range value
+/// here means the client is lying or the two builds disagree, and clamping it
+/// would turn a detectable attack into a silently accepted one.
 AMSG(intent, unreliable)
 struct TestPing
 {
-    AFIELD() float x = 0.f;
-    AFIELD() float y = 0.f;
+    AFIELD(min = -100.0, max = 100.0) float x = 0.f;
+    AFIELD(min = -100.0, max = 100.0) float y = 0.f;
+};
+
+/// @brief An intent about an entity the sender claims to control.
+///
+/// `pawn` is the intent's *subject*, and `target` deliberately is not — a
+/// client naming something it does not own is ordinary ("shoot at that"), while
+/// a client acting through something it does not own is not.
+AMSG(intent, reliable)
+struct TestMovePawn
+{
+    AFIELD(controlled) Assisi::ECS::Entity pawn;
+    AFIELD()           Assisi::ECS::Entity target;
+    AFIELD()           int32_t             mode = 0;
 };
 
 /// @brief Server → client, loss tolerable. The default form: rides the snapshot,
@@ -80,6 +98,18 @@ struct TestBurst
 {
     AFIELD() uint32_t source    = 0;
     AFIELD() int32_t  intensity = 1;
+};
+
+/// @brief A registered intent that nothing handles.
+///
+/// Not an oversight — the negative control. A message nobody handles is a
+/// normal state, because the sender's build may care about something this one
+/// does not, and the point is that it is *counted* rather than silently
+/// swallowed.
+AMSG(intent, unreliable)
+struct TestUnhandled
+{
+    AFIELD() int32_t value = 0;
 };
 
 /// @brief Server → client, must arrive, and names no entity — so there is

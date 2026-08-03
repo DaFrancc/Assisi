@@ -110,41 +110,48 @@ def _gen_field_meta(f: FieldInfo) -> str:
     norep     = 'true' if f.args.has('norep') else 'false'
     vmin, vmax = _validate_bounds(f, tc)
 
-    bounds_active   = vmin is not None or vmax is not None
-    enum_active     = f.enum_info is not None
-    listener_active = f.radio is not None and f.radio.source != ''
+    bounds_active     = vmin is not None or vmax is not None
+    enum_active       = f.enum_info is not None
+    listener_active   = f.radio is not None and f.radio.source != ''
+    controlled_active = f.args.has('controlled')
 
-    # FieldMeta's trailing members are positional (bounds, then the enum block —
-    # enumConstants/enumSize/enumSigned — then the radio trio), so emitting a later
-    # block forces every earlier block to be emitted at its default. Blocks that no
-    # field needs are omitted, keeping unannotated fields at the short,
-    # golden-stable initializer form.
+    # FieldMeta's trailing members are positional — bounds, then the enum block
+    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled —
+    # so emitting any block forces every *earlier* block to be emitted at its
+    # default. Blocks nobody needs are omitted, which keeps an unannotated field
+    # at the short, golden-stable initializer form.
     tail: list[str] = []
 
-    if bounds_active or enum_active or listener_active:
+    if bounds_active or enum_active or listener_active or controlled_active:
         has_min = 'true' if vmin is not None else 'false'
         has_max = 'true' if vmax is not None else 'false'
         min_v   = f'{vmin}f' if vmin is not None else '0.f'
         max_v   = f'{vmax}f' if vmax is not None else '0.f'
         tail += [has_min, has_max, min_v, max_v]
 
-    if enum_active or listener_active:
+    if enum_active or listener_active or controlled_active:
         if enum_active:
             consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
             tail.append(f'{{ {consts} }}')
             tail.append(str(f.enum_info.size))
             tail.append('true' if f.enum_info.is_signed else 'false')
         else:
-            # Non-enum listener: empty enumConstants, size 0 (marks "not an enum").
+            # Not an enum: empty enumConstants, size 0 (which marks "not an enum").
             tail += ['{}', '0', 'false']
 
-    if listener_active:
-        values = ', '.join(str(v) for v in f.radio.values)
-        tail += [
-            f'"{f.radio.source}"',
-            f'{{ {values} }}',
-            f'Assisi::Core::Reflect::RadioBehavior::{f.radio.behavior}',
-        ]
+    if listener_active or controlled_active:
+        if listener_active:
+            values = ', '.join(str(v) for v in f.radio.values)
+            tail += [
+                f'"{f.radio.source}"',
+                f'{{ {values} }}',
+                f'Assisi::Core::Reflect::RadioBehavior::{f.radio.behavior}',
+            ]
+        else:
+            tail += ['""', '{}', 'Assisi::Core::Reflect::RadioBehavior::None']
+
+    if controlled_active:
+        tail.append('true')
 
     base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, {norep}'
     return base + ' }' if not tail else base + ', ' + ', '.join(tail) + ' }'
@@ -186,6 +193,50 @@ def _gen_flag_tail(serializable: bool, comp: ComponentInfo) -> str:
 def _is_serializable(f: FieldInfo) -> bool:
     """A non-transient field reflectgen has codegen for (a TYPES entry or an enum)."""
     return not f.args.has('transient') and _field_tc(f) is not None
+
+
+# A message's EntityRef fields, for JSON only.
+#
+# The component path routes an EntityRef through Runtime::SceneSerializer, which
+# resolves it against the scene being saved. A message has no scene and is never
+# saved — its JSON form exists for tests, tooling, and log lines — so it carries
+# the handle's two halves verbatim instead. The *binary* path is unaffected and
+# still translates through NetIds, which is the only form that means anything
+# across the wire.
+MESSAGE_ENTITY_REF = TypeCodegen(
+    'EntityRef',
+    'nlohmann::json{{ {{ "index", {a}.index }}, {{ "generation", {a}.generation }} }}',
+    'if (j.contains("{f}") && j.at("{f}").is_object()) {a} = Assisi::ECS::Entity{{ '
+    'j.at("{f}").value("index", 0u), j.at("{f}").value("generation", 0u) }};')
+
+
+def _message_field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
+    """Like _field_tc, but for a field of a message."""
+    if f.cpp_type in _ENTITY_REF_TYPES:
+        return MESSAGE_ENTITY_REF
+    return _field_tc(f)
+
+
+def _gen_message_serialize(fields: list[FieldInfo]) -> str:
+    serializable = [f for f in fields if _is_serializable(f)]
+    if not serializable:
+        return '(void)ptr;\nreturn nlohmann::json{};'
+    lines = ['const auto& c = *static_cast<const T*>(ptr);', 'return nlohmann::json{']
+    for f in serializable:
+        expr = _message_field_tc(f).serialize.format(a=f'c.{f.name}', f=f.name)
+        lines.append(f'    {{ "{f.name}", {expr} }},')
+    lines.append('};')
+    return '\n'.join(lines)
+
+
+def _gen_message_deserialize(fields: list[FieldInfo]) -> str:
+    serializable = [f for f in fields if _is_serializable(f)]
+    if not serializable:
+        return '(void)j;\n(void)out_ptr;'
+    lines = ['auto& a = *static_cast<T*>(out_ptr);']
+    for f in serializable:
+        lines.append(_message_field_tc(f).deserialize.format(f=f.name, a=f'a.{f.name}'))
+    return '\n'.join(lines)
 
 
 def _gen_serialize(fields: list[FieldInfo]) -> str:
@@ -308,9 +359,10 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
 def _check_messages(messages: list, header_name: str) -> None:
     """Reject message annotations that could not mean anything.
 
-    Both rejections are about a field annotation whose whole purpose is to
-    distinguish disk from wire — a distinction a message does not have, because
-    a message *is* its wire form and is never saved anywhere.
+    The first two rejections are about field annotations whose whole purpose is
+    to distinguish disk from wire — a distinction a message does not have,
+    because a message *is* its wire form and is never saved anywhere. The third
+    is about an annotation the dispatch site could not act on.
     """
     for msg in messages:
         for f in msg.fields:
@@ -325,13 +377,41 @@ def _check_messages(messages: list, header_name: str) -> None:
                     f"{where} is marked AFIELD(transient), but a message has no persistent form "
                     f"to be excluded from — nothing ever saves one. Remove the field, or remove "
                     f"transient.")
+            if f.args.has('controlled'):
+                if msg.direction != 'intent':
+                    raise ValueError(
+                        f"{where} is marked AFIELD(controlled), but '{msg.name}' is an event. "
+                        f"The annotation means 'the sender must control this entity', and the "
+                        f"sender of an event is the server, which controls everything by "
+                        f"definition. It only applies to AMSG(intent, ...).")
+                if f.cpp_type not in _ENTITY_REF_TYPES:
+                    raise ValueError(
+                        f"{where} is marked AFIELD(controlled) but its type is '{f.cpp_type}'. "
+                        f"Only an EntityRef field can name an entity for the dispatch site to "
+                        f"check control of.")
+
+
+def _check_controlled_outside_messages(components: list, header_name: str) -> None:
+    """AFIELD(controlled) on a component field would silently mean nothing.
+
+    There is no sender for a component — it is state, and state has no dispatch
+    site to reject it at — so the annotation would read as a rule being enforced
+    while nothing enforced it.
+    """
+    for comp in components:
+        for f in comp.fields:
+            if f.args.has('controlled'):
+                raise ValueError(
+                    f"{header_name}: field '{comp.name}::{f.name}' is marked AFIELD(controlled), "
+                    f"but '{comp.name}' is not a message. The annotation is a rule the intent "
+                    f"dispatch site enforces about a sender, and a component has no sender.")
 
 
 def _gen_message_block(msg: MessageInfo) -> str:
     var_name    = f'_reflectgen_msg_{msg.name}'
     field_metas = ',\n            '.join(_gen_field_meta(f) for f in msg.fields)
-    serialize   = _indent(_gen_serialize(msg.fields), 12)
-    deserialize = _indent(_gen_deserialize_asset(msg.fields), 12)
+    serialize   = _indent(_gen_message_serialize(msg.fields), 12)
+    deserialize = _indent(_gen_message_deserialize(msg.fields), 12)
 
     direction   = 'Intent' if msg.direction == 'intent' else 'Event'
     reliability = 'Reliable' if msg.reliability == 'reliable' else 'Unreliable'
@@ -364,6 +444,46 @@ static const bool {var_name} = []() -> bool
     }});
     return true;
 }}();
+
+"""
+
+
+def gen_message_forward(msg: MessageInfo) -> str:
+    """A global-scope forward declaration of one message type.
+
+    Forward-declared rather than included because specializing on an incomplete
+    type is legal, and including the real headers would close a cycle: a header
+    that declares handlers already includes the dispatch header the traits are
+    part of.
+    """
+    return (''.join(f'namespace {ns} {{ ' for ns in msg.namespaces)
+            + f'struct {msg.name}; '
+            + ''.join('} ' for _ in msg.namespaces)).rstrip()
+
+
+def gen_message_traits(msg: MessageInfo) -> str:
+    """The compile-time half of one message's declaration.
+
+    What makes `SendIntent(SomeEvent{...})` a compile error at the call site
+    rather than a dropped packet at the receive site — and what makes passing a
+    struct that was never declared a message fail with an incomplete type
+    instead of silently encoding nothing.
+
+    Emitted into a whole-tree header rather than beside the registration,
+    because a specialization is only useful where the *call* is.
+    """
+    direction   = 'Intent' if msg.direction == 'intent' else 'Event'
+    reliability = 'Reliable' if msg.reliability == 'reliable' else 'Unreliable'
+    independent = 'true' if msg.args.has('independent') else 'false'
+
+    return f"""\
+template <>
+struct MessageTraits<::{msg.fqn}>
+{{
+    static constexpr MessageDirection   direction   = MessageDirection::{direction};
+    static constexpr MessageReliability reliability = MessageReliability::{reliability};
+    static constexpr bool               independent = {independent};
+}};
 
 """
 
@@ -454,6 +574,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     _check_asset_fields(components, include_path)
     _check_replication(components, include_path)
     _check_messages(messages, include_path)
+    _check_controlled_outside_messages(components, include_path)
 
     component_infos = [c for c in components if not c.is_asset]
     asset_infos     = [c for c in components if c.is_asset]

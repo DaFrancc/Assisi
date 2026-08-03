@@ -171,6 +171,43 @@ endfunction()
 # its own whole-tree pass. Call once, from the top level, after every
 # add_subdirectory() — same contract as assisi_generate_replicable_limits(), and
 # for the same reason: the header list is only complete then.
+# Emit the generated header that gives every AMSG type its compile-time facts —
+# direction, reliability, independence — so a send call can refuse the wrong
+# direction at compile time rather than dropping a packet at the far end.
+#
+# Same contract and same copy_if_different reasoning as the replicable count:
+# every header edit re-runs the scan, but the output only *changes* when a
+# message is added, renamed, moved, or reclassified.
+function(assisi_generate_message_traits)
+    get_property(_headers GLOBAL PROPERTY ASSISI_REFLECTED_HEADERS)
+    if (NOT _headers)
+        message(FATAL_ERROR
+            "assisi_generate_message_traits: no reflected headers registered. "
+            "Call this after the add_subdirectory() calls that invoke assisi_reflect().")
+    endif()
+
+    set(_dir "${CMAKE_BINARY_DIR}/generated/Assisi/Core/Reflect")
+    set(_out "${_dir}/MessageTraits.hpp")
+    set(_tmp "${_out}.tmp")
+
+    add_custom_command(
+        OUTPUT  "${_out}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_dir}"
+        COMMAND Python3::Interpreter "${_ASSISI_REFLECTGEN}" ${_headers} --message-traits "${_tmp}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_tmp}" "${_out}"
+        DEPENDS ${_headers} "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
+        COMMENT "reflectgen: message traits"
+        VERBATIM
+    )
+
+    add_custom_target(Assisi-MessageTraits DEPENDS "${_out}")
+
+    # NetSync's MessageDispatch.hpp includes it, so NetSync is what must wait.
+    # The include directory is already published by Assisi-Core (same generated
+    # root as ReplicableLimits.hpp).
+    add_dependencies(Assisi-NetSync Assisi-MessageTraits)
+endfunction()
+
 function(assisi_check_message_handlers)
     get_property(_headers GLOBAL PROPERTY ASSISI_REFLECTED_HEADERS)
     if (NOT _headers)

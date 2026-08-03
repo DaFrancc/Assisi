@@ -114,6 +114,28 @@ struct FieldMeta
     std::string               radioSource;                          ///< Sibling enum field this field's visibility follows ("" = not a listener).
     std::vector<std::int64_t> radioValues;                          ///< Enum values at which this field is active; meaningful when radioSource set.
     RadioBehavior             radioBehavior = RadioBehavior::None;   ///< Editor treatment while inactive.
+
+    /// @brief AFIELD(controlled): this message field must name an entity the
+    /// sender controls.
+    ///
+    /// Only meaningful on an `EntityRef` field of an `AMSG(intent, …)`, and
+    /// reflectgen rejects it anywhere else. It marks the *subject* of an intent
+    /// — "the pawn I am telling you to do something with" — as distinct from
+    /// any other entity the message merely mentions, like the thing being shot
+    /// at. Without the distinction the dispatch site could either check nothing
+    /// or check every reference, and checking every reference would forbid a
+    /// client from ever naming an entity it does not own.
+    ///
+    /// The check itself lives at the single dispatch site: an intent whose
+    /// controlled field names an entity the sender does not control is dropped
+    /// and counted, deliberately *not* treated as an error — control transfer
+    /// has a propagation delay, so an honest client can send one.
+    ///
+    /// Deliberately **not** in the protocol hash. It changes which messages are
+    /// accepted, never how bytes decode, so two builds differing only here
+    /// still parse each other perfectly and the server's rule governs — the
+    /// same argument that keeps the game's neverReplicate list out of the hash.
+    bool controlled = false;
 };
 
 } // namespace Assisi::Core::Reflect
