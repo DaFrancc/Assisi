@@ -7,6 +7,7 @@
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/NetSync/DistanceRelevancy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <glm/gtc/quaternion.hpp>
@@ -110,6 +111,70 @@ std::vector<std::string> LoadNeverReplicateFromConfig(std::string_view configPat
         // sends, so say so rather than falling through quietly.
         Core::Log::Warn("NetSync: cannot read 'networking.neverReplicate' from '{}' ({}) — replicating every "
                         "capable component.",
+                        configPath, error.what());
+        return {};
+    }
+}
+
+RelevancyConfig LoadRelevancyFromConfig(std::string_view configPath)
+{
+    const std::expected<std::string, Core::AssetError> text = Core::AssetSystem::ReadText(configPath);
+    if (!text)
+        return {}; // no config is not a problem; telling everyone everything is a complete answer
+
+    try
+    {
+        const nlohmann::json json = nlohmann::json::parse(*text);
+        if (!json.contains("networking"))
+            return {};
+
+        const nlohmann::json &block = json.at("networking");
+        if (!block.contains("relevancy"))
+            return {};
+
+        const nlohmann::json &relevancy = block.at("relevancy");
+        if (!relevancy.is_object())
+        {
+            Core::Log::Warn("NetSync: 'networking.relevancy' in '{}' must be an object — ignoring it.", configPath);
+            return {};
+        }
+
+        RelevancyConfig config;
+        if (relevancy.contains("provider"))
+        {
+            const std::string name = relevancy.at("provider").get<std::string>();
+            if (name == "all")
+            {
+                config.provider = RelevancyConfig::Provider::All;
+            }
+            else if (name == "distance")
+            {
+                config.provider = RelevancyConfig::Provider::Distance;
+            }
+            else
+            {
+                // A name nobody implements is a typo or a renamed provider, and
+                // quietly falling back to "everything" would leave the author
+                // believing a radius is in force when it is not.
+                Core::Log::Warn("NetSync: 'networking.relevancy.provider' is '{}', which is not a provider this "
+                                "build knows ('all' or 'distance') — telling every connection about everything.",
+                                name);
+            }
+        }
+        if (relevancy.contains("radius"))
+            config.radius = relevancy.at("radius").get<float>();
+        if (relevancy.contains("exitRadius"))
+            config.exitRadius = relevancy.at("exitRadius").get<float>();
+        if (relevancy.contains("dwellTicks"))
+            config.dwellTicks = relevancy.at("dwellTicks").get<std::uint32_t>();
+        return config;
+    }
+    catch (const std::exception &error)
+    {
+        // Same direction as every other loader here: a malformed config must not
+        // silently *narrow* what a game sends.
+        Core::Log::Warn("NetSync: cannot read 'networking.relevancy' from '{}' ({}) — telling every connection "
+                        "about everything.",
                         configPath, error.what());
         return {};
     }
@@ -220,6 +285,14 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     // Session start. Whatever claims this scene arrived carrying, they were made
     // in a session that is over.
     StripAuthoredControl();
+
+    if (_config.relevancy.provider == RelevancyConfig::Provider::Distance)
+    {
+        _relevancy = std::make_unique<DistanceRelevancy>(_config.relevancy);
+        Core::Log::Info("NetSync: relevancy is distance-based — enter {} m, exit {} m, dwell {} ticks.",
+                        static_cast<double>(_config.relevancy.radius),
+                        static_cast<double>(_config.relevancy.exitRadius), _config.relevancy.dwellTicks);
+    }
 }
 
 void ReplicationServer::StripAuthoredControl()
@@ -393,6 +466,27 @@ void ReplicationServer::SetRelevancyProvider(std::unique_ptr<RelevancyProvider> 
     }
 }
 
+void ReplicationServer::SetViewAnchors(Net::ConnectionId connection, std::span<const ECS::Entity> anchors)
+{
+    const auto it = _connections.find(connection);
+    if (it == _connections.end())
+        return;
+    it->second.anchors.assign(anchors.begin(), anchors.end());
+}
+
+std::span<const ECS::Entity> ReplicationServer::ViewAnchors(Net::ConnectionId connection) const
+{
+    const auto it = _connections.find(connection);
+    if (it == _connections.end())
+        return {};
+    if (!it->second.anchors.empty())
+        return std::span<const ECS::Entity>{it->second.anchors};
+
+    const auto controlled = _controlledByClient.find(it->second.clientId.value);
+    return controlled == _controlledByClient.end() ? std::span<const ECS::Entity>{}
+                                                   : std::span<const ECS::Entity>{controlled->second};
+}
+
 void ReplicationServer::GrantRelevance(Net::ConnectionId connection, NetId netId)
 {
     const auto it = _connections.find(connection);
@@ -445,13 +539,29 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
     if (_relevancy == nullptr)
         return _liveNetIds;
 
+    // The anchors this connection actually views from: whatever the session set,
+    // or — only as a default — the entities it controls. A provider handed an
+    // empty list is being told this connection has no viewpoint, and what to do
+    // about that is its decision, not the engine's.
+    connection.anchorScratch.clear();
+    if (!connection.anchors.empty())
+    {
+        for (const ECS::Entity anchor : connection.anchors)
+        {
+            if (_scene.IsAlive(anchor))
+                connection.anchorScratch.push_back(anchor);
+        }
+    }
+    else if (const auto controlled = _controlledByClient.find(connection.clientId.value);
+             controlled != _controlledByClient.end())
+    {
+        connection.anchorScratch.assign(controlled->second.begin(), controlled->second.end());
+    }
+
     _providerScratch.clear();
     const RelevancyQuery query{
         connection.clientId,
-        // Anchors are session state that M2 fills; a provider seeing none is
-        // being told this connection has no viewpoint, and fail-open is its
-        // job, not the engine's.
-        std::span<const ECS::Entity>{},
+        std::span<const ECS::Entity>{connection.anchorScratch},
         std::span<const NetId>{_liveNetIds},
         &_scene,
         this,
@@ -482,8 +592,34 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
         }
     }
 
+    // Relevance::Always — the escape from whatever the provider decided. Every
+    // connection, unconditionally, because a radius is a bandwidth tool and an
+    // objective marker that vanishes at 60 metres is a bug the saving does not
+    // pay for.
+    merged.insert(merged.end(), _alwaysRelevant.begin(), _alwaysRelevant.end());
+
     std::sort(merged.begin(), merged.end());
     merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
+
+    // Relevance::ControllerOnly — the escape in the other direction, and the one
+    // class that reads ControlledBy, which is its whole job description. Applied
+    // last so it outranks the provider, a grant, and Always alike: "only this
+    // player may know about it" is not a preference to be outvoted.
+    if (!_controllerOnly.empty())
+    {
+        std::erase_if(merged,
+                      [this, &connection](NetId netId)
+                      {
+                          const auto entry = std::lower_bound(
+                              _controllerOnly.begin(), _controllerOnly.end(), netId,
+                              [](const auto &pair, NetId value) { return pair.first < value; });
+                          if (entry == _controllerOnly.end() || entry->first != netId)
+                              return false; // not one of them
+                          // Uncontrolled means nobody, which is the honest
+                          // reading of "only the controller may see it".
+                          return entry->second != connection.clientId.value;
+                      });
+    }
 
     // A provider may name whatever it likes; only live entities exist.
     std::vector<NetId> &effective = connection.effectiveScratch;
@@ -509,6 +645,37 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
             continue; // already forgotten — the empty-baseline path has it covered
         ForgetAcked(connection, netId);
     }
+
+    // Boundary thrash is invisible otherwise — it looks exactly like ordinary
+    // bandwidth — and it is the one failure mode hysteresis exists to prevent.
+    // Enters climbing in lockstep with exits is the shape to watch for.
+    // One merge over two sorted sequences, counting both directions at once —
+    // cheaper than two set_differences and it needs no output to discard.
+    {
+        std::size_t before = 0;
+        std::size_t now    = 0;
+        while (before < connection.relevant.size() && now < effective.size())
+        {
+            if (connection.relevant[before] < effective[now])
+            {
+                ++connection.diagnostics.relevancyExits;
+                ++before;
+            }
+            else if (effective[now] < connection.relevant[before])
+            {
+                ++connection.diagnostics.relevancyEnters;
+                ++now;
+            }
+            else
+            {
+                ++before;
+                ++now;
+            }
+        }
+        connection.diagnostics.relevancyExits += connection.relevant.size() - before;
+        connection.diagnostics.relevancyEnters += effective.size() - now;
+    }
+    connection.diagnostics.relevantEntities = static_cast<std::uint32_t>(effective.size());
 
     connection.relevant = effective;
     return effective;
@@ -814,6 +981,40 @@ void ReplicationServer::ReconcileNetIds()
     // has already accepted the scene as it is, including whatever came back from
     // the dead since the last one.
     RebuildControlIndex();
+
+    // The escape classes, resolved once per tick rather than per connection.
+    // Both lists are tiny by construction — an entity opting out of the provider
+    // is unusual by definition — and the alternative is walking the whole live
+    // set once per connection, which is exactly the cost relevancy exists to
+    // avoid paying.
+    _alwaysRelevant.clear();
+    _controllerOnly.clear();
+    if (_relevancy != nullptr)
+    {
+        for (const NetId netId : _liveNetIds)
+        {
+            const ECS::Entity entity = EntityOf(netId);
+            if (entity == ECS::NullEntity)
+                continue;
+
+            const Replicated *marker = _scene.Get<Replicated>(entity);
+            if (marker == nullptr || marker->relevance == Relevance::Default)
+                continue;
+
+            if (marker->relevance == Relevance::Always)
+            {
+                _alwaysRelevant.push_back(netId);
+            }
+            else
+            {
+                const ControlledBy *claim = _scene.Get<ControlledBy>(entity);
+                _controllerOnly.emplace_back(netId, claim == nullptr ? InvalidClientId.value : claim->client);
+            }
+        }
+    }
+    // `_liveNetIds` is sorted, so both come out sorted without a sort — but the
+    // binary searches downstream depend on it, so it is stated rather than left
+    // to be rediscovered.
 }
 
 Core::Reflect::ComponentMask ReplicationServer::ExclusionMaskOf(ECS::Entity entity) const

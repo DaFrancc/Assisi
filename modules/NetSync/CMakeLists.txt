@@ -4,6 +4,7 @@ Assisi_apply_defaults(Assisi-NetSync)
 target_sources(Assisi-NetSync
   PUBLIC
     "include/Assisi/NetSync/BodyState.hpp"
+    "include/Assisi/NetSync/DistanceRelevancy.hpp"
     "include/Assisi/NetSync/InputCommand.hpp"
     "include/Assisi/NetSync/NetClock.hpp"
     "include/Assisi/NetSync/NetComponents.hpp"
@@ -12,6 +13,7 @@ target_sources(Assisi-NetSync
     "include/Assisi/NetSync/Replication.hpp"
   PRIVATE
     "src/BodyState.cpp"
+    "src/DistanceRelevancy.cpp"
     "src/InputCommand.cpp"
     "src/NetClock.cpp"
     "src/NetProtocol.cpp"

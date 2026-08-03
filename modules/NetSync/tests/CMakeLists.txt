@@ -21,6 +21,7 @@ add_executable(Assisi-NetSync-Tests
   TestBodyReplication.cpp
   TestComponentMaskCodec.cpp
   TestControl.cpp
+  TestDistanceRelevancy.cpp
   TestInstancePolicy.cpp
   TestRelevancy.cpp
   TestReplication.cpp

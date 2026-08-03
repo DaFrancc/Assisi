@@ -29,6 +29,32 @@ namespace Assisi::NetSync
 /// replicates, which the client learns from the spawn, so putting it on the wire
 /// would be pure overhead. The client adds its own copy to every mirror it
 /// creates.
+/// @brief How relevancy treats an entity that carries `Replicated`.
+///
+/// The complete standard set, present in every system surveyed from Quake 3's
+/// `SVF_*` flags to Iris filters: let the provider decide, always, only to the
+/// controller, or not at all (which is `Replicated`'s own absence). Resist
+/// inventing a fifth — every one of them is expressible as a provider plus a
+/// grant.
+AENUM()
+enum class Relevance : uint8_t
+{
+    /// The provider decides. The default, and the only value that costs
+    /// nothing to evaluate.
+    Default = 0,
+
+    /// Every connection, whatever the provider says. The correct setting for
+    /// anything plot-critical: a radius is a bandwidth tool, not a correctness
+    /// tool, and an objective marker that vanishes at 60 metres is a bug the
+    /// bandwidth saving does not pay for.
+    Always = 1,
+
+    /// Only the connection named by `ControlledBy`, and nobody at all while
+    /// uncontrolled. For entities that are one player's private business — an
+    /// inventory proxy, a personal waypoint.
+    ControllerOnly = 2,
+};
+
 ACOMP()
 struct Replicated
 {
@@ -60,6 +86,17 @@ struct Replicated
     /// which is why this component does not need `tracked`. Edit it through any
     /// path; the next snapshot sees it.
     AFIELD() Assisi::Core::Reflect::ComponentMask excluded;
+
+    /// @brief Whether relevancy filtering applies to this entity, and to whom.
+    ///
+    /// The escape hatch from whatever provider a game installs. `Default` — the
+    /// provider decides — is what almost everything wants; the other two exist
+    /// because a distance radius is the wrong tool for correctness and for
+    /// privacy respectively. See Relevance.
+    ///
+    /// Read live by the server every snapshot, like `excluded`, so there is
+    /// nothing to invalidate.
+    AFIELD() Relevance relevance = Relevance::Default;
 };
 
 /// @brief Which connection's player this entity is.

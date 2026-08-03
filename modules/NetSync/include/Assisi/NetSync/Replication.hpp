@@ -39,6 +39,58 @@
 namespace Assisi::NetSync
 {
 
+/// @brief Which relevancy provider a game wants, and how to tune it.
+///
+/// Deliberately **not** part of the protocol hash, by the same argument that
+/// keeps `neverReplicate` out of it: this changes what is *sent*, never how
+/// bytes *decode*. A client applies whatever arrives regardless of its own
+/// settings, so two builds differing only here pair fine and the server's
+/// numbers govern. Hashing it would make a tuning edit refuse connections for
+/// no correctness gain.
+struct RelevancyConfig
+{
+    /// @brief What decides who is told about what.
+    enum class Provider : std::uint8_t
+    {
+        /// Everyone is told about everything, with the intersection skipped
+        /// outright. The default, and free.
+        All = 0,
+        /// A radius around each connection's view anchors, with hysteresis.
+        Distance = 1,
+    };
+
+    Provider provider = Provider::All;
+
+    /// @brief Metres at which an entity *enters* a connection's set.
+    float radius = 60.f;
+
+    /// @brief Metres at which it leaves again. Must exceed `radius`.
+    ///
+    /// The gap is not a refinement, it is the mechanism: with one radius, an
+    /// entity sitting on the boundary converts into a despawn and a full
+    /// respawn on every crossing, which is the one failure mode every surveyed
+    /// system either engineered around or suffered. A value at or below
+    /// `radius` is corrected at load with a warning.
+    float exitRadius = 75.f;
+
+    /// @brief Ticks an entity must stay beyond `exitRadius` before the revoke
+    /// takes effect. Belt to the hysteresis braces.
+    ///
+    /// **Gates revokes only.** Entering is immediate, so an anchor teleport — a
+    /// level transition, a spectator jump — shows the world at once instead of
+    /// after a fraction of a second of emptiness. Symmetric dwell is the
+    /// reflex to resist here.
+    std::uint32_t dwellTicks = 30;
+};
+
+/// @brief Read the `networking.relevancy` object of a game config.
+///
+/// Absent key yields the default (everything relevant, costing nothing) and a
+/// malformed one warns and yields the same — the contract every other loader in
+/// this file follows, and the safe direction: a config typo must not silently
+/// *narrow* what a game sends.
+[[nodiscard]] RelevancyConfig LoadRelevancyFromConfig(std::string_view configPath = "game.json");
+
 /// @brief Tuning shared by both halves.
 struct ReplicationConfig
 {
@@ -118,6 +170,13 @@ struct ReplicationConfig
     /// Filled by whoever owns the session (from game.json), never read from the
     /// filesystem by the server itself — so a test can set it without a file.
     std::vector<std::string> neverReplicate;
+
+    /// Who is told about what. Defaults to everything, which costs nothing; a
+    /// server whose provider is `Distance` installs one at construction.
+    ///
+    /// Filled by the session-owning layer from game.json, on the same terms as
+    /// `neverReplicate` — the server never reads the filesystem itself.
+    RelevancyConfig relevancy;
 };
 
 /// @brief Read the `networking.neverReplicate` array of a game config.
@@ -229,6 +288,22 @@ struct ConnectionDiagnostics
     /// byte budget is binding and correction *frequency* is degrading — which
     /// the priority accumulator makes fair, not free.
     std::uint32_t dirtyBacklog       = 0;
+
+    /// Entities this connection is currently told about. Equal to the live
+    /// count when nothing filters; the number a radius is actually buying
+    /// otherwise.
+    std::uint32_t relevantEntities   = 0;
+
+    /// Entities that have entered and left this connection's set over the
+    /// session. Totals rather than rates, like everything else here — a rate
+    /// needs a clock and a window, and whoever draws this has both.
+    ///
+    /// Worth surfacing because boundary thrash is invisible otherwise: it looks
+    /// like ordinary bandwidth, and it is the failure mode hysteresis exists to
+    /// prevent. Enters climbing in lockstep with exits is the shape to watch
+    /// for.
+    std::uint64_t relevancyEnters    = 0;
+    std::uint64_t relevancyExits     = 0;
 };
 
 /// @brief The authoritative half. Owns NetId assignment and snapshot sending.
@@ -321,6 +396,24 @@ class ReplicationServer
     void SetRelevancyProvider(std::unique_ptr<RelevancyProvider> provider);
 
     [[nodiscard]] RelevancyProvider *Relevancy() const { return _relevancy.get(); }
+
+    /// @brief Set the entities @p connection views the world from.
+    ///
+    /// Session state, not a component, and deliberately *not* derived from
+    /// `ControlledBy` at the point of use. A v1 joiner is a spectator with no
+    /// controlled entity and still needs a viewpoint; Unreal's anchor is the
+    /// view target rather than the pawn, and spectator and camera actors are
+    /// exactly where owner-derived anchoring leaks. The pawn itself never
+    /// depends on anchors to stay visible to its controller — that is the
+    /// implicit grant's job.
+    ///
+    /// Passing an empty list restores the default, which is the connection's
+    /// controlled entities.
+    void SetViewAnchors(Net::ConnectionId connection, std::span<const ECS::Entity> anchors);
+
+    /// @brief The anchors in effect for @p connection: whatever was set, or its
+    /// controlled entities if nothing was.
+    [[nodiscard]] std::span<const ECS::Entity> ViewAnchors(Net::ConnectionId connection) const;
 
     /// @brief Pin @p netId into @p connection's set regardless of what the
     /// provider says. Idempotent.
@@ -477,6 +570,15 @@ class ReplicationServer
         /// Entities pinned into this connection's set by GrantRelevance,
         /// sorted. Merged after the provider, so a grant always wins.
         std::vector<NetId> grants;
+
+        /// What this connection views the world from, when the session has
+        /// said. Empty means "use whatever it controls" — see SetViewAnchors on
+        /// why the default is not the *definition*.
+        std::vector<ECS::Entity> anchors;
+
+        /// Scratch holding the anchors actually handed to the provider this
+        /// snapshot: `anchors` if non-empty, the controlled set otherwise.
+        std::vector<ECS::Entity> anchorScratch;
 
         /// Scratch for the per-snapshot set algebra, kept so a filtering server
         /// does not allocate twice per connection per snapshot.
@@ -673,6 +775,17 @@ class ReplicationServer
     /// Scratch for one provider's output, reused across connections within a
     /// snapshot tick.
     std::vector<NetId> _providerScratch;
+
+    /// The escape classes, resolved once per tick in ReconcileNetIds rather
+    /// than per connection: both lists are tiny (an entity opting out of the
+    /// provider is by definition unusual), and evaluating them per connection
+    /// would mean walking the whole live set for each one — which is the cost
+    /// relevancy exists to avoid.
+    std::vector<NetId> _alwaysRelevant; ///< Relevance::Always, sorted.
+
+    /// Relevance::ControllerOnly, sorted by NetId, paired with the client that
+    /// may see it (0 while uncontrolled, which means nobody may).
+    std::vector<std::pair<NetId, std::uint32_t>> _controllerOnly;
 
     std::unordered_map<NetId, ECS::Entity>      _entityByNetId;
     std::unordered_map<std::uint64_t, NetId>    _netIdByEntity; ///< Keyed by the entity's packed handle.
