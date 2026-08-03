@@ -898,6 +898,14 @@ endif()
 # arrays of component names on disk and on the wire alike.
 assisi_generate_replicable_limits()
 
+# Same contract, same reason it is here rather than in a module: the handler
+# table binds every AMSG_HANDLER declaration in the tree, so the header list has
+# to be complete before it can be written. Gated on networking because the table
+# it produces calls into NetSync.
+if (ASSISI_ENABLE_NETWORKING)
+    assisi_check_message_handlers()
+endif()
+
 # Notes for module CMakeLists:
 # - Each module target should link:
 #     Assisi::Options, Assisi::Warnings, Assisi::Perf, Assisi::Deps

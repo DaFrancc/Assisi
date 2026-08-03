@@ -22,7 +22,7 @@ different problems for a reader to debug.
 
 from typing import Optional
 
-from reflect_parser import FieldInfo, ComponentInfo
+from reflect_parser import FieldInfo, ComponentInfo, MessageInfo
 from reflect_types import (TypeCodegen, TYPES, UNSUPPORTED_TYPES,
                            _ASSET_ID_TYPES, _COMPONENT_MASK_TYPES, _ENTITY_REF_TYPES)
 
@@ -305,6 +305,69 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
                     f"would silently do nothing. Mark the component replicable, or drop norep.")
 
 
+def _check_messages(messages: list, header_name: str) -> None:
+    """Reject message annotations that could not mean anything.
+
+    Both rejections are about a field annotation whose whole purpose is to
+    distinguish disk from wire — a distinction a message does not have, because
+    a message *is* its wire form and is never saved anywhere.
+    """
+    for msg in messages:
+        for f in msg.fields:
+            where = f"{header_name}: field '{msg.name}::{f.name}'"
+            if f.args.has('norep'):
+                raise ValueError(
+                    f"{where} is marked AFIELD(norep), but '{msg.name}' is a message — it exists "
+                    f"only to cross the wire, so a field that never crosses it is a field that "
+                    f"does nothing. Remove the field, or remove norep.")
+            if f.args.has('transient'):
+                raise ValueError(
+                    f"{where} is marked AFIELD(transient), but a message has no persistent form "
+                    f"to be excluded from — nothing ever saves one. Remove the field, or remove "
+                    f"transient.")
+
+
+def _gen_message_block(msg: MessageInfo) -> str:
+    var_name    = f'_reflectgen_msg_{msg.name}'
+    field_metas = ',\n            '.join(_gen_field_meta(f) for f in msg.fields)
+    serialize   = _indent(_gen_serialize(msg.fields), 12)
+    deserialize = _indent(_gen_deserialize_asset(msg.fields), 12)
+
+    direction   = 'Intent' if msg.direction == 'intent' else 'Event'
+    reliability = 'Reliable' if msg.reliability == 'reliable' else 'Unreliable'
+    independent = 'true' if msg.args.has('independent') else 'false'
+
+    return f"""\
+// ── {msg.name} {'─' * max(0, 74 - len(msg.name))}
+// AMSG({msg.direction}, {msg.reliability}{', independent' if msg.args.has('independent') else ''})
+static const bool {var_name} = []() -> bool
+{{
+    using T = {msg.fqn};
+    Assisi::Core::Reflect::MessageRegistry::Instance().Register({{
+        "{msg.name}",
+        typeid(T),
+        {{
+            {field_metas}
+        }},
+        Assisi::Core::Reflect::MessageDirection::{direction},
+        Assisi::Core::Reflect::MessageReliability::{reliability},
+        {independent},
+        Assisi::Core::Reflect::kInvalidMessageId, // id: assigned at finalize
+        [](const void* ptr) -> nlohmann::json
+        {{
+{serialize}
+        }},
+        [](const nlohmann::json& j, void* out_ptr)
+        {{
+{deserialize}
+        }},
+    }});
+    return true;
+}}();
+
+"""
+
+
 def _gen_asset_block(comp: ComponentInfo) -> str:
     fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
     var_name = f'_reflectgen_{comp.name}'
@@ -339,13 +402,58 @@ static const bool {var_name} = []() -> bool
 """
 
 
-def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
+def _gen_handler_block(handler) -> str:
+    """Bind one AMSG_HANDLER declaration to its message type.
+
+    Emitted **inside the handler's own namespace**, and that is the whole answer
+    to "which function does this call". The message type is spelled exactly as
+    the declaration spelled it and is resolved in exactly the scope the
+    declaration was resolved in, so the binding names the same type the author
+    named — there is no second lookup that could find something else. The
+    handler itself is then written fully qualified and anchored at global scope,
+    so nothing nearer can shadow it, and the address is taken through an
+    explicit signature cast, so an overload set collapses to precisely the
+    declared shape at compile time.
+
+    Two handlers for one message type is caught by the whole-tree check, which is
+    the only scope where that question can be asked — see reflectgen.py's
+    --check-handlers.
+    """
+    open_ns  = ''.join(f'namespace {ns} {{ ' for ns in handler.namespaces)
+    close_ns = ''.join('} ' for _ in handler.namespaces)
+    scope    = '::'.join(['', *handler.namespaces, handler.name]) if handler.namespaces else f'::{handler.name}'
+    var      = f'_reflectgen_bind_{handler.name}_{handler.message.replace("::", "_")}'
+
+    return f"""\
+// ── handler: {handler.name} → {handler.message} {'─' * max(0, 40 - len(handler.name) - len(handler.message))}
+{open_ns}namespace {{
+const bool {var} = []() -> bool
+{{
+    // Resolved in the declaration's own scope, so it names the same type the
+    // declaration named — never whatever a second lookup elsewhere might find.
+    using MsgT = {handler.message};
+    Assisi::NetSync::MessageDispatch::Instance().Bind<MsgT>(
+        static_cast<void (*)(Assisi::NetSync::NetContext &, const MsgT &)>(&{scope}));
+    return true;
+}}();
+}} {close_ns}
+
+"""
+
+
+def generate_cpp(components: list[ComponentInfo], include_path: str, messages: Optional[list] = None,
+                 handlers: Optional[list] = None) -> str:
+    messages = messages or []
+    handlers = handlers or []
+
     # Default-deny is enforced here (not only in main) so every path that emits
     # code — the CLI and direct callers such as the golden tests — refuses an
     # unserializable field rather than silently dropping it.
     _check_unsupported(components, include_path)
+    _check_unsupported(messages, include_path)
     _check_asset_fields(components, include_path)
     _check_replication(components, include_path)
+    _check_messages(messages, include_path)
 
     component_infos = [c for c in components if not c.is_asset]
     asset_infos     = [c for c in components if c.is_asset]
@@ -381,7 +489,7 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
     # Enum fields (de)serialize through a std::int64_t cast, which needs <cstdint>.
     has_enums = any(
         f.enum_info is not None
-        for comp in components
+        for comp in [*components, *messages]
         if not comp.args.has('transient')
         for f in comp.fields
         if not f.args.has('transient')
@@ -398,6 +506,10 @@ def generate_cpp(components: list[ComponentInfo], include_path: str) -> str:
             includes.append('#include <Assisi/Runtime/SceneSerializer.hpp>')
     if asset_infos:
         includes.append('#include <Assisi/Core/Reflect/AssetTypeRegistry.hpp>')
+    if messages:
+        includes.append('#include <Assisi/Core/Reflect/MessageRegistry.hpp>')
+    if handlers:
+        includes.append('#include <Assisi/NetSync/MessageDispatch.hpp>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
@@ -518,7 +630,18 @@ static const bool {var_name} = []() -> bool
     for comp in asset_infos:
         blocks.append(_gen_asset_block(comp))
 
+    for msg in messages:
+        blocks.append(_gen_message_block(msg))
+
     blocks.append('} // namespace\n')
+
+    # Handler bindings sit *outside* the file's anonymous namespace because each
+    # one opens the handler's own namespace to resolve the message type there.
+    # They keep their own inner anonymous namespace, so the registrar objects are
+    # still internal to this translation unit.
+    for handler in handlers:
+        blocks.append('\n' + _gen_handler_block(handler))
+
     return ''.join(blocks)
 
 

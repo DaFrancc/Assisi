@@ -19,6 +19,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/Reflect/MessageRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
 
 namespace Assisi::Core::Reflect
@@ -457,6 +458,59 @@ std::string BoundText(bool present, float value)
     return ToHex64(std::bit_cast<std::uint32_t>(value));
 }
 
+/// One line per wire field: its codec index, name, type, and every parameter
+/// that changes what the bits *mean* rather than merely how many there are.
+///
+/// Shared by components and messages because they encode identically — the same
+/// FieldMeta walk, the same wire-field filter — and a description that drifted
+/// between the two would let a field type change be a protocol change on one
+/// side of the wire and not the other.
+void AppendWireFields(std::string &text, const std::vector<FieldMeta> &fields)
+{
+    std::size_t codecIndex = 0;
+    for (const FieldMeta &field : fields)
+    {
+        if (!IsWireField(field))
+            continue;
+
+        text += "  ";
+        text += std::to_string(codecIndex);
+        text += ' ';
+        text += field.name;
+        text += ' ';
+        text += FieldTypeName(field.type);
+
+        // Quantization parameters travel in the hash, not just the layout: two
+        // builds that quantize the same Vec3 over different ranges corrupt each
+        // other *silently*, which is the one failure mode a handshake exists to
+        // prevent. Today the parameters are the AFIELD min/max bounds and the
+        // enum width; when per-field quantization bit counts land in FieldMeta
+        // they must be appended here too.
+        text += " min=";
+        text += BoundText(field.hasMin, field.minValue);
+        text += " max=";
+        text += BoundText(field.hasMax, field.maxValue);
+
+        if (field.type == FieldType::Enum)
+        {
+            text += " esize=";
+            text += std::to_string(field.enumSize);
+            text += field.enumSigned ? " signed" : " unsigned";
+            // Enumerator *values* are wire semantics: renumbering one keeps the
+            // layout identical while changing what the bits mean.
+            for (const EnumConstant &constant : field.enumConstants)
+            {
+                text += ' ';
+                text += constant.name;
+                text += '=';
+                text += std::to_string(constant.value);
+            }
+        }
+        text += '\n';
+        ++codecIndex;
+    }
+}
+
 } // namespace
 
 std::size_t CountCodecFields(const ComponentMeta &meta)
@@ -521,6 +575,127 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     }
 
     return true;
+}
+
+bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &writer, const CodecContext *context)
+{
+    if (meta.id == kInvalidMessageId)
+    {
+        ASSISI_ASSERT(false, "WriteMessage: message id is not finalized — the registry finalizes lazily on "
+                             "first query, so call this only after startup registration.");
+        Log::Error("BinaryCodec: refusing to encode message '{}' — its MessageId is not finalized", meta.name);
+        return false;
+    }
+
+    // The body is built apart from the packet because the length prefix has to
+    // precede it and is only known once it is written. Copying it back in costs
+    // one pass over a few dozen bits; messages are small and rare next to state,
+    // and the alternative — reserving a fixed-width length and patching it — puts
+    // a mutable hole in a stream whose whole virtue is that it is append-only.
+    BitWriter body;
+    for (const FieldMeta &field : meta.fields)
+    {
+        if (!IsWireField(field))
+            continue;
+        if (!WriteField(field, FieldAddress(message, field.offset), body, context))
+        {
+            ASSISI_ASSERT(false, "WriteMessage: unencodable field type");
+            Log::Error("BinaryCodec: cannot encode message field '{}::{}' (type {}, enumSize {})", meta.name,
+                       field.name, FieldTypeName(field.type), field.enumSize);
+            return false;
+        }
+    }
+
+    // Bits, not bytes: the stream is bit-packed and a message body starts
+    // wherever the previous one ended, so byte-aligning it to make the prefix
+    // prettier would cost up to seven bits per message for nothing.
+    const std::size_t bodyBits = body.BitsWritten();
+    writer.WriteVarUInt32(meta.id);
+    writer.WriteVarUInt32(static_cast<std::uint32_t>(bodyBits));
+
+    BitReader   copy(body.Data());
+    std::size_t remaining = bodyBits;
+    while (remaining > 0)
+    {
+        const std::uint32_t chunk = static_cast<std::uint32_t>(std::min<std::size_t>(remaining, 64));
+        writer.WriteBits64(copy.ReadBits64(chunk), chunk);
+        remaining -= chunk;
+    }
+    return true;
+}
+
+MessageId ReadMessageId(BitReader &reader)
+{
+    const MessageId id = reader.ReadVarUInt32();
+    return reader.Failed() ? kInvalidMessageId : id;
+}
+
+bool ReadMessage(const MessageMeta &meta, void *message, BitReader &reader, const CodecContext *context)
+{
+    const std::uint32_t bodyBits = reader.ReadVarUInt32();
+    if (reader.Failed() || bodyBits > reader.BitsRemaining())
+    {
+        // A length past the end of the buffer is either a truncated packet or a
+        // hostile one, and both are the same answer.
+        reader.Invalidate();
+        return false;
+    }
+
+    const std::size_t bodyEnd = reader.BitsRead() + bodyBits;
+
+    for (const FieldMeta &field : meta.fields)
+    {
+        if (!IsWireField(field))
+            continue;
+        if (!ReadField(field, FieldAddress(message, field.offset), reader, context))
+        {
+            Log::Error("BinaryCodec: cannot decode message field '{}::{}' (type {}, enumSize {})", meta.name,
+                       field.name, FieldTypeName(field.type), field.enumSize);
+            return false;
+        }
+        if (reader.Failed())
+            return false;
+    }
+
+    // The declared length is the authority on where the next message starts, not
+    // where this one's fields happened to stop. They agree for a matched pair;
+    // when they do not, trusting the fields would misalign every message after
+    // this one, so the cursor is put where the sender said the body ended.
+    if (reader.BitsRead() != bodyEnd)
+    {
+        if (reader.BitsRead() > bodyEnd)
+        {
+            reader.Invalidate(); // read past the body: the two builds disagree
+            return false;
+        }
+        std::size_t skip = bodyEnd - reader.BitsRead();
+        while (skip > 0)
+        {
+            const std::uint32_t chunk = static_cast<std::uint32_t>(std::min<std::size_t>(skip, 64));
+            (void)reader.ReadBits64(chunk);
+            skip -= chunk;
+        }
+    }
+    return !reader.Failed();
+}
+
+bool SkipMessageBody(BitReader &reader)
+{
+    const std::uint32_t bodyBits = reader.ReadVarUInt32();
+    if (reader.Failed() || bodyBits > reader.BitsRemaining())
+    {
+        reader.Invalidate();
+        return false;
+    }
+
+    std::size_t skip = bodyBits;
+    while (skip > 0)
+    {
+        const std::uint32_t chunk = static_cast<std::uint32_t>(std::min<std::size_t>(skip, 64));
+        (void)reader.ReadBits64(chunk);
+        skip -= chunk;
+    }
+    return !reader.Failed();
 }
 
 ComponentId ReadComponentId(BitReader &reader)
@@ -606,55 +781,47 @@ std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
         // Only wire fields, and their codec index — so making a field transient
         // or norep shifts every later index and changes the hash, which is
         // correct: it changes the mask width and the payload order.
-        std::size_t codecIndex = 0;
-        for (const FieldMeta &field : meta.fields)
-        {
-            if (!IsWireField(field))
-                continue;
+        AppendWireFields(text, meta.fields);
+    }
+    return text;
+}
 
-            text += "  ";
-            text += std::to_string(codecIndex);
-            text += ' ';
-            text += field.name;
-            text += ' ';
-            text += FieldTypeName(field.type);
+std::string MessageLayoutDescription(std::span<const MessageMeta> messages)
+{
+    std::string text;
+    text.reserve(messages.size() * 128u);
 
-            // Quantization parameters travel in the hash, not just the layout:
-            // two builds that quantize the same Vec3 over different ranges
-            // corrupt each other *silently*, which is the one failure mode a
-            // handshake exists to prevent. Today the parameters are the AFIELD
-            // min/max bounds and the enum width; when per-field quantization bit
-            // counts land in FieldMeta they must be appended here too.
-            text += " min=";
-            text += BoundText(field.hasMin, field.minValue);
-            text += " max=";
-            text += BoundText(field.hasMax, field.maxValue);
+    text += "messages=";
+    text += std::to_string(messages.size());
+    text += '\n';
 
-            if (field.type == FieldType::Enum)
-            {
-                text += " esize=";
-                text += std::to_string(field.enumSize);
-                text += field.enumSigned ? " signed" : " unsigned";
-                // Enumerator *values* are wire semantics: renumbering one keeps
-                // the layout identical while changing what the bits mean.
-                for (const EnumConstant &constant : field.enumConstants)
-                {
-                    text += ' ';
-                    text += constant.name;
-                    text += '=';
-                    text += std::to_string(constant.value);
-                }
-            }
-            text += '\n';
-            ++codecIndex;
-        }
+    for (const MessageMeta &meta : messages)
+    {
+        text += std::to_string(meta.id);
+        text += ' ';
+        text += meta.name;
+
+        // Direction and reliability are wire *semantics* rather than layout, and
+        // they belong in the hash for the same reason `replicated` does: two
+        // builds that disagree about which way a message travels, or about
+        // whether it must arrive, have identical field descriptions and
+        // completely different behaviour. Reclassifying a message is a protocol
+        // change, and this is what makes it one.
+        text += meta.direction == MessageDirection::Intent ? " intent" : " event";
+        text += meta.reliability == MessageReliability::Reliable ? " reliable" : " unreliable";
+        if (meta.independent)
+            text += " independent";
+        text += '\n';
+
+        AppendWireFields(text, meta.fields);
     }
     return text;
 }
 
 std::string ProtocolLayoutDescription()
 {
-    return ProtocolLayoutDescription(ComponentRegistry::Instance().All());
+    return ProtocolLayoutDescription(ComponentRegistry::Instance().All()) +
+           MessageLayoutDescription(MessageRegistry::Instance().All());
 }
 
 std::uint64_t ProtocolHash(std::span<const ComponentMeta> components)
@@ -665,7 +832,8 @@ std::uint64_t ProtocolHash(std::span<const ComponentMeta> components)
 
 std::uint64_t ProtocolHash()
 {
-    return ProtocolHash(ComponentRegistry::Instance().All());
+    const std::string text = ProtocolLayoutDescription();
+    return ContentHash64(std::as_bytes(std::span{text.data(), text.size()}));
 }
 
 std::string ProtocolSummary(std::span<const ComponentMeta> components)
@@ -681,7 +849,15 @@ std::string ProtocolSummary(std::span<const ComponentMeta> components)
 
 std::string ProtocolSummary()
 {
-    return ProtocolSummary(ComponentRegistry::Instance().All());
+    std::string summary = "assisi-proto/";
+    summary += std::to_string(kCodecVersion);
+    summary += " components=";
+    summary += std::to_string(ComponentRegistry::Instance().Count());
+    summary += " messages=";
+    summary += std::to_string(MessageRegistry::Instance().Count());
+    summary += " hash=";
+    summary += ToHex64(ProtocolHash());
+    return summary;
 }
 
 } // namespace Assisi::Core::Reflect

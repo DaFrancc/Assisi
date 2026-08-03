@@ -783,6 +783,222 @@ class MalformedMacroTest(unittest.TestCase):
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
 
 
+def _parse_full(source: str):
+    """Parse an inline header string, returning (components, messages, handlers)."""
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "Temp.hpp"
+        path.write_text(source, encoding="utf-8")
+        return reflectgen.parse_header_full(path)
+
+
+class MessageGrammarTest(unittest.TestCase):
+    """AMSG(direction, reliability[, flags]) — mandatory, positional, ordered.
+
+    Every way of getting the grammar wrong is a build error that names the rule,
+    which is the whole argument for making both arguments mandatory: the
+    declaration states the entire wire contract with nothing to memorise, and a
+    default that changed later could never silently reclassify a message written
+    under the old one.
+    """
+
+    def test_both_arguments_are_recorded(self):
+        src = ("namespace N {\nAMSG(event, unreliable, independent)\n"
+               "struct Boom { AFIELD() uint32_t target = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].direction, "event")
+        self.assertEqual(messages[0].reliability, "unreliable")
+        self.assertTrue(messages[0].args.has("independent"))
+        self.assertEqual(messages[0].fqn, "N::Boom")
+
+    def test_missing_both_arguments_is_rejected(self):
+        src = "namespace N {\nAMSG()\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("no arguments", str(caught.exception))
+
+    def test_missing_reliability_is_rejected(self):
+        src = "namespace N {\nAMSG(event)\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("only one argument", str(caught.exception))
+
+    def test_swapped_arguments_are_named_as_swapped(self):
+        # The mistake the ordering rule exists to catch, and the fix is one
+        # transposition — so the error says so rather than reporting an unknown
+        # argument twice.
+        src = "namespace N {\nAMSG(reliable, event)\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("wrong way round", str(caught.exception))
+        self.assertIn("AMSG(event, reliable)", str(caught.exception))
+
+    def test_unknown_direction_is_rejected(self):
+        src = "namespace N {\nAMSG(broadcast, reliable)\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("not a direction", str(caught.exception))
+
+    def test_unknown_reliability_is_rejected(self):
+        src = "namespace N {\nAMSG(event, maybe)\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("not a reliability", str(caught.exception))
+
+    def test_unknown_flag_is_rejected(self):
+        src = ("namespace N {\nAMSG(event, reliable, buffered)\n"
+               "struct Boom { AFIELD() uint32_t t = 0; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("unknown AMSG flag", str(caught.exception))
+
+    def test_amsg_on_a_non_struct_is_rejected(self):
+        # Silently walking past it would leave the author believing a type is on
+        # the wire when nothing registered it.
+        src = "namespace N {\nAMSG(event, reliable)\nvoid NotAStruct();\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("not followed by a 'struct'", str(caught.exception))
+
+    def test_norep_in_a_message_is_rejected(self):
+        src = ("namespace N {\nAMSG(event, reliable)\n"
+               "struct Boom { AFIELD(norep) uint32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("only to cross the wire", str(caught.exception))
+
+    def test_transient_in_a_message_is_rejected(self):
+        src = ("namespace N {\nAMSG(event, reliable)\n"
+               "struct Boom { AFIELD(transient) uint32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("no persistent form", str(caught.exception))
+
+    def test_a_message_registers_with_its_grammar(self):
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Go { AFIELD() uint32_t target = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Go.hpp", messages)
+        self.assertIn("MessageRegistry::Instance().Register", cpp)
+        self.assertIn("MessageDirection::Intent", cpp)
+        self.assertIn("MessageReliability::Reliable", cpp)
+        self.assertIn("using T = N::Go;", cpp)
+
+
+class MessageHandlerTest(unittest.TestCase):
+    """AMSG_HANDLER() declarations, and the binding they generate."""
+
+    _SRC = (
+        "namespace Game {\n"
+        "AMSG(intent, reliable)\n"
+        "struct Fire { AFIELD() uint32_t weapon = 0; };\n"
+        "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
+        "}\n"
+    )
+
+    def test_handler_is_found_with_its_namespace_and_message(self):
+        _, _, handlers = _parse_full(self._SRC)
+        self.assertEqual(len(handlers), 1)
+        self.assertEqual(handlers[0].name, "HandleFire")
+        self.assertEqual(handlers[0].namespaces, ["Game"])
+        self.assertEqual(handlers[0].message, "Fire")
+        self.assertEqual(handlers[0].fqn, "::Game::HandleFire")
+
+    def test_binding_is_emitted_in_the_declarations_own_namespace(self):
+        _, messages, handlers = _parse_full(self._SRC)
+        cpp = reflectgen.generate_cpp([], "Game/Fire.hpp", messages, handlers)
+        # The message type is resolved where the declaration resolved it...
+        self.assertIn("namespace Game {", cpp)
+        self.assertIn("using MsgT = Fire;", cpp)
+        # ...the handler is named from global scope, so nothing nearer can
+        # shadow it...
+        self.assertIn("&::Game::HandleFire", cpp)
+        # ...and the signature is pinned, so an overload set cannot drift.
+        self.assertIn("static_cast<void (*)(Assisi::NetSync::NetContext &, const MsgT &)>", cpp)
+
+    def test_a_non_void_handler_is_rejected(self):
+        src = ("namespace Game {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
+               "AMSG_HANDLER() bool HandleFire(NetContext &ctx, const Fire &msg);\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("returns void", str(caught.exception))
+
+    def test_a_handler_without_a_context_is_not_matched(self):
+        # The signature is fixed, and a declaration that does not have it is not
+        # a handler at all — which surfaces as "no handler for this message"
+        # rather than as a silently wrong binding.
+        src = ("namespace Game {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
+               "AMSG_HANDLER() void HandleFire(const Fire &msg);\n}\n")
+        _, _, handlers = _parse_full(src)
+        self.assertEqual(handlers, [])
+
+    def test_two_handlers_for_one_message_is_a_build_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            first = Path(d) / "A.hpp"
+            first.write_text(
+                "namespace Game {\n"
+                "AMSG(intent, reliable)\n"
+                "struct Fire { AFIELD() uint32_t w = 0; };\n"
+                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
+                "}\n", encoding="utf-8")
+            second = Path(d) / "B.hpp"
+            second.write_text(
+                "namespace Other {\n"
+                "AMSG_HANDLER() void AlsoHandleFire(NetContext &ctx, const Game::Fire &msg);\n"
+                "}\n", encoding="utf-8")
+
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_message_handlers([first, second])
+            message = str(caught.exception)
+            self.assertIn("two handlers are declared", message)
+            # Both sites are named, because "one of these is wrong" is not
+            # actionable without knowing which two.
+            self.assertIn("HandleFire", message)
+            self.assertIn("AlsoHandleFire", message)
+
+    def test_a_handler_for_an_unknown_message_is_a_build_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(
+                "namespace Game {\n"
+                "AMSG_HANDLER() void HandleNothing(NetContext &ctx, const Missing &msg);\n"
+                "}\n", encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_message_handlers([path])
+            self.assertIn("names no AMSG message type", str(caught.exception))
+
+    def test_an_ambiguous_message_name_is_a_build_error(self):
+        # The same struct name in two namespaces, and a handler declared in
+        # neither. Guessing which one it meant is exactly what the rule forbids.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(
+                "namespace A {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n"
+                "namespace B {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n"
+                "namespace C {\n"
+                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
+                "}\n", encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_message_handlers([path])
+            self.assertIn("ambiguous", str(caught.exception))
+
+    def test_an_enclosing_namespace_disambiguates(self):
+        # ...and when the handler *is* declared inside one of the candidates,
+        # that is not ambiguity — it is the same rule C++ itself would use.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(
+                "namespace A {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
+                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n}\n"
+                "namespace B {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n",
+                encoding="utf-8")
+            summary = reflectgen.check_message_handlers([path])
+            self.assertIn("A::Fire -> A::HandleFire", summary)
+            self.assertIn("B::Fire -> (no handler)", summary)
+
+
 class IncludePathTest(unittest.TestCase):
     def test_detects_path_after_include_segment(self):
         p = Path("modules") / "Runtime" / "include" / "Assisi" / "Runtime" / "Foo.hpp"

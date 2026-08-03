@@ -6,11 +6,15 @@ add_library(Assisi-NetSync-TestComponents INTERFACE)
 target_include_directories(Assisi-NetSync-TestComponents INTERFACE
   "${CMAKE_CURRENT_SOURCE_DIR}/support/include"
 )
-target_link_libraries(Assisi-NetSync-TestComponents INTERFACE Assisi::ECS)
+# NetSync rather than ECS alone: the handler declarations take a NetContext,
+# which is what makes them handlers rather than functions that happen to be
+# named like them.
+target_link_libraries(Assisi-NetSync-TestComponents INTERFACE Assisi::ECS Assisi::NetSync)
 assisi_reflect(
   TARGET Assisi-NetSync-TestComponents
   HEADERS
     support/include/Assisi/NetSync/TestNetComponents.hpp
+    support/include/Assisi/NetSync/TestMessageHandlers.hpp
 )
 
 add_executable(Assisi-NetSync-Tests
@@ -23,6 +27,7 @@ add_executable(Assisi-NetSync-Tests
   TestControl.cpp
   TestDistanceRelevancy.cpp
   TestInstancePolicy.cpp
+  TestMessages.cpp
   TestRelevancy.cpp
   TestReplication.cpp
 )

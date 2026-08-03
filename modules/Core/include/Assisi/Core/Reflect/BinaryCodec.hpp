@@ -53,6 +53,7 @@
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
+#include <Assisi/Core/Reflect/MessageMeta.hpp>
 
 namespace Assisi::Core::Reflect
 {
@@ -181,6 +182,52 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
 bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader,
                    FieldMask *appliedMask = nullptr, const CodecContext *context = nullptr);
 
+// ── Messages ──────────────────────────────────────────────────────────────────
+// A message is a reflected struct, so it encodes through the same field walk a
+// component does. Two things differ, and both come from what a message *is*:
+// there is no baseline to delta against (an event is not a value that has a
+// previous version), so every field always goes; and the payload is
+// length-prefixed, so a reader that does not recognise the id can step over the
+// body instead of losing the rest of the packet.
+//
+// The length prefix buys *skip*, not tolerance. With dense ids, a peer holding a
+// different message set would step over the right number of bytes and then
+// dispatch the wrong type for every id after the divergence. Real forward and
+// backward tolerance needs stable, name-derived ids and a handshake policy that
+// permits the mismatch in the first place; the prefix is what keeps that a
+// policy change rather than a format rewrite, for the day a title ships with
+// independent client and server patch cadences.
+
+/// @brief Writes a complete message block: id varint, byte length, then every
+/// field.
+///
+/// @return false if the message could not be encoded — an unfinalized id, too
+/// many fields, or a `FieldType::Unknown` field. Loud, for the same reason
+/// WriteComponent is: shipping a block the receiver will misparse is worse than
+/// refusing to ship one.
+bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &writer,
+                  const CodecContext *context = nullptr);
+
+/// @brief Reads the `MessageId` prefix of a block. The caller resolves it to a
+/// `MessageMeta` and then calls ReadMessage — or, for an id it does not know,
+/// SkipMessageBody.
+[[nodiscard]] MessageId ReadMessageId(BitReader &reader);
+
+/// @brief Reads a message body into @p message, which must be a
+/// default-constructed instance of @p meta's type.
+///
+/// Unlike ReadComponent this is not a patch: a message has no baseline, so
+/// every field on the wire is written and the caller starts from a fresh value.
+bool ReadMessage(const MessageMeta &meta, void *message, BitReader &reader,
+                 const CodecContext *context = nullptr);
+
+/// @brief Step over the body of a message whose id this build does not know.
+///
+/// Reads the length prefix and advances past that many bits, leaving the reader
+/// positioned at the next message. Fails the reader if the length runs past the
+/// buffer — a hostile length must not be able to rewind or overrun.
+bool SkipMessageBody(BitReader &reader);
+
 // ── Protocol identity ─────────────────────────────────────────────────────────
 // Two builds must agree on the component table and every field's wire encoding
 // before a single snapshot is exchanged. Layout agreement alone is not enough:
@@ -206,7 +253,20 @@ inline constexpr std::uint8_t kCodecVersion = 1;
 /// wire-compatible, and hashing offsets would reject them for nothing.
 [[nodiscard]] std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components);
 
-/// @brief ProtocolLayoutDescription over the whole ComponentRegistry, in id order.
+/// @brief The message half of the same text: every registered `AMSG` in id
+/// order, with its direction, reliability, and wire fields.
+[[nodiscard]] std::string MessageLayoutDescription(std::span<const MessageMeta> messages);
+
+/// @brief ProtocolLayoutDescription over the whole ComponentRegistry *and* the
+/// whole MessageRegistry, in id order.
+///
+/// Messages are in here because that is what makes declaring one a versioning
+/// event: add a message, reorder its fields, or flip it from unreliable to
+/// reliable, and the hash moves, so a mismatched pair refuses to connect rather
+/// than misparsing each other. It is the story Unity built deliberately
+/// (RpcCollectionVersion), Godot approximates with an undiagnosable whole-set
+/// checksum, and Mirror gets wrong at sixteen bits — and here it falls out of
+/// messages being reflected structs.
 [[nodiscard]] std::string ProtocolLayoutDescription();
 
 /// @brief FNV-1a 64 of ProtocolLayoutDescription — the value exchanged at

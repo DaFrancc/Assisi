@@ -43,10 +43,15 @@ from reflect_parser import (  # noqa: F401
     RadioInfo,
     FieldInfo,
     ComponentInfo,
+    MessageInfo,
+    HandlerInfo,
     parse_header,
+    parse_header_full,
     parse_annot_args,
+    parse_amsg_args,
     parse_radio_spec,
     parse_enum_constants,
+    find_handlers,
     strip_comments,
     _detect_include_path,
 )
@@ -128,6 +133,101 @@ inline constexpr std::size_t kReplicableMaskBytes = {mask_bytes};
 """
 
 
+def _resolve_message_type(handler, messages_by_fqn: dict, header_name: str) -> str:
+    """The fully-qualified, ::-anchored spelling of the message a handler takes.
+
+    Resolved *here* rather than left to C++ name lookup, because the generated
+    table lives in its own translation unit at global scope where the handler's
+    enclosing namespaces are not in scope — and because leaving it to lookup is
+    exactly how the wrong function gets called when two namespaces declare the
+    same struct name. Anything that cannot be resolved to exactly one message is
+    a build error naming the candidates, never a guess.
+    """
+    written = handler.message.lstrip(':')
+
+    # Already qualified enough to name exactly one message.
+    exact = [fqn for fqn in messages_by_fqn if fqn == written or fqn.endswith('::' + written)]
+    if len(exact) == 1:
+        return '::' + exact[0]
+
+    if not exact:
+        raise ValueError(
+            f"{header_name}: handler '{handler.name}' takes 'const {handler.message} &', which names no "
+            f"AMSG message type. Known messages: {sorted(messages_by_fqn) or '(none)'}.")
+
+    # Several candidates. The handler's own namespace decides, if it can — a
+    # handler declared inside a namespace that holds one of them is naming that
+    # one, by the same rule C++ would use.
+    scope = '::'.join(handler.namespaces)
+    enclosing = [fqn for fqn in exact
+                 if scope and (fqn.startswith(scope + '::') or fqn == scope + '::' + written)]
+    if len(enclosing) == 1:
+        return '::' + enclosing[0]
+
+    raise ValueError(
+        f"{header_name}: handler '{handler.name}' takes 'const {handler.message} &', which is ambiguous "
+        f"between {sorted(exact)}. Spell the message type fully qualified in the declaration — a handler "
+        f"binding must never depend on which one a name-lookup happens to find.")
+
+
+def collect_messages_and_handlers(headers) -> tuple[dict, list]:
+    """Scan the whole tree once: every AMSG type, and every AMSG_HANDLER.
+
+    Tolerant of headers it cannot parse, exactly as count_replicable is and for
+    the same reason: a malformed header is already a hard error in the per-header
+    pass, and repeating the failure here would bury the real message.
+    """
+    messages_by_fqn: dict = {}
+    handlers: list = []
+    for header in headers:
+        try:
+            _, messages, found = parse_header_full(Path(header).resolve())
+        except Exception:
+            continue
+        for msg in messages:
+            messages_by_fqn[msg.fqn] = (msg, str(header))
+        handlers.extend(found)
+    return messages_by_fqn, handlers
+
+
+def check_message_handlers(headers) -> str:
+    """One handler per message type, checked across the whole tree.
+
+    Two modules each claiming the same message would otherwise be resolved by
+    link order — which is to say by accident, differently on different
+    platforms, and silently. Whole-tree is the only scope at which the question
+    is meaningful, which is why this is a separate pass from the per-header
+    codegen that emits the bindings themselves.
+
+    Returns a human-readable summary; raises on a duplicate, naming both sites.
+    """
+    messages_by_fqn, handlers = collect_messages_and_handlers(headers)
+
+    bound: dict = {}
+    for handler in sorted(handlers, key=lambda h: (h.header, h.name)):
+        message_fqn = _resolve_message_type(handler, messages_by_fqn, Path(handler.header).name)
+        if message_fqn in bound:
+            first = bound[message_fqn]
+            raise ValueError(
+                f"two handlers are declared for message '{message_fqn.lstrip(':')}':\n"
+                f"  {first.fqn} in {first.header}\n"
+                f"  {handler.fqn} in {handler.header}\n"
+                f"A message type has exactly one handler. Two would be resolved by link order, "
+                f"which is to say by accident.")
+        bound[message_fqn] = handler
+
+    lines = [f'{len(messages_by_fqn)} message type(s), {len(bound)} handler(s)']
+    for message_fqn, handler in sorted(bound.items()):
+        lines.append(f'  {message_fqn.lstrip(":")} -> {handler.fqn.lstrip(":")}')
+    # Not an error. A message nobody handles is a normal state — one side of the
+    # wire may simply not care about it — and it is dropped and counted at
+    # dispatch. Listing it is how someone notices a handler they meant to write,
+    # without the build refusing to proceed over a decision that is theirs.
+    for fqn in sorted(set(messages_by_fqn) - {f.lstrip(':') for f in bound}):
+        lines.append(f'  {fqn} -> (no handler)')
+    return '\n'.join(lines) + '\n'
+
+
 def main():
     parser = argparse.ArgumentParser(description='Assisi reflection code generator')
     parser.add_argument('headers', nargs='+', type=Path,
@@ -141,7 +241,22 @@ def main():
                         help='Instead of generating registrations, count ACOMP(replicable) '
                              'types across every header given and write ReplicableLimits.hpp '
                              'to this path.')
+    parser.add_argument('--check-handlers', dest='check_out', type=Path, default=None,
+                        help='Instead of generating registrations, check that no message type '
+                             'has two AMSG_HANDLER declarations across every header given, and '
+                             'write the handler map to this path.')
     args = parser.parse_args()
+
+    if args.check_out is not None:
+        args.check_out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            text = check_message_handlers(args.headers)
+        except Exception as error:
+            print(f'reflectgen: error: {error}', file=sys.stderr)
+            sys.exit(1)
+        args.check_out.write_text(text, encoding='utf-8')
+        print(f'reflectgen: {text.splitlines()[0]}')
+        sys.exit(0)
 
     if args.count_out is not None:
         args.count_out.parent.mkdir(parents=True, exist_ok=True)
@@ -166,17 +281,35 @@ def main():
         # rejected header should print the reason it was rejected, not a Python
         # traceback with the reason buried at the bottom.
         try:
-            components = parse_header(header)
+            components, messages, handlers = parse_header_full(header)
             _check_unsupported(components, header.name)
 
-            if not components:
-                print(f'  (no ACOMP annotations found, skipping)')
+            if not components and not messages and not handlers:
+                # Still write the file, empty. The build declares this path as an
+                # output, so producing nothing turns a header that legitimately
+                # registers nothing — a handler-only header, say — into a missing
+                # file and a confusing compile error somewhere downstream.
+                print(f'  (no ACOMP or AMSG annotations found — writing an empty registration unit)')
+                out = args.outdir / (header.stem + '.generated.cpp')
+                out.write_text(f'// AUTO-GENERATED by reflectgen — do not edit.\n'
+                               f'// Source: {include_path}\n'
+                               f'//\n'
+                               f'// This header declares nothing that registers. AMSG_HANDLER declarations\n'
+                               f'// are bound by the whole-tree pass instead (--message-handlers), so a\n'
+                               f'// handler-only header lands here empty and that is correct.\n',
+                               encoding='utf-8')
+                print(f'  wrote: {out}')
                 continue
 
             for comp in components:
                 print(f'  found: {comp.name} ({len(comp.fields)} field(s))')
+            for msg in messages:
+                print(f'  found: {msg.name} (message, {msg.direction}/{msg.reliability}, '
+                      f'{len(msg.fields)} field(s))')
+            for handler in handlers:
+                print(f'  found: {handler.name} (handler for {handler.message})')
 
-            cpp = generate_cpp(components, include_path)
+            cpp = generate_cpp(components, include_path, messages, handlers)
         except Exception as e:
             print(f'  error: {e}', file=sys.stderr)
             ok = False

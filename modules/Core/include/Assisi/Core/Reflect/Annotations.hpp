@@ -111,6 +111,59 @@
 /// (serialization, network replication interception).
 #define AEVENT(...)
 
+/// AMSG(direction, reliability[, flags]) — marks a struct as a network message,
+/// which is what other engines spell as an RPC.
+///
+///   AMSG(intent, reliable)                struct PlantBomb    { ... };
+///   AMSG(intent, unreliable)              struct PingMarker   { ... };
+///   AMSG(event,  unreliable)              struct Detonated    { ... };
+///   AMSG(event,  reliable)                struct MatchStarted { ... };
+///   AMSG(event,  unreliable, independent) struct ChatLine     { ... };
+///
+/// **Both positional arguments are mandatory, in that order.** Direction first
+/// — `intent` (client → server, never trusted) or `event` (server → client,
+/// authoritative) — then reliability. Missing, swapped, or unknown arguments are
+/// build errors that name the rule. Explicitness over defaults: the declaration
+/// states the whole wire contract with nothing to memorise, and no future change
+/// of default can silently reclassify a message written under the old one.
+///
+/// Reliability is per *type*, never per send. A message that is sometimes
+/// reliable has an unclear meaning, and the per-type declaration is what lets a
+/// panel show reliable traffic broken down by type.
+///
+/// The one optional flag is `independent`: this message names no entity, so
+/// relevancy has nothing to scope it by and nothing to hold it for.
+///
+/// A message is a plain reflected struct with AFIELD members, so it gets the
+/// binary and JSON codecs, the inspector, and — the part that matters — a place
+/// in the protocol hash, all through the machinery components already use.
+/// Addressing is *data*: a message about an entity carries a NetId field, rather
+/// than being "called on" anything. See Assisi/Core/Reflect/MessageMeta.hpp.
+///
+/// reflectgen hard-fails on AFIELD(norep) and AFIELD(transient) inside an AMSG —
+/// a message exists only to cross the wire, so a field that never crosses it
+/// does nothing, and there is no persistent form to be excluded from.
+#define AMSG(...)
+
+/// AMSG_HANDLER() — marks a declaration as the handler for one message type.
+///
+///   AMSG_HANDLER() void HandleChatSend(NetContext &ctx, const ChatSend &msg);
+///
+/// The declaration *is* the registration: reflectgen's whole-tree pass emits one
+/// translation unit binding every handler to its type, fully qualified and
+/// behind an explicit signature cast, so nothing about which function gets
+/// called is left to name lookup or link order. Two handlers for one message
+/// type is a build error naming both sites.
+///
+/// The signature is fixed — `void(NetContext &, const T &)` — and the rigidity
+/// is the point: it keeps the scan a fixed-shape pattern match rather than a C++
+/// signature parser. Free functions only; a lambda has no declaration to scan,
+/// and `static` or anonymous-namespace functions have no linkage for the table
+/// to reference.
+///
+/// See Assisi/NetSync/MessageDispatch.hpp.
+#define AMSG_HANDLER(...)
+
 /// AENUM() — marks an `enum class` so reflectgen records its enumerators, making
 /// it usable as an AFIELD type (serialized by value, edited as a dropdown). The
 /// enum must be defined in the same header as the component(s) that use it, and

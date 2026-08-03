@@ -159,6 +159,47 @@ function(assisi_generate_replicable_limits)
     target_include_directories(Assisi-Core PUBLIC "${CMAKE_BINARY_DIR}/generated")
 endfunction()
 
+# Fail the build if two AMSG_HANDLER declarations claim the same message type.
+#
+# The bindings themselves are emitted per header, into the same OBJECT library
+# as that header's component registrations — which is where they belong, because
+# a handler must ship with the module that declares it and with nobody else. An
+# OBJECT library is never stripped, so linkage is already guaranteed by the same
+# mechanism component registration relies on.
+#
+# What per-header codegen cannot see is the *other* headers, so uniqueness gets
+# its own whole-tree pass. Call once, from the top level, after every
+# add_subdirectory() — same contract as assisi_generate_replicable_limits(), and
+# for the same reason: the header list is only complete then.
+function(assisi_check_message_handlers)
+    get_property(_headers GLOBAL PROPERTY ASSISI_REFLECTED_HEADERS)
+    if (NOT _headers)
+        message(FATAL_ERROR
+            "assisi_check_message_handlers: no reflected headers registered. "
+            "Call this after the add_subdirectory() calls that invoke assisi_reflect().")
+    endif()
+
+    set(_dir "${CMAKE_BINARY_DIR}/generated/messages")
+    set(_out "${_dir}/HandlerMap.txt")
+    set(_tmp "${_out}.tmp")
+
+    # The map is written as a file rather than only printed so it is inspectable
+    # after the fact: "which handler is bound to this message, and is anything
+    # unhandled" is a question worth being able to answer without re-running the
+    # build. copy_if_different keeps an unchanged map from touching mtimes.
+    add_custom_command(
+        OUTPUT  "${_out}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_dir}"
+        COMMAND Python3::Interpreter "${_ASSISI_REFLECTGEN}" ${_headers} --check-handlers "${_tmp}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_tmp}" "${_out}"
+        DEPENDS ${_headers} "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
+        COMMENT "reflectgen: checking message handlers"
+        VERBATIM
+    )
+
+    add_custom_target(Assisi-MessageHandlerCheck ALL DEPENDS "${_out}")
+endfunction()
+
 # Call once on each final executable (or shared library) to force-include
 # all reflection registration code produced by assisi_reflect() calls.
 function(assisi_link_reflections target)

@@ -46,4 +46,48 @@ struct LocalOnly
     AFIELD() int32_t value = 0;
 };
 
+/// @brief One message per cell of the AMSG grammar, so every combination has
+/// something to be true about.
+///
+/// A test build is the only place all four exist together; a real game would
+/// declare whichever it needs. They are also what the registry, the codec
+/// round-trip, the hash-moves property, and the generated handler table are
+/// exercised against — none of which can be tested by a build that registers no
+/// messages at all.
+
+/// @brief Client → server, must arrive. The shape of a deliberate action whose
+/// loss the player would notice.
+AMSG(intent, reliable)
+struct TestPlaceMarker
+{
+    AFIELD() uint32_t target = 0;
+    AFIELD() int32_t  slot   = 0;
+};
+
+/// @brief Client → server, freshest wins. The spammy case, where a resent stale
+/// message is worse than a lost one.
+AMSG(intent, unreliable)
+struct TestPing
+{
+    AFIELD() float x = 0.f;
+    AFIELD() float y = 0.f;
+};
+
+/// @brief Server → client, loss tolerable. The default form: rides the snapshot,
+/// so its ordering against the entity it names is free.
+AMSG(event, unreliable)
+struct TestBurst
+{
+    AFIELD() uint32_t source    = 0;
+    AFIELD() int32_t  intensity = 1;
+};
+
+/// @brief Server → client, must arrive, and names no entity — so there is
+/// nothing for relevancy to scope it by and nothing to hold it for.
+AMSG(event, reliable, independent)
+struct TestAnnounce
+{
+    AFIELD() int32_t round = 0;
+};
+
 } // namespace Assisi::NetSync::Test

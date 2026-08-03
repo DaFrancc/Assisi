@@ -72,6 +72,47 @@ class ComponentInfo:
     is_asset:   bool = False  # True for AASSET (standalone asset), False for ACOMP
 
 
+@dataclass
+class MessageInfo:
+    """One AMSG(direction, reliability[, extras]) struct.
+
+    Direction and reliability are mandatory *positional* arguments in that
+    order, so the declaration states the whole wire contract with no defaults to
+    remember and no way for a changed default to silently reclassify an existing
+    message. Everything after them is a flag.
+    """
+    name:        str
+    namespaces:  list           # e.g. ['MyGame', 'Chat']
+    direction:   str            # 'intent' | 'event'
+    reliability: str            # 'reliable' | 'unreliable'
+    args:        AnnotArgs      # the remaining flags, e.g. `independent`
+    fields:      list           # list[FieldInfo]
+
+    @property
+    def fqn(self) -> str:
+        return '::'.join(self.namespaces + [self.name]) if self.namespaces else self.name
+
+
+@dataclass
+class HandlerInfo:
+    """One AMSG_HANDLER() declaration: `void Name(NetContext &, const T &);`
+
+    The registration step other engines automate (Unity's generated RPC systems,
+    Unreal's UHT) is automated here too — a declaration in a reflected header
+    *is* the registration, and the generated table binds it by fully-qualified
+    name with an explicit signature cast, so nothing about scoping is left to
+    lookup rules.
+    """
+    name:       str    # unqualified function name
+    namespaces: list   # enclosing namespaces at the declaration
+    message:    str    # the message type as written, e.g. 'ChatSend' or 'A::B::ChatSend'
+    header:     str    # source header, for diagnostics
+
+    @property
+    def fqn(self) -> str:
+        return '::'.join(['', *self.namespaces, self.name]) if self.namespaces else f'::{self.name}'
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Annotation argument parser
 # ──────────────────────────────────────────────────────────────────────────────
@@ -160,6 +201,29 @@ _ACOMP_RE  = re.compile(r'\bACOMP\s*\(([^)]*)\)')
 _AASSET_RE = re.compile(r'\bAASSET\s*\(([^)]*)\)')
 _AENUM_RE  = re.compile(r'\bAENUM\s*\(([^)]*)\)')
 _AFIELD_RE = re.compile(r'\bAFIELD\s*\(([^)]*)\)')
+_AMSG_RE   = re.compile(r'\bAMSG\s*\(([^)]*)\)')
+
+# AMSG_HANDLER() followed by exactly one shape:
+#   void Name(NetContext &ctx, const MessageType &msg);
+# Rigid on purpose. The rigidity is what keeps this a fixed-shape pattern match
+# rather than a C++ signature parser — extracting one type from one fixed
+# pattern does not reopen the function-parsing problem that AMSG-as-a-struct
+# exists to avoid, because the wire form still comes entirely from the struct.
+# Parameter names are optional (a declaration may omit them) and the reference
+# markers may sit against either token.
+_AMSG_HANDLER_RE = re.compile(
+    r'\bAMSG_HANDLER\s*\(\s*\)\s*'
+    r'(?P<ret>[\w:]+)\s+'                       # return type (must be void)
+    r'(?P<name>\w+)\s*\('
+    r'\s*(?P<ctx>[\w:]+)\s*&\s*\w*\s*,'         # NetContext &ctx
+    r'\s*const\s+(?P<msg>[\w:]+)\s*&\s*\w*\s*'  # const T &msg
+    r'\)\s*;'
+)
+
+# Both AMSG positional arguments, in the order the grammar fixes.
+_AMSG_DIRECTIONS   = ('intent', 'event')
+_AMSG_RELIABILITY  = ('reliable', 'unreliable')
+_AMSG_EXTRA_FLAGS  = {'independent'}
 _STRUCT_RE = re.compile(r'\bstruct\s+(\w+)')
 # `enum class Name` / `enum struct Name`, with an optional `: underlying`. Both
 # the name (group 1) and the underlying-type spelling (group 2, up to the body's
@@ -390,6 +454,122 @@ _FIELD_RE  = re.compile(
 )
 
 
+def parse_amsg_args(content: str, struct_name: str, header_name: str) -> tuple[str, str, AnnotArgs]:
+    """Parse `AMSG(direction, reliability[, extras])` into its three parts.
+
+    The two positional arguments are mandatory and ordered, and every way of
+    getting that wrong is a hard build error that names the rule. Explicitness
+    over defaults, for two reasons: the declaration states the entire wire
+    contract with nothing to memorise, and a default that changed later could
+    never silently reclassify messages that were written under the old one.
+    """
+    where = f"{header_name}: message '{struct_name}'"
+    grammar = ("AMSG takes two mandatory arguments in this order — direction "
+               "('intent' or 'event'), then reliability ('reliable' or 'unreliable') — "
+               "optionally followed by flags. For example: "
+               "AMSG(event, unreliable, independent).")
+
+    tokens = [tok.strip() for tok in _split_args(content) if tok.strip()]
+    if len(tokens) < 2:
+        raise ValueError(
+            f"{where} is declared '{'AMSG(' + content.strip() + ')'}', which names "
+            f"{'no arguments' if not tokens else 'only one argument'}. {grammar}")
+
+    direction, reliability = tokens[0], tokens[1]
+
+    # Swapped is called out by name rather than lumped in with "unknown", because
+    # it is the mistake the ordering rule exists to catch and the fix is one
+    # transposition.
+    if direction in _AMSG_RELIABILITY and reliability in _AMSG_DIRECTIONS:
+        raise ValueError(
+            f"{where} is declared 'AMSG({direction}, {reliability})' — the two arguments are "
+            f"the right way round for each other but the wrong way round for the grammar. "
+            f"Write 'AMSG({reliability}, {direction})'. {grammar}")
+
+    if direction not in _AMSG_DIRECTIONS:
+        raise ValueError(
+            f"{where} has '{direction}' as its first argument, which is not a direction. "
+            f"{grammar}")
+    if reliability not in _AMSG_RELIABILITY:
+        raise ValueError(
+            f"{where} has '{reliability}' as its second argument, which is not a reliability. "
+            f"{grammar}")
+
+    extras = parse_annot_args(','.join(tokens[2:]))
+    unknown = extras.flags - _AMSG_EXTRA_FLAGS
+    if unknown:
+        raise ValueError(
+            f"{where} has unknown AMSG flag(s) {sorted(unknown)}; the only flag is "
+            f"'independent' (this message names no entity, so relevancy has nothing to "
+            f"scope it by and nothing to hold it for).")
+    if extras.kvs:
+        raise ValueError(
+            f"{where} has AMSG key = value argument(s) {sorted(extras.kvs)}; AMSG takes "
+            f"two positional arguments and flags, nothing else.")
+
+    return direction, reliability, extras
+
+
+def find_handlers(text: str, path: Path) -> list:
+    """Every AMSG_HANDLER() declaration in an already-comment-stripped header.
+
+    Namespace tracking is a second, independent walk rather than being folded
+    into parse_header's state machine: handlers are found by one rigid regex over
+    the whole text, and threading that through a character-by-character scanner
+    designed around struct bodies would complicate the common path for a rare
+    declaration.
+    """
+    handlers: list = []
+    for match in _AMSG_HANDLER_RE.finditer(text):
+        where = f"{path.name}: handler '{match.group('name')}'"
+        if match.group('ret') != 'void':
+            raise ValueError(
+                f"{where} returns '{match.group('ret')}'. A message handler returns void — "
+                f"there is nowhere for a return value to go, because a reply is state and "
+                f"the state channel already carries it.")
+        if not match.group('ctx').endswith('NetContext'):
+            raise ValueError(
+                f"{where} takes '{match.group('ctx')} &' as its first parameter, but every "
+                f"handler has the same signature: void Name(NetContext &, const T &).")
+
+        # Namespaces enclosing this declaration: count braces before it, tracking
+        # the namespace stack exactly as parse_header does.
+        namespaces = _namespaces_at(text, match.start())
+        handlers.append(HandlerInfo(name=match.group('name'), namespaces=namespaces,
+                                    message=match.group('msg'), header=str(path)))
+    return handlers
+
+
+def _namespaces_at(text: str, position: int) -> list:
+    """The namespace stack in effect at @p position of a comment-stripped header."""
+    ns_stack: list = []
+    ns_depths: list = []
+    depth = 0
+    i = 0
+    while i < position:
+        ns_m = _NS_RE.match(text, i)
+        if ns_m:
+            j = ns_m.end()
+            while j < position and text[j] in ' \t\n\r':
+                j += 1
+            if j < position and text[j] == '{':
+                for part in ns_m.group(1).split('::'):
+                    ns_stack.append(part)
+                    ns_depths.append(depth)
+                depth += 1
+                i = j + 1
+                continue
+        if text[i] == '{':
+            depth += 1
+        elif text[i] == '}':
+            depth -= 1
+            while ns_depths and ns_depths[-1] >= depth:
+                ns_stack.pop()
+                ns_depths.pop()
+        i += 1
+    return ns_stack
+
+
 def _extract_brace_body(text: str, start: int) -> tuple[Optional[str], int]:
     """
     Find the brace-balanced body at or after `start`.
@@ -446,8 +626,19 @@ def parse_header(path: Path) -> list[ComponentInfo]:
     any component field whose type names one is resolved to it (enum_info),
     which is what lets reflectgen (de)serialize the field and emit its combo.
     """
+    return parse_header_full(path)[0]
+
+
+def parse_header_full(path: Path) -> tuple[list, list, list]:
+    """Everything a header declares: (components, messages, handlers).
+
+    parse_header stays the components-only facade because that is what almost
+    every caller and every existing test wants; this is the form the message
+    milestone needs.
+    """
     text = strip_comments(path.read_text(encoding='utf-8'))
     components: list[ComponentInfo] = []
+    messages: list = []
     # Enum lookups, keyed by both the unqualified name and the fully-qualified
     # spelling so a field can reference the enum either way.
     enums: dict[str, EnumInfo] = {}
@@ -459,6 +650,7 @@ def parse_header(path: Path) -> list[ComponentInfo]:
     n               = len(text)
     pending_acomp: Optional[AnnotArgs] = None
     pending_is_asset = False
+    pending_amsg: Optional[str] = None  # the raw AMSG(...) argument text
 
     while i < n:
         # ── Namespace ───────────────────────────────────────────────────────
@@ -488,6 +680,11 @@ def parse_header(path: Path) -> list[ComponentInfo]:
             pending_is_asset = True
             i = aasset_m.end()
             continue
+        amsg_m = _AMSG_RE.match(text, i)
+        if amsg_m:
+            pending_amsg = amsg_m.group(1)
+            i = amsg_m.end()
+            continue
         aenum_m = _AENUM_RE.match(text, i)
         if aenum_m:
             # AENUM must be immediately followed (bar whitespace) by an
@@ -514,6 +711,38 @@ def parse_header(path: Path) -> list[ComponentInfo]:
             enums[fqn] = info
             i = end
             continue
+
+        # ── Struct (only matters after AMSG) ─────────────────────────────────
+        if pending_amsg is not None:
+            struct_m = _STRUCT_RE.match(text, i)
+            if struct_m:
+                name = struct_m.group(1)
+                body, end = _extract_brace_body(text, struct_m.end())
+                if body is not None:
+                    direction, reliability, extras = parse_amsg_args(pending_amsg, name, path.name)
+                    messages.append(MessageInfo(
+                        name=name,
+                        namespaces=list(ns_stack),
+                        direction=direction,
+                        reliability=reliability,
+                        args=extras,
+                        fields=_find_fields_in_body(body, str(path)),
+                    ))
+                    pending_amsg = None
+                    brace_depth += body.count('{') - body.count('}')
+                    i = end
+                    continue
+                pending_amsg = None
+            elif not text[i].isspace():
+                # An AMSG followed by anything but a struct is a malformed
+                # annotation, not something to walk past: a message *is* a
+                # struct, and silently ignoring the macro would leave the author
+                # believing a type is on the wire when nothing registered it.
+                snippet = ' '.join(text[i:i + 60].split())
+                raise ValueError(
+                    f"{path.name}: AMSG is not followed by a 'struct' definition "
+                    f"(got: '{snippet}...'). A message is a plain reflected struct — see "
+                    f"Assisi/Core/Reflect/MessageMeta.hpp for why it is not a function.")
 
         # ── Struct (only matters after ACOMP/AASSET) ────────────────────────
         if pending_acomp is not None:
@@ -554,13 +783,18 @@ def parse_header(path: Path) -> list[ComponentInfo]:
     for comp in components:
         for f in comp.fields:
             f.enum_info = enums.get(f.cpp_type)
+    for msg in messages:
+        for f in msg.fields:
+            f.enum_info = enums.get(f.cpp_type)
 
     # Radio references resolve against sibling fields (and their enum_info), so
     # this must run after enum resolution. Any misuse raises here.
     for comp in components:
         _resolve_radio(comp, path.name)
+    for msg in messages:
+        _resolve_radio(msg, path.name)
 
-    return components
+    return components, messages, find_handlers(text, path)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
