@@ -443,6 +443,28 @@ void ReplicationServer::ClearControl(ECS::Entity entity)
     }
 }
 
+NetId ReplicationServer::EnsureNetId(ECS::Entity entity)
+{
+    if (entity == ECS::NullEntity || !_scene.IsAlive(entity))
+        return InvalidNetId;
+
+    if (const NetId existing = NetIdOf(entity); existing != InvalidNetId)
+        return existing;
+
+    // Only for entities that actually replicate — handing an id to something the
+    // snapshot will never mention would make an event reference resolve to
+    // nothing on arrival, which is worse than resolving to nothing here.
+    if (!_scene.Has<Replicated>(entity))
+        return InvalidNetId;
+
+    const NetId netId = _nextNetId++;
+    _netIdByEntity.emplace(PackEntity(entity), netId);
+    _entityByNetId.emplace(netId, entity);
+    // Ids only ever climb, so the live set stays sorted by appending.
+    _liveNetIds.push_back(netId);
+    return netId;
+}
+
 ClientId ReplicationServer::ControllerOf(ECS::Entity entity) const
 {
     if (const ControlledBy *claim = _scene.Get<ControlledBy>(entity))
@@ -1098,6 +1120,260 @@ void ReplicationServer::DispatchIntent(ClientId sender, ConnectionDiagnostics &d
         ++diagnostics.intentsAccepted;
 }
 
+std::size_t ReplicationServer::EventFloorBytes(const Connection &connection) const
+{
+    // Nothing waiting, nothing allowed. A game that sends no events must not pay
+    // for the feature — the same performance-first rule that makes relevancy
+    // cost nothing without a provider.
+    return connection.pendingEvents.empty() ? 0 : _config.reservedEventBytes;
+}
+
+bool ReplicationServer::EventReaches(const Connection &connection, NetId subject) const
+{
+    if (!connection.ready)
+        return false;
+    if (subject == InvalidNetId)
+        return true; // independent: nothing to scope it by, so everyone ready
+    // The relevancy boundary, reused rather than re-derived. This is what makes
+    // the zero-bytes guarantee cover messages and not only state.
+    return IsRelevant(connection.id, subject);
+}
+
+void ReplicationServer::QueueEvent(Connection &connection, NetId subject, std::vector<std::byte> bytes)
+{
+    while (connection.pendingEvents.size() >= _config.maxHeldEventsPerConnection)
+    {
+        // Oldest first. A queue at its cap is a connection being told about
+        // entities it will never hold, and the newest event is the one most
+        // likely to still be about something.
+        connection.pendingEvents.pop_front();
+        ++connection.diagnostics.eventsOverflowed;
+    }
+    connection.pendingEvents.push_back(Connection::PendingEvent{subject, std::move(bytes)});
+    connection.diagnostics.eventsHeld = static_cast<std::uint32_t>(connection.pendingEvents.size());
+}
+
+void ReplicationServer::SendEvent(const void *event, std::type_index type, Recipients recipients, ClientId who)
+{
+    const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
+    const Core::Reflect::MessageId        id       = registry.IdOf(type);
+    const Core::Reflect::MessageMeta     *meta     = registry.ById(id);
+    if (meta == nullptr)
+    {
+        Core::Log::Error("NetSync: refusing to send an event of an unregistered type — is it AMSG?");
+        return;
+    }
+
+    // Encoded once. Entity references translate to NetIds identically for every
+    // recipient, so there is nothing per-connection about the bytes.
+    //
+    // Assigned on demand rather than looked up: spawning something and
+    // announcing it in the same frame is the common case, and NetIds are
+    // otherwise handed out at the next tick — so a lookup would silently encode
+    // "nothing" for exactly the entity the event is about.
+    Core::Reflect::CodecContext codec;
+    codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
+    { return static_cast<std::uint64_t>(EnsureNetId(UnpackEntity(packed))); };
+
+    Core::BitWriter writer;
+    if (!Core::Reflect::WriteMessage(*meta, event, writer, &codec))
+        return;
+    const std::span<const std::byte> encoded = writer.Data();
+    std::vector<std::byte>           bytes(encoded.begin(), encoded.end());
+
+    // What relevancy scopes this by: the first entity the message names. An
+    // `independent` event names none by declaration, and reflectgen refuses an
+    // event that names none without saying so.
+    NetId subject = InvalidNetId;
+    if (!meta->independent)
+    {
+        for (const Core::Reflect::FieldMeta &field : meta->fields)
+        {
+            if (field.type != Core::Reflect::FieldType::EntityRef)
+                continue;
+            const std::uint64_t packed =
+                *reinterpret_cast<const std::uint64_t *>(static_cast<const std::byte *>(event) + field.offset);
+            subject = EnsureNetId(UnpackEntity(packed));
+            break;
+        }
+    }
+
+    const bool reliable = meta->reliability == Core::Reflect::MessageReliability::Reliable;
+
+    const auto deliver = [&](Connection &connection)
+    {
+        if (reliable)
+        {
+            // Immediately, on the control lane, stamped with the tick the client
+            // must have applied before it may act on this. Rare by design — see
+            // MessageType::Announcement.
+            Core::BitWriter announcement;
+            WriteMessageType(MessageType::Announcement, announcement);
+            announcement.WriteVarUInt64(_simTick);
+            announcement.WriteVarUInt32(subject);
+            announcement.WriteBytes(bytes);
+            _transport.Send(connection.id, announcement.Data(), Net::SendMode::Reliable, Net::Lane::Control);
+            ++connection.diagnostics.announcementsSent;
+            return;
+        }
+        QueueEvent(connection, subject, bytes);
+    };
+
+    const auto deliverToHost = [&]()
+    {
+        // No transport, no reliability distinction: the host's own delivery is a
+        // queue drained at the end of its tick, which gives it the same
+        // "the world is at least as new as the message" property packet ordering
+        // gives a remote client.
+        _hostEvents.emplace_back(id, bytes);
+    };
+
+    switch (recipients)
+    {
+    case Recipients::AllRelevant:
+    case Recipients::ExceptInstigator:
+    {
+        const bool exclude = recipients == Recipients::ExceptInstigator;
+        for (auto &[connectionId, connection] : _connections)
+        {
+            (void)connectionId;
+            if (exclude && connection.clientId == who)
+                continue;
+            if (EventReaches(connection, subject))
+                deliver(connection);
+        }
+        // The authority sees everything, so the host is in the all-relevant
+        // class by definition — and can be the excluded instigator like anyone
+        // else.
+        if (!exclude || who != HostClientId)
+            deliverToHost();
+        break;
+    }
+
+    case Recipients::Directed:
+    {
+        if (!who.IsValid())
+        {
+            // Nobody to address. Reachable honestly — an uncontrolled entity has
+            // no controller — so it is counted rather than treated as an error,
+            // on the host's counters since no connection owns the failure.
+            ++_hostDiagnostics.eventsUndeliverable;
+            return;
+        }
+        if (who == HostClientId)
+        {
+            deliverToHost();
+            return;
+        }
+        const auto connectionId = _connectionByClient.find(who.value);
+        if (connectionId == _connectionByClient.end())
+        {
+            ++_hostDiagnostics.eventsUndeliverable;
+            return;
+        }
+        const auto connection = _connections.find(connectionId->second);
+        if (connection == _connections.end() || !connection->second.ready)
+        {
+            ++_hostDiagnostics.eventsUndeliverable;
+            return;
+        }
+        // A directed event is addressed to a person, not to a viewpoint, so it
+        // deliberately does *not* consult relevancy: "you died" must reach you
+        // whether or not your corpse is in your own set.
+        deliver(connection->second);
+        break;
+    }
+    }
+}
+
+void ReplicationServer::WriteEventSection(Connection &connection, Core::BitWriter &writer,
+                                          const SentSnapshot &record)
+{
+    // The section is allowed to run *past* the snapshot's soft cap, by the
+    // configured floor, rather than having those bytes held back from the entity
+    // and body passes.
+    //
+    // Reserving up front does not work: those passes stop when they are already
+    // at the budget, and the last entity written can overshoot it by more than
+    // the reservation — so the "floor" would be gone exactly when the world is
+    // busiest, which is when events most need it. Overrunning a soft cap by a
+    // bounded amount, only when something is waiting, actually guarantees it.
+    const std::size_t limit = _config.maxSnapshotBytes + EventFloorBytes(connection);
+
+    // Bool-chained like the entity and body sections, for the same reason: a
+    // count would have to be known before the first record is written, which
+    // means predicting the budget cut instead of discovering it.
+    std::size_t index = 0;
+    while (index < connection.pendingEvents.size())
+    {
+        Connection::PendingEvent &pending = connection.pendingEvents[index];
+
+        // The subject despawned before this connection ever heard of it, so the
+        // event is now about nothing.
+        if (pending.subject != InvalidNetId &&
+            !std::binary_search(_liveNetIds.begin(), _liveNetIds.end(), pending.subject))
+        {
+            connection.pendingEvents.erase(connection.pendingEvents.begin() +
+                                           static_cast<std::ptrdiff_t>(index));
+            ++connection.diagnostics.eventsEvicted;
+            continue;
+        }
+
+        // Acked, or written into this very packet — the same test the body-state
+        // gate uses, and what makes a message about an entity spawned in this
+        // snapshot arrive *after* the spawn without any ordering machinery.
+        const bool known = pending.subject == InvalidNetId ||
+                           std::binary_search(connection.acked.begin(), connection.acked.end(), pending.subject) ||
+                           std::binary_search(record.netIds.begin(), record.netIds.end(), pending.subject);
+        if (!known)
+        {
+            ++index; // held: the entity may arrive in a later snapshot
+            continue;
+        }
+
+        if (writer.BytesWritten() + pending.bytes.size() > limit)
+            break; // out of room even with the allowance; try next tick
+
+        writer.WriteBool(true);
+        writer.WriteBytes(pending.bytes);
+        connection.pendingEvents.erase(connection.pendingEvents.begin() + static_cast<std::ptrdiff_t>(index));
+        ++connection.diagnostics.eventsSent;
+    }
+
+    writer.WriteBool(false);
+    connection.diagnostics.eventsHeld = static_cast<std::uint32_t>(connection.pendingEvents.size());
+}
+
+void ReplicationServer::DispatchHostEvents()
+{
+    if (_hostEvents.empty())
+        return;
+
+    // Swapped out first: a handler may send further events, and appending to the
+    // vector being iterated would either reallocate under it or run this tick's
+    // consequences inside this tick's drain.
+    std::vector<std::pair<Core::Reflect::MessageId, std::vector<std::byte>>> events;
+    events.swap(_hostEvents);
+
+    Core::Reflect::CodecContext codec;
+    codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
+    { return PackEntity(EntityOf(static_cast<NetId>(wire))); };
+
+    NetContext context{HostClientId, _session, &_scene};
+
+    for (const auto &[id, bytes] : events)
+    {
+        const Core::Reflect::MessageMeta *meta = Core::Reflect::MessageRegistry::Instance().ById(id);
+        if (meta == nullptr)
+            continue;
+
+        Core::BitReader reader(bytes);
+        (void)Core::Reflect::ReadMessageId(reader);
+        if (!MessageDispatch::Instance().Dispatch(*meta, context, reader, &codec))
+            ++_hostDiagnostics.intentsUnhandled;
+    }
+}
+
 void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index type)
 {
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
@@ -1705,6 +1981,14 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     const std::size_t writtenFromComponents = record.written.size();
     WriteBodyStates(connection, effective, writer, record, writtenFromComponents);
 
+    // Last, after the entity blocks and the body states, so a message about an
+    // entity established earlier *in this same packet* inherits its ordering
+    // from the framing itself. That is the one genuine improvement the survey
+    // found in replicon's tick-sync guarantee, and here it costs nothing: the
+    // snapshot already carries the tick and the wire order already puts entity
+    // blocks first.
+    WriteEventSection(connection, writer, record);
+
     // All three are built in ascending order — except `written`, which the body
     // pass may have appended to — so keep the invariant explicit, since the ack
     // path binary-searches them.
@@ -1761,6 +2045,11 @@ void ReplicationServer::Tick(std::uint64_t simTick)
         if (connection.ready)
             SendSnapshot(connection);
     }
+
+    // End of tick: after every state mutation this tick produced, so a host-side
+    // handler sees a world at least as new as the message it is handling — the
+    // property a remote client gets free from packet ordering.
+    DispatchHostEvents();
 }
 
 // ===========================================================================
@@ -1866,6 +2155,120 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
     return true;
 }
 
+void ReplicationClient::DispatchEvent(const Core::Reflect::MessageMeta &meta, Core::BitReader &reader)
+{
+    Core::Reflect::CodecContext codec;
+    codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
+    {
+        const ECS::Entity mirror = EntityOf(static_cast<NetId>(wire));
+        return (static_cast<std::uint64_t>(mirror.index)) | (static_cast<std::uint64_t>(mirror.generation) << 32);
+    };
+
+    NetContext context{InvalidClientId, _session, &_scene};
+    if (!MessageDispatch::Instance().Dispatch(meta, context, reader, &codec))
+    {
+        // Normal: the server's build may care about something this one does
+        // not. Counted so a handler somebody meant to write is a number rather
+        // than a silence.
+        ++_eventsUnhandled;
+        (void)Core::Reflect::SkipMessageBody(reader);
+        return;
+    }
+    ++_eventsDispatched;
+}
+
+bool ReplicationClient::ApplyEventSection(Core::BitReader &reader)
+{
+    while (reader.Ok() && reader.ReadBool())
+    {
+        const Core::Reflect::MessageId id = Core::Reflect::ReadMessageId(reader);
+        if (!reader.Ok() || id == Core::Reflect::kInvalidMessageId)
+            return false;
+
+        const Core::Reflect::MessageMeta *meta = Core::Reflect::MessageRegistry::Instance().ById(id);
+        if (meta == nullptr)
+        {
+            // An id this build does not know. The length prefix is exactly what
+            // makes stepping over it possible instead of losing the rest of the
+            // packet — and the handshake means it should never happen between a
+            // matched pair.
+            if (!Core::Reflect::SkipMessageBody(reader))
+                return false;
+            ++_eventsUnhandled;
+            continue;
+        }
+
+        DispatchEvent(*meta, reader);
+    }
+    return reader.Ok();
+}
+
+void ReplicationClient::HandleAnnouncement(Core::BitReader &reader)
+{
+    DeferredAnnouncement pending;
+    pending.serverTick = reader.ReadVarUInt64();
+    pending.subject    = reader.ReadVarUInt32();
+    pending.messageId  = Core::Reflect::ReadMessageId(reader);
+    if (!reader.Ok() || pending.messageId == Core::Reflect::kInvalidMessageId)
+        return;
+
+    // The body is copied whole — id prefix and all — so the deferred path and
+    // the immediate one decode identically rather than through two readers with
+    // two chances to disagree.
+    const std::size_t bodyStart = (reader.BitsRead() - 0) / 8;
+    (void)bodyStart;
+
+    // Re-encode the id in front of the body so DispatchEvent sees the same shape
+    // it sees in the snapshot section.
+    Core::BitWriter body;
+    body.WriteVarUInt32(pending.messageId);
+    const std::uint32_t bodyBits = reader.ReadVarUInt32();
+    body.WriteVarUInt32(bodyBits);
+    std::size_t remaining = bodyBits;
+    while (remaining > 0 && reader.Ok())
+    {
+        const std::uint32_t chunk = static_cast<std::uint32_t>(std::min<std::size_t>(remaining, 64));
+        body.WriteBits64(reader.ReadBits64(chunk), chunk);
+        remaining -= chunk;
+    }
+    if (!reader.Ok())
+        return;
+
+    const std::span<const std::byte> encoded = body.Data();
+    pending.bytes.assign(encoded.begin(), encoded.end());
+    _deferredAnnouncements.push_back(std::move(pending));
+
+    // Try immediately: an announcement about a world we have already caught up
+    // to has nothing to wait for.
+    DrainAnnouncements();
+}
+
+void ReplicationClient::DrainAnnouncements()
+{
+    for (auto it = _deferredAnnouncements.begin(); it != _deferredAnnouncements.end();)
+    {
+        // Two conditions, and both are about the same thing: does the world this
+        // message describes exist here yet. The tick stamp covers state the
+        // message implies; the entity check covers the one it names.
+        const bool tickReached = _lastAppliedTick >= it->serverTick;
+        const bool subjectHere = it->subject == InvalidNetId || EntityOf(it->subject) != ECS::NullEntity;
+        if (!tickReached || !subjectHere)
+        {
+            ++it;
+            continue;
+        }
+
+        const Core::Reflect::MessageMeta *meta = Core::Reflect::MessageRegistry::Instance().ById(it->messageId);
+        if (meta != nullptr)
+        {
+            Core::BitReader reader(it->bytes);
+            (void)Core::Reflect::ReadMessageId(reader);
+            DispatchEvent(*meta, reader);
+        }
+        it = _deferredAnnouncements.erase(it);
+    }
+}
+
 void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
 {
     Core::BitReader   reader(payload);
@@ -1910,6 +2313,11 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
         ConfirmLevelReady();
         break;
     }
+
+    case MessageType::Announcement:
+        if (_synchronized)
+            HandleAnnouncement(reader);
+        break;
 
     case MessageType::Reject:
     {
@@ -2163,6 +2571,17 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     ++_snapshotsApplied;
     _worldComplete = header.worldComplete;
     _feedback      = ClockFeedback{header.serverTick, header.inputBufferDepth, header.starvedTicks};
+
+    // After the state, never before. A handler for an event about an entity
+    // spawned in this same packet must find that entity already there, and the
+    // wire order plus this call site are the entire mechanism — no per-message
+    // sequencing, no waiting.
+    if (!ApplyEventSection(reader))
+        return false;
+
+    // ...and the tick just moved, so an announcement that was waiting for it may
+    // now have its world.
+    DrainAnnouncements();
 
     SendAck(header.serverTick);
     return true;

@@ -112,6 +112,15 @@ enum class MessageType : std::uint8_t
     /// attacker-shaped messages meeting hand-written parsing spread across many
     /// receive sites, and one validated door is the only structural answer.
     Intent = 8,
+    /// Server → client: one `AMSG(event, reliable)`, tick-stamped.
+    ///
+    /// Rare by design. Both Quake 3 and Unreal hit the same reliable-buffer
+    /// cliff — Unreal's overflow *closes the connection* — and both mitigations
+    /// amount to asking every call site to budget against a global. The
+    /// unreliable form rides the snapshot instead, and the documented rule is
+    /// that a type sending at snapshot cadence belongs there or is state wearing
+    /// an event costume.
+    Announcement = 9,
 
     Count
 };
@@ -139,7 +148,9 @@ enum class RejectReason : std::uint8_t
 ///
 ///  - 3 → 4: `ServerHello.clientId` (docs/replication-messaging-relevancy-plan-v1.md M0).
 ///  - 4 → 5: `MessageType::Intent` and its envelope (same plan, M4).
-inline constexpr std::uint32_t kNetProtocolVersion = 5;
+///  - 5 → 6: the snapshot's message section, and `MessageType::Announcement`
+///    (same plan, M5).
+inline constexpr std::uint32_t kNetProtocolVersion = 6;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

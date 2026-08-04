@@ -81,6 +81,8 @@ bool NetSession::Join(std::string_view address, std::uint16_t port, bool deferHa
     }
 
     _client = std::make_unique<ReplicationClient>(*_transport, _scene, _connection, _physics);
+    // So a handler's NetContext can reach back out to send further messages.
+    _client->SetOwningSession(this);
     // Before the first Poll: a hello that arrives and is answered immediately
     // cannot be un-answered.
     _client->SetDeferHandshake(deferHandshake);

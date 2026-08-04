@@ -93,11 +93,16 @@ struct TestMovePawn
 
 /// @brief Server → client, loss tolerable. The default form: rides the snapshot,
 /// so its ordering against the entity it names is free.
+///
+/// `source` is the entity this is about, and it is what relevancy scopes the
+/// message by — a connection that cannot see the entity is not told the event
+/// happened either, which is the zero-bytes guarantee covering messages and not
+/// only state.
 AMSG(event, unreliable)
 struct TestBurst
 {
-    AFIELD() uint32_t source    = 0;
-    AFIELD() int32_t  intensity = 1;
+    AFIELD() Assisi::ECS::Entity source;
+    AFIELD() int32_t             intensity = 1;
 };
 
 /// @brief A registered intent that nothing handles.

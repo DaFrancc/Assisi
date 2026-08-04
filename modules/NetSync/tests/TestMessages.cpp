@@ -148,7 +148,7 @@ TEST_CASE("a message round-trips through JSON")
     REQUIRE(meta->serialize != nullptr);
     REQUIRE(meta->deserialize != nullptr);
 
-    const TestBurst sent{/*source=*/9, /*intensity=*/33};
+    const TestBurst sent{ECS::Entity{9, 1}, /*intensity=*/33};
     const nlohmann::json json = meta->serialize(&sent);
 
     TestBurst received;
@@ -301,7 +301,7 @@ TEST_CASE("the generated table binds every handler, and binds each to its own ty
     CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(3.5f));
     CHECK(HandlerLog::Instance().lastPing.y == doctest::Approx(-1.25f));
 
-    CHECK(deliver(TestBurst{/*source=*/5, /*intensity=*/9}));
+    CHECK(deliver(TestBurst{ECS::NullEntity, /*intensity=*/9}));
     CHECK(HandlerLog::Instance().burstCalls == 1);
 
     CHECK(deliver(TestAnnounce{/*round=*/3}));
@@ -329,11 +329,10 @@ TEST_CASE("a message value fills in from nothing, not from the last one")
         return MessageDispatch::Instance().Dispatch(*meta, context, reader);
     };
 
-    CHECK(deliver(TestBurst{/*source=*/99, /*intensity=*/42}));
-    CHECK(HandlerLog::Instance().lastBurst.source == 99);
+    CHECK(deliver(TestBurst{ECS::NullEntity, /*intensity=*/42}));
+    CHECK(HandlerLog::Instance().lastBurst.intensity == 42);
 
     CHECK(deliver(TestBurst{}));
-    CHECK(HandlerLog::Instance().lastBurst.source == 0);
     CHECK(HandlerLog::Instance().lastBurst.intensity == 1); // the field's own default
 }
 

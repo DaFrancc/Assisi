@@ -165,6 +165,28 @@ struct ReplicationConfig
     std::uint32_t intentStaleWindowTicks = 120; ///< Two seconds at 60 Hz.
     std::uint32_t intentLeadWindowTicks  = 60;  ///< One second of client lead.
 
+    /// Bytes the message section may run *past* maxSnapshotBytes by, when
+    /// something is waiting to go out.
+    ///
+    /// An allowance rather than a reservation, and the difference is the whole
+    /// point. Holding bytes back up front does not work: the entity and body
+    /// passes stop once they are already at the budget, and the last entity
+    /// written can overshoot by more than any reservation — so the floor would
+    /// evaporate exactly when the world is busiest, which is when events most
+    /// need it. maxSnapshotBytes is a soft cap already; overrunning it by a
+    /// bounded amount, only when a connection has events pending, is what
+    /// actually guarantees a full world cannot permanently starve them.
+    std::size_t reservedEventBytes = 96;
+
+    /// How many unreliable events one connection may have waiting for the
+    /// entities they are about. Past this, the oldest is dropped and counted.
+    ///
+    /// A queue that grows without bound is a connection whose events are about
+    /// entities it will never be told about, which is a bug in the game's
+    /// scoping rather than a condition to absorb. The cap makes it visible in
+    /// bytes instead of in memory.
+    std::size_t maxHeldEventsPerConnection = 64;
+
     /// Bounds a command must satisfy before the simulation sees it.
     InputLimits inputLimits;
 
@@ -355,6 +377,27 @@ struct ConnectionDiagnostics
     /// Dropped because the bytes did not decode: truncated, malformed, or an id
     /// this build has never heard of.
     std::uint64_t intentsMalformed   = 0;
+
+    // ── Events ───────────────────────────────────────────────────────────────
+
+    /// Unreliable events written into this connection's snapshot sections.
+    std::uint64_t eventsSent         = 0;
+    /// Reliable announcements sent on the control lane. Worth its own number:
+    /// the rule is that these are rare, and a rule nobody can see is a rule
+    /// nobody keeps.
+    std::uint64_t announcementsSent  = 0;
+    /// Events waiting for the entity they are about to arrive. A number that
+    /// climbs and stays high means the game is talking about entities this
+    /// connection will never be told about.
+    std::uint32_t eventsHeld         = 0;
+    /// Held events dropped because their subject despawned before it ever
+    /// arrived — the event is now about nothing.
+    std::uint64_t eventsEvicted      = 0;
+    /// Held events dropped because the queue hit its cap, oldest first.
+    std::uint64_t eventsOverflowed   = 0;
+    /// Directed events with nobody to direct them at: an uncontrolled entity,
+    /// or a client that has left.
+    std::uint64_t eventsUndeliverable = 0;
 };
 
 /// @brief The authoritative half. Owns NetId assignment and snapshot sending.
@@ -525,6 +568,71 @@ class ReplicationServer
         DispatchLocalIntent(&intent, typeid(T));
     }
 
+    // ── Sending events ───────────────────────────────────────────────────────
+    // Three recipient classes, and no fourth. Membership of each is *computed*
+    // from relevancy and control, never enumerated by gameplay code: an
+    // arbitrary per-call connection list is the API through which an event leaks
+    // exactly what state filtering withholds, and it duplicates in every call
+    // site the recipient computation relevancy already owns in one place.
+    //
+    // Delivery form comes from the type, not the call: an `AMSG(event,
+    // unreliable)` rides the next snapshot, where its ordering against the
+    // entity it names is free; an `AMSG(event, reliable)` goes out immediately
+    // on the control lane with a tick stamp the client defers against.
+
+    /// @brief To everyone who can see the entity this event is about.
+    ///
+    /// The default, and structural: the section is built per connection
+    /// alongside that connection's entity blocks, so "who can see it" is
+    /// already computed. An `independent` event, naming no entity, goes to
+    /// every ready connection instead.
+    ///
+    /// The host is included — the authority sees everything — through a local
+    /// queue dispatched at the end of its own tick.
+    template <typename T>
+    void Send(const T &event)
+    {
+        static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Event,
+                      "A server sends AMSG(event, ...). An intent is a request, and the server does not "
+                      "make requests of itself.");
+        SendEvent(&event, typeid(T), Recipients::AllRelevant, InvalidClientId);
+    }
+
+    /// @brief To exactly one client: whoever controls @p entity.
+    ///
+    /// Dropped and counted when nobody does — an uncontrolled entity has no
+    /// controller to address, and guessing would mean picking someone.
+    template <typename T>
+    void SendToController(ECS::Entity entity, const T &event)
+    {
+        static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Event,
+                      "A server sends AMSG(event, ...).");
+        SendEvent(&event, typeid(T), Recipients::Directed, ControllerOf(entity));
+    }
+
+    /// @brief To exactly one client, named directly. For session-level events
+    /// with no entity involved.
+    template <typename T>
+    void SendTo(ClientId client, const T &event)
+    {
+        static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Event,
+                      "A server sends AMSG(event, ...).");
+        SendEvent(&event, typeid(T), Recipients::Directed, client);
+    }
+
+    /// @brief To everyone who can see it, except @p instigator.
+    ///
+    /// For events the instigator has already shown itself locally — the
+    /// `COND_SkipOwner` pattern every system has. The host can be the excluded
+    /// instigator like anyone else.
+    template <typename T>
+    void SendExcept(ClientId instigator, const T &event)
+    {
+        static_assert(Core::Reflect::MessageTraits<T>::direction == Core::Reflect::MessageDirection::Event,
+                      "A server sends AMSG(event, ...).");
+        SendEvent(&event, typeid(T), Recipients::ExceptInstigator, instigator);
+    }
+
     /// @brief The scene the session is bound to. Handlers reach the world
     /// through the context rather than through a global.
     [[nodiscard]] ECS::Scene &Scene() { return _scene; }
@@ -676,6 +784,31 @@ class ReplicationServer
         std::uint64_t rateWindowTick   = 0;
         std::uint32_t packetsInWindow  = 0;
 
+        /// One unreliable event waiting for the next snapshot section.
+        struct PendingEvent
+        {
+            /// The entity this event is about, or InvalidNetId for an
+            /// `independent` one. What relevancy scoped it by, and what it
+            /// waits for.
+            NetId subject = InvalidNetId;
+
+            /// The encoded message block, id and length prefix included.
+            /// Encoded once server-side and copied per recipient — entity
+            /// references translate to NetIds identically for everyone, so
+            /// there is nothing per-connection about the bytes.
+            std::vector<std::byte> bytes;
+        };
+
+        /// Events queued for this connection's next snapshot.
+        ///
+        /// **Held, not dropped.** An event about an entity the connection does
+        /// not hold yet — a spawn the byte budget cut, a mid-join page — waits
+        /// until that entity lands. That is the body-state gate's rule with the
+        /// opposite resolution, and deliberately so: a state can wait for the
+        /// next tick because the next tick restates it, while an event cannot
+        /// be regenerated.
+        std::deque<PendingEvent> pendingEvents;
+
         /// The same window, per *message type*, for intents.
         ///
         /// Per type rather than one bucket for all of them: a client spamming
@@ -747,6 +880,40 @@ class ReplicationServer
     /// dispatch. Everything before it is transport.
     void DispatchIntent(ClientId sender, ConnectionDiagnostics &diagnostics,
                         const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
+
+    /// Who an event goes to. Three classes, computed rather than enumerated.
+    enum class Recipients : std::uint8_t
+    {
+        AllRelevant,      ///< Everyone whose set contains the subject.
+        Directed,         ///< One named client.
+        ExceptInstigator, ///< All-relevant, minus one.
+    };
+
+    /// The type-erased half of Send/SendTo/SendToController/SendExcept.
+    void SendEvent(const void *event, std::type_index type, Recipients recipients, ClientId who);
+
+    /// Bytes the message section may run past the snapshot's soft cap by: zero
+    /// when nothing is waiting, the configured floor otherwise.
+    [[nodiscard]] std::size_t EventFloorBytes(const Connection &connection) const;
+
+    /// This entity's NetId, assigning one if it replicates and has none yet.
+    ///
+    /// The lazy assignment in ReconcileNetIds happens once per tick, which
+    /// leaves a window every frame where a just-spawned entity has no wire
+    /// identity — and "spawn it and announce it" is the common case, not an
+    /// exotic one. Returns InvalidNetId for anything that does not replicate.
+    NetId EnsureNetId(ECS::Entity entity);
+
+    /// Whether @p connection should receive an event scoped to @p subject.
+    [[nodiscard]] bool EventReaches(const Connection &connection, NetId subject) const;
+
+    /// Queue an already-encoded unreliable event for one connection's next
+    /// snapshot section, evicting the oldest if the queue is over its cap.
+    void QueueEvent(Connection &connection, NetId subject, std::vector<std::byte> bytes);
+
+    /// Write the snapshot's message section: every pending event whose subject
+    /// this connection already holds, or which this same packet just delivered.
+    void WriteEventSection(Connection &connection, Core::BitWriter &writer, const SentSnapshot &record);
 
     /// Encode and re-decode the host's own intent so it travels the identical
     /// path a remote one does.
@@ -901,6 +1068,19 @@ class ReplicationServer
     /// Where the host's own intent counters go — see HostDiagnostics().
     ConnectionDiagnostics _hostDiagnostics;
 
+    /// Events addressed to the host's own player, waiting for the end of the
+    /// tick.
+    ///
+    /// The host has no connection, so nothing would otherwise deliver to it —
+    /// which would make chat, this design's own example, invisible to the
+    /// person hosting. Dispatched after every state mutation for the tick, so a
+    /// handler sees a world at least as new as the message, which is the
+    /// property a remote client gets free from packet ordering.
+    std::vector<std::pair<Core::Reflect::MessageId, std::vector<std::byte>>> _hostEvents;
+
+    /// Drain _hostEvents through the same handler path a client uses.
+    void DispatchHostEvents();
+
     /// The escape classes, resolved once per tick in ReconcileNetIds rather
     /// than per connection: both lists are tiny (an entity opting out of the
     /// provider is by definition unusual), and evaluating them per connection
@@ -1037,6 +1217,19 @@ class ReplicationClient
     /// anything uncontrolled, anything someone else controls, and everything
     /// before the handshake.
     [[nodiscard]] bool ControlsEntity(ECS::Entity entity) const;
+
+    /// @brief The session this client belongs to, for handler contexts.
+    void SetOwningSession(NetSession *session) { _session = session; }
+
+    /// @brief Events delivered to a handler so far.
+    [[nodiscard]] std::uint64_t EventsDispatched() const { return _eventsDispatched; }
+
+    /// @brief Events dropped because nothing handles their type. Normal — the
+    /// server's build may care about something this one does not — but visible.
+    [[nodiscard]] std::uint64_t EventsUnhandled() const { return _eventsUnhandled; }
+
+    /// @brief Announcements waiting for the world to catch up to them.
+    [[nodiscard]] std::size_t DeferredAnnouncementCount() const { return _deferredAnnouncements.size(); }
 
     /// @brief True once the server has confirmed we hold its whole world.
     ///
@@ -1238,6 +1431,43 @@ class ReplicationClient
     /// static_assert and everything that needs a .cpp lives in one.
     bool SendIntentBytes(const void *intent, std::type_index type, std::uint64_t clientTick, bool reliable);
 
+    /// Read and dispatch the snapshot's message section.
+    ///
+    /// Called *after* the packet's entity blocks and body states have been
+    /// applied, which is the whole ordering guarantee: a handler for an event
+    /// about an entity spawned in this same packet finds that entity already
+    /// there.
+    bool ApplyEventSection(Core::BitReader &reader);
+
+    /// One reliable announcement, held until the world is new enough for it.
+    struct DeferredAnnouncement
+    {
+        Core::Reflect::MessageId messageId = Core::Reflect::kInvalidMessageId;
+        std::uint64_t            serverTick = 0; ///< Applied tick this needs before it means anything.
+        NetId                    subject    = InvalidNetId;
+        std::vector<std::byte>   bytes;
+    };
+
+    void HandleAnnouncement(Core::BitReader &reader);
+
+    /// Dispatch every announcement whose moment has arrived.
+    ///
+    /// The control lane is not the snapshot lane, so an announcement can and
+    /// does overtake the state it is about. Holding it until the applied tick
+    /// reaches its stamp *and* the entity it names exists is the client-side
+    /// half of the ordering the snapshot section gets from framing — needed
+    /// only here, and only because these two things travel separately.
+    void DrainAnnouncements();
+
+    /// Decode one message body and hand it to its handler. Shared by the
+    /// snapshot section and the announcement path so both translate NetIds the
+    /// same way and both count the same drops.
+    void DispatchEvent(const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
+
+    std::vector<DeferredAnnouncement> _deferredAnnouncements;
+    std::uint64_t                     _eventsDispatched = 0;
+    std::uint64_t                     _eventsUnhandled  = 0;
+
     /// One entity's pose at one server tick. Only the transform is buffered:
     /// it is the only component whose value between two snapshots is
     /// meaningfully *interpolatable* — a health value or a state enum has no
@@ -1300,6 +1530,7 @@ class ReplicationClient
     Net::NetTransport     &_transport;
     ECS::Scene            &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
+    NetSession            *_session = nullptr; ///< For handler contexts; null in direct-drive tests.
     Net::ConnectionId      _connection;
 
     /// Resolved once. A descriptor *removal* is the one component removal with a

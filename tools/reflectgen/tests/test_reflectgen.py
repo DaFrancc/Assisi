@@ -861,7 +861,7 @@ class MessageGrammarTest(unittest.TestCase):
         self.assertIn("not followed by a 'struct'", str(caught.exception))
 
     def test_norep_in_a_message_is_rejected(self):
-        src = ("namespace N {\nAMSG(event, reliable)\n"
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
                "struct Boom { AFIELD(norep) uint32_t t = 0; };\n}\n")
         _, messages, _ = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
@@ -869,12 +869,30 @@ class MessageGrammarTest(unittest.TestCase):
         self.assertIn("only to cross the wire", str(caught.exception))
 
     def test_transient_in_a_message_is_rejected(self):
-        src = ("namespace N {\nAMSG(event, reliable)\n"
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
                "struct Boom { AFIELD(transient) uint32_t t = 0; };\n}\n")
         _, messages, _ = _parse_full(src)
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp([], "N/Boom.hpp", messages)
         self.assertIn("no persistent form", str(caught.exception))
+
+    def test_an_event_naming_no_entity_must_say_so(self):
+        # Relevancy scopes an event by the entity it is about. With no entity
+        # reference there is nothing to scope by, so the declaration is asking
+        # for two incompatible things and the fix is one word either way.
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Boom { AFIELD() int32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("not marked independent", str(caught.exception))
+
+    def test_an_independent_event_needs_no_entity(self):
+        src = ("namespace N {\nAMSG(event, unreliable, independent)\n"
+               "struct Chat { AFIELD() int32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Chat.hpp", messages)
+        self.assertIn("MessageDirection::Event", cpp)
 
     def test_a_message_registers_with_its_grammar(self):
         src = ("namespace N {\nAMSG(intent, reliable)\n"

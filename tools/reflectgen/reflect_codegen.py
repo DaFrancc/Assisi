@@ -365,6 +365,19 @@ def _check_messages(messages: list, header_name: str) -> None:
     is about an annotation the dispatch site could not act on.
     """
     for msg in messages:
+        # An event that is not `independent` is scoped by the entity it is
+        # about: relevancy sends it to whoever can see that entity, and holds it
+        # for whoever has not been told about it yet. With no entity reference
+        # there is nothing to scope by, so the declaration is asking for two
+        # incompatible things and the fix is one word either way.
+        if msg.direction == 'event' and not msg.args.has('independent'):
+            if not any(f.cpp_type in _ENTITY_REF_TYPES for f in msg.fields):
+                raise ValueError(
+                    f"{header_name}: message '{msg.name}' is an event that names no entity, but it is not "
+                    f"marked independent. Relevancy scopes an event by the entity it is about — give it an "
+                    f"EntityRef field, or write AMSG(event, {msg.reliability}, independent) if it genuinely "
+                    f"concerns no entity (a round banner, a chat line).")
+
         for f in msg.fields:
             where = f"{header_name}: field '{msg.name}::{f.name}'"
             if f.args.has('norep'):
