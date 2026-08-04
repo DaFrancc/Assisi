@@ -54,9 +54,39 @@ class Application
     Application(const Application &) = delete;
     Application &operator=(const Application &) = delete;
 
+    /// @brief Run with no window, renderer, input, or debug UI — the dedicated
+    /// server mode. Must be called before Initialize(); after that the split has
+    /// already happened.
+    ///
+    /// This is a flag on Application rather than a separate headless class on
+    /// purpose: the simulation hooks, the SystemRegistry, and (later) the
+    /// listen server embedding a server inside a client process all want the
+    /// two modes to be the *same* object with one of its halves not brought up.
+    /// `game.json` may also set it; Initialize() takes either.
+    void SetHeadless(bool headless) { _headless = headless; }
+
+    /// @brief Whether this process runs without presentation. Valid before
+    /// Initialize() only if SetHeadless() was called; after Initialize() it also
+    /// reflects the config file.
+    [[nodiscard]] bool IsHeadless() const { return _headless; }
+
+    /// @brief Run as a viewer that must not write anything a sibling process on
+    /// this machine also owns. Must be called before Initialize().
+    ///
+    /// The play-in-editor client: a second window of the same executable,
+    /// launched from the same directory, sharing one asset tree with the editor
+    /// that spawned it. Here it means ImGui keeps no `imgui.ini` (that path is
+    /// resolved against the working directory, so the two processes would fight
+    /// over one file and the last to exit would rearrange the other's panels).
+    /// Per-user state — options, logs, captures — is separated by pointing the
+    /// child at its own user root instead, which needs no flag.
+    void SetRestrictedViewer(bool restricted) { _restrictedViewer = restricted; }
+
+    [[nodiscard]] bool IsRestrictedViewer() const { return _restrictedViewer; }
+
     /// @brief Brings up the engine (asset system, window, renderer, ImGui,
     /// input, post-process). Must be called once, after construction and before
-    /// Run().
+    /// Run(). In headless mode only the simulation half is brought up.
     ///
     /// @return true on success; false if any bring-up step failed (the failing
     /// step logs the reason). On failure the object is safe to destroy — no
@@ -71,11 +101,13 @@ class Application
     void Run();
 
   protected:
-    virtual void OnStart()                  = 0;
-    virtual void OnFixedUpdate(float dt)    = 0;
-    virtual void OnUpdate(float dt)         = 0;
-    virtual void OnRender(Render::RenderFrame &frame) = 0;
-    virtual void OnImGui()                  {}
+    virtual void OnStart()               = 0;
+    virtual void OnFixedUpdate(float dt) = 0;
+    virtual void OnUpdate(float dt)      = 0;
+    /// Not pure: a headless app never receives this call and should not have to
+    /// write an empty override to say so.
+    virtual void OnRender(Render::RenderFrame & /*frame*/) {}
+    virtual void OnImGui() {}
     virtual void OnShutdown()               {}
     /// @brief Called when the framebuffer is resized. Override to react to resolution changes.
     virtual void OnResize(int32_t /*width*/, int32_t /*height*/) {}
@@ -92,8 +124,22 @@ class Application
     /// is a no-op: Application owns no scene, so the app must opt in.
     virtual void FlushDeferred() {}
 
-    Window::WindowContext &GetWindow() const { return *_window; }
-    Window::InputContext  &GetInput()  const { return *_input; }
+    /// @warning Both assert in a headless process, which has neither. Guard with
+    /// IsHeadless() (or HasPresentation()) in code that runs in both modes.
+    Window::WindowContext &GetWindow() const;
+    Window::InputContext  &GetInput() const;
+
+    /// @brief Whether the window/renderer half of the engine was brought up.
+    /// False in a headless process, and false before Initialize().
+    [[nodiscard]] bool HasPresentation() const { return _presentationInitialized; }
+
+    /// @brief The fixed-step tick counter — the engine's network clock.
+    ///
+    /// Incremented once per iteration of the fixed-step accumulator loop, i.e.
+    /// once per OnFixedUpdate at exactly `physicsHz`, independent of frame rate.
+    /// Snapshots are stamped with it and input commands target it, which is why
+    /// it must never be derived from wall-clock time or frame count.
+    [[nodiscard]] std::uint64_t GetSimTick() const { return _simTick; }
 
     /// @brief Fraction of a fixed physics step left unconsumed by the current
     /// frame — in [0, 1). Use it in OnRender() to blend physics-driven state
@@ -180,9 +226,16 @@ class Application
     static constexpr int32_t FrameHistory() { return kFrameHistory; }
 
   private:
+    /// Everything a dedicated server needs: assets, config, options, jobs.
+    [[nodiscard]] bool InitializeCore();
+    /// Everything only a windowed process needs: window, renderer, debug UI,
+    /// input, post-process. Skipped entirely when headless.
+    [[nodiscard]] bool InitializePresentation();
+
     void HandleFramebufferResize(int32_t width, int32_t height);
     void RenderFrame();
     void ConfigurePostProcess();
+    [[nodiscard]] bool ShouldClose() const;
 
     /// Declared first so the capture runtime is up before anything else exists —
     /// in particular before _jobs spawns its workers, which register themselves
@@ -205,6 +258,21 @@ class Application
     Render::PostProcess _postProcess;
     Core::EventQueue    _events;
     bool                _initialized = false;
+
+    bool _headless = false;
+    bool _restrictedViewer = false;
+    /// Tracks the presentation half specifically: teardown of DebugUI /
+    /// PostProcess / RenderSystem must be gated on *that* having been brought
+    /// up, not on Initialize() having succeeded — headless satisfies the latter
+    /// without any of the former existing.
+    bool _presentationInitialized = false;
+    /// Set by RequestClose(). The headless loop has no window to ask, and even
+    /// the windowed loop is cleaner asking one flag than dereferencing a pointer
+    /// that may not exist.
+    bool _closeRequested = false;
+
+    /// See GetSimTick(). Monotonic for the process's lifetime; never reset.
+    std::uint64_t _simTick = 0;
 
     int32_t _fps = 0;
     double  _cpuFrameMs = 0.0;

@@ -28,3 +28,7 @@ assisi_reflect(
 )
 
 add_library(Assisi::Physics ALIAS Assisi-Physics)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()

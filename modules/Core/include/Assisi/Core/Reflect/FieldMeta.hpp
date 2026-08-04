@@ -33,6 +33,11 @@ enum class FieldType
     AssetPathVector, ///< std::vector<Core::AssetPath> — serialized as a JSON array of strings.
     AssetId,         ///< Core::AssetId — a stable GUID reference, serialized as { guid, path-hint }.
     AssetIdVector,   ///< std::vector<Core::AssetId> — serialized as a JSON array of { guid, path-hint }.
+    /// Reflect::ComponentMask — a set of replicable component types. A bitset in
+    /// memory; an array of component *names* in every codec, because the bit
+    /// index (a replicable ordinal) is not stable across builds. Appended to this
+    /// enum rather than inserted, so no existing value shifts.
+    ComponentMask,
     Unknown,
 };
 
@@ -62,6 +67,20 @@ struct FieldMeta
     FieldType   type      = FieldType::Unknown;
     std::size_t offset    = 0;
     bool        transient = false; ///< If true, excluded from serialization.
+
+    /// @brief AFIELD(norep): saved to disk, never sent over the network.
+    ///
+    /// The sibling of `transient`, one layer in: a transient field is excluded
+    /// from *every* codec, a norep field only from the binary one. It is how a
+    /// replicable component keeps server-only bookkeeping — a spawn cooldown, an
+    /// aggro table — without either splitting the component in two or leaking
+    /// the value to every client. Legal only on an ACOMP(replicable) component
+    /// (reflectgen rejects it elsewhere, where it would silently mean nothing),
+    /// and mutually exclusive with `transient`.
+    ///
+    /// Like `transient`, it shifts every later field's codec index, so it is
+    /// part of the protocol hash — see BinaryCodec's IsWireField.
+    bool norep = false;
 
     // Editor hints from AFIELD(min=..., max=...): inclusive bounds an editor
     // must clamp numeric edits to (e.g. a light radius that must not go
@@ -95,6 +114,28 @@ struct FieldMeta
     std::string               radioSource;                          ///< Sibling enum field this field's visibility follows ("" = not a listener).
     std::vector<std::int64_t> radioValues;                          ///< Enum values at which this field is active; meaningful when radioSource set.
     RadioBehavior             radioBehavior = RadioBehavior::None;   ///< Editor treatment while inactive.
+
+    /// @brief AFIELD(controlled): this message field must name an entity the
+    /// sender controls.
+    ///
+    /// Only meaningful on an `EntityRef` field of an `AMSG(intent, …)`, and
+    /// reflectgen rejects it anywhere else. It marks the *subject* of an intent
+    /// — "the pawn I am telling you to do something with" — as distinct from
+    /// any other entity the message merely mentions, like the thing being shot
+    /// at. Without the distinction the dispatch site could either check nothing
+    /// or check every reference, and checking every reference would forbid a
+    /// client from ever naming an entity it does not own.
+    ///
+    /// The check itself lives at the single dispatch site: an intent whose
+    /// controlled field names an entity the sender does not control is dropped
+    /// and counted, deliberately *not* treated as an error — control transfer
+    /// has a propagation delay, so an honest client can send one.
+    ///
+    /// Deliberately **not** in the protocol hash. It changes which messages are
+    /// accepted, never how bytes decode, so two builds differing only here
+    /// still parse each other perfectly and the server's rule governs — the
+    /// same argument that keeps the game's neverReplicate list out of the hash.
+    bool controlled = false;
 };
 
 } // namespace Assisi::Core::Reflect

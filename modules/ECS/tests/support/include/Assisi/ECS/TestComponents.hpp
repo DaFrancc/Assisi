@@ -41,4 +41,12 @@ struct Tracked
     AFIELD() int32_t value = 0;
 };
 
+/// @brief ACOMP(transient): registered only for a stable ComponentId, with no
+/// serialization hooks at all. The control for tests that check a consumer
+/// gates on ComponentMeta::serializable rather than probing each hook.
+ACOMP(transient)
+struct TransientTag
+{
+};
+
 } // namespace Assisi::ECS

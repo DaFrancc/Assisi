@@ -4,6 +4,21 @@
 * text=auto
 
 ###############################################################################
+# Asset formats the engine writes byte-for-byte, pinned to LF.
+#
+# These are text, so `text=auto` above would otherwise check them out as CRLF on
+# Windows and LF everywhere else. The engine writes them with LF on every
+# platform and hashes level files to decide whether two machines are running the
+# same world, so a checkout that rewrote the newlines made a Windows and a Linux
+# machine disagree about a level neither had edited.
+#
+# eol=lf rather than -text: they stay diffable, they just stop moving.
+###############################################################################
+*.alvl  text eol=lf
+*.aast  text eol=lf
+*.amat  text eol=lf
+
+###############################################################################
 # Set default behavior for command prompt diff.
 #
 # This is need for earlier builds of msysgit that does not have it on by

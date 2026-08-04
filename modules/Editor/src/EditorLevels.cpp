@@ -179,6 +179,15 @@ void EditorApp::LoadLevel(const std::string &name)
 
 bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
 {
+    // A networked session replicates *this* scene, and a load replaces every
+    // entity in it. Continuing to host across that would mean silently
+    // despawning the entire world on every connected client and respawning a
+    // different one; joining a host and then loading a level locally would mean
+    // fighting the host over the same scene. Both are the wrong outcome, and
+    // neither is something the protocol should have to express — so end the
+    // session first and let the player start a new one.
+    ShutdownNetSession();
+
     // The engine does the whole load: deserialize, drop the old asset set, evict
     // the renderer's cached bindings, re-resolve assets and rebuild physics. What
     // remains below is purely editor bookkeeping about the OLD scene. (We are at a

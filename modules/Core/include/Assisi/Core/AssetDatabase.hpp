@@ -41,6 +41,25 @@
 namespace Assisi::Core
 {
 
+/// @brief Whether a Rebuild() may write to the asset tree.
+enum class RebuildMode : std::uint8_t
+{
+    /// The authoring default: mint and write a sidecar for any asset lacking
+    /// one, and re-mint on an id collision, so every file ends up addressable.
+    Reconcile,
+
+    /// Never write anything. An asset with no sidecar (or a colliding id) is
+    /// skipped rather than fixed, so the index is only as complete as the tree
+    /// already was.
+    ///
+    /// For a second process sharing one asset tree with the first — a
+    /// play-in-editor client. Two processes minting into the same directory is
+    /// a race whose loser silently gets a different id for the same file, which
+    /// is exactly the kind of corruption that shows up a week later as a level
+    /// referencing an asset that no longer exists.
+    ReadOnly,
+};
+
 /// @brief Editor-time index of every asset under the asset root, keyed by id.
 class AssetDatabase
 {
@@ -53,9 +72,11 @@ class AssetDatabase
     /// sidecar that exists but cannot be parsed is left untouched and its file
     /// is skipped with a warning (never clobbered).
     ///
+    /// @p mode selects whether the reconcile may write; see RebuildMode.
+    ///
     /// @return The number of asset files registered (excluding built-ins), or
     ///         AssetError::NotInitialized if the asset root is not set.
-    std::expected<std::size_t, AssetError> Rebuild();
+    std::expected<std::size_t, AssetError> Rebuild(RebuildMode mode = RebuildMode::Reconcile);
 
     /// @brief The current virtual path for an id (built-ins included), or
     ///        nullopt if the id is unknown.

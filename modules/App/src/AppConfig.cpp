@@ -57,6 +57,8 @@ AppConfig AppConfig::LoadFromJson()
             }
         }
 
+        if (json.contains("headless")) cfg.headless = json.at("headless").get<bool>();
+
         if (json.contains("timing"))
         {
             const auto &t = json.at("timing");

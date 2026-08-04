@@ -37,7 +37,15 @@ class DebugUI
 {
   public:
     /// @brief Initialises ImGui and attaches the GLFW + Vulkan backends.
-    static void Initialize(const Window::WindowContext &window, Render::Vulkan::VulkanContext &vulkanContext);
+    ///
+    /// @p persistLayout false suppresses `imgui.ini` entirely. ImGui resolves
+    /// that path against the working directory, so two processes launched from
+    /// the same place fight over one file and the last one to exit wins — which
+    /// for a play-in-editor client means it rearranges the editor's panels on
+    /// its way out. A viewer that exists for one play session has no layout
+    /// worth keeping anyway.
+    static void Initialize(const Window::WindowContext &window, Render::Vulkan::VulkanContext &vulkanContext,
+                           bool persistLayout = true);
 
     /// @brief Releases all ImGui resources.
     static void Shutdown();

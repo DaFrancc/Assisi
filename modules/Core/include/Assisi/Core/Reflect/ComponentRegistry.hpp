@@ -67,6 +67,29 @@ class ComponentRegistry
     /// Because ids are dense from zero, this is a direct index.
     const ComponentMeta *ById(ComponentId id) const;
 
+    /// @brief Iterate only the replicable components, in ascending id order.
+    ///
+    /// The same shape as SerializableComponents(), one predicate further in. A
+    /// component's position in *this* sequence is its replicable ordinal, which
+    /// is what ComponentMask indexes by.
+    std::span<const ComponentMeta *const> ReplicableComponents() const;
+
+    /// @brief Bit index of @p id within a ComponentMask, or kInvalidOrdinal if
+    /// that component is not replicable.
+    ///
+    /// A dense-array lookup, not a search: this runs per component per entity per
+    /// snapshot, so the map is built once at finalize.
+    ///
+    /// @warning Ordinals are **not** stable across builds — adding, renaming, or
+    /// flipping the capability of any component reshuffles them. They are a
+    /// runtime index and must never be persisted; ComponentMask serializes names
+    /// for exactly this reason.
+    std::size_t ReplicableOrdinalOf(ComponentId id) const;
+
+    /// @brief Sentinel returned by ReplicableOrdinalOf for a non-replicable
+    /// component.
+    static constexpr std::size_t kInvalidOrdinal = static_cast<std::size_t>(-1);
+
   private:
     ComponentRegistry() = default;
 
@@ -79,6 +102,10 @@ class ComponentRegistry
     // registration, and the state is read-only once main() is running.
     mutable std::vector<ComponentMeta>                        _metas;
     mutable std::vector<const ComponentMeta *>                _serializable;
+    mutable std::vector<const ComponentMeta *>                _replicable;
+    /// Replicable ordinal per ComponentId, kInvalidOrdinal for the rest. Sized to
+    /// the whole table so the hot lookup is an index rather than a search.
+    mutable std::vector<std::size_t>                          _replicableOrdinal;
     mutable std::unordered_map<std::type_index, ComponentId>  _idByType;
     mutable bool                                              _finalized = false;
 };

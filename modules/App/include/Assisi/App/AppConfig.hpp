@@ -20,6 +20,12 @@ struct AppConfig
     glm::vec4   clearColor = {0.15f, 0.15f, 0.18f, 1.f};
     double      physicsHz  = 60.0;
 
+    /// @brief Run with no window, renderer, input, or debug UI — the dedicated
+    /// server mode (`"headless": true` at the root of game.json). A command-line
+    /// flag can also set it; the two OR together, so a config that omits the key
+    /// never turns a `--server` invocation back into a windowed one.
+    bool headless = false;
+
     /// @brief Reads assets/game.json via the asset system.
     /// Falls back to defaults if the file is missing or malformed.
     static AppConfig LoadFromJson();

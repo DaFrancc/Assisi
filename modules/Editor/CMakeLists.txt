@@ -20,6 +20,7 @@ target_sources(Assisi-Editor
     "src/EditorGizmo.cpp"
     "src/EditorInspector.cpp"
     "src/EditorLevels.cpp"
+    "src/EditorNet.cpp"
     "src/EditorOptions.cpp"
     "src/EditorPlay.cpp"
     "src/EditorWorlds.cpp"
@@ -38,6 +39,7 @@ target_link_libraries(Assisi-Editor
     # Render, Physics, Window, ECS, Core. Runtime is also a direct dependency
     # of EditHistory, kept explicit.
     Assisi::App
+    Assisi::NetSync
     Assisi::Runtime
     nlohmann_json::nlohmann_json
   PRIVATE

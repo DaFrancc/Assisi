@@ -38,14 +38,13 @@ void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, c
     physics.RebuildSceneBodies(scene);
 }
 
-bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
-               const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset,
-               Runtime::LevelHeader *header)
+namespace
 {
-    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, header))
-        return false;
 
+/// The half of a load that is the same whichever way the bytes arrived.
+void FinishLoad(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
+                Physics::PhysicsWorld &physics, Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset)
+{
     if (reset == AssetCacheReset::ClearFirst)
     {
         // New asset set, and nothing else resident: drop the old cache and evict
@@ -57,6 +56,40 @@ bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCac
     }
 
     RebindSceneAssetsAndPhysics(scene, cache, database, physics);
+}
+
+} // namespace
+
+bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
+               const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
+               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset,
+               Runtime::LevelHeader *header)
+{
+    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, header))
+        return false;
+
+    FinishLoad(scene, cache, database, physics, sceneRenderer, reset);
+    return true;
+}
+
+bool LoadLevelFile(ECS::Scene &scene, const std::filesystem::path &path, Render::AssetCache &cache,
+                   const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
+                   Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset,
+                   Runtime::LevelHeader *header)
+{
+    if (!Runtime::SceneSerializer::LoadFromDisk(scene, path, /*onProgress=*/{}, header))
+        return false;
+
+    FinishLoad(scene, cache, database, physics, sceneRenderer, reset);
+    return true;
+}
+
+bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics)
+{
+    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath))
+        return false;
+
+    physics.RebuildSceneBodies(scene);
     return true;
 }
 

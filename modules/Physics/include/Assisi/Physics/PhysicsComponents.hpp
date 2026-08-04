@@ -51,7 +51,13 @@ enum class ColliderShape : std::uint8_t
 /// underlying Jolt body. `shape` is a radio source: each dimension field lists
 /// the shapes it applies to and vanishes from the inspector for the others (only
 /// the fields that shape uses matter — a Sphere ignores `halfExtents`/`halfHeight`).
-ACOMP()
+///
+/// Replicated, and load-bearing: under local simulation a client builds a real
+/// dynamic body for every mirrored entity, and this descriptor is what it builds
+/// it from. It is also the discriminator between the client's two kinds of
+/// mirror — an entity with one is body-corrected, an entity without one is
+/// interpolated (docs/replication-plan-v4.md §3.5).
+ACOMP(replicable)
 struct RigidBodyDescriptor
 {
     AFIELD(radioBroadcast) ColliderShape shape = ColliderShape::Box; ///< Collision primitive to build.
@@ -77,7 +83,17 @@ struct RigidBodyDescriptor
 /// Needs a RigidBody to act on, and only reports contacts in a world whose
 /// PhysicsWorld has contact reporting switched on (PhysicsWorld::SetContactReporting) —
 /// that is the profile installer's job, so worlds with no bouncers pay nothing.
-ACOMP()
+///
+/// Replicated, and the reasoning is worth keeping because the first pass got it
+/// wrong. "A client-side bounce is a local guess at what the server's bounce
+/// also did" is true — but only if the client *has* one. Under local simulation
+/// the client runs its own physics, and a mirror missing this component simply
+/// does not bounce: it falls, rests, and is snapped back up by every correction.
+/// The result is a simulation that is continuously wrong in a way the correction
+/// stream keeps papering over, which reads on screen as a body lagging its own
+/// authoritative position. The component is authored data that changes ~never;
+/// only its *effect* is local.
+ACOMP(replicable)
 struct Bounce
 {
     /// Fraction of speed carried back out of an impact: 0 stops the body dead,

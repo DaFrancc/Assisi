@@ -75,7 +75,8 @@ class ParseTest(unittest.TestCase):
         # GhostComponent lives inside a // comment and must not be parsed.
         self.assertEqual(
             [c.name for c in self.components],
-            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient", "SampleRadio"],
+            ["SampleAllTypes", "SampleRef", "SampleEmpty", "SampleTransient", "SampleRadio",
+             "SampleReplicated"],
         )
         self.assertNotIn("GhostComponent", self.by_name)
 
@@ -211,11 +212,11 @@ class CodegenTest(unittest.TestCase):
         )
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
         # min-only: hasMin, hasMax, minValue, maxValue appended.
-        self.assertIn('offsetof(T, radius), false, true, false, 0.0f, 0.f', cpp)
+        self.assertIn('offsetof(T, radius), false, false, true, false, 0.0f, 0.f', cpp)
         # min and max together.
-        self.assertIn('offsetof(T, bias), false, true, true, -1.0f, 1.0f', cpp)
+        self.assertIn('offsetof(T, bias), false, false, true, true, -1.0f, 1.0f', cpp)
         # Unannotated fields keep the short (golden-stable) initializer.
-        self.assertIn('offsetof(T, plain), false }', cpp)
+        self.assertIn('offsetof(T, plain), false, false }', cpp)
 
     def test_non_numeric_bound_is_a_hard_error(self):
         components = _parse_source(
@@ -229,7 +230,7 @@ class CodegenTest(unittest.TestCase):
             "namespace N {\nACOMP()\nstruct C { AFIELD(min = 0, max = 100) int32_t count = 1; };\n}\n"
         )
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
-        self.assertIn("offsetof(T, count), false, true, true, 0.0f, 100.0f", cpp)
+        self.assertIn("offsetof(T, count), false, false, true, true, 0.0f, 100.0f", cpp)
 
     def _assert_bound_rejected(self, field_decl: str):
         components = _parse_source(
@@ -320,7 +321,7 @@ class ParserEdgeCaseTest(unittest.TestCase):
 
         cpp = reflectgen.generate_cpp(components, "N/C.hpp")
         # In the metadata table (unknown type, transient), but never (de)serialized.
-        self.assertIn("offsetof(T, cache), true", cpp)
+        self.assertIn("offsetof(T, cache), true, false", cpp)
         self.assertNotIn("c.cache", cpp)
         self.assertNotIn("comp.cache", cpp)
 
@@ -438,6 +439,85 @@ class AssetTypeTest(unittest.TestCase):
         cpp = reflectgen.generate_cpp(_parse_source(src), "N/Mixed.hpp")
         self.assertIn("ComponentRegistry", cpp)
         self.assertIn("AssetTypeRegistry", cpp)
+
+
+class ReplicationAnnotationTest(unittest.TestCase):
+    """ACOMP(replicable) / AFIELD(norep) — the wire gate.
+
+    Every rejection here has the same motive: the mistake's natural failure mode
+    is silence (a component that quietly does not replicate, a field that quietly
+    does), which a live session reveals late and confusingly, so the generator
+    refuses instead.
+    """
+
+    def _sample(self):
+        return reflectgen.parse_header(FIXTURES / "Sample.hpp")
+
+    def test_replicable_component_emits_tracks_changes_and_replicable(self):
+        cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
+        # replicable implies tracked, so both trailing flags are emitted — the
+        # implication is what stops a replicable component reporting change tick
+        # 0 forever and going silent after its spawn.
+        self.assertIn("true,      // serializable\n"
+                      "        true,      // tracksChanges\n"
+                      "        true       // replicable", cpp)
+
+    def test_replicable_with_explicit_tracked_is_accepted(self):
+        # Not redundancy: one change-tick lane, two readers. The implication
+        # serves replication; the explicit word records that a local system wants
+        # the ticks too, so dropping `replicable` later cannot silently strip
+        # them. ECS::Transform is the live case.
+        src = ("namespace N {\nACOMP(replicable, tracked)\n"
+               "struct C { AFIELD() int32_t a = 0; };\n}\n")
+        cpp = reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("true       // replicable", cpp)
+
+    def test_the_retired_replicated_spelling_is_rejected_by_name(self):
+        # It would otherwise parse as an unknown flag and be silently ignored,
+        # un-replicating a component that used to travel.
+        src = "namespace N {\nACOMP(replicated)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("renamed to 'replicable'", str(caught.exception))
+
+    def test_unmarked_component_emits_neither_flag(self):
+        cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
+        # SampleRef is plain ACOMP(): its registration keeps the short form.
+        self.assertIn("true       // serializable", cpp)
+
+    def test_norep_field_is_flagged_but_still_serialized_to_disk(self):
+        cpp = reflectgen.generate_cpp(self._sample(), SAMPLE_INCLUDE)
+        # In the metadata table with norep = true (transient = false)...
+        self.assertIn('{ "serverOnly", Assisi::Core::Reflect::FieldType::Int32, '
+                      'offsetof(T, serverOnly), false, true }', cpp)
+        # ...and in both JSON bodies, because norep is a *wire* exclusion only.
+        self.assertIn("c.serverOnly", cpp)
+        self.assertIn("comp.serverOnly", cpp)
+
+    def test_replicable_with_transient_is_rejected(self):
+        src = "namespace N {\nACOMP(replicable, transient)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("nothing to put on the wire", str(caught.exception))
+
+    def test_replicable_on_an_asset_is_rejected(self):
+        src = "namespace N {\nAASSET(replicable)\nstruct A { AFIELD() float b = 0.f; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/A.hpp")
+        self.assertIn("assets do not replicate", str(caught.exception))
+
+    def test_norep_outside_a_replicable_component_is_rejected(self):
+        src = "namespace N {\nACOMP()\nstruct C { AFIELD(norep) int32_t a = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("silently do nothing", str(caught.exception))
+
+    def test_norep_with_transient_is_rejected(self):
+        src = ("namespace N {\nACOMP(replicable)\n"
+               "struct C { AFIELD(transient, norep) int32_t a = 0; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("Drop norep", str(caught.exception))
 
 
 class EnumTest(unittest.TestCase):
@@ -577,14 +657,14 @@ class RadioTest(unittest.TestCase):
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
         # Non-enum listener: defaulted bounds + empty enum block (size 0), then the trio.
         self.assertIn(
-            'offsetof(T, n), false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 1, 2 }, '
+            'offsetof(T, n), false, false, false, false, 0.f, 0.f, {}, 0, false, "mode", { 1, 2 }, '
             "Assisi::Core::Reflect::RadioBehavior::Grey",
             cpp,
         )
         # The broadcaster enum stays an ordinary enum field (no radio members),
         # now carrying its width (default int -> 4, signed).
         self.assertIn(
-            'offsetof(T, mode), false, false, false, 0.f, 0.f, '
+            'offsetof(T, mode), false, false, false, false, 0.f, 0.f, '
             '{ { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 4, true }',
             cpp,
         )
@@ -596,7 +676,7 @@ class RadioTest(unittest.TestCase):
             "AFIELD(radioBroadcast, radioListen = {source = mode, value = High, behavior = vanish}) Sub sub = Sub::A;"
         )), "N/C.hpp")
         self.assertIn(
-            'offsetof(T, sub), false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, '
+            'offsetof(T, sub), false, false, false, false, 0.f, 0.f, { { "A", 0 }, { "B", 1 } }, 4, true, '
             '"mode", { 2 }, Assisi::Core::Reflect::RadioBehavior::Vanish',
             cpp,
         )
@@ -607,7 +687,7 @@ class RadioTest(unittest.TestCase):
             "AFIELD(min = 0, radioListen = {source = mode, value = High, behavior = vanish}) int32_t n = 0;"
         )), "N/C.hpp")
         self.assertIn(
-            'offsetof(T, n), false, true, false, 0.0f, 0.f, {}, 0, false, "mode", { 2 }, '
+            'offsetof(T, n), false, false, true, false, 0.0f, 0.f, {}, 0, false, "mode", { 2 }, '
             "Assisi::Core::Reflect::RadioBehavior::Vanish",
             cpp,
         )
@@ -701,6 +781,314 @@ class MalformedMacroTest(unittest.TestCase):
         src = "namespace N {\nACOMP()\nstruct C { AFIELD() SomeUnknownType t; };\n}\n"
         with self.assertRaises(ValueError):
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+
+
+def _parse_full(source: str):
+    """Parse an inline header string, returning (components, messages, handlers)."""
+    with tempfile.TemporaryDirectory() as d:
+        path = Path(d) / "Temp.hpp"
+        path.write_text(source, encoding="utf-8")
+        return reflectgen.parse_header_full(path)
+
+
+class MessageGrammarTest(unittest.TestCase):
+    """AMSG(direction, reliability[, flags]) — mandatory, positional, ordered.
+
+    Every way of getting the grammar wrong is a build error that names the rule,
+    which is the whole argument for making both arguments mandatory: the
+    declaration states the entire wire contract with nothing to memorise, and a
+    default that changed later could never silently reclassify a message written
+    under the old one.
+    """
+
+    def test_both_arguments_are_recorded(self):
+        src = ("namespace N {\nAMSG(event, unreliable, independent)\n"
+               "struct Boom { AFIELD() uint32_t target = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].direction, "event")
+        self.assertEqual(messages[0].reliability, "unreliable")
+        self.assertTrue(messages[0].args.has("independent"))
+        self.assertEqual(messages[0].fqn, "N::Boom")
+
+    def test_missing_both_arguments_is_rejected(self):
+        src = "namespace N {\nAMSG()\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("no arguments", str(caught.exception))
+
+    def test_missing_reliability_is_rejected(self):
+        src = "namespace N {\nAMSG(event)\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("only one argument", str(caught.exception))
+
+    def test_swapped_arguments_are_named_as_swapped(self):
+        # The mistake the ordering rule exists to catch, and the fix is one
+        # transposition — so the error says so rather than reporting an unknown
+        # argument twice.
+        src = "namespace N {\nAMSG(reliable, event)\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("wrong way round", str(caught.exception))
+        self.assertIn("AMSG(event, reliable)", str(caught.exception))
+
+    def test_unknown_direction_is_rejected(self):
+        src = "namespace N {\nAMSG(broadcast, reliable)\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("not a direction", str(caught.exception))
+
+    def test_unknown_reliability_is_rejected(self):
+        src = "namespace N {\nAMSG(event, maybe)\nstruct Boom { AFIELD() uint32_t t = 0; };\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("not a reliability", str(caught.exception))
+
+    def test_unknown_flag_is_rejected(self):
+        src = ("namespace N {\nAMSG(event, reliable, buffered)\n"
+               "struct Boom { AFIELD() uint32_t t = 0; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("unknown AMSG flag", str(caught.exception))
+
+    def test_amsg_on_a_non_struct_is_rejected(self):
+        # Silently walking past it would leave the author believing a type is on
+        # the wire when nothing registered it.
+        src = "namespace N {\nAMSG(event, reliable)\nvoid NotAStruct();\n}\n"
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("not followed by a 'struct'", str(caught.exception))
+
+    def test_norep_in_a_message_is_rejected(self):
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Boom { AFIELD(norep) uint32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("only to cross the wire", str(caught.exception))
+
+    def test_transient_in_a_message_is_rejected(self):
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Boom { AFIELD(transient) uint32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("no persistent form", str(caught.exception))
+
+    def test_an_event_naming_no_entity_must_say_so(self):
+        # Relevancy scopes an event by the entity it is about. With no entity
+        # reference there is nothing to scope by, so the declaration is asking
+        # for two incompatible things and the fix is one word either way.
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Boom { AFIELD() int32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("not marked independent", str(caught.exception))
+
+    def test_an_independent_event_needs_no_entity(self):
+        src = ("namespace N {\nAMSG(event, unreliable, independent)\n"
+               "struct Chat { AFIELD() int32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Chat.hpp", messages)
+        self.assertIn("MessageDirection::Event", cpp)
+
+    def test_a_message_registers_with_its_grammar(self):
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Go { AFIELD() uint32_t target = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Go.hpp", messages)
+        self.assertIn("MessageRegistry::Instance().Register", cpp)
+        self.assertIn("MessageDirection::Intent", cpp)
+        self.assertIn("MessageReliability::Reliable", cpp)
+        self.assertIn("using T = N::Go;", cpp)
+
+
+class ControlledFieldTest(unittest.TestCase):
+    """AFIELD(controlled): "the sender must control this entity".
+
+    It marks the *subject* of an intent, as distinct from any other entity the
+    message merely mentions. Without the distinction the dispatch site could
+    either check nothing or check every reference, and checking every reference
+    would forbid a client from ever naming an entity it does not own — which is
+    most of them.
+    """
+
+    def test_controlled_reaches_the_field_metadata(self):
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Go { AFIELD(controlled) Assisi::ECS::Entity pawn; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Go.hpp", messages)
+        # Emitted last in FieldMeta's positional tail, which forces every earlier
+        # block to its default — so the presence of the trailing `true` is what
+        # the dispatch site reads.
+        self.assertIn('offsetof(T, pawn), false, false, false, false, 0.f, 0.f, {}, 0, false, "", {}, '
+                      'Assisi::Core::Reflect::RadioBehavior::None, true', cpp)
+
+    def test_controlled_on_an_event_is_rejected(self):
+        # The sender of an event is the server, which controls everything by
+        # definition, so the annotation could not mean anything.
+        src = ("namespace N {\nAMSG(event, reliable)\n"
+               "struct Boom { AFIELD(controlled) Assisi::ECS::Entity what; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("is an event", str(caught.exception))
+
+    def test_controlled_on_a_non_entity_field_is_rejected(self):
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Go { AFIELD(controlled) int32_t pawn = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Go.hpp", messages)
+        self.assertIn("Only an EntityRef field", str(caught.exception))
+
+    def test_controlled_on_a_component_is_rejected(self):
+        # A component has no sender, so there would be nothing to enforce the
+        # rule against — and an annotation that reads like a rule while
+        # enforcing nothing is worse than no annotation.
+        src = ("namespace N {\nACOMP()\n"
+               "struct C { AFIELD(controlled) Assisi::ECS::Entity e; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("a component has no sender", str(caught.exception))
+
+
+class MessageTraitsTest(unittest.TestCase):
+    """The compile-time facts that make a wrong-direction send a build error."""
+
+    def test_traits_carry_the_grammar(self):
+        src = ("namespace N {\nAMSG(event, reliable, independent)\n"
+               "struct Boom { AFIELD() uint32_t t = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        traits = reflectgen.gen_message_traits(messages[0])
+        self.assertIn("MessageTraits<::N::Boom>", traits)
+        self.assertIn("MessageDirection::Event", traits)
+        self.assertIn("MessageReliability::Reliable", traits)
+        self.assertIn("independent = true", traits)
+
+    def test_the_type_is_forward_declared_at_global_scope(self):
+        # Forward-declared rather than included, because specializing on an
+        # incomplete type is legal and including the real header would close a
+        # cycle through the dispatch header.
+        src = ("namespace A { namespace B {\nAMSG(intent, unreliable)\n"
+               "struct Go { AFIELD() uint32_t t = 0; };\n} }\n")
+        _, messages, _ = _parse_full(src)
+        self.assertEqual(reflectgen.gen_message_forward(messages[0]),
+                         "namespace A { namespace B { struct Go; } }")
+
+
+class MessageHandlerTest(unittest.TestCase):
+    """AMSG_HANDLER() declarations, and the binding they generate."""
+
+    _SRC = (
+        "namespace Game {\n"
+        "AMSG(intent, reliable)\n"
+        "struct Fire { AFIELD() uint32_t weapon = 0; };\n"
+        "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
+        "}\n"
+    )
+
+    def test_handler_is_found_with_its_namespace_and_message(self):
+        _, _, handlers = _parse_full(self._SRC)
+        self.assertEqual(len(handlers), 1)
+        self.assertEqual(handlers[0].name, "HandleFire")
+        self.assertEqual(handlers[0].namespaces, ["Game"])
+        self.assertEqual(handlers[0].message, "Fire")
+        self.assertEqual(handlers[0].fqn, "::Game::HandleFire")
+
+    def test_binding_is_emitted_in_the_declarations_own_namespace(self):
+        _, messages, handlers = _parse_full(self._SRC)
+        cpp = reflectgen.generate_cpp([], "Game/Fire.hpp", messages, handlers)
+        # The message type is resolved where the declaration resolved it...
+        self.assertIn("namespace Game {", cpp)
+        self.assertIn("using MsgT = Fire;", cpp)
+        # ...the handler is named from global scope, so nothing nearer can
+        # shadow it...
+        self.assertIn("&::Game::HandleFire", cpp)
+        # ...and the signature is pinned, so an overload set cannot drift.
+        self.assertIn("static_cast<void (*)(Assisi::NetSync::NetContext &, const MsgT &)>", cpp)
+
+    def test_a_non_void_handler_is_rejected(self):
+        src = ("namespace Game {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
+               "AMSG_HANDLER() bool HandleFire(NetContext &ctx, const Fire &msg);\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            _parse_full(src)
+        self.assertIn("returns void", str(caught.exception))
+
+    def test_a_handler_without_a_context_is_not_matched(self):
+        # The signature is fixed, and a declaration that does not have it is not
+        # a handler at all — which surfaces as "no handler for this message"
+        # rather than as a silently wrong binding.
+        src = ("namespace Game {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
+               "AMSG_HANDLER() void HandleFire(const Fire &msg);\n}\n")
+        _, _, handlers = _parse_full(src)
+        self.assertEqual(handlers, [])
+
+    def test_two_handlers_for_one_message_is_a_build_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            first = Path(d) / "A.hpp"
+            first.write_text(
+                "namespace Game {\n"
+                "AMSG(intent, reliable)\n"
+                "struct Fire { AFIELD() uint32_t w = 0; };\n"
+                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
+                "}\n", encoding="utf-8")
+            second = Path(d) / "B.hpp"
+            second.write_text(
+                "namespace Other {\n"
+                "AMSG_HANDLER() void AlsoHandleFire(NetContext &ctx, const Game::Fire &msg);\n"
+                "}\n", encoding="utf-8")
+
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_message_handlers([first, second])
+            message = str(caught.exception)
+            self.assertIn("two handlers are declared", message)
+            # Both sites are named, because "one of these is wrong" is not
+            # actionable without knowing which two.
+            self.assertIn("HandleFire", message)
+            self.assertIn("AlsoHandleFire", message)
+
+    def test_a_handler_for_an_unknown_message_is_a_build_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(
+                "namespace Game {\n"
+                "AMSG_HANDLER() void HandleNothing(NetContext &ctx, const Missing &msg);\n"
+                "}\n", encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_message_handlers([path])
+            self.assertIn("names no AMSG message type", str(caught.exception))
+
+    def test_an_ambiguous_message_name_is_a_build_error(self):
+        # The same struct name in two namespaces, and a handler declared in
+        # neither. Guessing which one it meant is exactly what the rule forbids.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(
+                "namespace A {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n"
+                "namespace B {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n"
+                "namespace C {\n"
+                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n"
+                "}\n", encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_message_handlers([path])
+            self.assertIn("ambiguous", str(caught.exception))
+
+    def test_an_enclosing_namespace_disambiguates(self):
+        # ...and when the handler *is* declared inside one of the candidates,
+        # that is not ambiguity — it is the same rule C++ itself would use.
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(
+                "namespace A {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n"
+                "AMSG_HANDLER() void HandleFire(NetContext &ctx, const Fire &msg);\n}\n"
+                "namespace B {\nAMSG(intent, reliable)\nstruct Fire { AFIELD() uint32_t w = 0; };\n}\n",
+                encoding="utf-8")
+            summary = reflectgen.check_message_handlers([path])
+            self.assertIn("A::Fire -> A::HandleFire", summary)
+            self.assertIn("B::Fire -> (no handler)", summary)
 
 
 class IncludePathTest(unittest.TestCase):
