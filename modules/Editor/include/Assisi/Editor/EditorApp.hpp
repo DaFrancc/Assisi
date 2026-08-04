@@ -342,6 +342,14 @@ class EditorApp : public Assisi::App::Application
     /// cached that could go stale.
     void DrawReplicationPolicy();
 
+    /// The Relevance dropdown, drawn only for entities this machine authors.
+    ///
+    /// Split out because it has a different honesty rule from the rest of the
+    /// policy block: a mirror's Replicated marker is client-fabricated, so
+    /// showing its relevance as authorable would dress a default up as the
+    /// host's decision.
+    void DrawRelevancePolicy();
+
     /// Does this entity currently send @p meta to clients?
     ///
     /// The single *read* both policy surfaces use — the glyph button on each

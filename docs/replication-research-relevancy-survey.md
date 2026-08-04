@@ -1503,3 +1503,62 @@ Assisi is growing into, not the one it is today.
   · High Scalability, EVE architecture:
   <https://highscalability.com/eve-online-architecture/> · Second Life
   server architecture: <https://wiki.secondlife.com/wiki/Server_architecture>
+
+
+---
+
+## Postscript — what Assisi chose, and why
+
+Written after the build (docs/replication-messaging-relevancy-plan-v1.md,
+M0–M2), so the record says what happened rather than what was recommended.
+
+**Set membership, filtering strictly before priority** — §12's consensus fact 1
+and Iris's ordering, both adopted. One sorted `std::vector<NetId>` per
+connection, intersected with the live set once per snapshot. No per-pair
+predicate, which is the shape Unreal built two successive systems to escape.
+
+**§18.1's "it falls out for free" was right about the half it had checked and
+wrong about the rest**, which is the most useful thing this survey produced.
+Exit really does ride the existing despawn diff and re-entry really does ride
+the empty-baseline path — that half cost almost no code. But the body-state pass
+is a *fourth* independent walk of the live set with its own acked-based gate,
+and that gate does not imply relevancy: a revoked entity stays acked until its
+despawn round-trips, so unfiltered it kept shipping motion for an entity the
+connection could not see. And a revoke followed by a re-grant inside one round
+trip made the server send a delta against a baseline the client had already
+destroyed, producing a mirror built from whichever components that delta
+happened to carry. Both needed rules of their own, and both have tests that fail
+without them.
+
+**§14's decomposition, applied literally.** The component is named
+`ControlledBy`, and it does three of the five jobs — input binding, directed
+addressing, disconnect cleanup. State authority stays architectural: the server
+writes everything, and making it per-entity data would buy a permission lattice
+and a receive filter. The relevancy anchor is deliberately *session state* that
+merely defaults to controlled entities, because a v1 joiner is a spectator with
+no controlled entity and still needs somewhere to look — which is exactly where
+owner-derived anchoring leaked in the systems this survey read. Prediction is
+noted as job five and nothing about it is designed.
+
+**Hysteresis, and the one place the survey's own honesty mattered.** §18.1
+flagged that boundary hysteresis has no citable academic treatment — it is
+engine lore. It shipped anyway, with two radii and a dwell, because the failure
+mode is unmistakable once described. The dwell gates *revokes only*: delaying
+entry would make a level transition or a spectator jump show an empty world and
+then pop it in, which is the same artefact relocated somewhere less obvious.
+There is a test that teleports an anchor across a ten-second dwell and expects
+the world one snapshot later.
+
+**The escape classes are §12's consensus fact 3 verbatim**, and no fifth was
+invented. `Always` survives any provider because a radius is a bandwidth tool
+and an objective marker that vanishes at sixty metres is a bug the saving does
+not pay for; `ControllerOnly` is applied last so it outranks the provider, an
+explicit grant, and `Always` alike.
+
+**What the engine promises, and where it stops.** An entity outside a
+connection's set contributes zero bytes to it — no component blocks, no body
+state, no messages about it. That guarantee is the whole engine-side surface,
+per the owner's direction: line-of-sight and fog-of-war stay a game-side
+provider, and the guarantee is what makes such a provider sufficient. The
+RepGraph lesson from §18.1 is recorded rather than built; the trigger for a
+spatial grid is a measured cost, not an anticipated one.

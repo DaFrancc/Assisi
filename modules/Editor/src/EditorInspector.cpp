@@ -862,6 +862,20 @@ void EditorApp::DrawReplicationSection(bool mirrored)
             ImGui::TextDisabled("Policy is the host's; a joined client cannot author it.");
             ImGui::TreePop();
         }
+
+        // Who controls it, if anyone. Read from the replicated component, which
+        // is an observed fact rather than a fabrication — unlike this mirror's
+        // Replicated marker, which the client default-constructed.
+        if (const auto *claim = _scene->Get<Assisi::NetSync::ControlledBy>(_selectedEntity))
+        {
+            const bool mine = _netSession != nullptr && _netSession->ControlsEntity(_selectedEntity);
+            ImGui::TextDisabled("Controlled by client %u%s", claim->client, mine ? " (you)" : "");
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Assigned by the host at runtime and replicated like any other component. "
+                                  "Never authored — a client id belongs to one session.");
+            }
+        }
     }
 
     if (!isReplicated)
@@ -986,12 +1000,56 @@ void EditorApp::SetSelectedEntitySends(const Assisi::Core::Reflect::ComponentMet
         marker->excluded.Set(ordinal, !sends);
 }
 
+void EditorApp::DrawRelevancePolicy()
+{
+    const auto *marker = _scene->Get<Assisi::NetSync::Replicated>(_selectedEntity);
+    if (marker == nullptr)
+        return;
+
+    // A mirror's Replicated marker is default-constructed by the client when it
+    // creates the entity — the host's real one never travels. Rendering its
+    // relevance as an authorable dropdown would display fabricated data dressed
+    // up as the host's policy, which is the same mistake the Receiving list
+    // exists to avoid. Mirrors show observed facts only.
+    if (IsMirrored(_selectedEntity))
+        return;
+
+    static constexpr const char *kLabels[] = {"Default (the provider decides)", "Always relevant",
+                                              "Only its controller"};
+    int current = static_cast<int>(marker->relevance);
+
+    ImGui::TextUnformatted("Relevance");
+    ImGui::SameLine(180.f);
+    ImGui::SetNextItemWidth(-1.f);
+    if (ImGui::Combo("##relevance", &current, kLabels, IM_ARRAYSIZE(kLabels)))
+    {
+        // Through the undo path like any other edit — a policy change *is* an
+        // edit, and Ctrl-Z should mean the same thing here as anywhere else.
+        if (Assisi::Editor::EditHistory *history = ActiveHistory())
+        {
+            history->RecordBefore(_selectedEntity,
+                                  Assisi::Core::Reflect::ComponentIdOf<Assisi::NetSync::Replicated>(),
+                                  EditLabel("Relevance", _selectedEntity), _selectedEntity);
+        }
+        if (Assisi::NetSync::Replicated *mutable_ = _scene->GetMut<Assisi::NetSync::Replicated>(_selectedEntity))
+            mutable_->relevance = static_cast<Assisi::NetSync::Relevance>(current);
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Always is for anything plot-critical: a radius is a bandwidth tool, not a "
+                          "correctness tool. Only-its-controller is for one player's private business, and "
+                          "reaches nobody while the entity is uncontrolled.");
+    }
+}
+
 void EditorApp::DrawReplicationPolicy()
 {
     using namespace Assisi::Core::Reflect;
 
     if (_scene->Get<Assisi::NetSync::Replicated>(_selectedEntity) == nullptr)
         return;
+
+    DrawRelevancePolicy();
 
     // Gathered from the live component set every frame, so adding or removing a
     // component is reflected immediately — nothing is cached that could go stale.

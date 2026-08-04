@@ -1122,3 +1122,60 @@ detail.
 - gRPC core concepts: <https://grpc.io/docs/what-is-grpc/core-concepts/> · Protobuf language guide: <https://protobuf.dev/programming-guides/proto3/> · Cap'n Proto RPC: <https://capnproto.org/rpc.html>
 - Exploits — Among Us (Tenable): <https://medium.com/tenable-techblog/hacking-in-among-us-b43ea0fdd3d7> · Impostor: <https://github.com/Impostor/Impostor/blob/master/README.md> · CS:GO RCE (secret.club): <https://secret.club/2021/05/13/source-engine-rce-join.html> · HackerOne #1070835: <https://hackerone.com/reports/1070835> · CVE-2023-24059: <https://nvd.nist.gov/vuln/detail/CVE-2023-24059> · CVE-2022-24126: <https://nvd.nist.gov/vuln/detail/CVE-2022-24126> · DS3 PoC writeup: <https://github.com/tremwil/ds3-nrssr-rce>
 - In-repo — docs/replication-plan-v4.md · docs/replication-optin-plan-v1.md · docs/replication-research-ecs-survey.md · docs/research/networking/r1-engine-case-studies.md
+
+
+---
+
+## Postscript — what Assisi chose, and why
+
+Written after the build (docs/replication-messaging-relevancy-plan-v1.md,
+M3–M5), so the record says what happened rather than what was recommended.
+
+**Structs, not functions — §18's load-bearing recommendation, adopted whole.**
+`AMSG(direction, reliability)` on a plain struct goes through reflectgen's
+existing field path, so a message gets the binary codec, the JSON codec, the
+inspector, and a place in the protocol hash without a line of new machinery.
+That last one is the reason: declaring a message is a *versioning event*, so two
+builds that disagree refuse to connect instead of misparsing each other. It is
+the story Unity built deliberately with `RpcCollectionVersion`, Godot
+approximates with an undiagnosable whole-set checksum, and Mirror gets wrong at
+sixteen bits — and here it falls out of the annotation rather than being
+engineered.
+
+**Where the survey was overruled.** §18 proposed direction and reliability as
+defaulted arguments. Both are mandatory and positional instead: the declaration
+states the whole wire contract with nothing to memorise, and no later change of
+default can silently reclassify a message written under the old one. Unreliable
+*intents* were also added as a first-class cell — the survey treated
+client→server as necessarily reliable, and the spammy freshest-wins asks (map
+pings, look-here markers) are worse served by a resend than by a loss.
+
+**Where the survey was corrected by the code.** §18 called the length-prefixed
+wire form "tolerate-capable". It is not: with dense ids a peer holding a
+different message set steps the right number of bytes and then dispatches the
+wrong type for every id after the divergence. The prefix buys *skip*. Real
+tolerance needs stable name-derived ids and a handshake policy that permits the
+mismatch, and the prefix is what keeps that a policy change rather than a format
+rewrite — recorded as a seam, not built.
+
+**The exploit pattern drove the shape.** All four documented incidents in §15
+are attacker-made messages meeting hand-written parsing across many receive
+sites, so the single validated dispatch site is what was built and intents are
+what happens to travel through it. Eight steps, ordered so a flood costs a
+comparison rather than a parse. Field ranges are rejected, never clamped — the
+input path clamps because a stick can saturate, while an out-of-range intent
+field means the client is lying or the builds disagree, and clamping converts a
+detectable attack into a silently accepted one.
+
+**The reliable-buffer cliff was respected rather than mitigated.** Q3 and Unreal
+both hit it, and both mitigations amount to asking every call site to budget
+against a global. There are two forms and no general reliable-ordered messaging:
+unreliable events ride the snapshot after the entity blocks, which buys
+replicon's ordering guarantee out of the framing itself, and reliable
+announcements carry a tick stamp the client defers against.
+
+**The host is not a special case.** A listen server's player is not a
+connection, which would have made it the one participant whose messages skipped
+every check and whose path no fuzz test covered. Its intents are encoded and
+re-decoded to reach the identical dispatch site, and it is not exempt from
+validation — trusted is not the same as correct.

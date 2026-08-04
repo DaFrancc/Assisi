@@ -85,6 +85,28 @@ struct SessionStats
     // Host.
     std::uint32_t dirtyBacklog  = 0; ///< Entities that had something to send and did not fit.
     std::uint64_t keyframeSweeps = 0;
+
+    // Relevancy (host). Worst case across clients, like the ping: a mean hides
+    // the one connection actually having a bad time.
+    std::uint32_t relevantEntities = 0; ///< Largest set any client currently holds.
+    std::uint64_t relevancyEnters  = 0;
+    std::uint64_t relevancyExits   = 0;
+
+    // Messages. Split by *why* rather than lumped into one number, because a
+    // rate-limited client is misbehaving, a stale one has a clock problem, an
+    // out-of-range one is lying, and an unhandled one means somebody forgot to
+    // write a handler — four different conversations.
+    std::uint64_t intentsAccepted   = 0;
+    std::uint64_t intentsRejected   = 0; ///< Wrong direction, out of range, or not theirs.
+    std::uint64_t intentsRateLimited = 0;
+    std::uint64_t intentsStale      = 0;
+    std::uint64_t intentsUnhandled  = 0;
+    std::uint64_t eventsSent        = 0; ///< Host: written into snapshot sections.
+    std::uint64_t announcementsSent = 0;
+    std::uint32_t eventsHeld        = 0; ///< Waiting for the entity they are about.
+    std::uint64_t eventsEvicted     = 0;
+    std::uint64_t eventsDispatched  = 0; ///< Client: handed to a handler.
+    std::uint64_t eventsUnhandled   = 0;
 };
 
 class NetSession

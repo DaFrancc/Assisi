@@ -1,7 +1,14 @@
 # Replication messaging & relevancy plan v1 — who is told, what is said, who speaks
 
-**Status: PLAN OF RECORD (v1.1, signed off 2026-08-03) — one adversarial
-review pass and one owner design pass applied (§7).**
+**Status: PLAN OF RECORD, and BUILT — M0 through M6 landed 2026-08-03. Two
+review passes are recorded in §7; §8 lists where the implementation departed
+from this document.**
+
+**Owed:** the eyes-on pass. Everything here has a terminal-verifiable DoD and
+all of it is green, but M2's panel rows under a real two-editor LAN session and
+M6's inspector behaviour were specified as eyes-needed and have not been looked
+at — alongside the R1–R9 eyes-on pass already outstanding from
+docs/replication-plan-v4.md §4a.
 
 This plan covers the three mechanisms the replication system still lacks, as
 one plan because they interlock: **relevancy** (which entities each connection
@@ -1148,3 +1155,80 @@ folded in as D9/D14 and the M3/M4 stage updates:
    (`void(NetContext &, const T &)`), bound fully-qualified with
    signature casts and a cross-module uniqueness check — zero runtime
    name lookup, zero same-name ambiguity.
+
+---
+
+## 8. Where the implementation departed from this plan
+
+Recorded because a plan that is quietly wrong is worse than one that says so.
+Every item here was forced by the code rather than chosen.
+
+**The entity-handle packing was a live bug, not a new decision.**
+`Replication.cpp` packed `ECS::Entity` index-high/generation-low while
+`BinaryCodec` documents and uses index-low/generation-high, so `entityToWire`
+swapped the halves of every replicated `EntityRef`. It read correctly only when
+a handle's index equalled its generation — which includes `{0, 0}`, the first
+entity in any scene, and is exactly why nothing noticed until a message
+referenced a second one. Fixed at M4.
+
+**`AFIELD(controlled)`, which the plan did not name.** D10's step 7 says an
+intent naming an entity the sender does not control is dropped and counted, but
+not *which* field names it. Checking every `EntityRef` would forbid a client
+from ever mentioning an entity it does not own — most of them, including
+anything it is shooting at. So the subject is marked, and the annotation is
+rejected on events (the sender is the server, which controls everything) and on
+components (which have no sender).
+
+**An event must name its subject or say `independent`.** The plan assumed a
+message "about an entity" without saying how the engine identifies it. It is the
+first `EntityRef` field, and reflectgen refuses a non-`independent` event that
+declares none — the declaration was otherwise asking for two incompatible
+things, since relevancy scopes an event by the entity it is about.
+
+**The message section's byte floor is an *allowance*, not a reservation.** D11a
+called for a reserved floor within the snapshot budget. Reserving up front does
+not work, and a test caught it: the entity pass stops once it is already at the
+budget, and the last entity written overshoots by more than any reservation — so
+the floor evaporated exactly when the world was busiest, which is when events
+most need one. The section instead runs past the soft cap by a bounded amount,
+and only when a connection actually has something waiting, so a game that sends
+no events pays nothing.
+
+**NetIds are assigned on demand when an event names an entity.** The plan
+inherited v4's "assigned lazily on the first `Tick()`", which leaves a window
+every frame where a just-spawned entity has no wire identity. Spawning something
+and announcing it in the same frame is the common case, not an exotic one, and
+the lookup silently encoded "nothing" for exactly the entity the event was
+about.
+
+**The handler binding is emitted per header, not as one whole-tree TU.** D14
+argued for a single generated translation unit on the grounds that linkers strip
+registrar objects in static libraries. That argument is sound and already solved:
+reflection registrations go into per-module OBJECT libraries, which are never
+stripped. A global table would additionally force every executable to link every
+module's handlers — the test-support handlers broke the sandbox link, which is
+how this was found. Uniqueness across the tree is still checked, as its own pass
+with no codegen (`reflectgen --check-handlers`).
+
+**Handler bindings resolve the message type in the declaration's own scope.**
+D14 asked for fully-qualified `::`-anchored names everywhere. The *handler* is
+named that way, and the signature cast pins the overload — but the message type
+is spelled as the declaration spelled it, inside the declaration's own
+namespace, because that is the scope the declaration itself resolved it in.
+There is no second lookup that could find something else, which is what the
+requirement was actually about. Cross-header ambiguity is a build error naming
+the candidates.
+
+**`MessageTraits` is a generated header the plan did not anticipate.** The
+compile-time direction check ("sending an event from a client fails to build")
+needs the message's grammar visible at the *call* site, which a specialization
+inside a generated `.cpp` cannot provide. Message types are forward-declared
+rather than included — specializing on an incomplete type is legal, and
+including the real headers would close a cycle through the dispatch header.
+
+**A message's `EntityRef` fields serialize to JSON as raw handles.** The
+component path routes them through `Runtime::SceneSerializer`, which resolves
+against the scene being saved. A message has no scene and is never saved; its
+JSON form exists for tests and log lines. The binary path is unaffected and
+still translates through NetIds, which is the only form that means anything
+across the wire.

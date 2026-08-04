@@ -72,6 +72,23 @@ void LabelledValue(const char *label, const std::string &value)
     ImGui::TextUnformatted(value.c_str());
 }
 
+/// A counter whose *normal* value is zero, coloured only when it is not.
+///
+/// The whole point of the messaging counters is that each one names a different
+/// problem, so a row that is merely nonzero should draw the eye — and a row that
+/// is zero should not. The tooltip carries what the number means, because a
+/// count without a diagnosis is a count nobody acts on.
+template <typename T>
+void NetCounterRow(const char *label, T value, const char *tooltip)
+{
+    ImGui::TextUnformatted(label);
+    ImGui::SameLine(180.f);
+    ImGui::TextColored(value > 0 ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%llu",
+                       static_cast<unsigned long long>(value));
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("%s", tooltip);
+}
+
 /// FNV-1a over a level file, with CRLF folded to LF first, or nullopt if it
 /// could not be read.
 ///
@@ -742,12 +759,73 @@ void EditorApp::DrawNetworkWindow()
         ImGui::TextColored(stats.dirtyBacklog > 0 ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%u entit%s",
                            stats.dirtyBacklog, stats.dirtyBacklog == 1 ? "y" : "ies");
         LabelledValue("Keyframe sweeps", std::format("{}", stats.keyframeSweeps));
+
+        // --- relevancy ------------------------------------------------------
+        // Worth its own group because boundary thrash is invisible otherwise:
+        // it looks exactly like ordinary bandwidth, and it is the one failure
+        // mode hysteresis exists to prevent. Enters climbing in lockstep with
+        // exits is the shape to watch for.
+        if (ImGui::TreeNodeEx("Relevancy", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            LabelledValue("Largest set", std::format("{} of {}", stats.relevantEntities,
+                                                     stats.replicatedEntities));
+            LabelledValue("Entered", std::format("{}", stats.relevancyEnters));
+
+            const bool thrashing = stats.relevancyExits > 0 && stats.relevancyEnters > stats.relevancyExits * 2;
+            ImGui::TextUnformatted("Left");
+            ImGui::SameLine(180.f);
+            ImGui::TextColored(thrashing ? kWarnColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%llu",
+                               static_cast<unsigned long long>(stats.relevancyExits));
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Entities crossing in and out of a client's set. Enters and exits climbing "
+                                  "together means entities are oscillating on the boundary — widen the exit "
+                                  "radius or the dwell.");
+            }
+            ImGui::TreePop();
+        }
+
+        // --- messages -------------------------------------------------------
+        // Split by *why* rather than by count. "Intents dropped" is not a
+        // diagnosis: a rate-limited client is misbehaving, a stale one has a
+        // clock problem, a rejected one is lying or mismatched, and an
+        // unhandled one means somebody forgot to write a handler.
+        if (ImGui::TreeNodeEx("Messages", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            LabelledValue("Intents accepted", std::format("{}", stats.intentsAccepted));
+            NetCounterRow("Intents rejected", stats.intentsRejected,
+                          "A field outside its declared range, an event sent as an intent, or an entity the "
+                          "sender does not control. Rejected, never clamped.");
+            NetCounterRow("Intents rate-limited", stats.intentsRateLimited,
+                          "A client exceeding the per-type ceiling. Dropped before the payload is decoded.");
+            NetCounterRow("Intents stale", stats.intentsStale,
+                          "A client tick outside the accepted window — too old to act on, or too far ahead "
+                          "to have happened.");
+            NetCounterRow("Intents unhandled", stats.intentsUnhandled,
+                          "A registered message type with no AMSG_HANDLER. Normal if deliberate.");
+
+            LabelledValue("Events sent", std::format("{}", stats.eventsSent));
+            LabelledValue("Announcements", std::format("{}", stats.announcementsSent));
+            NetCounterRow("Events held", stats.eventsHeld,
+                          "Waiting for the entity they are about to reach that client. A number that stays "
+                          "high means events about entities the client will never be told about.");
+            NetCounterRow("Events evicted", stats.eventsEvicted,
+                          "Held events whose subject despawned before it ever arrived.");
+            ImGui::TreePop();
+        }
     }
     else
     {
         LabelledValue("Server tick", std::format("{}", stats.serverTick));
         LabelledValue("Mirrored entities", std::format("{}", stats.replicatedEntities));
         LabelledValue("Snapshots applied", std::format("{}", stats.snapshotsApplied));
+
+        LabelledValue("Events received", std::format("{}", stats.eventsDispatched));
+        NetCounterRow("Events unhandled", stats.eventsUnhandled,
+                      "The host sent a message type nothing here handles. Normal if deliberate.");
+        NetCounterRow("Announcements waiting", stats.eventsHeld,
+                      "Reliable events that arrived ahead of the world they describe, held until the applied "
+                      "tick catches up.");
 
         // --- the correction stream ------------------------------------------
         // Rates, not totals: a total that keeps climbing tells you the session is

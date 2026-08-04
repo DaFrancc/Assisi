@@ -1139,9 +1139,13 @@ or a two-window sequence:
   unsolved is semantics (mirrored children of local parents, strip
   interaction, transform spaces — and now world-space body state under
   parent-relative Transforms). Mirrors are flat in v1.
-- **RPCs** — still their own future design; validation is security surface,
-  not a rider. The state-first rule stands: nothing that has a current value
-  becomes an event.
+- **RPCs** — **no longer deferred.** Built as messages in
+  docs/replication-messaging-relevancy-plan-v1.md (M3–M5): reflected structs
+  under `AMSG(direction, reliability)`, one validated dispatch site for
+  client→server intents, a snapshot section for server→client events. The
+  deferral's own reasoning is what the design was built around — validation is
+  security surface, not a rider — and the state-first rule stands unchanged:
+  nothing that has a current value becomes an event.
 - **The Steam provider, and the `NetProvider` seam with it** — v3.5 §5 built
   the seam early "while the session API is being shaped"; v4 cuts it, which
   is a change worth justifying: the join surface is two call sites
@@ -1154,9 +1158,14 @@ or a two-window sequence:
 - **Adaptive time dilation** — the NetClock's inputs already exist; the
   smooth response (Overwatch's ~15.2 ms frames under starvation, Rocket
   League's upstream throttle) remains a drop-in later.
-- **Lag compensation, interest management, reconnect-as-repair,
-  sub-tick evaluation** — unchanged from the v2 deferral list, unstarted by
-  design.
+- **Interest management** — **no longer deferred.** Built as relevancy in
+  docs/replication-messaging-relevancy-plan-v1.md (M1–M2): one sorted set per
+  connection, intersected with the live set before priority, with a Distance
+  provider and the four escape classes. The seam this plan reserved — a
+  per-connection predicate applied before priority accumulation — is where it
+  landed.
+- **Lag compensation, reconnect-as-repair, sub-tick evaluation** — unchanged
+  from the v2 deferral list, unstarted by design.
 - **Windows** — the GNS chain has never built there;
   `protobuf_MSVC_STATIC_RUNTIME` defaults ON and will fight the dynamic CRT
   (tracked in `remaining-work.md` §1). Deferred, not forgotten.

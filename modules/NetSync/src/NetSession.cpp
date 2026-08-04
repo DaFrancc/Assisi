@@ -318,6 +318,23 @@ SessionStats NetSession::Stats() const
                 // the one connection that is actually struggling.
                 stats.dirtyBacklog  = std::max(stats.dirtyBacklog, diagnostics->dirtyBacklog);
                 stats.keyframeSweeps = std::max(stats.keyframeSweeps, diagnostics->keyframeSweeps);
+
+                // Worst case for the gauges, totals for the counters: "how big
+                // is the biggest set" and "how much churn has there been" are
+                // different questions and only one of them sums.
+                stats.relevantEntities = std::max(stats.relevantEntities, diagnostics->relevantEntities);
+                stats.eventsHeld       = std::max(stats.eventsHeld, diagnostics->eventsHeld);
+                stats.relevancyEnters += diagnostics->relevancyEnters;
+                stats.relevancyExits += diagnostics->relevancyExits;
+                stats.intentsAccepted += diagnostics->intentsAccepted;
+                stats.intentsRejected += diagnostics->intentsWrongWay + diagnostics->intentsOutOfRange +
+                                         diagnostics->intentsNotYours + diagnostics->intentsMalformed;
+                stats.intentsRateLimited += diagnostics->intentsRateLimited;
+                stats.intentsStale += diagnostics->intentsStale;
+                stats.intentsUnhandled += diagnostics->intentsUnhandled;
+                stats.eventsSent += diagnostics->eventsSent;
+                stats.announcementsSent += diagnostics->announcementsSent;
+                stats.eventsEvicted += diagnostics->eventsEvicted;
             }
             Net::ConnectionStats transportStats;
             if (_transport->GetConnectionStats(client, transportStats))
@@ -337,6 +354,14 @@ SessionStats NetSession::Stats() const
             (void)replicated;
             ++stats.replicatedEntities;
         }
+
+        // The host's own intents have no connection to be counted against, so
+        // they would otherwise be the one traffic nobody could see.
+        const ConnectionDiagnostics &host = _server->HostDiagnostics();
+        stats.intentsAccepted += host.intentsAccepted;
+        stats.intentsRejected += host.intentsWrongWay + host.intentsOutOfRange + host.intentsNotYours +
+                                 host.intentsMalformed;
+        stats.intentsUnhandled += host.intentsUnhandled;
     }
     else if (_client)
     {
@@ -354,6 +379,9 @@ SessionStats NetSession::Stats() const
         stats.divergenceMean     = corrections.divergenceMean();
         stats.divergenceMax      = corrections.divergenceMax;
         stats.mirrorsResurrected = _client->MirrorsResurrected();
+        stats.eventsDispatched   = _client->EventsDispatched();
+        stats.eventsUnhandled    = _client->EventsUnhandled();
+        stats.eventsHeld         = static_cast<std::uint32_t>(_client->DeferredAnnouncementCount());
         if (_clock)
         {
             stats.clockCorrections = _clock->CorrectionCount();
