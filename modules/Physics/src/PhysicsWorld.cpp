@@ -686,26 +686,32 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
-    // Transform is ACOMP(tracked): writing it through the query reference bypasses
-    // Scene::GetMut's stamping, so each moved body must report the change itself,
-    // or PropagateTransforms would not see the new pose. Resolve the id once.
-    const Assisi::Core::Reflect::ComponentId transformId =
-        Assisi::Core::Reflect::ComponentIdOf<Assisi::ECS::Transform>();
-
     // Below these per-physics-step deltas a body is treated as at rest, so the pose
     // is snapped to the current step instead of blended (see the per-body use).
     constexpr float kRestPositionDeltaSq = 1e-8f; // (0.1 mm)^2 of translation between steps
     constexpr float kRestRotationDelta   = 1e-7f; // 1 - |dot(prev, cur)|; ~0.0009 rad between steps
 
+    // QueryMut, not Query: Transform is ACOMP(tracked) and this is the physics
+    // writeback, so the new pose has to stamp a change tick. PropagateTransforms's
+    // dirty-skip and network delta replication both filter on that tick, and a
+    // write through a plain Query's `Transform&` stamps nothing — the body would
+    // move with both consumers still reporting it unchanged. The proxy stamps
+    // exactly like Scene::GetMut, which is what the old explicit MarkChanged-by-id
+    // call here was standing in for.
+    //
+    // RigidBody comes along as a Mut proxy because QueryMut wraps every type, but
+    // it is only read — through the const Get(), which never stamps (and RigidBody
+    // is ACOMP(transient) and untracked anyway, so there is no tick lane to touch).
     for (auto [entity, transform, rb] :
-         scene.Query<Assisi::ECS::Transform, RigidBody>())
+         scene.QueryMut<Assisi::ECS::Transform, RigidBody>())
     {
-        if (!bodies.IsAdded(rb.bodyId) || bodies.GetMotionType(rb.bodyId) == JPH::EMotionType::Static)
+        const JPH::BodyID bodyId = rb.Get().bodyId;
+        if (!bodies.IsAdded(bodyId) || bodies.GetMotionType(bodyId) == JPH::EMotionType::Static)
         {
             continue;
         }
 
-        const auto it = _impl->snapshots.find(rb.bodyId.GetIndexAndSequenceNumber());
+        const auto it = _impl->snapshots.find(bodyId.GetIndexAndSequenceNumber());
         if (it == _impl->snapshots.end())
         {
             continue;
@@ -719,20 +725,133 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
         // so it renders stable. Snapping still tracks a slow creep exactly (it
         // writes curPosition/curRotation every frame) — it only drops the blend.
         const glm::vec3 positionDelta = s.curPosition - s.prevPosition;
-        transform.position = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
-                                 ? s.curPosition
-                                 : glm::mix(s.prevPosition, s.curPosition, alpha);
+        const glm::vec3 targetPosition = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
+                                             ? s.curPosition
+                                             : glm::mix(s.prevPosition, s.curPosition, alpha);
 
         // 1 - |dot(prev, cur)| is ~0 for near-identical orientations; abs folds the
         // quaternion q/-q double cover. slerp keeps angular speed constant across
         // the blend and is renormalised since the result feeds the render matrix.
-        const float rotationDelta = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
-        transform.rotation = rotationDelta < kRestRotationDelta
-                                 ? s.curRotation
-                                 : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
+        const float     rotationDelta  = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
+        const glm::quat targetRotation = rotationDelta < kRestRotationDelta
+                                             ? s.curRotation
+                                             : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
 
-        scene.MarkChanged(entity, transformId);
+        // Nothing moved: skip the write entirely rather than stamp a change tick
+        // for a pose identical to the one already there.
+        //
+        // Every mutable access through the proxy stamps, and a resting body would
+        // otherwise be marked changed on every single frame for the rest of the
+        // session — a permanent false positive that PropagateTransforms pays for
+        // in dirty-subtree work and that replication pays for in bandwidth, since
+        // a visual-only mirror (one whose descriptor its entity declines to send)
+        // has no body channel and travels by Transform delta.
+        //
+        // Exact comparison is right here rather than epsilon'd: a resting body's
+        // snapshot poses are frozen — nothing integrates them — so the computed
+        // target is bit-identical frame to frame, and the rest-snap branches above
+        // already absorbed the near-rest jitter that would otherwise need a
+        // tolerance. Anything genuinely in motion differs in the low bits and is
+        // written.
+        const Assisi::ECS::Transform &current = transform.Get();
+        if (current.position == targetPosition && current.rotation == targetRotation)
+            continue;
+
+        // Taken once, after every skip: binding the reference costs one tick per
+        // body that actually moves rather than one per field written.
+        Assisi::ECS::Transform &t = transform.GetMut();
+        t.position                = targetPosition;
+        t.rotation                = targetRotation;
     }
+}
+
+void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
+{
+    out.clear();
+
+    JPH::BodyIDVector active;
+    _impl->physicsSystem.GetActiveBodies(JPH::EBodyType::RigidBody, active);
+    if (active.empty())
+        return;
+
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    out.reserve(active.size());
+    for (const JPH::BodyID &id : active)
+    {
+        const ECS::Entity entity = _impl->EntityFor(id);
+        if (entity == ECS::NullEntity)
+            continue; // a raw AddBody body: nothing a caller could name it by
+
+        const JPH::RVec3 position = bodies.GetPosition(id);
+        const JPH::Quat  rotation = bodies.GetRotation(id);
+        const JPH::Vec3  linear   = bodies.GetLinearVelocity(id);
+        const JPH::Vec3  angular  = bodies.GetAngularVelocity(id);
+
+        out.push_back(ActiveBodyState{
+            entity,
+            glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
+            glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
+            glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
+            glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+        });
+    }
+}
+
+bool PhysicsWorld::IsBodyActive(const RigidBody &body) const
+{
+    const JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    return bodies.IsAdded(body.bodyId) && bodies.IsActive(body.bodyId);
+}
+
+void PhysicsWorld::DeactivateBody(const RigidBody &body)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+        return;
+    bodies.DeactivateBody(body.bodyId);
+}
+
+void PhysicsWorld::ApplyBodyState(const RigidBody &body, glm::vec3 position, glm::quat rotation,
+                                  glm::vec3 linearVelocity, glm::vec3 angularVelocity, bool activate)
+{
+    JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
+    if (!bodies.IsAdded(body.bodyId))
+        return;
+
+    // A static body can be *placed*, it just has no motion to place it with —
+    // the same split SetBodyTransform makes. Refusing the whole call for one
+    // would be a trap: a correction for a body the two ends disagree about the
+    // motion type of would silently do nothing, which is the worst available
+    // outcome for a peer that is trying to tell us where something is.
+    const bool isStatic = bodies.GetMotionType(body.bodyId) == JPH::EMotionType::Static;
+
+    // Normalized for the same reason AddBody and SetBodyTransform do it: a
+    // quaternion that crossed a wire (or a level file) is often a hair off unit
+    // length, and Jolt asserts IsNormalized() when it rotates with one.
+    bodies.SetPositionAndRotation(body.bodyId, JPH::RVec3(position.x, position.y, position.z),
+                                  JPH::Quat(rotation.x, rotation.y, rotation.z, rotation.w).Normalized(),
+                                  (activate && !isStatic) ? JPH::EActivation::Activate
+                                                          : JPH::EActivation::DontActivate);
+
+    if (!isStatic)
+    {
+        // Before the deactivate below, not after: Jolt ignores velocity written
+        // to a sleeping body, so zeroing an about-to-sleep body has to happen
+        // while it is still awake.
+        bodies.SetLinearVelocity(body.bodyId, JPH::Vec3(linearVelocity.x, linearVelocity.y, linearVelocity.z));
+        bodies.SetAngularVelocity(body.bodyId, JPH::Vec3(angularVelocity.x, angularVelocity.y, angularVelocity.z));
+
+        if (!activate)
+            bodies.DeactivateBody(body.bodyId);
+    }
+
+    // Collapse both snapshots onto the corrected pose. Without this the next
+    // InterpolateTransforms() blends from the pre-correction pose and smears the
+    // jump across a frame — which the view-side error smoothing is *also* trying
+    // to absorb, so the two double-count into a wobble at every correction.
+    const auto it = _impl->snapshots.find(body.bodyId.GetIndexAndSequenceNumber());
+    if (it != _impl->snapshots.end())
+        it->second = Impl::MotionSnapshot{position, rotation, position, rotation};
 }
 
 std::pair<glm::vec3, glm::quat> PhysicsWorld::GetBodyTransform(const RigidBody &body) const

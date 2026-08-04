@@ -14,41 +14,77 @@ as "everything else is done."
 
 ## 1. Networking — stages 0–6 (`networking-design-notes.md`)
 
-The declared next milestone. Design settled 2026-07-20; **nothing built**
-(no `modules/Net`/`NetSync`, no headless split in `Application`, no `simTick`).
-Stage 7 (prediction, lag compensation, interest management, NAT-traversal
-production infra) is explicitly deferred and excluded here.
+Design settled 2026-07-20, review-hardened 2026-07-22 (v2) by a multi-agent
+research pass (cited reports in `docs/research/networking/`). **Stages 0–6 are
+built, tested and green on Linux.** Stage 7 (prediction, lag compensation,
+interest management, NAT-traversal production infra) remains deferred and is
+excluded here.
 
-- **Stage 0 — GNS build integration.** protobuf(+abseil) + crypto backend + GNS
-  via FetchContent, static, warnings-clean, both platforms. The designated risk
-  stage; timeboxed, with a four-step escalation ladder in the doc. Done =
-  loopback echo test in `modules/Net/tests` passing locally on both compilers
-  (there is no CI — see §4c).
-- **Stage 2 — headless Application.** Split `Initialize()` into
-  `InitializeCore()` / `InitializePresentation()`; `AppConfig::headless` +
-  `--server`; loop paced by `SleepUntil` against `_closeRequested` instead of
-  window/vsync; `OnRender` gets a default no-op body. Independently valuable
-  (headless sim tests, runnable locally) and independent of Stage 0 — either can
-  land first.
-- **Stage 1 — `Assisi::Net` transport wrapper.** Pimpl over GNS, dense
-  `ConnectionId`, lanes, `Poll()` on the main thread, `CreateLoopbackPair` for
-  the listen server. Needs Stage 0.
-- **Stage 3 — sim tick + input commands.** `simTick` in the fixed-step loop,
-  `InputCommand` sampled per tick from `ActionMap`, per-connection command
-  queues. Forces player-controlling systems off direct `IsKeyDown` polling.
-- **Stage 4 — binary codec over FieldMeta.** `ByteWriter`/`ByteReader`,
-  `Write/ReadComponent` walking reflection metadata, protocol hash at handshake.
-  Unit-testable in isolation.
-- **Stage 5 — replication core.** `ReplicationServer`/`ReplicationClient`,
-  NetId map, delta replication off change ticks, snapshot interpolation.
-  **Blocker to resolve first, in ECS:** `Query` yields mutable references
-  without stamping change ticks, so mutations through queries produce no delta.
-  Fix (stamping query variant vs. enforced `GetMut` discipline) must land
-  before this stage — the doc leans toward the stamping variant.
-- **Stage 6 — listen server + sandbox Host/Join UI.**
+**Updated 2026-08-01.** The replication *model* moved on: the plan of record is
+`docs/replication-plan-v4.md` — local simulation with authoritative correction
+— and its milestones R1–R8 are built on branch `networking`. Three items that
+were open in this section are closed by it, and are marked below. What v4 adds
+that is *not* yet verified is the by-eye and two-window half of its own DoDs;
+that list lives in v4 §4, not here, because it is verification of new work
+rather than a backlog of old.
 
-Suggested order (from the 2026-07-21 review of the docs): Stage 2 → Stage 0 →
-1 → 3/4 → 5 → 6, with §2 below as a short preface.
+### Built
+
+- **N0 — GNS build integration.** protobuf v35.1 (+ force-fetched abseil) and
+  GameNetworkingSockets pinned to `master` @ `f4525e39` (2026-06-06) behind
+  `ASSISI_ENABLE_NETWORKING`. `OVERRIDE_FIND_PACKAGE` redirects GNS's own
+  `find_package(Protobuf)` to the tree we build; `protobuf_generate_cpp` is
+  shimmed onto `protobuf_generate`.
+- **N1 — `Assisi::Net`.** Pimpl over GNS, dense `ConnectionId`, three lanes,
+  `Poll()` on the calling thread, `CreateLoopbackPair` in both modes.
+- **N2 — headless `Application`.** `InitializeCore()`/`InitializePresentation()`,
+  `AppConfig::headless` + `--server`, tick-paced loop, `LoadLevelSim`. The
+  no-GPU DoD holds: with `DISPLAY`/`WAYLAND_DISPLAY` unset the server loads six
+  shared libraries, none of them Vulkan/GL/X11/Wayland/DRM.
+- **N3 — sim tick, input commands, clock.** `simTick` on `SystemContext`,
+  `InputCommand` (with the reserved sub-tick byte), redundant send, server-side
+  jitter queue, `ClampInputCommand`, `NetClock`.
+- **N3½ — `QueryMut`** + the call-site migration.
+- **N4 — binary codec.** Bit-level `BitWriter`/`BitReader`, reflection-driven
+  component blocks, protocol hash, fuzz-hardened reader.
+- **N5 — replication core.** Delta snapshots off change ticks, spawn/despawn
+  and **component removal** from set comparison, budgeted send loop, input
+  hardening, deferred EntityRef resolve, `worldComplete` join signalling,
+  client-side snapshot interpolation.
+- **N6 — session layer and UI.** `NetSession` (host/join/disconnect + stats),
+  the editor's Network panel, and `Assisi-Sandbox --server --host/--connect`.
+  Hosting from a windowed process *is* the listen server.
+
+Suites: NetSync 45 cases / 375 assertions, Net 4 / 166, plus a 5 s soak through
+150 ms RTT and 5% loss. All 11 ctest targets green.
+
+**Since v4 (2026-08-01):** NetSync 73 cases, including a second soak with real
+physics on both sides; 13 ctest targets green. Two latent defects in the shipped
+core, documented in v4 §2, are fixed: a snapshot that hit the byte budget marked
+an undelivered entity as delivered (R4, per-entity baselines), and replication
+read the render-side Transform rather than the physics world — so a headless
+host replicated stale poses and a windowed one never stopped replicating
+sleeping bodies (R5, body-state capture).
+
+### Remaining in this milestone
+
+- **Windows.** The GNS dependency chain has never been built there, and the
+  `USE_CRYPTO=BCrypt` path has never run. One landmine spotted while reading
+  upstream, not yet acted on: protobuf's `protobuf_MSVC_STATIC_RUNTIME`
+  defaults **ON** and forces `CMAKE_MSVC_RUNTIME_LIBRARY` to the static CRT for
+  itself *and* abseil, which will not match this tree's default dynamic CRT —
+  expect to force it OFF.
+- ~~**Snapshot quantization.**~~ **Closed 2026-08-01 by v4 R8** — body-state
+  corrections pack through `WriteFloatQuantized` plus a smallest-three
+  quaternion, parameters in `game.json`'s `networking` block and inside the
+  handshake hash. An awake record went 425 bits → 161. Component blocks are
+  still whole-value; that is the remaining half of this lever, and it is
+  unmeasured because corrections, not components, are what a moving world costs.
+- **Sub-tick evaluation.** `InputCommand::subTickFraction` is on the wire and
+  ignored, by design.
+- **`ScopedRawEntityContext` relocation** out of Runtime (open decision 3) —
+  still not needed, since NetSync uses the codec's own remap hooks.
+- Everything else in the milestone is Stage 7, which stays deferred.
 
 ## 2. Code-review round 6 — cleared
 
@@ -262,9 +298,10 @@ These were real and unrecorded — the docs assumed some of them existed.
 
 ## 5. Decisions waiting on the user (unblock further work; zero code until decided)
 
-**Only one remains** — the four round-6 items below were decided and fixed on
-2026-07-22 (branch `hygiene/round6`), and Template Phase 3 was decided and
-executed the same day (branch `extract-editor`); they are kept with their
+**None remain open** — the four round-6 items below were decided and fixed on
+2026-07-22 (branch `hygiene/round6`), Template Phase 3 was decided and
+executed the same day (branch `extract-editor`), and the milestone order fell
+last (networking first, branch `networking`). All are kept with their
 rationale so the reasoning is not lost.
 
 Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
@@ -300,10 +337,11 @@ Not deferred *work* — deferred *choices*. Each blocks or shapes an item above:
   else fail with the reason. An sRGB surface double-encodes gamma against
   `cube_min.frag`'s own `pow`, so it stays a last resort until L2 moves that
   encode into the tonemap pass.
-- **Milestone order: networking stages vs. lighting stages.** Both are now
-  fully designed with nothing built; §1 and §4 don't depend on each other.
-  Pick which thread runs first (or interleave — L2 is small enough to slot in
-  anywhere).
+- ~~**Milestone order: networking stages vs. lighting stages.**~~ **Decided
+  2026-07-22: networking first** (branch `networking`, staged plan in
+  `networking-design-notes.md` N0–N7). Lighting L1–L6 follows; the option to
+  slot L2 (HDR pipeline) in between remains open since it's small and
+  independent. With this, §5 has **zero** open decisions.
 
 ## Excluded — deferred by design (do not resurrect without cause)
 

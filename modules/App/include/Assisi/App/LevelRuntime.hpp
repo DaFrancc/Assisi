@@ -25,6 +25,7 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <cstdint>
+#include <filesystem>
 #include <string_view>
 
 namespace Assisi::Runtime
@@ -99,6 +100,40 @@ bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCac
                Runtime::SceneRenderer &sceneRenderer,
                AssetCacheReset reset = AssetCacheReset::ClearFirst,
                Runtime::LevelHeader *header = nullptr);
+
+/// @brief LoadLevel from an absolute filesystem path instead of a virtual one.
+///
+/// Same safe-point rules, same everything — the only difference is where the
+/// bytes come from. It exists for levels that are not assets: the temp snapshot
+/// a play-in-editor host writes so its client processes can load the scene it is
+/// actually simulating, unsaved edits included. Asset *references inside* the
+/// level still resolve through the asset system as usual; it is only the level
+/// file itself that lives outside it.
+bool LoadLevelFile(ECS::Scene &scene, const std::filesystem::path &path, Render::AssetCache &cache,
+                   const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
+                   Runtime::SceneRenderer &sceneRenderer,
+                   AssetCacheReset reset = AssetCacheReset::ClearFirst,
+                   Runtime::LevelHeader *header = nullptr);
+
+/// @brief The simulation half of LoadLevel: deserialize the level and rebuild
+/// its physics bodies, with no asset cache and no renderer involved.
+///
+/// This is what a dedicated server loads. It takes no Render or Runtime types
+/// at all, which is the point — a headless process has no GPU assets to resolve
+/// and no binding caches to evict, and asking it for an AssetCache just to
+/// throw one away would be a lie about what it needs. Mesh/material GUIDs stay
+/// in the scene as authored data (the server replicates them; it never resolves
+/// them), so a client joining later gets the same references the level declared.
+///
+/// The safe-point warning on LoadLevel does not apply here: nothing GPU-owned
+/// is freed. Returns false (scene untouched) if the level didn't resolve or
+/// deserialize.
+///
+/// @note This header still *includes* the Render/Runtime headers for LoadLevel
+/// above, so including it does not yet give a caller a render-free dependency
+/// footprint — only a render-free call. Untangling the header is part of the
+/// App core/presentation split committed to in the networking design notes.
+bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics);
 
 /// @brief Per-frame streaming upgrade: while the cache has async loads in
 /// flight (and for one frame after the last finishes, to pick up the final

@@ -17,6 +17,7 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -86,6 +87,13 @@ void EditorApp::OnStart()
             }
         }
     }
+
+    // Before any session can exist: the quantization is inside the handshake
+    // hash, so it has to be settled before the first hello is written. The
+    // smoothing is not — it is purely local — but it reads from the same file
+    // and there is no reason to defer it.
+    Assisi::NetSync::LoadQuantizationFromConfig();
+    Assisi::NetSync::LoadSmoothingFromConfig();
 
     // What the manager needs to turn a level file into a running world when the
     // game travels. Installed once; captured by pointer, and all three outlive it.
@@ -179,6 +187,34 @@ void EditorApp::OnStart()
         }
     }
 
+    // A play-in-editor client: enter Play as a joiner straight away. Nothing
+    // about this process is otherwise special — which is the point, since a
+    // viewer that took a different code path would stop being a test of the
+    // path it exists to test. The world it ends up showing is the host's, built
+    // from the handshake (BuildJoinedWorld); whatever level was loaded above is
+    // discarded on the way, and Stop brings it back.
+    if (!_editorConfig.autoJoinEndpoint.empty())
+    {
+        std::string   address = "127.0.0.1";
+        std::uint16_t port    = static_cast<std::uint16_t>(_netPort);
+        const std::string_view endpoint = _editorConfig.autoJoinEndpoint;
+        if (const std::size_t colon = endpoint.rfind(':'); colon != std::string_view::npos)
+        {
+            address = std::string(endpoint.substr(0, colon));
+            const std::string portText(endpoint.substr(colon + 1));
+            if (const int32_t parsed = std::atoi(portText.c_str()); parsed > 0 && parsed <= 65535)
+                port = static_cast<std::uint16_t>(parsed);
+        }
+        else
+        {
+            address = std::string(endpoint);
+        }
+
+        std::snprintf(_netAddress.data(), _netAddress.size(), "%s", address.c_str());
+        _netPort = static_cast<int32_t>(port);
+        StartPlay(NetIntent::Join);
+    }
+
     // --- Systems ---
     _systems.Register(Assisi::App::SystemPhase::Update, "EntityPicking",
                       [this](Assisi::App::SystemContext &) { HandleEntityPicking(); });
@@ -200,13 +236,20 @@ void EditorApp::OnStart()
 
 void EditorApp::ReimportAssets()
 {
-    const std::expected<std::size_t, Assisi::Core::AssetError> result = _assetDatabase.Rebuild();
+    // A restricted viewer shares one asset tree with the editor that spawned it,
+    // and two processes minting ids into the same directory is a race whose
+    // loser silently gets a different id for the same file. It indexes what is
+    // already there and writes nothing.
+    const Assisi::Core::RebuildMode mode = IsRestrictedViewer() ? Assisi::Core::RebuildMode::ReadOnly
+                                                                : Assisi::Core::RebuildMode::Reconcile;
+    const std::expected<std::size_t, Assisi::Core::AssetError> result = _assetDatabase.Rebuild(mode);
     if (!result)
     {
         Assisi::Core::Log::Warn("Asset reimport failed: asset root unavailable.");
         return;
     }
-    Assisi::Core::Log::Info("Asset reimport: {} assets indexed (GUID sidecars reconciled).", *result);
+    Assisi::Core::Log::Info("Asset reimport: {} assets indexed ({}).", *result,
+                            IsRestrictedViewer() ? "read-only scan" : "GUID sidecars reconciled");
 
     // Wire the (rebuilt) database into serialization's path hint and the asset
     // cache's id↔path translation. The resolvers capture the database by
@@ -220,7 +263,9 @@ void EditorApp::ReimportAssets()
     // (only when something changed — steady state does nothing). The hint
     // resolver is already installed above, so written `.amat` channels carry
     // regenerated path hints (D2).
-    if (ReconcileMeshMaterials())
+    // ...and never in a restricted viewer, which is the writing half this whole
+    // pass exists to do.
+    if (!IsRestrictedViewer() && ReconcileMeshMaterials())
     {
         if (const std::expected<std::size_t, Assisi::Core::AssetError> rescan = _assetDatabase.Rebuild(); rescan)
             Assisi::Core::Log::Info("Asset reimport: {} assets indexed after material reconcile.", *rescan);
@@ -633,6 +678,15 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha());
     }
 
+    // Immediately after the writeback and before Render() propagates world
+    // matrices: a bodied mirror's visual offset is *added on top of* the pose
+    // the writeback just wrote, so this cannot run before it. A no-op unless
+    // this editor is a connected client.
+    {
+        ASSISI_PROFILE_SCOPE("net-smooth-view");
+        SmoothNetView();
+    }
+
     // Refresh the editor camera's world matrix from its TRS before the view
     // matrix is derived from it; SceneRenderer propagates the game scene it draws.
     RefreshCameraMatrix();
@@ -660,6 +714,18 @@ void EditorApp::OnFixedUpdate(float dt)
 {
     if (!_scene)
         return;
+    // The pump runs unconditionally even though a session now only exists inside
+    // a play session (docs/replication-plan-v4.md §3.6). The two facts are not in
+    // tension: `IsSimulating()` is false while Paused and during the frames a
+    // join spends building its world, and both are states where the wire must
+    // still be read — a join that stops polling never receives the handshake it
+    // is waiting for, and a session whose host vanished must notice. Gating this
+    // on IsSimulating() would deadlock the join and silently strand the other.
+    //
+    // Poll first: a command that arrived for this tick should be applied on this
+    // tick, not the next one. It also advances the join state machine, which is
+    // why it takes dt.
+    PollNetSession(dt);
 
     // **In the editor, the play state is a flat switch: while it is not Playing,
     // nothing steps anywhere.** Not "the world you are looking at is frozen" —
@@ -667,43 +733,57 @@ void EditorApp::OnFixedUpdate(float dt)
     // resident world. Per-world `simulate` then selects among the worlds of a
     // *running* session; it never overrides the session being stopped, which is
     // what it used to do for any world other than the viewed one.
-    if (!IsSimulating())
-        return;
-
-    // Every simulated world steps, and each runs its OWN FixedUpdate systems
-    // immediately before its own physics — the Unity/Unreal convention (apply
-    // forces this tick, then simulate them), now held per world rather than only
-    // for the active one. Worlds step sequentially, which is what lets them share
-    // one Jolt thread pool.
     //
-    // Only Active worlds step: Dormant means "resident and inspectable, but not
-    // stepped" (WorldState), and a stale `simulate` must not be able to break
-    // that. Resuming while viewing the dormant edited world used to do exactly
-    // that and step its physics.
-    _worlds.ForEach(
-        [this, dt](Assisi::App::World &world)
-        {
-            if (world.state != Assisi::App::WorldState::Active || !world.simulate)
-                return;
-
-            world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
-                              {world, dt, &GetInput(), &_actions, GetEvents(),
-                               /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
-
+    // A block rather than an early return, because the session tick below has to
+    // run in either state — see PollNetSession's note above.
+    if (IsSimulating())
+    {
+        // Every simulated world steps, and each runs its OWN FixedUpdate systems
+        // immediately before its own physics — the Unity/Unreal convention (apply
+        // forces this tick, then simulate them), now held per world rather than only
+        // for the active one. Worlds step sequentially, which is what lets them share
+        // one Jolt thread pool.
+        //
+        // Only Active worlds step: Dormant means "resident and inspectable, but not
+        // stepped" (WorldState), and a stale `simulate` must not be able to break
+        // that. Resuming while viewing the dormant edited world used to do exactly
+        // that and step its physics.
+        _worlds.ForEach(
+            [this, dt](Assisi::App::World &world)
             {
-                // Jolt's whole step, including its internal job dispatch. Everything
-                // under `fixed-update` that isn't a named ECS system is this.
-                ASSISI_PROFILE_SCOPE("physics-step");
-                world.physics.Update(dt);
-            }
-            {
-                // Snapshot the new poses for render interpolation; OnRender blends them.
-                // Linear in the body count, and separable from the solve — worth its own
-                // slice so a big scene says which of the two grew.
-                ASSISI_PROFILE_SCOPE("physics-capture");
-                world.physics.CaptureState();
-            }
-        });
+                if (world.state != Assisi::App::WorldState::Active || !world.simulate)
+                    return;
+
+                world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
+                                  {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
+                                   /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
+
+                {
+                    // Jolt's whole step, including its internal job dispatch. Everything
+                    // under `fixed-update` that isn't a named ECS system is this.
+                    ASSISI_PROFILE_SCOPE("physics-step");
+                    world.physics.Update(dt);
+                }
+                {
+                    // Snapshot the new poses for render interpolation; OnRender blends them.
+                    // Linear in the body count, and separable from the solve — worth its own
+                    // slice so a big scene says which of the two grew.
+                    ASSISI_PROFILE_SCOPE("physics-capture");
+                    world.physics.CaptureState();
+                }
+            });
+    }
+
+    // Between the step and the snapshot. A mirrored body woken by a contact the
+    // server never had — client poses differ by whatever the last correction has
+    // not yet removed, and Jolt wakes by island — has to be put back before
+    // anything reads it, and before this frame's render writeback picks it up.
+    if (_netSession)
+        _netSession->AfterPhysicsStep();
+
+    // Last: a snapshot describes the world at the *end* of the tick it is
+    // stamped with, so it has to be built after everything that moves it.
+    TickNetSession();
 }
 
 void EditorApp::OnUpdate(float dt)
@@ -725,9 +805,25 @@ void EditorApp::OnUpdate(float dt)
     // Delete edits text there instead). Same safe mutation point as the undo above.
     if (Assisi::Editor::EditHistory *history = ActiveHistory();
         history != nullptr && !ImGui::GetIO().WantTextInput && _selectedEntity != Assisi::ECS::NullEntity &&
-        _scene->IsAlive(_selectedEntity) && ImGui::IsKeyPressed(ImGuiKey_Delete, false))
+        _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity) &&
+        ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
         DeleteEntity(_selectedEntity);
+    }
+
+    // A joining client builds the host's level here, for the same reason: the
+    // load frees the old asset set and re-resolves, and the fixed step that
+    // noticed the handshake runs mid-frame. A failure inside sets _pendingStopPlay,
+    // which the next block picks up on this same frame.
+    if (_pendingJoinBuild)
+    {
+        _pendingJoinBuild = false;
+        BuildJoinedWorld();
+    }
+    if (_pendingStopPlay)
+    {
+        _pendingStopPlay = false;
+        StopPlay();
     }
 
     // A world requested from the Game panel is created here, at the frame's safe
@@ -810,6 +906,23 @@ void EditorApp::OnUpdate(float dt)
                                                             world.streamingPending);
                     });
 
+    // A mirror arrives carrying authored asset ids and null resolved pointers,
+    // and nothing else in this loop knows to look at it: UpgradeStreamingAssets
+    // above only runs while the *cache* has loads in flight, which a spawn
+    // arriving over the wire is not. This was v2's third integration gap — the
+    // world replicated correctly and drew nothing. The client's structure
+    // revision is the signal; resolving is idempotent, so acting on it late
+    // costs a frame of billboard and never correctness.
+    if (_netSession != nullptr && _netSession->Client() != nullptr)
+    {
+        if (const std::uint64_t revision = _netSession->Client()->StructureRevision();
+            revision != _netStructureRevision)
+        {
+            _netStructureRevision = revision;
+            Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
+        }
+    }
+
     // Worlds that simulate but are not drawn get neither the pose write-back nor
     // the transform propagation the render path does for the world it draws. Give
     // them both, in that order — see App::SyncUnrenderedWorld. Skipped entirely
@@ -831,7 +944,7 @@ void EditorApp::OnUpdate(float dt)
     // The editor's own systems act on the world being *viewed* — picking, the fly
     // camera and selection all follow the world selector, not the played world.
     const Assisi::App::SystemContext editorCtx{
-        *_world, dt, &input, &_actions, GetEvents(), /*isActiveWorld=*/true, &_worlds};
+        *_world, dt, GetSimTick(), &input, &_actions, GetEvents(), /*isActiveWorld=*/true, &_worlds};
     _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
@@ -854,7 +967,7 @@ void EditorApp::OnUpdate(float dt)
                     return;
 
                 const Assisi::App::SystemContext ctx{
-                    world,   dt, &input, &_actions, GetEvents(),
+                    world,   dt, GetSimTick(), &input, &_actions, GetEvents(),
                     /*isActiveWorld=*/&world == _worlds.Active(), &_worlds};
                 world.systems.Run(Assisi::App::SystemPhase::PreUpdate,  ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update,     ctx);
@@ -887,6 +1000,13 @@ Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
     { ApplyEditRebind(entity, id, present); };
 }
+
+bool EditorApp::IsMirrored(Assisi::ECS::Entity entity) const
+{
+    return _scene != nullptr && _scene->IsAlive(entity) && _scene->Has<Assisi::NetSync::Mirrored>(entity);
+}
+
+bool EditorApp::IsEditable(Assisi::ECS::Entity entity) const { return IsEditable() && !IsMirrored(entity); }
 
 bool EditorApp::IsEditable() const
 {
@@ -1187,6 +1307,7 @@ void EditorApp::OnImGui()
     { ASSISI_PROFILE_SCOPE("panel/diagnostics");  DrawDiagnosticsWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/chiara");       DrawChiaraWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/game-control"); DrawGameControlWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/network");      DrawNetworkWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/entity-list");  DrawEntityListWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/history");      DrawHistoryWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/levels");       DrawLevelsWindow(); }
@@ -1194,6 +1315,7 @@ void EditorApp::OnImGui()
     { ASSISI_PROFILE_SCOPE("panel/hello-image");  DrawHelloImageWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
     { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
+    { ASSISI_PROFILE_SCOPE("panel/host-modal");   DrawHostUnsavedModal(); }
 
     // Release the Inspector's physics freeze here rather than inside the panel.
     // The panel cannot be trusted to observe its own release: DrawInspector

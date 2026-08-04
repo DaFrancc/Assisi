@@ -159,6 +159,24 @@ bool Application::Initialize()
         return true;
     }
 
+    if (!InitializeCore())
+    {
+        return false;
+    }
+
+    // Headless stops here: no window is created, RenderSystem::Initialize is
+    // never called, and nothing below this line touches a GPU.
+    if (!_headless && !InitializePresentation())
+    {
+        return false;
+    }
+
+    _initialized = true;
+    return true;
+}
+
+bool Application::InitializeCore()
+{
     if (auto result = Core::AssetSystem::Initialize(); !result)
     {
         Core::Log::Fatal("Failed to initialize asset system.");
@@ -176,8 +194,17 @@ bool Application::Initialize()
     Core::AssetSystem::SetAuthoringRoot(ASSISI_SOURCE_ASSET_ROOT);
 #endif
 
-    _config = AppConfig::LoadFromJson();
+    _config  = AppConfig::LoadFromJson();
+    _options = OptionsConfig::LoadFromJson();
 
+    // Either source turns it on; a --server flag must not be undone by a config
+    // file that says nothing about headless mode.
+    _headless = _headless || _config.headless;
+    return true;
+}
+
+bool Application::InitializePresentation()
+{
     Window::WindowConfiguration winCfg;
     winCfg.Width  = _config.width;
     winCfg.Height = _config.height;
@@ -203,10 +230,10 @@ bool Application::Initialize()
         return false;
     }
 
-    Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext());
+    Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext(),
+                               /*persistLayout=*/!_restrictedViewer);
 
     _input = std::make_unique<Window::InputContext>(*_window);
-    _options = OptionsConfig::LoadFromJson();
 
     if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
     {
@@ -219,20 +246,35 @@ bool Application::Initialize()
         ConfigurePostProcess();
     }
 
-    _initialized = true;
+    _presentationInitialized = true;
     return true;
+}
+
+Window::WindowContext &Application::GetWindow() const
+{
+    ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process — there is no window. Guard with "
+                                      "IsHeadless()/HasPresentation().");
+    return *_window;
+}
+
+Window::InputContext &Application::GetInput() const
+{
+    ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process — there are no input devices. Guard with "
+                                     "IsHeadless()/HasPresentation().");
+    return *_input;
 }
 
 Application::~Application()
 {
-    // DebugUI/render teardown only ran meaningful bring-up if Initialize()
-    // succeeded. Tear the GPU stack down in order and — crucially — here,
-    // before main() returns: the device lives in RenderSystem's static, so
-    // leaving it to static destruction races the dynamic loader that owns
-    // vulkan-1.dll (freeing the device through an unloaded DLL is a crash).
-    // The GPU was already drained at the end of Run(); this only orders the
-    // releases: our own resources first, then the device last.
-    if (_initialized)
+    // DebugUI/render teardown only ran meaningful bring-up if the presentation
+    // half was brought up — which a headless process skips entirely, while still
+    // reporting a successful Initialize(). Tear the GPU stack down in order and
+    // — crucially — here, before main() returns: the device lives in
+    // RenderSystem's static, so leaving it to static destruction races the
+    // dynamic loader that owns vulkan-1.dll (freeing the device through an
+    // unloaded DLL is a crash). The GPU was already drained at the end of Run();
+    // this only orders the releases: our own resources first, then the device last.
+    if (_presentationInitialized)
     {
         Debug::DebugUI::Shutdown();
         _postProcess.Shutdown();
@@ -242,7 +284,19 @@ Application::~Application()
 
 void Application::RequestClose()
 {
-    _window->RequestClose();
+    _closeRequested = true;
+    // Still forward it: the window is what a windowed process's OS-level close
+    // path observes, and leaving the two out of sync would make an
+    // externally-closed window and a programmatic close behave differently.
+    if (_window)
+    {
+        _window->RequestClose();
+    }
+}
+
+bool Application::ShouldClose() const
+{
+    return _closeRequested || (_window && _window->ShouldClose());
 }
 
 namespace
@@ -322,7 +376,12 @@ void Application::Run()
     double  cpuMsAccum     = 0.0;
     double  gpuMsAccum     = 0.0;
 
-    while (!_window->ShouldClose())
+    // Headless pacing target: the next fixed tick. A windowed process paces on
+    // frames (vsync or the FPS cap); a server has no frames, so without this it
+    // would spin a core running an accumulator loop that mostly does nothing.
+    Clock::time_point nextTickTime = Clock::now();
+
+    while (!ShouldClose())
     {
         ASSISI_PROFILE_SCOPE("Frame");
         ASSISI_PROFILE_FRAME();
@@ -346,8 +405,31 @@ void Application::Run()
         // Pacing is exclusive with vsync: only cap in FpsLimit mode with a
         // finite limit. In VSync mode FIFO present paces us; with an unlimited
         // cap (fpsLimit < 0) we run as fast as the GPU allows.
+        //
+        // A headless process has no render to pace, so it paces the *tick*
+        // instead — same placement, same reasoning, a different target.
         double sleepMs = 0.0;
-        if (_options.frameSync == FrameSyncMode::FpsLimit && _options.fpsLimit > 0)
+        if (_headless)
+        {
+            ASSISI_PROFILE_SCOPE("pacing-sleep");
+
+            // Pace to the next fixed tick with the same self-tuning sleep the
+            // FPS cap uses. Advancing the target by exactly one step (rather
+            // than from "now") keeps the tick rate honest across a long run: a
+            // step that overruns is absorbed by the next one being shorter,
+            // instead of every step drifting later by the overshoot.
+            const Clock::time_point sleepStart = Clock::now();
+            nextTickTime += std::chrono::duration_cast<Clock::duration>(Seconds(physicsStep));
+            if (nextTickTime < sleepStart)
+            {
+                // Fell far enough behind that catching up tick-by-tick would
+                // spiral. Give up the lost time rather than chase it.
+                nextTickTime = sleepStart;
+            }
+            SleepUntil(nextTickTime);
+            sleepMs = Seconds(Clock::now() - sleepStart).count() * 1000.0;
+        }
+        else if (_options.frameSync == FrameSyncMode::FpsLimit && _options.fpsLimit > 0)
         {
             ASSISI_PROFILE_SCOPE("pacing-sleep");
             const Clock::time_point sleepStart = Clock::now();
@@ -388,8 +470,15 @@ void Application::Run()
         const Clock::time_point inputStart = Clock::now();
         {
             ASSISI_PROFILE_SCOPE("input");
-            Window::WindowContext::PollEvents();
-            _input->Poll();
+
+            // A headless process has neither window nor input devices; the whole
+            // phase is skipped rather than null-guarded per call, so the profile
+            // slice reads as an empty phase instead of a fictitious one.
+            if (!_headless)
+            {
+                Window::WindowContext::PollEvents();
+                _input->Poll();
+            }
         }
         const Clock::time_point inputEnd = Clock::now();
 
@@ -401,6 +490,10 @@ void Application::Run()
             accumulator += dt;
             while (accumulator >= physicsStep)
             {
+                // The network clock. Incremented with the step, before the hook,
+                // so OnFixedUpdate and every system it runs sees the tick they
+                // are simulating rather than the one they just finished.
+                ++_simTick;
                 OnFixedUpdate(static_cast<float>(physicsStep));
                 accumulator -= physicsStep;
             }
@@ -437,7 +530,8 @@ void Application::Run()
         // SetVSync() no-ops when already in the requested state, so this is a cheap
         // compare every frame and only recreates when the user actually changed it.
         // Applies the persisted option on the first iteration too.
-        Render::Vulkan::VulkanContext *vulkanContext = Render::RenderSystem::GetVulkanContext();
+        Render::Vulkan::VulkanContext *vulkanContext =
+            _headless ? nullptr : Render::RenderSystem::GetVulkanContext();
         if (vulkanContext)
         {
             // Scoped because it is the other thing that used to sit between two
@@ -449,8 +543,14 @@ void Application::Run()
             vulkanContext->SetVSync(_options.frameSync == FrameSyncMode::VSync);
         }
 
+        // The brackets stay taken in headless too: renderMs then measures the
+        // empty phase rather than going stale, so `unaccounted` below keeps
+        // meaning the same thing on a server as it does in a window.
         const Clock::time_point renderStart = Clock::now();
-        RenderFrame();
+        if (!_headless)
+        {
+            RenderFrame();
+        }
         const Clock::time_point renderEnd = Clock::now();
         {
             ASSISI_PROFILE_SCOPE("flush");
@@ -555,8 +655,11 @@ void Application::Run()
     // until after main() returns — so without this, resources are freed while
     // the last frame's command buffer is still in flight (validation:
     // "destroy ... currently in use by VkCommandBuffer", then a crash).
-    if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
-        vulkanContext->GetDevice()->waitForIdle();
+    if (_presentationInitialized)
+    {
+        if (auto *vulkanContext = Render::RenderSystem::GetVulkanContext())
+            vulkanContext->GetDevice()->waitForIdle();
+    }
 
     OnShutdown();
 }

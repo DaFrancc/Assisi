@@ -62,6 +62,11 @@ struct Registry
     /// next Create() would hand out a duplicate live handle) and re-flags it live.
     /// Asserts the slot is currently free; the entity is not added to any
     /// component pool (the caller repopulates components separately).
+    ///
+    /// Grows the slot table if the target index is past its end, creating the
+    /// skipped slots free. That covers the restore-across-a-reset case: a scene
+    /// that has been Clear()ed reports no slots at all, and a snapshot taken
+    /// before the clear must still restore at exact identity.
     void ReviveAt(Entity entity);
 
     /// @brief Returns true if the entity handle is still valid.

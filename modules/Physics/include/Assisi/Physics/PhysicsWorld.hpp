@@ -22,6 +22,7 @@
 #include <memory>
 #include <span>
 #include <utility>
+#include <vector>
 
 namespace Assisi::Physics
 {
@@ -182,6 +183,59 @@ class PhysicsWorld
     /// Transforms would sit at spawn pose forever no matter how much the bodies
     /// move. Call once per frame after the fixed-step loop, before propagating.
     void SyncTransforms(Assisi::ECS::Scene &scene) { InterpolateTransforms(scene, 1.f); }
+
+    // --- Authoritative body state (replication) -------------------------------
+    //
+    // Replication used to read the render-side Transform, which is wrong twice
+    // over: a headless host never runs the writeback at all (so its
+    // physics-driven entities replicate their load pose forever), and the
+    // writeback stamps *every* body every frame including sleeping ones (so a
+    // settled world never stops costing bandwidth). Both are the same root
+    // cause — the render pose is not the physics truth — and reading the world
+    // directly removes it rather than patching it twice.
+
+    /// @brief One active body's authoritative motion state.
+    struct ActiveBodyState
+    {
+        ECS::Entity entity;
+        glm::vec3   position;
+        glm::quat   rotation;
+        glm::vec3   linearVelocity;
+        glm::vec3   angularVelocity;
+    };
+
+    /// @brief Every currently-awake dynamic body, with its pose and velocities.
+    ///
+    /// Only bodies created through AddBodyFromDescriptor appear — it is the one
+    /// entry point that knows an entity, and a body with no entity is nothing a
+    /// replication layer could name. The order Jolt returns active bodies in is
+    /// unspecified, which is fine: every consumer of this re-sorts by its own
+    /// identity.
+    void GetActiveBodyStates(std::vector<ActiveBodyState> &out) const;
+
+    /// @brief Whether the simulation currently considers @p body awake.
+    [[nodiscard]] bool IsBodyActive(const RigidBody &body) const;
+
+    /// @brief Put @p body to sleep without moving it.
+    void DeactivateBody(const RigidBody &body);
+
+    /// @brief Set pose, both velocities, and activation in one call.
+    ///
+    /// Deliberately not composed from the pieces above, because those have the
+    /// wrong semantics for a correction three times over: SetBodyTransform
+    /// reactivates unconditionally (so an "asleep" correction applied through it
+    /// would wake the body), it zeroes the velocities, and there is no
+    /// angular-velocity setter at all.
+    ///
+    /// Like SetBodyTransform it collapses both render-interpolation snapshots
+    /// onto the target. That is load-bearing for the smoothing above this: the
+    /// visual offset assumes the rendered pose is *unchanged* at the instant of
+    /// a correction, and if the writeback also smeared the jump across a frame
+    /// the two would double-count into a wobble at every correction.
+    ///
+    /// No-op for a static body or a handle not in the simulation.
+    void ApplyBodyState(const RigidBody &body, glm::vec3 position, glm::quat rotation, glm::vec3 linearVelocity,
+                        glm::vec3 angularVelocity, bool activate);
 
     /// @brief Returns the current world-space position and rotation of a body.
     std::pair<glm::vec3, glm::quat> GetBodyTransform(const RigidBody &body) const;

@@ -45,12 +45,17 @@ separate package manager step, and nothing to install by hand:
 | [FreeType](https://github.com/freetype/freetype) | Font rasterization |
 | [nlohmann/json](https://github.com/nlohmann/json) | JSON for configs and level files |
 | [doctest](https://github.com/doctest/doctest) | Unit-test framework |
+| [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets) | UDP transport for the networking modules — reliability, fragmentation, connection state |
+| [protobuf](https://github.com/protocolbuffers/protobuf) | Pulled in by GameNetworkingSockets |
 | [Assimp](https://github.com/assimp/assimp) | Multi-format mesh import — **off by default** |
 
 [Assimp](https://github.com/assimp/assimp) is the deferred catch-all import backend (FBX/OBJ/DAE/…) and
 stays off (`ASSISI_ENABLE_ASSIMP`) so its heavy build doesn't tax every configure; fastgltf covers the
-runtime glTF path today. Rendering is **Vulkan**: a Vulkan-capable GPU and driver are required at
-runtime, but no Vulkan SDK is needed to build (the engine loads Vulkan dynamically).
+runtime glTF path today. Networking is on by default but can be turned off with
+`ASSISI_ENABLE_NETWORKING=OFF`, which drops GameNetworkingSockets and protobuf — a noticeable chunk of
+first-configure time if you are not building a multiplayer game. Rendering is **Vulkan**: a
+Vulkan-capable GPU and driver are required at runtime, but no Vulkan SDK is needed to build (the engine
+loads Vulkan dynamically).
 
 **Minimum CPU:** x86-64 with **AVX2** (Intel Haswell 2013+ / AMD Zen 2015+, and the FMA/F16C/LZCNT/BMI
 extensions that ship alongside it). This is a deliberate baseline — the engine is compiled with these
@@ -200,118 +205,203 @@ ctest --preset msvc-debug -R ECS   # a single suite
 Assisi is organized into several modules, each responsible for a specific aspect of the engine. All modules compile as static libraries under the `Assisi::` CMake namespace. Below is an overview of each module and its responsibilities:
 
 ### Core
-The Core module contains the fundamental utilities and infrastructure shared across all other modules:
-the `Logger` (console and file sinks), `AssetSystem` (a virtual filesystem with a read-only asset root
-and a writable per-user root, returning `std::expected`), error types, `Prelude.hpp` (common includes),
-and the `EventQueue` (a per-frame typed event bus for decoupled inter-system communication). It also
-houses the **reflection** system — `ACOMP()`/`AFIELD()` annotations and a `ComponentRegistry` that the
-`reflectgen` build tool (`tools/reflectgen`) turns into (de)serialization and inspector code — and
-`JobSystem`, the engine's task pool (worker threads plus a main-thread queue for work that has to land
-at a safe point in the frame).
+Core holds the pieces every other module needs. `Logger` writes to the console and to a file.
+`AssetSystem` is a small virtual filesystem: a read-only root for the assets the game ships with, a
+writable one for per-user files like saves and settings, and `std::expected` returns instead of
+exceptions. `EventQueue` is a typed message bus, drained once per frame, that lets systems talk to one
+another without knowing each other exist. `JobSystem` is the engine's task pool — worker threads, plus a
+main-thread queue for work that has to land at a specific safe point in the frame. `Prelude.hpp` is the
+common-includes header.
+
+Core is also where **reflection** lives. Tag a struct with `ACOMP()` and its fields with `AFIELD()`, and
+the `reflectgen` build tool (`tools/reflectgen`) reads your header and writes the tedious code for you:
+saving and loading the component, drawing it in the editor's inspector, and packing it for the network.
+Extra tags adjust that — `ACOMP(replicable)` lets a component travel over the network, `AFIELD(norep)`
+keeps one field off the wire (see NetSync). `ComponentRegistry` is the runtime table of everything that
+was generated.
 
 ### Math
-The Math module provides a collection of mathematical functions and data structures commonly used in game development, such as vectors, matrices, and quaternions.
-Currently it is mostly a wrapper around the GLM library, but in the future it will include more custom math utilities and optimizations specific to the engine's needs.
+Math is the vectors, matrices and quaternions everything else is written in terms of. Today it is mostly
+a thin wrapper around [GLM](https://github.com/g-truc/glm); the wrapper exists so engine-specific
+utilities and optimizations can be added later without every call site changing.
 
 ### Window
-The Window module is responsible for creating and managing the application window, handling input events, and interfacing with the underlying operating system's windowing system.
-It manages the GLFW lifecycle via a `GlfwLibrary` shared pointer, exposes a `WindowContext` for the OS window, and an `InputContext` for polling keyboard and mouse state.
-It also provides `ActionMap` — a named input action system that maps string action names to key/mouse button bindings and can be loaded from `game.json`.
+Window creates the operating-system window and reads input from it. It manages GLFW's lifetime
+(`GlfwLibrary` is shared, so GLFW is initialised once and shut down when the last user of it goes away),
+and exposes `WindowContext` for the window itself and `InputContext` for polling the keyboard and mouse.
+`ActionMap` sits on top of that: it maps a name like `"Jump"` to a key or mouse button, loaded from
+`game.json`, so game code asks about actions rather than hardcoding keys.
 
 ### Geometry
-The Geometry module owns mesh and material *data*, independent of the GPU — so importers and tools can
-use it without a Vulkan device. It provides `MeshData` / `Vertex` / `SubMesh` / `LodRange`, `Bounds`
-(bounding spheres and AABBs used by the frustum cull), `DefaultMeshes` (the built-in cube/sphere/plane
-primitives), and `MaterialData` / `MaterialFile` (the `.amat` on-disk material). `MeshImporter` and
-`AssetImport` load glTF through fastgltf, exploding a file's materials into individual assets on import.
+Geometry owns mesh and material *data* with no GPU involved, which is what lets importers and
+command-line tools use it without a Vulkan device. It provides `MeshData` / `Vertex` / `SubMesh` /
+`LodRange` for the geometry itself, `Bounds` (the bounding spheres and boxes that culling uses to decide
+whether something is on screen), `DefaultMeshes` (the built-in cube, sphere and plane), and
+`MaterialData` / `MaterialFile` — `.amat`, the on-disk material format. `MeshImporter` and `AssetImport`
+load glTF files through fastgltf, splitting a file's materials into separate assets as they import.
 
 ### Render
-The Render module renders the scene through **Vulkan**, via NVIDIA's
-[NVRHI](https://github.com/NVIDIA-RTX/NVRHI) hardware-abstraction layer (Windows and Linux; no Vulkan SDK
-required to build — only a Vulkan-capable driver at runtime). It provides `RenderSystem` / `VulkanContext`
-(device, swapchain, frames-in-flight), `ShaderModule` (loads SPIR-V that glslang compiles from GLSL at
-build time), and `MeshBuffer` / `Buffer` / `Texture`. The default renderer is a **clustered forward**
-pipeline: `ClusterGrid` bins point/spot/directional lights into a froxel grid with compute shaders,
-`MeshPass` shades with a Cook–Torrance PBR model reading only the lights that touch each cluster, and
-`PostProcess` supplies optional MSAA and/or FXAA. Drawing is **GPU-driven**: `MeshCuller` frustum-culls
-on the GPU and builds indirect commands, so a whole scene issues a single `drawIndexedIndirect`, and
-`GeometryArena` keeps mesh data in shared vertex/index buffers. `AssetCache` resolves asset paths to GPU
-meshes/textures (deduplicated by path, including the built-in `prim://` primitives and fallback
-textures) and streams uploads off the main thread. `OutlinePass` / `IconPass` / `LinePass` are the
-editor's overlay passes — opt-in, so a game never builds them. `GpuMarker.hpp` labels command buffers
-for RenderDoc and Nsight; see [`docs/gpu-profiling-guide.md`](docs/gpu-profiling-guide.md).
+Render draws the scene with **Vulkan**, through NVIDIA's
+[NVRHI](https://github.com/NVIDIA-RTX/NVRHI) hardware-abstraction layer. Windows and Linux; you do not
+need the Vulkan SDK to build, only a Vulkan-capable driver to run. `RenderSystem` and `VulkanContext`
+own the device, the swapchain and the frames-in-flight; `ShaderModule` loads SPIR-V that glslang compiles
+from GLSL at build time; `MeshBuffer` / `Buffer` / `Texture` are the GPU resources.
+
+The default renderer is **clustered forward**. The camera's view is diced into a 3D grid of small boxes,
+and a compute shader records which lights reach each box (`ClusterGrid`). When `MeshPass` shades a pixel
+it looks up the box that pixel falls in and considers only those few lights, instead of looping over
+every light in the level — which is what lets a scene hold a lot of them. Shading uses a Cook–Torrance
+PBR model, and `PostProcess` adds optional anti-aliasing (MSAA and/or FXAA).
+
+Drawing is **GPU-driven**. Rather than the CPU working out what is visible and issuing one draw call per
+object, `MeshCuller` does the visibility test on the GPU and writes the draw commands there too, so an
+entire scene goes out as a single `drawIndexedIndirect`. `GeometryArena` is what makes that possible: it
+keeps all mesh data in a few shared vertex and index buffers instead of one buffer per mesh. `AssetCache`
+turns asset paths into GPU meshes and textures, reusing anything already loaded (including the built-in
+`prim://` primitives and the fallback textures) and doing its uploads off the main thread. `OutlinePass`,
+`IconPass` and `LinePass` are the editor's overlays, opt-in so a game build never compiles them.
+`GpuMarker.hpp` labels command buffers so RenderDoc and Nsight captures are readable; see
+[`docs/gpu-profiling-guide.md`](docs/gpu-profiling-guide.md).
 
 ### ECS
-The ECS (Entity-Component-System) module provides a framework for working with entity IDs, component storage, sparse sets, queries, and scene management.
-Entity handles carry a generation counter so stale handles are detected after a slot is reused. It is
-designed to be flexible and efficient, allowing you to create complex game objects and systems without worrying about the underlying data structures or performance implications.
-Key types: `Scene`, `SceneRegistry`, `Query` (with `Without<>` exclusion filters), `Registry`, `SparseSet`.
+ECS (Entity-Component-System) is how game objects are represented: an entity is just an ID, its data
+lives in components attached to that ID, and systems run over every entity that has a particular set of
+components. This module is that machinery — `Scene` (the container it all lives in), `Registry` and
+`SparseSet` (the component storage), and `Query`, which walks every entity holding a chosen set of
+components and can skip the ones that also hold something else (`Without<>`). Entity handles carry a
+generation counter, so a handle to an entity that has since been destroyed is caught as stale instead of
+quietly pointing at whatever reused its slot.
 
 ### Runtime
-The Runtime module provides ready-to-use components and systems common to most games:
-`Transform` (with hierarchy via `Parent` and `PropagateTransforms`),
-`MeshRenderer`, `Camera`, and point/spot/directional light components.
-It ships the default render path — `SceneRenderer`, which ties the camera, the clustered `LightingSystem`,
-and mesh drawing together — plus `SceneSerializer` (save/load `.alvl` level files, driven by reflection),
-`AssetResolve` (GUID/path asset references on components) and `Lifecycle`'s `DestroyTag` /
-`DestroyMarked` (deferred end-of-frame entity destruction).
-These building blocks compose into your own game logic without modification.
+Runtime is the ready-made components and systems most games need, built on ECS. The components are
+`Transform` (position, rotation and scale, with parenting through `Parent` and `PropagateTransforms`),
+`MeshRenderer`, `Camera`, and point/spot/directional lights. The systems are `SceneRenderer`, the default
+render path, which ties the camera, the clustered `LightingSystem` and mesh drawing together;
+`SceneSerializer`, which saves and loads `.alvl` level files using reflection, so a new component is
+serialized without anyone writing serialization code for it; `AssetResolve`, which turns the asset
+references stored on components into loaded assets; and `Lifecycle`, whose `DestroyTag` / `DestroyMarked`
+pair defers entity destruction to the end of the frame so nothing is deleted out from under a system
+that is still iterating.
 
 ### Physics
-The Physics module wraps [Jolt Physics](https://github.com/jrouwe/JoltPhysics) to provide rigid body simulation.
-It exposes `PhysicsWorld` (manages the simulation, body creation, stepping, and gravity),
-`RigidBody` (holds a live Jolt `BodyID`, not serialized),
-and `RigidBodyDescriptor` (a serializable description of a body's shape and static/dynamic flags).
-Call `PhysicsWorld::Clear()` before loading a new level to destroy all tracked bodies.
+Physics wraps [Jolt Physics](https://github.com/jrouwe/JoltPhysics) for rigid-body simulation.
+`PhysicsWorld` owns the simulation — creating bodies, stepping it forward, gravity. A simulated entity
+carries two components: `RigidBodyDescriptor`, the saved description of the body (its shape, and whether
+it is static or dynamic), and `RigidBody`, the live handle to Jolt's copy of that body, which is created
+on load and never written to disk. Call `PhysicsWorld::Clear()` before loading a new level, or the
+previous level's bodies stay in the simulation.
+
+### Net
+Net moves bytes between two machines and has no idea what they mean — it knows nothing about entities or
+components. It wraps [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets)
+behind `NetTransport`, which opens and closes connections and sends each message either **reliable**
+(resent until it arrives, delivered in order) or **unreliable** (sent once; if it drops, it is gone).
+Messages travel on separate *lanes*, so one big slow transfer cannot hold up small urgent ones queued
+behind it.
+
+`CreateLoopbackPair()` hands back both ends of a connection living inside a single process. That is how
+the replication tests run: the real code path, without a network and without a test-only fake.
+
+### NetSync
+NetSync is the layer that keeps two machines' scenes looking the same. Net moves the bytes; NetSync
+decides which bytes to move.
+
+**Keeping the two in sync.** The straightforward approach is for the server to send everyone's positions
+every frame and for clients to draw exactly what they are told — but then every client is always
+rendering a slightly stale world. Assisi instead has *every* machine run the same physics simulation at
+60 Hz, so a client can work out most of what happens on its own. The server sends corrections when a
+client has drifted away from the truth. The client is usually right by itself; the server's job is to
+keep it honest.
+
+**Sending only what changed.** The server remembers the last snapshot each client confirmed receiving,
+and sends only the difference against that confirmed state. Nothing is ever retransmitted: if a packet is
+lost, the next snapshot is still measured against the same confirmed baseline, so it already contains
+whatever went missing. Packet loss costs a little extra bandwidth instead of putting the two machines
+out of sync.
+
+The main pieces are `ReplicationServer` and `ReplicationClient`, the two halves of the conversation;
+`BodyState`, which carries physics corrections in compressed form (rotations as three numbers instead of
+four, positions to roughly 2 mm) and eases the result in visually so a correction does not look like a
+teleport; and `NetClock`, which keeps the client's idea of "which tick is it right now" close to the
+server's. When two machines connect they first compare a **protocol hash** — a fingerprint of how every
+replicated component is laid out — and refuse to connect if it differs, rather than decoding each other's
+bytes into the wrong fields.
+
+**Deciding what replicates.** Sending an entire scene would be wasteful, so five separate things all have
+to agree before a given component is put on the wire:
+
+1. **The component type must be allowed to travel.** Only types declared `ACOMP(replicable)` are ever
+   eligible.
+2. **The game can veto a type outright.** `networking.neverReplicate` in `game.json` blocks a component
+   for that game, even one an engine module marked replicable.
+3. **The entity has to opt in.** Only entities carrying the `Replicated` component are sent at all.
+4. **That entity can drop individual components.** `Replicated::excluded` is a per-entity list of
+   opt-outs, so one crate can send its transform but keep, say, its audio state to itself.
+5. **Individual fields can be held back.** `AFIELD(norep)` marks a field as saved to disk but never sent
+   over the network.
+
+Steps 1 and 2 are deliberately separate decisions made by separate people. An engine module can say a
+component *is able to* replicate, but only the game says whether it actually *does* — so marking
+something in an engine header never quietly adds it to every game's bandwidth bill. Steps 3 and 4 are
+what you edit in the editor: each component header gets a clickable glyph, and the `Replicated` component
+shows the same choices as a checklist. Design notes and the reasoning behind all of this are in
+[`docs/replication-optin-plan-v1.md`](docs/replication-optin-plan-v1.md) and
+[`docs/replication-plan-v4.md`](docs/replication-plan-v4.md).
 
 ### Debug
-The Debug module wraps [Dear ImGui](https://github.com/ocornut/imgui) and
-[ImPlot](https://github.com/epezent/implot) with a GLFW + **Vulkan** backend.
-`DebugUI::Initialize(window, vulkanContext)` must be called after the Vulkan context exists.
-Override `OnImGui()` in your application class to draw debug panels and overlays.
+Debug is the developer UI: [Dear ImGui](https://github.com/ocornut/imgui) and
+[ImPlot](https://github.com/epezent/implot) wired up to a GLFW + **Vulkan** backend.
+`DebugUI::Initialize(window, vulkanContext)` has to be called after the Vulkan context exists. Override
+`OnImGui()` in your application class to draw your own panels and overlays.
 
 ### App
-The App module provides the application framework on top of the lower-level modules.
-`Application` is the base class: it runs a fixed-timestep physics loop (default 60 Hz, `AppConfig::physicsHz`)
-and paces rendering either to the display refresh (VSync) or to an optional FPS cap, selectable at runtime.
-Override `OnStart`, `OnFixedUpdate(dt)`, `OnUpdate(dt)`, and `OnRender(RenderFrame&)`, plus optionally
-`OnImGui()`, `OnShutdown()`, `OnResize()`, and `OnRenderTargetsChanged()`.
+App is the framework that ties the lower modules together. `Application` is the base class you derive
+from: it runs physics on a fixed timestep (60 Hz by default, `AppConfig::physicsHz`) and paces rendering
+either to the display's refresh rate or to an optional FPS cap, switchable at runtime. You override
+`OnStart`, `OnFixedUpdate(dt)`, `OnUpdate(dt)` and `OnRender(RenderFrame&)`, plus `OnImGui()`,
+`OnShutdown()`, `OnResize()` and `OnRenderTargetsChanged()` if you need them.
 
-`SystemRegistry` provides dependency-ordered, phase-based system registration (`PreUpdate`, `FixedUpdate`,
-`Update`, `PostUpdate`) via `After()` / `Before()` constraints; render systems register separately through
-`RegisterRender`. Named input actions come from an `ActionMap` loaded from `assets/game.json`.
+`SystemRegistry` is where systems are registered. Each one goes into a phase (`PreUpdate`, `FixedUpdate`,
+`Update`, `PostUpdate`) and can declare that it runs `After()` or `Before()` a named other system; the
+registry sorts them accordingly, so ordering is stated deliberately instead of being an accident of
+registration order. Render systems register separately, through `RegisterRender`.
 
-`World` and `WorldManager` hold **several scenes resident at once** — each world owns its scene, its
-physics world and its own instance of the registered systems, and carries a `WorldState`
-(`Loading` / `Active` / `Dormant`). Systems are bound per world through named **profiles**, so a level
-selects which systems it runs rather than the choice being global. `Application` also owns a
-`Core::JobSystem` (task pool, `Jobs().Run()` / `RunOnMain()`), drained at a fixed point each frame —
-that is where background asset loads publish.
+`World` and `WorldManager` let **several scenes be loaded at the same time** — for streaming, or for
+keeping a menu alive behind a level. Each world owns its own scene, its own physics world and its own
+instances of the registered systems, and is in one of three states (`Loading`, `Active`, `Dormant`).
+Which systems a world runs comes from a named **profile**, so a level chooses its systems rather than
+every level being stuck with one global set. `Application` also owns the `Core::JobSystem`
+(`Jobs().Run()` / `RunOnMain()`); its main-thread queue is drained at a fixed point each frame, which is
+where background asset loads hand their results back.
 
-Configuration is split in two: `AppConfig` (loaded from `assets/game.json`) holds window, clear-color, and
-physics-rate settings a game ships with; `OptionsConfig` (persisted to `options.json`) holds user-facing
-runtime options — anti-aliasing mode, MSAA sample count, and VSync/FPS-limit — editable in-app through the
-**F11** options window.
+Configuration comes in two halves. `AppConfig`, read from `assets/game.json`, is what the game ships
+with: window setup, clear colour, physics rate. `OptionsConfig`, saved to `options.json`, is what the
+player changes: anti-aliasing mode, MSAA sample count, VSync and FPS limit, all editable in-app through
+the **F11** options window.
 
 ### Editor
-The Editor module is the level editor, built **as a library** rather than baked into an executable, so a
-game and its editor are two thin targets over the same code. `EditorApp` derives from `App::Application`
-and adds the fly camera, entity list, reflected-component inspector, transform gizmo, asset browser,
-collider wireframes, play/pause/stop, and `.alvl` level load/save. `EditHistory` is the undo/redo system
-(Ctrl-Z), which captures at every edit site and survives entering and leaving play mode. `apps/sandbox`
-is a few hundred lines on top of it. Editor overlays are opt-in at the renderer level
-(`enableEditorVisuals`), so a game build never creates those pipelines or loads editor assets.
+The Editor is the level editor, built **as a library** instead of as an executable, so a game and its
+editor come out as two thin targets over the same code. `EditorApp` derives from `App::Application` and
+adds the fly camera, entity list, inspector (generated from reflection, so your own components show up in
+it without any work), transform gizmo, asset browser, collider wireframes, play/pause/stop, and `.alvl`
+level loading and saving. `EditHistory` is undo/redo (Ctrl-Z): every edit site records into it, and the
+history survives entering and leaving play mode. Play can start as a host or as a client, and
+**Host + N play-in-editor clients** launch as child processes from a single button, so testing a
+networked session does not mean starting binaries by hand. `apps/sandbox` is a few hundred lines on top
+of all this. The editor's overlays are opt-in at the renderer level (`enableEditorVisuals`), so a shipped
+game never creates those pipelines or loads editor assets.
 
 ### Chiara
-Chiara is the performance and memory analyzer — an always-on-when-compiled-in frame profiler, named
-scopes and counters recorded into lock-free per-thread rings and exported as Chrome Trace JSON that
-opens in [Perfetto](https://ui.perfetto.dev). `ASSISI_PROFILE_SCOPE` / `ASSISI_PROFILE_COUNTER` cost
-~18 ns per scope; in a build without `ASSISI_ENABLE_CHIARA` every macro compiles to nothing at all, so
-instrumentation cannot bit-rot. Press **F9** in the sandbox for the capture panel — snapshot the recent
-past out of the ring, or stream a longer session to disk.
+Chiara is the performance and memory analyzer — a frame profiler that is always on whenever it is
+compiled in. `ASSISI_PROFILE_SCOPE` and `ASSISI_PROFILE_COUNTER` record named scopes and counters into a
+lock-free ring buffer per thread, which is exported as Chrome Trace JSON and opens in
+[Perfetto](https://ui.perfetto.dev). A scope costs about 18 ns; in a build without
+`ASSISI_ENABLE_CHIARA` the macros compile to nothing at all, so instrumentation can stay in the code
+permanently rather than rotting. Press **F9** in the sandbox for the capture panel — snapshot the recent
+past out of the ring, or stream a longer session straight to disk.
 
-It has no dependencies, which is what lets `Core` (and therefore everything) sit above it. The design
-notes are in [`docs/chiara-design-notes.md`](docs/chiara-design-notes.md), and
+Chiara has no dependencies of its own, which is what lets `Core` (and therefore everything else) sit
+above it. Design notes are in [`docs/chiara-design-notes.md`](docs/chiara-design-notes.md), and
 [`scripts/chiara-analyze.py`](scripts/chiara-analyze.py) reads a capture from the terminal when you want
 numbers rather than a flame chart.
 
@@ -321,7 +411,14 @@ comments in the headers. Design notes and the rolling code-review docket live in
 including the architecture notes for [clustered lighting](docs/light-culling-design-notes.md),
 [GPU-driven rendering](docs/gpu-driven-rendering-design-notes.md),
 [multi-scene worlds](docs/multi-scene-design-notes.md), the [job system](docs/job-system-design-notes.md),
-[asset streaming](docs/asset-streaming-design-notes.md) and [Chiara](docs/chiara-design-notes.md).
+[asset streaming](docs/asset-streaming-design-notes.md), [replication](docs/replication-plan-v4.md) and
+its [opt-in model](docs/replication-optin-plan-v1.md), and [Chiara](docs/chiara-design-notes.md).
+
+The replication docs come with [a survey of how other ECS engines solve the same
+problem](docs/replication-research-ecs-survey.md) — Unity NetCode, bevy_replicon, lightyear, Flecs,
+EnTT, Unreal (classic/Iris/Mass), Photon Quantum, Overwatch, SpatialOS and Godot — with a source beside
+every claim and the unverifiable ones marked as such. It is the evidence the design argues from,
+including the two places it deliberately departs from the majority.
 
 Two practical guides:
 - [`docs/gpu-profiling-guide.md`](docs/gpu-profiling-guide.md) — capturing and reading a frame with

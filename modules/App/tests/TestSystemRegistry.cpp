@@ -33,8 +33,8 @@ RenderContext MakeCtx(Assisi::ECS::Scene &scene)
 // pointers there: an InputContext cannot exist without a window.
 SystemContext MakeGameCtx(World &world, Assisi::Core::EventQueue &events, bool isActiveWorld)
 {
-    return SystemContext{world,  0.016f, /*input=*/nullptr, /*actions=*/nullptr,
-                         events, isActiveWorld};
+    return SystemContext{world,  0.016f, /*simTick=*/0, /*input=*/nullptr,
+                         /*actions=*/nullptr, events, isActiveWorld};
 }
 
 std::size_t IndexOf(const std::vector<std::string> &order, const std::string &name)

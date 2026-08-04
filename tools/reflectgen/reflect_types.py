@@ -41,6 +41,15 @@ _ASSET_ID_VECTOR = TypeCodegen(
     'for (const auto& _e : j.at("{f}")) {a}.push_back(Assisi::Core::DeserializeAssetId(_e)); }} }}')
 
 
+# Shared codegen for Reflect::ComponentMask. Both directions route through the
+# Core helpers, which own the bit<->name translation and the load-time warnings
+# for names that no longer resolve (see ComponentMaskJson.hpp).
+_COMPONENT_MASK = TypeCodegen(
+    'ComponentMask',
+    'Assisi::Core::Reflect::SerializeComponentMask({a})',
+    '{{ if (j.contains("{f}")) {a} = Assisi::Core::Reflect::DeserializeComponentMask(j.at("{f}")); }}')
+
+
 # Serialize expressions produce values for json initializer lists.
 # Deserialize statements read from j.at("{f}") and assign to comp.{f}.
 #
@@ -167,6 +176,15 @@ TYPES: dict[str, TypeCodegen] = {
     'std::vector<AssetId>':               _ASSET_ID_VECTOR,
     'std::vector<Core::AssetId>':         _ASSET_ID_VECTOR,
     'std::vector<Assisi::Core::AssetId>': _ASSET_ID_VECTOR,
+    # Reflect::ComponentMask — a set of replicable component types, held as a
+    # bitset but serialized as an array of component *names*: the bit index is a
+    # replicable ordinal, which reshuffles whenever any component is added,
+    # renamed, or has its capability flipped, so persisting bits would silently
+    # re-aim an exclusion at the wrong component. Accepts every spelling.
+    'ComponentMask':                       _COMPONENT_MASK,
+    'Reflect::ComponentMask':              _COMPONENT_MASK,
+    'Core::Reflect::ComponentMask':        _COMPONENT_MASK,
+    'Assisi::Core::Reflect::ComponentMask': _COMPONENT_MASK,
 }
 
 # Field types whose codegen calls the Core AssetId JSON helpers; a generated file
@@ -174,6 +192,13 @@ TYPES: dict[str, TypeCodegen] = {
 _ASSET_ID_TYPES = {
     'AssetId', 'Core::AssetId', 'Assisi::Core::AssetId',
     'std::vector<AssetId>', 'std::vector<Core::AssetId>', 'std::vector<Assisi::Core::AssetId>',
+}
+
+# Same idea for ComponentMask: its codegen calls the Core mask JSON helpers, so a
+# generated file carrying one must include ComponentMaskJson.hpp.
+_COMPONENT_MASK_TYPES = {
+    'ComponentMask', 'Reflect::ComponentMask',
+    'Core::Reflect::ComponentMask', 'Assisi::Core::Reflect::ComponentMask',
 }
 
 # EntityRef is meaningless in a standalone asset (there is no scene to resolve

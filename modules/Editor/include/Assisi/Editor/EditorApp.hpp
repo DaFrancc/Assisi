@@ -15,6 +15,7 @@
 ///   - EditorLevels.cpp     level scan/save/load + the Levels window
 
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/ChildProcess.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -27,6 +28,7 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/GeometryArena.hpp>
@@ -43,6 +45,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -112,6 +115,21 @@ struct EditorConfig
     /// Core::AssetSystem; a missing/typo'd path warns and starts empty.
     std::string startupLevel;
 
+    /// Endpoint ("address" or "address:port") to join automatically once the
+    /// editor has started. Empty = none.
+    ///
+    /// What makes a play-in-editor client a client: the process is a full
+    /// editor, launched by another one, that enters Play as a joiner the moment
+    /// it is up. Nothing else about it is special — which is the point, since a
+    /// PIE client that ran a different code path would stop being a test of the
+    /// thing it is meant to test.
+    std::string autoJoinEndpoint;
+
+    /// Run as a restricted viewer: no writes to anything the editor that
+    /// spawned this process also owns (see Application::SetRestrictedViewer and
+    /// Core::RebuildMode::ReadOnly). Set for a play-in-editor client.
+    bool restrictedViewer = false;
+
     /// Build the SceneRenderer's editor overlay passes (selection outline,
     /// entity icons, collider wireframes). On by default — this exists so the
     /// renderer's off-path (what a Game build runs: passes never built, no
@@ -124,7 +142,12 @@ struct EditorConfig
 class EditorApp : public Assisi::App::Application
 {
   public:
-    explicit EditorApp(EditorConfig config = {}) : _editorConfig(std::move(config)) {}
+    explicit EditorApp(EditorConfig config = {}) : _editorConfig(std::move(config))
+    {
+        // Application reads this during Initialize(), which runs before OnStart,
+        // so it cannot wait for a hook — hence the constructor body.
+        SetRestrictedViewer(_editorConfig.restrictedViewer);
+    }
 
     /// @brief Transform-gizmo handle set. Public so the free helpers in
     /// EditorGizmo.cpp can map it to ImGuizmo's operation enum.
@@ -143,6 +166,7 @@ class EditorApp : public Assisi::App::Application
     void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
+    void OnShutdown() override;
 
   private:
     // --- Setup ---
@@ -172,6 +196,93 @@ class EditorApp : public Assisi::App::Application
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see EditorPlay.cpp
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See EditorApp.cpp
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
+    void DrawNetworkWindow();     // negotiated level + live net stats; see EditorNet.cpp
+    void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"; see EditorNet.cpp
+    /// @brief The two host-side authoring warnings: a level with nothing marked
+    /// Replicated, and dynamic bodies that will run as cosmetic local physics.
+    /// Both describe a gap between what was marked and what clients will see.
+    void DrawHostAuthoringWarnings();
+    void ShutdownNetSession();    // tear down and forget; safe to call with no session
+    void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
+    void TickNetSession();        // end of the fixed step: snapshots (host) or input (client)
+    void SmoothNetView();         // once per frame, AFTER the physics writeback: interpolation + correction smoothing
+
+    // --- Networked play (docs/replication-plan-v4.md §3.6) ------------------
+    // One rule the rest falls out of: **a network session exists only inside a
+    // play session.** Hosting starts by entering Play; a client joins by
+    // entering Play with a join target; Stop — either side, any reason — tears
+    // the session down. That is what lets the join build its world inside the
+    // *play* scene, which the editor already treats as disposable, so nearly
+    // every guard an "editing while joined" mode would need is machinery the
+    // play snapshot/restore already provides.
+
+    /// @brief What the current (or next) play session does on the network.
+    enum class NetIntent : std::uint8_t
+    {
+        Standalone, ///< Ordinary Play. No transport is created at all.
+        Host,       ///< Play-and-listen: this scene is the replicated one.
+        Join,       ///< Play as a client of someone else's world.
+    };
+
+    /// @brief How far a joining client has got. Distinct from the session's own
+    /// state because "connected" and "has a world to put the snapshots in" are
+    /// two different things, and only the editor knows the second.
+    enum class JoinPhase : std::uint8_t
+    {
+        None,       ///< Not joining.
+        Connecting, ///< Transport up, waiting for the host's ServerHello.
+        Building,   ///< Hello received; loading and stripping the host's level.
+        Live,       ///< Handshake answered; snapshots are being applied.
+    };
+
+    /// @brief True while a session exists and is not Offline.
+    [[nodiscard]] bool IsNetSessionActive() const;
+
+    /// @brief What this editor would advertise as its level: the edited world's
+    /// saved path plus a content hash of the file as it currently sits on disk.
+    /// Addressing is `None` when the level has never been saved — which is what
+    /// makes "save the level to host" a check rather than a suggestion.
+    [[nodiscard]] Assisi::NetSync::LevelIdentity HostLevelIdentity() const;
+
+    /// @brief Build the joined world from the host's handshake: resolve the
+    /// level, verify its content hash, load it into the play scene, strip the
+    /// entities the host owns, then answer the handshake. Marshalled to the
+    /// frame's safe point — it frees and re-resolves GPU assets.
+    void BuildJoinedWorld();
+
+    /// @brief Destroy every entity carrying `Replicated` and clear the dangling
+    /// `Parent` of anything that was under one. Those entities are the host's;
+    /// they arrive as mirrors, and keeping the file's copies too would double
+    /// the world.
+    void StripReplicatedEntities();
+
+    /// @brief Abort a join in progress with a reason a human can act on: the
+    /// panel shows it, the log keeps it, and the session ends through the same
+    /// Stop as everything else.
+    void FailJoin(std::string reason);
+
+    // --- Play in editor (§3.6) ---------------------------------------------
+    // "Host + N clients" launches N more copies of this executable, each of
+    // which joins the listen server this one just started. It exists because
+    // every later milestone is verified by *looking* at two worlds agreeing,
+    // and two-window choreography by hand is the difference between checking
+    // that ten times and checking it once.
+
+    /// @brief Snapshot the live scene to a temp level file and describe it as
+    /// an absolute-path LevelIdentity.
+    ///
+    /// This is what makes PIE immune to the unsaved-edits problem that hosting
+    /// across machines has to prompt about: the clients load the scene as it is
+    /// *right now*, not as it was last saved. Returns false (and logs) if the
+    /// file could not be written.
+    bool WritePieTempLevel(Assisi::NetSync::LevelIdentity &outLevel);
+
+    /// @brief Launch @p count play-in-editor clients against the local host.
+    void SpawnPieClients(std::int32_t count);
+
+    /// @brief Terminate and reap every play-in-editor client, then delete the
+    /// temp level. Safe to call when there are none.
+    void ShutdownPieClients();
 
     /// @brief Diagnostic (end of OnImGui): warns with full ImGui internal state
     /// when a widget holds ActiveId for seconds with no mouse button down and no
@@ -215,6 +326,48 @@ class EditorApp : public Assisi::App::Application
 
     // --- Inspector helpers ---
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
+    /// @brief The inspector's replication block: the Replicated checkbox, the
+    /// session-scoped NetId, which of the two client timelines a mirror is on,
+    /// and the warnings that catch an entity that will not replicate the way its
+    /// author expects. Drawn under the entity id. See EditorInspector.cpp.
+    void DrawReplicationSection(bool mirrored);
+
+    /// Per-component send policy for the selected authoring entity: one checkbox
+    /// per capable component it *carries*, writing `Replicated::excluded`.
+    /// Authoring entities only — a mirror's marker is client-fabricated, so
+    /// showing its mask would display data the host never sent.
+    ///
+    /// The list is rebuilt from the entity's live component set every frame, so
+    /// adding or removing a component changes it immediately; there is nothing
+    /// cached that could go stale.
+    void DrawReplicationPolicy();
+
+    /// The Relevance dropdown, drawn only for entities this machine authors.
+    ///
+    /// Split out because it has a different honesty rule from the rest of the
+    /// policy block: a mirror's Replicated marker is client-fabricated, so
+    /// showing its relevance as authorable would dress a default up as the
+    /// host's decision.
+    void DrawRelevancePolicy();
+
+    /// Does this entity currently send @p meta to clients?
+    ///
+    /// The single *read* both policy surfaces use — the glyph button on each
+    /// component header and the Sends checklist. Neither keeps state of its own,
+    /// so they cannot disagree: they are two renderings of one mask.
+    [[nodiscard]] bool SelectedEntitySends(const Assisi::Core::Reflect::ComponentMeta &meta) const;
+
+    /// ...and the single *write*, undo-recorded. Same reason.
+    void SetSelectedEntitySends(const Assisi::Core::Reflect::ComponentMeta &meta, bool sends);
+
+    /// Whether the game config forbids @p meta outright, in which case a
+    /// per-entity control for it would be a switch that cannot matter.
+    [[nodiscard]] bool IsComponentGameVetoed(const Assisi::Core::Reflect::ComponentMeta &meta) const;
+
+    /// Component names the game config vetoes, cached at session start so the
+    /// policy checkboxes can render a forbidden component as a disabled switch
+    /// with a reason rather than a live one that silently does nothing.
+    std::vector<std::string> _netVetoedComponentNames;
     /// @brief Draws one editable row per material slot of @p mrc's resolved mesh
     /// (labelled by the imported material name), each a `.amat` path + browse
     /// button writing into `materialOverrides[slot]`. @p fieldOffset is the offset
@@ -324,6 +477,24 @@ class EditorApp : public Assisi::App::Application
     /// shown is the edited world. Other residents are inspect-only, so the panels
     /// disable their editing controls.
     [[nodiscard]] bool IsEditable() const;
+
+    /// @brief True when @p entity may be edited: the world allows it *and* the
+    /// entity is not a mirror of somebody else's.
+    ///
+    /// One predicate, gating the inspector, the gizmo, the Delete key, and the
+    /// hierarchy actions together — because a guard applied to three of the four
+    /// is a guard nobody can reason about. The scope shrank when the
+    /// session-viewer mode was cut (it protects a disposable play scene now, not
+    /// the editing scene), but it stays for two reasons: a gizmo fighting the
+    /// correction stream is a confusing artifact even in a world about to be
+    /// thrown away, and the server only resends what *changes* — so an edit to a
+    /// static replicated field would sit visibly wrong until the next keyframe
+    /// sweep, which is exactly the class of quiet wrongness this design spends
+    /// machinery to avoid.
+    [[nodiscard]] bool IsEditable(Assisi::ECS::Entity entity) const;
+
+    /// @brief Whether @p entity is a mirror the server owns.
+    [[nodiscard]] bool IsMirrored(Assisi::ECS::Entity entity) const;
     /// @brief The resident-world dropdown drawn at the top of the Entities panel.
     void DrawWorldSelector();
 
@@ -339,7 +510,14 @@ class EditorApp : public Assisi::App::Application
     // --- Play control (F5 run / F6 pause / F7 stop) ---
     /// @brief Enters play from the editing state: snapshots the scene so Stop can
     /// restore it, then begins simulating. No-op unless currently Editing.
-    void StartPlay();
+    ///
+    /// @p intent selects what the session does on the network. Host refuses
+    /// (with a message) unless the level has been saved, and prompts when the
+    /// scene has unsaved edits — clients load the last *saved* file, so hosting
+    /// past that point means correcting bodies against geometry no client can
+    /// see. Join enters Play immediately and builds its world when the host's
+    /// handshake names one.
+    void StartPlay(NetIntent intent = NetIntent::Standalone);
     /// @brief Resumes a paused simulation in place. No-op unless currently Paused.
     void ResumePlay();
     /// @brief Freezes simulation where it stands — physics, and any game-logic
@@ -446,6 +624,71 @@ class EditorApp : public Assisi::App::Application
     Assisi::App::World                *_world   = nullptr; ///< The active world.
     Assisi::ECS::Scene                *_scene   = nullptr; ///< == &_world->scene.
     Assisi::Physics::PhysicsWorld     *_physics = nullptr; ///< == &_world->physics.
+
+    /// The networked session, when there is one. Created on Host/Join and
+    /// destroyed on Disconnect (and before any level load), because it holds a
+    /// reference to the scene it replicates and a level load replaces that
+    /// scene wholesale.
+    std::unique_ptr<Assisi::NetSync::NetSession> _netSession;
+    /// UI state for the network panel, kept here rather than in statics so two
+    /// editors in one process would not share it.
+    std::array<char, 64> _netAddress{"127.0.0.1"};
+    int32_t              _netPort = 27015;
+    /// Why the last Host/Join failed. Held here rather than read back off the
+    /// session, because a failed attempt destroys the session that knows.
+    std::string _netError;
+
+    // Networked play. `_netIntent` is the role this play session was entered
+    // for; `_joinPhase` tracks a client through connect -> build -> live.
+    NetIntent _netIntent = NetIntent::Standalone;
+    JoinPhase _joinPhase = JoinPhase::None;
+    /// Seconds spent waiting for a host's ServerHello. A join that never gets
+    /// one would otherwise sit in Play forever with an empty world and no
+    /// explanation.
+    float                  _joinElapsed         = 0.f;
+    static constexpr float kJoinTimeoutSeconds  = 10.f;
+    /// Marshalled to OnUpdate: BuildJoinedWorld frees and re-resolves GPU
+    /// assets, which must not happen from the fixed step mid-frame.
+    bool _pendingJoinBuild = false;
+    /// Marshalled likewise: a host that vanished, or a failed join, ends the
+    /// play session at the frame's safe point rather than under the pump.
+    bool _pendingStopPlay = false;
+    /// The unsaved-edits host prompt (§3.6): a modal, not a warning, because
+    /// the consequence surfaces minutes later on someone else's screen.
+    bool _hostPromptOpen  = false;
+    bool _hostIgnoreDirty = false; ///< Set by "Host last-saved" for one attempt.
+    // Correction-rate sampling for the Network panel. Rates rather than totals:
+    // a total that keeps climbing only says the session is still running, which
+    // is already visible. Sampled over a second so a frame-rate stutter does not
+    // read as a bandwidth spike.
+    float         _netSampleSeconds         = 0.f;
+    std::uint64_t _lastCorrectionBytes      = 0;
+    std::uint64_t _lastCorrectionsApplied   = 0;
+    float         _correctionBytesPerSecond = 0.f;
+    float         _correctionsPerSecond     = 0.f;
+
+    /// The mirrored world's structure revision this editor last resolved assets
+    /// against. Mirrors arrive with authored asset ids and null GPU pointers;
+    /// this is what tells the frame loop to look again.
+    std::uint64_t _netStructureRevision = 0;
+    /// The edited world's level identity as it was before Play. A join replaces
+    /// the play scene with the *host's* level, so both have to be put back.
+    std::string _prePlayLevelPath;
+    std::string _prePlayProfile;
+
+    /// The Play control's net mode, as an index into the dropdown. Sticky for
+    /// the process and reset at launch: it is a per-session testing choice
+    /// ("this time, host with two viewers"), not a preference worth persisting
+    /// into options.json and then being surprised by tomorrow.
+    std::int32_t _playNetSelection = 0;
+    /// How many play-in-editor clients the next Host launches. 0 = none, which
+    /// is also what a plain "Host" (the cross-machine case) means.
+    std::int32_t _pieClientCount = 0;
+    /// The launched clients. Destroying one terminates it, so losing track of
+    /// this vector is not a way to leak a window.
+    std::vector<Assisi::App::ChildProcess> _pieClients;
+    /// The temp level a PIE host wrote for its clients to load. Deleted at Stop.
+    std::filesystem::path _pieTempLevel;
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;

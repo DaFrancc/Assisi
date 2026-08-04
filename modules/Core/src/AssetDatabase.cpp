@@ -144,7 +144,7 @@ AssetId MintAssetId()
     return id;
 }
 
-std::expected<std::size_t, AssetError> AssetDatabase::Rebuild()
+std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
 {
     _idToPath.clear();
     _pathToId.clear();
@@ -248,6 +248,13 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild()
                 _manifests.insert_or_assign(id, std::move(slots));
             }
         }
+        else if (mode == RebuildMode::ReadOnly)
+        {
+            // Nothing to read and nothing we may write. The file stays out of
+            // the index rather than being given an id this process invented and
+            // the authoring process knows nothing about.
+            continue;
+        }
         else
         {
             // Missing sidecar: mint an id and write one.
@@ -268,6 +275,12 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild()
         // above never fires for it, and every later Rebuild() repeats the same
         // collision, leaving the file unaddressable by id forever.
         auto [slot, inserted] = _idToPath.try_emplace(id, virtualPath);
+        if (!inserted && mode == RebuildMode::ReadOnly)
+        {
+            Log::Warn("AssetDatabase: id {} is already taken by '{}'; leaving '{}' unindexed (read-only scan).",
+                      id.ToString(), slot->second, virtualPath);
+            continue;
+        }
         if (!inserted)
         {
             const AssetId  previous = id;

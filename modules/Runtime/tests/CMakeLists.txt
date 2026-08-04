@@ -7,6 +7,7 @@ add_executable(Assisi-Runtime-Tests
   TestHierarchy.cpp
   TestLifecycle.cpp
   TestLightingSystem.cpp
+  TestWireGating.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-Runtime-Tests)

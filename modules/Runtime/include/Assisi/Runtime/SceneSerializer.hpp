@@ -108,6 +108,15 @@ class SceneSerializer
     static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
                              const ProgressFn &onProgress = {}, LevelHeader *header = nullptr);
 
+    /// @brief Load the scene from an absolute filesystem path, bypassing the
+    /// asset system.
+    ///
+    /// For levels that are not assets: the temp snapshot a play-in-editor host
+    /// writes so its clients can load the *unsaved* scene it is simulating.
+    /// Otherwise identical to LoadFromFile, failure handling included.
+    static bool LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
+                             const ProgressFn &onProgress = {}, LevelHeader *header = nullptr);
+
     /// @brief Moves a set of entities' component *data* from one scene to another.
     ///
     /// Entity migration (docs/multi-scene-design-notes.md §2, S4): the entities
