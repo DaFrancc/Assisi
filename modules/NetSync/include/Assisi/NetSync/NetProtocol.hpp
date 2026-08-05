@@ -16,6 +16,8 @@
 #include <Assisi/Core/BitStream.hpp>
 
 #include <cstdint>
+#include <format>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -30,10 +32,28 @@ namespace Assisi::NetSync
 ///
 /// Never recycled within a session: at this scale 32 bits will not run out, and
 /// reuse would let a stale reference silently address a different entity.
-using NetId = std::uint32_t;
+///
+/// An aggregate, matching `ClientId` below — aggregate initialization
+/// (`NetId{7}`) is the only way in, which is what blocks the implicit conversion
+/// in both directions.
+///
+/// Deliberately no arithmetic. Allocating from a counter, and deriving a member
+/// block's ids as `base + index`, are both real operations — but they belong at
+/// the two or three sites that do them, spelled out, rather than baked into the
+/// type where every other use inherits them for free. `base + index` is only
+/// *sometimes* a member's NetId, and that is a seam worth having to look at.
+struct NetId
+{
+    std::uint32_t value = 0;
+
+    [[nodiscard]] constexpr bool IsValid() const { return value != 0; }
+
+    friend constexpr bool operator==(NetId, NetId)  = default;
+    friend constexpr auto operator<=>(NetId, NetId) = default;
+};
 
 /// @brief The never-valid NetId. Zero, so a value-initialized NetId is invalid.
-inline constexpr NetId InvalidNetId = 0;
+inline constexpr NetId InvalidNetId{0};
 
 /// @brief Session-scoped identity for a *participant*: the thing `ControlledBy`
 /// names, directed messages address, and logs blame.
@@ -295,3 +315,23 @@ void WriteSnapshotHeader(const SnapshotHeader &header, Core::BitWriter &writer);
 bool ReadSnapshotHeader(Core::BitReader &reader, SnapshotHeader &outHeader);
 
 } // namespace Assisi::NetSync
+
+/// Prints as the bare number, so a log line reads "netId 7" rather than making
+/// every call site spell `.value`. Without this the type would be strictly worse
+/// to hold than the integer it replaces, which is how a good rule gets worked
+/// around.
+template <> struct std::formatter<Assisi::NetSync::NetId> : std::formatter<std::uint32_t>
+{
+    auto format(Assisi::NetSync::NetId id, std::format_context &ctx) const
+    {
+        return std::formatter<std::uint32_t>::format(id.value, ctx);
+    }
+};
+
+template <> struct std::hash<Assisi::NetSync::NetId>
+{
+    [[nodiscard]] std::size_t operator()(Assisi::NetSync::NetId id) const noexcept
+    {
+        return std::hash<std::uint32_t>{}(id.value);
+    }
+};

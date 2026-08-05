@@ -1119,7 +1119,11 @@ class ReplicationServer
     std::unordered_map<NetId, ECS::Entity>      _entityByNetId;
     std::unordered_map<std::uint64_t, NetId>    _netIdByEntity; ///< Keyed by the entity's packed handle.
     std::vector<NetId>                          _liveNetIds;    ///< Sorted; rebuilt each ReconcileNetIds.
-    NetId                                       _nextNetId = 1;
+
+    /// Raw counter, not a NetId — see ECS::InstanceTable::_nextId for why: the
+    /// type is opaque everywhere except the two places that turn a count into an
+    /// identity, EnsureNetId and ReconcileNetIds.
+    std::uint32_t _nextNetId = 1;
 
     std::uint64_t _simTick     = 0;
     std::uint64_t _snapshotDiv = 3; ///< tickRateHz / snapshotHz, at least 1.

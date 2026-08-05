@@ -849,7 +849,7 @@ void EditorApp::DrawReplicationSection(bool mirrored)
             netId = client->NetIdOf(_selectedEntity);
 
         if (netId != Assisi::NetSync::InvalidNetId)
-            ImGui::TextDisabled("NetId %u", netId);
+            ImGui::TextDisabled("NetId %u", netId.value); // printf boundary
     }
 
     if (mirrored)
