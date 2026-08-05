@@ -26,37 +26,9 @@ no warnings.
 | 8 | `4cbc649` | `ASYSTEM`, the catalog, and profiles deleted outright |
 | 5b rest | `83b28eb` | Override marks, per-field and per-component reset, auto-naming |
 | review 1 | `48a6ea3` | Reset stayed one press behind; multi-select; a blueprint's scale went into the placement |
+| 5d, 5e | (this branch) | Blueprint editing mode, re-expansion on save, history truncation, the stale-copy host gate |
 
 ## Not built
-
-### 5d — re-expansion as an in-place diff, and history truncation
-
-The last gap in the authoring loop. A blueprint is edited by opening it *as* a
-level and saving it; nothing then tells the instances of it in other resident
-worlds to catch up, so "edit the blueprint, see it everywhere" currently needs a
-level reload.
-
-The decided trigger is **save**: `EditorApp::SaveLevel` invalidates the saved
-file's definition and re-expands every instance whose closure contains it, in
-every resident world. It has to be an in-place diff rather than destroy-and-
-recreate — entity handles are `(slot, generation)`, `EditHistory` stores exact
-handles, and `Scene::ReviveAt` is valid only for a currently-free slot under a
-strictly linear history, so recreating forty cars behind undo's back means a
-later Ctrl-Z revives into a slot something else now occupies. When an edit does
-delete a member, truncate the history below the oldest transaction naming any of
-the destroyed entities.
-
-### 5e — the Play/Host flush gate
-
-Its stated failure — "a green handshake over two different worlds" — is **not
-reachable today**. The host expands from disk through `GetBlueprintDefinition`
-exactly as a client does, so both read the same stale bytes and agree. It becomes
-reachable the moment 5d makes the editor expand from an in-memory form.
-
-The plan says to land 5e with 7a so the hash never ships without the flush; that
-ordering assumed 5d was already there. **Land it with 5d instead.** The existing
-dirty-level modal (`EditorNet.cpp`'s `DrawHostUnsavedModal`) already covers the
-level case.
 
 ### 7b, 7c, 7d — blueprint replication
 
@@ -100,6 +72,19 @@ Open the **Blueprints** panel.
 
 - **Place instance** — pick any `.abp` or `.alvl` and drop a copy in front of the
   camera. Undoable as one gesture.
+- **Edit** — opens that file in its own world with an editor sun and a raised
+  ambient, and switches the editor into *blueprint mode*. Saving writes the file
+  and brings every live copy of it up to date in place, in every resident world
+  that is not simulating. See "Blueprint mode" below.
+- An instance is a first-class thing to select: its root draws the same billboard
+  a placement-only entity does, clicking that billboard selects the instance, and
+  the Inspector shows the **record** — name, source, live member count, and a
+  placement you can type into rather than only drag. Nearest-hit wins between a
+  root icon and an entity, so neither hides the other.
+- The active entity of a multi-selection — the last one clicked, which is what the
+  Inspector shows and the gizmo drives — outlines redder than the rest
+  (`Runtime::kActiveSelectionOutline`). A single selection is its own active
+  entity, so an ordinary click gets that colour too.
 - **Create from selection** — name it, and the selected entity plus everything
   parented under it is written to `blueprints/<name>.abp` and replaced with an
   instance of it. The swap is invisible on screen; one Ctrl-Z takes it back.
@@ -117,6 +102,78 @@ Open the **Blueprints** panel.
   either scope. `X` cycles the gizmo frame World → Local → Instance on a member.
 - Nesting is not authored from the UI yet: a selection containing a member is
   refused, with a note pointing at the `instances` entry that expresses it.
+
+## Blueprint mode
+
+A blueprint is an ordinary level file, so editing one is opening it as a level.
+What makes it a *mode* rather than another Open Level is that **the level you came
+from stays resident behind it** — which is not a convenience. Saving the blueprint
+has to bring that level's copies of it up to date in place, and it cannot do that
+to a world it just unloaded.
+
+The blueprint world takes the **edited** role while it is open, with its own undo
+history and its own dirty marker, and hands the role back on close. Two live
+histories rather than one saved and restored: the level's has to come back
+untouched, and `EditHistory` binds a `Scene` by reference.
+
+- **The rig** is a real entity carrying `Runtime::EditorOnly`, which
+  `SceneSerializer::Save` skips exactly as it skips a blueprint member. So the sun
+  is in the outliner and the inspector edits it like anything else, and no file
+  ever sees it. Ambient is a renderer knob rather than a component — it was
+  `const float kAmbient = 0.03` in `cube_min.frag` and is now a frame constant,
+  defaulting to that same value everywhere, so no existing render changed.
+- **Hidden while in there**: play control, the network panel, levels, the
+  placement panel, Chiara, diagnostics. Not for tidiness — every one of those acts
+  on *the level*, and the level is not what is in front of you. Play is refused
+  from the hotkey too, since simulating a world holding one crate and a sun would
+  settle its bodies into a pose the file then remembers.
+- **The world selector is inert** in the mode: stepping out of it with the
+  selector would leave the edited role behind on the blueprint, so the level you
+  switched to would be view-only for a reason nothing on screen explains.
+
+### Re-expansion (5d)
+
+`EditorApp::SaveLevelToPath` writes the file, then `ReexpandInstancesOf` walks
+every resident world for instances the edit reaches — **by closure, not by path**,
+because a parking lot's flattened member list contains the car's members. A
+simulating world is skipped and named in the log.
+
+`SceneSerializer::ReexpandInstance` is an in-place diff, matched by member
+**name**: a name in both lists keeps its exact `(slot, generation)`, a name only
+in the old list is destroyed, a name only in the new one is created. It has to be
+a diff rather than destroy-and-recreate because `EditHistory` stores exact handles
+and `Scene::ReviveAt` is valid only for a free slot — rebuild forty cars behind
+undo's back and a later Ctrl-Z revives into a slot something else now occupies.
+The previous member names must be captured *before* the cache is invalidated;
+nothing can reconstruct them after.
+
+The instance's record is untouched: placement, overrides and removals belong to
+the level that placed it, not to the file being edited.
+
+### Truncation, and the prompt
+
+When an edit deletes a member, `EditHistory::ForgetEntities` drops undo steps —
+**as a suffix, not a filter**. Undo replays newest-first, so if step 12 names a
+dead handle then nothing older than 12 is reachable either; the newest offending
+transaction and everything below it goes. Dropping only the offenders would leave
+steps that apply against a `before` state which was never restored.
+
+Because that can cost a lot of unrelated history, a save that would delete members
+**asks first** — naming them and the number of steps at stake. The prompt is about
+the catch-up, not the save: the file is written either way, because which members
+die is only knowable from the new definition, which only exists once the file is
+on disk. Declining leaves the live copies where they were before 5d existed.
+
+### The stale-copy gate (5e)
+
+Declining is what makes 5e's failure reachable, and it did not exist before.
+Leave copies stale, then host: a client expands the file fresh and builds a
+different member set under the same NetIds, and the content-set hash agrees the
+machines match — because it hashes the *disk*, and the disks do match. So hosting
+is refused while anything is stale, with the fix named in the message. A refusal
+rather than a prompt: unlike unsaved edits there is no "host it anyway" that means
+anything, since the copies are wrong either way. Cleared by a level load or by an
+accepted catch-up.
 
 ## Decisions taken
 
@@ -160,8 +217,29 @@ which; passing the whole transform divides the members' scale out, so the copy
 replacing the original looks right and every fresh instance comes back the wrong
 size. The rule taken: where a thing stands and which way it faces is placement,
 how big it is is what it is. An instance's own scale still multiplies on top, so
-the two are separate knobs. Worth knowing that rotation goes the other way — a
-crate authored at 45° comes back axis-aligned. Say so if that should change too.
+the two are separate knobs.
+
+Rotation deliberately goes the other way — a crate authored at 45° comes back
+axis-aligned — and that was **confirmed as the wanted behaviour** (2026-08-05),
+not left as an accident. A scale of 0.6 is set because that is how big a crate
+is; a rotation of 37° is usually just where the thing landed when it was
+dropped. Cancelling the common case is right more often than preserving it. If
+a group's *whole* facing is meaningful — a staircase assembly on a diagonal —
+give it a dummy root at identity and tilt the child: only the root's rotation is
+dropped, children keep theirs.
+
+**A blueprint gets a world, not a window.** "Open the blueprint editor in a new
+window" was asked for and is not what shipped: ImGui multi-viewport is off
+(`DebugUI.cpp`), and a second OS window needs per-viewport swapchains in the
+Vulkan backend — a renderer project larger than 5d itself. A dedicated world plus
+a reduced panel set gives everything else that was wanted. The one thing lost is
+dragging it to another monitor.
+
+**Warn about the catch-up, not about the save.** The prompt was specified as
+Cancel/Save. It is Update/Leave instead, for two reasons: which members die is
+only knowable from the *new* definition, which only exists once the file is
+written; and cancelling a save the author explicitly asked for is worse than
+leaving live copies stale, which is a state the editor already had.
 
 **A component with an `AFIELD(norep)` field keeps the JSON path** rather than
 being encoded into the prepared form. The codec skips `norep`, which is right for
@@ -179,3 +257,12 @@ than a silently missing field.
 - The four `.alvl` files were converted to v2 by a one-shot JSON transform (a
   throwaway, not committed — it preserved components the converter's binary would
   not have had registered). They round-trip through the engine now.
+- The truncation test pins the surviving stack's *depth and label*, not that it
+  still replays. "Leaves a replayable stack" is what stage 5d asks for and only
+  the shape of it is checked.
+- 5d's by-eye check is unpaid: drag a car, save, confirm the file holds zero
+  member overrides.
+- The Levels panel's Save used to write to whatever the *combo* had selected
+  rather than the level that was open — load `Test`, scroll to `Materials`, save,
+  and `Materials.alvl` got `Test`'s contents. Fixed on the way past; `SaveLevel`
+  now goes through `SaveLevelToPath(_world->levelPath)`.
