@@ -264,7 +264,7 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
         loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath,
                                                         /*onProgress=*/{}, &header);
         if (loaded)
-            incoming.physics.RebuildSceneBodies(incoming.scene);
+            incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
     }
 
     if (!loaded)
@@ -320,8 +320,8 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
                                                                /*onProgress=*/{}, &header);
         if (ok)
         {
-            incoming.physics.RebuildSceneBodies(incoming.scene);
-            incoming.profile = std::move(header.profile);
+            incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
+            incoming.profile         = std::move(header.profile);
         }
         deserProgress->store(1.f);
         _pending                = PendingLoad{.world = &incoming, .task = {}, .path = path, .syncResult = ok};
@@ -350,7 +350,7 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
                 &header);
             if (!ok)
                 return false;
-            w->physics.RebuildSceneBodies(w->scene);
+            w->propagationTick = BuildSceneBodies(w->scene, w->physics);
             // Park the level's choice on the world itself; installing it is main-
             // thread work (an installer may touch anything) and happens at
             // promotion, after this task is joined.
@@ -558,6 +558,13 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
         Runtime::SceneSerializer::TransferEntities(src.scene, dst.scene, subtree);
     src.scene.FlushDestroyed();
 
+    // Before the bodies below, and for the same reason App::BuildSceneBodies
+    // propagates first: a migrated subtree is parented by definition, and a body
+    // is placed in world space from a parent matrix the destination has not
+    // computed for these entities yet.
+    dst.propagationTick = Runtime::PropagateTransforms(dst.scene, dst.propagationTick);
+    const Physics::PhysicsWorld::ParentWorldFn parentWorld = ParentWorldResolver(dst.scene);
+
     // Rebuild transients in the DESTINATION world. RigidBody and the MeshRenderer
     // pointers are transient (never serialized), so the arrived entities have the
     // durable RigidBodyDescriptor/mesh ids but no live body or resolved GPU
@@ -567,7 +574,7 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
         const Runtime::Transform          *transform = dst.scene.Get<Runtime::Transform>(e);
         const Physics::RigidBodyDescriptor *desc      = dst.scene.Get<Physics::RigidBodyDescriptor>(e);
         if (transform != nullptr && desc != nullptr && dst.scene.Get<Physics::RigidBody>(e) == nullptr)
-            dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc);
+            dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc, parentWorld);
 
         if (Runtime::MeshRenderer *mesh = dst.scene.Get<Runtime::MeshRenderer>(e);
             mesh != nullptr && _services.cache != nullptr && _services.database != nullptr)
@@ -661,8 +668,31 @@ void SyncUnrenderedWorld(World &world)
 {
     // Poses first: without this the propagation below would compute correct
     // matrices for positions the bodies left behind at spawn.
-    world.physics.SyncTransforms(world.scene);
+    world.physics.SyncTransforms(world.scene, ParentWorldResolver(world.scene));
     world.propagationTick = Runtime::PropagateTransforms(world.scene, world.propagationTick);
+}
+
+Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene)
+{
+    // Physics reasons in world space, a parented Transform is an offset from its
+    // parent, and Physics sits below the layer that owns the parent link — so the
+    // answer is handed down rather than looked up there.
+    return [&scene](ECS::Entity entity) -> const glm::mat4 *
+    {
+        const Runtime::Parent *parent = scene.Get<Runtime::Parent>(entity);
+        if (parent == nullptr || parent->parent == ECS::NullEntity)
+            return nullptr;
+
+        const ECS::Transform *parentTransform = scene.Get<ECS::Transform>(parent->parent);
+        return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
+    };
+}
+
+uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick)
+{
+    const uint64_t tick = Runtime::PropagateTransforms(scene, propagationTick);
+    physics.RebuildSceneBodies(scene, ParentWorldResolver(scene));
+    return tick;
 }
 
 } // namespace Assisi::App

@@ -3,6 +3,7 @@
 #include "ServerApp.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
@@ -210,7 +211,7 @@ void ServerApp::BuildJoinedWorld()
     for (const ECS::Entity entity : doomed)
         _scene.Destroy(entity);
     _scene.FlushDestroyed();
-    _physics.RebuildSceneBodies(_scene);
+    (void)Assisi::App::BuildSceneBodies(_scene, _physics);
 
     _session->ConfirmLevelReady();
     Log::Info("Client: built '{}' ({} replicated entities stripped) and answered the handshake.",

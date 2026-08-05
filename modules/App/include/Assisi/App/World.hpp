@@ -504,4 +504,36 @@ class WorldManager
 /// for every simulated world that is not the one being rendered.
 void SyncUnrenderedWorld(World &world);
 
+/// @brief Builds the parent-world lookup physics needs to place and read back a
+/// parented entity's pose (Physics::PhysicsWorld::ParentWorldFn).
+///
+/// Every path that creates bodies from a scene or writes physics poses into
+/// Transforms must pass this, or a parented body is created at its local pose and
+/// then drifts by its parent's transform every frame afterwards. Blueprint
+/// instances make parented bodies ordinary rather than exotic — a car's wheels
+/// are under its body (docs/blueprint-system-concept.md §12).
+///
+/// The lookup reads `Transform::worldMatrix`, which is transient and computed by
+/// Runtime::PropagateTransforms, so **propagate before building bodies** from a
+/// freshly loaded or restored scene. App::BuildSceneBodies does that in the right
+/// order; prefer it over calling RebuildSceneBodies directly.
+///
+/// The returned callable borrows @p scene and is valid for as long as it is.
+[[nodiscard]] Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene);
+
+/// @brief Rebuilds a scene's physics bodies in the order that works: **propagate
+/// first, then create bodies**.
+///
+/// A body is created in world space and a parented entity's Transform is an
+/// offset from its parent, so the parent's world matrix has to exist before the
+/// body can be placed. World matrices are transient — never serialized — so a
+/// freshly loaded or restored scene has none until propagation runs. Doing it the
+/// other way round places every parented body at its local pose.
+///
+/// @param propagationTick The caller's propagation bookmark, or 0 to recompute
+///        every matrix (correct for a scene whose entities were just replaced).
+/// @return The scene's change tick after propagating; store it if the caller
+///         keeps a bookmark, discard it to simply lose one frame of skipping.
+uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick = 0);
+
 } // namespace Assisi::App
