@@ -454,6 +454,127 @@ void EditorApp::RebuildInstanceTransients(std::span<const Assisi::ECS::Entity> m
     }
 }
 
+const nlohmann::json *EditorApp::OverrideClaimFor(Assisi::ECS::Entity entity, const std::string &component) const
+{
+    if (_scene == nullptr || _world == nullptr)
+        return nullptr;
+
+    const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(entity);
+    if (tag == nullptr)
+        return nullptr;
+
+    const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId);
+    if (row == nullptr || !row->overrides.is_object())
+        return nullptr;
+
+    const Assisi::Runtime::BlueprintDefinition *definition =
+        Assisi::Runtime::GetBlueprintDefinition(row->source);
+    if (definition == nullptr || tag->memberIndex >= definition->members.size())
+        return nullptr;
+
+    const auto member = row->overrides.find(definition->members[tag->memberIndex].name);
+    if (member == row->overrides.end() || !member->is_object())
+        return nullptr;
+
+    const auto claim = member->find(component);
+    return claim == member->end() ? nullptr : &*claim;
+}
+
+void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &component,
+                              const std::string &field)
+{
+    if (_scene == nullptr || _world == nullptr || !IsEditable(entity))
+        return;
+
+    const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(entity);
+    if (tag == nullptr)
+        return;
+
+    const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId);
+    if (row == nullptr)
+        return;
+
+    const Assisi::Runtime::BlueprintDefinition *definition =
+        Assisi::Runtime::GetBlueprintDefinition(row->source);
+    if (definition == nullptr || tag->memberIndex >= definition->members.size())
+        return;
+
+    const Assisi::Runtime::BlueprintMemberDesc &desc = definition->members[tag->memberIndex];
+
+    Assisi::Runtime::BlueprintInstance updated = *row;
+    const auto                         member  = updated.overrides.find(desc.name);
+    if (member == updated.overrides.end() || !member->is_object() || !member->contains(component))
+        return;
+
+    if (field.empty())
+    {
+        member->erase(component);
+    }
+    else
+    {
+        auto &claim = member->at(component);
+        if (!claim.is_object() || !claim.contains(field))
+            return;
+        claim.erase(field);
+        // An empty claim is the same as no claim, and leaving one behind would
+        // keep marking the component as overridden for a field nobody changed.
+        if (claim.empty())
+            member->erase(component);
+    }
+    if (member->empty())
+        updated.overrides.erase(desc.name);
+
+    Assisi::Editor::EditHistory *history = ActiveHistory();
+
+    const auto *meta = Assisi::Core::Reflect::ComponentRegistry::Instance().Find(component);
+    if (meta == nullptr)
+        return;
+
+    // Captured before the value moves, so the transaction can put both back.
+    std::optional<nlohmann::json> before;
+    if (history != nullptr)
+        before = history->CaptureComponent(entity, meta->id);
+
+    // Re-apply from the blueprint, plus whatever claim survives. This is a
+    // one-member re-expansion: the value falls back exactly as a fresh load would
+    // produce it, which is the definition of "un-overridden means un-resolved".
+    const bool     stillClaimed = member != updated.overrides.end() && member->contains(component);
+    nlohmann::json resolved     = desc.components.contains(component)
+                                      ? desc.components.at(component)
+                                      : nlohmann::json::object();
+    if (stillClaimed && member->at(component).is_object())
+    {
+        for (const auto &[key, value] : member->at(component).items())
+            resolved[key] = value;
+    }
+
+    _scene->RemoveById(entity, meta->id);
+    if (desc.components.contains(component) || stillClaimed)
+    {
+        nlohmann::json wrapper{{component, resolved}};
+        Assisi::Runtime::QualifyReferences(wrapper, row->name.empty() ? "" : row->name + "/");
+        meta->addToScene(_scene, entity.index, entity.generation, wrapper.at(component));
+    }
+
+    _world->instances.RestoreAt(tag->instanceId, updated);
+
+    if (history != nullptr)
+    {
+        Assisi::Editor::Transaction txn;
+        txn.label           = field.empty() ? "Reset " + component : "Reset " + component + "." + field;
+        txn.selectionBefore = _selectedEntity;
+        txn.selectionAfter  = _selectedEntity;
+        txn.cmds.push_back(Assisi::Editor::ComponentDelta{entity, meta->id, before,
+                                                          history->CaptureComponent(entity, meta->id)});
+        txn.cmds.push_back(
+            Assisi::Editor::InstanceDelta{.instanceId = tag->instanceId, .before = *row, .after = updated});
+        history->Push(std::move(txn));
+    }
+
+    // The component came back from JSON: its transients did not.
+    RebuildInstanceTransients(std::span{&entity, 1});
+}
+
 void EditorApp::SaveLevel(const std::string &name)
 {
     const auto resolved = Assisi::Core::AssetSystem::Resolve("levels/" + name + ".alvl");

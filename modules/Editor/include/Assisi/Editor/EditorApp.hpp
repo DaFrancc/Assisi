@@ -522,6 +522,23 @@ class EditorApp : public Assisi::App::Application
     /// pointers and Jolt bodies. Propagates first, because a parented member is
     /// placed from a parent matrix that does not exist until it has.
     void RebuildInstanceTransients(std::span<const Assisi::ECS::Entity> members);
+
+    /// @brief What @p entity's instance claims about @p component, or null if it
+    /// claims nothing — which is the common case and the one worth keeping cheap.
+    ///
+    /// A `null` claim means the instance removed the component. The pointer is
+    /// into the instance table's row and lives until the next edit.
+    [[nodiscard]] const nlohmann::json *OverrideClaimFor(Assisi::ECS::Entity entity,
+                                                         const std::string  &component) const;
+
+    /// @brief Drops an override claim and lets the value fall back to the
+    /// blueprint's.
+    ///
+    /// Reset is first-class at every scope (§5): pass a field name to drop one
+    /// field, or nothing to drop the whole component's claim. One transaction per
+    /// gesture, carrying the record *and* the restored value — the same pairing an
+    /// edit uses, for the same reason.
+    void ResetOverride(Assisi::ECS::Entity entity, const std::string &component, const std::string &field);
     void LoadLevel(const std::string &name);
     /// @brief Loads a level by virtual path (e.g. "levels/Materials.alvl"), doing
     /// the cache-clear + rebind LoadLevel wraps. Returns false if the file didn't

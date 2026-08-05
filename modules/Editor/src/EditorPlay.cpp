@@ -332,6 +332,32 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
     const Assisi::ECS::Entity previousSelection = _selectedEntity;
     const Assisi::ECS::Entity entity            = _scene->Create();
     _selectedEntity                             = entity;
+    _selectedInstance                           = 0;
+
+    // Auto-named on create, so nobody has to think about naming until they care
+    // (docs/blueprint-system-concept.md §6). It matters more than it looks: an
+    // entity's name is what an override and every reference address it by, so an
+    // unnamed one gets a placeholder from the serializer at save time — which is
+    // stable, but says nothing. A unique-in-scene default keeps the file readable
+    // and keeps two entities from racing for the same one.
+    {
+        std::string candidate;
+        for (std::uint32_t suffix = 1;; ++suffix)
+        {
+            candidate = "Entity_" + std::to_string(suffix);
+            bool taken = false;
+            _scene->ForEachEntity(
+                [&](Assisi::ECS::Entity other)
+                {
+                    const auto *name = _scene->Get<Assisi::Runtime::Name>(other);
+                    taken = taken || (name != nullptr && name->value.View() == candidate);
+                });
+            if (!taken)
+                break;
+        }
+        (void)_scene->Add<Assisi::Runtime::Name>(entity,
+                                                 {Assisi::Core::ShortString{candidate}});
+    }
 
     // Capture the creation as one undoable transaction: undo destroys the bare
     // entity, redo revives it at this exact handle. Components added afterwards
