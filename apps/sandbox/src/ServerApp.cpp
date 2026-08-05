@@ -108,6 +108,10 @@ void ServerApp::OnStart()
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
     _session          = std::make_unique<NetSync::NetSession>(_scene, &_physics, config);
 
+    // Triggered by hosting or joining, never by the level load above: a process
+    // that only simulates has nothing to compare with anybody.
+    _contentSetHash.Start(Jobs());
+
     if (_options.role == ServerRole::Host)
     {
         // What joining clients are told to load. A host with no level file
@@ -224,6 +228,14 @@ void ServerApp::OnFixedUpdate(float dt)
     // tick is applied on this tick rather than the next one.
     if (_session)
     {
+        // Before Poll, so a hello that has been waiting on the scan goes out on
+        // the same tick the scan finished rather than the next one.
+        if (std::uint64_t hash = 0; _contentSetHash.Poll(hash))
+        {
+            Assisi::Core::Log::Info("Content set hashed: {}.", Assisi::Core::ToHex64(hash));
+            _session->SetContentSetHash(hash);
+        }
+
         _session->Poll();
 
         // The handshake named a level; build it before answering. Nothing here

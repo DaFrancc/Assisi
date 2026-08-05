@@ -130,6 +130,15 @@ enum class RejectReason : std::uint8_t
 {
     ProtocolMismatch = 1, ///< The two builds do not agree on component layout.
     ServerFull       = 2,
+    /// The two machines do not hold the same set of level and blueprint files.
+    ///
+    /// Deliberately strict: *any* difference refuses, including files neither
+    /// machine ever loads, because a stray experimental `.abp` is indistinguishable
+    /// from a car whose wheels moved. That is a development-time cost and never a
+    /// shipping one, and it buys the property blueprint replication depends on —
+    /// after a successful join, both machines are known to expand any blueprint
+    /// identically (docs/blueprint-system-concept.md §9).
+    ContentMismatch = 3,
 };
 
 /// @brief Framing version for the messages in this file.
@@ -150,7 +159,9 @@ enum class RejectReason : std::uint8_t
 ///  - 4 → 5: `MessageType::Intent` and its envelope (same plan, M4).
 ///  - 5 → 6: the snapshot's message section, and `MessageType::Announcement`
 ///    (same plan, M5).
-inline constexpr std::uint32_t kNetProtocolVersion = 6;
+///  - 6 → 7: `ClientHello.contentSetHash` and `RejectReason::ContentMismatch`
+///    (docs/blueprint-system-concept.md §9).
+inline constexpr std::uint32_t kNetProtocolVersion = 7;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.
@@ -229,6 +240,21 @@ struct ServerHello
 struct ClientHello
 {
     std::uint64_t protocolHash = 0;
+
+    /// One hash over **every** `.alvl` and `.abp` this build can resolve, each
+    /// content-normalised, combined in sorted virtual-path order.
+    ///
+    /// The level's own `contentHash` names *which* level; this names the whole
+    /// content set, and it has to, because a blueprint spawned from C++ is named
+    /// by no level and would never be hashed — while blueprint replication makes
+    /// every blueprint's content load-bearing across the wire. Once the sets are
+    /// known equal, a blueprint can be named on the wire by its index in the
+    /// sorted list: two bytes, no path string, no per-file hash.
+    ///
+    /// **The client sends it; the server decides.** The server owns who joins,
+    /// which is where a content check belongs, and it matches how the protocol
+    /// hash already works.
+    std::uint64_t contentSetHash = 0;
 };
 
 /// @brief The fixed part of a snapshot, before the entity data.

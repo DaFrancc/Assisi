@@ -103,6 +103,23 @@ void NetSession::ConfirmLevelReady()
         _client->ConfirmLevelReady();
 }
 
+void NetSession::SetContentSetHash(std::uint64_t hash)
+{
+    if (_server)
+        _server->SetContentSetHash(hash);
+    if (_client)
+        _client->SetContentSetHash(hash);
+}
+
+bool NetSession::HasContentSetHash() const
+{
+    if (_server)
+        return _server->HasContentSetHash();
+    if (_client)
+        return _client->HasContentSetHash();
+    return true; // offline: there is no handshake to gate
+}
+
 void NetSession::AbortJoin(std::string reason)
 {
     _lastError = reason;

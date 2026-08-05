@@ -33,8 +33,16 @@ namespace
 std::uint16_t HostOnFreePort(NetSession &session)
 {
     for (std::uint16_t port = 27200; port < 27240; ++port)
+    {
         if (session.Host(port))
+        {
+            // No ServerHello goes out until the host knows its content set. The
+            // real thing kicks a scan when hosting starts and sets this when it
+            // lands; these tests hand it the empty set's hash directly.
+            session.SetContentSetHash(0);
             return port;
+        }
+    }
     return 0;
 }
 
@@ -87,6 +95,7 @@ TEST_CASE("a session hosts, another joins, and the world arrives")
     SpawnReplicated(hostScene, 3.f);
 
     REQUIRE_MESSAGE(client.Join("127.0.0.1", port), client.LastError());
+    client.SetContentSetHash(0);
     CHECK(client.IsClient());
 
     std::uint64_t tick = 0;
@@ -126,6 +135,7 @@ TEST_CASE("a client's mirrored entities leave with the session")
     SpawnReplicated(hostScene, 1.f);
     SpawnReplicated(hostScene, 2.f);
     REQUIRE(client.Join("127.0.0.1", port));
+    client.SetContentSetHash(0);
 
     std::uint64_t tick = 0;
     Pump(host, client, tick, 120);

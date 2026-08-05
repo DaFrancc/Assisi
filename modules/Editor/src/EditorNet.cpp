@@ -421,6 +421,14 @@ void EditorApp::PollNetSession(float dt)
     if (!_netSession)
         return;
 
+    // Before Poll, so a hello that has been waiting on the scan goes out on the
+    // same frame it landed.
+    if (std::uint64_t hash = 0; _contentSetHash.Poll(hash))
+    {
+        Assisi::Core::Log::Info("Editor: content set hashed ({}).", Assisi::Core::ToHex64(hash));
+        _netSession->SetContentSetHash(hash);
+    }
+
     _netSession->Poll();
 
     if (_netIntent == NetIntent::Standalone)
@@ -448,6 +456,12 @@ void EditorApp::PollNetSession(float dt)
             _pendingJoinBuild = true;
             return;
         }
+
+        // Phase-aware: a first scan of a large asset tree is not a dead host, and
+        // timing out on it would read as one. The clock only runs once both sides
+        // have everything they need to answer.
+        if (!_netSession->HasContentSetHash())
+            return;
 
         _joinElapsed += dt;
         if (_joinElapsed >= kJoinTimeoutSeconds)

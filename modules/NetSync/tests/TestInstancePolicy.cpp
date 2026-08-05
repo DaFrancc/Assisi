@@ -56,6 +56,8 @@ struct Harness
         : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
           client(transport, clientScene, pair.second)
     {
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
         server.AddConnection(pair.first);
     }
 

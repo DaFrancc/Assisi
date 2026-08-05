@@ -16,6 +16,7 @@
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/ChildProcess.hpp>
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Window/ActionMap.hpp>
@@ -651,6 +652,12 @@ class EditorApp : public Assisi::App::Application
     // for; `_joinPhase` tracks a client through connect -> build -> live.
     NetIntent _netIntent = NetIntent::Standalone;
     JoinPhase _joinPhase = JoinPhase::None;
+
+    /// The content-set scan, kicked when a session starts. Until it lands, a host
+    /// sends no ServerHello and a client sends no ClientHello, and the join
+    /// timeout does not run — a first scan of a large asset tree is not a dead
+    /// host, and timing out on it would read as one.
+    Assisi::App::ContentSetHashJob _contentSetHash;
     /// Seconds spent waiting for a host's ServerHello. A join that never gets
     /// one would otherwise sit in Play forever with an empty world and no
     /// explanation.

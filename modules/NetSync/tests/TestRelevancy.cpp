@@ -133,6 +133,8 @@ struct Harness
         : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
           client(transport, clientScene, pair.second)
     {
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
         server.AddConnection(pair.first);
     }
 
@@ -399,6 +401,8 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
     const auto        pair = transport.CreateLoopbackPair();
     ReplicationServer server(transport, serverScene, &serverPhysics);
     ReplicationClient client(transport, clientScene, pair.second, &clientPhysics);
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
     server.AddConnection(pair.first);
 
     auto *provider = new ScriptedProvider();

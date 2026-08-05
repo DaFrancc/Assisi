@@ -70,8 +70,10 @@ struct ControlHarness
         peer.clientSide = pair.second;
         peer.scene      = std::make_unique<ECS::Scene>();
         peer.client     = std::make_unique<ReplicationClient>(transport, *peer.scene, peer.clientSide);
+        peer.client->SetContentSetHash(0);
         peers.push_back(std::move(peer));
 
+        server.SetContentSetHash(0);
         server.AddConnection(peers.back().serverSide);
         return peers.size() - 1;
     }
