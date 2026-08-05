@@ -4,6 +4,8 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Scene.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -108,6 +110,65 @@ void InstanceTable::Clear()
 {
     _rows.clear();
     _nextId = 1;
+}
+
+std::vector<ECS::Entity> MembersOf(ECS::Scene &scene, uint32_t instanceId)
+{
+    std::vector<ECS::Entity> members;
+    if (instanceId == 0)
+        return members;
+
+    for (auto [entity, tag] : scene.Query<ECS::BlueprintMember>())
+    {
+        if (tag.instanceId == instanceId)
+            members.push_back(entity);
+    }
+    return members;
+}
+
+bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity)
+{
+    if (!scene.Has<ECS::BlueprintMember>(entity))
+        return false;
+
+    scene.Remove<ECS::BlueprintMember>(entity);
+    return true;
+}
+
+ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, uint32_t instanceId,
+                       std::string_view name)
+{
+    const BlueprintInstance *row = FindInstance(table, instanceId);
+    if (row == nullptr)
+        return ECS::NullEntity;
+
+    const BlueprintDefinition *definition = GetBlueprintDefinition(row->source);
+    if (definition == nullptr)
+        return ECS::NullEntity;
+
+    // Once, here — after which the scan compares integers rather than strings per
+    // entity, which is the whole reason the tag carries an index.
+    const std::optional<uint32_t> index = definition->IndexOf(name);
+    if (!index.has_value())
+        return ECS::NullEntity;
+
+    for (auto [entity, tag] : scene.Query<ECS::BlueprintMember>())
+    {
+        if (tag.instanceId == instanceId && tag.memberIndex == *index)
+            return entity;
+    }
+    return ECS::NullEntity;
+}
+
+const BlueprintInstance *FindInstance(const InstanceTable &table, uint32_t instanceId,
+                                      std::string_view expectedSource)
+{
+    const BlueprintInstance *row = table.Find(instanceId);
+    if (row == nullptr)
+        return nullptr;
+    if (!expectedSource.empty() && row->source != expectedSource)
+        return nullptr;
+    return row;
 }
 
 std::vector<LevelInstance> InstancesForSave(const InstanceTable &table)

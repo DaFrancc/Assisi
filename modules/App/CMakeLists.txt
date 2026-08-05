@@ -5,6 +5,7 @@ target_sources(Assisi-App
   PUBLIC
     "include/Assisi/App/AppConfig.hpp"
     "include/Assisi/App/Application.hpp"
+    "include/Assisi/App/BlueprintVerbs.hpp"
     "include/Assisi/App/ChildProcess.hpp"
     "include/Assisi/App/LevelRuntime.hpp"
     "include/Assisi/App/OptionsConfig.hpp"
@@ -14,6 +15,7 @@ target_sources(Assisi-App
   PRIVATE
     "src/AppConfig.cpp"
     "src/Application.cpp"
+    "src/BlueprintVerbs.cpp"
     "src/ChildProcess.cpp"
     "src/ChiaraPanel.cpp"
     "src/LevelRuntime.cpp"

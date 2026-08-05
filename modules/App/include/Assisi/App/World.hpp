@@ -137,6 +137,18 @@ struct World
     /// renderer: one renderer serving two worlds would skip propagation in
     /// whichever it drew second.
     std::uint64_t propagationTick = 0;
+
+    /// The manager that created this world, or null for one built standalone (a
+    /// test, or a headless process with no manager). Set by WorldManager::Create
+    /// and never by anything else — a world belongs to exactly one manager for
+    /// its whole life.
+    ///
+    /// It exists so a call that has only a World can still reach the engine
+    /// services a spawn needs: App::SpawnBlueprint resolves the new members'
+    /// assets through them, which is what keeps a spawned car from arriving with
+    /// unresolved meshes. Null simply means no asset resolve, which is correct for
+    /// a headless host and for a test.
+    class WorldManager *manager = nullptr;
 };
 
 /// @brief Owns every resident world and tracks the two roles the app cares
@@ -278,6 +290,11 @@ class WorldManager
         Core::JobSystem           *jobs = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
+
+    /// @brief The installed services. For code that has a World and needs the
+    /// engine-wide pieces a load would use — App::SpawnBlueprint resolving a
+    /// freshly spawned instance's assets, notably.
+    [[nodiscard]] const Services &GetServices() const { return _services; }
 
     /// @brief **Travel**: loads @p levelPath into a new world, makes it the
     /// active one, and retires the world that was active.
