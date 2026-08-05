@@ -50,9 +50,6 @@ constexpr const char *kIconMaskPixelShader = "editor/shaders/icon_mask.frag.spv"
 // render/don't LOD so a large scene isn't peppered with distant icons.
 constexpr float kMaxIconDistance = 100.f;
 
-// Selection-highlight outline colour (the always-on-top border around a selected
-// entity's mesh/icon). Matches the "selected" collider colour the editor uses.
-constexpr glm::vec3 kSelectionOutlineColor{1.0f, 0.45f, 0.0f};
 
 float AspectRatio(int32_t width, int32_t height)
 {
@@ -213,7 +210,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     {
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "mesh-constants");
         _meshPass.UpdateFrameConstants(frame.commandList, projection * view, view, frame.width, frame.height,
-                                       camera.nearZ, camera.farZ, _lighting.DirLightCount(), _debugView);
+                                       camera.nearZ, camera.farZ, _lighting.DirLightCount(), _debugView,
+                                       _ambientColor, _ambientIntensity);
     }
     _lastDrawStats = DrawScene(DrawSceneParams{.scene          = scene,
                                                .meshPass       = _meshPass,
@@ -296,6 +294,24 @@ void SceneRenderer::SetIconSuppressedEntities(std::span<const ECS::Entity> entit
     _iconSuppressed.assign(entities.begin(), entities.end());
 }
 
+void SceneRenderer::SubmitEditorIcons(std::span<const glm::vec3> positions)
+{
+    if (!_editorVisuals)
+    {
+        return; // the icon pass was never built (InitParams::enableEditorVisuals off)
+    }
+    _submittedIcons.insert(_submittedIcons.end(), positions.begin(), positions.end());
+}
+
+void SceneRenderer::SubmitIconOutline(const glm::vec3 &position)
+{
+    if (!_editorVisuals)
+    {
+        return;
+    }
+    _submittedIconOutlines.push_back(position);
+}
+
 void SceneRenderer::SubmitOutlineGroup(std::span<const Render::OutlinePass::OutlineItem> items,
                                        const glm::vec3 &color)
 {
@@ -367,6 +383,17 @@ void SceneRenderer::DrawEditorIcons(const Render::RenderFrame &frame, const glm:
         }
     }
 
+    // Billboards the caller placed by hand, for things that are not entities — a
+    // blueprint instance's root, which has no Transform for the queries above to
+    // find. Editor chrome, so gated on the same toggle, but not distance-culled:
+    // there are a handful of them and losing the only mark an instance has is worse
+    // than drawing one far away.
+    if (_editorIconsVisible)
+    {
+        _iconPositions.insert(_iconPositions.end(), _submittedIcons.begin(), _submittedIcons.end());
+    }
+    _submittedIcons.clear();
+
     if (_iconPositions.empty())
     {
         return;
@@ -390,6 +417,25 @@ void SceneRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, const
     {
         DrawHighlightOutlineFor(entity, frame, viewProjection, view, scene);
     }
+
+    // The same treatment for a submitted billboard that belongs to no entity, so a
+    // selected instance reads exactly like a selected entity rather than being the
+    // one selection in the editor with no visible border.
+    if (!_submittedIconOutlines.empty() && _editorIconsVisible)
+    {
+        const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
+        const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
+        for (const glm::vec3 &center : _submittedIconOutlines)
+        {
+            // Always the active colour: a submitted outline is only ever asked for by
+            // a selection of exactly one thing (an instance), and that thing is what
+            // the inspector is showing.
+            _outlinePass.DrawBillboard(frame, viewProjection, center, cameraRight, cameraUp,
+                                       0.5f * Render::kEntityIconWorldSize, _iconPass.IconTexture(),
+                                       kActiveSelectionOutline);
+        }
+    }
+    _submittedIconOutlines.clear();
 }
 
 void SceneRenderer::DrawHighlightOutlineFor(ECS::Entity entity, const Render::RenderFrame &frame,
@@ -417,10 +463,13 @@ void SceneRenderer::DrawHighlightOutlineFor(ECS::Entity entity, const Render::Re
     const bool loadingMesh =
         renderer != nullptr && renderer->meshBuffer == nullptr && !IsIconSuppressed(entity);
 
+    // The one the inspector is talking about reads redder than the rest. With one
+    // thing selected it is that thing, so an ordinary click gets the active colour.
+    const glm::vec3 color = entity == _activeHighlight ? kActiveSelectionOutline : kSelectionOutline;
+
     if (renderer != nullptr && renderer->meshBuffer != nullptr)
     {
-        _outlinePass.Draw(frame, viewProjection, *renderer->meshBuffer, transform->worldMatrix,
-                          kSelectionOutlineColor);
+        _outlinePass.Draw(frame, viewProjection, *renderer->meshBuffer, transform->worldMatrix, color);
     }
     else if (placementIcon || loadingMesh)
     {
@@ -429,8 +478,7 @@ void SceneRenderer::DrawHighlightOutlineFor(ECS::Entity entity, const Render::Re
         const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
         const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
         _outlinePass.DrawBillboard(frame, viewProjection, center, cameraRight, cameraUp,
-                                   0.5f * Render::kEntityIconWorldSize, _iconPass.IconTexture(),
-                                   kSelectionOutlineColor);
+                                   0.5f * Render::kEntityIconWorldSize, _iconPass.IconTexture(), color);
     }
 }
 

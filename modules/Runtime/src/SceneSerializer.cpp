@@ -9,6 +9,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/EditorOnly.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 
@@ -452,6 +453,42 @@ struct StagedInstance
     nlohmann::json overrides = nlohmann::json::object();
 };
 
+/// Which entities a re-expansion may take over instead of creating, keyed by the
+/// member name they currently stand for.
+///
+/// Entries are **erased as they are adopted**, so what is left when staging ends is
+/// exactly the set of members the edit deleted. That is the whole diff, and it falls
+/// out of the staging walk rather than needing a second comparison that could
+/// disagree with it.
+struct AdoptionSet
+{
+    /// The row to keep, instead of allocating a new one. A re-expansion must land on
+    /// the same instance id: every BlueprintMember tag in the world names it, and so
+    /// does every transaction in the editor's history.
+    uint32_t instanceId = 0;
+
+    std::unordered_map<std::string, ECS::Entity> byName;
+};
+
+/// Takes every serializable component off @p entity, so it can be rebuilt from a
+/// definition with none of the previous version's leftovers.
+///
+/// The handle survives, which is the entire point: a member the author neither
+/// deleted nor renamed keeps its exact (slot, generation), so every undo transaction
+/// and every EntityRef pointing at it stays true.
+///
+/// Non-serializable state — a Jolt body, a resolved asset pointer — is deliberately
+/// *not* touched here, because Runtime cannot see it. Removing it is the caller's
+/// precondition (see SceneSerializer::ReexpandInstance).
+void StripSerializable(ECS::Scene &scene, ECS::Entity entity)
+{
+    for (const Core::Reflect::ComponentMeta *meta :
+         Core::Reflect::ComponentRegistry::Instance().SerializableComponents())
+    {
+        scene.RemoveById(entity, meta->id);
+    }
+}
+
 /// The last segment of a member path — what the member is called in its own file,
 /// and what fits in a Name.
 std::string_view LeafName(std::string_view path)
@@ -469,8 +506,10 @@ std::string_view LeafName(std::string_view path)
 ///
 /// Throws on a name collision — with a level entity, with another instance, or
 /// with a member of one. Every one of them makes a reference ambiguous.
+/// @param adopt when non-null, a re-expansion: the row already exists and members
+///        whose names it knows are taken over rather than created.
 StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const LevelInstance &entry,
-                             int32_t levelInstanceIndex)
+                             int32_t levelInstanceIndex, AdoptionSet *adopt = nullptr)
 {
     if (!HasUniformScale(entry.transform))
     {
@@ -488,16 +527,21 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
     staged.definition = definition;
     staged.placement  = entry.transform;
     staged.overrides  = entry.overrides;
-    staged.id = table.Add(BlueprintInstance{.name      = entry.name,
-                                            .source    = definition->source,
-                                            .transform = entry.transform,
-                                            // Anything the loader places came out of a file, so it is
-                                            // authored by construction. A placement made outside a load
-                                            // decides for itself — see PlaceInstance.
-                                            .authored           = levelInstanceIndex >= 0,
-                                            .levelInstanceIndex = levelInstanceIndex,
-                                            .overrides          = entry.overrides,
-                                            .removed            = entry.removed});
+    // A re-expansion keeps its row exactly as it is: the placement, the overrides and
+    // the removals belong to the level that placed this instance, and the file being
+    // edited has nothing to say about any of them.
+    staged.id = adopt != nullptr
+                    ? adopt->instanceId
+                    : table.Add(BlueprintInstance{.name      = entry.name,
+                                                  .source    = definition->source,
+                                                  .transform = entry.transform,
+                                                  // Anything the loader places came out of a file, so it is
+                                                  // authored by construction. A placement made outside a load
+                                                  // decides for itself — see PlaceInstance.
+                                                  .authored           = levelInstanceIndex >= 0,
+                                                  .levelInstanceIndex = levelInstanceIndex,
+                                                  .overrides          = entry.overrides,
+                                                  .removed            = entry.removed});
 
     staged.members.reserve(definition->members.size());
     staged.resolved.reserve(definition->members.size());
@@ -518,7 +562,22 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
             continue;
         }
 
-        const ECS::Entity e = scene.Create();
+        // A member the edit left alone keeps its entity — see AdoptionSet. Stripped
+        // rather than patched, because the new definition may simply not declare a
+        // component the old one did, and a patch cannot express an absence.
+        ECS::Entity e = ECS::NullEntity;
+        if (adopt != nullptr)
+        {
+            if (const auto it = adopt->byName.find(desc.name); it != adopt->byName.end())
+            {
+                e = it->second;
+                adopt->byName.erase(it);
+                StripSerializable(scene, e);
+            }
+        }
+        if (e == ECS::NullEntity)
+            e = scene.Create();
+
         staged.members.push_back(e);
         staged.resolved.push_back(desc);
 
@@ -684,6 +743,14 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
         meta->iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *)
         {
             const ECS::Entity entity{idx, gen};
+
+            // Scaffolding the editor stood up to work by — the blueprint editor's
+            // sun above all. Skipping it here is enough for the whole save: passes 2
+            // and 3 both work off `entityMap`, and what never enters it is never
+            // named and never serialized.
+            if (scene.Has<EditorOnly>(entity))
+                return;
+
             if (const ECS::BlueprintMember *tag = scene.Get<ECS::BlueprintMember>(entity))
             {
                 if (instances != nullptr)
@@ -1191,6 +1258,100 @@ std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(
     }
 
     return ExpandedInstance{.instanceId = instance.id, .members = std::move(instance.members)};
+}
+
+std::optional<SceneSerializer::ReexpandedInstance>
+SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, uint32_t instanceId,
+                                  std::span<const std::string> previousMemberNames)
+{
+    if (s_context || s_rawContextScene != nullptr)
+    {
+        Core::Log::Error("ReexpandInstance: a serialization context is already active on this thread.");
+        return std::nullopt;
+    }
+
+    const BlueprintInstance *found = table.Find(instanceId);
+    if (found == nullptr)
+    {
+        Core::Log::Error("Blueprint: cannot re-expand instance {} — no such instance is live.", instanceId);
+        return std::nullopt;
+    }
+    // A copy. Staging reads the row back out of the table, and the entry below has to
+    // outlive anything that touches it.
+    const BlueprintInstance row = *found;
+
+    // Both failure checks happen here, before the first member is stripped, which is
+    // what lets the contract promise "changed nothing" on nullopt. Past this point a
+    // throw is structurally unreachable: the definition loaded, so its member names
+    // are unique, and the placement was accepted once already, so its scale is
+    // uniform.
+    if (GetBlueprintDefinition(row.source) == nullptr)
+    {
+        Core::Log::Error("Blueprint: '{}' no longer loads; instance {} is left as it was.", row.source,
+                         instanceId);
+        return std::nullopt;
+    }
+
+    // What is live now, under the names the *old* definition gave it. A tag whose
+    // index the old list does not cover is skipped rather than guessed at — it can
+    // only mean the caller passed the wrong list, and adopting the wrong entity for a
+    // name would silently rebuild one member on top of another.
+    AdoptionSet adopt;
+    adopt.instanceId = instanceId;
+    for (const ECS::Entity member : MembersOf(scene, instanceId))
+    {
+        const ECS::BlueprintMember *tag = scene.Get<ECS::BlueprintMember>(member);
+        if (tag == nullptr || tag->memberIndex >= previousMemberNames.size())
+            continue;
+        adopt.byName.emplace(previousMemberNames[tag->memberIndex], member);
+    }
+
+    const LevelInstance entry{.name      = row.name,
+                              .source    = row.source,
+                              .transform = row.transform,
+                              .overrides = row.overrides,
+                              .removed   = row.removed};
+
+    ScopedContextReset guard;
+    s_context = SerializationContext{};
+
+    StagedInstance staged;
+    try
+    {
+        staged = StageInstance(scene, table, entry, row.levelInstanceIndex, &adopt);
+        CommitInstance(scene, staged, row.name);
+    }
+    catch (const std::exception &ex)
+    {
+        // Unreachable by the reasoning above, and reported rather than swallowed if
+        // that reasoning ever stops holding. There is no unwind: the adopted members
+        // have already been stripped, so the honest thing is to say so loudly.
+        Core::Log::Error("Blueprint: re-expanding '{}' failed part-way: {}. Reload the level.", row.source,
+                         ex.what());
+        return std::nullopt;
+    }
+
+    if (!s_context->unresolvedRefNames.empty())
+    {
+        Core::Log::Error("Blueprint: '{}' has {} reference(s) naming a member it does not declare; the first "
+                         "is '{}'. They are null in instance {}.",
+                         row.source, s_context->unresolvedRefNames.size(),
+                         s_context->unresolvedRefNames.front(), instanceId);
+    }
+
+    ReexpandedInstance out;
+    out.members = std::move(staged.members);
+
+    // Whatever was never adopted is a member the edit deleted.
+    out.destroyed.reserve(adopt.byName.size());
+    for (const auto &[name, entity] : adopt.byName)
+        out.destroyed.push_back(entity);
+    std::sort(out.destroyed.begin(), out.destroyed.end(),
+              [](ECS::Entity a, ECS::Entity b) { return a.index < b.index; });
+    for (const ECS::Entity entity : out.destroyed)
+        scene.Destroy(entity);
+
+    return out;
 }
 
 std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, InstanceTable &table,

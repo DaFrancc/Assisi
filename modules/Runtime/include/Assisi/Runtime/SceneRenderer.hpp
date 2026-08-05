@@ -42,6 +42,18 @@
 namespace Assisi::Runtime
 {
 
+/// @brief The always-on-top border around a selected entity's mesh or icon.
+inline constexpr glm::vec3 kSelectionOutline{1.0f, 0.55f, 0.05f};
+
+/// @brief The same, for the **active** entity of a selection — the last one
+/// clicked, which is what the inspector shows and what the gizmo actually drives.
+///
+/// Redder than the rest on purpose. With several things selected, every one of them
+/// moves and only one of them is being edited, and "which one is the inspector
+/// talking about" is otherwise a question the viewport cannot answer. A single
+/// selection is its own active entity, so this is the colour of an ordinary click.
+inline constexpr glm::vec3 kActiveSelectionOutline{1.0f, 0.28f, 0.05f};
+
 class SceneRenderer
 {
   public:
@@ -152,6 +164,20 @@ class SceneRenderer
     void SetDebugView(Render::MaterialDebugView view) { _debugView = view; }
     [[nodiscard]] Render::MaterialDebugView DebugView() const { return _debugView; }
 
+    /// @brief The uniform ambient term, in linear colour and intensity.
+    ///
+    /// Defaults to white at Render::kDefaultAmbientIntensity, which is the constant
+    /// this replaced — so a game that never calls this renders exactly as before.
+    /// The blueprint editor turns it up: inspecting a model means seeing all of it,
+    /// and a scene lit only by a key light hides half of one in black.
+    void SetAmbient(const glm::vec3 &color, float intensity)
+    {
+        _ambientColor     = color;
+        _ambientIntensity = intensity;
+    }
+    [[nodiscard]] glm::vec3 AmbientColor() const { return _ambientColor; }
+    [[nodiscard]] float     AmbientIntensity() const { return _ambientIntensity; }
+
     /// @brief Drawn/culled counts from the most recent Render(); zero before the
     /// first frame. Reflects whether culling is actually removing anything.
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
@@ -166,6 +192,7 @@ class SceneRenderer
         _highlightedEntities.clear();
         if (_editorVisuals && entity != ECS::NullEntity)
             _highlightedEntities.push_back(entity);
+        _activeHighlight = entity;
     }
     /// @brief The same, for a multi-entity selection: every one of @p entities gets
     /// its own outline. Replaces whatever was highlighted before; an empty span
@@ -180,6 +207,21 @@ class SceneRenderer
             if (entity != ECS::NullEntity)
                 _highlightedEntities.push_back(entity);
     }
+
+    /// @brief Which highlighted entity is the *active* one — the last clicked, what
+    /// the inspector shows and the gizmo drives. It outlines in
+    /// kActiveSelectionOutline instead of kSelectionOutline.
+    ///
+    /// Set separately rather than read off the end of the list above, because the
+    /// caller filters that list: an entity already outlined some other way (a
+    /// rigidbody, drawn by its collider) is dropped from it, and the last survivor
+    /// of that filtering is not the active entity — it just happens to be last.
+    ///
+    /// Harmless if it names an entity that is not in the list, or none at all: with
+    /// exactly one thing selected it *is* the active one, so a single selection
+    /// carries the active colour.
+    void SetActiveHighlight(ECS::Entity entity) { _activeHighlight = entity; }
+    [[nodiscard]] ECS::Entity ActiveHighlight() const { return _activeHighlight; }
     /// @brief The first highlighted entity, or NullEntity. Kept for callers that
     /// only ever set one.
     [[nodiscard]] ECS::Entity HighlightedEntity() const
@@ -209,6 +251,24 @@ class SceneRenderer
     /// caller re-supplies it every frame; pass an empty span (or don't call) to
     /// suppress nothing.
     void SetIconSuppressedEntities(std::span<const ECS::Entity> entities);
+
+    /// @brief Queue editor billboards at world positions that belong to no entity.
+    ///
+    /// A blueprint instance's root is exactly that: it evaporates at expansion
+    /// (docs/blueprint-system-concept.md §3), so there is no Transform anywhere in
+    /// the scene marking where the copy was placed — and without a mark the author
+    /// has nothing to click and nothing to look at while dragging the group. The
+    /// positions come from the world's instance table, which is editor knowledge, so
+    /// they are pushed in rather than queried out.
+    ///
+    /// Consumed and cleared each Render(), like the overlay lines; re-submit every
+    /// frame. Drawn with the same icon as an entity's, and skipped entirely when
+    /// editor icons are hidden.
+    void SubmitEditorIcons(std::span<const glm::vec3> positions);
+
+    /// @brief Outline one of those billboards, so a selected instance reads the same
+    /// as a selected entity. Cleared each Render(); re-submit every frame.
+    void SubmitIconOutline(const glm::vec3 &position);
 
     /// @brief Queue one independent silhouette outline for the next Render(): the
     /// @p items' silhouettes union into a SINGLE border of @p color (e.g. a capsule
@@ -289,6 +349,15 @@ class SceneRenderer
     // Consumed and cleared each Render().
     std::vector<ECS::Entity> _iconSuppressed;
 
+    // Billboards belonging to no entity — a blueprint instance's root, which has no
+    // Transform in the scene to be found by a query. Pushed in by the editor and
+    // cleared each Render(). See SubmitEditorIcons.
+    std::vector<glm::vec3> _submittedIcons;
+    std::vector<glm::vec3> _submittedIconOutlines;
+
+    // Which highlighted entity outlines in the active colour. See SetActiveHighlight.
+    ECS::Entity _activeHighlight = ECS::NullEntity;
+
     // Projection the froxel grid was last built against; a mismatch in Render()
     // triggers a rebuild. Identity forces one on the first frame.
     glm::mat4 _clusterProjection{1.f};
@@ -297,6 +366,8 @@ class SceneRenderer
     bool      _sortDraws      = true; // default draw path sorts by sort key before submit
     bool      _gpuCulling     = false; // GPU-driven cull path (stage F1); CPU path is the default reference
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
+    glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
+    float     _ambientIntensity = Render::kDefaultAmbientIntensity;         // == the constant this replaced
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene

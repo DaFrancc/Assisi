@@ -15,6 +15,7 @@ target_sources(Assisi-Editor
     "src/EditHistory.cpp"
     "src/EditorApp.cpp"
     "src/EditorAssetBrowser.cpp"
+    "src/EditorBlueprintMode.cpp"
     "src/EditorCamera.cpp"
     "src/EditorColliders.cpp"
     "src/EditorGizmo.cpp"

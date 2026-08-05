@@ -61,6 +61,12 @@ struct FrameConstants
     ///   w  = -z * log(nearZ)                (matching bias)
     /// slice = log(|viewZ|) * z + w, which is gridDim.z * log(|viewZ|/nearZ) / log(farZ/nearZ).
     glm::vec4 clusterScale;
+    /// Uniform ambient term: rgb = linear colour, w = intensity. It used to be
+    /// `const float kAmbient = 0.03` in cube_min.frag, which is the right *value*
+    /// and the wrong place — a constant nothing can turn down is a scene you cannot
+    /// light for inspection. The default keeps every existing render byte-identical
+    /// (white × 0.03), so this is a knob, not a look change.
+    glm::vec4 ambient;
 };
 } // namespace
 
@@ -190,7 +196,8 @@ bool MeshPass::RebuildPipeline(const nvrhi::FramebufferInfo &framebufferInfo)
 
 void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &viewProjection,
                                     const glm::mat4 &view, uint32_t screenWidth, uint32_t screenHeight, float nearZ,
-                                    float farZ, uint32_t dirLightCount, MaterialDebugView debugView) const
+                                    float farZ, uint32_t dirLightCount, MaterialDebugView debugView,
+                                    const glm::vec3 &ambientColor, float ambientIntensity) const
 {
     FrameConstants constants;
     constants.viewProjection = viewProjection;
@@ -216,6 +223,8 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm:
         glm::vec4(static_cast<float>(ClusterGrid::kNumX) / static_cast<float>(screenWidth),
                   static_cast<float>(ClusterGrid::kNumY) / static_cast<float>(screenHeight), sliceScale,
                   -sliceScale * std::log(safeNear));
+
+    constants.ambient = glm::vec4(ambientColor, ambientIntensity);
 
     commandList->writeBuffer(_frameConstantsBuffer, &constants, sizeof(constants));
 }

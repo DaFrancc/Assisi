@@ -16,6 +16,9 @@
 #include <Assisi/Runtime/NameComponent.hpp>
 
 #include <imgui.h>
+// After imgui.h, not sorted with it: ImGuizmo.h uses ImDrawList/ImU32 without
+// declaring them and does not include imgui.h itself.
+#include <ImGuizmo.h>
 
 #include <nlohmann/json.hpp>
 
@@ -1133,11 +1136,110 @@ void EditorApp::DrawReplicationPolicy()
     ImGui::TreePop();
 }
 
+void EditorApp::DrawInstanceInspector()
+{
+    const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance);
+    if (row == nullptr)
+    {
+        _selectedInstance = 0; // it went away while it was selected
+        ImGui::TextDisabled("That instance is no longer live.");
+        return;
+    }
+
+    const bool editable = IsEditable();
+    ImGui::BeginDisabled(!editable);
+
+    ImGui::TextUnformatted(row->name.empty() ? "(spawned at runtime)" : row->name.c_str());
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.65f, 0.85f, 0.65f, 1.f});
+    ImGui::TextUnformatted(row->source.c_str());
+    ImGui::PopStyleColor();
+
+    const std::size_t memberCount = Assisi::Runtime::MembersOf(*_scene, _selectedInstance).size();
+    ImGui::TextDisabled("instance of a blueprint - %zu live member(s)", memberCount);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("This is the copy's placement, not an entity. Editing it moves every member and "
+                          "records no overrides — expand the instance in the Entities panel to edit one "
+                          "member.");
+    }
+
+    ImGui::Separator();
+    ImGui::SeparatorText("Placement");
+
+    // Read out of the row every frame rather than caching: the gizmo writes the same
+    // field, and a cached copy would fight it for a frame on every drag.
+    glm::vec3 position = row->transform.position;
+    glm::vec3 euler    = glm::degrees(glm::eulerAngles(row->transform.rotation));
+    float     scale    = row->transform.scale.x;
+
+    bool edited = false;
+    edited |= ImGui::DragFloat3("position", &position.x, 0.01f);
+    edited |= ImGui::DragFloat3("rotation", &euler.x, 0.5f);
+    // One number, because that is what an instance may have. Three would let a
+    // non-uniform scale be typed and then be silently averaged, which reads as the
+    // editor ignoring what was entered.
+    edited |= ImGui::DragFloat("scale", &scale, 0.01f, kMinTypedInstanceScale, 0.f, "%.3f");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Uniform: an instance may translate, rotate, or scale evenly, and nothing else.");
+
+    // The same press/release shape a drag has, so typing a number and dragging a
+    // handle produce one undo entry each and not one per frame.
+    if (ImGui::IsItemActivated() || ImGui::IsItemActive())
+        _captureEditingActive = true;
+    if (edited)
+    {
+        BeginInstanceGesture(_selectedInstance);
+        _captureEditingActive = true;
+
+        Assisi::Runtime::Transform placement;
+        placement.position = position;
+        placement.rotation = glm::normalize(glm::quat(glm::radians(euler)));
+        placement.scale    = glm::vec3(scale);
+        ApplyInstancePlacement(_selectedInstance, placement);
+    }
+    // Deactivation of *any* of the three closes the gesture; they are one control as
+    // far as the author is concerned, so IsItemDeactivatedAfterEdit (which speaks
+    // only for the scale drag above) is not enough on its own.
+    //
+    // ...but not while the gizmo has it. Both write the same gesture, the gizmo runs
+    // first in the frame, and ImGuizmo is not an ImGui item — so without this the
+    // "nothing is active" clause would close a gesture mid-drag and push one
+    // transaction per frame for the whole drag.
+    // ImGuizmo::IsUsing rather than IsUsingGizmo(), which also counts *hovering*: a
+    // typed edit followed by the mouse drifting over the handles would otherwise
+    // leave the gesture open until it drifted off again.
+    if (_instanceDragId != 0 && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing())
+        EndInstanceGesture("Move Instance");
+
+    if (!row->overrides.empty() || !row->removed.empty())
+    {
+        ImGui::Separator();
+        ImGui::TextDisabled("%zu member(s) overridden, %zu removed", row->overrides.size(),
+                            row->removed.size());
+    }
+
+    ImGui::EndDisabled();
+
+    if (!editable && ImGui::IsWindowHovered())
+        ImGui::SetTooltip("This world is inspect-only.");
+}
+
 void EditorApp::DrawInspector()
 {
     using namespace Assisi::Core::Reflect;
 
     ImGui::Begin("Inspector");
+
+    // An instance is selected, not an entity. It has no root to inspect — the root
+    // evaporates at expansion (§3) — so what there is to edit is the *record*: where
+    // the copy stands. Without this the panel said "no entity selected" over a
+    // perfectly good selection, and the placement could only be dragged, never typed.
+    if (_selectedEntity == Assisi::ECS::NullEntity && _selectedInstance != 0)
+    {
+        DrawInstanceInspector();
+        ImGui::End();
+        return;
+    }
 
     if (_selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
     {

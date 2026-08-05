@@ -70,6 +70,7 @@ glm::mat4 TransformMatrix(const Rt::Transform &transform)
     return glm::translate(glm::mat4(1.f), transform.position) * glm::mat4_cast(transform.rotation) *
            glm::scale(glm::mat4(1.f), transform.scale);
 }
+
 } // namespace
 
 void EditorApp::DrawInstanceGizmo()
@@ -121,28 +122,11 @@ void EditorApp::DrawInstanceGizmo()
 
     const bool nowUsing = ImGuizmo::IsUsing();
 
-    // Press edge: snapshot the record and every member's pose, because the undo
-    // entry has to take both back together and neither is reconstructible after
-    // the fact.
-    if (nowUsing && _instanceDragId != _selectedInstance)
-    {
-        _instanceDragId  = _selectedInstance;
-        _instanceDragRow = *row;
-        _instanceDragPoses.clear();
-
-        if (Assisi::Editor::EditHistory *history = ActiveHistory())
-        {
-            const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
-            for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, _selectedInstance))
-            {
-                if (std::optional<nlohmann::json> pose = history->CaptureComponent(member, transformId))
-                    _instanceDragPoses.emplace_back(member, std::move(*pose));
-            }
-        }
-    }
-
     if (nowUsing)
+    {
+        BeginInstanceGesture(_selectedInstance);
         _captureEditingActive = true;
+    }
 
     if (manipulated)
     {
@@ -156,78 +140,128 @@ void EditorApp::DrawInstanceGizmo()
             Rt::Transform placement;
             placement.position = translation;
             placement.rotation = glm::normalize(orientation);
-            // One number, not three: an instance may only translate, rotate, or
-            // scale *uniformly*, and the editor is where that is enforced first so
-            // a violation cannot be authored at all (§3). The load hard-fails on
-            // one anyway; this is the half that keeps it from ever being written.
-            placement.scale = glm::vec3((scale.x + scale.y + scale.z) / 3.f);
-
-            // Move the members by the delta rather than re-expanding: re-expansion
-            // would destroy and recreate handles behind undo's back, and dragging
-            // is the one gesture that must stay cheap.
-            const glm::mat4 delta = TransformMatrix(placement) * glm::inverse(TransformMatrix(row->transform));
-            const glm::quat deltaRotation =
-                glm::normalize(placement.rotation * glm::inverse(row->transform.rotation));
-
-            for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, _selectedInstance))
-            {
-                // Only the members the placement reaches directly; a parented one
-                // rides along through its parent, and moving it too would apply the
-                // delta twice.
-                if (_scene->Has<Rt::Parent>(member))
-                    continue;
-
-                Rt::Transform *memberTransform = _scene->GetMut<Rt::Transform>(member);
-                if (memberTransform == nullptr)
-                    continue;
-
-                memberTransform->position = glm::vec3(delta * glm::vec4(memberTransform->position, 1.f));
-                memberTransform->rotation = glm::normalize(deltaRotation * memberTransform->rotation);
-                memberTransform->scale *= placement.scale.x / row->transform.scale.x;
-
-                if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(member))
-                    _physics->SetBodyTransform(*body, memberTransform->position, memberTransform->rotation);
-            }
-
-            Assisi::Runtime::BlueprintInstance updated = *row;
-            updated.transform                          = placement;
-            _world->instances.RestoreAt(_selectedInstance, std::move(updated));
+            placement.scale    = scale;
+            ApplyInstancePlacement(_selectedInstance, placement);
         }
     }
 
-    // Release edge: one transaction carrying the record and every pose it moved.
-    if (!nowUsing && _instanceDragId != 0)
+    if (!nowUsing)
+        EndInstanceGesture("Move Instance");
+}
+
+void EditorApp::BeginInstanceGesture(std::uint32_t instanceId)
+{
+    if (_scene == nullptr || _world == nullptr || instanceId == 0 || _instanceDragId == instanceId)
+        return;
+
+    const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(instanceId);
+    if (row == nullptr)
+        return;
+
+    _instanceDragId  = instanceId;
+    _instanceDragRow = *row;
+    _instanceDragPoses.clear();
+
+    if (Assisi::Editor::EditHistory *history = ActiveHistory())
     {
-        if (Assisi::Editor::EditHistory *history = ActiveHistory())
+        const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
+        for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, instanceId))
         {
-            const Assisi::Runtime::BlueprintInstance *now = _world->instances.Find(_instanceDragId);
-            if (now != nullptr)
-            {
-                Assisi::Editor::Transaction txn;
-                txn.label = "Move Instance";
-                txn.cmds.push_back(Assisi::Editor::InstanceDelta{
-                    .instanceId = _instanceDragId, .before = _instanceDragRow, .after = *now});
-
-                const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
-                for (const auto &[member, before] : _instanceDragPoses)
-                {
-                    if (!_scene->IsAlive(member))
-                        continue;
-                    std::optional<nlohmann::json> after = history->CaptureComponent(member, transformId);
-                    if (after != std::optional<nlohmann::json>{before})
-                        txn.cmds.push_back(Assisi::Editor::ComponentDelta{member, transformId, before, after});
-                }
-
-                // Only if something actually moved — a click without a drag is not
-                // an edit, the same rule the gesture machinery applies elsewhere.
-                if (txn.cmds.size() > 1)
-                    history->Push(std::move(txn));
-            }
+            if (std::optional<nlohmann::json> pose = history->CaptureComponent(member, transformId))
+                _instanceDragPoses.emplace_back(member, std::move(*pose));
         }
-
-        _instanceDragId = 0;
-        _instanceDragPoses.clear();
     }
+}
+
+void EditorApp::ApplyInstancePlacement(std::uint32_t instanceId, const Rt::Transform &requested)
+{
+    if (_scene == nullptr || _world == nullptr)
+        return;
+
+    const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(instanceId);
+    if (row == nullptr)
+        return;
+
+    Rt::Transform placement = requested;
+    placement.rotation      = glm::normalize(placement.rotation);
+    // One number, not three: an instance may only translate, rotate, or scale
+    // *uniformly*, and the editor is where that is enforced first so a violation
+    // cannot be authored at all (§3). The load hard-fails on one anyway; this is the
+    // half that keeps it from ever being written.
+    placement.scale = glm::vec3((placement.scale.x + placement.scale.y + placement.scale.z) / 3.f);
+    // A zero would divide out below and take every member's scale with it, and there
+    // is no way back from that — the members would all be zero-sized and the
+    // placement would have no record of what they were.
+    if (placement.scale.x <= kMinTypedInstanceScale)
+        placement.scale = glm::vec3(kMinTypedInstanceScale);
+
+    // Move the members by the delta rather than re-expanding: re-expansion would
+    // destroy and recreate handles behind undo's back, and this is the gesture that
+    // has to stay cheap.
+    const glm::mat4 delta = TransformMatrix(placement) * glm::inverse(TransformMatrix(row->transform));
+    const glm::quat deltaRotation =
+        glm::normalize(placement.rotation * glm::inverse(row->transform.rotation));
+    const float scaleRatio =
+        row->transform.scale.x != 0.f ? placement.scale.x / row->transform.scale.x : 1.f;
+
+    for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, instanceId))
+    {
+        // Only the members the placement reaches directly; a parented one rides along
+        // through its parent, and moving it too would apply the delta twice.
+        if (_scene->Has<Rt::Parent>(member))
+            continue;
+
+        Rt::Transform *memberTransform = _scene->GetMut<Rt::Transform>(member);
+        if (memberTransform == nullptr)
+            continue;
+
+        memberTransform->position = glm::vec3(delta * glm::vec4(memberTransform->position, 1.f));
+        memberTransform->rotation = glm::normalize(deltaRotation * memberTransform->rotation);
+        memberTransform->scale *= scaleRatio;
+
+        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(member))
+            _physics->SetBodyTransform(*body, memberTransform->position, memberTransform->rotation);
+    }
+
+    Assisi::Runtime::BlueprintInstance updated = *row;
+    updated.transform                          = placement;
+    _world->instances.RestoreAt(instanceId, std::move(updated));
+}
+
+void EditorApp::EndInstanceGesture(const char *label)
+{
+    if (_instanceDragId == 0 || _scene == nullptr || _world == nullptr)
+        return;
+
+    if (Assisi::Editor::EditHistory *history = ActiveHistory())
+    {
+        const Assisi::Runtime::BlueprintInstance *now = _world->instances.Find(_instanceDragId);
+        if (now != nullptr)
+        {
+            Assisi::Editor::Transaction txn;
+            txn.label = label;
+            txn.cmds.push_back(Assisi::Editor::InstanceDelta{
+                .instanceId = _instanceDragId, .before = _instanceDragRow, .after = *now});
+
+            const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
+            for (const auto &[member, before] : _instanceDragPoses)
+            {
+                if (!_scene->IsAlive(member))
+                    continue;
+                std::optional<nlohmann::json> after = history->CaptureComponent(member, transformId);
+                if (after != std::optional<nlohmann::json>{before})
+                    txn.cmds.push_back(Assisi::Editor::ComponentDelta{member, transformId, before, after});
+            }
+
+            // Only if something actually moved — a click without a drag is not an
+            // edit, the same rule the gesture machinery applies elsewhere.
+            if (txn.cmds.size() > 1)
+                history->Push(std::move(txn));
+        }
+    }
+
+    _instanceDragId = 0;
+    _instanceDragPoses.clear();
 }
 
 void EditorApp::DrawTransformGizmo()

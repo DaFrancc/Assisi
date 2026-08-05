@@ -212,6 +212,57 @@ class SceneSerializer
                                                                        const LevelInstance &entry,
                                                                        bool                 authored);
 
+    /// @brief What a re-expansion left behind.
+    struct ReexpandedInstance
+    {
+        /// Parallel to the file's *new* member list, NullEntity where this instance
+        /// removed one — the same shape ExpandedInstance has. A member that survived
+        /// the edit appears here with the handle it already had.
+        std::vector<ECS::Entity> members;
+
+        /// Members the edit deleted, destroyed by the call (deferred, as ever) and
+        /// in slot order so a log or a test reads the same twice.
+        ///
+        /// The caller needs these for more than tidiness: an undo transaction naming
+        /// one of them can no longer be replayed, so the editor truncates its
+        /// history against this list.
+        std::vector<ECS::Entity> destroyed;
+    };
+
+    /// @brief Brings one live instance up to date with its file, **keeping every
+    /// surviving member's exact handle**.
+    ///
+    /// The editor's "you edited the blueprint, now every copy catches up" path. It
+    /// has to be a diff rather than destroy-and-recreate, and the reason is undo:
+    /// entity handles are `(slot, generation)`, EditHistory stores exact handles, and
+    /// Scene::ReviveAt is valid only for a currently-free slot. Rebuild forty cars
+    /// behind undo's back and a later Ctrl-Z revives into a slot something else now
+    /// occupies.
+    ///
+    /// Members are matched **by name**, which is why @p previousMemberNames must be
+    /// the member list the live tags were written against — read it out of the old
+    /// definition *before* invalidating the cache, because that is the only copy. A
+    /// name in both lists keeps its entity (stripped and rebuilt in place), a name
+    /// only in the old list is destroyed, a name only in the new one is created.
+    ///
+    /// The instance's own record is untouched: placement, overrides and removals
+    /// belong to the level that placed it, not to the file being edited. An override
+    /// naming a member the file no longer declares is dropped for this expansion with
+    /// a warning but stays in the record — so re-adding that member by hand brings
+    /// the override back, rather than having silently discarded somebody's edit.
+    ///
+    /// **Precondition.** The caller has already taken off whatever engine-side state
+    /// serialization does not cover — the Jolt body above all — for every live member
+    /// of @p instanceId. This strips reflected components only. Rebuild those from
+    /// `members` afterwards.
+    ///
+    /// @return nullopt, having changed nothing, if the instance is not live or its
+    ///         file no longer loads. Both are checked before the first member is
+    ///         touched, which is what makes "changed nothing" true.
+    [[nodiscard]] static std::optional<ReexpandedInstance>
+    ReexpandInstance(ECS::Scene &scene, InstanceTable &instances, uint32_t instanceId,
+                     std::span<const std::string> previousMemberNames);
+
     /// @brief Writes @p entities as a standalone file — the "create blueprint from
     /// selection" half of authoring.
     ///
