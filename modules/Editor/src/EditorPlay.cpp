@@ -295,7 +295,7 @@ void EditorApp::StopPlay()
             }
         }
 
-        _selectedEntity = Assisi::ECS::NullEntity;
+        ClearSelection();
         Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
     }
 
@@ -331,8 +331,7 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
     // builds the entity up from here.
     const Assisi::ECS::Entity previousSelection = _selectedEntity;
     const Assisi::ECS::Entity entity            = _scene->Create();
-    _selectedEntity                             = entity;
-    _selectedInstance                           = 0;
+    SelectEntity(entity, SelectMode::Replace);
 
     // Auto-named on create, so nobody has to think about naming until they care
     // (docs/blueprint-system-concept.md §6). It matters more than it looks: an
@@ -374,6 +373,158 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
     return entity;
 }
 
+// ---------------------------------------------------------------------------
+// Selection
+// ---------------------------------------------------------------------------
+//
+// One list, `_selection`, in click order. `_selectedEntity` is its last element
+// — the *active* entity — and is what the inspector, the gizmo and every older
+// caller read. Keeping both is not redundancy: with two things selected, "which
+// one am I editing" and "what will Delete take" are different questions, and a
+// single member could only answer one of them.
+
+void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
+{
+    if (entity == Assisi::ECS::NullEntity)
+    {
+        // A click on empty space clears, whatever the modifier: a Ctrl-click on
+        // nothing toggling nothing is a click that appears to do nothing at all.
+        ClearSelection();
+        return;
+    }
+
+    switch (mode)
+    {
+    case SelectMode::Replace:
+        _selection.assign(1, entity);
+        _selectionAnchor = entity;
+        break;
+
+    case SelectMode::Toggle:
+    {
+        const auto it = std::find(_selection.begin(), _selection.end(), entity);
+        if (it != _selection.end())
+        {
+            _selection.erase(it);
+            // Deselecting the active entity hands the role to whatever is still
+            // selected, rather than leaving the inspector on something no longer
+            // in the list.
+            _selectedEntity   = _selection.empty() ? Assisi::ECS::NullEntity : _selection.back();
+            _selectedInstance = 0;
+            if (_selectedEntity != Assisi::ECS::NullEntity && _scene != nullptr)
+            {
+                if (const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(_selectedEntity))
+                    _selectedInstance = tag->instanceId;
+            }
+            _selectionAnchor = _selectedEntity;
+            return;
+        }
+        _selection.push_back(entity);
+        _selectionAnchor = entity;
+        break;
+    }
+
+    case SelectMode::Range:
+    {
+        // Resolved against the row order the entity list recorded while drawing.
+        // With no anchor, or an anchor that is no longer on screen, there is no
+        // range to describe — fall back to a plain pick rather than guessing.
+        const auto from = std::find(_entityRowOrder.begin(), _entityRowOrder.end(), _selectionAnchor);
+        const auto to   = std::find(_entityRowOrder.begin(), _entityRowOrder.end(), entity);
+        if (from == _entityRowOrder.end() || to == _entityRowOrder.end())
+        {
+            _selection.assign(1, entity);
+            _selectionAnchor = entity;
+            break;
+        }
+
+        // The anchor stays put: shift-clicking further down replaces the range
+        // rather than adding a second one, which is what lets a range be grown
+        // and shrunk by clicking around.
+        const auto first = from <= to ? from : to;
+        const auto last  = from <= to ? to : from;
+        _selection.assign(first, last + 1);
+        // …and the clicked row is the active one, whichever end of the range it
+        // is at.
+        if (const auto it = std::find(_selection.begin(), _selection.end(), entity); it != _selection.end())
+        {
+            _selection.erase(it);
+            _selection.push_back(entity);
+        }
+        break;
+    }
+    }
+
+    _selectedEntity = _selection.empty() ? Assisi::ECS::NullEntity : _selection.back();
+
+    // Selecting a member keeps its instance in view for the inspector's header;
+    // selecting a loose entity clears it, so the two modes can never be half on.
+    _selectedInstance = 0;
+    if (_selectedEntity != Assisi::ECS::NullEntity && _scene != nullptr)
+    {
+        if (const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(_selectedEntity))
+            _selectedInstance = tag->instanceId;
+    }
+}
+
+void EditorApp::ClearSelection()
+{
+    _selection.clear();
+    _selectedEntity   = Assisi::ECS::NullEntity;
+    _selectedInstance = 0;
+    _selectionAnchor  = Assisi::ECS::NullEntity;
+}
+
+bool EditorApp::IsSelected(Assisi::ECS::Entity entity) const
+{
+    return std::find(_selection.begin(), _selection.end(), entity) != _selection.end();
+}
+
+bool EditorApp::HasSelectedAncestor(Assisi::ECS::Entity entity) const
+{
+    if (_scene == nullptr)
+        return false;
+
+    // Bounded by the selection size rather than by the chain: a cycle in Parent is
+    // a corrupt scene, not something to hang on.
+    for (std::size_t guard = 0; guard < _selection.size() + 64; ++guard)
+    {
+        const auto *parent = _scene->Get<Assisi::Runtime::Parent>(entity);
+        if (parent == nullptr || parent->parent == Assisi::ECS::NullEntity)
+            return false;
+        if (IsSelected(parent->parent))
+            return true;
+        entity = parent->parent;
+    }
+    return false;
+}
+
+void EditorApp::PruneSelection()
+{
+    if (_scene == nullptr)
+        return;
+
+    std::erase_if(_selection, [&](Assisi::ECS::Entity e) { return !_scene->IsAlive(e); });
+
+    // `_selectedEntity` is also written directly — by undo restoring a selection,
+    // by picking, by CreateEntity — so reconcile in both directions rather than
+    // assuming the list is ahead.
+    if (_selectedEntity != Assisi::ECS::NullEntity && !_scene->IsAlive(_selectedEntity))
+        _selectedEntity = Assisi::ECS::NullEntity;
+    if (_selectedEntity == Assisi::ECS::NullEntity)
+        _selection.clear();
+    else if (!IsSelected(_selectedEntity))
+        _selection.assign(1, _selectedEntity);
+    else if (_selection.back() != _selectedEntity)
+    {
+        std::erase(_selection, _selectedEntity);
+        _selection.push_back(_selectedEntity);
+    }
+
+    if (_selectionAnchor != Assisi::ECS::NullEntity && !_scene->IsAlive(_selectionAnchor))
+        _selectionAnchor = _selectedEntity;
+}
+
 std::vector<Assisi::ECS::Entity> EditorApp::GatherSubtree(Assisi::ECS::Entity root)
 {
     std::vector<Assisi::ECS::Entity> result{root};
@@ -401,34 +552,61 @@ std::vector<Assisi::ECS::Entity> EditorApp::GatherSubtree(Assisi::ECS::Entity ro
 
 void EditorApp::DeleteEntity(Assisi::ECS::Entity entity)
 {
-    if (_scene == nullptr || !_scene->IsAlive(entity))
-    {
-        return;
-    }
-    // A mirror is not ours to delete: the server would simply send it again, and
-    // the round trip would show up as a mysterious flicker rather than as a
-    // refusal. (The client *can* destroy one — gameplay runs over the play world
-    // — and the apply path survives it; that is a different thing from the
-    // editor offering it as an authoring action.)
-    if (!IsEditable(entity))
+    DeleteEntities(std::span{&entity, 1});
+}
+
+void EditorApp::DeleteSelection()
+{
+    // A copy: the delete rewrites `_selection` as it goes.
+    const std::vector<Assisi::ECS::Entity> roots = _selection;
+    DeleteEntities(roots);
+}
+
+void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
+{
+    if (_scene == nullptr)
     {
         return;
     }
 
-    const std::vector<Assisi::ECS::Entity> subtree = GatherSubtree(entity);
+    // The union of every root's subtree, deduplicated. Two selected entities
+    // often stand in the same subtree — a parent and its child, both picked with
+    // Ctrl — and capturing that child twice would push two EntityDeltas naming
+    // one entity, so undo would revive it, then try to revive it again.
+    std::vector<Assisi::ECS::Entity> doomed;
+    for (const Assisi::ECS::Entity root : roots)
+    {
+        // A mirror is not ours to delete: the server would simply send it again,
+        // and the round trip would show up as a mysterious flicker rather than as
+        // a refusal. (The client *can* destroy one — gameplay runs over the play
+        // world — and the apply path survives it; that is a different thing from
+        // the editor offering it as an authoring action.)
+        if (!_scene->IsAlive(root) || !IsEditable(root))
+            continue;
 
-    // Capture the whole subtree as one transaction *before* tearing anything down
+        for (const Assisi::ECS::Entity e : GatherSubtree(root))
+            if (std::find(doomed.begin(), doomed.end(), e) == doomed.end())
+                doomed.push_back(e);
+    }
+    if (doomed.empty())
+        return;
+
+    // Capture everything as one transaction *before* tearing anything down
     // (components must still be alive to serialize). Undo revives every entity at
     // its exact handle and restores its components (two-phase, so Parent refs
-    // resolve); redo re-deletes.
+    // resolve); redo re-deletes. One transaction for the whole gesture, so
+    // deleting five entities is one Ctrl-Z rather than five.
     Assisi::Editor::EditHistory *history = ActiveHistory();
     Assisi::Editor::Transaction  txn;
     if (history != nullptr)
     {
-        txn.label           = EditLabel(subtree.size() > 1 ? "Delete Subtree" : "Delete Entity", entity);
+        const char *what = doomed.size() == 1  ? "Delete Entity"
+                           : roots.size() > 1  ? "Delete Entities"
+                                               : "Delete Subtree";
+        txn.label           = EditLabel(what, doomed.front());
         txn.selectionBefore = _selectedEntity;
         txn.selectionAfter  = Assisi::ECS::NullEntity;
-        for (const Assisi::ECS::Entity e : subtree)
+        for (const Assisi::ECS::Entity e : doomed)
             txn.cmds.push_back(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
     }
 
@@ -436,7 +614,7 @@ void EditorApp::DeleteEntity(Assisi::ECS::Entity entity)
     // snapshot; the undo rebuilds it from RigidBodyDescriptor via the rebind hook),
     // then queue the entity for destruction. Destroy is deferred; the slots free at
     // the frame's FlushDestroyed, ready for a later undo's ReviveAt.
-    for (const Assisi::ECS::Entity e : subtree)
+    for (const Assisi::ECS::Entity e : doomed)
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(e))
         {
@@ -449,9 +627,16 @@ void EditorApp::DeleteEntity(Assisi::ECS::Entity entity)
     if (history != nullptr)
         history->Push(std::move(txn));
 
-    // Drop the selection if it was anywhere in the deleted subtree.
-    if (std::find(subtree.begin(), subtree.end(), _selectedEntity) != subtree.end())
-        _selectedEntity = Assisi::ECS::NullEntity;
+    // Drop from the selection anything that was deleted. Destroy is deferred, so
+    // IsAlive still says yes this frame — the doomed list is the only truthful
+    // answer until the flush.
+    std::erase_if(_selection,
+                  [&](Assisi::ECS::Entity e)
+                  { return std::find(doomed.begin(), doomed.end(), e) != doomed.end(); });
+    if (std::find(doomed.begin(), doomed.end(), _selectedEntity) != doomed.end())
+        _selectedEntity = _selection.empty() ? Assisi::ECS::NullEntity : _selection.back();
+    if (std::find(doomed.begin(), doomed.end(), _selectionAnchor) != doomed.end())
+        _selectionAnchor = _selectedEntity;
 }
 
 // ---------------------------------------------------------------------------
@@ -812,20 +997,21 @@ void EditorApp::DrawEntityListWindow()
         ImGui::SetTooltip("Add a new entity");
     }
 
-    // Delete removes the selected entity and its subtree (undoable). Disabled when
-    // nothing is selected. Also on the Delete key (see OnUpdate).
+    // Delete removes every selected entity and its subtree (undoable). Disabled
+    // when nothing is selected. Also on the Delete key (see OnUpdate).
     ImGui::SameLine();
     const bool canDelete = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
                            IsEditable(_selectedEntity);
     ImGui::BeginDisabled(!canDelete);
     if (ImGui::Button("-"))
     {
-        DeleteEntity(_selectedEntity);
+        DeleteSelection();
     }
     ImGui::EndDisabled();
     if (ImGui::IsItemHovered() && canDelete)
     {
-        ImGui::SetTooltip("Delete the selected entity (Del)");
+        ImGui::SetTooltip(_selection.size() > 1 ? "Delete the selected entities (Del)"
+                                                : "Delete the selected entity (Del)");
     }
     ImGui::SameLine();
     ImGui::TextDisabled("add / delete entity");
@@ -838,6 +1024,13 @@ void EditorApp::DrawEntityListWindow()
     // click is distinguished by IsMouseDoubleClicked.
     Assisi::ECS::Entity focusRequest = Assisi::ECS::NullEntity;
 
+    // The rows this pass draws, in draw order — what a Shift-range walks through.
+    // Rebuilt rather than cached: rows come and go with the scene and with which
+    // instances are expanded, and a range resolved against a stale order would
+    // select entities that are not between the two rows the user clicked.
+    _entityRowOrder.clear();
+    _pendingRangeTarget = Assisi::ECS::NullEntity;
+
     // Members are gathered per instance and drawn under a collapsible row instead
     // of loose in the list, because a level of forty cars is two hundred rows of
     // "body", "wheel_fl", "wheel_fl", … otherwise. Built each frame: membership is
@@ -848,6 +1041,8 @@ void EditorApp::DrawEntityListWindow()
 
     const auto drawEntityRow = [&](Assisi::ECS::Entity entity)
     {
+            _entityRowOrder.push_back(entity);
+
             // Show the entity's Name if it has a non-empty one; otherwise fall back
             // to its [index:generation] id. PushID(index) keeps rows distinct even
             // when two entities share a name.
@@ -865,15 +1060,17 @@ void EditorApp::DrawEntityListWindow()
             if (mirrored)
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.55f, 0.75f, 1.f, 1.f});
 
-            const bool selected = (entity == _selectedEntity);
+            const bool selected = IsSelected(entity);
             if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowDoubleClick))
             {
-                _selectedEntity = entity;
-                // Selecting a member keeps its instance in view for the inspector's
-                // header; selecting a loose entity clears it, so the two modes can
-                // never be half on.
-                const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(entity);
-                _selectedInstance = tag != nullptr ? tag->instanceId : 0;
+                // Ctrl picks one more (or drops one); Shift takes everything
+                // between the last plain pick and here. A range needs the whole
+                // row order, and half of it has not been drawn yet — so note the
+                // click and resolve it below.
+                if (ImGui::GetIO().KeyShift)
+                    _pendingRangeTarget = entity;
+                else
+                    SelectEntity(entity, ImGui::GetIO().KeyCtrl ? SelectMode::Toggle : SelectMode::Replace);
 
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 {
@@ -931,8 +1128,11 @@ void EditorApp::DrawEntityListWindow()
         const bool open = ImGui::TreeNodeEx(header, flags);
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
         {
+            // Instance mode is exclusive: the gizmo moves the group and writes the
+            // placement, which is not a thing that composes with a handful of
+            // loose entities also being selected.
+            ClearSelection();
             _selectedInstance = instanceId;
-            _selectedEntity   = Assisi::ECS::NullEntity;
         }
         if (open)
         {
@@ -941,6 +1141,13 @@ void EditorApp::DrawEntityListWindow()
             ImGui::TreePop();
         }
         ImGui::PopID();
+    }
+
+    // Now that every row has been drawn, both ends of a Shift-range are known.
+    if (_pendingRangeTarget != Assisi::ECS::NullEntity)
+    {
+        SelectEntity(_pendingRangeTarget, SelectMode::Range);
+        _pendingRangeTarget = Assisi::ECS::NullEntity;
     }
 
     if (focusRequest != Assisi::ECS::NullEntity)

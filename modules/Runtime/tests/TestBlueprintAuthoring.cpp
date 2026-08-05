@@ -218,6 +218,64 @@ TEST_CASE("Authoring: a selection containing a blueprint member is refused")
     CHECK_FALSE(std::filesystem::exists(root / "nested.abp"));
 }
 
+TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
+{
+    const std::filesystem::path root = FreshRoot("scale");
+
+    ECS::Scene  scene;
+    ECS::Entity cube = scene.Create();
+    ECS::Transform pose = At(10.f, 0.f, 0.f);
+    pose.scale          = {0.6f, 0.6f, 0.6f};
+    REQUIRE(scene.Add(cube, pose) != nullptr);
+    REQUIRE(scene.Add(cube, Runtime::Name{Core::ShortString{"cube"}}) != nullptr);
+
+    // The origin an author's selection is written around carries no scale, so the
+    // file records the cube at the size it was drawn at. Divide the scale out into
+    // the placement instead and the file holds a unit cube: the copy that replaced
+    // the original still looks right (its placement carries the scale back), and
+    // every fresh instance comes back full size.
+    const ECS::Transform origin = Runtime::AuthoringOrigin(pose);
+    CHECK(origin.position.x == doctest::Approx(10.f));
+    CHECK(origin.scale.x == doctest::Approx(1.f));
+
+    const std::vector<ECS::Entity> selection{cube};
+    REQUIRE(SceneSerializer::SaveEntitiesToFile(scene, selection, root / "small_crate.abp", origin));
+
+    const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition("small_crate.abp");
+    REQUIRE(definition != nullptr);
+    REQUIRE(definition->members.size() == 1);
+    CHECK(Runtime::TransformFromJson(definition->members[0].components.at("Transform")).scale.x ==
+          doctest::Approx(0.6f));
+
+    // A copy placed somewhere else entirely is still the size it was saved at.
+    InstanceTable                table;
+    const Runtime::LevelInstance entry{.name      = "small_crate_1",
+                                       .source    = "small_crate.abp",
+                                       .transform = At(-4.f, 0.f, 0.f),
+                                       .overrides = nlohmann::json::object(),
+                                       .removed   = {}};
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true);
+    REQUIRE(placed.has_value());
+
+    const ECS::Transform *copy = scene.Get<ECS::Transform>(placed->members[0]);
+    REQUIRE(copy != nullptr);
+    CHECK(copy->position.x == doctest::Approx(-4.f));
+    CHECK(copy->scale.x == doctest::Approx(0.6f));
+
+    // …and scaling the *instance* still multiplies on top, so the two are not the
+    // same knob — one is what the thing is, the other is what this copy of it is.
+    ECS::Transform doubled = At(0.f, 0.f, 0.f);
+    doubled.scale          = {2.f, 2.f, 2.f};
+    const Runtime::LevelInstance bigEntry{.name      = "small_crate_2",
+                                          .source    = "small_crate.abp",
+                                          .transform = doubled,
+                                          .overrides = nlohmann::json::object(),
+                                          .removed   = {}};
+    const auto big = SceneSerializer::PlaceInstance(scene, table, bigEntry, /*authored=*/true);
+    REQUIRE(big.has_value());
+    CHECK(scene.Get<ECS::Transform>(big->members[0])->scale.x == doctest::Approx(1.2f));
+}
+
 TEST_CASE("Authoring: a reference leaving the selection is nulled, not dangled")
 {
     const std::filesystem::path root = FreshRoot("outref");

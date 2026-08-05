@@ -68,6 +68,10 @@ AEVENT()
 struct EntitySelectionChangedEvent
 {
     Assisi::ECS::Entity entity;
+    /// Ctrl or Shift was held: fold the entity into the selection instead of
+    /// replacing it. Both modifiers do the same thing in the viewport — a range
+    /// needs an order to walk through, and the 3D view has none.
+    bool additive = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -145,6 +149,19 @@ class EditorApp : public Assisi::App::Application
         Scale
     };
 
+    /// @brief How a click folds into the current selection.
+    ///
+    /// Named after the gesture rather than the modifier key, because the two do
+    /// not map one-to-one: the viewport binds *both* Ctrl and Shift to Toggle
+    /// (there is no row order out there to draw a range through), while the
+    /// entity list binds Shift to Range.
+    enum class SelectMode : std::uint8_t
+    {
+        Replace, ///< Plain click: this entity becomes the whole selection.
+        Toggle,  ///< Ctrl-click: add it, or drop it if it was already in.
+        Range    ///< Shift-click: everything between the anchor and here.
+    };
+
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
     void OnUpdate(float dt) override;
@@ -185,6 +202,11 @@ class EditorApp : public Assisi::App::Application
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See EditorApp.cpp
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
     void DrawInstanceGizmo();     // …and over a selected blueprint instance, which moves as one
+    /// @brief Writes @p world onto @p entity as a local TRS against @p parentWorld,
+    /// and syncs any physics body to it. The tail of a gizmo drag, factored out
+    /// because a multi-selection runs it once per entity.
+    void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
+                               const glm::mat4 &world);
     void DrawNetworkWindow();     // negotiated level + live net stats; see EditorNet.cpp
     void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"; see EditorNet.cpp
     /// @brief The two host-side authoring warnings: a level with nothing marked
@@ -540,6 +562,39 @@ class EditorApp : public Assisi::App::Application
     /// edit uses, for the same reason.
     void ResetOverride(Assisi::ECS::Entity entity, const std::string &component, const std::string &field);
     void LoadLevel(const std::string &name);
+
+    // --- Selection ---------------------------------------------------------
+    /// @brief Folds a click on @p entity into the selection under @p mode.
+    ///
+    /// Keeps `_selectedEntity` (the *active* entity — what the inspector shows
+    /// and the gizmo drives) as the last entity clicked, and `_selectedInstance`
+    /// in step with it. Range needs an order to walk, so it is resolved against
+    /// the row order the entity list recorded while drawing; a Range with no
+    /// order behaves as Replace.
+    void SelectEntity(Assisi::ECS::Entity entity, SelectMode mode);
+    /// @brief Empties the selection, both the active entity and the instance.
+    void ClearSelection();
+    /// @brief True if @p entity is anywhere in the selection, active or not.
+    [[nodiscard]] bool IsSelected(Assisi::ECS::Entity entity) const;
+    /// @brief Every selected entity, active one included, in click order.
+    ///
+    /// The single source of truth for "what is selected": `_selectedEntity` is
+    /// its last element, kept as a separate member only because every existing
+    /// caller reads it.
+    [[nodiscard]] std::span<const Assisi::ECS::Entity> Selection() const { return _selection; }
+    /// @brief True if any entity on @p entity's Parent chain is also selected.
+    ///
+    /// Such an entity must not be moved by the gizmo directly: its parent is
+    /// already moving, and transform propagation carries it along — applying the
+    /// drag to both would move it twice as far as the handle went.
+    [[nodiscard]] bool HasSelectedAncestor(Assisi::ECS::Entity entity) const;
+    /// @brief Drops dead entities from the selection.
+    ///
+    /// A delete elsewhere (undo, a play stop, a level load) can kill a selected
+    /// entity without going through the selection at all, and a stale handle in
+    /// the list would outline a slot something else now occupies.
+    void PruneSelection();
+
     /// @brief Loads a level by virtual path (e.g. "levels/Materials.alvl"), doing
     /// the cache-clear + rebind LoadLevel wraps. Returns false if the file didn't
     /// deserialize. The shared core of LoadLevel and the command-line loader.
@@ -579,6 +634,15 @@ class EditorApp : public Assisi::App::Application
     /// selection if it fell inside the deleted subtree. Used by the Delete key and
     /// the entity list's delete button.
     void DeleteEntity(Assisi::ECS::Entity entity);
+    /// @brief Deletes every selected entity and its subtree, as one transaction.
+    /// Used by the Delete key and the entity list's delete button.
+    void DeleteSelection();
+    /// @brief Deletes the union of @p roots' subtrees as a single undoable
+    /// transaction, skipping any root that is dead or not ours to edit.
+    ///
+    /// The union is deduplicated: two selected entities are often in one subtree,
+    /// and capturing the shared part twice would make undo revive it twice.
+    void DeleteEntities(std::span<const Assisi::ECS::Entity> roots);
     /// @brief Collects @p root plus every entity whose Parent chain leads to it
     /// (breadth-first over the Parent pool). Root-first order; used by DeleteEntity.
     std::vector<Assisi::ECS::Entity> GatherSubtree(Assisi::ECS::Entity root);
@@ -792,7 +856,45 @@ class EditorApp : public Assisi::App::Application
     static constexpr float kMoveSpeed        = 8.f;
     static constexpr float kMouseSensitivity = 0.1f;
 
+    /// The *active* entity: the one the inspector shows and the gizmo drives.
+    /// Always `_selection.back()`, or NullEntity when the selection is empty.
+    /// Kept as its own member because nearly every panel reads it, and because
+    /// "the one click acted on last" is a different question from "what is
+    /// selected" the moment more than one thing is.
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
+
+    /// Everything selected, in click order, active entity last.
+    std::vector<Assisi::ECS::Entity> _selection;
+
+    /// Where a Shift-range starts: the last entity picked by a plain or
+    /// Ctrl-click. Held separately from the selection because a range replaces
+    /// what the previous range added without moving its own start — dragging the
+    /// shift-click up and down a list has to grow and shrink one range, not
+    /// stack a new one each time.
+    Assisi::ECS::Entity _selectionAnchor = Assisi::ECS::NullEntity;
+
+    /// The entity list's visible rows in draw order, rebuilt every frame. Range
+    /// selection walks this; nothing else may rely on it, since it describes the
+    /// list as it was last drawn rather than the scene.
+    std::vector<Assisi::ECS::Entity> _entityRowOrder;
+
+    /// A Shift-click waiting for the row order to finish being built. Resolved at
+    /// the end of the list draw, when both ends of the range are known to be in
+    /// `_entityRowOrder` — mid-draw, everything below the click is still missing.
+    Assisi::ECS::Entity _pendingRangeTarget = Assisi::ECS::NullEntity;
+
+    /// A reset requested by the inspector, applied once its component loop has
+    /// finished. Deferred because the reset removes and re-adds the component:
+    /// doing that mid-loop leaves the loop reading a pointer into a pool that has
+    /// since moved, and leaves the frame's open capture gesture straddling a value
+    /// that changed underneath it.
+    struct PendingOverrideReset
+    {
+        Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
+        std::string         component;
+        std::string         field; ///< Empty resets the whole component's claim.
+    };
+    std::optional<PendingOverrideReset> _pendingOverrideReset;
 
     /// The blueprint instance the selection is *about*, or 0 for none.
     ///

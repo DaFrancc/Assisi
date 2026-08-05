@@ -163,9 +163,29 @@ class SceneRenderer
     /// No-op unless InitParams::enableEditorVisuals was set.
     void SetHighlightedEntity(ECS::Entity entity)
     {
-        _highlightedEntity = _editorVisuals ? entity : ECS::NullEntity;
+        _highlightedEntities.clear();
+        if (_editorVisuals && entity != ECS::NullEntity)
+            _highlightedEntities.push_back(entity);
     }
-    [[nodiscard]] ECS::Entity HighlightedEntity() const { return _highlightedEntity; }
+    /// @brief The same, for a multi-entity selection: every one of @p entities gets
+    /// its own outline. Replaces whatever was highlighted before; an empty span
+    /// clears. Copied rather than referenced — the caller's list is free to change
+    /// between here and Render().
+    void SetHighlightedEntities(std::span<const ECS::Entity> entities)
+    {
+        _highlightedEntities.clear();
+        if (!_editorVisuals)
+            return;
+        for (const ECS::Entity entity : entities)
+            if (entity != ECS::NullEntity)
+                _highlightedEntities.push_back(entity);
+    }
+    /// @brief The first highlighted entity, or NullEntity. Kept for callers that
+    /// only ever set one.
+    [[nodiscard]] ECS::Entity HighlightedEntity() const
+    {
+        return _highlightedEntities.empty() ? ECS::NullEntity : _highlightedEntities.front();
+    }
 
     /// @brief Show/hide the editor's entity icons — world-space billboards marking
     /// entities that have a Transform but no mesh. Off by default (games don't want
@@ -206,12 +226,15 @@ class SceneRenderer
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
 
-    /// @brief Draw the selection outline for _highlightedEntity (if any) as an
+    /// @brief Draw a selection outline for every highlighted entity as an
     /// always-on-top overlay after the scene: a mesh silhouette, or — for a
     /// placement-only entity shown as an icon — its billboard quad (editor only).
     /// No-op when nothing is highlighted or the outline pass is unavailable.
     void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
                               const glm::mat4 &view, ECS::Scene &scene);
+    /// @brief One entity's share of the above.
+    void DrawHighlightOutlineFor(ECS::Entity entity, const Render::RenderFrame &frame,
+                                 const glm::mat4 &viewProjection, const glm::mat4 &view, ECS::Scene &scene);
 
     /// @brief Draw a world-space billboard for every entity with a Transform but no
     /// MeshRenderer, using the camera basis from @p view to face them. Icons beyond
@@ -236,8 +259,8 @@ class SceneRenderer
     Render::IconPass    _iconPass;
     Render::LinePass    _linePass;
 
-    // The entity drawn with a selection outline this frame (NullEntity = none).
-    ECS::Entity _highlightedEntity = ECS::NullEntity;
+    // The entities drawn with a selection outline this frame (empty = none).
+    std::vector<ECS::Entity> _highlightedEntities;
 
     // Editor overlay passes were requested at Initialize (InitParams::
     // enableEditorVisuals). When false the passes were never built and every

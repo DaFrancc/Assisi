@@ -178,10 +178,17 @@ void EditorApp::DrawBlueprintsWindow()
     // --- Make one out of what is selected -----------------------------------
     ImGui::Separator();
 
-    const bool haveSelection = _selectedEntity != Assisi::ECS::NullEntity && _scene != nullptr &&
+    const bool haveSelection = !_selection.empty() && _scene != nullptr &&
                                _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity);
-    const bool selectionIsMember =
-        haveSelection && _scene->Has<Assisi::ECS::BlueprintMember>(_selectedEntity);
+    // Any member anywhere in the selection, not just the active one: the refusal
+    // is about what would be written into the file, and every selected entity is.
+    bool selectionIsMember = false;
+    if (haveSelection)
+    {
+        for (const Assisi::ECS::Entity entity : _selection)
+            selectionIsMember =
+                selectionIsMember || _scene->Has<Assisi::ECS::BlueprintMember>(entity);
+    }
 
     ImGui::BeginDisabled(!editable || !haveSelection || selectionIsMember);
     ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Create from selection").x - ImGui::GetStyle().ItemSpacing.x -
@@ -206,12 +213,14 @@ void EditorApp::DrawBlueprintsWindow()
         }
         else if (!haveSelection)
         {
-            ImGui::SetTooltip("Select an entity. It and everything parented under it become the blueprint.");
+            ImGui::SetTooltip("Select an entity (Ctrl-click for more). Each one and everything parented "
+                              "under it becomes the blueprint.");
         }
         else
         {
             ImGui::SetTooltip("Saves the selection and its children as blueprints/<name>.abp, then replaces "
-                              "them with an instance of it. One Ctrl-Z undoes the swap.");
+                              "them with an instance of it. Placed at the first selected entity's position "
+                              "and rotation; scale stays part of the blueprint. One Ctrl-Z undoes the swap.");
         }
     }
 
@@ -316,25 +325,44 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
         history->Push(std::move(txn));
     }
 
+    ClearSelection();
     _selectedInstance = placed->instanceId;
-    _selectedEntity   = Assisi::ECS::NullEntity;
 }
 
 void EditorApp::CreateBlueprintFromSelection(const std::string &name)
 {
-    if (_scene == nullptr || _world == nullptr || !IsEditable(_selectedEntity))
+    if (_scene == nullptr || _world == nullptr || _selection.empty())
         return;
 
-    const std::vector<Assisi::ECS::Entity> subtree = GatherSubtree(_selectedEntity);
+    // Every selected entity and everything under it, deduplicated: selecting a
+    // parent and one of its children is an ordinary thing to do with Ctrl, and
+    // writing that child twice would put two members with one name in the file.
+    std::vector<Assisi::ECS::Entity> subtree;
+    for (const Assisi::ECS::Entity root : _selection)
+    {
+        if (!_scene->IsAlive(root) || !IsEditable(root))
+            continue;
+        for (const Assisi::ECS::Entity entity : GatherSubtree(root))
+            if (std::find(subtree.begin(), subtree.end(), entity) == subtree.end())
+                subtree.push_back(entity);
+    }
     if (subtree.empty())
         return;
 
-    // The blueprint is authored around the selection root's pose, and the instance
-    // is placed back at it — so the swap is invisible on screen, which is what
-    // makes it feel like a refactor rather than an edit.
+    // The blueprint is authored around the first selected entity's pose, and the
+    // instance is placed back at it — so the swap is invisible on screen, which is
+    // what makes it feel like a refactor rather than an edit. The *first*, not the
+    // last: with several entities selected the anchor should not depend on the
+    // order they were clicked in.
+    //
+    // Scale is deliberately not part of that pose. A cube scaled to 0.6 and saved
+    // as `small_crate` *is* a small crate — cancelling its scale into the
+    // placement would leave a unit cube in the file, so the copy standing in front
+    // of you looked right and every fresh one came back full size. Where a thing
+    // stands and which way it faces is placement; how big it is, is what it is.
     Assisi::Runtime::Transform placement;
-    if (const auto *transform = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity))
-        placement = *transform;
+    if (const auto *transform = _scene->Get<Assisi::Runtime::Transform>(_selection.front()))
+        placement = Assisi::Runtime::AuthoringOrigin(*transform);
 
     const std::string source   = "blueprints/" + name + ".abp";
     const auto        resolved = Assisi::Core::AssetSystem::Resolve(source);
@@ -380,8 +408,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     // deferred destroy would let the new members take slots the undo needs back.
     _scene->FlushDestroyed();
 
-    _selectedEntity   = Assisi::ECS::NullEntity;
-    _selectedInstance = 0;
+    ClearSelection();
 
     const Assisi::Runtime::LevelInstance entry{.name      = name,
                                                .source    = source,
@@ -501,7 +528,13 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
 
     const Assisi::Runtime::BlueprintMemberDesc &desc = definition->members[tag->memberIndex];
 
-    Assisi::Runtime::BlueprintInstance updated = *row;
+    // A copy, taken now: `row` points into the table, and RestoreAt below writes
+    // through it — so reading `*row` afterwards for the transaction's "before"
+    // would hand undo the value it was supposed to undo *to*, and the override
+    // would look reverted while the record still claimed it.
+    const Assisi::Runtime::BlueprintInstance original = *row;
+
+    Assisi::Runtime::BlueprintInstance updated = original;
     const auto                         member  = updated.overrides.find(desc.name);
     if (member == updated.overrides.end() || !member->is_object() || !member->contains(component))
         return;
@@ -521,6 +554,13 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
         if (claim.empty())
             member->erase(component);
     }
+    // What is left of this member's claim on this component, read out *before*
+    // the member entry can be erased — an iterator into an erased entry is not
+    // something to compare against end() later.
+    const nlohmann::json survivingClaim =
+        member->contains(component) ? member->at(component) : nlohmann::json{};
+    const bool stillClaimed = !survivingClaim.is_null();
+
     if (member->empty())
         updated.overrides.erase(desc.name);
 
@@ -530,6 +570,19 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     if (meta == nullptr)
         return;
 
+    // Close out any capture gesture still open on this component first.
+    //
+    // The inspector opens one every frame the component's block is drawn, holding
+    // the value as it was *before* this frame. The reset then changes that value,
+    // so the end-of-frame sweep would commit a gesture whose "after" is the
+    // blueprint's own value — and record it as a fresh override. That is exactly
+    // the one-press lag it used to have: the value reset, the claim came straight
+    // back, and only a second press (which changed nothing, so the gesture was
+    // dropped) made the mark go away. Committing here also keeps a real edit made
+    // in the same frame as its own transaction, ahead of the reset that undoes it.
+    if (history != nullptr)
+        history->CommitGesture(entity, meta->id);
+
     // Captured before the value moves, so the transaction can put both back.
     std::optional<nlohmann::json> before;
     if (history != nullptr)
@@ -538,13 +591,11 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     // Re-apply from the blueprint, plus whatever claim survives. This is a
     // one-member re-expansion: the value falls back exactly as a fresh load would
     // produce it, which is the definition of "un-overridden means un-resolved".
-    const bool     stillClaimed = member != updated.overrides.end() && member->contains(component);
-    nlohmann::json resolved     = desc.components.contains(component)
-                                      ? desc.components.at(component)
-                                      : nlohmann::json::object();
-    if (stillClaimed && member->at(component).is_object())
+    nlohmann::json resolved = desc.components.contains(component) ? desc.components.at(component)
+                                                                 : nlohmann::json::object();
+    if (survivingClaim.is_object())
     {
-        for (const auto &[key, value] : member->at(component).items())
+        for (const auto &[key, value] : survivingClaim.items())
             resolved[key] = value;
     }
 
@@ -552,7 +603,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     if (desc.components.contains(component) || stillClaimed)
     {
         nlohmann::json wrapper{{component, resolved}};
-        Assisi::Runtime::QualifyReferences(wrapper, row->name.empty() ? "" : row->name + "/");
+        Assisi::Runtime::QualifyReferences(wrapper, original.name.empty() ? "" : original.name + "/");
         meta->addToScene(_scene, entity.index, entity.generation, wrapper.at(component));
     }
 
@@ -567,7 +618,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
         txn.cmds.push_back(Assisi::Editor::ComponentDelta{entity, meta->id, before,
                                                           history->CaptureComponent(entity, meta->id)});
         txn.cmds.push_back(
-            Assisi::Editor::InstanceDelta{.instanceId = tag->instanceId, .before = *row, .after = updated});
+            Assisi::Editor::InstanceDelta{.instanceId = tag->instanceId, .before = original, .after = updated});
         history->Push(std::move(txn));
     }
 
@@ -644,7 +695,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // old scene, so it must not survive into the new one.
     SetPlayState(PlayState::Editing);
     _playSnapshot.clear();
-    _selectedEntity = Assisi::ECS::NullEntity;
+    ClearSelection();
 
     // Same aliasing hazard as the history below, and the same reason: an armed
     // eyedropper or an open asset-browser dialog holds an entity handle from the

@@ -382,26 +382,40 @@ bool SceneRenderer::IsIconSuppressed(ECS::Entity entity) const
 void SceneRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
                                          const glm::mat4 &view, ECS::Scene &scene)
 {
-    if (!_outlinePass.IsValid() || _highlightedEntity == ECS::NullEntity || !scene.IsAlive(_highlightedEntity))
+    if (!_outlinePass.IsValid())
+    {
+        return;
+    }
+    for (const ECS::Entity entity : _highlightedEntities)
+    {
+        DrawHighlightOutlineFor(entity, frame, viewProjection, view, scene);
+    }
+}
+
+void SceneRenderer::DrawHighlightOutlineFor(ECS::Entity entity, const Render::RenderFrame &frame,
+                                            const glm::mat4 &viewProjection, const glm::mat4 &view,
+                                            ECS::Scene &scene)
+{
+    if (entity == ECS::NullEntity || !scene.IsAlive(entity))
     {
         return;
     }
 
-    const Transform *transform = scene.Get<Transform>(_highlightedEntity);
+    const Transform *transform = scene.Get<Transform>(entity);
     if (transform == nullptr)
     {
         return; // no placement — nothing to outline
     }
-    const MeshRenderer *renderer = scene.Get<MeshRenderer>(_highlightedEntity);
+    const MeshRenderer *renderer = scene.Get<MeshRenderer>(entity);
 
     // A placement-only entity shows a billboard only in editor mode; a MeshRenderer
     // whose mesh is still loading shows one always (see DrawEditorIcons). Outline
     // whichever is actually on screen so selection tracks it. A suppressed entity
     // (e.g. a meshless collider, marked by its wireframe instead) has no billboard,
     // so there is nothing to outline — its selection reads from the wireframe colour.
-    const bool placementIcon = renderer == nullptr && _editorIconsVisible && !IsIconSuppressed(_highlightedEntity);
-    const bool loadingMesh    = renderer != nullptr && renderer->meshBuffer == nullptr &&
-                             !IsIconSuppressed(_highlightedEntity);
+    const bool placementIcon = renderer == nullptr && _editorIconsVisible && !IsIconSuppressed(entity);
+    const bool loadingMesh =
+        renderer != nullptr && renderer->meshBuffer == nullptr && !IsIconSuppressed(entity);
 
     if (renderer != nullptr && renderer->meshBuffer != nullptr)
     {

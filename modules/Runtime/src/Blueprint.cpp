@@ -73,6 +73,15 @@ ECS::Transform ComposeTransform(const ECS::Transform &placement, const ECS::Tran
     return out;
 }
 
+ECS::Transform AuthoringOrigin(const ECS::Transform &root)
+{
+    ECS::Transform out;
+    out.position = root.position;
+    out.rotation = root.rotation;
+    // …and scale stays at 1. See the header for why this one field is dropped.
+    return out;
+}
+
 ECS::Transform InverseComposeTransform(const ECS::Transform &placement, const ECS::Transform &world)
 {
     // Exact only under the uniform-scale rule, same as the forward form: with one

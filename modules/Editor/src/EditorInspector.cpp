@@ -520,8 +520,11 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
 
             if (ImGui::BeginPopupContextItem("##resetfield"))
             {
+                // Queued, not applied: the reset removes and re-adds the
+                // component, and this loop is still walking a pointer into the
+                // pool that would move underneath it. Drained once the loop ends.
                 if (ImGui::MenuItem("Reset to blueprint"))
-                    ResetOverride(_selectedEntity, meta.name, field.name);
+                    _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta.name, field.name};
                 ImGui::EndPopup();
             }
         }
@@ -1353,7 +1356,7 @@ void EditorApp::DrawInspector()
             ImGui::SameLine();
             ImGui::BeginDisabled(!editable);
             if (ImGui::SmallButton("Reset##component"))
-                ResetOverride(_selectedEntity, meta->name, /*field=*/{});
+                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/{}};
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Drop this instance's claim and follow the blueprint again.");
@@ -1393,6 +1396,17 @@ void EditorApp::DrawInspector()
             anyFieldEdited |= edited;
         }
         ImGui::PopID();
+    }
+
+    // The component loop is done, so its pointers are dead anyway: apply a reset
+    // requested above. Here rather than at the click, because the reset swaps the
+    // component out from under the loop and out from under the frame's open
+    // capture gesture.
+    if (_pendingOverrideReset.has_value())
+    {
+        const PendingOverrideReset request = *_pendingOverrideReset;
+        _pendingOverrideReset.reset();
+        ResetOverride(request.entity, request.component, request.field);
     }
 
     // A typed asset-id edit changes mesh/materialOverrides; re-resolve so the

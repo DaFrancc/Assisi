@@ -168,14 +168,17 @@ void EditorApp::SubmitColliderWireframes()
         return;
     }
 
-    bool selectedIsRigidBody = false;
+    // Selected entities that turned out to be rigid bodies: they get the orange
+    // collider outline below, so the generic selection highlight would draw a
+    // second mesh silhouette over the top of it.
+    std::vector<Assisi::ECS::Entity> outlinedAsBodies;
 
     for (auto [entity, tc, desc] :
          _scene->Query<Assisi::ECS::Transform, Assisi::Physics::RigidBodyDescriptor>())
     {
         _colliderEntities.push_back(entity);
 
-        const bool selected = (entity == _selectedEntity);
+        const bool selected = IsSelected(entity);
 
         // Selected body draws on top in orange; the rest are depth-tested green.
         const glm::vec4 lineColor = selected ? kSelectedColor : kUnselectedColor;
@@ -198,7 +201,7 @@ void EditorApp::SubmitColliderWireframes()
         // selection). The outline is orange and on top, like a selection highlight.
         if (selected)
         {
-            selectedIsRigidBody = true;
+            outlinedAsBodies.push_back(entity);
             const glm::vec3 outlineColor = glm::vec3(kSelectedColor);
             SubmitColliderOutline(bodyModel, desc, outlineColor);
 
@@ -217,11 +220,20 @@ void EditorApp::SubmitColliderWireframes()
     _sceneRenderer.SetIconSuppressedEntities(_colliderEntities);
 
     // A selected rigidbody's mesh + collider outline already come from the orange
-    // on-top submissions above, so drop the generic selection highlight to avoid a
-    // redundant second mesh outline; a selected non-rigidbody still uses it.
-    if (selectedIsRigidBody)
+    // on-top submissions above, so drop it from the generic selection highlight to
+    // avoid a redundant second mesh outline; a selected non-rigidbody still uses
+    // it. Per entity rather than all-or-nothing: with a body and a plain mesh both
+    // selected, clearing the whole set would leave the mesh with no outline at all.
+    if (!outlinedAsBodies.empty())
     {
-        _sceneRenderer.SetHighlightedEntity(Assisi::ECS::NullEntity);
+        std::vector<Assisi::ECS::Entity> stillHighlighted;
+        stillHighlighted.reserve(_selection.size());
+        for (const Assisi::ECS::Entity entity : _selection)
+        {
+            if (std::find(outlinedAsBodies.begin(), outlinedAsBodies.end(), entity) == outlinedAsBodies.end())
+                stillHighlighted.push_back(entity);
+        }
+        _sceneRenderer.SetHighlightedEntities(stillHighlighted);
     }
 }
 

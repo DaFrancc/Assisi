@@ -354,6 +354,22 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// @brief Whether @p transform's scale is uniform enough to compose exactly.
 [[nodiscard]] bool HasUniformScale(const ECS::Transform &transform);
 
+/// @brief The origin a selection is authored around when it becomes a blueprint:
+/// @p root's position and rotation, with unit scale.
+///
+/// Scale is left out on purpose, and that asymmetry is the whole point of this
+/// existing as a named thing rather than as `*transform` at the call site.
+/// Passing the full transform as the origin divides the members' scale out into
+/// the placement: the copy standing in front of the author looks right (its
+/// placement carries the scale back), but the file holds a unit-size thing, so
+/// every *fresh* instance comes back the wrong size. A cube scaled to 0.6 and
+/// saved as `small_crate` is a small crate — where it stands and which way it
+/// faces is placement, how big it is is what it is.
+///
+/// An instance may still be scaled after the fact; that multiplies on top, the
+/// same as any other placement.
+[[nodiscard]] ECS::Transform AuthoringOrigin(const ECS::Transform &root);
+
 /// @brief Rewrites every reflected EntityRef field in @p components by prepending
 /// @p prefix to the name it holds.
 ///
