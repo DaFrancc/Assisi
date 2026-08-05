@@ -60,6 +60,7 @@ World &WorldManager::Create(std::string_view label)
     // LoadLevel (which calls this) is already guarded at its own entry.
     std::unique_ptr<World> world = std::make_unique<World>();
     world->name.assign(label).append("#").append(std::to_string(_nextId++));
+    world->manager = this;
 
     World &ref = *world;
     _worlds.push_back(std::move(world));

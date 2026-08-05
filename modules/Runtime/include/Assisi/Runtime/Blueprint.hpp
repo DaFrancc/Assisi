@@ -25,6 +25,7 @@
 #include <nlohmann/json.hpp>
 
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 
 namespace Assisi::Runtime
@@ -223,6 +224,41 @@ class InstanceTable
     std::unordered_map<uint32_t, BlueprintInstance> _rows;
     uint32_t                                        _nextId = 1;
 };
+
+/// @brief Every live member of @p instanceId, by scanning the tag pool.
+///
+/// **"The members of instance 7" is a query**, computed when asked and discarded.
+/// A member already destroyed simply is not found; there is no list to go stale.
+/// That is the difference from a stored member list, which needs invalidating
+/// every time a member dies or is reparented and gets it wrong once.
+[[nodiscard]] std::vector<ECS::Entity> MembersOf(ECS::Scene &scene, uint32_t instanceId);
+
+/// @brief One member leaves its instance; the entity lives on.
+///
+/// Removes the tag and nothing else. A partial instance is not a broken state,
+/// because membership is a query — which is also why ExplodeInstance below does
+/// not need to be all-or-nothing.
+///
+/// @return false if @p entity was not a member of anything.
+bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
+
+/// @brief The entity for member @p name of instance @p id, or NullEntity.
+///
+/// Resolves the name to an index once through the cached member list, then
+/// compares integers per entity — which is why the tag carries an index rather
+/// than a string.
+[[nodiscard]] ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, uint32_t instanceId,
+                                     std::string_view name);
+
+/// @brief The row for @p id, optionally confirming it came from @p expectedSource.
+///
+/// The source check is why the table has to exist: without it a typed view over
+/// instance 7 would be built over a crate's members and return nonsense (§2).
+///
+/// @return nullptr if no such instance is live, or if it is not from
+///         @p expectedSource (when one is given).
+[[nodiscard]] const BlueprintInstance *FindInstance(const InstanceTable &table, uint32_t instanceId,
+                                                    std::string_view expectedSource = {});
 
 /// @brief The `instances` array a save should write for a live table, in id order.
 ///
