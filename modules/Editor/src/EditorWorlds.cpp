@@ -68,7 +68,7 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     }
 
     world.levelPath = virtualPath;
-    _worlds.ApplyProfile(world, header.profile);
+    (void)_worlds.ApplySystems(world, header.systems, virtualPath);
     world.state     = Assisi::App::WorldState::Active;
     // A world created during play simulates immediately; one created while editing
     // stays frozen, because nothing outside the edited world has a restore story.

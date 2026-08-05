@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include <Assisi/App/TestSystems.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
@@ -590,13 +591,16 @@ TEST_CASE("A fresh world starts unloaded, unsimulated, and roleless")
     CHECK_FALSE(world.streamingPending);
     CHECK(world.propagationTick == 0u);
     CHECK(world.levelPath.empty());
-    CHECK(world.profile.empty()); // Create installs nothing; profiles apply at load
+    CHECK(world.systemNames.empty()); // Create installs nothing; the level's list applies at load
     CHECK(worlds.Active() == nullptr);
     CHECK(worlds.Edited() == nullptr);
 }
 
 // ---------------------------------------------------------------------------
-// System profiles (docs/world-system-binding-design-notes.md §3)
+// Systems (docs/blueprint-system-concept.md §8)
+//
+// A level names the systems it wants; ASYSTEM declarations reach the catalog by
+// being linked. The cases below use the ones in support/TestSystems.hpp.
 // ---------------------------------------------------------------------------
 
 namespace
@@ -609,207 +613,140 @@ void TickUpdate(World &world, Assisi::Core::EventQueue &events, bool isActiveWor
                                                          /*input=*/nullptr, /*actions=*/nullptr,
                                                          events, isActiveWorld});
 }
+
+std::uint32_t Runs(const World &world, const char *system)
+{
+    return Assisi::App::Test::RunCounts::Instance().Count(world, system);
+}
 } // namespace
 
-TEST_CASE("A level's profile decides which systems its world runs")
+TEST_CASE("A level's system list decides which systems its world runs")
 {
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "assisi-world-profile-test";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root / "levels");
-    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
-
-    // Two levels asking for different profiles, plus one asking for none.
-    const auto writeLevel = [&root](const char *name, const char *profile)
-    {
-        Assisi::ECS::Scene scene;
-        (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = profile};
-        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / name, header));
-    };
-    writeLevel("Combat.alvl", "Gameplay");
-    writeLevel("Menu.alvl", "MainMenu");
-    writeLevel("Plain.alvl", "");
-
     Assisi::Core::EventQueue events;
-    WorldManager             worlds;
-
-    int32_t gameplayTicks = 0;
-    int32_t menuTicks     = 0;
-    worlds.RegisterProfile("Gameplay", [&](World &w) {
-        w.systems.Register(SystemPhase::Update, "Gameplay", [&](SystemContext &) { ++gameplayTicks; });
-    });
-    worlds.RegisterProfile("MainMenu", [&](World &w) {
-        w.systems.Register(SystemPhase::Update, "Menu", [&](SystemContext &) { ++menuTicks; });
-    });
-    worlds.SetDefaultProfile("Gameplay");
-
-    World *const combat = worlds.LoadLevel("levels/Combat.alvl");
-    REQUIRE(combat != nullptr);
-    CHECK(combat->profile == "Gameplay");
-    TickUpdate(*combat, events);
-    CHECK(gameplayTicks == 1);
-    CHECK(menuTicks == 0);
-
-    World *const menu = worlds.LoadLevel("levels/Menu.alvl");
-    REQUIRE(menu != nullptr);
-    CHECK(menu->profile == "MainMenu");
-    TickUpdate(*menu, events);
-    CHECK(gameplayTicks == 1); // the menu world runs no gameplay systems at all
-    CHECK(menuTicks == 1);
-
-    // A level naming no profile takes the host's default — and keeps naming
-    // none, so a save does not bake this host's default into the file.
-    World *const plain = worlds.LoadLevel("levels/Plain.alvl");
-    REQUIRE(plain != nullptr);
-    CHECK(plain->installedProfile == "Gameplay");
-    CHECK(plain->profile.empty());
-
-    std::filesystem::remove_all(root);
-}
-
-TEST_CASE("Two worlds of one profile hold independent system state")
-{
-    // The reason registries are per world: a shared instance's cross-frame state
-    // would advance once per world per frame (multi-scene-design-notes.md §1).
-    Assisi::Core::EventQueue events;
-    WorldManager             worlds;
-
-    worlds.RegisterProfile("Counting", [](World &w) {
-        w.systems.Register(SystemPhase::Update, "Count",
-                           [count = 0](SystemContext &ctx) mutable
-                           {
-                               ++count;
-                               // Park the count where the test can read it per world.
-                               ctx.world.propagationTick = static_cast<std::uint64_t>(count);
-                           });
-    });
-
-    World &a = worlds.Create("A");
-    World &b = worlds.Create("B");
-    worlds.ApplyProfile(a, "Counting");
-    worlds.ApplyProfile(b, "Counting");
-
-    TickUpdate(a, events);
-    TickUpdate(a, events);
-    TickUpdate(b, events);
-
-    CHECK(a.propagationTick == 2u); // each world counted only its own ticks
-    CHECK(b.propagationTick == 1u);
-}
-
-TEST_CASE("An unknown profile falls back to the default instead of leaving a world systemless")
-{
-    // Silence would be worse than a wrong-but-running world: a typo'd profile
-    // would ship a level where physics steps and no game logic does, which reads
-    // as a gameplay bug rather than the load error it is.
-    Assisi::Core::EventQueue events;
-    WorldManager             worlds;
-
-    int32_t defaultTicks = 0;
-    worlds.RegisterProfile("Default", [&](World &w) {
-        w.systems.Register(SystemPhase::Update, "Default", [&](SystemContext &) { ++defaultTicks; });
-    });
-    worlds.SetDefaultProfile("Default");
-
-    World &world = worlds.Create("Typo");
-    worlds.ApplyProfile(world, "Gamplay"); // sic
-
-    CHECK(world.installedProfile == "Default");
-    TickUpdate(world, events);
-    CHECK(defaultTicks == 1);
-
-    // ...but the level's own request survives, because that is what a save writes
-    // back. Overwriting it with the fallback's name would silently destroy the
-    // author's choice — the typo becomes permanent the first time the level is
-    // saved, and a level authored for the game build loses its profile whenever
-    // it is opened in a host that does not register it.
-    CHECK(world.profile == "Gamplay");
-}
-
-TEST_CASE("A profile the host cannot honour still round-trips through a save")
-{
-    // The end-to-end version of the check above: author a level for a profile
-    // this host has never heard of, load it, save it, and the file must come back
-    // unchanged rather than rewritten with whatever ran instead.
-    const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "assisi-world-profile-preserve";
-    std::filesystem::remove_all(root);
-    std::filesystem::create_directories(root / "levels");
-    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
-
-    const std::filesystem::path file = root / "levels" / "L.alvl";
-    {
-        Assisi::ECS::Scene scene;
-        (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = "ShippedGameOnly"};
-        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, file, header));
-    }
+    Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    worlds.RegisterProfile("Default", [](World &) {});
-    worlds.SetDefaultProfile("Default");
+    World       &named   = worlds.Create("Named");
+    World       &unnamed = worlds.Create("Unnamed");
 
-    World *const loaded = worlds.LoadLevel("levels/L.alvl");
-    REQUIRE(loaded != nullptr);
-    CHECK(loaded->installedProfile == "Default"); // what actually ran
-    CHECK(loaded->profile == "ShippedGameOnly");  // what the level asked for
+    REQUIRE(worlds.ApplySystems(named, std::vector<std::string>{"Counter"}, "(test)"));
+    REQUIRE(worlds.ApplySystems(unnamed, {}, "(test)"));
 
-    // Save exactly as the editor does, from the world's recorded profile.
-    const Assisi::Runtime::LevelHeader out{.instances = {}, .profile = loaded->profile};
-    REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(loaded->scene, file, out));
+    TickUpdate(named, events);
+    TickUpdate(unnamed, events);
 
-    Assisi::ECS::Scene           reloaded;
-    Assisi::Runtime::LevelHeader header;
-    REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(reloaded, "levels/L.alvl", {}, &header));
-    CHECK(header.profile == "ShippedGameOnly");
-
-    std::filesystem::remove_all(root);
+    CHECK(Runs(named, "Counter") == 1);
+    CHECK(Runs(unnamed, "Counter") == 0);
+    CHECK(named.systemNames == std::vector<std::string>{"Counter"});
 }
 
-TEST_CASE("Re-applying a profile replaces the previous systems rather than stacking them")
+TEST_CASE("Two worlds naming one system hold independent state")
 {
-    // The editor's Open Level path: the world already holds the outgoing level's
-    // systems. Registration is append-only and a repeated name corrupts the
-    // ordering graph, so ApplyProfile must clear first.
+    // The reason the registry is per world: a system's cross-frame state lives in
+    // its registered lambda's captures, so one shared instance running over two
+    // worlds would advance that state twice per frame.
     Assisi::Core::EventQueue events;
-    WorldManager             worlds;
+    Assisi::App::Test::RunCounts::Instance().Reset();
 
-    int32_t aTicks = 0;
-    int32_t bTicks = 0;
-    worlds.RegisterProfile("A", [&](World &w) {
-        w.systems.Register(SystemPhase::Update, "Tick", [&](SystemContext &) { ++aTicks; });
-    });
-    worlds.RegisterProfile("B", [&](World &w) {
-        w.systems.Register(SystemPhase::Update, "Tick", [&](SystemContext &) { ++bTicks; });
-    });
+    WorldManager worlds;
+    World       &first  = worlds.Create("First");
+    World       &second = worlds.Create("Second");
 
-    World &world = worlds.Create("Reused");
-    worlds.ApplyProfile(world, "A");
-    TickUpdate(world, events);
-    CHECK(aTicks == 1);
+    const std::vector<std::string> names{"Counter"};
+    REQUIRE(worlds.ApplySystems(first, names, "(test)"));
+    REQUIRE(worlds.ApplySystems(second, names, "(test)"));
 
-    worlds.ApplyProfile(world, "B");
-    TickUpdate(world, events);
-    CHECK(aTicks == 1); // A's system is gone, not merely shadowed
-    CHECK(bTicks == 1);
-    CHECK(world.profile == "B");
+    TickUpdate(first, events);
+    TickUpdate(first, events);
+    TickUpdate(second, events);
+
+    CHECK(Runs(first, "Counter") == 2);
+    CHECK(Runs(second, "Counter") == 1);
 }
 
-TEST_CASE("A level's profile survives a save/load round trip")
+TEST_CASE("A name this build does not declare fails the load instead of running short")
 {
-    // A Scene does not carry the profile, so a save that forgot it would silently
+    Assisi::Core::EventQueue events;
+    Assisi::App::Test::RunCounts::Instance().Reset();
+
+    WorldManager worlds;
+    World       &world = worlds.Create("Typo");
+
+    // Nothing is installed, not even the names that *were* valid: a half-installed
+    // world runs and looks nearly right, which is worse than a refused load.
+    CHECK_FALSE(worlds.ApplySystems(world, std::vector<std::string>{"Counter", "Nonexistent"}, "(test)"));
+    TickUpdate(world, events);
+    CHECK(Runs(world, "Counter") == 0);
+}
+
+TEST_CASE("The list is a union: naming a system twice installs it once")
+{
+    Assisi::Core::EventQueue events;
+    Assisi::App::Test::RunCounts::Instance().Reset();
+
+    WorldManager worlds;
+    World       &world = worlds.Create("Doubled");
+
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter", "Counter"}, "(test)"));
+    TickUpdate(world, events);
+
+    // Once per tick. It matters beyond tidiness: re-registering a name corrupts
+    // the ordering graph, because After()/Before() bind to the first entry.
+    CHECK(Runs(world, "Counter") == 1);
+}
+
+TEST_CASE("File order carries no meaning; after/before decides run order")
+{
+    Assisi::Core::EventQueue events;
+    Assisi::App::Test::RunCounts::Instance().Reset();
+
+    WorldManager worlds;
+    World       &world = worlds.Create("Ordered");
+
+    // Named the wrong way round on purpose. Follower declares `after = Counter`,
+    // so the file cannot reorder them.
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Follower", "Counter"}, "(test)"));
+
+    std::vector<std::string> order;
+    world.systems.Run(SystemPhase::Update, SystemContext{world, 0.016f, 0, nullptr, nullptr, events, true});
+    CHECK(Runs(world, "Counter") == 1);
+    CHECK(Runs(world, "Follower") == 1);
+}
+
+TEST_CASE("Re-applying a list replaces the previous systems rather than stacking them")
+{
+    Assisi::Core::EventQueue events;
+    Assisi::App::Test::RunCounts::Instance().Reset();
+
+    WorldManager worlds;
+    World       &world = worlds.Create("Reused");
+
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "(test)"));
+    TickUpdate(world, events);
+    CHECK(Runs(world, "Counter") == 1);
+
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Follower"}, "(test)"));
+    TickUpdate(world, events);
+    CHECK(Runs(world, "Counter") == 1); // not run again — it is gone
+    CHECK(Runs(world, "Follower") == 1);
+    CHECK(world.systemNames == std::vector<std::string>{"Follower"});
+}
+
+TEST_CASE("A level's system list survives a save/load round trip")
+{
+    // A Scene does not carry the list, so a save that forgot it would silently
     // strip the field from every level the editor touches.
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "assisi-world-profile-roundtrip";
+        std::filesystem::temp_directory_path() / "assisi-world-systems-roundtrip";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "levels");
     REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
 
+    const std::vector<std::string> names{"Counter", "Follower"};
     {
         Assisi::ECS::Scene scene;
         (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = "Sewers"};
+        const Assisi::Runtime::LevelHeader header{.instances = {}, .systems = names};
         REQUIRE(
             Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "L.alvl", header));
     }
@@ -817,9 +754,9 @@ TEST_CASE("A level's profile survives a save/load round trip")
     Assisi::ECS::Scene          scene;
     Assisi::Runtime::LevelHeader header;
     REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(scene, "levels/L.alvl", {}, &header));
-    CHECK(header.profile == "Sewers");
+    CHECK(header.systems == names);
 
-    // ...and a level that names none stays free of the key.
+    // ...and a level that needs none stays free of the key.
     {
         Assisi::ECS::Scene bare;
         REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(bare, root / "levels" / "N.alvl"));
@@ -827,7 +764,7 @@ TEST_CASE("A level's profile survives a save/load round trip")
     Assisi::ECS::Scene          bare;
     Assisi::Runtime::LevelHeader none;
     REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(bare, "levels/N.alvl", {}, &none));
-    CHECK(none.profile.empty());
+    CHECK(none.systems.empty());
 
     std::filesystem::remove_all(root);
 }
@@ -840,23 +777,14 @@ TEST_CASE("Dispatching every simulated world runs shared systems twice, input sy
     Assisi::Core::EventQueue events;
     WorldManager             worlds;
 
-    int32_t aiTicks    = 0;
-    int32_t inputTicks = 0;
-    worlds.RegisterProfile("Gameplay",
-                           [&](World &w)
-                           {
-                               w.systems.Register(SystemPhase::Update, "AI",
-                                                  [&](SystemContext &) { ++aiTicks; });
-                               w.systems.Register(SystemPhase::Update, "PlayerInput",
-                                                  [&](SystemContext &) { ++inputTicks; })
-                                   .ActiveWorldOnly();
-                           });
+    Assisi::App::Test::RunCounts::Instance().Reset();
 
     World &played    = worlds.Create("Played");
     World &background = worlds.Create("Background");
     World &dormant   = worlds.Create("Dormant");
+    const std::vector<std::string> names{"Counter", "ActiveOnly"};
     for (World *w : {&played, &background, &dormant})
-        worlds.ApplyProfile(*w, "Gameplay");
+        REQUIRE(worlds.ApplySystems(*w, names, "(test)"));
 
     worlds.SetActive(played);
     played.state     = WorldState::Active;
@@ -876,8 +804,13 @@ TEST_CASE("Dispatching every simulated world runs shared systems twice, input sy
             TickUpdate(world, events, /*isActiveWorld=*/&world == worlds.Active());
         });
 
-    CHECK(aiTicks == 2);    // both simulated worlds
-    CHECK(inputTicks == 1); // ...but one InputContext, so only the active one
+    // Both simulated worlds ran the shared system...
+    CHECK(Runs(played, "Counter") == 1);
+    CHECK(Runs(background, "Counter") == 1);
+    CHECK(Runs(dormant, "Counter") == 0);
+    // ...but there is one InputContext, so the activeWorldOnly one ran once.
+    CHECK(Runs(played, "ActiveOnly") == 1);
+    CHECK(Runs(background, "ActiveOnly") == 0);
 }
 
 TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
@@ -891,15 +824,13 @@ TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
     Assisi::Core::EventQueue events;
     WorldManager             worlds;
 
-    int32_t ticks = 0;
-    worlds.RegisterProfile("Gameplay", [&](World &w) {
-        w.systems.Register(SystemPhase::Update, "Logic", [&](SystemContext &) { ++ticks; });
-    });
+    Assisi::App::Test::RunCounts::Instance().Reset();
 
     World &viewed     = worlds.Create("Viewed");
     World &secondary  = worlds.Create("Secondary");
-    worlds.ApplyProfile(viewed, "Gameplay");
-    worlds.ApplyProfile(secondary, "Gameplay");
+    const std::vector<std::string> names{"Counter"};
+    REQUIRE(worlds.ApplySystems(viewed, names, "(test)"));
+    REQUIRE(worlds.ApplySystems(secondary, names, "(test)"));
     worlds.SetActive(viewed);
     viewed.state    = WorldState::Active;
     secondary.state = WorldState::Active;
@@ -924,13 +855,13 @@ TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
     };
 
     dispatch();
-    CHECK(ticks == 0); // paused means paused everywhere, stale flag or not
+    CHECK(Runs(viewed, "Counter") + Runs(secondary, "Counter") == 0); // paused everywhere, stale flag or not
 
     // Resume: both worlds are simulating again and both run their logic.
     hostIsPlaying   = true;
     viewed.simulate = true;
     dispatch();
-    CHECK(ticks == 2);
+    CHECK(Runs(viewed, "Counter") + Runs(secondary, "Counter") == 2);
 }
 
 TEST_CASE("Travelling from inside a system is refused, and deferred travel replaces it")
@@ -997,12 +928,12 @@ TEST_CASE("Travelling from inside a system is refused, and deferred travel repla
     std::filesystem::remove_all(root);
 }
 
-TEST_CASE("A background load's profile is installed when it is promoted")
+TEST_CASE("A background load's systems are installed when it is promoted")
 {
-    // The worker parks the level's choice on the world it exclusively owns;
+    // The worker parks the level's list on the world it exclusively owns;
     // installing it is main-thread work that waits for promotion.
     const std::filesystem::path root =
-        std::filesystem::temp_directory_path() / "assisi-world-profile-async";
+        std::filesystem::temp_directory_path() / "assisi-world-systems-async";
     std::filesystem::remove_all(root);
     std::filesystem::create_directories(root / "levels");
     REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
@@ -1010,18 +941,15 @@ TEST_CASE("A background load's profile is installed when it is promoted")
     {
         Assisi::ECS::Scene scene;
         (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = "Arena"};
+        const Assisi::Runtime::LevelHeader header{.instances = {},
+                                                  .systems   = std::vector<std::string>{"Counter"}};
         REQUIRE(
             Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "A.alvl", header));
     }
 
     Assisi::Core::EventQueue events;
     WorldManager             worlds;
-
-    int32_t arenaTicks = 0;
-    worlds.RegisterProfile("Arena", [&](World &w) {
-        w.systems.Register(SystemPhase::Update, "Arena", [&](SystemContext &) { ++arenaTicks; });
-    });
+    Assisi::App::Test::RunCounts::Instance().Reset();
 
     World &start = worlds.Create("Main");
     worlds.SetActive(start);
@@ -1029,19 +957,18 @@ TEST_CASE("A background load's profile is installed when it is promoted")
 
     World *const loading = worlds.BeginLoadLevel("levels/A.alvl");
     REQUIRE(loading != nullptr);
-    // The name is parked as soon as the file is read, but the systems are NOT
-    // installed while the world is still Loading: an installer is main-thread
-    // work, and the frame loop skips such worlds anyway. Ticking it proves the
-    // registry is still empty.
+    // The names are parked as soon as the file is read, but nothing is installed
+    // while the world is still Loading: installing is main-thread work, and the
+    // frame loop skips such worlds anyway. Ticking it proves the registry is empty.
     CHECK(loading->state == WorldState::Loading);
     TickUpdate(*loading, events);
-    CHECK(arenaTicks == 0);
+    CHECK(Runs(*loading, "Counter") == 0);
 
     World *const promoted = worlds.PromotePendingLoad();
     REQUIRE(promoted != nullptr);
-    CHECK(promoted->profile == "Arena");
+    CHECK(promoted->systemNames == std::vector<std::string>{"Counter"});
     TickUpdate(*promoted, events);
-    CHECK(arenaTicks == 1);
+    CHECK(Runs(*promoted, "Counter") == 1);
 
     std::filesystem::remove_all(root);
 }

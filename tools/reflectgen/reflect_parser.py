@@ -113,6 +113,33 @@ class HandlerInfo:
         return '::'.join(['', *self.namespaces, self.name]) if self.namespaces else f'::{self.name}'
 
 
+@dataclass
+class SystemInfo:
+    """One ASYSTEM() declaration: `void Name(SystemContext &);`
+
+    A system is (phase, name, function, ordering, scope) and data can supply only
+    the name, so everything but the name lives here — on the function, rather than
+    in a registration call elsewhere or restated in every level file. The
+    declaration *is* the registration; linking a module registers its systems.
+    """
+    function:        str    # unqualified function name
+    namespaces:      list   # enclosing namespaces at the declaration
+    name:            str    # the name a file uses; defaults to function minus a trailing "System"
+    phase:           str    # PreUpdate | FixedUpdate | Update | PostUpdate | Render
+    after:           list   # system names this must run after
+    before:          list   # system names this must run before
+    active_world_only: bool
+    header:          str    # source header, for diagnostics
+
+    @property
+    def fqn(self) -> str:
+        return '::'.join(['', *self.namespaces, self.function]) if self.namespaces else f'::{self.function}'
+
+    @property
+    def is_render(self) -> bool:
+        return self.phase == 'Render'
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Annotation argument parser
 # ──────────────────────────────────────────────────────────────────────────────
@@ -219,6 +246,25 @@ _AMSG_HANDLER_RE = re.compile(
     r'\s*const\s+(?P<msg>[\w:]+)\s*&\s*\w*\s*'  # const T &msg
     r'\)\s*;'
 )
+
+# ASYSTEM(phase, ...) followed by one fixed shape:
+#   void Name(SystemContext &ctx);
+# Rigid for the same reason AMSG_HANDLER is: extracting a phase and a name from a
+# fixed pattern does not reopen the C++-signature-parsing problem, and every
+# system has the same signature by construction — the context type is decided by
+# the phase, not by the author.
+_ASYSTEM_RE = re.compile(
+    r'\bASYSTEM\s*\((?P<args>[^)]*)\)\s*'
+    r'(?:inline\s+)?'                      # a header-only system is still a system
+    r'(?P<ret>[\w:]+)\s+'                  # return type (must be void)
+    r'(?P<fn>\w+)\s*\('
+    r'\s*(?P<ctx>[\w:]+)\s*&\s*\w*\s*'     # SystemContext &ctx / RenderContext &ctx
+    r'\)\s*;'
+)
+
+_ASYSTEM_PHASES = ('PreUpdate', 'FixedUpdate', 'Update', 'PostUpdate', 'Render')
+_ASYSTEM_FLAGS  = {'activeWorldOnly'}
+_ASYSTEM_KEYS   = {'name', 'after', 'before'}
 
 # Both AMSG positional arguments, in the order the grammar fixes.
 _AMSG_DIRECTIONS   = ('intent', 'event')
@@ -510,6 +556,97 @@ def parse_amsg_args(content: str, struct_name: str, header_name: str) -> tuple[s
     return direction, reliability, extras
 
 
+def find_systems(text: str, path: Path) -> list:
+    """Every ASYSTEM() declaration in an already-comment-stripped header.
+
+    A second independent walk, like find_handlers and for the same reason: one
+    rigid regex over the whole text is simpler than threading a rare declaration
+    through a scanner built around struct bodies.
+    """
+    systems: list = []
+    for match in _ASYSTEM_RE.finditer(text):
+        where = f"{path.name}: system '{match.group('fn')}'"
+
+        if match.group('ret') != 'void':
+            raise ValueError(
+                f"{where} returns '{match.group('ret')}'. A system returns void — the scheduler has "
+                f"nowhere to put a value, and anything it wanted to say belongs in a component.")
+
+        args = _split_args(match.group('args'))
+        if not args or not args[0]:
+            raise ValueError(
+                f"{where} has no phase. Phase is mandatory and positional: "
+                f"ASYSTEM({'|'.join(_ASYSTEM_PHASES)}).")
+
+        phase = args[0].strip()
+        if phase not in _ASYSTEM_PHASES:
+            raise ValueError(
+                f"{where} names phase '{phase}', which is not one of "
+                f"{', '.join(_ASYSTEM_PHASES)}.")
+
+        # The context type follows from the phase rather than from the author, so
+        # a mismatch is caught here instead of becoming a wrong cast at runtime.
+        # This is the check the manual Register/RegisterRender split leaves to the
+        # caller.
+        wanted_ctx = 'RenderContext' if phase == 'Render' else 'SystemContext'
+        if not match.group('ctx').endswith(wanted_ctx):
+            raise ValueError(
+                f"{where} is in phase {phase} and takes '{match.group('ctx')} &'. A {phase} system "
+                f"takes {wanted_ctx} & — the phase decides the context, so the two cannot disagree.")
+
+        name              = ''
+        after, before     = [], []
+        active_world_only = False
+
+        for arg in args[1:]:
+            arg = arg.strip()
+            if not arg:
+                continue
+            if '=' in arg:
+                key, _, value = arg.partition('=')
+                key, value    = key.strip(), value.strip().strip('"')
+                if key not in _ASYSTEM_KEYS:
+                    raise ValueError(
+                        f"{where} sets unknown key '{key}'. Recognised: "
+                        f"{', '.join(sorted(_ASYSTEM_KEYS))}.")
+                if not value:
+                    raise ValueError(f"{where} sets '{key}' to nothing.")
+                if key == 'name':
+                    name = value
+                elif key == 'after':
+                    after.append(value)
+                else:
+                    before.append(value)
+                continue
+
+            if arg not in _ASYSTEM_FLAGS:
+                raise ValueError(
+                    f"{where} carries unknown flag '{arg}'. Recognised: "
+                    f"{', '.join(sorted(_ASYSTEM_FLAGS))}. Note that RequireAny is deliberately not "
+                    f"part of ASYSTEM — a gate reflectgen cannot verify, and too tight a one is a "
+                    f"system that silently never runs.")
+            active_world_only = True
+
+        if active_world_only and phase == 'Render':
+            raise ValueError(
+                f"{where} is a Render system with activeWorldOnly. Render already runs for the world "
+                f"being drawn and nothing else, so the flag would say nothing.")
+
+        # Default: the function name with a trailing "System" stripped, because
+        # `BounceSystem` in code is `Bounce` in a file and repeating the suffix in
+        # every level would be noise.
+        if not name:
+            name = match.group('fn')
+            if name.endswith('System') and len(name) > len('System'):
+                name = name[: -len('System')]
+
+        systems.append(SystemInfo(function=match.group('fn'),
+                                  namespaces=_namespaces_at(text, match.start()),
+                                  name=name, phase=phase, after=after, before=before,
+                                  active_world_only=active_world_only, header=str(path)))
+    return systems
+
+
 def find_handlers(text: str, path: Path) -> list:
     """Every AMSG_HANDLER() declaration in an already-comment-stripped header.
 
@@ -627,6 +764,15 @@ def parse_header(path: Path) -> list[ComponentInfo]:
     which is what lets reflectgen (de)serialize the field and emit its combo.
     """
     return parse_header_full(path)[0]
+
+
+def parse_header_systems(path: Path) -> list:
+    """Every ASYSTEM() declaration in @p path.
+
+    Separate from parse_header_full rather than a fourth tuple element, so the
+    three existing callers and every existing test keep working unchanged.
+    """
+    return find_systems(strip_comments(path.read_text(encoding='utf-8')), path)
 
 
 def parse_header_full(path: Path) -> tuple[list, list, list]:

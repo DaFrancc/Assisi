@@ -110,6 +110,13 @@ struct BlueprintDefinition
     /// members in the order the instances are listed.
     std::vector<BlueprintMemberDesc> members;
 
+    /// Every system this file and its nested closure name, deduplicated. A spawn
+    /// queues these, which is what closes the cross-machine hole in "a component
+    /// whose system was never installed just does nothing": a client that receives
+    /// a missile *runs the spawn*, so it installs the trail system by construction
+    /// rather than by the level having remembered to ask (§8, §9).
+    std::vector<std::string> systems;
+
     /// @p source plus every file reachable from it by instancing, sorted and
     /// deduplicated. Warms the cache (loading `car_with_antenna.abp` warms
     /// `car.abp`, since the closure is walked anyway) and is what a content hash

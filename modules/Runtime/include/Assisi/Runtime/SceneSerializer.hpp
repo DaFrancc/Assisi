@@ -91,16 +91,26 @@ struct LevelHeader
     /// the wire, so the order is part of the format rather than an artefact.
     std::vector<LevelInstance> instances;
 
-    /// @brief Which system profile the level wants installed into the world it
-    /// loads into (docs/world-system-binding-design-notes.md §3). Empty means
-    /// "the host's default profile" — the common case, so most levels never
-    /// mention it.
+    /// @brief The systems this file needs, by name — closer to a module import
+    /// than an include.
     ///
-    /// A name, not a system list: systems are C++ functions, so data can only
-    /// select among sets the game registered. Keeping the file's vocabulary to a
-    /// single name is also what lets the game's system list evolve without
-    /// touching level files.
-    std::string profile;
+    /// **Profiles are gone.** A profile was a second vocabulary a level had to
+    /// know, defined somewhere else, and "which systems does profile X install?"
+    /// was answerable only by reading the game's C++. A list is longer and more
+    /// straightforward (docs/blueprint-system-concept.md §8).
+    ///
+    /// The list is a **union, not a concatenation** — naming a system twice, or
+    /// two nested blueprints both naming `Bounce`, installs it once — and **file
+    /// order carries no meaning**, because run order comes from `after`/`before`
+    /// on the system itself. An unknown name is a **hard error at load**: a level
+    /// that names a system this build does not have is a level that will run
+    /// without it, which is the silent failure the whole design opens with.
+    ///
+    /// The list is authored, never derived. Inferring it from the members'
+    /// components is tempting and wrong, and not hypothetically — every blueprint
+    /// with a rigid body would declare a dependency on physics when almost none
+    /// mean it.
+    std::vector<std::string> systems;
 };
 
 class SceneSerializer

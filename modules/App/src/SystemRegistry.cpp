@@ -347,6 +347,24 @@ void SystemRegistry::RunRender(RenderContext ctx)
     RunPhase(_renderPhase, "Render", "Render", ctx, /*skipActiveOnly=*/false, ctx.scene);
 }
 
+bool SystemRegistry::Has(std::string_view name) const
+{
+    for (const Phase<SystemContext> &phase : _gamePhases)
+    {
+        for (const auto &entry : phase.entries)
+        {
+            if (entry.name == name)
+                return true;
+        }
+    }
+    for (const auto &entry : _renderPhase.entries)
+    {
+        if (entry.name == name)
+            return true;
+    }
+    return false;
+}
+
 void SystemRegistry::Clear()
 {
     for (Phase<SystemContext> &phase : _gamePhases)

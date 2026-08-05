@@ -91,27 +91,23 @@ struct World
     /// table is discarded with the world (docs/blueprint-system-concept.md §2).
     Runtime::InstanceTable instances;
 
-    /// This world's game systems, installed once by its profile (see
-    /// WorldManager::RegisterProfile). Per world rather than per app because a
+    /// This world's game systems, installed once from its level's list (see
+    /// WorldManager::ApplySystems). Per world rather than per app because a
     /// system's cross-frame state lives in its registered lambda's captures: one
     /// shared instance running over several worlds would advance that state N×
-    /// too fast (docs/multi-scene-design-notes.md §1). Empty until a profile is
-    /// applied, which is deliberate — Create() installs nothing.
+    /// too fast (docs/multi-scene-design-notes.md §1). Empty until the level's
+    /// list is applied, which is deliberate — Create() installs nothing.
     SystemRegistry        systems;
 
-    /// The profile name the **level asked for**, or "" if it named none. This is
-    /// what a save writes back, so it is preserved verbatim even when it could
-    /// not be honoured: rewriting it with whatever was actually installed would
-    /// silently destroy the author's choice in any host that happens not to
-    /// register that profile — a game-build level opened in a tools build, or a
-    /// name whose typo is about to be fixed.
-    std::string           profile;
-
-    /// The profile that actually populated @ref systems, or "" if none ran.
-    /// Differs from @ref profile only when the request could not be honoured and
-    /// ApplyProfile fell back — that difference is the diagnostic, and it is
-    /// deliberately not persisted.
-    std::string           installedProfile;
+    /// The system names the **level asked for**, in file order. What a save
+    /// writes back, so it is preserved verbatim: rewriting it with whatever was
+    /// actually installed would silently destroy the author's choice in a host
+    /// that happens not to declare one of them.
+    ///
+    /// A blueprint spawned into this world adds its own names to the registry
+    /// without touching this list — those belong to the blueprint's file, not to
+    /// the level's.
+    std::vector<std::string> systemNames;
 
     /// Unique key within the manager. Deliberately NOT the level path: travel
     /// A→B→A leaves two worlds of one path resident, so names are generated.
@@ -178,49 +174,34 @@ class WorldManager
     /// worlds of the same level are distinguishable.
     ///
     /// The new world starts Loading, unsimulated, holds no role, and has an
-    /// **empty system registry** — profiles are applied at the commit points
-    /// below, never here, so a world is never at risk of being installed into
-    /// twice (see ApplyProfile).
+    /// **empty system registry** — the level's list is applied at the commit
+    /// points below, never here, so a world is never at risk of being installed
+    /// into twice (see ApplySystems).
     World &Create(std::string_view label = "World");
 
-    // --- System profiles -----------------------------------------------------
+    // --- Systems -------------------------------------------------------------
     //
     // Which systems a world runs is decided once, when its content is committed,
-    // by a named *profile*: an installer function the game registers at startup.
-    // Code defines the profiles (systems are C++ functions, so data cannot create
-    // them); level files merely select one by name. See
-    // docs/world-system-binding-design-notes.md §3.
+    // by the *list of names* its file carries. Code defines the systems — they
+    // are C++ functions, so data cannot create them — and declares them with
+    // ASYSTEM, which is what puts them in the catalog; a file merely names them.
     //
-    // Profiles are expected to compose out of smaller installer functions, so a
-    // level that wants "the usual set plus water" costs one line rather than a
-    // re-declaration. Composition is additive only: removing a system from a set
-    // breaks any After()/Before() constraint naming it.
+    // This replaced named profiles, which were a second vocabulary a level had to
+    // know, defined somewhere else, where "which systems does profile X install?"
+    // was answerable only by reading the game's C++.
 
-    /// @brief Populates a freshly committed world with its systems. Called once
-    /// per world, on the main thread — so an installer must not carry one-time
-    /// side effects, and any cross-frame state it needs belongs in its
-    /// registered lambdas' captures (which is what makes that state per world).
-    using ProfileInstaller = std::function<void(World &)>;
-
-    /// @brief Registers @p installer under @p name. Re-registering a name
-    /// replaces the previous installer (worlds already built keep their
-    /// systems).
-    void RegisterProfile(std::string_view name, ProfileInstaller installer);
-
-    /// @brief Sets the profile applied to worlds whose level names none — the
-    /// common case, so most levels never mention a profile at all.
-    void SetDefaultProfile(std::string_view name) { _defaultProfile = name; }
-
-    /// @brief Installs @p name's systems into @p world, replacing whatever it
-    /// had (see SystemRegistry::Clear — re-registering over an existing set
-    /// would corrupt the ordering graph).
+    /// @brief Installs @p names into @p world, replacing whatever it had.
     ///
-    /// An empty @p name selects the default profile. An **unknown** name is an
-    /// error that falls back to the default rather than leaving the world
-    /// systemless: a typo in a level file must not ship a world where physics
-    /// steps and no game logic runs, which is silent and looks like a gameplay
-    /// bug rather than a load error.
-    void ApplyProfile(World &world, std::string_view name);
+    /// Clears first (see SystemRegistry::Clear — re-registering over an existing
+    /// set corrupts the ordering graph, because After()/Before() bind to the
+    /// first entry of a name), then installs from SystemCatalog.
+    ///
+    /// @param context Named in the error when a name is unknown — the level path.
+    /// @return false if any name is unknown, in which case the world is left with
+    ///         no systems rather than some. A half-installed world runs and looks
+    ///         nearly right, which is the failure mode worth avoiding; the caller
+    ///         refuses the load.
+    bool ApplySystems(World &world, std::span<const std::string> names, std::string_view context);
 
     /// @brief Destroys the named world.
     ///
@@ -471,8 +452,6 @@ class WorldManager
 
     // Profiles number in the handful and are looked up once per world load, so a
     // vector scan beats hashing and keeps registration order for diagnostics.
-    std::vector<std::pair<std::string, ProfileInstaller>> _profiles;
-    std::string                                          _defaultProfile;
 
     // Non-zero while a ForEach is walking _worlds; the mutating operations refuse
     // rather than invalidate it. A counter, not a flag, so nested iteration

@@ -107,7 +107,7 @@ void EditorApp::StartPlay(NetIntent intent)
     // The edited world's level identity, so Stop can put it back: a join
     // replaces the play scene with the *host's* level and retargets both.
     _prePlayLevelPath = _world != nullptr ? _world->levelPath : std::string{};
-    _prePlayProfile   = _world != nullptr ? _world->profile : std::string{};
+    _prePlaySystems   = _world != nullptr ? _world->systemNames : std::vector<std::string>{};
 
     SetPlayState(PlayState::Playing);
     _netIntent   = intent;
@@ -302,10 +302,10 @@ void EditorApp::StopPlay()
     // A joined session loaded the *host's* level into this world and retargeted
     // both its identity and its systems. The entities are back; put those back
     // too, or Save would write the editing scene out over the host's filename.
-    if (_world != nullptr && (_world->levelPath != _prePlayLevelPath || _world->profile != _prePlayProfile))
+    if (_world != nullptr && (_world->levelPath != _prePlayLevelPath || _world->systemNames != _prePlaySystems))
     {
         _world->levelPath = _prePlayLevelPath;
-        _worlds.ApplyProfile(*_world, _prePlayProfile);
+        (void)_worlds.ApplySystems(*_world, _prePlaySystems, _prePlayLevelPath);
     }
 
     SetPlayState(PlayState::Editing);

@@ -256,7 +256,7 @@ void EditorApp::BuildJoinedWorld()
     // The world is the host's level for the duration; StopPlay puts the edited
     // world's identity and profile back.
     _world->levelPath = level.addressing == Assisi::NetSync::LevelAddressing::Virtual ? level.path : std::string{};
-    _worlds.ApplyProfile(*_world, header.profile);
+    (void)_worlds.ApplySystems(*_world, header.systems, level.path);
 
     StripReplicatedEntities();
 
@@ -297,8 +297,8 @@ bool EditorApp::WritePieTempLevel(Assisi::NetSync::LevelIdentity &outLevel)
         return false;
     }
 
-    const Assisi::Runtime::LevelHeader header{.instances = {},
-                                              .profile = _world != nullptr ? _world->profile : std::string{}};
+    const Assisi::Runtime::LevelHeader header{
+        .instances = {}, .systems = _world != nullptr ? _world->systemNames : std::vector<std::string>{}};
     if (!Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header,
                                                       _world != nullptr ? &_world->instances : nullptr))
     {

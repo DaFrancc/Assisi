@@ -574,10 +574,50 @@ const bool {var} = []() -> bool
 """
 
 
+def gen_system_registration(system) -> str:
+    """One ASYSTEM declaration's catalog entry.
+
+    The declaration *is* the registration, and it lands in the module's generated
+    OBJECT library — which cmake/AssisiReflect.cmake pulls fully into the final
+    link precisely so a static initializer nobody references still runs. That is
+    what replaces `registerGameSystems`: linking a module registers its systems.
+
+    The function is wrapped in a lambda with an explicit fully-qualified call
+    rather than taken by address, for the same reason handler binding is: nothing
+    about which function runs should depend on name lookup.
+    """
+    names   = lambda values: '{' + ', '.join(f'"{v}"' for v in values) + '}'
+    context = 'RenderContext' if system.is_render else 'SystemContext'
+    run     = ('nullptr' if system.is_render else
+               f'[](Assisi::App::SystemContext &ctx) {{ {system.fqn}(ctx); }}')
+    render  = (f'[](Assisi::App::RenderContext &ctx) {{ {system.fqn}(ctx); }}' if system.is_render
+               else 'nullptr')
+
+    return f"""\
+// ── {system.name} (system) {'─' * max(0, 65 - len(system.name))}
+static const bool _reflectgen_system_{system.function} = []() -> bool
+{{
+    Assisi::App::SystemCatalog::Instance().Register({{
+        "{system.name}",
+        Assisi::App::SystemPhase::{system.phase if not system.is_render else 'Update'},
+        {str(system.is_render).lower()},   // render phase — runs through RunRender, not Run
+        {run},
+        {render},
+        {names(system.after)},
+        {names(system.before)},
+        {str(system.active_world_only).lower()},
+    }});
+    return true;
+}}();
+
+"""
+
+
 def generate_cpp(components: list[ComponentInfo], include_path: str, messages: Optional[list] = None,
-                 handlers: Optional[list] = None) -> str:
+                 handlers: Optional[list] = None, systems: Optional[list] = None) -> str:
     messages = messages or []
     handlers = handlers or []
+    systems  = systems or []
 
     # Default-deny is enforced here (not only in main) so every path that emits
     # code — the CLI and direct callers such as the golden tests — refuses an
@@ -644,6 +684,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/Core/Reflect/MessageRegistry.hpp>')
     if handlers:
         includes.append('#include <Assisi/NetSync/MessageDispatch.hpp>')
+    if systems:
+        includes.append('#include <Assisi/App/SystemCatalog.hpp>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
@@ -775,6 +817,9 @@ static const bool {var_name} = []() -> bool
     # still internal to this translation unit.
     for handler in handlers:
         blocks.append('\n' + _gen_handler_block(handler))
+
+    for system in systems:
+        blocks.append('\n' + gen_system_registration(system))
 
     return ''.join(blocks)
 

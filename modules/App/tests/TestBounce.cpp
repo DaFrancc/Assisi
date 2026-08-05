@@ -157,22 +157,37 @@ TEST_CASE("Turning contact reporting off stops recording and drops the log")
     CHECK(world.physics.Contacts().empty());
 }
 
-TEST_CASE("ApplyProfile resets contact reporting so it cannot leak between levels")
+TEST_CASE("ApplySystems resets contact reporting so it cannot leak between levels")
 {
-    // Contact reporting is part of what a profile configures, so re-targeting a
-    // world at a profile that does not want it must switch it back off. Otherwise
-    // the first bouncy level opened in a session taxes every level after it.
+    // A system that wants contact reporting turns it on for itself, so
+    // re-targeting a world at a list that does not want it must switch it back
+    // off. Otherwise the first bouncy level opened in a session taxes every level
+    // after it with a contact log nothing reads.
     WorldManager worlds;
-    worlds.RegisterProfile("Bouncy", [](World &world) { world.physics.SetContactReporting(true); });
-    worlds.RegisterProfile("Plain", [](World &) {});
+    World       &world = worlds.Create("Reused");
 
-    World &world = worlds.Create("Reused");
-
-    worlds.ApplyProfile(world, "Bouncy");
+    world.physics.SetContactReporting(true);
     CHECK(world.physics.IsContactReporting());
 
-    worlds.ApplyProfile(world, "Plain");
+    // Any re-target clears it, including to the empty list.
+    CHECK(worlds.ApplySystems(world, {}, "(test)"));
     CHECK_FALSE(world.physics.IsContactReporting());
+}
+
+TEST_CASE("ApplySystems refuses a name this build does not declare")
+{
+    // A level naming a system that is not here is a level that will run without
+    // it — the silent failure the whole design opens with. So the load fails
+    // rather than the world quietly running short.
+    WorldManager             worlds;
+    World                   &world = worlds.Create("Typo");
+    const std::vector<std::string> names{"NoSuchSystemAnywhere"};
+
+    CHECK_FALSE(worlds.ApplySystems(world, names, "levels/Test.alvl"));
+
+    // Recorded verbatim even so: a save must not rewrite the author's list with
+    // whatever happened to install.
+    CHECK(world.systemNames == names);
 }
 
 TEST_CASE("BounceSystem sends a landing body back up, scaled by rebound")
