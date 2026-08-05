@@ -24,6 +24,7 @@
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <variant>
 #include <vector>
@@ -200,6 +201,29 @@ class EditHistory
     /// @brief Empties both stacks — call on level load, Stop-play, and Scene::Clear,
     /// which rebuild entity identity densely and dangle every stored handle.
     void Clear();
+
+    /// @brief Drops the undo steps that can no longer be replayed because the
+    /// entities in @p destroyed are gone, and returns how many went.
+    ///
+    /// Saving a blueprint that deleted one of its members destroys that member in
+    /// every live copy (stage 5d). A transaction naming one of them cannot be
+    /// applied — the handle is dead, and ReviveAt is valid only for a free slot,
+    /// which the next entity created will take.
+    ///
+    /// **The rule is a suffix, not a filter.** Undo is linear: it replays newest
+    /// first, so if step 12 is unreplayable then nothing older than 12 can ever be
+    /// reached either. So the *newest* offending transaction is found and everything
+    /// from there down goes. Dropping only the offenders would leave a stack whose
+    /// remaining steps assume a `before` state that was never restored — every one of
+    /// them would apply against the wrong world, quietly.
+    ///
+    /// The redo stack goes with it: a redo naming a destroyed entity would recreate
+    /// it into a slot the world has moved on from.
+    std::size_t ForgetEntities(std::span<const Assisi::ECS::Entity> destroyed);
+
+    /// @brief What ForgetEntities would drop, without dropping it — so a save can
+    /// say how much history is at stake before the author commits to it.
+    [[nodiscard]] std::size_t CountForgettable(std::span<const Assisi::ECS::Entity> destroyed) const;
 
     /// @brief True while an Undo()/Redo() is applying. The capture layer checks
     /// this to avoid recording the edits the apply itself makes (re-entrancy).

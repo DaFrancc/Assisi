@@ -2,6 +2,7 @@
 
 #include <Assisi/Editor/EditHistory.hpp>
 
+#include <algorithm>
 #include <utility>
 
 #include <Assisi/Core/Logger.hpp>
@@ -117,6 +118,71 @@ void EditHistory::Clear()
     _undo.clear();
     _redo.clear();
     _open.clear(); // any in-flight gesture references entity handles about to dangle
+}
+
+namespace
+{
+
+/// Whether @p txn acts on any entity in @p destroyed.
+///
+/// An InstanceDelta names an instance rather than an entity, and an instance
+/// survives its members being re-expanded — the row is exactly what a blueprint edit
+/// does not touch. So only the two entity-shaped commands are asked.
+bool NamesAny(const Transaction &txn, std::span<const Assisi::ECS::Entity> destroyed)
+{
+    const auto hit = [destroyed](Assisi::ECS::Entity entity)
+    { return std::find(destroyed.begin(), destroyed.end(), entity) != destroyed.end(); };
+
+    for (const EditCommand &cmd : txn.cmds)
+    {
+        if (const auto *component = std::get_if<ComponentDelta>(&cmd); component != nullptr && hit(component->entity))
+            return true;
+        if (const auto *entity = std::get_if<EntityDelta>(&cmd); entity != nullptr && hit(entity->handle))
+            return true;
+    }
+    return false;
+}
+
+/// One past the newest transaction in @p undo that names a destroyed entity, or 0 if
+/// none does — which is exactly how many steps have to go. See ForgetEntities for
+/// why the answer is a suffix rather than a set.
+std::size_t ForgettableCount(const std::vector<Transaction>       &undo,
+                             std::span<const Assisi::ECS::Entity> destroyed)
+{
+    if (destroyed.empty())
+        return 0;
+
+    for (std::size_t i = undo.size(); i > 0; --i)
+    {
+        if (NamesAny(undo[i - 1], destroyed))
+            return i;
+    }
+    return 0;
+}
+
+} // namespace
+
+std::size_t EditHistory::CountForgettable(std::span<const Assisi::ECS::Entity> destroyed) const
+{
+    return ForgettableCount(_undo, destroyed);
+}
+
+std::size_t EditHistory::ForgetEntities(std::span<const Assisi::ECS::Entity> destroyed)
+{
+    const std::size_t drop = ForgettableCount(_undo, destroyed);
+    if (drop == 0)
+        return 0;
+
+    _undo.erase(_undo.begin(), _undo.begin() + static_cast<std::ptrdiff_t>(drop));
+    // Whole, not filtered: a redo replays forward from where undo left off, so a
+    // surviving redo below a dropped one has the same broken-chain problem.
+    _redo.clear();
+    // An open gesture on a destroyed entity would commit a transaction naming it the
+    // moment the sweep runs — putting back exactly what was just removed.
+    std::erase_if(_open, [destroyed](const OpenGesture &gesture) {
+        return std::find(destroyed.begin(), destroyed.end(), gesture.entity) != destroyed.end();
+    });
+    return drop;
 }
 
 const std::string &EditHistory::NextUndoLabel() const

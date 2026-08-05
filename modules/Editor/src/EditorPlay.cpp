@@ -47,6 +47,18 @@ void EditorApp::StartPlay(NetIntent intent)
         return;
     }
 
+    // Not from inside a blueprint. The world in front of you holds one piece of
+    // content and an editor sun; playing it would simulate that, settle its bodies,
+    // and leave the file remembering a pose nobody authored. The hotkey reaches here
+    // even though the Game panel is hidden, which is exactly why the guard is here
+    // and not on the button.
+    if (InBlueprintMode())
+    {
+        Assisi::Core::Log::Warn("Play: close the blueprint editor first — a blueprint world is content, "
+                                "not a level to run.");
+        return;
+    }
+
     // Play-in-editor hosting sidesteps both gates below, structurally rather
     // than by exception: its clients load a temp snapshot of the scene as it is
     // *right now*, so "the level was never saved" and "the level on disk is not
@@ -76,6 +88,24 @@ void EditorApp::StartPlay(NetIntent intent)
         if (IsSceneDirty() && !_hostIgnoreDirty)
         {
             _hostPromptOpen = true;
+            return;
+        }
+
+        // Stage 5e, and the one failure 5d can create. Declining a blueprint's
+        // catch-up leaves this world's copies of it as they were while the file on
+        // disk moved on. A client expands that file, so the two machines would spawn
+        // different member sets under the same NetIds — a green handshake over two
+        // different worlds, which is exactly what the content-set hash cannot catch
+        // (it hashes the disk, and both machines' disks agree).
+        //
+        // A refusal rather than a prompt: unlike unsaved edits, there is no
+        // "host it anyway" that means anything. The copies are wrong either way.
+        if (!_staleInstanceSources.empty())
+        {
+            _netError = "some live blueprint copies are out of date with their file (" +
+                        _staleInstanceSources.front() +
+                        "). Save the blueprint again and accept the update, or reload the level.";
+            Assisi::Core::Log::Warn("Editor: refusing to host — {}", _netError);
             return;
         }
     }

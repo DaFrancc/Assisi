@@ -8,9 +8,11 @@
 ///
 /// The wireframe traces the collider's actual edges (a box's 12 edges, a sphere's
 /// three great circles, ...), not a filled silhouette. Unselected colliders draw
-/// light green and depth-tested (occluded by scene geometry, so they recede);
-/// the selected collider draws yellow-orange and on-top (x-ray), so it is never
-/// lost behind a wall. Hidden entirely while the game is playing.
+/// light green and depth-tested (occluded by scene geometry, so they recede); a
+/// selected collider draws on-top (x-ray) in the selection colours from
+/// Runtime/SceneRenderer.hpp, so it is never lost behind a wall and never disagrees
+/// with the silhouette drawn around the same object's mesh. Hidden entirely while
+/// the game is playing.
 
 #include <Assisi/Editor/EditorApp.hpp>
 
@@ -23,6 +25,7 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Render/LinePass.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 
 namespace Assisi::Editor
 {
@@ -31,11 +34,14 @@ namespace
 {
 using Assisi::Render::LineVertex;
 
-// Wireframe colours (written straight to the scene target, like the selection
-// outline's orange — see outline_edge.frag). Selected is a distinct yellow-orange
-// so it never reads as the red-orange selection silhouette drawn around the mesh.
+// Wireframe colours, written straight to the scene target (see outline_edge.frag).
+// Only the unselected one is defined here — a selected collider borrows the very
+// constants the mesh silhouette uses, so a rigidbody and a plain mesh say "selected"
+// and "this is the one being edited" in one vocabulary rather than two that have to
+// be kept in step by hand.
 constexpr glm::vec4 kUnselectedColor{0.40f, 0.95f, 0.45f, 1.0f}; // light green
-constexpr glm::vec4 kSelectedColor{1.00f, 0.65f, 0.10f, 1.0f};   // yellow-orange
+constexpr glm::vec4 kSelectedColor{Assisi::Runtime::kSelectionOutline, 1.0f};
+constexpr glm::vec4 kActiveSelectedColor{Assisi::Runtime::kActiveSelectionOutline, 1.0f};
 
 // Tessellation of curved shapes. 24 segments per full circle is smooth enough for
 // an editor overlay without flooding the line batch.
@@ -179,9 +185,14 @@ void EditorApp::SubmitColliderWireframes()
         _colliderEntities.push_back(entity);
 
         const bool selected = IsSelected(entity);
+        const bool active   = selected && entity == _selectedEntity;
 
-        // Selected body draws on top in orange; the rest are depth-tested green.
-        const glm::vec4 lineColor = selected ? kSelectedColor : kUnselectedColor;
+        // Selected body draws on top in orange; the rest are depth-tested green. The
+        // active one goes redder still, so a multi-selection says which member of it
+        // the inspector and the gizmo are actually addressing.
+        const glm::vec4 lineColor = active     ? kActiveSelectedColor
+                                    : selected ? kSelectedColor
+                                               : kUnselectedColor;
 
         // The Jolt body is placed from the Transform's local position+rotation only
         // (no scale — see AddPhysicsBody), and the descriptor's dimensions are
@@ -202,7 +213,7 @@ void EditorApp::SubmitColliderWireframes()
         if (selected)
         {
             outlinedAsBodies.push_back(entity);
-            const glm::vec3 outlineColor = glm::vec3(kSelectedColor);
+            const glm::vec3 outlineColor = glm::vec3(active ? kActiveSelectedColor : kSelectedColor);
             SubmitColliderOutline(bodyModel, desc, outlineColor);
 
             // Entity mesh silhouette (if the body has a visible mesh). Uses the full

@@ -29,7 +29,8 @@ void EditorApp::HandleEntityPicking()
     if (_actions.IsActionPressed("Select", input) &&
         !input.IsMouseCaptured() && !ImGuiWantsMouse() && !IsUsingGizmo())
     {
-        const Assisi::ECS::Entity picked = PickEntity(input.MousePosition());
+        float                     entityT = 0.f;
+        const Assisi::ECS::Entity picked  = PickEntity(input.MousePosition(), entityT);
 
         // An armed eyedropper consumes the click to fill its EntityRef field
         // rather than moving the selection.
@@ -38,15 +39,30 @@ void EditorApp::HandleEntityPicking()
             ApplyEyedropperPick(picked);
             _eyedropperArmed = false;
             _eyedropperMeta  = nullptr;
+            return;
         }
-        else
+
+        // An instance's root billboard is clickable too, and selecting an instance is
+        // a different gesture from selecting an entity — so it is resolved here
+        // rather than folded into PickEntity's return. Nearest wins: a root icon
+        // behind a wall should not beat the wall, and a member's mesh in front of the
+        // icon should not be unclickable because the icon is there.
+        float               instanceT  = 0.f;
+        const std::uint32_t instanceId = PickInstance(input.MousePosition(), instanceT);
+        if (instanceId != 0 && instanceT <= entityT)
         {
-            // Ctrl *and* Shift both mean "add this one too" out here. In a list a
-            // range is well defined — everything between two rows — but the
-            // viewport has no order to draw one through, so binding Shift to
-            // anything else would only be a second key that does nothing.
-            GetEvents().Push(EntitySelectionChangedEvent{picked, ImGuiAdditiveModifier()});
+            // Exclusive, like every other way of selecting an instance: it is the
+            // whole group, not one more thing in a list of entities.
+            ClearSelection();
+            _selectedInstance = instanceId;
+            return;
         }
+
+        // Ctrl *and* Shift both mean "add this one too" out here. In a list a range
+        // is well defined — everything between two rows — but the viewport has no
+        // order to draw one through, so binding Shift to anything else would only be
+        // a second key that does nothing.
+        GetEvents().Push(EntitySelectionChangedEvent{picked, ImGuiAdditiveModifier()});
     }
 }
 
@@ -334,33 +350,85 @@ bool RayBillboardIntersect(glm::vec3 origin, glm::vec3 dir, glm::vec3 center, gl
 
 } // namespace
 
+EditorApp::PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
+{
+    PickRay ray;
+
+    RefreshCameraMatrix();
+    const glm::mat4 view   = Assisi::Runtime::ViewMatrix(_cameraTransform);
+    const auto      fbSize = GetWindow().GetFramebufferSize();
+    const float     w      = static_cast<float>(fbSize.Width);
+    const float     h      = static_cast<float>(fbSize.Height);
+    if (w <= 0.f || h <= 0.f) // minimized/zero-size framebuffer — no valid ray
+        return ray;
+    const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(_camera, w / h);
+
+    const float ndcX    = (2.f * mousePos.x / w) - 1.f;
+    const float ndcY    = 1.f - (2.f * mousePos.y / h);
+    glm::vec4   viewDir = glm::inverse(projection) * glm::vec4(ndcX, ndcY, -1.f, 1.f);
+    viewDir.z           = -1.f;
+    viewDir.w           = 0.f;
+
+    ray.direction = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
+    ray.origin    = _cameraTransform.position;
+    // Camera world basis (view rows), matching how the billboards are oriented, so
+    // a meshless entity's clickable area is exactly its icon quad.
+    ray.cameraRight = glm::vec3(view[0][0], view[1][0], view[2][0]);
+    ray.cameraUp    = glm::vec3(view[0][1], view[1][1], view[2][1]);
+    ray.valid       = true;
+    return ray;
+}
+
+std::uint32_t EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
+{
+    tOut = std::numeric_limits<float>::max();
+    if (_scene == nullptr || _world == nullptr)
+        return 0;
+
+    const PickRay ray = BuildPickRay(mousePos);
+    if (!ray.valid)
+        return 0;
+
+    const float   iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    std::uint32_t result   = 0;
+
+    // The same quad the renderer draws for the instance root, so what is clickable is
+    // exactly what is visible (see EditorApp::SubmitInstanceIcons).
+    for (const auto &[id, row] : _world->instances.All())
+    {
+        float t = 0.f;
+        if (RayBillboardIntersect(ray.origin, ray.direction, row->transform.position, ray.cameraRight,
+                                  ray.cameraUp, iconHalf, t) &&
+            t < tOut)
+        {
+            tOut   = t;
+            result = id;
+        }
+    }
+    return result;
+}
+
 Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos)
 {
+    float ignored = 0.f;
+    return PickEntity(mousePos, ignored);
+}
+
+Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos, float &tOut)
+{
+    tOut = std::numeric_limits<float>::max();
     if (!_scene)
         return Assisi::ECS::NullEntity;
 
-    RefreshCameraMatrix();
-    const glm::mat4 view         = Assisi::Runtime::ViewMatrix(_cameraTransform);
-    const auto      fbSize       = GetWindow().GetFramebufferSize();
-    const float     w            = static_cast<float>(fbSize.Width);
-    const float     h            = static_cast<float>(fbSize.Height);
-    if (w <= 0.f || h <= 0.f) // minimized/zero-size framebuffer — no valid ray
+    const PickRay ray = BuildPickRay(mousePos);
+    if (!ray.valid)
         return Assisi::ECS::NullEntity;
-    const glm::mat4 projection   = Assisi::Runtime::ProjectionMatrix(_camera, w / h);
 
-    const float     ndcX    = (2.f * mousePos.x / w) - 1.f;
-    const float     ndcY    = 1.f - (2.f * mousePos.y / h);
-    glm::vec4       viewDir = glm::inverse(projection) * glm::vec4(ndcX, ndcY, -1.f, 1.f);
-    viewDir.z = -1.f;
-    viewDir.w =  0.f;
-    const glm::vec3 rayDir    = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
-    const glm::vec3 rayOrigin = _cameraTransform.position;
-
-    // Camera world basis (view rows), matching how the billboards are oriented, so
-    // a meshless entity's clickable area is exactly its icon quad.
-    const glm::vec3 cameraRight(view[0][0], view[1][0], view[2][0]);
-    const glm::vec3 cameraUp(view[0][1], view[1][1], view[2][1]);
-    const float     iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    const glm::vec3 rayOrigin   = ray.origin;
+    const glm::vec3 rayDir      = ray.direction;
+    const glm::vec3 cameraRight = ray.cameraRight;
+    const glm::vec3 cameraUp    = ray.cameraUp;
+    const float     iconHalf    = 0.5f * Assisi::Render::kEntityIconWorldSize;
 
     float               closestT = std::numeric_limits<float>::max();
     Assisi::ECS::Entity result   = Assisi::ECS::NullEntity;
@@ -381,6 +449,7 @@ Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos)
         }
     }
 
+    tOut = closestT;
     return result;
 }
 

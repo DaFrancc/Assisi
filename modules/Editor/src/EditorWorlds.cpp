@@ -184,6 +184,19 @@ void EditorApp::DrawWorldSelector()
     if (_worlds.Count() < 2)
         return;
 
+    // Blueprint mode is a mode, not a world you happen to be looking at. Letting the
+    // selector step out of it would leave the edited role behind on the blueprint —
+    // so the level you switched to would be view-only and the reason would be
+    // invisible. Close the blueprint to get back.
+    if (InBlueprintMode())
+    {
+        ImGui::TextDisabled("editing %s", _world->levelPath.c_str());
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Close the blueprint (Blueprint panel) to go back to the level.");
+        ImGui::Separator();
+        return;
+    }
+
     ImGui::SetNextItemWidth(-120.f);
     if (ImGui::BeginCombo("##world", _world->name.c_str()))
     {

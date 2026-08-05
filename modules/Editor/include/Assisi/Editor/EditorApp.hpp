@@ -523,6 +523,141 @@ class EditorApp : public Assisi::App::Application
     /// @brief Refreshes @ref _blueprintFiles from the asset root.
     void ScanBlueprints();
 
+    // --- Blueprint editing mode --------------------------------------------
+    //
+    // A blueprint is an ordinary level file, so editing one is opening it as a
+    // level. What makes it a *mode* rather than another Open Level is that the
+    // level you came from stays resident and untouched behind it — which is the
+    // whole point, because saving the blueprint has to bring that level's copies
+    // of it up to date, and it cannot do that to a world it just unloaded.
+    //
+    // The blueprint world takes over the **edited** role while it is open, with
+    // its own undo history and its own dirty marker, and hands the role back on
+    // close. Two live histories rather than one saved and restored: the level's
+    // must survive the round trip exactly, and EditHistory binds a Scene by
+    // reference, so stashing it is not something to be clever about.
+
+    /// @brief True while the world being shown is the open blueprint.
+    [[nodiscard]] bool InBlueprintMode() const;
+
+    /// @brief Opens @p source (a `.abp`, or any level file) in its own world with
+    /// the editor's lighting rig, and switches the editor into blueprint mode.
+    ///
+    /// Loads assets and touches GPU state, so it must run at the frame's
+    /// main-thread drain like any other level load — reach it through
+    /// @ref _pendingBlueprintOpen rather than calling it from a panel.
+    void OpenBlueprintForEditing(const std::string &source);
+
+    /// @brief Leaves blueprint mode: hands the edited role back, destroys the
+    /// blueprint world, and shows the level again. No-op if none is open.
+    void CloseBlueprintEditor();
+
+    /// @brief Stands up the lighting the blueprint editor works by — a sun and a
+    /// raised ambient — so a model is visible without the author having to light
+    /// one. Every entity it creates carries Runtime::EditorOnly, which is what
+    /// keeps the sun out of the saved file.
+    void AddBlueprintEditorRig(Assisi::App::World &world);
+
+    /// @brief The blueprint-mode panel: what is being edited, save/close, and the
+    /// live lighting controls.
+    void DrawBlueprintEditorWindow();
+
+    /// @brief The blueprint world's sun, or NullEntity if the rig is gone (the
+    /// author is free to delete it — it is an ordinary entity).
+    [[nodiscard]] Assisi::ECS::Entity BlueprintSunEntity() const;
+
+    // --- Re-expansion on save (stage 5d) ------------------------------------
+
+    /// @brief One live instance a save would bring up to date, and what it takes.
+    struct PendingReexpand
+    {
+        Assisi::App::World *world = nullptr;
+        std::uint32_t       instanceId = 0;
+        /// The member names the live tags were written against. Captured before the
+        /// definition cache is dropped, because nothing can reconstruct them after.
+        std::vector<std::string> previousMemberNames;
+        /// Members this instance loses, resolved from the name diff. Empty for the
+        /// common edit, which changes values and adds nothing and removes nothing.
+        std::vector<Assisi::ECS::Entity> doomed;
+    };
+
+    /// @brief Brings every live copy of @p source up to date, across every resident
+    /// world that is not simulating.
+    ///
+    /// Called by a successful save. Instances are matched by **closure**, not by
+    /// source path: a parking lot's flattened member list contains the car's members,
+    /// so editing the car changes the lot too.
+    ///
+    /// If the edit deletes members and that would cost undo history, this stops and
+    /// asks (@ref _pendingReexpand) rather than doing it — see
+    /// DrawReexpandConfirmModal. Nothing about the file on disk depends on the answer;
+    /// declining leaves the live copies stale until the level is reloaded, which is
+    /// exactly where they were before 5d existed.
+    void ReexpandInstancesOf(const std::string &source);
+
+    /// @brief Performs the work @ref ReexpandInstancesOf collected. Truncates the
+    /// history of any world that lost a member, and rebuilds physics and assets for
+    /// every member that survived or arrived.
+    void ApplyPendingReexpand();
+
+    /// @brief The "this costs you N undo steps" prompt. No-op when nothing is
+    /// pending.
+    void DrawReexpandConfirmModal();
+
+    // --- Moving an instance -------------------------------------------------
+    //
+    // An instance has no root entity to grab — the root evaporates at expansion
+    // (docs/blueprint-system-concept.md §3), so "the instance's transform" is a
+    // field on a table row and moving it means moving every member the placement
+    // reaches. Two callers do that: the gizmo and the inspector. They share these
+    // three so a typed number and a dragged handle produce the same edit, the same
+    // undo entry, and the same rounding.
+
+    /// @brief Opens a placement gesture on @p instanceId: snapshots the record and
+    /// every member's pose, because the undo entry needs both and neither is
+    /// reconstructible afterwards. Idempotent while the same gesture is open.
+    void BeginInstanceGesture(std::uint32_t instanceId);
+
+    /// @brief Moves @p instanceId to @p placement, carrying its members by the
+    /// delta.
+    ///
+    /// By delta rather than by re-expansion, deliberately: re-expanding would
+    /// destroy and recreate handles behind undo's back, and this is the gesture that
+    /// has to stay cheap. A non-uniform scale is averaged to one number here, which
+    /// is where the "an instance may only scale uniformly" rule is enforced first —
+    /// the load hard-fails on one, and this is the half that keeps it from ever being
+    /// authored.
+    void ApplyInstancePlacement(std::uint32_t instanceId, const Assisi::Runtime::Transform &placement);
+
+    /// @brief Closes the open placement gesture into one transaction labelled
+    /// @p label, carrying the record and every pose that actually moved. No-op if
+    /// nothing moved — a click without a drag is not an edit.
+    void EndInstanceGesture(const char *label);
+
+    /// @brief The Inspector, when what is selected is an *instance* rather than an
+    /// entity — its identity and its placement, typed rather than only dragged.
+    void DrawInstanceInspector();
+
+    /// @brief Floor for a typed instance scale. Zero divides every member's scale
+    /// away with no record of what it was; see ApplyInstancePlacement.
+    static constexpr float kMinTypedInstanceScale = 1e-4f;
+
+    /// @brief Draws a billboard at every live instance's placement, and outlines the
+    /// selected one.
+    ///
+    /// An instance's root evaporates at expansion, so nothing in the scene marks
+    /// where a copy was put. That left the group's origin invisible and, worse,
+    /// unclickable: the only way to select an instance was to find a member in the
+    /// outliner and press "Select instance". A billboard gives it the same handle
+    /// every placement-only entity already has.
+    void SubmitInstanceIcons();
+
+    /// @brief The instance whose root billboard @p mousePos is over, or 0.
+    ///
+    /// @param tOut distance along the pick ray, so the caller can decide between
+    ///        this and an entity hit by which is actually in front.
+    [[nodiscard]] std::uint32_t PickInstance(glm::vec2 mousePos, float &tOut);
+
     /// @brief Places an instance of @p source in front of the camera, as one
     /// undoable transaction: the record and every member it created.
     ///
@@ -544,6 +679,9 @@ class EditorApp : public Assisi::App::Application
     /// pointers and Jolt bodies. Propagates first, because a parented member is
     /// placed from a parent matrix that does not exist until it has.
     void RebuildInstanceTransients(std::span<const Assisi::ECS::Entity> members);
+    /// @brief The same, for a world that is not the one being shown — a blueprint
+    /// save brings instances up to date wherever they are resident.
+    void RebuildInstanceTransients(Assisi::App::World &world, std::span<const Assisi::ECS::Entity> members);
 
     /// @brief What @p entity's instance claims about @p component, or null if it
     /// claims nothing — which is the common case and the one worth keeping cheap.
@@ -599,7 +737,17 @@ class EditorApp : public Assisi::App::Application
     /// the cache-clear + rebind LoadLevel wraps. Returns false if the file didn't
     /// deserialize. The shared core of LoadLevel and the command-line loader.
     bool LoadLevelFromPath(const std::string &virtualPath);
+    /// @brief Saves the shown world to `levels/<name>.alvl`. Save As, and the
+    /// Levels panel's shorthand for a level that lives where levels live.
     void SaveLevel(const std::string &name);
+    /// @brief Saves the shown world to @p virtualPath verbatim, and records the
+    /// history position that now matches disk.
+    ///
+    /// The general form, and the one a blueprint needs: a `.abp` lives under
+    /// `blueprints/`, not `levels/`, and saving it through the name-shaped call
+    /// would write a level file beside the wrong content. @return false if the path
+    /// could not be resolved or the write failed.
+    bool SaveLevelToPath(const std::string &virtualPath);
 
     // --- Play control (F5 run / F6 pause / F7 stop) ---
     /// @brief Enters play from the editing state: snapshots the scene so Stop can
@@ -699,7 +847,23 @@ class EditorApp : public Assisi::App::Application
     /// clears the modal target when the queue is empty. Called after each choice.
     void AdvanceStaleQueue();
 
+    /// @brief A camera ray through a screen point, plus the camera basis the
+    /// billboards are oriented by — so what is clickable is exactly what is drawn.
+    struct PickRay
+    {
+        glm::vec3 origin{0.f};
+        glm::vec3 direction{0.f, 0.f, -1.f};
+        glm::vec3 cameraRight{1.f, 0.f, 0.f};
+        glm::vec3 cameraUp{0.f, 1.f, 0.f};
+        /// False for a zero-size framebuffer (minimized), where there is no ray.
+        bool valid = false;
+    };
+    [[nodiscard]] PickRay BuildPickRay(glm::vec2 mousePos);
+
     Assisi::ECS::Entity PickEntity(glm::vec2 mousePos);
+    /// @brief The same, reporting the hit distance so a caller can weigh it against
+    /// a non-entity hit (an instance root's billboard) and take whichever is nearer.
+    Assisi::ECS::Entity PickEntity(glm::vec2 mousePos, float &tOut);
 
     // --- Systems ---
     Assisi::App::SystemRegistry _systems;
@@ -972,6 +1136,11 @@ class EditorApp : public Assisi::App::Application
     // undoable there, but the whole container is discarded when play resumes or
     // stops, so paused undo never leaks into the persistent editing history.
     std::optional<Assisi::Editor::EditHistory> _pausedHistory;
+    // The open blueprint world's own history, live only while blueprint mode is.
+    // Separate from _history rather than swapped with it: the level's undo stack has
+    // to come back untouched, and EditHistory binds a Scene by reference — a stash
+    // that moved it would be a stack pointing at a scene that had moved on.
+    std::optional<Assisi::Editor::EditHistory> _blueprintHistory;
     // Accumulated across a frame's ImGui panels: true if an edit widget (inspector
     // drag/type, or the gizmo) is still being manipulated. The end-of-OnImGui sweep
     // reads it to decide whether an open capture gesture has ended. Reset each frame.
@@ -979,6 +1148,44 @@ class EditorApp : public Assisi::App::Application
     // The main history's state token at the last successful SaveLevel (0 = base /
     // freshly loaded). IsSceneDirty() compares the live token against it.
     std::uint64_t _savedStateToken = 0;
+
+    // --- Blueprint editing mode ---
+    // The world holding the blueprint being edited, or null when none is open. It
+    // holds the *edited* role while it lives, which is what makes the panels let you
+    // touch it; the level it was opened from stays resident and inspect-only.
+    Assisi::App::World *_blueprintWorld = nullptr;
+    // Which world to show again on close. By name, not by pointer: closing is a
+    // frame or many after opening and the world could have gone in between.
+    std::string _blueprintReturnWorld;
+    // _blueprintHistory's token at the blueprint's last successful save.
+    std::uint64_t _blueprintSavedToken = 0;
+    // The lighting the blueprint editor works by. The sun is an entity (so the
+    // gizmo and inspector reach it like anything else); ambient is a renderer knob,
+    // since there is no such component and nothing about it belongs in a file.
+    glm::vec3 _blueprintAmbientColor{1.f, 1.f, 1.f};
+    float     _blueprintAmbient = 0.25f;
+    // Deferred, for the same reason level loads are: opening resolves assets and
+    // touches GPU state, and a panel runs mid-frame.
+    std::optional<std::string> _pendingBlueprintOpen;
+    // Set by the panel's Close button, applied at the same safe point — closing
+    // destroys a world, which must never happen from inside a panel.
+    bool _pendingBlueprintClose = false;
+
+    // A collected re-expansion waiting on the author's answer, plus what it costs.
+    // Empty the rest of the time; the modal is only raised when history is at stake.
+    std::vector<PendingReexpand> _pendingReexpand;
+    std::string                  _pendingReexpandSource;
+    std::size_t                  _pendingReexpandUndoLoss = 0;
+    // The member names the edit removes, for the prompt. Names rather than entities:
+    // "lid, hinge" is what the author recognises, and one name may cover four copies.
+    std::vector<std::string> _pendingReexpandRemoved;
+    // Blueprints whose live copies the author chose to leave stale. Hosting is
+    // refused while this is non-empty (stage 5e): a client expands the file, so the
+    // two machines would build different member sets and the content-set hash would
+    // agree that they match — it hashes the disk, and the disks *do* match. Cleared
+    // by a level load, and by a catch-up that is accepted.
+    std::vector<std::string> _staleInstanceSources;
+
     // Last dirty state pushed to the OS window title, so the title is only re-set
     // when it actually flips (not every frame).
     bool _titleDirtyShown = false;

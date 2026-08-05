@@ -47,6 +47,14 @@ enum class MaterialDebugView : uint32_t
     Emissive,
 };
 
+/// @brief The ambient term every surface gets for free, when nobody says otherwise.
+///
+/// Named here rather than left as a literal in three places because it is a value
+/// with a history: it was `const float kAmbient = 0.03` inside cube_min.frag, and
+/// moving it into the frame constants must not change a single rendered pixel by
+/// accident. Anything that wants a different one passes it.
+inline constexpr float kDefaultAmbientIntensity = 0.03f;
+
 class MeshPass
 {
   public:
@@ -94,9 +102,17 @@ class MeshPass
     /// matrix + cluster-grid parameters). Call once per frame, before Submit. The
     /// vertex shader multiplies @p viewProjection by each instance's world matrix
     /// for clip position, so the model matrix never leaves the GPU.
+    ///
+    /// @p ambientColor / @p ambientIntensity are the uniform term every surface
+    /// receives regardless of what lights it. The defaults reproduce the constant
+    /// this replaced (`kAmbient = 0.03` in cube_min.frag) exactly, so a caller that
+    /// says nothing renders what it always did; the editor turns it up to inspect a
+    /// model without having to light one.
     void UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &viewProjection, const glm::mat4 &view,
                               uint32_t screenWidth, uint32_t screenHeight, float nearZ, float farZ,
-                              uint32_t dirLightCount, MaterialDebugView debugView = MaterialDebugView::None) const;
+                              uint32_t dirLightCount, MaterialDebugView debugView = MaterialDebugView::None,
+                              const glm::vec3 &ambientColor = glm::vec3(1.f, 1.f, 1.f),
+                              float             ambientIntensity = kDefaultAmbientIntensity) const;
 
     /// @brief Submission counts from one Submit — the consumer half of the
     /// draw-stats (the producer counts drawn/culled). Since stage E the pass builds

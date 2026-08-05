@@ -699,6 +699,9 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         _sceneRenderer.SetHighlightedEntities(_selection);
     else
         _sceneRenderer.SetHighlightedEntity(Assisi::ECS::NullEntity);
+    // Which of them is the one being edited. Set after the list, because
+    // SetHighlightedEntity(Null) above clears it as part of clearing the selection.
+    _sceneRenderer.SetActiveHighlight(_showEditorOverlays ? _selectedEntity : Assisi::ECS::NullEntity);
     // Entity icons show while authoring/paused, but not during live play.
     _sceneRenderer.SetEditorIconsVisible(_showEditorOverlays && _playState != PlayState::Playing);
     if (_showEditorOverlays)
@@ -707,6 +710,11 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // build half; `overlay-lines` inside Render() is the draw half.
         ASSISI_PROFILE_SCOPE("collider-wireframes");
         SubmitColliderWireframes();
+
+        // A billboard where each instance was placed. Its root is a table row rather
+        // than an entity, so nothing in the scene would otherwise mark it — and an
+        // unmarked origin is also an unclickable one.
+        SubmitInstanceIcons();
     }
     // The propagation bookmark comes from the world, not the renderer: one
     // renderer will serve several worlds once more than one is resident.
@@ -851,6 +859,29 @@ void EditorApp::OnUpdate(float dt)
         _pendingTravel.reset();
         TravelToLevel(request);
     }
+
+    // Opening a blueprint loads assets; closing destroys a world. Both belong here
+    // rather than in the panel that asked for them, for the same reason every level
+    // load does: a panel runs mid-frame, after draws that reference what these free.
+    if (_pendingBlueprintOpen)
+    {
+        const std::string request = *_pendingBlueprintOpen;
+        _pendingBlueprintOpen.reset();
+        OpenBlueprintForEditing(request);
+    }
+    if (_pendingBlueprintClose)
+    {
+        _pendingBlueprintClose = false;
+        CloseBlueprintEditor();
+    }
+
+    // The rig's ambient follows the mode, every frame rather than at the two
+    // transitions: the renderer is shared by every world, so a knob left turned up
+    // would light the level the author went back to.
+    if (InBlueprintMode())
+        _sceneRenderer.SetAmbient(_blueprintAmbientColor, _blueprintAmbient);
+    else
+        _sceneRenderer.SetAmbient(glm::vec3(1.f), Assisi::Render::kDefaultAmbientIntensity);
 
     // A travel a game system asked for last frame. Applied here rather than where
     // it was requested: systems run inside the walk over the resident worlds, and
@@ -1067,6 +1098,10 @@ Assisi::Editor::EditHistory *EditorApp::ActiveHistory()
     switch (_playState)
     {
     case PlayState::Editing:
+        // The blueprint world has its own stack, and the level's stays exactly where
+        // it was — an edit in one must never land in the other's history.
+        if (InBlueprintMode())
+            return _blueprintHistory ? &*_blueprintHistory : nullptr;
         return _history ? &*_history : nullptr;
     case PlayState::Paused:
         return _pausedHistory ? &*_pausedHistory : nullptr;
@@ -1079,6 +1114,11 @@ Assisi::Editor::EditHistory *EditorApp::ActiveHistory()
 bool EditorApp::IsSceneDirty()
 {
     // Dirty tracks the *editing* history (where saves happen), not a paused scratch.
+    if (InBlueprintMode())
+    {
+        return _blueprintHistory.has_value() &&
+               _blueprintHistory->CurrentStateToken() != _blueprintSavedToken;
+    }
     return _history.has_value() && _history->CurrentStateToken() != _savedStateToken;
 }
 
@@ -1346,20 +1386,41 @@ void EditorApp::OnImGui()
         DrawTransformGizmo();
     }
 
+    // Blueprint mode shows a smaller editor. What is hidden is not hidden to be
+    // tidy: play control, the network, level open/save and the placement panel all
+    // act on *the level*, and the level is not what is in front of you — a Play
+    // button that runs a world containing one crate and an editor sun is a control
+    // whose only possible use is a mistake.
+    const bool blueprintMode = InBlueprintMode();
+
     { ASSISI_PROFILE_SCOPE("panel/options");      DrawOptionsWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/diagnostics");  DrawDiagnosticsWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/chiara");       DrawChiaraWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/game-control"); DrawGameControlWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/network");      DrawNetworkWindow(); }
+    if (!blueprintMode)
+    {
+        { ASSISI_PROFILE_SCOPE("panel/diagnostics");  DrawDiagnosticsWindow(); }
+        { ASSISI_PROFILE_SCOPE("panel/chiara");       DrawChiaraWindow(); }
+        { ASSISI_PROFILE_SCOPE("panel/game-control"); DrawGameControlWindow(); }
+        { ASSISI_PROFILE_SCOPE("panel/network");      DrawNetworkWindow(); }
+    }
     { ASSISI_PROFILE_SCOPE("panel/entity-list");  DrawEntityListWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/history");      DrawHistoryWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/levels");       DrawLevelsWindow(); }
-    { ASSISI_PROFILE_SCOPE("panel/blueprints");   DrawBlueprintsWindow(); }
+    if (!blueprintMode)
+    {
+        { ASSISI_PROFILE_SCOPE("panel/levels");     DrawLevelsWindow(); }
+        { ASSISI_PROFILE_SCOPE("panel/blueprints"); DrawBlueprintsWindow(); }
+    }
+    { ASSISI_PROFILE_SCOPE("panel/blueprint-mode"); DrawBlueprintEditorWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/inspector");    DrawInspector(); }
-    { ASSISI_PROFILE_SCOPE("panel/hello-image");  DrawHelloImageWindow(); }
+    if (!blueprintMode)
+    {
+        { ASSISI_PROFILE_SCOPE("panel/hello-image"); DrawHelloImageWindow(); }
+    }
     { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
     { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
-    { ASSISI_PROFILE_SCOPE("panel/host-modal");   DrawHostUnsavedModal(); }
+    { ASSISI_PROFILE_SCOPE("panel/reexpand-modal"); DrawReexpandConfirmModal(); }
+    if (!blueprintMode)
+    {
+        { ASSISI_PROFILE_SCOPE("panel/host-modal"); DrawHostUnsavedModal(); }
+    }
 
     // Release the Inspector's physics freeze here rather than inside the panel.
     // The panel cannot be trusted to observe its own release: DrawInspector

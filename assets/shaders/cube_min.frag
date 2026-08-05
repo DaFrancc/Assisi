@@ -62,6 +62,7 @@ layout(binding = 256) uniform FrameConstants
     // Froxel lookup scale/bias (see Render::FrameConstants): xy = gridDim.xy /
     // screenSize, z = gridDim.z / log(farZ/nearZ), w = -z * log(nearZ).
     vec4  clusterScale;
+    vec4  ambient;            // rgb = linear colour, w = intensity
 } uFrame;
 
 // Debug view modes (must match Render::MaterialDebugView). 0 = normal lit render;
@@ -109,7 +110,6 @@ layout(std430, binding = 5) readonly buffer LightGrids     { LightGrid  lightGri
 // Must match Render::ClusterGrid::kMaxLightIndices and cluster_cull.comp's MAX_LIGHT_INDICES.
 const uint kSpotIndexBase = 262144u;
 
-const float kAmbient = 0.03;
 const float PI = 3.14159265359;
 
 // ---- Material sample ---------------------------------------------------
@@ -396,7 +396,8 @@ void main()
 
     // Ambient is scaled by the occlusion map (direct light already accounts for
     // visibility via N·L); emissive is added on top, unlit.
-    vec3 color = kAmbient * albedo * surf.occlusion + Lo + surf.emissive;
+    vec3 ambient = uFrame.ambient.rgb * uFrame.ambient.w;
+    vec3 color = ambient * albedo * surf.occlusion + Lo + surf.emissive;
 
     // Reinhard tone map + gamma correction
     color = color / (color + vec3(1.0));

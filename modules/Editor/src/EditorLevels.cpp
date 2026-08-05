@@ -168,10 +168,23 @@ void EditorApp::DrawBlueprintsWindow()
             ImGui::EndCombo();
         }
 
-        if (ImGui::Button("Place instance", ImVec2(-1.f, 0.f)))
+        const float halfW = (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
+        if (ImGui::Button("Place instance", ImVec2(halfW, 0.f)))
             PlaceBlueprintInstance(_blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)]);
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Adds a copy in front of the camera. Undoable.");
+
+        ImGui::SameLine();
+        // Deferred: opening loads assets and creates a world, and this runs
+        // mid-frame. The safe point in OnUpdate picks it up next frame.
+        if (ImGui::Button("Edit", ImVec2(-1.f, 0.f)))
+            _pendingBlueprintOpen = _blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)];
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Opens the file in its own world with an editor sun, so you can work on it "
+                              "directly. This level stays loaded behind it, and saving brings its copies "
+                              "up to date.");
+        }
     }
     ImGui::EndDisabled();
 
@@ -450,33 +463,38 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
 
 void EditorApp::RebuildInstanceTransients(std::span<const Assisi::ECS::Entity> members)
 {
-    if (_scene == nullptr || _world == nullptr)
+    if (_world == nullptr)
         return;
+    RebuildInstanceTransients(*_world, members);
+}
 
+void EditorApp::RebuildInstanceTransients(Assisi::App::World                  &world,
+                                          std::span<const Assisi::ECS::Entity> members)
+{
     for (const Assisi::ECS::Entity member : members)
     {
         if (member == Assisi::ECS::NullEntity)
             continue;
-        if (auto *mesh = _scene->Get<Assisi::Runtime::MeshRenderer>(member))
+        if (auto *mesh = world.scene.Get<Assisi::Runtime::MeshRenderer>(member))
             Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache, _assetDatabase);
     }
 
     // Propagate before building bodies, for the reason App::BuildSceneBodies
     // exists: a parented member is placed from a parent matrix that does not exist
     // until propagation has run over the entities just created.
-    _world->propagationTick = Assisi::Runtime::PropagateTransforms(*_scene, _world->propagationTick);
-    const auto parentWorld  = Assisi::App::ParentWorldResolver(*_scene);
+    world.propagationTick  = Assisi::Runtime::PropagateTransforms(world.scene, world.propagationTick);
+    const auto parentWorld = Assisi::App::ParentWorldResolver(world.scene);
 
     for (const Assisi::ECS::Entity member : members)
     {
         if (member == Assisi::ECS::NullEntity)
             continue;
-        const auto *transform  = _scene->Get<Assisi::Runtime::Transform>(member);
-        const auto *descriptor = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(member);
+        const auto *transform  = world.scene.Get<Assisi::Runtime::Transform>(member);
+        const auto *descriptor = world.scene.Get<Assisi::Physics::RigidBodyDescriptor>(member);
         if (transform != nullptr && descriptor != nullptr &&
-            _scene->Get<Assisi::Physics::RigidBody>(member) == nullptr)
+            world.scene.Get<Assisi::Physics::RigidBody>(member) == nullptr)
         {
-            _physics->AddBodyFromDescriptor(*_scene, member, *transform, *descriptor, parentWorld);
+            world.physics.AddBodyFromDescriptor(world.scene, member, *transform, *descriptor, parentWorld);
         }
     }
 }
@@ -628,27 +646,50 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
 
 void EditorApp::SaveLevel(const std::string &name)
 {
-    const auto resolved = Assisi::Core::AssetSystem::Resolve("levels/" + name + ".alvl");
+    (void)SaveLevelToPath("levels/" + name + ".alvl");
+}
+
+bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
+{
+    if (_scene == nullptr || _world == nullptr)
+        return false;
+
+    const auto resolved = Assisi::Core::AssetSystem::Resolve(virtualPath);
     if (!resolved)
     {
-        Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", name);
-        return;
+        Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", virtualPath);
+        return false;
     }
-    // Carry the world's profile back into the file. A Scene does not know it —
-    // it is a property of the level — so a save that dropped it would silently
+    // Carry the world's systems back into the file. A Scene does not know them —
+    // they are a property of the level — so a save that dropped them would silently
     // strip the field from every level the editor touches.
     const Assisi::Runtime::LevelHeader header{.instances = {}, .systems = _world->systemNames};
-    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header, &_world->instances))
-    {
-        // Save As renames what this world *is* — keep its level identity truthful,
-        // since travel and (later) the network level handshake read it.
-        _world->levelPath = "levels/" + name + ".alvl";
+    if (!Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header, &_world->instances))
+        return false;
 
-        // Record the history position that now matches disk — IsSceneDirty compares
-        // against this to drive the title's unsaved-changes marker.
-        if (_history)
-            _savedStateToken = _history->CurrentStateToken();
+    // Save As renames what this world *is* — keep its level identity truthful,
+    // since travel and (later) the network level handshake read it.
+    _world->levelPath = virtualPath;
+
+    // Record the history position that now matches disk — IsSceneDirty compares
+    // against this to drive the title's unsaved-changes marker. Which history that
+    // is depends on which world is being edited.
+    if (InBlueprintMode())
+    {
+        if (_blueprintHistory)
+            _blueprintSavedToken = _blueprintHistory->CurrentStateToken();
     }
+    else if (_history)
+    {
+        _savedStateToken = _history->CurrentStateToken();
+    }
+
+    // Stage 5d: every live copy of what was just written catches up, wherever it is
+    // resident. A level save normally finds nothing — a file cannot instance itself —
+    // so this costs one walk of the instance tables and stops.
+    ReexpandInstancesOf(virtualPath);
+
+    return true;
 }
 
 void EditorApp::LoadLevel(const std::string &name)
@@ -716,6 +757,14 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
         _history->Clear();
     _pausedHistory.reset(); // a load ends any play session, scratch history included
     _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
+
+    // A load expands every instance from the files as they are now, so nothing this
+    // world holds can still be behind one (stage 5e).
+    _staleInstanceSources.clear();
+    _pendingReexpand.clear();
+    _pendingReexpandRemoved.clear();
+    _pendingReexpandUndoLoss = 0;
+    _pendingReexpandSource.clear();
 
     return true;
 }

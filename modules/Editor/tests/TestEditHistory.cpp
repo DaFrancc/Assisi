@@ -730,3 +730,62 @@ TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component
     REQUIRE(sawCameraRebind);
     CHECK(transformPresentAtCameraRebind); // false today: hook fires before Transform is restored
 }
+
+TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below it")
+{
+    // Saving a blueprint that dropped a member destroys that member in every live
+    // copy (stage 5d). Undo is linear, so a transaction naming a dead handle makes
+    // everything *older* than it unreachable too — the rule is a suffix, not a
+    // filter. See EditHistory::ForgetEntities.
+    Scene        scene;
+    const Entity kept  = scene.Create();
+    const Entity doomed = scene.Create();
+    REQUIRE(scene.Add(kept, Transform{}) != nullptr);
+    REQUIRE(scene.Add(doomed, Transform{}) != nullptr);
+
+    const auto tid = IdOf("Transform");
+    const auto now = CaptureComponent(scene, kept, tid);
+
+    EditHistory hist(scene);
+    const auto  push = [&](const char *label, Entity target)
+    {
+        Transaction txn;
+        txn.label = label;
+        txn.cmds.push_back(ComponentDelta{target, tid, now, now});
+        hist.Push(std::move(txn));
+    };
+
+    push("A", kept);    // 1
+    push("B", doomed);  // 2  <- names the doomed member
+    push("C", kept);    // 3
+    push("D", doomed);  // 4  <- and so does this, the newest one that does
+    push("E", kept);    // 5
+    REQUIRE(hist.UndoDepth() == 5);
+
+    const Entity destroyed[] = {doomed};
+
+    // Asked without acting, so a save can say what it costs before committing.
+    CHECK(hist.CountForgettable(destroyed) == 4);
+    CHECK(hist.UndoDepth() == 5);
+
+    CHECK(hist.ForgetEntities(destroyed) == 4);
+
+    // Only E survives: everything at or below D goes, including C — which names
+    // nothing dead but sits under a step that can never be replayed.
+    REQUIRE(hist.UndoDepth() == 1);
+    CHECK(hist.NextUndoLabel() == "E");
+    CHECK_FALSE(hist.CanRedo());
+
+    // An entity nothing names costs nothing. From this same scene on purpose: a
+    // handle is (slot, generation) with no scene identity in it, so an entity taken
+    // from a second Scene would be {0,0} and alias `kept` — which is worth knowing
+    // and is why nothing may compare handles across scenes.
+    const Entity bystander = scene.Create();
+    const Entity none[]    = {bystander};
+    CHECK(hist.CountForgettable(none) == 0);
+    CHECK(hist.ForgetEntities(none) == 0);
+    CHECK(hist.UndoDepth() == 1);
+
+    const Entity untouched[] = {kept};
+    CHECK(hist.CountForgettable(untouched) == 1); // E does name it
+}

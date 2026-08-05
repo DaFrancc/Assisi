@@ -42,6 +42,7 @@ assisi_reflect(
   TARGET Assisi-Runtime
   HEADERS
     include/Assisi/Runtime/Components.hpp
+    include/Assisi/Runtime/EditorOnly.hpp
     include/Assisi/Runtime/Hierarchy.hpp
     include/Assisi/Runtime/Lifecycle.hpp
     include/Assisi/Runtime/LightComponents.hpp
