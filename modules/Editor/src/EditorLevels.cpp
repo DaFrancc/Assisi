@@ -2,11 +2,17 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Runtime/AssetResolve.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <imgui.h>
@@ -117,6 +123,102 @@ void EditorApp::DrawLevelsWindow()
 }
 
 // ---------------------------------------------------------------------------
+// Blueprints window
+// ---------------------------------------------------------------------------
+
+void EditorApp::DrawBlueprintsWindow()
+{
+    ImGui::Begin("Blueprints");
+
+    // The one sentence that makes the panel legible: a blueprint is not a second
+    // kind of thing, it is a file you place instead of copying.
+    ImGui::TextWrapped("A blueprint is an ordinary level file you place copies of. Editing the file fixes "
+                       "every copy on the next load.");
+    ImGui::Separator();
+
+    const bool editable = (_playState == PlayState::Editing) && IsEditable();
+
+    if (ImGui::Button("Refresh"))
+        ScanBlueprints();
+    ImGui::SameLine();
+    ImGui::TextDisabled("%zu file(s)", _blueprintFiles.size());
+
+    // --- Place an instance of an existing file ------------------------------
+    ImGui::BeginDisabled(!editable);
+    if (_blueprintFiles.empty())
+    {
+        ImGui::TextDisabled("No .abp or .alvl files found under the asset root.");
+    }
+    else
+    {
+        _selectedBlueprint =
+            std::clamp(_selectedBlueprint, 0, static_cast<int32_t>(_blueprintFiles.size()) - 1);
+
+        ImGui::SetNextItemWidth(-1.f);
+        if (ImGui::BeginCombo("##blueprint", _blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)].c_str()))
+        {
+            for (int32_t i = 0; i < static_cast<int32_t>(_blueprintFiles.size()); ++i)
+            {
+                const bool selected = (i == _selectedBlueprint);
+                if (ImGui::Selectable(_blueprintFiles[static_cast<std::size_t>(i)].c_str(), selected))
+                    _selectedBlueprint = i;
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        if (ImGui::Button("Place instance", ImVec2(-1.f, 0.f)))
+            PlaceBlueprintInstance(_blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)]);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Adds a copy in front of the camera. Undoable.");
+    }
+    ImGui::EndDisabled();
+
+    // --- Make one out of what is selected -----------------------------------
+    ImGui::Separator();
+
+    const bool haveSelection = _selectedEntity != Assisi::ECS::NullEntity && _scene != nullptr &&
+                               _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity);
+    const bool selectionIsMember =
+        haveSelection && _scene->Has<Assisi::ECS::BlueprintMember>(_selectedEntity);
+
+    ImGui::BeginDisabled(!editable || !haveSelection || selectionIsMember);
+    ImGui::SetNextItemWidth(-ImGui::CalcTextSize("Create from selection").x - ImGui::GetStyle().ItemSpacing.x -
+                            ImGui::GetStyle().FramePadding.x * 2.f);
+    ImGui::InputTextWithHint("##newblueprint", "name", _newBlueprintName, sizeof(_newBlueprintName));
+    ImGui::SameLine();
+    if (ImGui::Button("Create from selection") && _newBlueprintName[0] != '\0')
+    {
+        CreateBlueprintFromSelection(_newBlueprintName);
+        _newBlueprintName[0] = '\0';
+    }
+    ImGui::EndDisabled();
+
+    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+    {
+        if (selectionIsMember)
+        {
+            // Nesting is an `instances` entry, not copied entities — copying them
+            // would bake the inner blueprint in and stop a fix to it propagating.
+            ImGui::SetTooltip("The selection belongs to a blueprint instance. Prune it first, or nest by "
+                              "adding an `instances` entry to the file by hand.");
+        }
+        else if (!haveSelection)
+        {
+            ImGui::SetTooltip("Select an entity. It and everything parented under it become the blueprint.");
+        }
+        else
+        {
+            ImGui::SetTooltip("Saves the selection and its children as blueprints/<name>.abp, then replaces "
+                              "them with an instance of it. One Ctrl-Z undoes the swap.");
+        }
+    }
+
+    ImGui::End();
+}
+
+// ---------------------------------------------------------------------------
 // Level management
 // ---------------------------------------------------------------------------
 
@@ -142,6 +244,214 @@ void EditorApp::ScanLevels()
     }
     std::sort(_levelFiles.begin(), _levelFiles.end());
     _selectedLevel = 0;
+}
+
+void EditorApp::ScanBlueprints()
+{
+    _blueprintFiles = Assisi::App::ScanContentPaths();
+    _selectedBlueprint = 0;
+}
+
+void EditorApp::PlaceBlueprintInstance(const std::string &source)
+{
+    if (_scene == nullptr || _world == nullptr || !IsEditable())
+        return;
+
+    // In front of the camera, like every other create gesture here — placing at
+    // the origin means hunting for it.
+    RefreshCameraMatrix();
+    const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
+
+    Assisi::Runtime::Transform placement;
+    placement.position = _cameraTransform.position + forward * 5.f;
+
+    // A name unique in this level, because it is the prefix its members are
+    // addressed by: `car_3/wheel_fl` has to name exactly one entity.
+    const std::string stem = std::filesystem::path(source).stem().string();
+    std::string       name = stem;
+    for (uint32_t suffix = 1;; ++suffix)
+    {
+        bool taken = false;
+        for (const auto &[id, row] : _world->instances.All())
+            taken = taken || row->name == name;
+        if (!taken)
+            break;
+        name = stem + "_" + std::to_string(suffix);
+    }
+
+    const Assisi::Runtime::LevelInstance entry{.name      = name,
+                                               .source    = source,
+                                               .transform = placement,
+                                               .overrides = nlohmann::json::object(),
+                                               .removed   = {}};
+
+    const auto placed = Assisi::Runtime::SceneSerializer::PlaceInstance(*_scene, _world->instances, entry,
+                                                                        /*authored=*/true);
+    if (!placed)
+    {
+        Assisi::Core::Log::Error("Editor: could not place '{}' — see the log above.", source);
+        return;
+    }
+
+    // Transients the expansion does not build: the members arrived with asset ids
+    // and descriptors, and need the same resolve + physics build a level load runs.
+    RebuildInstanceTransients(placed->members);
+
+    // One transaction: the record and every member. Undo takes the whole copy back
+    // rather than leaving a record with no entities or entities with no record.
+    if (Assisi::Editor::EditHistory *history = ActiveHistory())
+    {
+        Assisi::Editor::Transaction txn;
+        txn.label           = "Place " + name;
+        txn.selectionBefore = _selectedEntity;
+        txn.selectionAfter  = Assisi::ECS::NullEntity;
+        txn.cmds.push_back(Assisi::Editor::InstanceDelta{
+            .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
+        for (const Assisi::ECS::Entity member : placed->members)
+        {
+            if (member != Assisi::ECS::NullEntity)
+                txn.cmds.push_back(Assisi::Editor::EntityDelta{member, std::nullopt,
+                                                               history->CaptureEntityComponents(member)});
+        }
+        history->Push(std::move(txn));
+    }
+
+    _selectedInstance = placed->instanceId;
+    _selectedEntity   = Assisi::ECS::NullEntity;
+}
+
+void EditorApp::CreateBlueprintFromSelection(const std::string &name)
+{
+    if (_scene == nullptr || _world == nullptr || !IsEditable(_selectedEntity))
+        return;
+
+    const std::vector<Assisi::ECS::Entity> subtree = GatherSubtree(_selectedEntity);
+    if (subtree.empty())
+        return;
+
+    // The blueprint is authored around the selection root's pose, and the instance
+    // is placed back at it — so the swap is invisible on screen, which is what
+    // makes it feel like a refactor rather than an edit.
+    Assisi::Runtime::Transform placement;
+    if (const auto *transform = _scene->Get<Assisi::Runtime::Transform>(_selectedEntity))
+        placement = *transform;
+
+    const std::string source   = "blueprints/" + name + ".abp";
+    const auto        resolved = Assisi::Core::AssetSystem::Resolve(source);
+    if (!resolved)
+    {
+        Assisi::Core::Log::Error("Editor: cannot resolve a path for '{}'.", source);
+        return;
+    }
+
+    if (!Assisi::Runtime::SceneSerializer::SaveEntitiesToFile(*_scene, subtree, *resolved, placement))
+        return;
+
+    // The file is new, so nothing can have cached a definition for it — but a
+    // *previous* file of the same name may be cached, and would be expanded
+    // instead of what was just written.
+    Assisi::Runtime::InvalidateBlueprint(source);
+    ScanBlueprints();
+
+    // Capture the originals before tearing them down: undo has to revive them, and
+    // their components must still be alive to serialize.
+    Assisi::Editor::EditHistory *history = ActiveHistory();
+    Assisi::Editor::Transaction  txn;
+    txn.label           = "Create " + name;
+    txn.selectionBefore = _selectedEntity;
+    txn.selectionAfter  = Assisi::ECS::NullEntity;
+    if (history != nullptr)
+    {
+        for (const Assisi::ECS::Entity entity : subtree)
+            txn.cmds.push_back(
+                Assisi::Editor::EntityDelta{entity, history->CaptureEntityComponents(entity), std::nullopt});
+    }
+
+    for (const Assisi::ECS::Entity entity : subtree)
+    {
+        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
+        {
+            _physics->RemoveBody(*body);
+            _scene->Remove<Assisi::Physics::RigidBody>(entity);
+        }
+        _scene->Destroy(entity);
+    }
+    // Now, not at end of frame: the placement below creates entities, and a
+    // deferred destroy would let the new members take slots the undo needs back.
+    _scene->FlushDestroyed();
+
+    _selectedEntity   = Assisi::ECS::NullEntity;
+    _selectedInstance = 0;
+
+    const Assisi::Runtime::LevelInstance entry{.name      = name,
+                                               .source    = source,
+                                               .transform = placement,
+                                               .overrides = nlohmann::json::object(),
+                                               .removed   = {}};
+
+    const auto placed = Assisi::Runtime::SceneSerializer::PlaceInstance(*_scene, _world->instances, entry,
+                                                                        /*authored=*/true);
+    if (!placed)
+    {
+        // The entities are already gone. Push what we have so Ctrl-Z brings them
+        // back rather than leaving the author with nothing and no way to recover.
+        Assisi::Core::Log::Error("Editor: '{}' was written but could not be placed; undo to restore the "
+                                 "original entities.",
+                                 source);
+        if (history != nullptr)
+            history->Push(std::move(txn));
+        return;
+    }
+
+    RebuildInstanceTransients(placed->members);
+
+    if (history != nullptr)
+    {
+        txn.cmds.push_back(Assisi::Editor::InstanceDelta{
+            .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
+        for (const Assisi::ECS::Entity member : placed->members)
+        {
+            if (member != Assisi::ECS::NullEntity)
+                txn.cmds.push_back(Assisi::Editor::EntityDelta{member, std::nullopt,
+                                                               history->CaptureEntityComponents(member)});
+        }
+        history->Push(std::move(txn));
+    }
+
+    _selectedInstance = placed->instanceId;
+}
+
+void EditorApp::RebuildInstanceTransients(std::span<const Assisi::ECS::Entity> members)
+{
+    if (_scene == nullptr || _world == nullptr)
+        return;
+
+    for (const Assisi::ECS::Entity member : members)
+    {
+        if (member == Assisi::ECS::NullEntity)
+            continue;
+        if (auto *mesh = _scene->Get<Assisi::Runtime::MeshRenderer>(member))
+            Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache, _assetDatabase);
+    }
+
+    // Propagate before building bodies, for the reason App::BuildSceneBodies
+    // exists: a parented member is placed from a parent matrix that does not exist
+    // until propagation has run over the entities just created.
+    _world->propagationTick = Assisi::Runtime::PropagateTransforms(*_scene, _world->propagationTick);
+    const auto parentWorld  = Assisi::App::ParentWorldResolver(*_scene);
+
+    for (const Assisi::ECS::Entity member : members)
+    {
+        if (member == Assisi::ECS::NullEntity)
+            continue;
+        const auto *transform  = _scene->Get<Assisi::Runtime::Transform>(member);
+        const auto *descriptor = _scene->Get<Assisi::Physics::RigidBodyDescriptor>(member);
+        if (transform != nullptr && descriptor != nullptr &&
+            _scene->Get<Assisi::Physics::RigidBody>(member) == nullptr)
+        {
+            _physics->AddBodyFromDescriptor(*_scene, member, *transform, *descriptor, parentWorld);
+        }
+    }
 }
 
 void EditorApp::SaveLevel(const std::string &name)

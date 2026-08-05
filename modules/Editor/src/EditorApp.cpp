@@ -177,6 +177,7 @@ void EditorApp::OnStart()
     SetupCamera();
     SetupScene();
     ScanLevels();
+    ScanBlueprints();
 
     // Startup level from EditorConfig: open it now so `<editor-exe>
     // levels/Materials.alvl` boots straight into that scene. Resolved through the
@@ -1354,6 +1355,7 @@ void EditorApp::OnImGui()
     { ASSISI_PROFILE_SCOPE("panel/entity-list");  DrawEntityListWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/history");      DrawHistoryWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/levels");       DrawLevelsWindow(); }
+    { ASSISI_PROFILE_SCOPE("panel/blueprints");   DrawBlueprintsWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/inspector");    DrawInspector(); }
     { ASSISI_PROFILE_SCOPE("panel/hello-image");  DrawHelloImageWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }

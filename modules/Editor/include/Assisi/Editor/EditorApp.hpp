@@ -190,6 +190,7 @@ class EditorApp : public Assisi::App::Application
     void DrawDiagnosticsWindow();
     void DrawChiaraWindow();  // performance capture (F9); empty without -c builds
     void DrawLevelsWindow();
+    void DrawBlueprintsWindow();
     void DrawInspector();
     void DrawHelloImageWindow(); // ImGui-texture-display smoke test
     void DrawAssetBrowser();
@@ -510,6 +511,31 @@ class EditorApp : public Assisi::App::Application
 
     // --- Level management ---
     void ScanLevels();
+
+    /// @brief Refreshes @ref _blueprintFiles from the asset root.
+    void ScanBlueprints();
+
+    /// @brief Places an instance of @p source in front of the camera, as one
+    /// undoable transaction: the record and every member it created.
+    ///
+    /// The instance is *authored* — level content, written back when the level
+    /// saves — which is what distinguishes it from a runtime SpawnBlueprint.
+    void PlaceBlueprintInstance(const std::string &source);
+
+    /// @brief Saves the selected entity and its subtree as a blueprint, then
+    /// replaces them with an instance of it.
+    ///
+    /// This is what "authoring a blueprint" *is*: the file is the same format a
+    /// level is, and creating one is saving a selection and instancing it back.
+    /// One transaction, so a mistake is one Ctrl-Z — the entities come back and
+    /// the instance goes away. The file stays on disk, which is the same thing
+    /// undo does to any other save.
+    void CreateBlueprintFromSelection(const std::string &name);
+
+    /// @brief Rebuilds what expansion deliberately leaves out: resolved GPU asset
+    /// pointers and Jolt bodies. Propagates first, because a parented member is
+    /// placed from a parent matrix that does not exist until it has.
+    void RebuildInstanceTransients(std::span<const Assisi::ECS::Entity> members);
     void LoadLevel(const std::string &name);
     /// @brief Loads a level by virtual path (e.g. "levels/Materials.alvl"), doing
     /// the cache-clear + rebind LoadLevel wraps. Returns false if the file didn't
@@ -1003,6 +1029,14 @@ class EditorApp : public Assisi::App::Application
     std::vector<std::string> _levelFiles;
     int32_t                  _selectedLevel = 0;
     char                     _saveAsName[128] = {};
+
+    /// Every `.abp` and `.alvl` under the asset root, as virtual paths — what the
+    /// Blueprints panel offers to place. Both extensions, because they are one
+    /// format and the extension never gates behaviour: instancing a level into a
+    /// level is legal, and the editor should not pretend otherwise.
+    std::vector<std::string> _blueprintFiles;
+    int32_t                  _selectedBlueprint = 0;
+    char                     _newBlueprintName[128] = {};
     // A level load requested from the UI (OnImGui), applied at the next OnUpdate —
     // never mid-frame: LoadLevel frees GPU assets (incl. the bindless table) that
     // this frame's already-recorded draws still reference, which faults the GPU.

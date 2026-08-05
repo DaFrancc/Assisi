@@ -174,6 +174,54 @@ class SceneSerializer
                                                                 std::string_view      source,
                                                                 const ECS::Transform &placement);
 
+    /// @brief What a placement produced.
+    struct ExpandedInstance
+    {
+        std::uint32_t instanceId = 0;
+
+        /// Parallel to the blueprint's member list, with NullEntity where this
+        /// instance removed one. The editor needs the actual entities to build the
+        /// undo entry — placing an instance is one InstanceDelta plus one
+        /// EntityDelta per member, undone atomically.
+        std::vector<ECS::Entity> members;
+    };
+
+    /// @brief Places one instance from a full entry — name, source, placement, and
+    /// whatever it overrides.
+    ///
+    /// The authoring counterpart of ExpandInstance above, which is the runtime
+    /// spawn: this one is *named*, so its members are addressable as
+    /// `car_3/wheel_fl` and a level entity can point at them.
+    ///
+    /// @param authored true for content an author placed, which a save writes back.
+    ///        A runtime spawn is false: it exists because something in the game
+    ///        asked for it, and writing it into the file would make it authored the
+    ///        next time the level loads.
+    [[nodiscard]] static std::optional<ExpandedInstance> PlaceInstance(ECS::Scene &scene,
+                                                                       InstanceTable       &instances,
+                                                                       const LevelInstance &entry,
+                                                                       bool                 authored);
+
+    /// @brief Writes @p entities as a standalone file — the "create blueprint from
+    /// selection" half of authoring.
+    ///
+    /// Members are stored around @p origin rather than around wherever they were
+    /// standing, so the new file is placeable: a parentless entity's transform is
+    /// divided by the origin, and a parented one is already relative to its parent
+    /// and left alone.
+    ///
+    /// A reference pointing *outside* @p entities becomes null, with a warning —
+    /// the same rule entity migration follows, and for the same reason: the file
+    /// cannot name something it does not contain.
+    ///
+    /// @return false if the file could not be written, or if the selection
+    ///         contains a blueprint member. Wrapping an instance in a new blueprint
+    ///         is nesting, which the file expresses as an `instances` entry rather
+    ///         than as copied entities — copying them would bake the inner
+    ///         blueprint in and stop a fix to it from propagating.
+    static bool SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS::Entity> entities,
+                                   const std::filesystem::path &path, const ECS::Transform &origin);
+
     /// @brief Encodes @p definition's members into codec blocks, once, so every
     /// later spawn of it is a decode rather than a JSON walk (§11).
     ///

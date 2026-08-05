@@ -40,6 +40,14 @@ struct ContentSet
     std::uint64_t hash = 0;
 };
 
+/// @brief Every `.alvl` and `.abp` under the asset root, as sorted virtual paths.
+///
+/// The listing half of BuildContentSet, split out because the editor's blueprint
+/// panel wants the names without paying to hash every file to get them. Both
+/// extensions, because they are one format and the extension never gates
+/// behaviour — instancing a level into a level is legal.
+[[nodiscard]] std::vector<std::string> ScanContentPaths();
+
 /// @brief Scans the asset root and hashes it.
 ///
 /// Blocking, and deliberately not called on the main thread: run it as a job
