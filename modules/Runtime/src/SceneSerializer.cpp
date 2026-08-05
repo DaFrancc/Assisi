@@ -3,7 +3,9 @@
 
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
@@ -72,6 +74,14 @@ thread_local ECS::Scene *s_rawContextScene = nullptr;
 inline uint64_t EntityKey(uint32_t idx, uint32_t gen)
 {
     return (static_cast<uint64_t>(gen) << 32) | idx;
+}
+
+/// A packed EntityRef, the way BinaryCodec spells one: index low, generation high.
+/// The same packing EntityKey uses, named separately because it means something
+/// different — this one crosses the codec's reference hook.
+constexpr uint64_t PackEntity(ECS::Entity entity)
+{
+    return (static_cast<uint64_t>(entity.generation) << 32) | entity.index;
 }
 
 // Tears down the thread-local context on every exit path, including a
@@ -434,6 +444,11 @@ struct StagedInstance
     /// This instance's view of each member, after its own overrides. Parallel to
     /// members; empty entries where there is a hole.
     std::vector<BlueprintMemberDesc> resolved;
+
+    /// The instance's own claims, kept so the commit knows which components it may
+    /// take off the fast path. A prepared block is *full state*, so decoding one
+    /// over a component an override just set would undo the override.
+    nlohmann::json overrides = nlohmann::json::object();
 };
 
 /// The last segment of a member path — what the member is called in its own file,
@@ -471,6 +486,7 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
     StagedInstance staged;
     staged.definition = definition;
     staged.placement  = entry.transform;
+    staged.overrides  = entry.overrides;
     staged.id         = table.Add(BlueprintInstance{.name               = entry.name,
                                                     .source             = definition->source,
                                                     .transform          = entry.transform,
@@ -546,6 +562,18 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
     // whichever one answered first.
     const std::string prefix = instanceName.empty() ? std::string{} : std::string{instanceName} + "/";
 
+    // A prepared block's EntityRefs are member *indices*; this turns them into this
+    // instance's handles. It is why nothing has to walk a decoded component looking
+    // for references afterwards — the codec's own hook does it during the read.
+    Core::Reflect::CodecContext codec;
+    codec.entityFromWire = [&staged](uint64_t packed) -> uint64_t
+    {
+        const auto index = static_cast<uint32_t>(packed & 0xFFFFFFFFull);
+        if (packed == PackEntity(ECS::NullEntity) || index >= staged.members.size())
+            return PackEntity(ECS::NullEntity);
+        return PackEntity(staged.members[index]);
+    };
+
     for (std::size_t i = 0; i < staged.members.size(); ++i)
     {
         const ECS::Entity e = staged.members[i];
@@ -554,13 +582,56 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
 
         const BlueprintMemberDesc &desc = staged.resolved[i];
 
+        // Which components this instance had something to say about. Those fall
+        // back to the JSON below, because an override is a patch and the codec has
+        // no patch: a block is full state, so decoding it would overwrite the very
+        // fields the override just set.
+        std::unordered_set<std::string> claimed;
+        if (const auto it = staged.overrides.find(desc.name); it != staged.overrides.end() && it->is_object())
+        {
+            for (const auto &[componentName, claim] : it->items())
+                claimed.insert(componentName);
+        }
+
+        for (const PreparedComponent &prepared : staged.definition->members[i].prepared)
+        {
+            if (claimed.contains(prepared.name))
+                continue;
+            // A component the instance removed is simply absent from `components`,
+            // so it is absent here too.
+            if (!desc.components.contains(prepared.name))
+                continue;
+
+            const Core::Reflect::ComponentMeta *meta = registry.Find(prepared.name);
+            if (meta == nullptr)
+                continue;
+
+            void *component = meta->construct(&scene, e.index, e.generation);
+            if (component == nullptr)
+                continue;
+
+            Core::BitReader reader{prepared.block};
+            (void)Core::Reflect::ReadComponentId(reader); // the block leads with it
+            if (!Core::Reflect::ReadComponent(*meta, component, reader, /*appliedMask=*/nullptr, &codec))
+            {
+                Core::Log::Error("Blueprint: '{}' member '{}' failed to decode its '{}' block.",
+                                 staged.definition->source, desc.name, prepared.name);
+            }
+        }
+
         if (desc.components.is_object())
         {
-            nlohmann::json components = desc.components;
-            QualifyReferences(components, prefix);
-
-            for (const auto &[componentName, componentData] : components.items())
+            for (const auto &[componentName, componentData] : desc.components.items())
             {
+                // Already decoded, and faster than this path would have been.
+                const bool wasPrepared =
+                    !claimed.contains(componentName) &&
+                    std::any_of(staged.definition->members[i].prepared.begin(),
+                                staged.definition->members[i].prepared.end(),
+                                [&](const PreparedComponent &p) { return p.name == componentName; });
+                if (wasPrepared)
+                    continue;
+
                 const Core::Reflect::ComponentMeta *meta = registry.Find(componentName);
                 if (meta == nullptr || !meta->serializable)
                 {
@@ -569,7 +640,13 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
                                     staged.definition->source, desc.name, componentName);
                     continue;
                 }
-                meta->addToScene(&scene, e.index, e.generation, componentData);
+
+                // Qualified through a one-key wrapper because QualifyReferences
+                // takes a component *set* — it has to look the component up to
+                // know which of its fields are references.
+                nlohmann::json wrapper{{componentName, componentData}};
+                QualifyReferences(wrapper, prefix);
+                meta->addToScene(&scene, e.index, e.generation, wrapper.at(componentName));
             }
         }
 
@@ -753,7 +830,9 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
             LevelInstance instance{
                 .name      = entry.at("name").get<std::string>(),
                 .source    = entry.at("source").get<std::string>(),
-                .transform = TransformFromJson(entry.value("transform", nlohmann::json::object()))};
+                .transform = TransformFromJson(entry.value("transform", nlohmann::json::object())),
+                .overrides = nlohmann::json::object(),
+                .removed   = {}};
             if (const auto claims = entry.find("overrides"); claims != entry.end() && claims->is_object())
                 instance.overrides = *claims;
             if (const auto claims = entry.find("removed"); claims != entry.end() && claims->is_array())
@@ -918,6 +997,120 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
 }
 
 // ---------------------------------------------------------------------------
+// The prepared form
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+/// Whether a component can be round-tripped through the codec without losing
+/// anything the level file holds.
+///
+/// `norep` fields are saved to disk and deliberately never sent over the network,
+/// so the codec skips them — which is right for replication and wrong for a
+/// blueprint, where the file *is* disk. Such a component keeps the JSON path.
+/// Nothing in the engine declares one today; the check is here so the day one
+/// appears it costs a little speed rather than a silently missing field.
+bool IsCodecLossless(const Core::Reflect::ComponentMeta &meta)
+{
+    for (const Core::Reflect::FieldMeta &field : meta.fields)
+    {
+        if (field.norep && !field.transient)
+            return false;
+    }
+    return true;
+}
+
+} // namespace
+
+bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
+{
+    if (s_rawContextScene != nullptr)
+    {
+        Core::Log::Error("PrepareBlueprint: a raw-entity context is active on this thread.");
+        return false;
+    }
+
+    const auto &registry = Core::Reflect::ComponentRegistry::Instance();
+
+    ECS::Scene scratch;
+
+    // Saved and restored rather than refused: a definition is built lazily, and the
+    // first caller to want one is usually a level load that already has its own
+    // name context open. Nesting is safe here because this one resolves against a
+    // scratch scene that nothing else can see.
+    std::optional<SerializationContext> outer = std::exchange(s_context, SerializationContext{});
+    struct RestoreOuter
+    {
+        std::optional<SerializationContext> *outer;
+        ~RestoreOuter() { s_context = std::move(*outer); }
+    } const restore{&outer};
+
+    // Every member first, so a reference can point forward — and in order, so
+    // member i is entity {i, 0} and its packed handle *is* i.
+    std::vector<ECS::Entity> scratchEntities;
+    scratchEntities.reserve(definition.members.size());
+    for (const BlueprintMemberDesc &member : definition.members)
+    {
+        const ECS::Entity e = scratch.Create();
+        scratchEntities.push_back(e);
+        s_context->nameToEntity.emplace(member.name, e);
+    }
+
+    for (std::size_t i = 0; i < definition.members.size(); ++i)
+    {
+        const BlueprintMemberDesc &member = definition.members[i];
+        if (!member.components.is_object())
+            continue;
+
+        for (const auto &[componentName, componentData] : member.components.items())
+        {
+            const Core::Reflect::ComponentMeta *meta = registry.Find(componentName);
+            if (meta == nullptr || !meta->serializable)
+                continue; // reported at expansion, where there is an instance to name
+            meta->addToScene(&scratch, scratchEntities[i].index, scratchEntities[i].generation, componentData);
+        }
+    }
+
+    if (!s_context->unresolvedRefNames.empty())
+    {
+        Core::Log::Error("Blueprint: '{}' has {} reference(s) naming an entity it does not declare; the first "
+                         "is '{}'.",
+                         definition.source, s_context->unresolvedRefNames.size(),
+                         s_context->unresolvedRefNames.front());
+        return false;
+    }
+
+    for (std::size_t i = 0; i < definition.members.size(); ++i)
+    {
+        BlueprintMemberDesc &member = definition.members[i];
+        const ECS::Entity    e      = scratchEntities[i];
+
+        for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
+        {
+            const void *component = meta->getByEntity(&scratch, e.index, e.generation);
+            if (component == nullptr || !IsCodecLossless(*meta))
+                continue;
+
+            Core::BitWriter writer;
+            if (!Core::Reflect::WriteComponent(*meta, component, writer))
+            {
+                // A component the codec refuses is a reflection bug, but it is not
+                // this blueprint's fault and the JSON path still works — so the
+                // member simply keeps that component on the slow path.
+                continue;
+            }
+
+            const std::span<const std::byte> bytes = writer.Data();
+            member.prepared.push_back(PreparedComponent{
+                .id = meta->id, .name = meta->name, .block = {bytes.begin(), bytes.end()}});
+        }
+    }
+
+    return true;
+}
+
+// ---------------------------------------------------------------------------
 // Runtime expansion
 // ---------------------------------------------------------------------------
 
@@ -939,7 +1132,11 @@ std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, Insta
 
     // No instance name: the members are `body`, not `car_3/body`, because nothing
     // placed this one and no file addresses into it.
-    const LevelInstance entry{.name = {}, .source = std::string{source}, .transform = placement};
+    const LevelInstance entry{.name      = {},
+                              .source    = std::string{source},
+                              .transform = placement,
+                              .overrides = nlohmann::json::object(),
+                              .removed   = {}};
 
     StagedInstance instance;
     try

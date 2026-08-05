@@ -15,6 +15,7 @@
 /// See docs/blueprint-system-concept.md; the sections are cited where the code
 /// implements a decision that would otherwise read as arbitrary.
 
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string>
@@ -24,12 +25,37 @@
 
 #include <nlohmann/json.hpp>
 
+#include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 
 namespace Assisi::Runtime
 {
+
+/// @brief One of a member's components, encoded once so spawning is a decode
+/// rather than a JSON walk.
+///
+/// **It has to be a decode, not a byte copy.** Components are not memcpy-safe —
+/// MeshRenderer holds a `std::vector<AssetId>`, whose bytes are a pointer, so
+/// copying them into a hundred bullets gives a hundred components sharing one
+/// allocation and ninety-nine dangling the moment the first is destroyed.
+/// Reflection also offers no generic way to clone a live component. BinaryCodec
+/// walks fields rather than copying bytes, is what replication already uses, and
+/// needs no new codegen.
+struct PreparedComponent
+{
+    /// Which component this is. The name is kept beside the id because an
+    /// instance's overrides address components by name.
+    Core::Reflect::ComponentId id = Core::Reflect::kInvalidComponentId;
+    std::string                name;
+
+    /// A full-state component block, with every EntityRef encoded as the *member
+    /// index* it points at rather than a handle. Spawning maps those to the live
+    /// entities through the codec's own reference hook, so nothing has to walk the
+    /// decoded component afterwards looking for references to patch.
+    std::vector<std::byte> block;
+};
 
 /// @brief One entry of a blueprint's flattened member list.
 ///
@@ -53,6 +79,11 @@ struct BlueprintMemberDesc
     /// chain; a parentless one is in file space, and the placement composes onto
     /// it directly (§3, "the component is absolute").
     bool parented = false;
+
+    /// This member's components, encoded once (§11). Spawning decodes these;
+    /// `components` above stays the authority for anything an instance overrode,
+    /// and for any component the codec cannot round-trip losslessly.
+    std::vector<PreparedComponent> prepared;
 
     /// Components an inner file deliberately deleted from this member with a
     /// `null` override.
