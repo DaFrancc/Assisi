@@ -504,6 +504,28 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                                   "holds this field's default.");
             }
         }
+        // A dot beside the fields this instance actually claims, and a right-click
+        // to drop the claim. Per field rather than per component because that is
+        // the granularity the record has: resetting one field leaves the others
+        // following the blueprint, which is the whole point of the merge rule.
+        if (const nlohmann::json *claim = OverrideClaimFor(_selectedEntity, meta.name);
+            claim != nullptr && claim->is_object() && claim->contains(field.name))
+        {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{1.f, 0.82f, 0.4f, 1.f});
+            ImGui::TextUnformatted("*");
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+                ImGui::SetTooltip("Overridden by this instance. Right-click to reset it.");
+
+            if (ImGui::BeginPopupContextItem("##resetfield"))
+            {
+                if (ImGui::MenuItem("Reset to blueprint"))
+                    ResetOverride(_selectedEntity, meta.name, field.name);
+                ImGui::EndPopup();
+            }
+        }
+
         anyFieldEdited |= edited;
         ImGui::PopID();
     }
@@ -1308,6 +1330,33 @@ void EditorApp::DrawInspector()
                 else
                     ImGui::SetTooltip("Withheld: stays on this machine. Click to send it.");
             }
+        }
+
+        // Overridden here? A member's inspector otherwise looks exactly like any
+        // other entity's, right up until a save turns the edit into an override —
+        // and the marking is also the cheap version of the validator this design
+        // skips: a field shown as overridden that you never touched is visible
+        // immediately (docs/blueprint-system-concept.md §10).
+        if (const nlohmann::json *claim = OverrideClaimFor(_selectedEntity, meta->name))
+        {
+            ImGui::SameLine();
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{1.f, 0.82f, 0.4f, 1.f});
+            ImGui::TextUnformatted(claim->is_null() ? "removed" : "overridden");
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("This instance changed %s. Fields it did not change still follow the "
+                                  "blueprint.",
+                                  claim->is_null() ? "whether it has this component" : "some of these fields");
+            }
+
+            ImGui::SameLine();
+            ImGui::BeginDisabled(!editable);
+            if (ImGui::SmallButton("Reset##component"))
+                ResetOverride(_selectedEntity, meta->name, /*field=*/{});
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                ImGui::SetTooltip("Drop this instance's claim and follow the blueprint again.");
         }
 
         if (headerOpen)
