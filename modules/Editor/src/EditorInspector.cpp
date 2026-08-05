@@ -1141,7 +1141,7 @@ void EditorApp::DrawInstanceInspector()
     const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance);
     if (row == nullptr)
     {
-        _selectedInstance = 0; // it went away while it was selected
+        _selectedInstance = {}; // it went away while it was selected
         ImGui::TextDisabled("That instance is no longer live.");
         return;
     }
@@ -1208,7 +1208,7 @@ void EditorApp::DrawInstanceInspector()
     // ImGuizmo::IsUsing rather than IsUsingGizmo(), which also counts *hovering*: a
     // typed edit followed by the mouse drifting over the handles would otherwise
     // leave the gesture open until it drifted off again.
-    if (_instanceDragId != 0 && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing())
+    if (_instanceDragId.IsValid() && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing())
         EndInstanceGesture("Move Instance");
 
     if (!row->overrides.empty() || !row->removed.empty())
@@ -1234,7 +1234,7 @@ void EditorApp::DrawInspector()
     // evaporates at expansion (§3) — so what there is to edit is the *record*: where
     // the copy stands. Without this the panel said "no entity selected" over a
     // perfectly good selection, and the placement could only be dragged, never typed.
-    if (_selectedEntity == Assisi::ECS::NullEntity && _selectedInstance != 0)
+    if (_selectedEntity == Assisi::ECS::NullEntity && _selectedInstance.IsValid())
     {
         DrawInstanceInspector();
         ImGui::End();

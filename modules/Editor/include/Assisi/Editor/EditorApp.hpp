@@ -572,7 +572,7 @@ class EditorApp : public Assisi::App::Application
     struct PendingReexpand
     {
         Assisi::App::World *world = nullptr;
-        std::uint32_t       instanceId = 0;
+        Assisi::ECS::InstanceId instanceId;
         /// The member names the live tags were written against. Captured before the
         /// definition cache is dropped, because nothing can reconstruct them after.
         std::vector<std::string> previousMemberNames;
@@ -616,7 +616,7 @@ class EditorApp : public Assisi::App::Application
     /// @brief Opens a placement gesture on @p instanceId: snapshots the record and
     /// every member's pose, because the undo entry needs both and neither is
     /// reconstructible afterwards. Idempotent while the same gesture is open.
-    void BeginInstanceGesture(std::uint32_t instanceId);
+    void BeginInstanceGesture(Assisi::ECS::InstanceId instanceId);
 
     /// @brief Moves @p instanceId to @p placement, carrying its members by the
     /// delta.
@@ -627,7 +627,7 @@ class EditorApp : public Assisi::App::Application
     /// is where the "an instance may only scale uniformly" rule is enforced first —
     /// the load hard-fails on one, and this is the half that keeps it from ever being
     /// authored.
-    void ApplyInstancePlacement(std::uint32_t instanceId, const Assisi::Runtime::Transform &placement);
+    void ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const Assisi::Runtime::Transform &placement);
 
     /// @brief Closes the open placement gesture into one transaction labelled
     /// @p label, carrying the record and every pose that actually moved. No-op if
@@ -656,7 +656,7 @@ class EditorApp : public Assisi::App::Application
     ///
     /// @param tOut distance along the pick ray, so the caller can decide between
     ///        this and an entity hit by which is actually in front.
-    [[nodiscard]] std::uint32_t PickInstance(glm::vec2 mousePos, float &tOut);
+    [[nodiscard]] Assisi::ECS::InstanceId PickInstance(glm::vec2 mousePos, float &tOut);
 
     /// @brief Places an instance of @p source in front of the camera, as one
     /// undoable transaction: the record and every member it created.
@@ -1069,9 +1069,9 @@ class EditorApp : public Assisi::App::Application
     /// clicking a member selects that member, and this stays set so the inspector
     /// can say which instance it belongs to.
     ///
-    /// So `_selectedInstance != 0 && _selectedEntity == NullEntity` is
+    /// So `_selectedInstance.IsValid() && _selectedEntity == NullEntity` is
     /// instance mode; both set is member mode.
-    std::uint32_t _selectedInstance = 0;
+    Assisi::ECS::InstanceId _selectedInstance;
 
     /// The gizmo's third frame, for a member of an instance: the blueprint root's
     /// axes, so the handles rotate with the car. A *view*, never a storage
@@ -1081,8 +1081,8 @@ class EditorApp : public Assisi::App::Application
     // An instance drag in progress. Snapshotted at the press edge rather than
     // captured through EditHistory's gesture machinery, which is keyed by
     // (entity, component) — this gesture moves several entities *and* a record,
-    // so it has no single key. Zero id = not dragging.
-    std::uint32_t                                                     _instanceDragId = 0;
+    // so it has no single key. An invalid id = not dragging.
+    Assisi::ECS::InstanceId                                           _instanceDragId;
     Assisi::Runtime::BlueprintInstance                                _instanceDragRow;
     std::vector<std::pair<Assisi::ECS::Entity, nlohmann::json>>       _instanceDragPoses;
 

@@ -187,14 +187,17 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
         writer.WriteInt32(LoadPod<std::int32_t>(address));
         return true;
     case FieldType::UInt32:
+        writer.WriteUInt32(LoadPod<std::uint32_t>(address));
+        return true;
+    case FieldType::InstanceRef:
     {
-        // A plain integer unless it names a blueprint instance, in which case it is
-        // a local id and the wire wants the instance's baseNetId — the same
-        // translation an EntityRef gets below, for the same reason.
-        const std::uint32_t value = LoadPod<std::uint32_t>(address);
-        writer.WriteUInt32(field.instanceRef && context != nullptr && context->instanceToWire
-                               ? context->instanceToWire(value)
-                               : value);
+        // A local instance id, translated to the instance's baseNetId by the
+        // caller's hook — the same shape EntityRef gets below, for the same reason:
+        // the number means nothing on the other machine. A null hook writes it
+        // through, which is right for every same-process round trip.
+        const std::uint32_t local = LoadPod<std::uint32_t>(address);
+        writer.WriteUInt32(context != nullptr && context->instanceToWire ? context->instanceToWire(local)
+                                                                        : local);
         return true;
     }
     case FieldType::Int64:
@@ -313,11 +316,13 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
         StorePod(address, reader.ReadInt32());
         return true;
     case FieldType::UInt32:
+        StorePod(address, reader.ReadUInt32());
+        return true;
+    case FieldType::InstanceRef:
     {
         const std::uint32_t wire = reader.ReadUInt32();
-        StorePod(address, field.instanceRef && context != nullptr && context->instanceFromWire
-                              ? context->instanceFromWire(wire)
-                              : wire);
+        StorePod(address, context != nullptr && context->instanceFromWire ? context->instanceFromWire(wire)
+                                                                         : wire);
         return true;
     }
     case FieldType::Int64:
@@ -456,6 +461,10 @@ const char *FieldTypeName(FieldType type)
     case FieldType::AssetId: return "assetid";
     case FieldType::AssetIdVector: return "assetid[]";
     case FieldType::ComponentMask: return "compmask";
+    // Distinct from "uint32" on purpose: the bytes are the same width and mean
+    // different things — one is a number, the other is a baseNetId a peer has to
+    // translate. This name is hashed, so two builds that disagree refuse to pair.
+    case FieldType::InstanceRef: return "instance";
     case FieldType::Unknown: break;
     }
     return "unknown";
@@ -503,15 +512,6 @@ void AppendWireFields(std::string &text, const std::vector<FieldMeta> &fields)
         text += BoundText(field.hasMin, field.minValue);
         text += " max=";
         text += BoundText(field.hasMax, field.maxValue);
-
-        // An instanceRef UInt32 carries a baseNetId where a plain one carries the
-        // number itself. Two builds disagreeing about that exchange values from two
-        // different id spaces and agree about every one of them, so it belongs in
-        // the hash — unlike `controlled`, which changes which messages are accepted
-        // and never how bytes decode. Only emitted when set, so no existing
-        // description (and no deployed hash) moves.
-        if (field.instanceRef)
-            text += " instanceref";
 
         if (field.type == FieldType::Enum)
         {

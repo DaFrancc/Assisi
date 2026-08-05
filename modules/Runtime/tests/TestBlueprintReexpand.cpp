@@ -93,7 +93,7 @@ std::vector<std::string> MemberNames(std::string_view source)
     return names;
 }
 
-ECS::Entity MemberNamed(ECS::Scene &scene, const InstanceTable &table, uint32_t instanceId,
+ECS::Entity MemberNamed(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId,
                         std::string_view memberName)
 {
     return Runtime::FindMember(scene, table, instanceId, memberName);
@@ -282,5 +282,5 @@ TEST_CASE("Re-expand: an unknown instance is refused")
 
     ECS::Scene    scene;
     InstanceTable table;
-    CHECK_FALSE(SceneSerializer::ReexpandInstance(scene, table, /*instanceId=*/7, {}).has_value());
+    CHECK_FALSE(SceneSerializer::ReexpandInstance(scene, table, ECS::InstanceId{7}, {}).has_value());
 }

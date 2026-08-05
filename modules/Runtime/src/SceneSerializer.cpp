@@ -433,7 +433,7 @@ std::string MemberPathName(const InstanceTable &instances, const ECS::BlueprintM
 /// Everything one placed instance produced, kept so a later failure can undo it.
 struct StagedInstance
 {
-    uint32_t                   id         = 0;
+    ECS::InstanceId            id;
     const BlueprintDefinition *definition = nullptr;
     ECS::Transform             placement;
 
@@ -465,7 +465,7 @@ struct AdoptionSet
     /// The row to keep, instead of allocating a new one. A re-expansion must land on
     /// the same instance id: every BlueprintMember tag in the world names it, and so
     /// does every transaction in the editor's history.
-    uint32_t instanceId = 0;
+    ECS::InstanceId instanceId;
 
     std::unordered_map<std::string, ECS::Entity> byName;
 };
@@ -1220,7 +1220,7 @@ std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(
             if (member != ECS::NullEntity)
                 scene.Destroy(member);
         }
-        if (instance.id != 0)
+        if (instance.id.IsValid())
             table.Remove(instance.id);
     };
 
@@ -1261,7 +1261,7 @@ std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(
 }
 
 std::optional<SceneSerializer::ReexpandedInstance>
-SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, uint32_t instanceId,
+SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::InstanceId instanceId,
                                   std::span<const std::string> previousMemberNames)
 {
     if (s_context || s_rawContextScene != nullptr)
@@ -1354,7 +1354,7 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, uint3
     return out;
 }
 
-std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, InstanceTable &table,
+std::optional<ECS::InstanceId> SceneSerializer::ExpandInstance(ECS::Scene &scene, InstanceTable &table,
                                                        std::string_view source, const ECS::Transform &placement)
 {
     // No instance name: the members are `body`, not `car_3/body`, because nothing
@@ -1366,7 +1366,7 @@ std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, Insta
                               .removed   = {}};
 
     const std::optional<ExpandedInstance> placed = PlaceInstance(scene, table, entry, /*authored=*/false);
-    return placed ? std::optional<uint32_t>{placed->instanceId} : std::nullopt;
+    return placed ? std::optional<ECS::InstanceId>{placed->instanceId} : std::nullopt;
 }
 
 bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS::Entity> entities,

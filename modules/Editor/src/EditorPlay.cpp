@@ -440,7 +440,7 @@ void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
             // selected, rather than leaving the inspector on something no longer
             // in the list.
             _selectedEntity   = _selection.empty() ? Assisi::ECS::NullEntity : _selection.back();
-            _selectedInstance = 0;
+            _selectedInstance = {};
             if (_selectedEntity != Assisi::ECS::NullEntity && _scene != nullptr)
             {
                 if (const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(_selectedEntity))
@@ -489,7 +489,7 @@ void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
 
     // Selecting a member keeps its instance in view for the inspector's header;
     // selecting a loose entity clears it, so the two modes can never be half on.
-    _selectedInstance = 0;
+    _selectedInstance = {};
     if (_selectedEntity != Assisi::ECS::NullEntity && _scene != nullptr)
     {
         if (const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(_selectedEntity))
@@ -501,7 +501,7 @@ void EditorApp::ClearSelection()
 {
     _selection.clear();
     _selectedEntity   = Assisi::ECS::NullEntity;
-    _selectedInstance = 0;
+    _selectedInstance = {};
     _selectionAnchor  = Assisi::ECS::NullEntity;
 }
 
@@ -1065,7 +1065,7 @@ void EditorApp::DrawEntityListWindow()
     // of loose in the list, because a level of forty cars is two hundred rows of
     // "body", "wheel_fl", "wheel_fl", … otherwise. Built each frame: membership is
     // a query, and a cached list is the stored member list this design refuses.
-    std::map<std::uint32_t, std::vector<Assisi::ECS::Entity>> members;
+    std::map<Assisi::ECS::InstanceId, std::vector<Assisi::ECS::Entity>> members;
     for (auto [entity, tag] : _scene->Query<Assisi::ECS::BlueprintMember>())
         members[tag.instanceId].push_back(entity);
 
@@ -1144,7 +1144,10 @@ void EditorApp::DrawEntityListWindow()
                       row != nullptr && !row->name.empty() ? row->name.c_str() : "instance",
                       row != nullptr ? row->source.c_str() : "?");
 
-        ImGui::PushID(static_cast<int32_t>(0x8000'0000u | instanceId));
+        // `.value` on purpose: an ImGui id is a raw number, one of the few places
+        // the instance id genuinely leaves its own type (see ECS::InstanceId). The
+        // high bit keeps it out of the entity rows' id space.
+        ImGui::PushID(static_cast<int32_t>(0x8000'0000u | instanceId.value));
 
         // The row itself selects the *instance*: the gizmo then moves the whole
         // group and writes its placement, recording no member overrides. Expanding

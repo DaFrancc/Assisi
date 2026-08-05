@@ -62,7 +62,7 @@ namespace Assisi::App
 /// component after spawning — typed, direct, no strings, and it expresses things
 /// overrides cannot. Overrides are an authoring concept for files, and there is no
 /// file to write at runtime.
-[[nodiscard]] std::optional<uint32_t> SpawnBlueprint(World &world, std::string_view source,
+[[nodiscard]] std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view source,
                                                      const ECS::Transform &placement);
 
 /// @brief Destroys every live member of @p instanceId and drops its table row.
@@ -76,7 +76,7 @@ namespace Assisi::App
 /// FlushDestroyed.
 ///
 /// @return false if no such instance is live.
-bool DestroyInstance(World &world, uint32_t instanceId);
+bool DestroyInstance(World &world, ECS::InstanceId instanceId);
 
 /// @brief One member leaves its instance; the entity lives on, unchanged in every
 /// other way.
@@ -92,21 +92,21 @@ bool PruneFromInstance(World &world, ECS::Entity entity);
 /// a query.
 ///
 /// @return false if no such instance is live.
-bool ExplodeInstance(World &world, uint32_t instanceId);
+bool ExplodeInstance(World &world, ECS::InstanceId instanceId);
 
 /// @brief The entity for member @p name of @p instanceId, or NullEntity.
 ///
 /// Returns a bare handle rather than an optional, which is the established
 /// entity-returning convention in this engine — the one-failure-convention rule
 /// scopes to the spawn and find-instance calls above.
-[[nodiscard]] ECS::Entity FindMember(World &world, uint32_t instanceId, std::string_view name);
+[[nodiscard]] ECS::Entity FindMember(World &world, ECS::InstanceId instanceId, std::string_view name);
 
 /// @brief The table row for @p instanceId, optionally confirming its source.
 ///
 /// The untyped half of what §7's `FindInstance<T>` will be: the source check is
 /// the part that has to exist either way, because building a typed view over an
 /// instance without it would happily produce a `Car` over a crate's members.
-[[nodiscard]] const Runtime::BlueprintInstance *FindInstance(World &world, uint32_t instanceId,
+[[nodiscard]] const Runtime::BlueprintInstance *FindInstance(World &world, ECS::InstanceId instanceId,
                                                              std::string_view expectedSource = {});
 
 } // namespace Assisi::App

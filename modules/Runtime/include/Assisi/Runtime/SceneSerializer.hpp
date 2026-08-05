@@ -180,14 +180,14 @@ class SceneSerializer
     /// spawn has no file around it to point at.
     ///
     /// @return the new instance id, or nullopt if the blueprint could not be used.
-    [[nodiscard]] static std::optional<uint32_t> ExpandInstance(ECS::Scene &scene, InstanceTable &instances,
+    [[nodiscard]] static std::optional<ECS::InstanceId> ExpandInstance(ECS::Scene &scene, InstanceTable &instances,
                                                                 std::string_view      source,
                                                                 const ECS::Transform &placement);
 
     /// @brief What a placement produced.
     struct ExpandedInstance
     {
-        std::uint32_t instanceId = 0;
+        ECS::InstanceId instanceId;
 
         /// Parallel to the blueprint's member list, with NullEntity where this
         /// instance removed one. The editor needs the actual entities to build the
@@ -260,7 +260,7 @@ class SceneSerializer
     ///         file no longer loads. Both are checked before the first member is
     ///         touched, which is what makes "changed nothing" true.
     [[nodiscard]] static std::optional<ReexpandedInstance>
-    ReexpandInstance(ECS::Scene &scene, InstanceTable &instances, uint32_t instanceId,
+    ReexpandInstance(ECS::Scene &scene, InstanceTable &instances, ECS::InstanceId instanceId,
                      std::span<const std::string> previousMemberNames);
 
     /// @brief Writes @p entities as a standalone file — the "create blueprint from

@@ -86,7 +86,7 @@ nlohmann::json CarFile()
                                                                     {"Parent", {{"parent", "body"}}}})})}};
 }
 
-const ECS::Transform *TransformOf(ECS::Scene &scene, const InstanceTable &table, uint32_t instanceId,
+const ECS::Transform *TransformOf(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId,
                                   std::string_view memberName)
 {
     const Runtime::BlueprintInstance *row = table.Find(instanceId);
@@ -234,9 +234,10 @@ TEST_CASE("Blueprint: expanding places members, tags them, and records one table
     ECS::Transform placement;
     placement.position = {5.f, 0.f, 0.f};
 
-    const std::optional<uint32_t> id = SceneSerializer::ExpandInstance(scene, table, "car.abp", placement);
+    const std::optional<ECS::InstanceId> id =
+        SceneSerializer::ExpandInstance(scene, table, "car.abp", placement);
     REQUIRE(id.has_value());
-    CHECK(*id == 1); // ids start at 1; 0 is never a live instance
+    CHECK(*id == ECS::InstanceId{1}); // ids start at 1; 0 is never a live instance
 
     const Runtime::BlueprintInstance *row = table.Find(*id);
     REQUIRE(row != nullptr);
@@ -277,8 +278,8 @@ TEST_CASE("Blueprint: a member's reference resolves to its own instance, not ano
     ECS::Scene    scene;
     InstanceTable table;
 
-    const std::optional<uint32_t> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
-    const std::optional<uint32_t> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const std::optional<ECS::InstanceId> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const std::optional<ECS::InstanceId> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
     CHECK(*first != *second);
@@ -323,12 +324,12 @@ TEST_CASE("Blueprint: a level's instances expand on load and are written back on
     REQUIRE(header.instances.size() == 1);
     CHECK(header.instances[0].name == "car_3");
 
-    const Runtime::BlueprintInstance *row = table.Find(1);
+    const Runtime::BlueprintInstance *row = table.Find(ECS::InstanceId{1});
     REQUIRE(row != nullptr);
     CHECK(row->name == "car_3");
     CHECK(row->levelInstanceIndex == 0);
 
-    const ECS::Transform *body = TransformOf(scene, table, 1, "body");
+    const ECS::Transform *body = TransformOf(scene, table, ECS::InstanceId{1}, "body");
     REQUIRE(body != nullptr);
     CHECK(body->position.x == doctest::Approx(22.f));
     CHECK(body->position.z == doctest::Approx(4.f));
@@ -410,14 +411,14 @@ TEST_CASE("Blueprint: instance ids restart with the world")
     ECS::Scene    scene;
     InstanceTable table;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
-    CHECK(table.Find(1) != nullptr);
+    CHECK(table.Find(ECS::InstanceId{1}) != nullptr);
 
     // Not stable across a load, and nothing may assume they are — so the second
     // load hands out 1 again rather than 2.
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
     CHECK(table.Size() == 1);
-    CHECK(table.Find(1) != nullptr);
-    CHECK(table.Find(2) == nullptr);
+    CHECK(table.Find(ECS::InstanceId{1}) != nullptr);
+    CHECK(table.Find(ECS::InstanceId{2}) == nullptr);
 }
 
 TEST_CASE("Blueprint: composition is a placement applied to a local pose")

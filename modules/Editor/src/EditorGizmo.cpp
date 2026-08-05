@@ -81,7 +81,7 @@ void EditorApp::DrawInstanceGizmo()
     const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance);
     if (row == nullptr)
     {
-        _selectedInstance = 0; // the instance went away while it was selected
+        _selectedInstance = {}; // the instance went away while it was selected
         return;
     }
 
@@ -149,9 +149,9 @@ void EditorApp::DrawInstanceGizmo()
         EndInstanceGesture("Move Instance");
 }
 
-void EditorApp::BeginInstanceGesture(std::uint32_t instanceId)
+void EditorApp::BeginInstanceGesture(Assisi::ECS::InstanceId instanceId)
 {
-    if (_scene == nullptr || _world == nullptr || instanceId == 0 || _instanceDragId == instanceId)
+    if (_scene == nullptr || _world == nullptr || !instanceId.IsValid() || _instanceDragId == instanceId)
         return;
 
     const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(instanceId);
@@ -173,7 +173,7 @@ void EditorApp::BeginInstanceGesture(std::uint32_t instanceId)
     }
 }
 
-void EditorApp::ApplyInstancePlacement(std::uint32_t instanceId, const Rt::Transform &requested)
+void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const Rt::Transform &requested)
 {
     if (_scene == nullptr || _world == nullptr)
         return;
@@ -230,7 +230,7 @@ void EditorApp::ApplyInstancePlacement(std::uint32_t instanceId, const Rt::Trans
 
 void EditorApp::EndInstanceGesture(const char *label)
 {
-    if (_instanceDragId == 0 || _scene == nullptr || _world == nullptr)
+    if (!_instanceDragId.IsValid() || _scene == nullptr || _world == nullptr)
         return;
 
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
@@ -260,7 +260,7 @@ void EditorApp::EndInstanceGesture(const char *label)
         }
     }
 
-    _instanceDragId = 0;
+    _instanceDragId = {};
     _instanceDragPoses.clear();
 }
 
@@ -273,7 +273,7 @@ void EditorApp::DrawTransformGizmo()
     // Instance mode: the whole group moves as one and the *record* is what changes,
     // recording no member overrides. Getting this wrong pins all five members the
     // first time somebody nudges a car (docs/blueprint-system-concept.md §3).
-    if (_selectedEntity == Assisi::ECS::NullEntity && _selectedInstance != 0)
+    if (_selectedEntity == Assisi::ECS::NullEntity && _selectedInstance.IsValid())
     {
         DrawInstanceGizmo();
         return;

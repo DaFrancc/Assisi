@@ -48,8 +48,8 @@ void EditorApp::HandleEntityPicking()
         // behind a wall should not beat the wall, and a member's mesh in front of the
         // icon should not be unclickable because the icon is there.
         float               instanceT  = 0.f;
-        const std::uint32_t instanceId = PickInstance(input.MousePosition(), instanceT);
-        if (instanceId != 0 && instanceT <= entityT)
+        const Assisi::ECS::InstanceId instanceId = PickInstance(input.MousePosition(), instanceT);
+        if (instanceId.IsValid() && instanceT <= entityT)
         {
             // Exclusive, like every other way of selecting an instance: it is the
             // whole group, not one more thing in a list of entities.
@@ -379,18 +379,18 @@ EditorApp::PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
     return ray;
 }
 
-std::uint32_t EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
+Assisi::ECS::InstanceId EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
 {
     tOut = std::numeric_limits<float>::max();
     if (_scene == nullptr || _world == nullptr)
-        return 0;
+        return {};
 
     const PickRay ray = BuildPickRay(mousePos);
     if (!ray.valid)
-        return 0;
+        return {};
 
-    const float   iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
-    std::uint32_t result   = 0;
+    const float             iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    Assisi::ECS::InstanceId result;
 
     // The same quad the renderer draws for the instance root, so what is clickable is
     // exactly what is visible (see EditorApp::SubmitInstanceIcons).

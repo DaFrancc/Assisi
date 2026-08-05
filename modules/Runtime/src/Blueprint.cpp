@@ -100,38 +100,40 @@ ECS::Transform InverseComposeTransform(const ECS::Transform &placement, const EC
 // The instance table
 // ---------------------------------------------------------------------------
 
-uint32_t InstanceTable::Add(BlueprintInstance instance)
+ECS::InstanceId InstanceTable::Add(BlueprintInstance instance)
 {
-    const uint32_t id = _nextId++;
+    // The one place that turns a raw counter into an id. Everywhere else the type
+    // is opaque, which is the point — see ECS::InstanceId.
+    const ECS::InstanceId id{_nextId++};
     _rows.emplace(id, std::move(instance));
     return id;
 }
 
-const BlueprintInstance *InstanceTable::Find(uint32_t id) const
+const BlueprintInstance *InstanceTable::Find(ECS::InstanceId id) const
 {
     const auto it = _rows.find(id);
     return it != _rows.end() ? &it->second : nullptr;
 }
 
-void InstanceTable::Remove(uint32_t id)
+void InstanceTable::Remove(ECS::InstanceId id)
 {
     _rows.erase(id);
 }
 
-void InstanceTable::RestoreAt(uint32_t id, BlueprintInstance instance)
+void InstanceTable::RestoreAt(ECS::InstanceId id, BlueprintInstance instance)
 {
-    if (id == 0)
+    if (!id.IsValid())
         return; // 0 is never a live instance
 
     _rows[id] = std::move(instance);
-    _nextId   = std::max(_nextId, id + 1);
+    _nextId   = std::max(_nextId, id.value + 1);
 }
 
-std::vector<std::pair<uint32_t, const BlueprintInstance *>> InstanceTable::All() const
+std::vector<std::pair<ECS::InstanceId, const BlueprintInstance *>> InstanceTable::All() const
 {
     // Sorted, because a save writes one entry per row and the file's byte content
     // must be a function of the world rather than of hash iteration order.
-    std::vector<std::pair<uint32_t, const BlueprintInstance *>> out;
+    std::vector<std::pair<ECS::InstanceId, const BlueprintInstance *>> out;
     out.reserve(_rows.size());
     for (const auto &[id, row] : _rows)
         out.emplace_back(id, &row);
@@ -145,10 +147,10 @@ void InstanceTable::Clear()
     _nextId = 1;
 }
 
-std::vector<ECS::Entity> MembersOf(ECS::Scene &scene, uint32_t instanceId)
+std::vector<ECS::Entity> MembersOf(ECS::Scene &scene, ECS::InstanceId instanceId)
 {
     std::vector<ECS::Entity> members;
-    if (instanceId == 0)
+    if (!instanceId.IsValid())
         return members;
 
     for (auto [entity, tag] : scene.Query<ECS::BlueprintMember>())
@@ -168,7 +170,7 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity)
     return true;
 }
 
-ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, uint32_t instanceId,
+ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId,
                        std::string_view name)
 {
     const BlueprintInstance *row = FindInstance(table, instanceId);
@@ -193,7 +195,7 @@ ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, uint32_t i
     return ECS::NullEntity;
 }
 
-const BlueprintInstance *FindInstance(const InstanceTable &table, uint32_t instanceId,
+const BlueprintInstance *FindInstance(const InstanceTable &table, ECS::InstanceId instanceId,
                                       std::string_view expectedSource)
 {
     const BlueprintInstance *row = table.Find(instanceId);

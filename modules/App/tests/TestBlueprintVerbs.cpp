@@ -67,7 +67,7 @@ nlohmann::json CarFile()
                      {"Parent", {{"parent", "body"}}}}}}})}};
 }
 
-int32_t TaggedCount(ECS::Scene &scene, uint32_t instanceId)
+int32_t TaggedCount(ECS::Scene &scene, ECS::InstanceId instanceId)
 {
     int32_t count = 0;
     for (auto [entity, tag] : scene.Query<ECS::BlueprintMember>())
@@ -89,7 +89,7 @@ TEST_CASE("Verbs: spawning creates a runnable instance and returns an id worth k
     ECS::Transform at;
     at.position = {12.f, 0.f, 0.f};
 
-    const std::optional<uint32_t> id = App::SpawnBlueprint(world, "car.abp", at);
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", at);
     REQUIRE(id.has_value());
     CHECK(world.scene.AliveCount() == 2);
 
@@ -104,7 +104,7 @@ TEST_CASE("Verbs: spawning creates a runnable instance and returns an id worth k
     // The source check is the whole reason the table exists.
     CHECK(App::FindInstance(world, *id, "car.abp") != nullptr);
     CHECK(App::FindInstance(world, *id, "crate.abp") == nullptr);
-    CHECK(App::FindInstance(world, 999) == nullptr);
+    CHECK(App::FindInstance(world, ECS::InstanceId{999}) == nullptr);
 
     CHECK(App::FindMember(world, *id, "nothing") == ECS::NullEntity);
 }
@@ -132,7 +132,7 @@ TEST_CASE("Verbs: destroy reaches only tagged members and spares the loose neigh
     const ECS::Entity loose = world.scene.Create();
     (void)world.scene.Add(loose, ECS::Transform{});
 
-    const std::optional<uint32_t> id = App::SpawnBlueprint(world, "car.abp", {});
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
     CHECK(world.scene.AliveCount() == 3);
 
@@ -153,7 +153,7 @@ TEST_CASE("Verbs: a pruned member lives on, and destroy no longer reaches it")
     Write(root, "car.abp", CarFile());
 
     App::World                    world;
-    const std::optional<uint32_t> id = App::SpawnBlueprint(world, "car.abp", {});
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
     const ECS::Entity wheel = App::FindMember(world, *id, "wheel_fl");
@@ -180,7 +180,7 @@ TEST_CASE("Verbs: explode ends the instance and destroys nothing")
     Write(root, "car.abp", CarFile());
 
     App::World                    world;
-    const std::optional<uint32_t> id = App::SpawnBlueprint(world, "car.abp", {});
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
     CHECK(App::ExplodeInstance(world, *id));
@@ -197,7 +197,7 @@ TEST_CASE("Verbs: the id outlives a member's death; the handle does not")
     Write(root, "car.abp", CarFile());
 
     App::World                    world;
-    const std::optional<uint32_t> id = App::SpawnBlueprint(world, "car.abp", {});
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
     // Destroying one member directly — no blueprint semantics anywhere in the
@@ -223,8 +223,8 @@ TEST_CASE("Verbs: two spawns of one file are separate instances")
     Write(root, "car.abp", CarFile());
 
     App::World                    world;
-    const std::optional<uint32_t> first  = App::SpawnBlueprint(world, "car.abp", {});
-    const std::optional<uint32_t> second = App::SpawnBlueprint(world, "car.abp", {});
+    const std::optional<ECS::InstanceId> first  = App::SpawnBlueprint(world, "car.abp", {});
+    const std::optional<ECS::InstanceId> second = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
     CHECK(*first != *second);

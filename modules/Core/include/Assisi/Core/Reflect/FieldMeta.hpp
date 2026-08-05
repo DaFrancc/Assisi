@@ -38,6 +38,12 @@ enum class FieldType
     /// index (a replicable ordinal) is not stable across builds. Appended to this
     /// enum rather than inserted, so no existing value shifts.
     ComponentMask,
+    /// ECS::InstanceId — which blueprint instance something belongs to. A
+    /// `std::uint32_t` in memory and its own type on purpose: the number is a
+    /// per-world counter, so it means nothing on another machine and the codec has
+    /// to translate it (CodecContext::instanceToWire) exactly as it translates an
+    /// EntityRef. Appended rather than inserted, so no existing value shifts.
+    InstanceRef,
     Unknown,
 };
 
@@ -136,27 +142,6 @@ struct FieldMeta
     /// still parse each other perfectly and the server's rule governs — the
     /// same argument that keeps the game's neverReplicate list out of the hash.
     bool controlled = false;
-
-    /// @brief AFIELD(instanceRef): this integer names a blueprint instance, and
-    /// the number is only meaningful on the machine that made it.
-    ///
-    /// Instance ids are per-world counters handed out from 1 (see
-    /// Runtime::InstanceTable) — a server's "instance 7" names nothing on a
-    /// client. The wire carries the instance's `baseNetId` instead, and each side
-    /// translates at the codec boundary through CodecContext's
-    /// `instanceToWire`/`instanceFromWire`, exactly as an EntityRef translates
-    /// through `entityToWire`/`entityFromWire`.
-    ///
-    /// Only meaningful on a `UInt32` field; reflectgen rejects it anywhere else.
-    /// A null hook (a same-process round trip — a save game, a test) writes the
-    /// raw value through, which is the right answer when both sides are the same
-    /// machine.
-    ///
-    /// **In** the protocol hash, unlike `controlled`. It changes how the bytes of
-    /// that field are to be interpreted — a build that translates and one that
-    /// does not would exchange numbers from two different id spaces and agree
-    /// about every one of them.
-    bool instanceRef = false;
 };
 
 } // namespace Assisi::Core::Reflect
