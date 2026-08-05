@@ -369,6 +369,34 @@ void EditorApp::DrawTransformGizmo()
         history->RecordBefore(_selectedEntity, transformId, EditLabel("Edit Transform", _selectedEntity),
                               _selectedEntity);
 
+    // The rest of a multi-selection rides the same drag. Each one gets its own
+    // gesture — the history is keyed by (entity, component), so five entities
+    // moving together are five ComponentDeltas — but they open and close on the
+    // same edges, so the drag is still one gesture to the person doing it.
+    //
+    // An entity whose parent is also selected is left out: propagation already
+    // carries it, and applying the drag to it as well would move it twice.
+    std::vector<Assisi::ECS::Entity> alsoDragged;
+    if (_selection.size() > 1)
+    {
+        alsoDragged.reserve(_selection.size() - 1);
+        for (const Assisi::ECS::Entity entity : _selection)
+        {
+            if (entity == _selectedEntity || !_scene->IsAlive(entity) || !IsEditable(entity))
+                continue;
+            if (_scene->Get<Rt::Transform>(entity) == nullptr || HasSelectedAncestor(entity))
+                continue;
+            alsoDragged.push_back(entity);
+            if (history != nullptr)
+                history->RecordBefore(entity, transformId, EditLabel("Edit Transform", entity), _selectedEntity);
+        }
+    }
+
+    // The pose the handle started this frame at. The others follow by the *change*
+    // in it, so a rotate turns the group about the handle rather than spinning each
+    // one in place.
+    const glm::mat4 worldBefore = transform->worldMatrix;
+
     if (inInstanceFrame)
         world = glm::inverse(instanceFrame) * world;
 
@@ -401,25 +429,30 @@ void EditorApp::DrawTransformGizmo()
 
     if (manipulated)
     {
-        const glm::mat4 local = glm::inverse(parentWorld) * world;
+        // The handle's own new pose, written straight from the matrix ImGuizmo
+        // produced — no delta, so the entity under the handle lands exactly where
+        // the handle is even after a long drag has accumulated rounding.
+        ApplyGizmoWorldMatrix(_selectedEntity, parentWorld, world);
 
-        glm::vec3 scale;
-        glm::quat orientation;
-        glm::vec3 translation;
-        glm::vec3 skew;
-        glm::vec4 perspective;
-        if (glm::decompose(local, scale, orientation, translation, skew, perspective))
+        // Everyone else follows by the same world-space change. Applied to their
+        // current pose rather than to a snapshot: this runs every frame of the
+        // drag, and each frame's delta is measured from that frame's start.
+        if (!alsoDragged.empty())
         {
-            Rt::Transform *mutableTransform = _scene->GetMut<Rt::Transform>(_selectedEntity);
-            mutableTransform->position = translation;
-            mutableTransform->rotation = glm::normalize(orientation);
-            mutableTransform->scale    = scale;
-
-            // Keep a physics body in step with the edited pose (scale isn't a body
-            // property, so only position/rotation sync — matches the inspector).
-            if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity))
+            const glm::mat4 delta = world * glm::inverse(worldBefore);
+            for (const Assisi::ECS::Entity entity : alsoDragged)
             {
-                _physics->SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);
+                const Rt::Transform *entityTransform = _scene->Get<Rt::Transform>(entity);
+                if (entityTransform == nullptr)
+                    continue;
+
+                glm::mat4 entityParentWorld(1.f);
+                if (const Rt::Parent *parent = _scene->Get<Rt::Parent>(entity))
+                {
+                    if (const Rt::Transform *parentTransform = _scene->Get<Rt::Transform>(parent->parent))
+                        entityParentWorld = parentTransform->worldMatrix;
+                }
+                ApplyGizmoWorldMatrix(entity, entityParentWorld, delta * entityTransform->worldMatrix);
             }
         }
     }
@@ -429,8 +462,42 @@ void EditorApp::DrawTransformGizmo()
     // guarantees the gizmo drag is its own transaction — it closes the instant the
     // drag ends, so a Transform edit that follows opens a fresh, separate one.
     if (history != nullptr && !nowUsing && _gizmoWasUsing)
+    {
         history->CommitGesture(_selectedEntity, transformId);
+        for (const Assisi::ECS::Entity entity : alsoDragged)
+            history->CommitGesture(entity, transformId);
+    }
     _gizmoWasUsing = nowUsing;
+}
+
+void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
+                                       const glm::mat4 &world)
+{
+    // A parented entity converts back to local against its parent's world (roots:
+    // identity, world == local).
+    const glm::mat4 local = glm::inverse(parentWorld) * world;
+
+    glm::vec3 scale;
+    glm::quat orientation;
+    glm::vec3 translation;
+    glm::vec3 skew;
+    glm::vec4 perspective;
+    if (!glm::decompose(local, scale, orientation, translation, skew, perspective))
+        return;
+
+    Rt::Transform *mutableTransform = _scene->GetMut<Rt::Transform>(entity);
+    if (mutableTransform == nullptr)
+        return;
+    mutableTransform->position = translation;
+    mutableTransform->rotation = glm::normalize(orientation);
+    mutableTransform->scale    = scale;
+
+    // Keep a physics body in step with the edited pose (scale isn't a body
+    // property, so only position/rotation sync — matches the inspector).
+    if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
+    {
+        _physics->SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);
+    }
 }
 
 } // namespace Assisi::Editor

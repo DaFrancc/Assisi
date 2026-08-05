@@ -18,3 +18,10 @@ inline bool ImGuiWantsKeyboard()
 {
     return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureKeyboard;
 }
+
+/// Ctrl or Shift held — the "add to the selection" modifier. One query for both
+/// because the viewport treats them the same (see HandleEntityPicking).
+inline bool ImGuiAdditiveModifier()
+{
+    return ImGui::GetCurrentContext() != nullptr && (ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift);
+}

@@ -223,7 +223,8 @@ void EditorApp::OnStart()
                       {
                           for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
                           {
-                              _selectedEntity = e.entity;
+                              SelectEntity(e.entity,
+                                           e.additive ? SelectMode::Toggle : SelectMode::Replace);
                           }
                       });
 
@@ -694,7 +695,10 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // decluttered without touching how the scene itself renders. (Whether the
     // overlay *passes* even exist is a separate Initialize-time decision —
     // EditorConfig::enableEditorVisuals.)
-    _sceneRenderer.SetHighlightedEntity(_showEditorOverlays ? _selectedEntity : Assisi::ECS::NullEntity);
+    if (_showEditorOverlays)
+        _sceneRenderer.SetHighlightedEntities(_selection);
+    else
+        _sceneRenderer.SetHighlightedEntity(Assisi::ECS::NullEntity);
     // Entity icons show while authoring/paused, but not during live play.
     _sceneRenderer.SetEditorIconsVisible(_showEditorOverlays && _playState != PlayState::Playing);
     if (_showEditorOverlays)
@@ -799,7 +803,14 @@ void EditorApp::OnUpdate(float dt)
     // command list is open (so scene mutation is safe).
     HandleUndoRedoHotkeys();
 
-    // Delete key removes the selected entity (+ its subtree), undoably. Gated like
+    // Reconcile the selection with the scene before anything reads it. Plenty of
+    // paths move `_selectedEntity` on their own — a level load, switching worlds,
+    // the undo just applied restoring a transaction's selection — and none of them
+    // know about the rest of the list; a stale handle left in it would outline a
+    // slot something else has since taken.
+    PruneSelection();
+
+    // Delete key removes the selection (+ each subtree), undoably. Gated like
     // undo: only when a history is active and no text field owns the keyboard (so
     // Delete edits text there instead). Same safe mutation point as the undo above.
     if (Assisi::Editor::EditHistory *history = ActiveHistory();
@@ -807,7 +818,7 @@ void EditorApp::OnUpdate(float dt)
         _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity) &&
         ImGui::IsKeyPressed(ImGuiKey_Delete, false))
     {
-        DeleteEntity(_selectedEntity);
+        DeleteSelection();
     }
 
     // A joining client builds the host's level here, for the same reason: the

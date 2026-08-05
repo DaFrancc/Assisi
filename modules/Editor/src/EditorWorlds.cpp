@@ -92,7 +92,7 @@ void EditorApp::MigrateSelectionTo(const std::string &targetWorld)
     // there, so drop it. (The migrated copy in the destination has a different
     // handle; re-selecting it is the game's/inspector's job, not done here.)
     const Assisi::ECS::Entity moved = _worlds.MigrateEntity(*_world, *dst, _selectedEntity);
-    _selectedEntity = Assisi::ECS::NullEntity;
+    ClearSelection();
     (void)moved;
 }
 

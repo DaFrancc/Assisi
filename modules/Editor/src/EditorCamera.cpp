@@ -41,7 +41,11 @@ void EditorApp::HandleEntityPicking()
         }
         else
         {
-            GetEvents().Push(EntitySelectionChangedEvent{picked});
+            // Ctrl *and* Shift both mean "add this one too" out here. In a list a
+            // range is well defined — everything between two rows — but the
+            // viewport has no order to draw one through, so binding Shift to
+            // anything else would only be a second key that does nothing.
+            GetEvents().Push(EntitySelectionChangedEvent{picked, ImGuiAdditiveModifier()});
         }
     }
 }
