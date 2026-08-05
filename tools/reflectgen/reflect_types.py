@@ -110,16 +110,18 @@ TYPES: dict[str, TypeCodegen] = {
         'Mat4',
         '{{ {a}[0][0], {a}[0][1], {a}[0][2], {a}[0][3], {a}[1][0], {a}[1][1], {a}[1][2], {a}[1][3], {a}[2][0], {a}[2][1], {a}[2][2], {a}[2][3], {a}[3][0], {a}[3][1], {a}[3][2], {a}[3][3] }}',
         '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = glm::mat4{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>(), _v[4].get<float>(), _v[5].get<float>(), _v[6].get<float>(), _v[7].get<float>(), _v[8].get<float>(), _v[9].get<float>(), _v[10].get<float>(), _v[11].get<float>(), _v[12].get<float>(), _v[13].get<float>(), _v[14].get<float>(), _v[15].get<float>() }}; }} }}'),
-    # ECS::Entity — serialized as a stable serial index via SceneSerializer.
-    # Accepts both qualified and unqualified names.
+    # ECS::Entity — serialized through SceneSerializer, whose active context
+    # decides whether the reference is a name (a level file), an index within a
+    # moved set (entity migration) or a packed handle (an undo payload). Accepts
+    # both qualified and unqualified spellings.
     'ECS::Entity': TypeCodegen(
         'EntityRef',
-        '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0ull)) : nlohmann::json(nullptr))',
-        '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint64_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+        'Assisi::Runtime::SceneSerializer::EntityToRef({a})',
+        '{{ if (j.contains("{f}")) {{ {a} = Assisi::Runtime::SceneSerializer::RefToEntity(j.at("{f}")); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
     'Assisi::ECS::Entity': TypeCodegen(
         'EntityRef',
-        '({a} != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex({a}).value_or(~0ull)) : nlohmann::json(nullptr))',
-        '{{ if (j.contains("{f}") && !j.at("{f}").is_null()) {{ {a} = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("{f}").get<uint64_t>()); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+        'Assisi::Runtime::SceneSerializer::EntityToRef({a})',
+        '{{ if (j.contains("{f}")) {{ {a} = Assisi::Runtime::SceneSerializer::RefToEntity(j.at("{f}")); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
     # Core::ShortString — a small fixed-capacity inline string (e.g. an entity
     # Name). Serialized as a JSON string of its view; Assign() re-imposes the
     # capacity on load. Same codegen as AssetPath but a distinct FieldType so the

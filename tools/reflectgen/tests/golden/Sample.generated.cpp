@@ -131,7 +131,7 @@ static const bool _reflectgen_SampleRef = []() -> bool
         {
             const auto& c = *static_cast<const T*>(ptr);
             return nlohmann::json{
-                { "target", (c.target != Assisi::ECS::NullEntity ? nlohmann::json(Assisi::Runtime::SceneSerializer::EntityToIndex(c.target).value_or(~0ull)) : nlohmann::json(nullptr)) },
+                { "target", Assisi::Runtime::SceneSerializer::EntityToRef(c.target) },
             };
         },
         [](void* scene_ptr, uint32_t entity_index, uint32_t entity_gen, const nlohmann::json& j)
@@ -139,7 +139,7 @@ static const bool _reflectgen_SampleRef = []() -> bool
             auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);
             Assisi::ECS::Entity e{entity_index, entity_gen};
             T comp{};
-            { if (j.contains("target") && !j.at("target").is_null()) { comp.target = Assisi::Runtime::SceneSerializer::IndexToEntity(j.at("target").get<uint64_t>()); } else { comp.target = Assisi::ECS::NullEntity; } }
+            { if (j.contains("target")) { comp.target = Assisi::Runtime::SceneSerializer::RefToEntity(j.at("target")); } else { comp.target = Assisi::ECS::NullEntity; } }
             (void)scene.Add(e, comp);
         },
         [](void* scene_ptr, std::function<void(uint32_t, uint32_t, const void*)> cb)
