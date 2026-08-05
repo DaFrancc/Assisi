@@ -180,6 +180,13 @@ ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
         s_context->unresolvedRefNames.push_back(std::move(name));
         return ECS::NullEntity;
     }
+
+    // Claimed but mapped at nothing: a member an instance removed. That is a
+    // legitimate thing for a file to say, so the reference nulls with a warning
+    // rather than refusing the file the way an unknown name does.
+    if (it->second == ECS::NullEntity)
+        Core::Log::Warn("SceneSerializer: a reference names '{}', which its instance removed — left null.", name);
+
     return it->second;
 }
 
@@ -417,7 +424,16 @@ struct StagedInstance
     uint32_t                   id         = 0;
     const BlueprintDefinition *definition = nullptr;
     ECS::Transform             placement;
-    std::vector<ECS::Entity>   members; ///< Parallel to definition->members.
+
+    /// Parallel to definition->members, with NullEntity where this instance
+    /// removed one. A hole rather than a shorter list because the index *is* the
+    /// NetId offset (§9): two instances of one file that removed different members
+    /// must still agree about which index names which member.
+    std::vector<ECS::Entity> members;
+
+    /// This instance's view of each member, after its own overrides. Parallel to
+    /// members; empty entries where there is a hole.
+    std::vector<BlueprintMemberDesc> resolved;
 };
 
 /// The last segment of a member path — what the member is called in its own file,
@@ -458,16 +474,33 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
     staged.id         = table.Add(BlueprintInstance{.name               = entry.name,
                                                     .source             = definition->source,
                                                     .transform          = entry.transform,
-                                                    .levelInstanceIndex = levelInstanceIndex});
+                                                    .levelInstanceIndex = levelInstanceIndex,
+                                                    .overrides          = entry.overrides,
+                                                    .removed            = entry.removed});
 
     staged.members.reserve(definition->members.size());
+    staged.resolved.reserve(definition->members.size());
     for (uint32_t i = 0; i < definition->members.size(); ++i)
     {
         const BlueprintMemberDesc &desc = definition->members[i];
-        const ECS::Entity          e    = scene.Create();
-        staged.members.push_back(e);
+        const std::string          path = entry.name.empty() ? desc.name : entry.name + "/" + desc.name;
 
-        const std::string path = entry.name.empty() ? desc.name : entry.name + "/" + desc.name;
+        if (IsMemberRemoved(desc.name, entry.removed))
+        {
+            // The hole. Its name is still claimed, mapped at nothing: a reference
+            // to a removed member then resolves to null with a warning, rather than
+            // refusing the file as an unknown name would.
+            staged.members.push_back(ECS::NullEntity);
+            staged.resolved.emplace_back();
+            if (!s_context->nameToEntity.emplace(path, ECS::NullEntity).second)
+                throw std::runtime_error(std::format("'{}' is claimed twice", path));
+            continue;
+        }
+
+        const ECS::Entity e = scene.Create();
+        staged.members.push_back(e);
+        staged.resolved.push_back(desc);
+
         if (!s_context->nameToEntity.emplace(path, e).second)
             throw std::runtime_error(std::format("'{}' is claimed twice", path));
 
@@ -476,6 +509,26 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
         // something needs it.
         (void)scene.Add(e, Name{Core::ShortString{LeafName(desc.name)}});
         (void)scene.Add(e, ECS::BlueprintMember{.instanceId = staged.id, .memberIndex = i});
+    }
+
+    // This instance's own claims, on top of whatever the file already resolved.
+    // Outermost wins per field, which is what makes a lot's colour and a level's
+    // radius both apply to the same wheel.
+    for (const auto &[memberPath, componentOverrides] : entry.overrides.items())
+    {
+        const std::optional<uint32_t> index = definition->IndexOf(memberPath);
+        if (!index.has_value())
+        {
+            Core::Log::Warn("Blueprint: instance '{}' overrides '{}', which '{}' does not declare — dropped.",
+                            entry.name.empty() ? definition->source : entry.name, memberPath,
+                            definition->source);
+            continue;
+        }
+        if (staged.members[*index] == ECS::NullEntity)
+            continue; // overriding a member this instance removed: nothing to apply it to
+
+        ApplyMemberOverride(staged.resolved[*index], componentOverrides,
+                            entry.name.empty() ? memberPath : entry.name + "/" + memberPath);
     }
 
     return staged;
@@ -495,8 +548,11 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
 
     for (std::size_t i = 0; i < staged.members.size(); ++i)
     {
-        const BlueprintMemberDesc &desc = staged.definition->members[i];
-        const ECS::Entity          e    = staged.members[i];
+        const ECS::Entity e = staged.members[i];
+        if (e == ECS::NullEntity)
+            continue; // a member this instance removed
+
+        const BlueprintMemberDesc &desc = staged.resolved[i];
 
         if (desc.components.is_object())
         {
@@ -627,9 +683,16 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
             result["instances"] = nlohmann::json::array();
             for (const LevelInstance &entry : placed)
             {
-                result["instances"].push_back({{"name", entry.name},
-                                               {"source", entry.source},
-                                               {"transform", TransformToJson(entry.transform)}});
+                nlohmann::json written{{"name", entry.name},
+                                       {"source", entry.source},
+                                       {"transform", TransformToJson(entry.transform)}};
+                // Only when there is something to say, so an instance nobody edited
+                // stays three lines rather than gaining two empty containers.
+                if (!entry.overrides.empty())
+                    written["overrides"] = entry.overrides;
+                if (!entry.removed.empty())
+                    written["removed"] = entry.removed;
+                result["instances"].push_back(std::move(written));
             }
         }
     }
@@ -687,10 +750,21 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
                 throw std::runtime_error(
                     std::format("instance '{}' has no source", entry.at("name").get<std::string>()));
             }
-            placed.push_back(LevelInstance{
+            LevelInstance instance{
                 .name      = entry.at("name").get<std::string>(),
                 .source    = entry.at("source").get<std::string>(),
-                .transform = TransformFromJson(entry.value("transform", nlohmann::json::object()))});
+                .transform = TransformFromJson(entry.value("transform", nlohmann::json::object()))};
+            if (const auto claims = entry.find("overrides"); claims != entry.end() && claims->is_object())
+                instance.overrides = *claims;
+            if (const auto claims = entry.find("removed"); claims != entry.end() && claims->is_array())
+            {
+                for (const auto &path : *claims)
+                {
+                    if (path.is_string())
+                        instance.removed.push_back(path.get<std::string>());
+                }
+            }
+            placed.push_back(std::move(instance));
         }
     }
 
@@ -879,7 +953,10 @@ std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, Insta
         // partial instance behind.
         Core::Log::Error("SpawnBlueprint: '{}' failed: {}", source, ex.what());
         for (const ECS::Entity member : instance.members)
-            scene.Destroy(member);
+        {
+            if (member != ECS::NullEntity)
+                scene.Destroy(member);
+        }
         if (instance.id != 0)
             table.Remove(instance.id);
         return std::nullopt;
@@ -891,7 +968,10 @@ std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, Insta
                          "first is '{}'.",
                          source, s_context->unresolvedRefNames.size(), s_context->unresolvedRefNames.front());
         for (const ECS::Entity member : instance.members)
-            scene.Destroy(member);
+        {
+            if (member != ECS::NullEntity)
+                scene.Destroy(member);
+        }
         table.Remove(instance.id);
         return std::nullopt;
     }
