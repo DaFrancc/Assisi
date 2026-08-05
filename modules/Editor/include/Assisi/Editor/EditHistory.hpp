@@ -32,6 +32,7 @@
 
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 
 namespace Assisi::ECS
 {
@@ -80,9 +81,32 @@ struct EntityDelta
     std::optional<std::vector<ComponentSnapshot>>    after;
 };
 
+/// @brief One blueprint instance record's reversible change.
+///
+/// The record is not scene data — source path, placement, overrides, removal list
+/// — so the two delta kinds above cannot express it, and without it undo leaves a
+/// **fake override** behind: the component reverts and the note saying "this
+/// instance changed that field" does not. That is precisely the disease recorded
+/// overrides exist to prevent, reintroduced through the back door.
+///
+/// So an inspector edit on a member is *one transaction* carrying both a
+/// ComponentDelta and this — placing an instance is this plus its EntityDeltas,
+/// and all of it reverts together.
+struct InstanceDelta
+{
+    std::uint32_t instanceId = 0;
+
+    /// The row on each side, or nullopt for "the instance did not exist".
+    /// Place = {before: nullopt, after: row}; delete = the reverse; an override
+    /// edit has both, differing only in `overrides`.
+    std::optional<Assisi::Runtime::BlueprintInstance> before;
+    std::optional<Assisi::Runtime::BlueprintInstance> after;
+};
+
 /// @brief The tagged union of edit kinds. A component field/add/remove edit is a
-/// ComponentDelta; an entity create/delete is an EntityDelta.
-using EditCommand = std::variant<ComponentDelta, EntityDelta>;
+/// ComponentDelta; an entity create/delete is an EntityDelta; a change to an
+/// instance's record is an InstanceDelta.
+using EditCommand = std::variant<ComponentDelta, EntityDelta, InstanceDelta>;
 
 /// @brief One user gesture (a gizmo drag, a slider drag, one add-component) —
 /// the atom of undo. Applying it toward `before` is undo; toward `after` is redo.
@@ -115,9 +139,15 @@ class EditHistory
     using RebindHook = std::function<void(Assisi::ECS::Entity entity,
                                           Assisi::Core::Reflect::ComponentId id, bool present)>;
 
-    /// @param scene   The scene edits apply to. Must outlive this history.
-    /// @param rebind  Transient-rebuild dispatch (may be empty — then a no-op).
-    EditHistory(Assisi::ECS::Scene &scene, RebindHook rebind = {});
+    /// @param scene     The scene edits apply to. Must outlive this history.
+    /// @param rebind    Transient-rebuild dispatch (may be empty — then a no-op).
+    /// @param instances The world's blueprint instance table, or null in a host
+    ///                  with no instances (tests). Without it a member edit still
+    ///                  reverts its component but records no override, which is a
+    ///                  level that silently loses the edit on save — so it is worth
+    ///                  passing wherever a level can be saved.
+    EditHistory(Assisi::ECS::Scene &scene, RebindHook rebind = {},
+                Assisi::Runtime::InstanceTable *instances = nullptr);
 
     /// @brief Records a completed transaction and clears the redo stack.
     ///
@@ -205,6 +235,16 @@ class EditHistory
     /// can build EntityDelta transactions.
     [[nodiscard]] std::vector<ComponentSnapshot> CaptureEntityComponents(Assisi::ECS::Entity entity) const;
 
+    /// @brief Snapshot one component to JSON under a raw-entity context, or nullopt
+    /// if absent. Public for the edit sites that build a transaction by hand rather
+    /// than through the gesture machinery — an instance drag, which moves several
+    /// entities and a record in one gesture and so has no single (entity, id) key.
+    [[nodiscard]] std::optional<nlohmann::json> CaptureComponent(Assisi::ECS::Entity entity,
+                                                                 Assisi::Core::Reflect::ComponentId id) const
+    {
+        return SnapshotComponent(entity, id);
+    }
+
     /// @brief Cap on retained transactions; the oldest is dropped past this. JSON
     /// payloads are heavy, so history is bounded regardless of edit count.
     static constexpr std::size_t kMaxDepth = 256;
@@ -241,6 +281,42 @@ class EditHistory
     /// Returns true if a transaction was pushed.
     bool CommitOpenGesture(const OpenGesture &gesture);
 
+    /// @brief If @p entity is a blueprint member, folds the gesture's own change
+    /// into its instance's override record and returns the record's before/after.
+    ///
+    /// **The per-field override is derived by diffing the gesture's before and
+    /// after** — which is explicitly not the computed-override mistake. That one
+    /// compared the live scene against the blueprint *across* edits, so editing a
+    /// blueprint froze the old values into every instance as fake overrides.
+    /// Reading what one gesture did is the definition of recorded.
+    ///
+    /// Returns nullopt when there is nothing to record: no table, not a member, or
+    /// an instance the table no longer knows.
+    std::optional<InstanceDelta> RecordOverride(Assisi::ECS::Entity entity,
+                                                Assisi::Core::Reflect::ComponentId id,
+                                                const std::optional<nlohmann::json> &before,
+                                                const std::optional<nlohmann::json> &after);
+
+    /// @brief A captured component's JSON with its EntityRef fields rewritten from
+    /// raw handles into the names a file addresses by.
+    ///
+    /// A capture serializes references as packed (slot, generation) handles, which
+    /// is exactly right for replaying an undo and exactly wrong for a file: a level
+    /// storing them would name nothing on the next load. A reference this cannot
+    /// name — an entity with no Name, or a member of an instance the table has
+    /// forgotten — is dropped from the claim with a warning rather than written
+    /// wrong, because an override that means something else is worse than one that
+    /// is missing.
+    [[nodiscard]] nlohmann::json ReferenceSafeOverride(const nlohmann::json                &component,
+                                                       const Assisi::Core::Reflect::ComponentMeta &meta,
+                                                       std::uint32_t instanceId) const;
+
+    /// @brief How a file that overrides a member of @p instanceId should name
+    /// @p target: instance-relative for a member of the same instance, `/…` for
+    /// anything else the writing file can see. Nullopt if it cannot be named.
+    [[nodiscard]] std::optional<std::string> NameForOverrideTarget(Assisi::ECS::Entity target,
+                                                                   std::uint32_t instanceId) const;
+
     void ApplyTransaction(const Transaction &txn, Direction dir);
 
     /// @brief Brings component `id` on `entity` to `target`: nullopt removes it,
@@ -258,8 +334,9 @@ class EditHistory
     bool AddComponentForRestore(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id,
                                 const nlohmann::json &data);
 
-    Assisi::ECS::Scene      &_scene;
-    RebindHook               _rebind;
+    Assisi::ECS::Scene             &_scene;
+    Assisi::Runtime::InstanceTable *_instances = nullptr;
+    RebindHook                      _rebind;
     std::vector<Transaction> _undo;
     std::vector<Transaction> _redo;
     std::vector<OpenGesture> _open; ///< Capture gestures awaiting commit (§5).

@@ -196,6 +196,7 @@ class EditorApp : public Assisi::App::Application
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see EditorPlay.cpp
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See EditorApp.cpp
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
+    void DrawInstanceGizmo();     // …and over a selected blueprint instance, which moves as one
     void DrawNetworkWindow();     // negotiated level + live net stats; see EditorNet.cpp
     void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"; see EditorNet.cpp
     /// @brief The two host-side authoring warnings: a level with nothing marked
@@ -493,6 +494,14 @@ class EditorApp : public Assisi::App::Application
     /// machinery to avoid.
     [[nodiscard]] bool IsEditable(Assisi::ECS::Entity entity) const;
 
+    /// @brief A human label for an entity in a picker or a header.
+    ///
+    /// `car_3 › wheel_fl` for a blueprint member, its Name if it has one, else
+    /// `[index:generation]`. The EntityRef field editor previewed everything as
+    /// `Entity [41:0]`, which is already hard to pick from and unusable the moment
+    /// a level holds forty cars (docs/blueprint-system-concept.md §10).
+    [[nodiscard]] std::string DescribeEntity(Assisi::ECS::Entity entity) const;
+
     /// @brief Whether @p entity is a mirror the server owns.
     [[nodiscard]] bool IsMirrored(Assisi::ECS::Entity entity) const;
     /// @brief The resident-world dropdown drawn at the top of the Entities panel.
@@ -748,6 +757,32 @@ class EditorApp : public Assisi::App::Application
     static constexpr float kMouseSensitivity = 0.1f;
 
     Assisi::ECS::Entity _selectedEntity = Assisi::ECS::NullEntity;
+
+    /// The blueprint instance the selection is *about*, or 0 for none.
+    ///
+    /// Selection has two modes (docs/blueprint-system-concept.md §10). Clicking an
+    /// instance's row selects the instance — the gizmo then moves the whole group
+    /// and writes its placement, recording no member overrides, which is what keeps
+    /// nudging a car from pinning all five of its members. Expanding the row and
+    /// clicking a member selects that member, and this stays set so the inspector
+    /// can say which instance it belongs to.
+    ///
+    /// So `_selectedInstance != 0 && _selectedEntity == NullEntity` is
+    /// instance mode; both set is member mode.
+    std::uint32_t _selectedInstance = 0;
+
+    /// The gizmo's third frame, for a member of an instance: the blueprint root's
+    /// axes, so the handles rotate with the car. A *view*, never a storage
+    /// decision — the override is recorded in file space either way.
+    bool _gizmoInstanceSpace = false;
+
+    // An instance drag in progress. Snapshotted at the press edge rather than
+    // captured through EditHistory's gesture machinery, which is keyed by
+    // (entity, component) — this gesture moves several entities *and* a record,
+    // so it has no single key. Zero id = not dragging.
+    std::uint32_t                                                     _instanceDragId = 0;
+    Assisi::Runtime::BlueprintInstance                                _instanceDragRow;
+    std::vector<std::pair<Assisi::ECS::Entity, nlohmann::json>>       _instanceDragPoses;
 
     // Physics freeze while an Inspector field is being held (see
     // HandlePhysicsEditing / ThawEditedBody). Dragging a Transform field on a

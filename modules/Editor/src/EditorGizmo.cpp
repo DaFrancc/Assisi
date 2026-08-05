@@ -2,6 +2,9 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
+
 #include <Assisi/Math/GLM.hpp> // pulls GLMConfig (GLM_ENABLE_EXPERIMENTAL) before the gtx header below
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Camera.hpp>
@@ -59,11 +62,188 @@ bool EditorApp::IsUsingGizmo() const
     return ImGuizmo::IsUsing() || ImGuizmo::IsOver();
 }
 
+namespace
+{
+/// A TRS as a matrix, in the order everything else in the engine composes it.
+glm::mat4 TransformMatrix(const Rt::Transform &transform)
+{
+    return glm::translate(glm::mat4(1.f), transform.position) * glm::mat4_cast(transform.rotation) *
+           glm::scale(glm::mat4(1.f), transform.scale);
+}
+} // namespace
+
+void EditorApp::DrawInstanceGizmo()
+{
+    if (_scene == nullptr || _world == nullptr || !IsEditable())
+        return;
+
+    const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance);
+    if (row == nullptr)
+    {
+        _selectedInstance = 0; // the instance went away while it was selected
+        return;
+    }
+
+    ImGuiIO &io = ImGui::GetIO();
+    if (!io.WantTextInput)
+    {
+        if (ImGui::IsKeyPressed(ImGuiKey_W, false))
+            _gizmoOp = GizmoOp::Translate;
+        else if (ImGui::IsKeyPressed(ImGuiKey_E, false))
+            _gizmoOp = GizmoOp::Rotate;
+        else if (ImGui::IsKeyPressed(ImGuiKey_R, false))
+            _gizmoOp = GizmoOp::Scale;
+        if (ImGui::IsKeyPressed(ImGuiKey_X, false))
+            _gizmoLocalSpace = !_gizmoLocalSpace;
+    }
+
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGuizmo::SetOrthographic(false);
+    ImGuizmo::SetDrawlist(ImGui::GetBackgroundDrawList());
+    ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x, viewport->Size.y);
+
+    const float     aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
+    const glm::mat4 view   = Rt::ViewMatrix(_cameraTransform);
+    const glm::mat4 proj   = Rt::ProjectionMatrix(_camera, aspect);
+
+    const Rt::Transform placementBefore = row->transform;
+    glm::mat4           world           = TransformMatrix(placementBefore);
+
+    const float snapValue = _gizmoOp == GizmoOp::Translate ? kTranslateSnap
+                            : _gizmoOp == GizmoOp::Rotate  ? kRotateSnap
+                                                           : kScaleSnap;
+    const glm::vec3 snap(snapValue);
+
+    const bool manipulated =
+        ImGuizmo::Manipulate(&view[0][0], &proj[0][0], ToOperation(_gizmoOp),
+                             _gizmoLocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD, &world[0][0], nullptr,
+                             io.KeyCtrl ? &snap[0] : nullptr);
+
+    const bool nowUsing = ImGuizmo::IsUsing();
+
+    // Press edge: snapshot the record and every member's pose, because the undo
+    // entry has to take both back together and neither is reconstructible after
+    // the fact.
+    if (nowUsing && _instanceDragId != _selectedInstance)
+    {
+        _instanceDragId  = _selectedInstance;
+        _instanceDragRow = *row;
+        _instanceDragPoses.clear();
+
+        if (Assisi::Editor::EditHistory *history = ActiveHistory())
+        {
+            const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
+            for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, _selectedInstance))
+            {
+                if (std::optional<nlohmann::json> pose = history->CaptureComponent(member, transformId))
+                    _instanceDragPoses.emplace_back(member, std::move(*pose));
+            }
+        }
+    }
+
+    if (nowUsing)
+        _captureEditingActive = true;
+
+    if (manipulated)
+    {
+        glm::vec3 scale;
+        glm::quat orientation;
+        glm::vec3 translation;
+        glm::vec3 skew;
+        glm::vec4 perspective;
+        if (glm::decompose(world, scale, orientation, translation, skew, perspective))
+        {
+            Rt::Transform placement;
+            placement.position = translation;
+            placement.rotation = glm::normalize(orientation);
+            // One number, not three: an instance may only translate, rotate, or
+            // scale *uniformly*, and the editor is where that is enforced first so
+            // a violation cannot be authored at all (§3). The load hard-fails on
+            // one anyway; this is the half that keeps it from ever being written.
+            placement.scale = glm::vec3((scale.x + scale.y + scale.z) / 3.f);
+
+            // Move the members by the delta rather than re-expanding: re-expansion
+            // would destroy and recreate handles behind undo's back, and dragging
+            // is the one gesture that must stay cheap.
+            const glm::mat4 delta = TransformMatrix(placement) * glm::inverse(TransformMatrix(row->transform));
+            const glm::quat deltaRotation =
+                glm::normalize(placement.rotation * glm::inverse(row->transform.rotation));
+
+            for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, _selectedInstance))
+            {
+                // Only the members the placement reaches directly; a parented one
+                // rides along through its parent, and moving it too would apply the
+                // delta twice.
+                if (_scene->Has<Rt::Parent>(member))
+                    continue;
+
+                Rt::Transform *memberTransform = _scene->GetMut<Rt::Transform>(member);
+                if (memberTransform == nullptr)
+                    continue;
+
+                memberTransform->position = glm::vec3(delta * glm::vec4(memberTransform->position, 1.f));
+                memberTransform->rotation = glm::normalize(deltaRotation * memberTransform->rotation);
+                memberTransform->scale *= placement.scale.x / row->transform.scale.x;
+
+                if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(member))
+                    _physics->SetBodyTransform(*body, memberTransform->position, memberTransform->rotation);
+            }
+
+            Assisi::Runtime::BlueprintInstance updated = *row;
+            updated.transform                          = placement;
+            _world->instances.RestoreAt(_selectedInstance, std::move(updated));
+        }
+    }
+
+    // Release edge: one transaction carrying the record and every pose it moved.
+    if (!nowUsing && _instanceDragId != 0)
+    {
+        if (Assisi::Editor::EditHistory *history = ActiveHistory())
+        {
+            const Assisi::Runtime::BlueprintInstance *now = _world->instances.Find(_instanceDragId);
+            if (now != nullptr)
+            {
+                Assisi::Editor::Transaction txn;
+                txn.label = "Move Instance";
+                txn.cmds.push_back(Assisi::Editor::InstanceDelta{
+                    .instanceId = _instanceDragId, .before = _instanceDragRow, .after = *now});
+
+                const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
+                for (const auto &[member, before] : _instanceDragPoses)
+                {
+                    if (!_scene->IsAlive(member))
+                        continue;
+                    std::optional<nlohmann::json> after = history->CaptureComponent(member, transformId);
+                    if (after != std::optional<nlohmann::json>{before})
+                        txn.cmds.push_back(Assisi::Editor::ComponentDelta{member, transformId, before, after});
+                }
+
+                // Only if something actually moved — a click without a drag is not
+                // an edit, the same rule the gesture machinery applies elsewhere.
+                if (txn.cmds.size() > 1)
+                    history->Push(std::move(txn));
+            }
+        }
+
+        _instanceDragId = 0;
+        _instanceDragPoses.clear();
+    }
+}
+
 void EditorApp::DrawTransformGizmo()
 {
     // Reset ImGuizmo's per-frame state every frame, even with nothing selected, so
     // IsUsing/IsOver read false when the gizmo isn't shown.
     ImGuizmo::BeginFrame();
+
+    // Instance mode: the whole group moves as one and the *record* is what changes,
+    // recording no member overrides. Getting this wrong pins all five members the
+    // first time somebody nudges a car (docs/blueprint-system-concept.md §3).
+    if (_selectedEntity == Assisi::ECS::NullEntity && _selectedInstance != 0)
+    {
+        DrawInstanceGizmo();
+        return;
+    }
 
     // No handles over an inspect-only world: the drag would move an entity whose
     // change could be neither undone nor saved.
@@ -90,7 +270,27 @@ void EditorApp::DrawTransformGizmo()
         else if (ImGui::IsKeyPressed(ImGuiKey_R, false))
             _gizmoOp = GizmoOp::Scale;
         if (ImGui::IsKeyPressed(ImGuiKey_X, false))
-            _gizmoLocalSpace = !_gizmoLocalSpace;
+        {
+            // Three-way for a member of an instance: World → Local → Instance. The
+            // third frame is the blueprint root's, so the handles rotate with the
+            // car — a *view*, never a storage decision, since the override is
+            // recorded in file space either way.
+            const bool isMember = _scene->Has<Assisi::ECS::BlueprintMember>(_selectedEntity);
+            if (!isMember)
+            {
+                _gizmoLocalSpace    = !_gizmoLocalSpace;
+                _gizmoInstanceSpace = false;
+            }
+            else if (!_gizmoLocalSpace && !_gizmoInstanceSpace)
+                _gizmoLocalSpace = true;
+            else if (_gizmoLocalSpace)
+            {
+                _gizmoLocalSpace    = false;
+                _gizmoInstanceSpace = true;
+            }
+            else
+                _gizmoInstanceSpace = false;
+        }
     }
 
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -122,6 +322,26 @@ void EditorApp::DrawTransformGizmo()
     // it regardless; translate/rotate honour the world/local toggle.
     const ImGuizmo::MODE mode = _gizmoLocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
 
+    // ImGuizmo only knows LOCAL and WORLD, so an arbitrary frame is had by folding
+    // the instance's placement into the *view* and handing it the member's matrix
+    // in instance space (§3). The result is drawn in the car's axes and decomposes
+    // back through the same fold, so nothing downstream has to know.
+    glm::mat4 gizmoView = view;
+    glm::mat4 instanceFrame(1.f);
+    bool      inInstanceFrame = false;
+    if (_gizmoInstanceSpace && _world != nullptr)
+    {
+        if (const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(_selectedEntity))
+        {
+            if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
+            {
+                instanceFrame   = TransformMatrix(row->transform);
+                gizmoView       = view * instanceFrame;
+                inInstanceFrame = true;
+            }
+        }
+    }
+
     const float snapValue = _gizmoOp == GizmoOp::Translate ? kTranslateSnap
                             : _gizmoOp == GizmoOp::Rotate   ? kRotateSnap
                                                             : kScaleSnap;
@@ -149,8 +369,14 @@ void EditorApp::DrawTransformGizmo()
         history->RecordBefore(_selectedEntity, transformId, EditLabel("Edit Transform", _selectedEntity),
                               _selectedEntity);
 
-    const bool manipulated = ImGuizmo::Manipulate(&view[0][0], &proj[0][0], operation, mode, &world[0][0],
+    if (inInstanceFrame)
+        world = glm::inverse(instanceFrame) * world;
+
+    const bool manipulated = ImGuizmo::Manipulate(&gizmoView[0][0], &proj[0][0], operation, mode, &world[0][0],
                                                   nullptr, io.KeyCtrl ? &snap[0] : nullptr);
+
+    if (inInstanceFrame)
+        world = instanceFrame * world;
 
     const bool nowUsing = ImGuizmo::IsUsing();
     // A held gizmo keeps the shared gesture open until release (mirrors the
