@@ -8,17 +8,22 @@
 /// via ComponentRegistry.  Unrecognised component names in a file are skipped
 /// with a warning so old levels remain loadable after component renames.
 ///
-/// ## Format (version 1)
+/// ## Format (version 2)
 /// @code{.json}
 /// {
-///   "version": 1,
+///   "version": 2,
 ///   "profile": "Gameplay",
 ///   "entities": [
 ///     {
+///       "name": "body",
 ///       "components": {
 ///         "Transform": { "position": [0,0,0], "rotation": [1,0,0,0], "scale": [1,1,1] },
 ///         "PointLight": { "color": [1,1,1], "intensity": 100.0, "radius": 20.0 }
 ///       }
+///     },
+///     {
+///       "name": "wheel_fl",
+///       "components": { "Parent": { "parent": "body" } }
 ///     }
 ///   ]
 /// }
@@ -26,6 +31,31 @@
 ///
 /// Entity IDs are not persisted; loading always clears the scene first and
 /// allocates fresh sequential entities so generation numbers stay at zero.
+///
+/// ## Names, and why v1 is gone
+/// Every entity carries a `name`, unique within the file, and every EntityRef
+/// field (`Parent::parent` and friends) stores that name rather than a position
+/// in the array. Positions are only safe while nothing outside the file points
+/// into it, and blueprint overrides point into it by design: an override that
+/// says "entity #1" means something different the moment somebody inserts a
+/// member above it, and a red wheel silently becomes a red headlight. The same
+/// fragility was already latent in `Parent`, where a hand-edited or merged file
+/// could re-target a parent link with no error at all.
+///
+/// The name lives on the entity as Runtime::Name, which is the same field the
+/// editor already shows — one name per entity, not a file identity beside a
+/// display label. Load fills it in for every entity, so a name is never absent
+/// after a round trip.
+///
+/// There is **no v1 reader**. The four level files in the tree were converted
+/// when the format changed (docs/blueprint-system-concept.md §6); carrying a
+/// positional path forever would have kept the failure it exists to remove.
+///
+/// A file is refused outright — the load fails and leaves an empty scene — for a
+/// duplicate name, a missing or empty name, a name too long for Runtime::Name,
+/// or an EntityRef naming an entity the file does not declare. Each of those is
+/// a file that means something other than what it says, and the alternative to
+/// refusing is a silently mis-wired scene.
 ///
 /// ## Transient fields
 /// Fields marked AFIELD(transient) (e.g. GPU handles, raw pointers) are
@@ -90,6 +120,16 @@ class SceneSerializer
     /// the dominant, entity-scaling cost — ending at 1.0.
     /// @p header (optional) receives the file's non-entity metadata; left
     /// untouched if the load fails its version check.
+    ///
+    /// **Throws** `std::runtime_error` on a wrong `version` or a malformed file
+    /// (see the naming rules in the file comment). A version mismatch throws
+    /// before the scene is cleared, so a direct caller keeps what it had;
+    /// everything else is a file this got partway through, and clears. The
+    /// LoadFrom* wrappers below turn every throw into `false` plus an empty scene,
+    /// so only a direct caller sees the exception.
+    ///
+    /// Returning quietly instead is what made a version mismatch read as a
+    /// *successful* load of an empty level all the way up to the caller.
     static void Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress = {},
                      LevelHeader *header = nullptr);
 
@@ -147,41 +187,60 @@ class SceneSerializer
     static std::vector<ECS::Entity> TransferEntities(ECS::Scene &src, ECS::Scene &dst,
                                                      std::span<const ECS::Entity> entities);
 
-    /// @brief Map a live entity to its stable serial index during the current Save.
+    /// @brief Serialize an EntityRef field's value the way the active context
+    /// addresses entities.
     ///
-    /// Only valid to call from within a component's serialize lambda.
-    /// Returns nullopt if the entity is unknown or no save is in progress.
-    static std::optional<uint64_t> EntityToIndex(ECS::Entity entity);
+    /// Called only from a component's generated serialize lambda. The JSON *type*
+    /// is the mode, which is what lets one pair of functions serve all three:
+    ///   - a **string** — the target's name — inside Save/Load of a file;
+    ///   - a **number** — an index within the moved set — inside TransferEntities;
+    ///   - a **number** — a packed (slot, generation) key — inside a
+    ///     ScopedRawEntityContext (editor undo payloads);
+    ///   - **null** for NullEntity, for a target outside a Save's scene, or when
+    ///     no context is active at all.
+    ///
+    /// A raw-context payload is therefore still not a valid level file and vice
+    /// versa — the asymmetry documented on ScopedRawEntityContext — but the two
+    /// can no longer be confused for each other by accident, because a name and
+    /// an index are not the same JSON type.
+    static nlohmann::json EntityToRef(ECS::Entity entity);
 
-    /// @brief Map a serial index to the live entity created during the current Load.
+    /// @brief Resolve an EntityRef field's serialized value against the active
+    /// context. The inverse of EntityToRef; same three modes.
     ///
-    /// Only valid to call from within a component's addToScene lambda.
-    /// Returns NullEntity if the index is out of range or no load is in progress.
-    static ECS::Entity IndexToEntity(uint64_t index);
+    /// Called only from a component's generated addToScene lambda. Returns
+    /// NullEntity when the value is null, when no context is active, or when the
+    /// reference cannot be resolved. In a *file* load an unresolvable name is not
+    /// merely nulled: it is recorded, and Load refuses the whole file once the
+    /// pass finishes. The refusal is deferred to there rather than thrown from
+    /// here because this runs inside generated code with no idea which file,
+    /// entity or component it is speaking for.
+    static ECS::Entity RefToEntity(const nlohmann::json &value);
 
     /// @brief RAII scope that makes EntityRef fields serialize/deserialize against
     /// *raw entity handles* instead of remapped serial indices.
     ///
     /// The generated serialize/deserialize for an `AFIELD() ECS::Entity` field
-    /// (e.g. `Parent.parent`) routes through EntityToIndex/IndexToEntity, which are
-    /// engaged only inside Save/Load. Called outside that (e.g. the editor
-    /// undo/redo system capturing or restoring a single component's JSON), they
-    /// return "unknown" and the field silently collapses to NullEntity — flattening
-    /// the hierarchy with no error.
+    /// (e.g. `Parent.parent`) routes through EntityToRef/RefToEntity, which resolve
+    /// names only inside Save/Load. Called outside that (e.g. the editor undo/redo
+    /// system capturing or restoring a single component's JSON), they return
+    /// "unknown" and the field silently collapses to NullEntity — flattening the
+    /// hierarchy with no error.
     ///
     /// Within this scope the mapping is identity-preserving instead:
-    ///   - EntityToIndex(e) returns a packed (slot, generation) key, no remap;
-    ///   - IndexToEntity(k) returns the live handle at that slot, but only when its
+    ///   - EntityToRef(e) returns a packed (slot, generation) key, no remap;
+    ///   - RefToEntity(k) returns the live handle at that slot, but only when its
 ///     generation still matches the one packed into `k` — a recycled slot
 ///     resolves to NullEntity rather than to its new occupant.
     /// This is exact only because the paired restore uses Scene::ReviveAt to bring
     /// entities back at their original (index, generation) — EntityAt(index) then
     /// resolves to the same handle that was captured.
     ///
-    /// Asymmetry (documented on purpose): level files on disk use remapped serial
-    /// indices (dense, stable across a save/load round-trip); undo payloads use raw
-    /// handles (valid only under the ReviveAt exact-identity guarantee). Do not mix
-    /// the two — a raw-context payload is not a valid level file and vice versa.
+    /// Asymmetry (documented on purpose): level files on disk address entities by
+    /// name (stable across a save/load round-trip *and* across an edit that
+    /// inserts entities); undo payloads use raw handles (valid only under the
+    /// ReviveAt exact-identity guarantee). Do not mix the two — a raw-context
+    /// payload is not a valid level file and vice versa.
     ///
     /// Non-reentrant with Save/Load and with itself: exactly one context (remap or
     /// raw) may be active per thread at a time.

@@ -1,27 +1,44 @@
 {
-  "version": 1,
   "entities": [
     {
       "components": {
         "DirectionalLight": {
-          "direction": [
-            -0.4,
-            -1.0,
-            -0.5
-          ],
           "color": [
             1.0,
             1.0,
             1.0
           ],
+          "direction": [
+            -0.4,
+            -1.0,
+            -0.5
+          ],
           "intensity": 0.6
         }
-      }
+      },
+      "name": "Entity"
     },
     {
       "components": {
-        "Name": {
-          "value": "Floor"
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            8.0,
+            0.25,
+            8.0
+          ],
+          "isStatic": true
         },
         "Transform": {
           "position": [
@@ -40,33 +57,31 @@
             0.5,
             16.0
           ]
-        },
+        }
+      },
+      "name": "Floor"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
-            8.0,
-            0.25,
-            8.0
+            4.0,
+            0.5,
+            0.25
           ],
           "isStatic": true
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "Wall0"
         },
         "Transform": {
           "position": [
@@ -85,18 +100,23 @@
             1.0,
             0.5
           ]
-        },
+        }
+      },
+      "name": "Wall0"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -105,13 +125,6 @@
             0.25
           ],
           "isStatic": true
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "Wall1"
         },
         "Transform": {
           "position": [
@@ -130,33 +143,34 @@
             1.0,
             0.5
           ]
-        },
+        }
+      },
+      "name": "Wall1"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
-            4.0,
             0.5,
-            0.25
+            0.5,
+            0.5
           ],
-          "isStatic": true
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "Crate0"
+          "isStatic": false
         },
         "Transform": {
           "position": [
@@ -175,18 +189,26 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Crate0"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -195,16 +217,6 @@
             0.5
           ],
           "isStatic": false
-        },
-        "Replicated": {
-          "priority": 1.0
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "Crate1"
         },
         "Transform": {
           "position": [
@@ -223,18 +235,26 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Crate1"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -243,16 +263,6 @@
             0.5
           ],
           "isStatic": false
-        },
-        "Replicated": {
-          "priority": 1.0
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "Crate2"
         },
         "Transform": {
           "position": [
@@ -271,18 +281,26 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Crate2"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -291,16 +309,6 @@
             0.5
           ],
           "isStatic": false
-        },
-        "Replicated": {
-          "priority": 1.0
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "Crate3"
         },
         "Transform": {
           "position": [
@@ -319,18 +327,26 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Crate3"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -339,16 +355,6 @@
             0.5
           ],
           "isStatic": false
-        },
-        "Replicated": {
-          "priority": 1.0
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "Crate4"
         },
         "Transform": {
           "position": [
@@ -367,18 +373,26 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Crate4"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -387,16 +401,6 @@
             0.5
           ],
           "isStatic": false
-        },
-        "Replicated": {
-          "priority": 1.0
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "Crate5"
         },
         "Transform": {
           "position": [
@@ -415,18 +419,23 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Crate5"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -435,16 +444,6 @@
             0.5
           ],
           "isStatic": false
-        },
-        "Replicated": {
-          "priority": 1.0
-        }
-      }
-    },
-    {
-      "components": {
-        "Name": {
-          "value": "CosmeticCrate"
         },
         "Transform": {
           "position": [
@@ -463,28 +462,10 @@
             1.0,
             1.0
           ]
-        },
-        "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
-          "materialOverrides": [
-            {
-              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
-              "path": "materials/checker.amat"
-            }
-          ]
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
         }
-      }
+      },
+      "name": "CosmeticCrate"
     }
-  ]
+  ],
+  "version": 2
 }

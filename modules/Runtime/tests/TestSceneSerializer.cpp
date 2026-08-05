@@ -13,11 +13,16 @@
 #include <optional>
 #include <string_view>
 
+#include <set>
+#include <string>
+
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Core/ShortString.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -75,20 +80,21 @@ TEST_CASE("SceneSerializer: forward parent reference survives a round-trip")
     CHECK(pc->parent == loadedParent);
 }
 
-// Adversarial hand-authored fixture: entity[0] (the child) references parent
-// serial index 1, which appears *after* it in the array. Exercises the loader
-// directly, independent of save ordering.
+// Adversarial hand-authored fixture: entity[0] (the child) references "body",
+// which appears *after* it in the array. Exercises the loader directly,
+// independent of save ordering.
 TEST_CASE("SceneSerializer: child-before-parent fixture loads the hierarchy")
 {
     const nlohmann::json fixture = {
-        {"version", 1},
+        {"version", 2},
         {"entities",
          nlohmann::json::array(
-             {{{"components", {{"Parent", {{"parent", 1}}}}}}, // [0] child -> parent 1
-              {{"components", {{"Transform",
-                               {{"position", {0.f, 0.f, 0.f}},
-                                {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                {"scale", {1.f, 1.f, 1.f}}}}}}}})}}; // [1] parent
+             {{{"name", "wheel"}, {"components", {{"Parent", {{"parent", "body"}}}}}}, // [0] -> body
+              {{"name", "body"},
+               {"components", {{"Transform",
+                                {{"position", {0.f, 0.f, 0.f}},
+                                 {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                 {"scale", {1.f, 1.f, 1.f}}}}}}}})}}; // [1] body
 
     ECS::Scene loaded;
     SceneSerializer::Load(loaded, fixture);
@@ -96,6 +102,143 @@ TEST_CASE("SceneSerializer: child-before-parent fixture loads the hierarchy")
     const auto *pc = loaded.Get<Parent>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(pc != nullptr);
     CHECK(pc->parent == ECS::Entity{.index = 1, .generation = 0});
+}
+
+// ---------------------------------------------------------------------------
+// Names (format v2). A name is what an override and every EntityRef address an
+// entity by, so a file whose names are ambiguous or dangling means something
+// other than what it says — and every one of these refuses rather than guesses.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SceneSerializer: a name survives the round trip and is the entity's Name")
+{
+    ECS::Scene        scene;
+    const ECS::Entity e = scene.Create();
+    REQUIRE(scene.Add(e, Transform{}) != nullptr);
+    REQUIRE(scene.Add(e, Runtime::Name{Core::ShortString{"wheel_fl"}}) != nullptr);
+
+    const nlohmann::json saved = SceneSerializer::Save(scene);
+    REQUIRE(saved.at("version").get<int32_t>() == 2);
+    REQUIRE(saved.at("entities").size() == 1);
+    CHECK(saved.at("entities")[0].at("name").get<std::string>() == "wheel_fl");
+    // Written once, at the entity level — not a second time inside components.
+    CHECK_FALSE(saved.at("entities")[0].at("components").contains("Name"));
+
+    ECS::Scene loaded;
+    SceneSerializer::Load(loaded, saved);
+    const auto *name = loaded.Get<Runtime::Name>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(name != nullptr);
+    CHECK(name->value.View() == "wheel_fl");
+}
+
+TEST_CASE("SceneSerializer: an unnamed entity is given a name, and duplicates are disambiguated")
+{
+    ECS::Scene        scene;
+    const ECS::Entity a = scene.Create();
+    const ECS::Entity b = scene.Create();
+    const ECS::Entity c = scene.Create();
+    REQUIRE(scene.Add(a, Transform{}) != nullptr);
+    REQUIRE(scene.Add(b, Transform{}) != nullptr);
+    REQUIRE(scene.Add(c, Transform{}) != nullptr);
+    // Two entities really can share a Name — it has always been a free-form label.
+    REQUIRE(scene.Add(a, Runtime::Name{Core::ShortString{"Cube"}}) != nullptr);
+    REQUIRE(scene.Add(b, Runtime::Name{Core::ShortString{"Cube"}}) != nullptr);
+
+    const nlohmann::json saved = SceneSerializer::Save(scene);
+    const auto          &list  = saved.at("entities");
+    REQUIRE(list.size() == 3);
+
+    std::set<std::string> names;
+    for (const auto &entity : list)
+        names.insert(entity.at("name").get<std::string>());
+    CHECK(names.size() == 3); // unique, which is what makes the file loadable at all
+    CHECK(names.contains("Cube"));
+    CHECK(names.contains("Cube_1"));
+
+    // And it reloads, which a file with two "Cube"s would not.
+    ECS::Scene loaded;
+    SceneSerializer::Load(loaded, saved);
+    CHECK(loaded.AliveCount() == 3);
+
+    // Deterministic: the same scene saves to the same names, so an override written
+    // against one save still addresses the same entity after the next.
+    CHECK(SceneSerializer::Save(scene) == saved);
+}
+
+TEST_CASE("SceneSerializer: two entities with the same name refuse the file")
+{
+    const nlohmann::json fixture = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", "body"}, {"components", nlohmann::json::object()}},
+                                            {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
+
+    ECS::Scene loaded;
+    CHECK_THROWS(SceneSerializer::Load(loaded, fixture));
+    CHECK(loaded.AliveCount() == 0);
+}
+
+TEST_CASE("SceneSerializer: a missing or empty name refuses the file")
+{
+    ECS::Scene loaded;
+
+    const nlohmann::json missing = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"components", nlohmann::json::object()}}})}};
+    CHECK_THROWS(SceneSerializer::Load(loaded, missing));
+
+    const nlohmann::json empty = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", ""}, {"components", nlohmann::json::object()}}})}};
+    CHECK_THROWS(SceneSerializer::Load(loaded, empty));
+
+    // Truncating instead is how two members become indistinguishable.
+    const nlohmann::json tooLong = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", std::string(Core::kShortStringMax + 1, 'x')},
+                                             {"components", nlohmann::json::object()}}})}};
+    CHECK_THROWS(SceneSerializer::Load(loaded, tooLong));
+}
+
+TEST_CASE("SceneSerializer: a reference to an undeclared name refuses the file")
+{
+    // The failure names exist to prevent, in its most direct form: a Parent
+    // pointing at something the file never declares. Nulling it would flatten the
+    // hierarchy silently, which is what the positional format already did.
+    const nlohmann::json fixture = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", "wheel"}, {"components", {{"Parent", {{"parent", "chassis"}}}}}},
+                                            {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
+
+    ECS::Scene loaded;
+    CHECK_THROWS(SceneSerializer::Load(loaded, fixture));
+    CHECK(loaded.AliveCount() == 0);
+}
+
+TEST_CASE("SceneSerializer: a v1 file is refused rather than read positionally")
+{
+    // Its refs are numbers, which under v2 would each resolve to *some* entity if
+    // the loader guessed. There is no v1 reader and this is what that means.
+    const nlohmann::json v1 = {
+        {"version", 1},
+        {"entities", nlohmann::json::array({{{"components", {{"Parent", {{"parent", 1}}}}}},
+                                            {{"components", nlohmann::json::object()}}})}};
+
+    ECS::Scene loaded;
+    CHECK_THROWS(SceneSerializer::Load(loaded, v1)); // the version check refuses it first
+    CHECK(loaded.AliveCount() == 0);
+}
+
+TEST_CASE("SceneSerializer: a null reference stays null")
+{
+    const nlohmann::json fixture = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", "loose"}, {"components", {{"Parent", {{"parent", nullptr}}}}}}})}};
+
+    ECS::Scene loaded;
+    SceneSerializer::Load(loaded, fixture);
+    const auto *pc = loaded.Get<Parent>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(pc != nullptr);
+    CHECK(pc->parent == ECS::NullEntity);
 }
 
 TEST_CASE("SceneSerializer: an empty scene round-trips to an empty scene")
@@ -169,10 +312,32 @@ TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
 
     const nlohmann::json future = {{"version", 999}, {"entities", nlohmann::json::array()}};
-    SceneSerializer::Load(scene, future); // rejected before the scene is cleared
+    CHECK_THROWS(SceneSerializer::Load(scene, future)); // rejected before the scene is cleared
 
     CHECK(scene.AliveCount() == 1);
     CHECK(scene.Get<Transform>(e) != nullptr);
+}
+
+TEST_CASE("SceneSerializer: a version mismatch through a file fails the load, not just the log")
+{
+    // It used to only log. LoadFromFile then returned true over an empty scene, so
+    // a level from a newer build read as a level with nothing in it — everywhere,
+    // all the way up to the server that announced it had loaded the world.
+    namespace fs        = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "assisi_serializer_version_test";
+    std::error_code ec;
+    fs::remove_all(root, ec);
+    fs::create_directories(root);
+    REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
+
+    {
+        std::ofstream out(root / "old.alvl", std::ios::binary);
+        out << nlohmann::json{{"version", 1}, {"entities", nlohmann::json::array()}}.dump(2);
+    }
+
+    ECS::Scene scene;
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "old.alvl"));
+    fs::remove_all(root, ec);
 }
 
 TEST_CASE("SceneSerializer: save/load through a file round-trips")
@@ -245,8 +410,9 @@ TEST_CASE("SceneSerializer: malformed and missing files fail cleanly, not fatall
 TEST_CASE("SceneSerializer: unknown component names are skipped, not fatal")
 {
     const nlohmann::json fixture = {
-        {"version", 1},
-        {"entities", nlohmann::json::array({{{"components",
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", "thing"},
+                                             {"components",
                                               {{"NopeComponent", {{"x", 1}}},
                                                {"Transform",
                                                 {{"position", {7.f, 0.f, 0.f}},
@@ -311,12 +477,11 @@ TEST_CASE("SceneSerializer: WITHOUT a context an EntityRef collapses (the bug th
     const auto *meta = Core::Reflect::ComponentRegistry::Instance().Find("Parent");
     REQUIRE(meta != nullptr);
 
-    // No context engaged: EntityToIndex returns nullopt, so a live handle encodes
-    // as the ~0u sentinel and deserializes back to NullEntity — the silent
+    // No context engaged: EntityToRef has nothing to address the target by, so a
+    // live handle encodes as null and deserializes back to NullEntity — the silent
     // hierarchy flattening that ScopedRawEntityContext exists to prevent.
     const nlohmann::json flat = meta->serialize(scene.Get<Parent>(b));
-    REQUIRE(flat.at("parent").is_number());
-    CHECK(flat.at("parent").get<uint32_t>() == ~0u);
+    CHECK(flat.at("parent").is_null());
 
     scene.RemoveById(b, meta->id);
     meta->addToScene(&scene, b.index, b.generation, flat);
@@ -325,8 +490,8 @@ TEST_CASE("SceneSerializer: WITHOUT a context an EntityRef collapses (the bug th
     CHECK(restored->parent == ECS::NullEntity);
 }
 
-// Round-6 review M11, FIXED: under ScopedRawEntityContext, EntityToIndex now
-// packs (slot, generation) instead of returning the bare slot, and IndexToEntity
+// Round-6 review M11, FIXED: under ScopedRawEntityContext, EntityToRef now
+// packs (slot, generation) instead of returning the bare slot, and RefToEntity
 // only resolves when the slot's current occupant still carries that generation.
 // A ref captured to an entity that is later destroyed used to resolve to whatever
 // new entity reused the slot — and no liveness check could catch it, because the
@@ -339,14 +504,13 @@ TEST_CASE("SceneSerializer: a raw ref to a recycled slot resolves to null, not i
     REQUIRE(e.generation == 0);
 
     // Capture: the raw context encodes slot + generation.
-    uint64_t captured = 0;
+    nlohmann::json captured;
     {
         SceneSerializer::ScopedRawEntityContext raw(scene);
-        const std::optional<uint64_t>           key = SceneSerializer::EntityToIndex(e);
-        REQUIRE(key.has_value());
-        captured = *key;
+        captured = SceneSerializer::EntityToRef(e);
+        REQUIRE(captured.is_number_unsigned());
         // Round-trips to the same entity while it is still alive.
-        CHECK(SceneSerializer::IndexToEntity(captured) == e);
+        CHECK(SceneSerializer::RefToEntity(captured) == e);
     }
 
     // Destroy e, then create a fresh entity that reuses the SAME slot with a bumped
@@ -359,14 +523,14 @@ TEST_CASE("SceneSerializer: a raw ref to a recycled slot resolves to null, not i
 
     {
         SceneSerializer::ScopedRawEntityContext raw(scene);
-        const ECS::Entity resolved = SceneSerializer::IndexToEntity(captured);
+        const ECS::Entity resolved = SceneSerializer::RefToEntity(captured);
         CHECK(resolved == ECS::NullEntity); // NOT silently redirected onto e2
         CHECK(resolved != e2);
 
         // A ref captured to the new occupant still resolves normally.
-        const std::optional<uint64_t> freshKey = SceneSerializer::EntityToIndex(e2);
-        REQUIRE(freshKey.has_value());
-        CHECK(SceneSerializer::IndexToEntity(*freshKey) == e2);
+        const nlohmann::json freshKey = SceneSerializer::EntityToRef(e2);
+        REQUIRE(freshKey.is_number_unsigned());
+        CHECK(SceneSerializer::RefToEntity(freshKey) == e2);
     }
 }
 

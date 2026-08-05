@@ -5,14 +5,19 @@
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
 
 #include <cmath>
 #include <cstdint>
+#include <format>
 #include <fstream>
 #include <map>
 #include <optional>
 #include <span>
+#include <stdexcept>
+#include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Assisi::Runtime
@@ -27,11 +32,31 @@ namespace
 
 struct SerializationContext
 {
-    // Save: entity key (gen<<32|idx) → serial index
-    std::unordered_map<uint64_t, uint32_t> entityToIndex;
+    /// How an EntityRef field addresses its target while this context is live.
+    /// Two callers, two vocabularies, and mixing them is the kind of bug that
+    /// produces a plausible scene rather than an error — so the mode is explicit.
+    enum class RefMode
+    {
+        Names,      ///< Save/Load of a file: a ref is the target entity's name.
+        SetIndices, ///< TransferEntities: a ref is an index within the moved set.
+    };
+    RefMode mode = RefMode::Names;
 
-    // Load: serial index → live Entity
-    std::vector<ECS::Entity> indexToEntity;
+    // SetIndices. Save side: entity key (gen<<32|idx) → index within the set.
+    // Load side: index → live Entity.
+    std::unordered_map<uint64_t, uint32_t> entityToIndex;
+    std::vector<ECS::Entity>               indexToEntity;
+
+    // Names. Save side: entity key → the unique name it is being written under.
+    // Load side: name → the live Entity created for it.
+    std::unordered_map<uint64_t, std::string>    entityToName;
+    std::unordered_map<std::string, ECS::Entity> nameToEntity;
+
+    /// Names an EntityRef asked for that the file never declared. Collected here
+    /// rather than thrown where they are found: RefToEntity runs inside a
+    /// component's generated deserialize, which knows neither the file nor the
+    /// entity it is speaking for. Load reports them together and refuses the file.
+    std::vector<std::string> unresolvedRefNames;
 };
 
 thread_local std::optional<SerializationContext> s_context;
@@ -63,48 +88,90 @@ struct ScopedContextReset
 // Public context accessors (called from component serialize/addToScene lambdas)
 // ---------------------------------------------------------------------------
 
-std::optional<uint64_t> SceneSerializer::EntityToIndex(ECS::Entity entity)
+nlohmann::json SceneSerializer::EntityToRef(ECS::Entity entity)
 {
+    // Null first, and unconditionally: every mode spells "no target" the same way,
+    // and none of the lookups below has a meaningful answer for it.
+    if (entity == ECS::NullEntity)
+        return nullptr;
+
     // Raw-entity context wins: identity mapping, keyed by slot AND generation.
     //
     // Round-6 M11: this used to return the bare slot index, dropping the
     // generation. A ref captured to an entity that was later destroyed then
     // resolved to whatever new entity reused the slot — silently, because the
     // reused slot is perfectly alive, so no liveness check can catch it. Packing
-    // the generation in lets IndexToEntity below reject the stale ref instead.
+    // the generation in lets RefToEntity below reject the stale ref instead.
     if (s_rawContextScene != nullptr)
         return EntityKey(entity.index, entity.generation);
 
     if (!s_context)
-        return std::nullopt;
+        return nullptr;
 
     const uint64_t key = EntityKey(entity.index, entity.generation);
-    const auto it = s_context->entityToIndex.find(key);
-    if (it == s_context->entityToIndex.end())
-        return std::nullopt;
 
-    return it->second;
+    if (s_context->mode == SerializationContext::RefMode::SetIndices)
+    {
+        const auto it = s_context->entityToIndex.find(key);
+        // Out of the moved set: ~0ull, which RefToEntity reads as out of range and
+        // nulls. TransferEntities warns about each of these before it gets here.
+        return it != s_context->entityToIndex.end() ? nlohmann::json(it->second) : nlohmann::json(~0ull);
+    }
+
+    const auto it = s_context->entityToName.find(key);
+    return it != s_context->entityToName.end() ? nlohmann::json(it->second) : nlohmann::json(nullptr);
 }
 
-ECS::Entity SceneSerializer::IndexToEntity(uint64_t index)
+ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
 {
-    // Raw-entity context wins: `index` is a packed (slot, generation) key. The
+    if (value.is_null())
+        return ECS::NullEntity;
+
+    // Raw-entity context wins: the value is a packed (slot, generation) key. The
     // paired restore revives entities at their original handle, so in the intended
     // flow the generation matches exactly. When it does not, the slot has been
     // recycled by an unrelated entity and the ref is stale — resolve to null
     // rather than silently redirecting onto whoever moved in (round-6 M11).
     if (s_rawContextScene != nullptr)
     {
-        const auto        slot    = static_cast<uint32_t>(index & 0xFFFFFFFFull);
-        const auto        wantGen = static_cast<uint32_t>(index >> 32);
+        if (!value.is_number_unsigned())
+            return ECS::NullEntity;
+        const uint64_t    key     = value.get<uint64_t>();
+        const auto        slot    = static_cast<uint32_t>(key & 0xFFFFFFFFull);
+        const auto        wantGen = static_cast<uint32_t>(key >> 32);
         const ECS::Entity live    = s_rawContextScene->EntityAt(slot);
         return live.generation == wantGen ? live : ECS::NullEntity;
     }
 
-    if (!s_context || index >= s_context->indexToEntity.size())
+    if (!s_context)
         return ECS::NullEntity;
 
-    return s_context->indexToEntity[static_cast<std::size_t>(index)];
+    if (s_context->mode == SerializationContext::RefMode::SetIndices)
+    {
+        if (!value.is_number_unsigned())
+            return ECS::NullEntity;
+        const uint64_t index = value.get<uint64_t>();
+        return index < s_context->indexToEntity.size() ? s_context->indexToEntity[static_cast<std::size_t>(index)]
+                                                       : ECS::NullEntity;
+    }
+
+    // A file ref is a name. Anything else is a v1 file or a hand-edit that meant a
+    // position — both of which would resolve to *some* entity if we guessed, which
+    // is the failure names exist to remove. Record it and let Load refuse.
+    if (!value.is_string())
+    {
+        s_context->unresolvedRefNames.push_back(value.dump());
+        return ECS::NullEntity;
+    }
+
+    auto       name = value.get<std::string>();
+    const auto it   = s_context->nameToEntity.find(name);
+    if (it == s_context->nameToEntity.end())
+    {
+        s_context->unresolvedRefNames.push_back(std::move(name));
+        return ECS::NullEntity;
+    }
+    return it->second;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +190,8 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
         return {};
 
     ScopedContextReset guard;
-    s_context = SerializationContext{};
+    s_context       = SerializationContext{};
+    s_context->mode = SerializationContext::RefMode::SetIndices;
 
     // Source half of the remap: each migrated entity → its index within the set.
     // A ref to any entity NOT in this map returns nullopt from EntityToIndex,
@@ -266,14 +334,62 @@ namespace
     }
     return fixed;
 }
+
+/// The name a saved entity is written under, before uniquing.
+///
+/// Runtime::Name is the entity's name — there is no second, file-only identity —
+/// so an entity that has one keeps it and an entity that does not gets a
+/// placeholder. Placeholders are stable across a round trip because Load writes
+/// whatever it read back onto the entity, so the *next* save reads a real name
+/// here and nothing shifts underneath an override.
+std::string AuthoredName(ECS::Scene &scene, ECS::Entity entity)
+{
+    if (const Name *name = scene.Get<Name>(entity); name != nullptr && !name->value.View().empty())
+        return std::string{name->value.View()};
+    return "Entity";
+}
+
+/// @p base if nothing has claimed it, else `base_1`, `base_2`, … until something
+/// is free. Claims the result in @p used.
+///
+/// Two entities really can share a Name today (it is a free-form label and always
+/// has been), and a file where they do would be refused on load. Disambiguating
+/// on the way out is what makes the format's uniqueness rule enforceable without
+/// a migration step that could not have known which "Cube" was which. Deterministic
+/// because the caller walks entities in the same sorted order the array uses, so
+/// re-saving an unchanged scene produces byte-identical names.
+std::string UniqueName(std::string base, std::unordered_set<std::string> &used)
+{
+    // A name has to survive a round trip through Runtime::Name, which truncates.
+    // Truncating here instead means the file says exactly what the load will hold.
+    if (base.size() > Core::kShortStringMax)
+        base.resize(Core::kShortStringMax);
+
+    if (used.insert(base).second)
+        return base;
+
+    for (uint32_t suffix = 1;; ++suffix)
+    {
+        std::string candidate = std::format("{}_{}", base, suffix);
+        if (candidate.size() > Core::kShortStringMax)
+        {
+            // Make room for the suffix rather than dropping it: a truncated
+            // duplicate is still a duplicate.
+            const std::string tail = std::format("_{}", suffix);
+            candidate = base.substr(0, Core::kShortStringMax - tail.size()) + tail;
+        }
+        if (used.insert(candidate).second)
+            return candidate;
+    }
+}
 } // namespace
 
 nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &header)
 {
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    // Pass 1: collect all entity keys into a sorted map so serial indices
-    // match the final array order. No serialization yet.
+    // Pass 1: collect all entity keys into a sorted map so the array order is
+    // deterministic. No serialization yet.
     std::map<uint64_t, nlohmann::json> entityMap;
 
     for (const auto *meta : registry.SerializableComponents())
@@ -284,18 +400,32 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
         });
     }
 
-    // Build entityToIndex from the sorted map (deterministic order).
-    SerializationContext ctx;
-    uint32_t serialIdx = 0;
-    for (const auto &entry : entityMap)
-        ctx.entityToIndex.emplace(entry.first, serialIdx++);
+    // Pass 2: name every entity, before anything serializes — an EntityRef field
+    // resolves to a *name*, and the target may be anywhere in the file, including
+    // ahead of the entity that points at it.
+    SerializationContext            ctx;
+    std::unordered_set<std::string> usedNames;
+    usedNames.reserve(entityMap.size());
+    for (auto &[key, entityJson] : entityMap)
+    {
+        const ECS::Entity entity{static_cast<uint32_t>(key & 0xFFFFFFFFull), static_cast<uint32_t>(key >> 32)};
+        std::string       name = UniqueName(AuthoredName(scene, entity), usedNames);
+
+        entityJson["name"] = name;
+        ctx.entityToName.emplace(key, std::move(name));
+    }
 
     s_context = std::move(ctx);
     const ScopedContextReset contextReset;
 
-    // Pass 2: serialize components (context is live so EntityToIndex works).
+    // Pass 3: serialize components (the context is live, so EntityToRef works).
     for (const auto *meta : registry.SerializableComponents())
     {
+        // Name is the entity's `name` key, written above. Emitting it here as well
+        // would put the same string in two places with no rule about which wins.
+        if (meta->name == "Name")
+            continue;
+
         meta->iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *compPtr)
         {
             const uint64_t key = EntityKey(idx, gen);
@@ -304,7 +434,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
     }
 
     nlohmann::json result;
-    result["version"] = 1;
+    result["version"] = 2;
     // Only written when set, so levels that never name a profile stay free of the
     // key rather than gaining an empty one on every save.
     if (!header.profile.empty())
@@ -333,10 +463,13 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
                            LevelHeader *header)
 {
     const int32_t version = j.value("version", 0);
-    if (version != 1)
+    if (version != 2)
     {
-        Core::Log::Error("SceneSerializer: unsupported level file version {}", version);
-        return;
+        // Thrown, not returned: a caller that gets no signal reports a *successful*
+        // load of an empty scene, which is how a level silently becomes nothing.
+        // Thrown before the Clear below, so a direct caller keeps what it had.
+        throw std::runtime_error(
+            std::format("unsupported level file version {} (this build reads version 2)", version));
     }
 
     if (header != nullptr)
@@ -351,17 +484,57 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
 
     const auto &entities = j.at("entities");
 
-    // Pass 1: create every entity up front so indexToEntity is complete before
-    // any component deserializes. Component EntityRef fields resolve through
-    // IndexToEntity, and a reference may point *forward* to an entity that has
-    // not been created yet (e.g. a child serialized before its parent after
-    // slot reuse). A single pass would resolve those to NullEntity and silently
-    // flatten the hierarchy, so all handles must exist before pass 2 runs.
-    s_context->indexToEntity.reserve(entities.size());
+    // Pass 1: read and validate every name, before a single entity is created.
+    // Refusing here rather than mid-load is what keeps a bad file from leaving a
+    // half-built scene, and every one of these means the file addresses something
+    // other than what it appears to.
+    std::vector<std::string> names;
+    names.reserve(entities.size());
     for (size_t i = 0; i < entities.size(); ++i)
-        s_context->indexToEntity.push_back(scene.Create());
+    {
+        const auto &entityJson = entities[i];
+        if (!entityJson.contains("name") || !entityJson.at("name").is_string())
+            throw std::runtime_error(std::format("entity #{} has no name", i));
 
-    // Pass 2: deserialize components now that every EntityRef can resolve.
+        std::string name = entityJson.at("name").get<std::string>();
+        if (name.empty())
+            throw std::runtime_error(std::format("entity #{} has an empty name", i));
+        if (name.size() > Core::kShortStringMax)
+        {
+            // Refused rather than truncated: truncation is how two members become
+            // indistinguishable, and an override that then picks the wrong one is
+            // exactly the failure named entities exist to prevent.
+            throw std::runtime_error(std::format("entity name '{}' is longer than the {}-byte limit", name,
+                                                 Core::kShortStringMax));
+        }
+        names.push_back(std::move(name));
+    }
+
+    // Pass 2: create every entity up front so nameToEntity is complete before any
+    // component deserializes. A reference may point *forward* to an entity that
+    // has not been created yet; a single pass would resolve those to NullEntity
+    // and silently flatten the hierarchy.
+    s_context->nameToEntity.reserve(names.size());
+    std::vector<ECS::Entity> created;
+    created.reserve(names.size());
+    for (size_t i = 0; i < names.size(); ++i)
+    {
+        const ECS::Entity e = scene.Create();
+        created.push_back(e);
+
+        if (!s_context->nameToEntity.emplace(names[i], e).second)
+        {
+            // Duplicate names make every reference and every override ambiguous,
+            // and picking one is picking silently.
+            scene.Clear();
+            throw std::runtime_error(std::format("two entities are both named '{}'", names[i]));
+        }
+
+        // The name is the entity's Name, not a second identity beside it.
+        (void)scene.Add(e, Name{Core::ShortString{names[i]}});
+    }
+
+    // Pass 3: deserialize components now that every EntityRef can resolve.
     const size_t entityCount = entities.size();
     for (size_t i = 0; i < entityCount; ++i)
     {
@@ -374,9 +547,21 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
         if (!entityJson.contains("components"))
             continue;
 
-        const ECS::Entity e = s_context->indexToEntity[i];
+        const ECS::Entity e = created[i];
         for (const auto &[compName, compData] : entityJson.at("components").items())
         {
+            // The entity-level name already wrote this one, and it is authoritative:
+            // a file that also lists Name in components is out of spec, and letting
+            // it through would give the entity a name nothing else in the file
+            // addresses it by.
+            if (compName == "Name")
+            {
+                Core::Log::Warn("SceneSerializer: entity '{}' lists a Name component; the entity's "
+                                "'name' key is authoritative and this one is ignored.",
+                                names[i]);
+                continue;
+            }
+
             const auto *meta = registry.Find(compName);
             if (!meta)
             {
@@ -394,6 +579,23 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
             }
             meta->addToScene(&scene, e.index, e.generation, compData);
         }
+    }
+
+    // Every reference had to resolve. One that did not means the file names an
+    // entity it does not declare — a rename someone made by hand, a merge that
+    // dropped an entity, or a v1 file whose numeric refs came through here.
+    if (!s_context->unresolvedRefNames.empty())
+    {
+        const std::vector<std::string> &bad = s_context->unresolvedRefNames;
+        std::string                     list;
+        for (size_t i = 0; i < bad.size() && i < 8; ++i)
+            list += (i == 0 ? "" : ", ") + bad[i];
+        if (bad.size() > 8)
+            list += std::format(", … ({} more)", bad.size() - 8);
+
+        scene.Clear();
+        throw std::runtime_error(
+            std::format("{} entity reference(s) name an entity the file does not declare: {}", bad.size(), list));
     }
 }
 
