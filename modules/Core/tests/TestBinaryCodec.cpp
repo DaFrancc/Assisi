@@ -765,7 +765,7 @@ TEST_CASE("BinaryCodec: an instanceRef UInt32 translates through the instance ho
             tagged = &field;
     }
     REQUIRE(tagged != nullptr);
-    tagged->instanceRef = true;
+    tagged->type = FieldType::InstanceRef;
 
     AllTypes source     = MakePopulated();
     source.uint32Value  = 7u;
@@ -816,7 +816,7 @@ TEST_CASE("BinaryCodec: instanceRef with no hook installed is a plain integer")
     for (FieldMeta &field : meta.fields)
     {
         if (field.name == "uint32Value")
-            field.instanceRef = true;
+            field.type = FieldType::InstanceRef;
     }
 
     AllTypes source    = MakePopulated();
@@ -839,7 +839,7 @@ TEST_CASE("BinaryCodec: instanceRef is part of the protocol layout")
     for (FieldMeta &field : flagged.fields)
     {
         if (field.name == "uint32Value")
-            field.instanceRef = true;
+            field.type = FieldType::InstanceRef;
     }
 
     const std::array<ComponentMeta, 1> plainSet{plain};

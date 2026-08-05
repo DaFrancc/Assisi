@@ -315,7 +315,7 @@ void EditorApp::SubmitInstanceIcons()
     }
     _sceneRenderer.SubmitEditorIcons(positions);
 
-    if (_selectedInstance != 0)
+    if (_selectedInstance.IsValid())
     {
         if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance))
             _sceneRenderer.SubmitIconOutline(row->transform.position);

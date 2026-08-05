@@ -60,7 +60,7 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
     REQUIRE(out.good());
 }
 
-ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, uint32_t id, std::string_view name)
+ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId id, std::string_view name)
 {
     return Runtime::FindMember(scene, table, id, name);
 }
@@ -111,7 +111,7 @@ TEST_CASE("Prepared form: a spawn decodes to the same values a JSON load produce
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<uint32_t> id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const std::optional<ECS::InstanceId> id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
 
     const ECS::Entity body = MemberOf(scene, table, *id, "body");
@@ -146,8 +146,8 @@ TEST_CASE("Prepared form: two spawns hold their own vector storage")
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<uint32_t> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
-    const std::optional<uint32_t> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const std::optional<ECS::InstanceId> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const std::optional<ECS::InstanceId> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
 
@@ -178,8 +178,8 @@ TEST_CASE("Prepared form: a reference decodes to this instance's member, not the
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<uint32_t> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
-    const std::optional<uint32_t> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const std::optional<ECS::InstanceId> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const std::optional<ECS::InstanceId> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
 
@@ -215,7 +215,7 @@ TEST_CASE("Prepared form: an overridden component takes the JSON path and the ov
     // A prepared block is full state, so decoding one over a component the override
     // just set would undo it. The claim wins; the field the claim did not name
     // still falls back to the blueprint's value.
-    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, 1, "body"));
+    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(91.f));
     CHECK(camera->isActive == true);

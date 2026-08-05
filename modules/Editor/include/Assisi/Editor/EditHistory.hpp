@@ -95,7 +95,7 @@ struct EntityDelta
 /// and all of it reverts together.
 struct InstanceDelta
 {
-    std::uint32_t instanceId = 0;
+    Assisi::ECS::InstanceId instanceId;
 
     /// The row on each side, or nullopt for "the instance did not exist".
     /// Place = {before: nullopt, after: row}; delete = the reverse; an override
@@ -333,13 +333,13 @@ class EditHistory
     /// is missing.
     [[nodiscard]] nlohmann::json ReferenceSafeOverride(const nlohmann::json                &component,
                                                        const Assisi::Core::Reflect::ComponentMeta &meta,
-                                                       std::uint32_t instanceId) const;
+                                                       Assisi::ECS::InstanceId instanceId) const;
 
     /// @brief How a file that overrides a member of @p instanceId should name
     /// @p target: instance-relative for a member of the same instance, `/…` for
     /// anything else the writing file can see. Nullopt if it cannot be named.
     [[nodiscard]] std::optional<std::string> NameForOverrideTarget(Assisi::ECS::Entity target,
-                                                                   std::uint32_t instanceId) const;
+                                                                   Assisi::ECS::InstanceId instanceId) const;
 
     void ApplyTransaction(const Transaction &txn, Direction dir);
 

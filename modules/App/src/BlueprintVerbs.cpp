@@ -16,9 +16,10 @@
 namespace Assisi::App
 {
 
-std::optional<uint32_t> SpawnBlueprint(World &world, std::string_view source, const ECS::Transform &placement)
+std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view source,
+                                              const ECS::Transform &placement)
 {
-    const std::optional<uint32_t> id =
+    const std::optional<ECS::InstanceId> id =
         Runtime::SceneSerializer::ExpandInstance(world.scene, world.instances, source, placement);
     if (!id)
         return std::nullopt;
@@ -67,7 +68,7 @@ std::optional<uint32_t> SpawnBlueprint(World &world, std::string_view source, co
     return id;
 }
 
-bool DestroyInstance(World &world, uint32_t instanceId)
+bool DestroyInstance(World &world, ECS::InstanceId instanceId)
 {
     if (world.instances.Find(instanceId) == nullptr)
         return false;
@@ -92,7 +93,7 @@ bool PruneFromInstance(World &world, ECS::Entity entity)
     return Runtime::PruneFromInstance(world.scene, entity);
 }
 
-bool ExplodeInstance(World &world, uint32_t instanceId)
+bool ExplodeInstance(World &world, ECS::InstanceId instanceId)
 {
     if (world.instances.Find(instanceId) == nullptr)
         return false;
@@ -104,12 +105,13 @@ bool ExplodeInstance(World &world, uint32_t instanceId)
     return true;
 }
 
-ECS::Entity FindMember(World &world, uint32_t instanceId, std::string_view name)
+ECS::Entity FindMember(World &world, ECS::InstanceId instanceId, std::string_view name)
 {
     return Runtime::FindMember(world.scene, world.instances, instanceId, name);
 }
 
-const Runtime::BlueprintInstance *FindInstance(World &world, uint32_t instanceId, std::string_view expectedSource)
+const Runtime::BlueprintInstance *FindInstance(World &world, ECS::InstanceId instanceId,
+                                               std::string_view expectedSource)
 {
     return Runtime::FindInstance(world.instances, instanceId, expectedSource);
 }

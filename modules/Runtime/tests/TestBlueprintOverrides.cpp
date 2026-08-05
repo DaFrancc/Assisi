@@ -66,7 +66,7 @@ nlohmann::json CameraFields(float fov, bool active)
 
 /// The live entity for member @p name of instance @p id, or NullEntity if this
 /// instance does not have it.
-ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, uint32_t id, std::string_view name)
+ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId id, std::string_view name)
 {
     const Runtime::BlueprintInstance *row = table.Find(id);
     REQUIRE(row != nullptr);
@@ -111,7 +111,7 @@ TEST_CASE("Overrides: a level's field claim wins, and the fields it did not name
     InstanceTable table;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
 
-    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, 1, "body"));
+    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"body"));
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(90.f)); // the claim
     CHECK(camera->isActive == true);                    // un-overridden means un-resolved
@@ -143,7 +143,7 @@ TEST_CASE("Overrides: outermost wins per field, so two levels' claims both apply
 
     // Both, not one replacing the other's whole object — the reading in which the
     // outer claim wipes the inner set is how someone loses edits.
-    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, 1, "car_1/body"));
+    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"car_1/body"));
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(33.f));
     CHECK(camera->isActive == false);
@@ -175,7 +175,7 @@ TEST_CASE("Overrides: null removes a component, and the removal beats an outer f
 
     // Removal wins. Resurrecting it from a field edit would silently bring back
     // every *other* field of a component somebody deliberately deleted.
-    CHECK(scene.Get<Camera>(MemberOf(scene, table, 1, "car_1/body")) == nullptr);
+    CHECK(scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"car_1/body")) == nullptr);
 }
 
 TEST_CASE("Overrides: an add starts from C++ defaults, not from what was deleted")
@@ -195,7 +195,7 @@ TEST_CASE("Overrides: an add starts from C++ defaults, not from what was deleted
     InstanceTable table;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
 
-    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, 1, "wheel_fl"));
+    const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl"));
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(12.f));
     // The body's Camera says isActive=true; this one is a *new* component that
@@ -221,16 +221,16 @@ TEST_CASE("Overrides: a removed member is not created, and the ones around it ke
 
     // One car lost a wheel; the other did not.
     CHECK(scene.AliveCount() == 3);
-    CHECK(MemberOf(scene, table, 1, "wheel_fl") == ECS::NullEntity);
-    CHECK(MemberOf(scene, table, 2, "wheel_fl") != ECS::NullEntity);
+    CHECK(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl") == ECS::NullEntity);
+    CHECK(MemberOf(scene, table, ECS::InstanceId{2},"wheel_fl") != ECS::NullEntity);
 
     // And the survivor kept index 0 rather than sliding down into the hole: the
     // index is the NetId offset, so two instances of one file that removed
     // different members must still agree about which index names which member.
-    const ECS::BlueprintMember *body = scene.Get<ECS::BlueprintMember>(MemberOf(scene, table, 1, "body"));
+    const ECS::BlueprintMember *body = scene.Get<ECS::BlueprintMember>(MemberOf(scene, table, ECS::InstanceId{1},"body"));
     REQUIRE(body != nullptr);
     CHECK(body->memberIndex == 0);
-    const ECS::BlueprintMember *wheel = scene.Get<ECS::BlueprintMember>(MemberOf(scene, table, 2, "wheel_fl"));
+    const ECS::BlueprintMember *wheel = scene.Get<ECS::BlueprintMember>(MemberOf(scene, table, ECS::InstanceId{2},"wheel_fl"));
     REQUIRE(wheel != nullptr);
     CHECK(wheel->memberIndex == 1);
 }
@@ -252,7 +252,7 @@ TEST_CASE("Overrides: a reference to a removed member nulls, rather than refusin
     // file never declared — so the wheel arrives with a null parent, not a refusal.
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
 
-    const Runtime::Parent *parent = scene.Get<Runtime::Parent>(MemberOf(scene, table, 1, "wheel_fl"));
+    const Runtime::Parent *parent = scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl"));
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == ECS::NullEntity);
 }
@@ -278,8 +278,8 @@ TEST_CASE("Overrides: removing a nested instance's name removes everything under
     // A path removes the member it names and everything beneath it, so nothing has
     // to know whether the path named a member or a nested instance.
     CHECK(scene.AliveCount() == 2);
-    CHECK(MemberOf(scene, table, 1, "car_1/body") != ECS::NullEntity);
-    CHECK(MemberOf(scene, table, 1, "car_2/body") == ECS::NullEntity);
+    CHECK(MemberOf(scene, table, ECS::InstanceId{1},"car_1/body") != ECS::NullEntity);
+    CHECK(MemberOf(scene, table, ECS::InstanceId{1},"car_2/body") == ECS::NullEntity);
 }
 
 TEST_CASE("Overrides: a claim on a member the blueprint no longer declares is dropped, not fatal")
@@ -356,7 +356,7 @@ TEST_CASE("Overrides: a save writes back what was read, and reloading gives the 
     InstanceTable reloadedTable;
     SceneSerializer::Load(reloaded, saved, {}, nullptr, &reloadedTable);
     CHECK(reloaded.AliveCount() == 1);
-    const Camera *camera = reloaded.Get<Camera>(MemberOf(reloaded, reloadedTable, 1, "body"));
+    const Camera *camera = reloaded.Get<Camera>(MemberOf(reloaded, reloadedTable, ECS::InstanceId{1}, "body"));
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(44.f));
 }

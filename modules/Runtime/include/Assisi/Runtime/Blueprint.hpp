@@ -27,6 +27,7 @@
 
 #include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 
@@ -248,15 +249,15 @@ class InstanceTable
 {
   public:
     /// @brief Adds a row and returns its fresh id (never 0).
-    uint32_t Add(BlueprintInstance instance);
+    ECS::InstanceId Add(BlueprintInstance instance);
 
     /// @brief The row for @p id, or nullptr if no such instance is live.
-    [[nodiscard]] const BlueprintInstance *Find(uint32_t id) const;
+    [[nodiscard]] const BlueprintInstance *Find(ECS::InstanceId id) const;
 
     /// @brief Drops @p id's row. The members are not touched — destroying them is
     /// the caller's business, and a row outliving its members would be a stored
     /// member list in disguise.
-    void Remove(uint32_t id);
+    void Remove(ECS::InstanceId id);
 
     /// @brief Puts a row back at an exact id, for undo.
     ///
@@ -267,11 +268,11 @@ class InstanceTable
     ///
     /// Also advances the allocator past @p id, so a later Add cannot collide with a
     /// row that was restored from under it.
-    void RestoreAt(uint32_t id, BlueprintInstance instance);
+    void RestoreAt(ECS::InstanceId id, BlueprintInstance instance);
 
     /// @brief Every live instance, in id order. For the editor's outliner and for
     /// a save, which writes one entry per row.
-    [[nodiscard]] std::vector<std::pair<uint32_t, const BlueprintInstance *>> All() const;
+    [[nodiscard]] std::vector<std::pair<ECS::InstanceId, const BlueprintInstance *>> All() const;
 
     /// @brief Empties the table and restarts ids from 1. Level unload.
     void Clear();
@@ -279,8 +280,11 @@ class InstanceTable
     [[nodiscard]] std::size_t Size() const { return _rows.size(); }
 
   private:
-    std::unordered_map<uint32_t, BlueprintInstance> _rows;
-    uint32_t                                        _nextId = 1;
+    std::unordered_map<ECS::InstanceId, BlueprintInstance> _rows;
+    /// The next id to hand out. A raw counter rather than an InstanceId because
+    /// this is the one place that does arithmetic on the number — which is exactly
+    /// what the type exists to forbid everywhere else.
+    uint32_t _nextId = 1;
 };
 
 /// @brief Every live member of @p instanceId, by scanning the tag pool.
@@ -289,7 +293,7 @@ class InstanceTable
 /// A member already destroyed simply is not found; there is no list to go stale.
 /// That is the difference from a stored member list, which needs invalidating
 /// every time a member dies or is reparented and gets it wrong once.
-[[nodiscard]] std::vector<ECS::Entity> MembersOf(ECS::Scene &scene, uint32_t instanceId);
+[[nodiscard]] std::vector<ECS::Entity> MembersOf(ECS::Scene &scene, ECS::InstanceId instanceId);
 
 /// @brief One member leaves its instance; the entity lives on.
 ///
@@ -305,7 +309,7 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// Resolves the name to an index once through the cached member list, then
 /// compares integers per entity — which is why the tag carries an index rather
 /// than a string.
-[[nodiscard]] ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, uint32_t instanceId,
+[[nodiscard]] ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId,
                                      std::string_view name);
 
 /// @brief The row for @p id, optionally confirming it came from @p expectedSource.
@@ -315,7 +319,7 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 ///
 /// @return nullptr if no such instance is live, or if it is not from
 ///         @p expectedSource (when one is given).
-[[nodiscard]] const BlueprintInstance *FindInstance(const InstanceTable &table, uint32_t instanceId,
+[[nodiscard]] const BlueprintInstance *FindInstance(const InstanceTable &table, ECS::InstanceId instanceId,
                                                     std::string_view expectedSource = {});
 
 /// @brief The `instances` array a save should write for a live table, in id order.

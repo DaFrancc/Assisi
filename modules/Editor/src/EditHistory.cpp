@@ -298,7 +298,7 @@ bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
     return true;
 }
 
-std::optional<std::string> EditHistory::NameForOverrideTarget(Entity target, std::uint32_t instanceId) const
+std::optional<std::string> EditHistory::NameForOverrideTarget(Entity target, ECS::InstanceId instanceId) const
 {
     if (_instances == nullptr || target == Assisi::ECS::NullEntity || !_scene.IsAlive(target))
         return std::nullopt;
@@ -336,7 +336,7 @@ std::optional<std::string> EditHistory::NameForOverrideTarget(Entity target, std
 
 nlohmann::json EditHistory::ReferenceSafeOverride(const nlohmann::json &component,
                                                   const Reflect::ComponentMeta &meta,
-                                                  std::uint32_t                 instanceId) const
+                                                  ECS::InstanceId               instanceId) const
 {
     nlohmann::json out = component;
 

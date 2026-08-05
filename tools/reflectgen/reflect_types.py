@@ -122,6 +122,25 @@ TYPES: dict[str, TypeCodegen] = {
         'EntityRef',
         'Assisi::Runtime::SceneSerializer::EntityToRef({a})',
         '{{ if (j.contains("{f}")) {{ {a} = Assisi::Runtime::SceneSerializer::RefToEntity(j.at("{f}")); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+    # ECS::InstanceId — a uint32 underneath and its own type on purpose, so the
+    # codec can tell "which blueprint instance" from every other unsigned integer
+    # and translate it to the instance's baseNetId on the wire. JSON carries the
+    # raw number: a file has one id space, and an instance id in a save is only
+    # ever read back by the same machine that wrote it. Both spellings accepted.
+    # The bare spelling too: unlike ECS::Entity, whose fields all live in other
+    # namespaces, InstanceId's own header declares one inside Assisi::ECS.
+    'InstanceId': TypeCodegen(
+        'InstanceRef',
+        '{a}.value',
+        '{{ if (j.contains("{f}")) {{ {a} = Assisi::ECS::InstanceId{{ j.at("{f}").get<std::uint32_t>() }}; }} }}'),
+    'ECS::InstanceId': TypeCodegen(
+        'InstanceRef',
+        '{a}.value',
+        '{{ if (j.contains("{f}")) {{ {a} = Assisi::ECS::InstanceId{{ j.at("{f}").get<std::uint32_t>() }}; }} }}'),
+    'Assisi::ECS::InstanceId': TypeCodegen(
+        'InstanceRef',
+        '{a}.value',
+        '{{ if (j.contains("{f}")) {{ {a} = Assisi::ECS::InstanceId{{ j.at("{f}").get<std::uint32_t>() }}; }} }}'),
     # Core::ShortString — a small fixed-capacity inline string (e.g. an entity
     # Name). Serialized as a JSON string of its view; Assign() re-imposes the
     # capacity on load. Same codegen as AssetPath but a distinct FieldType so the
