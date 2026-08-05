@@ -155,8 +155,8 @@ void EditorApp::SaveLevel(const std::string &name)
     // Carry the world's profile back into the file. A Scene does not know it —
     // it is a property of the level — so a save that dropped it would silently
     // strip the field from every level the editor touches.
-    const Assisi::Runtime::LevelHeader header{.profile = _world->profile};
-    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header))
+    const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = _world->profile};
+    if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header, &_world->instances))
     {
         // Save As renames what this world *is* — keep its level identity truthful,
         // since travel and (later) the network level handshake read it.
@@ -194,8 +194,8 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // safe point — level loads are marshalled to the main-thread drain, never run
     // from OnImGui; see the Load button in DrawLevelsWindow.)
     Assisi::Runtime::LevelHeader header;
-    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, *_physics,
-                                _sceneRenderer, Assisi::App::AssetCacheReset::ClearFirst, &header))
+    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, *_physics, _sceneRenderer,
+                                Assisi::App::AssetCacheReset::ClearFirst, &header, &_world->instances))
         return false;
 
     // Open Level reuses the edited world, clearing its scene in place rather than

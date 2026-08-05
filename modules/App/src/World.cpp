@@ -254,15 +254,15 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
         // Keep, never ClearFirst: the outgoing world is still alive (and still
         // being drawn) until the swap below.
         loaded = App::LoadLevel(incoming.scene, levelPath, *_services.cache, *_services.database,
-                                incoming.physics, *_services.renderer, AssetCacheReset::Keep,
-                                &header);
+                                incoming.physics, *_services.renderer, AssetCacheReset::Keep, &header,
+                                &incoming.instances);
     }
     else
     {
         // No render services (a headless server): the scene and its bodies are
         // all that matter.
         loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath,
-                                                        /*onProgress=*/{}, &header);
+                                                        /*onProgress=*/{}, &header, &incoming.instances);
         if (loaded)
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
     }
@@ -317,7 +317,8 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         // across frames via PumpPendingLoad.
         Runtime::LevelHeader header;
         const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path,
-                                                               /*onProgress=*/{}, &header);
+                                                               /*onProgress=*/{}, &header,
+                                                               &incoming.instances);
         if (ok)
         {
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
@@ -346,8 +347,8 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
             // cost); building bodies is the cheap tail to 1.0.
             Runtime::LevelHeader header;
             const bool           ok = Runtime::SceneSerializer::LoadFromFile(
-                w->scene, path, [deserProgress](float f) { deserProgress->store(f * 0.9f); },
-                &header);
+                w->scene, path, [deserProgress](float f) { deserProgress->store(f * 0.9f); }, &header,
+                &w->instances);
             if (!ok)
                 return false;
             w->propagationTick = BuildSceneBodies(w->scene, w->physics);
