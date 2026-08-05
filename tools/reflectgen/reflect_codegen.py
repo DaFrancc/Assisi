@@ -114,22 +114,23 @@ def _gen_field_meta(f: FieldInfo) -> str:
     enum_active       = f.enum_info is not None
     listener_active   = f.radio is not None and f.radio.source != ''
     controlled_active = f.args.has('controlled')
+    instance_ref      = f.args.has('instanceRef')
 
     # FieldMeta's trailing members are positional — bounds, then the enum block
-    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled —
-    # so emitting any block forces every *earlier* block to be emitted at its
-    # default. Blocks nobody needs are omitted, which keeps an unannotated field
-    # at the short, golden-stable initializer form.
+    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled,
+    # then instanceRef — so emitting any block forces every *earlier* block to be
+    # emitted at its default. Blocks nobody needs are omitted, which keeps an
+    # unannotated field at the short, golden-stable initializer form.
     tail: list[str] = []
 
-    if bounds_active or enum_active or listener_active or controlled_active:
+    if bounds_active or enum_active or listener_active or controlled_active or instance_ref:
         has_min = 'true' if vmin is not None else 'false'
         has_max = 'true' if vmax is not None else 'false'
         min_v   = f'{vmin}f' if vmin is not None else '0.f'
         max_v   = f'{vmax}f' if vmax is not None else '0.f'
         tail += [has_min, has_max, min_v, max_v]
 
-    if enum_active or listener_active or controlled_active:
+    if enum_active or listener_active or controlled_active or instance_ref:
         if enum_active:
             consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
             tail.append(f'{{ {consts} }}')
@@ -139,7 +140,7 @@ def _gen_field_meta(f: FieldInfo) -> str:
             # Not an enum: empty enumConstants, size 0 (which marks "not an enum").
             tail += ['{}', '0', 'false']
 
-    if listener_active or controlled_active:
+    if listener_active or controlled_active or instance_ref:
         if listener_active:
             values = ', '.join(str(v) for v in f.radio.values)
             tail += [
@@ -150,7 +151,10 @@ def _gen_field_meta(f: FieldInfo) -> str:
         else:
             tail += ['""', '{}', 'Assisi::Core::Reflect::RadioBehavior::None']
 
-    if controlled_active:
+    if controlled_active or instance_ref:
+        tail.append('true' if controlled_active else 'false')
+
+    if instance_ref:
         tail.append('true')
 
     base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, {norep}'
@@ -420,6 +424,37 @@ def _check_controlled_outside_messages(components: list, header_name: str) -> No
                     f"dispatch site enforces about a sender, and a component has no sender.")
 
 
+_INSTANCE_REF_TYPES = {'uint32_t', 'std::uint32_t'}
+
+
+def _check_instance_ref(decls: list, header_name: str) -> None:
+    """AFIELD(instanceRef) is a translation applied to a UInt32, and nothing else.
+
+    The codec routes a flagged field through CodecContext::instanceToWire /
+    instanceFromWire in the UInt32 case alone (BinaryCodec.cpp). On any other type
+    the annotation would parse, reach FieldMeta, travel in the protocol hash — and
+    translate nothing, which is the shape of bug the hash exists to catch and this
+    one would slip straight past.
+    """
+    for decl in decls:
+        for f in decl.fields:
+            if not f.args.has('instanceRef'):
+                continue
+            if f.cpp_type not in _INSTANCE_REF_TYPES:
+                raise ValueError(
+                    f"{header_name}: field '{decl.name}::{f.name}' is marked "
+                    f"AFIELD(instanceRef) but its type is '{f.cpp_type}'. The annotation means "
+                    f"'this integer is a blueprint instance id, translate it to the instance's "
+                    f"baseNetId on the wire', and only a uint32_t field is routed through that "
+                    f"translation.")
+            if f.args.has('transient'):
+                raise ValueError(
+                    f"{header_name}: field '{decl.name}::{f.name}' is marked both "
+                    f"AFIELD(instanceRef) and AFIELD(transient). A transient field never reaches "
+                    f"the codec, so the translation would never run — one of the two is a "
+                    f"mistake.")
+
+
 def _gen_message_block(msg: MessageInfo) -> str:
     var_name    = f'_reflectgen_msg_{msg.name}'
     field_metas = ',\n            '.join(_gen_field_meta(f) for f in msg.fields)
@@ -628,6 +663,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     _check_replication(components, include_path)
     _check_messages(messages, include_path)
     _check_controlled_outside_messages(components, include_path)
+    _check_instance_ref(components, include_path)
+    _check_instance_ref(messages, include_path)
 
     component_infos = [c for c in components if not c.is_asset]
     asset_infos     = [c for c in components if c.is_asset]

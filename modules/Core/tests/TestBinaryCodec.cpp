@@ -747,3 +747,103 @@ TEST_CASE("BinaryCodec: random noise decoded as a component block stays in bound
         CHECK(decoded.assetIds.size() <= Assisi::Core::Reflect::kMaxVectorElements);
     }
 }
+
+TEST_CASE("BinaryCodec: an instanceRef UInt32 translates through the instance hooks")
+{
+    // A blueprint instance id is a per-world counter — a server's "instance 7"
+    // names nothing on a client — so the wire carries the instance's baseNetId and
+    // each side translates at the codec boundary. Same shape as EntityRef, applied
+    // to a plain integer, which is why it needs a field flag to be told apart from
+    // every other UInt32.
+    ComponentMeta meta = MakeAllTypesMeta();
+
+    // uint32Value stands in for BlueprintMember::instanceId.
+    FieldMeta *tagged = nullptr;
+    for (FieldMeta &field : meta.fields)
+    {
+        if (field.name == "uint32Value")
+            tagged = &field;
+    }
+    REQUIRE(tagged != nullptr);
+    tagged->instanceRef = true;
+
+    AllTypes source     = MakePopulated();
+    source.uint32Value  = 7u;
+
+    Assisi::Core::Reflect::CodecContext context;
+    context.instanceToWire   = [](std::uint32_t local) { return local + 5000u; };
+    context.instanceFromWire = [](std::uint32_t wire) { return wire - 5000u; };
+
+    BitWriter writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields, &context));
+
+    SUBCASE("the inverse hook restores the local id")
+    {
+        BitReader reader(writer.Data());
+        REQUIRE(ReadComponentId(reader) == meta.id);
+        AllTypes decoded;
+        REQUIRE(ReadComponent(meta, &decoded, reader, nullptr, &context));
+        CHECK(decoded.uint32Value == 7u);
+    }
+
+    SUBCASE("decoding without the hook exposes the wire value")
+    {
+        BitReader reader(writer.Data());
+        REQUIRE(ReadComponentId(reader) == meta.id);
+        AllTypes decoded;
+        REQUIRE(ReadComponent(meta, &decoded, reader, nullptr, nullptr));
+        CHECK(decoded.uint32Value == 5007u);
+    }
+
+    SUBCASE("an unflagged UInt32 in the same component is untouched")
+    {
+        // The flag is per field, not per component: only the one that names an
+        // instance is translated, or every counter in the engine would be.
+        BitReader reader(writer.Data());
+        REQUIRE(ReadComponentId(reader) == meta.id);
+        AllTypes decoded;
+        REQUIRE(ReadComponent(meta, &decoded, reader, nullptr, &context));
+        CHECK(decoded.int32Value == source.int32Value);
+        CHECK(decoded.uint64Value == source.uint64Value);
+    }
+}
+
+TEST_CASE("BinaryCodec: instanceRef with no hook installed is a plain integer")
+{
+    // The same-process round trip — a save game, the editor, this test suite —
+    // has one id space, so translating would be wrong. A null hook writes through.
+    ComponentMeta meta = MakeAllTypesMeta();
+    for (FieldMeta &field : meta.fields)
+    {
+        if (field.name == "uint32Value")
+            field.instanceRef = true;
+    }
+
+    AllTypes source    = MakePopulated();
+    source.uint32Value = 41u;
+    AllTypes decoded;
+
+    REQUIRE(RoundTrip(meta, source, decoded, kAllFields));
+    CHECK(decoded.uint32Value == 41u);
+}
+
+TEST_CASE("BinaryCodec: instanceRef is part of the protocol layout")
+{
+    // Unlike AFIELD(controlled), which changes which messages are accepted and
+    // never how bytes decode. A build that translates and one that does not would
+    // exchange numbers from two different id spaces and agree about every one of
+    // them — silent, and exactly what the handshake exists to prevent.
+    ComponentMeta plain = MakeAllTypesMeta();
+
+    ComponentMeta flagged = MakeAllTypesMeta();
+    for (FieldMeta &field : flagged.fields)
+    {
+        if (field.name == "uint32Value")
+            field.instanceRef = true;
+    }
+
+    const std::array<ComponentMeta, 1> plainSet{plain};
+    const std::array<ComponentMeta, 1> flaggedSet{flagged};
+
+    CHECK(ProtocolLayoutDescription(plainSet) != ProtocolLayoutDescription(flaggedSet));
+}

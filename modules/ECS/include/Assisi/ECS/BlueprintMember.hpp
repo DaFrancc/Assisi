@@ -64,7 +64,13 @@ namespace Assisi::ECS
 ACOMP(replicable)
 struct BlueprintMember
 {
-    AFIELD() uint32_t instanceId  = 0; ///< Which spawned copy. 0 is never a live instance.
+    /// Which spawned copy. 0 is never a live instance.
+    ///
+    /// `instanceRef` because the number is per-world and per-machine: a server's
+    /// instance 7 names nothing on a client. The wire carries the instance's
+    /// `baseNetId` and each side translates at the codec boundary, which is what
+    /// makes this tag mean the same thing on both.
+    AFIELD(instanceRef) uint32_t instanceId = 0;
     AFIELD() uint32_t memberIndex = 0; ///< Which entry in the blueprint's flattened member list.
 };
 
