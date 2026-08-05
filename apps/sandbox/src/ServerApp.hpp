@@ -17,6 +17,7 @@
 /// the editor/game integration, which is separate work.
 
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
@@ -87,6 +88,11 @@ class ServerApp final : public Assisi::App::Application
     /// host does: a level that places instances refuses to load without somewhere
     /// to record them.
     Assisi::Runtime::InstanceTable _instances;
+
+    /// The content-set scan, kicked when this process starts hosting or joining.
+    /// Until it lands a host sends no ServerHello and a client sends no
+    /// ClientHello — see NetSession::SetContentSetHash.
+    Assisi::App::ContentSetHashJob _contentSetHash;
 
     /// Constructed only in a networked role, so the offline mode never
     /// initializes GameNetworkingSockets at all.

@@ -156,6 +156,20 @@ class NetSession
     /// @brief Tell a deferred join that the local world is built.
     void ConfirmLevelReady();
 
+    /// @brief The set of level and blueprint files this build holds, hashed.
+    ///
+    /// A **host** cannot be reached until it has one — every ServerHello is
+    /// withheld until then — and a **client** cannot answer one. Both are
+    /// deliberate: the two hellos are each sent exactly once, so one sent with a
+    /// placeholder is a join with no correct outcome. Computing the hash is a job
+    /// (App::BuildContentSetHash), so this normally lands a frame or two after
+    /// hosting or joining starts, and whichever side was waiting completes then.
+    void SetContentSetHash(std::uint64_t hash);
+
+    /// @brief Whether SetContentSetHash has been called on whichever half this
+    /// session is. True for an offline session, which needs no hash at all.
+    [[nodiscard]] bool HasContentSetHash() const;
+
     /// @brief Give up on a deferred join; @p reason lands in LastError() and in
     /// the client's reject message, so the UI can name the cause.
     void AbortJoin(std::string reason);

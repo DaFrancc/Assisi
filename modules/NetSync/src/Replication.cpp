@@ -338,7 +338,25 @@ void ReplicationServer::AddConnection(Net::ConnectionId connection)
         entry.clientId = ClientId{_nextClientId++};
         _connectionByClient.emplace(entry.clientId.value, connection);
     }
-    SendHello(entry);
+
+    // Registered, but silent until this host knows its own content set. A client
+    // that gets a hello answers it exactly once and never again, so a hello sent
+    // before the server can check the answer is a join with no correct outcome.
+    if (_contentSetHashReady)
+        SendHello(entry);
+}
+
+void ReplicationServer::SetContentSetHash(std::uint64_t hash)
+{
+    _contentSetHash      = hash;
+    _contentSetHashReady = true;
+
+    // Everyone who connected while the scan was running.
+    for (auto &[id, connection] : _connections)
+    {
+        if (!connection.ready)
+            SendHello(connection);
+    }
 }
 
 void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
@@ -870,6 +888,19 @@ void ReplicationServer::HandleClientHello(Connection &connection, Core::BitReade
         // other's state silently, which is far worse than not connecting.
         Core::Log::Warn("NetSync: rejecting connection {} — protocol hash mismatch.", connection.id);
         SendReject(connection, RejectReason::ProtocolMismatch);
+        return;
+    }
+
+    if (hello.contentSetHash != _contentSetHash)
+    {
+        // With only a hash the server cannot name what differs, which the design
+        // accepts: the check exists so that after a successful join both machines
+        // are known to expand any blueprint identically, and a diagnosable-but-
+        // weaker check would not buy that.
+        Core::Log::Warn("NetSync: rejecting connection {} — content set mismatch (ours {:016x}, theirs "
+                        "{:016x}).",
+                        connection.id, _contentSetHash, hello.contentSetHash);
+        SendReject(connection, RejectReason::ContentMismatch);
         return;
     }
 
@@ -2071,10 +2102,29 @@ void ReplicationClient::SendHello()
     WriteMessageType(MessageType::ClientHello, writer);
 
     ClientHello hello;
-    hello.protocolHash = NetProtocolHash();
+    hello.protocolHash   = NetProtocolHash();
+    hello.contentSetHash = _contentSetHash;
     WriteClientHello(hello, writer);
 
     _transport.Send(_connection, writer.Data(), Net::SendMode::Reliable, Net::Lane::Control);
+}
+
+void ReplicationClient::SetContentSetHash(std::uint64_t hash)
+{
+    _contentSetHash      = hash;
+    _contentSetHashReady = true;
+
+    // The hash was the last thing missing: a client whose level finished loading
+    // while the scan was still running completes its join here.
+    if (_levelReady && !_synchronized)
+        ConfirmLevelReady();
+}
+
+void ReplicationClient::ConfirmLevelReady(std::uint64_t contentSetHash)
+{
+    _contentSetHash      = contentSetHash;
+    _contentSetHashReady = true;
+    ConfirmLevelReady();
 }
 
 void ReplicationClient::ConfirmLevelReady()
@@ -2082,7 +2132,14 @@ void ReplicationClient::ConfirmLevelReady()
     if (_synchronized)
         return;
 
+    _levelReady    = true;
     _awaitingLevel = false;
+
+    // Both, or nothing. A hello with a placeholder hash is a refused join no retry
+    // can fix, because the hello is sent exactly once.
+    if (!_contentSetHashReady)
+        return;
+
     SendHello();
     _synchronized = true;
 }
@@ -2325,9 +2382,20 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
         const std::string   detail = reader.ReadString();
         if (!reader.Ok())
             return;
-        _rejectMessage = reason == static_cast<std::uint32_t>(RejectReason::ProtocolMismatch)
-                             ? "server rejected the connection: protocol mismatch"
-                             : "server rejected the connection: full";
+        switch (static_cast<RejectReason>(reason))
+        {
+        case RejectReason::ProtocolMismatch:
+            _rejectMessage = "server rejected the connection: protocol mismatch";
+            break;
+        case RejectReason::ContentMismatch:
+            _rejectMessage = "server rejected the connection: content sets differ — remove stray .alvl/.abp "
+                             "files or sync assets";
+            break;
+        case RejectReason::ServerFull:
+        default:
+            _rejectMessage = "server rejected the connection: full";
+            break;
+        }
         Core::Log::Error("NetSync: {}\n  server: {}", _rejectMessage, detail);
         _synchronized = false;
         break;

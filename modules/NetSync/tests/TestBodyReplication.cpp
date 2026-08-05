@@ -70,6 +70,10 @@ struct PhysicsHarness
         : pair(transport.CreateLoopbackPair()), server(transport, serverScene, &serverPhysics, config),
           client(transport, clientScene, pair.second, &clientPhysics)
     {
+        // Neither hello goes out until each side knows its content set; these
+        // tests are about bodies, so both take the empty set's hash.
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
         server.AddConnection(pair.first);
     }
 
@@ -658,6 +662,8 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     const auto        pair = transport.CreateLoopbackPair(true);
     ReplicationServer server(transport, serverScene, &serverPhysics, ReplicationConfig{});
     ReplicationClient client(transport, clientScene, pair.second, &clientPhysics);
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
     server.AddConnection(pair.first);
 
     // Floor on both, as a level would put it.

@@ -66,6 +66,11 @@ struct Harness
     {
         client.SetDeferHandshake(deferHandshake);
         server.SetLevelIdentity(std::move(level));
+        // Neither hello goes out until each side knows its content set. These
+        // tests are about replication rather than about what is on disk, so both
+        // are handed the empty set's hash and agree trivially.
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
         server.AddConnection(pair.first);
     }
 
@@ -581,6 +586,7 @@ TEST_CASE("a late-joining client converges on a world already in motion")
     ECS::Scene       lateScene;
     const auto       latePair = harness.transport.CreateLoopbackPair();
     ReplicationClient lateClient(harness.transport, lateScene, latePair.second);
+    lateClient.SetContentSetHash(0);
     harness.server.AddConnection(latePair.first);
 
     for (std::uint32_t i = 0; i < 20; ++i)
@@ -1130,6 +1136,8 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     const auto        pair = transport.CreateLoopbackPair(true);
     ReplicationServer server(transport, serverScene, /*physics=*/nullptr, ReplicationConfig{});
     ReplicationClient client(transport, clientScene, pair.second);
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
     server.AddConnection(pair.first);
 
     std::vector<ECS::Entity> entities;

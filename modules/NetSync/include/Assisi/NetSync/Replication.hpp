@@ -439,6 +439,24 @@ class ReplicationServer
     /// consequence beyond a gap in the numbering if a joiner is rejected.
     void AddConnection(Net::ConnectionId connection);
 
+    /// @brief Tell the server which content set it is running, so it can check a
+    /// joiner's against it.
+    ///
+    /// **Until this is called, no `ServerHello` goes out.** A connection is still
+    /// registered — it just waits. That is the literal reading of "the server
+    /// cannot be reached without one" (docs/blueprint-system-concept.md §9), and
+    /// the alternative is worse than it looks: `ClientHello` is sent exactly once
+    /// and never resent, so a server that received one while its own hash was
+    /// pending could neither verify it nor safely drop it.
+    ///
+    /// Hashing is a job, so this normally lands a frame or two after hosting
+    /// starts. Setting it flushes every hello that was waiting.
+    void SetContentSetHash(std::uint64_t hash);
+
+    /// @brief Whether SetContentSetHash has been called. Hosting is not reachable
+    /// until it has.
+    [[nodiscard]] bool HasContentSetHash() const { return _contentSetHashReady; }
+
     /// @brief Forget a connection. Its NetIds stay allocated — they belong to
     /// the entities, not to whoever was watching them.
     ///
@@ -1057,6 +1075,12 @@ class ReplicationServer
     /// ambiguity.
     std::uint32_t _nextClientId = kFirstRemoteClientId;
 
+    /// This host's content set, and whether it is known yet. Until it is, a
+    /// connection is registered but its ServerHello is withheld — see
+    /// SetContentSetHash.
+    std::uint64_t _contentSetHash      = 0;
+    bool          _contentSetHashReady = false;
+
     /// Who decides what each connection is told about. Null — the default —
     /// means everyone is told everything, on today's exact code path.
     std::unique_ptr<RelevancyProvider> _relevancy;
@@ -1162,9 +1186,27 @@ class ReplicationClient
     /// `level` is what a deferred client builds its world from.
     [[nodiscard]] const ServerHello &Handshake() const { return _handshake; }
 
+    /// @brief The content set this build holds, which the server checks against
+    /// its own before letting the join complete.
+    ///
+    /// **The `ClientHello` is withheld until this is set**, for the same reason the
+    /// server withholds its own hello: the hello is sent exactly once and never
+    /// resent, so sending one with a placeholder hash is a refused join that no
+    /// retry can fix. Computing it is a job, so a client that connects before its
+    /// scan finishes joins in appearance only and completes when the hash arrives.
+    void SetContentSetHash(std::uint64_t hash);
+
+    /// @brief Whether the content-set hash has been supplied.
+    [[nodiscard]] bool HasContentSetHash() const { return _contentSetHashReady; }
+
     /// @brief Answer the handshake: the local world is built and NetIds may now
     /// be mapped onto it. No-op unless awaiting.
+    ///
+    /// Two preconditions, not one — the world *and* the hash. A caller that has
+    /// only just finished loading should pass the hash here; one that had it
+    /// earlier can call SetContentSetHash and then this with no argument.
     void ConfirmLevelReady();
+    void ConfirmLevelReady(std::uint64_t contentSetHash);
 
     /// @brief Give up on a deferred join, recording @p reason for the UI. The
     /// client stays unsynchronized; the caller tears the session down.
@@ -1567,6 +1609,15 @@ class ReplicationClient
     bool          _worldComplete      = false;
     bool          _deferHandshake     = false;
     bool          _awaitingLevel      = false;
+
+    /// The content-set hash and whether it has been supplied. A separate flag
+    /// rather than a sentinel because 0 is a legitimate hash — an empty content
+    /// set — and "not yet" must not be confusable with "nothing to hash".
+    std::uint64_t _contentSetHash      = 0;
+    bool          _contentSetHashReady = false;
+    /// True once ConfirmLevelReady has been told the world is built, so a hash
+    /// arriving afterwards can complete the join on its own.
+    bool _levelReady = false;
 };
 
 } // namespace Assisi::NetSync

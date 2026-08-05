@@ -138,6 +138,12 @@ void EditorApp::StartPlay(NetIntent intent)
     // as disposable.
     _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene, _physics);
 
+    // Triggered by hosting or joining, never by a level load: pressing Play alone
+    // hashes nothing. Rescanned each time, because the content on disk may have
+    // moved on since the last session.
+    _contentSetHash.Reset();
+    _contentSetHash.Start(Jobs());
+
     // Cached for the inspector, which renders a game-vetoed component as a
     // disabled checkbox with a reason. Read here rather than per frame: the list
     // is fixed for the life of a session, and the inspector redraws constantly.
