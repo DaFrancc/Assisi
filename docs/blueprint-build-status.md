@@ -22,15 +22,28 @@ no warnings.
 | 6 | `d3c41f8` | The prepared form — one codec block per component per member |
 | 5a–5c | `9791e47` | `InstanceDelta`, outliner instance rows, the instance gizmo |
 | 7a | `9897fa9` | The content-set hash and the handshake it gates |
+| 5 authoring | `d5d5ac7` | The Blueprints panel: place an instance, create one from a selection |
+| 8 | `4cbc649` | `ASYSTEM`, the catalog, and profiles deleted outright |
+| 5b rest | `83b28eb` | Override marks, per-field and per-component reset, auto-naming |
 
 ## Not built
 
 ### 5d — re-expansion as an in-place diff, and history truncation
 
-Deliberately last of stage 5. The editor has no live `.abp` editing session: a
-blueprint is edited by opening it *as* a level, so there is nothing for
-re-expansion to hang off yet. Build the session first; the in-place diff is
-meaningless without it.
+The last gap in the authoring loop. A blueprint is edited by opening it *as* a
+level and saving it; nothing then tells the instances of it in other resident
+worlds to catch up, so "edit the blueprint, see it everywhere" currently needs a
+level reload.
+
+The decided trigger is **save**: `EditorApp::SaveLevel` invalidates the saved
+file's definition and re-expands every instance whose closure contains it, in
+every resident world. It has to be an in-place diff rather than destroy-and-
+recreate — entity handles are `(slot, generation)`, `EditHistory` stores exact
+handles, and `Scene::ReviveAt` is valid only for a currently-free slot under a
+strictly linear history, so recreating forty cars behind undo's back means a
+later Ctrl-Z revives into a slot something else now occupies. When an edit does
+delete a member, truncate the history below the oldest transaction naming any of
+the destroyed entities.
 
 ### 5e — the Play/Host flush gate
 
@@ -44,15 +57,14 @@ ordering assumed 5d was already there. **Land it with 5d instead.** The existing
 dirty-level modal (`EditorNet.cpp`'s `DrawHostUnsavedModal`) already covers the
 level case.
 
-### 7b–7e — blueprint replication
+### 7b, 7c, 7d — blueprint replication
 
 Nothing started. See the warning below.
 
-### 8 — `ASYSTEM` and the catalog
-
-Nothing started. The format still carries `profile`, which is what the build
-order intends: `systems` joins the format at stage 8, and converting four level
-files twice is cheaper than blocking on codegen.
+**7e is cancelled** by decision (2026-08-05): `BlueprintSpawnFromLevel` was
+provisional by design and gets deleted when `replication-plan-v4.md` §5's
+shared-baseline join lands, so building it means building something to throw
+away. The join rework replaces it.
 
 ### 9 — `InstanceView<T>` codegen
 
@@ -76,9 +88,28 @@ it back with the translation beside it.
 
 The other half of the same gap: the join's strip is still per-entity, so a level
 that places instances will duplicate their non-replicated members on a client.
-That is exactly what 7e fixes.
+With 7e cancelled, the fix comes with the shared-baseline join — where level
+content stops travelling at all and there is nothing left to duplicate.
 
 ---
+
+## What the editor can do today
+
+Open the **Blueprints** panel.
+
+- **Place instance** — pick any `.abp` or `.alvl` and drop a copy in front of the
+  camera. Undoable as one gesture.
+- **Create from selection** — name it, and the selected entity plus everything
+  parented under it is written to `blueprints/<name>.abp` and replaced with an
+  instance of it. The swap is invisible on screen; one Ctrl-Z takes it back.
+- The **Entities** panel groups an instance's members under one collapsible row.
+  Clicking the row selects the *instance* — the gizmo then moves the whole group
+  and writes its placement, recording no member overrides. Expanding it and
+  clicking a member selects that member.
+- Editing a member records an override, marked in the inspector with a reset at
+  either scope. `X` cycles the gizmo frame World → Local → Instance on a member.
+- Nesting is not authored from the UI yet: a selection containing a member is
+  refused, with a note pointing at the `instances` entry that expresses it.
 
 ## Decisions taken
 
