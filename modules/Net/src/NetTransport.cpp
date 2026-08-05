@@ -97,7 +97,11 @@ struct NetTransport::Impl
     // Ids start at 1 and only ever increase: InvalidConnection is 0, and never
     // recycling means a stale handle is always rejected instead of silently
     // addressing whoever took its slot.
-    ConnectionId nextId = 1;
+    //
+    // Raw counter, not a ConnectionId — see NetSync::ReplicationServer::
+    // _nextNetId for why: the type is opaque everywhere except Register, the one
+    // place that turns a count into an identity.
+    std::uint32_t nextId = 1;
 
     /// Events produced by the status callback between Poll() calls. Poll()
     /// appends received messages to the caller's vector after draining this, so
@@ -134,7 +138,8 @@ struct NetTransport::Impl
 
     ConnectionId Register(HSteamNetConnection handle)
     {
-        const ConnectionId id = nextId++;
+        // The one place that turns a raw counter into an id — see nextId.
+        const ConnectionId id{nextId++};
         byId.emplace(id, handle);
         byHandle.emplace(handle, id);
         return id;

@@ -24,6 +24,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -40,11 +42,33 @@ namespace Assisi::Net
 /// handle space so the wire library never leaks into a caller's type. Handles
 /// are never recycled within a NetTransport's lifetime, so a stale id is always
 /// detected rather than silently aliasing a new connection.
-using ConnectionId = std::uint32_t;
+///
+/// An aggregate, matching `NetSync::ClientId`/`NetSync::NetId` — aggregate
+/// initialization (`ConnectionId{7}`) is the only way in, which is what blocks
+/// the implicit conversion in both directions. Deliberately no arithmetic: a
+/// dense handle is never added to or subtracted from, only allocated, compared,
+/// and looked up.
+///
+/// `NetProtocol.hpp` already claims `ClientId` is "distinct from
+/// Net::ConnectionId on purpose, and a wrapper type rather than an alias so the
+/// compiler enforces it" — but while ConnectionId was a bare `std::uint32_t`,
+/// that enforcement only ran one way: a ClientId could never silently become a
+/// ConnectionId, but a ConnectionId still converted freely into any uint32_t
+/// slot, including a ClientId's. Making ConnectionId its own type the same way
+/// closes the other half.
+struct ConnectionId
+{
+    std::uint32_t value = 0;
+
+    [[nodiscard]] constexpr bool IsValid() const { return value != 0; }
+
+    friend constexpr bool operator==(ConnectionId, ConnectionId)  = default;
+    friend constexpr auto operator<=>(ConnectionId, ConnectionId) = default;
+};
 
 /// @brief The never-valid connection handle. Zero, so a value-initialized
 /// ConnectionId is invalid by construction.
-inline constexpr ConnectionId InvalidConnection = 0;
+inline constexpr ConnectionId InvalidConnection{0};
 
 /// @brief Delivery guarantee for one message.
 enum class SendMode : std::uint8_t
@@ -241,3 +265,23 @@ class NetTransport
 };
 
 } // namespace Assisi::Net
+
+/// Prints as the bare number, so a log line reads "connection 7" rather than
+/// making every call site spell `.value`. Without this the type would be
+/// strictly worse to hold than the integer it replaces, which is how a good
+/// rule gets worked around.
+template <> struct std::formatter<Assisi::Net::ConnectionId> : std::formatter<std::uint32_t>
+{
+    auto format(Assisi::Net::ConnectionId id, std::format_context &ctx) const
+    {
+        return std::formatter<std::uint32_t>::format(id.value, ctx);
+    }
+};
+
+template <> struct std::hash<Assisi::Net::ConnectionId>
+{
+    [[nodiscard]] std::size_t operator()(Assisi::Net::ConnectionId id) const noexcept
+    {
+        return std::hash<std::uint32_t>{}(id.value);
+    }
+};
