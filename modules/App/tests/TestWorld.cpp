@@ -624,7 +624,7 @@ TEST_CASE("A level's profile decides which systems its world runs")
     {
         Assisi::ECS::Scene scene;
         (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        const Assisi::Runtime::LevelHeader header{.profile = profile};
+        const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = profile};
         REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / name, header));
     };
     writeLevel("Combat.alvl", "Gameplay");
@@ -742,7 +742,7 @@ TEST_CASE("A profile the host cannot honour still round-trips through a save")
     {
         Assisi::ECS::Scene scene;
         (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        const Assisi::Runtime::LevelHeader header{.profile = "ShippedGameOnly"};
+        const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = "ShippedGameOnly"};
         REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, file, header));
     }
 
@@ -756,7 +756,7 @@ TEST_CASE("A profile the host cannot honour still round-trips through a save")
     CHECK(loaded->profile == "ShippedGameOnly");  // what the level asked for
 
     // Save exactly as the editor does, from the world's recorded profile.
-    const Assisi::Runtime::LevelHeader out{.profile = loaded->profile};
+    const Assisi::Runtime::LevelHeader out{.instances = {}, .profile = loaded->profile};
     REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(loaded->scene, file, out));
 
     Assisi::ECS::Scene           reloaded;
@@ -809,7 +809,7 @@ TEST_CASE("A level's profile survives a save/load round trip")
     {
         Assisi::ECS::Scene scene;
         (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        const Assisi::Runtime::LevelHeader header{.profile = "Sewers"};
+        const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = "Sewers"};
         REQUIRE(
             Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "L.alvl", header));
     }
@@ -1010,7 +1010,7 @@ TEST_CASE("A background load's profile is installed when it is promoted")
     {
         Assisi::ECS::Scene scene;
         (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        const Assisi::Runtime::LevelHeader header{.profile = "Arena"};
+        const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = "Arena"};
         REQUIRE(
             Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "A.alvl", header));
     }

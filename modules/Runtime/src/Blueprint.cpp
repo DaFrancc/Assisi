@@ -6,6 +6,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -544,6 +545,11 @@ const BlueprintDefinition *GetBlueprintDefinition(std::string_view source)
     std::sort(definition.closure.begin(), definition.closure.end());
     definition.closure.erase(std::unique(definition.closure.begin(), definition.closure.end()),
                              definition.closure.end());
+
+    // Once, here — a blueprint is parsed and encoded one time, because spawning a
+    // hundred bullets must not re-read and re-parse bullet.abp a hundred times.
+    if (!SceneSerializer::PrepareBlueprint(definition))
+        return nullptr;
 
     return &cache.emplace(std::string{source}, std::move(definition)).first->second;
 }

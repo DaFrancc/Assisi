@@ -174,6 +174,23 @@ class SceneSerializer
                                                                 std::string_view      source,
                                                                 const ECS::Transform &placement);
 
+    /// @brief Encodes @p definition's members into codec blocks, once, so every
+    /// later spawn of it is a decode rather than a JSON walk (§11).
+    ///
+    /// Called by Runtime::GetBlueprintDefinition as the last step of building one.
+    /// It lives here rather than in Blueprint.cpp because encoding needs live
+    /// components, which means deserializing the members into a scratch scene —
+    /// and that needs this file's name-resolution context.
+    ///
+    /// The scratch scene's entities are created in member order, so member *i* is
+    /// entity `{i, 0}` and an EntityRef between members encodes as the member index
+    /// itself. Spawning then maps those to live entities through the codec's own
+    /// reference hook, with nothing to walk afterwards.
+    ///
+    /// @return false if a member names a reference the file does not declare, which
+    ///         makes the whole blueprint unusable rather than quietly mis-wired.
+    static bool PrepareBlueprint(BlueprintDefinition &definition);
+
     /// @brief Write the scene to a JSON file at the given filesystem path.
     ///
     /// @return true on success, false if the file could not be opened.
