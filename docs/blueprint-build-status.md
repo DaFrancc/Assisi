@@ -25,6 +25,7 @@ no warnings.
 | 5 authoring | `d5d5ac7` | The Blueprints panel: place an instance, create one from a selection |
 | 8 | `4cbc649` | `ASYSTEM`, the catalog, and profiles deleted outright |
 | 5b rest | `83b28eb` | Override marks, per-field and per-component reset, auto-naming |
+| review 1 | `48a6ea3` | Reset stayed one press behind; multi-select; a blueprint's scale went into the placement |
 
 ## Not built
 
@@ -106,6 +107,12 @@ Open the **Blueprints** panel.
   Clicking the row selects the *instance* — the gizmo then moves the whole group
   and writes its placement, recording no member overrides. Expanding it and
   clicking a member selects that member.
+- Selection is a list: Ctrl-click picks and drops rows, Shift-click takes a
+  range, and in the viewport both modifiers add one more (there is no row order
+  out there to draw a range through). The gizmo moves everything selected; Delete
+  takes it all as one transaction; Create from selection writes all of it.
+  Selecting an *instance* is exclusive — it is a different gesture, not a
+  member of the same list.
 - Editing a member records an override, marked in the inspector with a reset at
   either scope. `X` cycles the gizmo frame World → Local → Instance on a member.
 - Nesting is not authored from the UI yet: a selection containing a member is
@@ -146,6 +153,15 @@ a file really removes.** The first has to, because the index is the NetId offset
 and two instances of one file that removed different members must still agree
 about which index names which member. The second cannot vary per instance, so
 there is nothing for a hole to preserve. The brief implies this without saying it.
+
+**The origin a selection is authored around carries no scale** (`AuthoringOrigin`).
+Position and rotation cancel into the placement, scale does not. Nothing said
+which; passing the whole transform divides the members' scale out, so the copy
+replacing the original looks right and every fresh instance comes back the wrong
+size. The rule taken: where a thing stands and which way it faces is placement,
+how big it is is what it is. An instance's own scale still multiplies on top, so
+the two are separate knobs. Worth knowing that rotation goes the other way — a
+crate authored at 45° comes back axis-aligned. Say so if that should change too.
 
 **A component with an `AFIELD(norep)` field keeps the JSON path** rather than
 being encoded into the prepared form. The codec skips `norep`, which is right for
