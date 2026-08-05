@@ -13,6 +13,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <optional>
 #include <span>
 #include <string>
@@ -35,6 +36,29 @@ inline constexpr std::uint64_t kFnvPrime       = 0x00000100000001b3ULL; ///< FNV
     }
     return hash;
 }
+
+/// @brief ContentHash64 of a text file, with CRLF folded to LF first; nullopt if
+///        it could not be read.
+///
+/// For any hash two machines must agree on. Read in binary so the platform
+/// translates nothing behind our back, then normalise explicitly: text reaches
+/// disk through two different line-ending translations — git checks `* text=auto`
+/// out as CRLF on Windows and LF everywhere else, and a text-mode write on
+/// Windows expands every newline on the way out. Either produces a byte-different
+/// but semantically identical file, and hashing raw bytes turned that into a
+/// refused join between a Windows and a Linux machine sitting on the same level
+/// (`562aa5d`).
+///
+/// Folding CR before LF is enough, because that is the only transformation either
+/// path applies. It does mean a literal "\r\n" inside a JSON string value would
+/// collide with "\n" — the strings in the files this hashes are asset paths and
+/// entity names, which have neither.
+///
+/// **Every content hash compared across machines must come from here.** Two
+/// spellings of this function is not a style problem: it is a pair of peers that
+/// refuse each other over an identical file, which is what happened when the
+/// editor learned to normalise and the dedicated server did not.
+[[nodiscard]] std::optional<std::uint64_t> HashTextFileNormalized(const std::filesystem::path &path);
 
 /// @brief Fixed-width 16-char lowercase hex of @p value — the on-disk form (a
 ///        64-bit hash overflows JSON's double, so it is stored as a string).

@@ -13,9 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <format>
-#include <fstream>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -42,22 +40,21 @@ double NowSeconds()
 /// How often a headless process prints a "still alive, here is the rate" line.
 constexpr double kReportIntervalSeconds = 5.0;
 
-/// FNV-1a over a level file's raw bytes, or nullopt if it cannot be read.
-/// Binary, not text, and the same on both ends: a text-mode read would translate
-/// line endings on one platform and not the other, turning a matched pair of
-/// files into a refused join.
+/// Resolves @p virtualPath and hashes it the way every peer must, or nullopt if
+/// it cannot be resolved or read.
+///
+/// The normalisation lives in Core, not here. This function used to hash raw
+/// bytes while the editor's copy folded CRLF, so an editor host and this server
+/// refused each other over the same CRLF-checked-out level — on the same
+/// machine. Two spellings of a hash that peers compare is the bug, not the
+/// duplication.
 std::optional<std::uint64_t> HashLevelFile(const std::string &virtualPath)
 {
     const auto resolved = Assisi::Core::AssetSystem::Resolve(virtualPath);
     if (!resolved)
         return std::nullopt;
 
-    std::ifstream file(*resolved, std::ios::binary);
-    if (!file.is_open())
-        return std::nullopt;
-
-    const std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    return Assisi::Core::ContentHash64(std::as_bytes(std::span{bytes.data(), bytes.size()}));
+    return Assisi::Core::HashTextFileNormalized(*resolved);
 }
 
 } // namespace
