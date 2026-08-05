@@ -202,7 +202,7 @@ TEST_CASE("an offline session is inert")
     session.Poll();
     session.Tick(0);
     session.SmoothView(1.f / 60.f);
-    CHECK(session.ConsumeInput(1, 0) == nullptr);
+    CHECK(session.ConsumeInput(Net::ConnectionId{1}, 0) == nullptr);
     CHECK(session.Stats().role == SessionRole::Offline);
     CHECK(session.StatusText() == "Offline");
 }
