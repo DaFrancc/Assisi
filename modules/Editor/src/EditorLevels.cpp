@@ -465,7 +465,7 @@ void EditorApp::SaveLevel(const std::string &name)
     // Carry the world's profile back into the file. A Scene does not know it —
     // it is a property of the level — so a save that dropped it would silently
     // strip the field from every level the editor touches.
-    const Assisi::Runtime::LevelHeader header{.instances = {}, .profile = _world->profile};
+    const Assisi::Runtime::LevelHeader header{.instances = {}, .systems = _world->systemNames};
     if (Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header, &_world->instances))
     {
         // Save As renames what this world *is* — keep its level identity truthful,
@@ -517,7 +517,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // ...and its systems, which belong to the level that is now in it. This is the
     // re-target case ApplyProfile's Clear exists for: the world already holds the
     // previous level's profile.
-    _worlds.ApplyProfile(*_world, header.profile);
+    (void)_worlds.ApplySystems(*_world, header.systems, virtualPath);
 
     // A load also ends any in-progress play session: the snapshot describes the
     // old scene, so it must not survive into the new one.

@@ -498,6 +498,24 @@ void FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_vie
     if (std::find(state.out->closure.begin(), state.out->closure.end(), source) == state.out->closure.end())
         state.out->closure.emplace_back(source);
 
+    // The closure's systems, unioned. A nested blueprint's needs are this file's
+    // needs too — spawning a lot spawns the cars, and a car's systems have to be
+    // there for them.
+    if (const auto systems = doc.find("systems"); systems != doc.end() && systems->is_array())
+    {
+        for (const auto &name : *systems)
+        {
+            if (!name.is_string())
+                continue;
+            std::string value = name.get<std::string>();
+            if (std::find(state.out->systems.begin(), state.out->systems.end(), value) ==
+                state.out->systems.end())
+            {
+                state.out->systems.push_back(std::move(value));
+            }
+        }
+    }
+
     if (const auto entities = doc.find("entities"); entities != doc.end() && entities->is_array())
     {
         for (const auto &entity : *entities)

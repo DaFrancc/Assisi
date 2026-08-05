@@ -746,10 +746,10 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
 
     nlohmann::json result;
     result["version"] = 2;
-    // Only written when set, so levels that never name a profile stay free of the
-    // key rather than gaining an empty one on every save.
-    if (!header.profile.empty())
-        result["profile"] = header.profile;
+    // Only written when set, so levels that need no systems stay free of the key
+    // rather than gaining an empty one on every save.
+    if (!header.systems.empty())
+        result["systems"] = header.systems;
     result["entities"] = nlohmann::json::array();
 
     for (auto &[key, entityJson] : entityMap)
@@ -854,7 +854,15 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
 
     if (header != nullptr)
     {
-        header->profile   = j.value("profile", std::string{});
+        header->systems.clear();
+        if (const auto it = j.find("systems"); it != j.end() && it->is_array())
+        {
+            for (const auto &name : *it)
+            {
+                if (name.is_string())
+                    header->systems.push_back(name.get<std::string>());
+            }
+        }
         header->instances = placed;
     }
 

@@ -195,95 +195,6 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
     return true;
 }
 
-// --- Demo game systems -----------------------------------------------------
-//
-// A minimum of real game logic, so that per-world system binding is observable
-// in the editor rather than only in the headless tests: Play should visibly do
-// something, Pause should visibly stop it, and a second resident world should
-// spin on its own.
-//
-// Both are *stateless* — everything they touch lives in components — which is
-// the shape a system installed into several worlds must have (see
-// docs/world-system-binding-design-notes.md §1). SpinDemo's own accumulator
-// deliberately lives in the World, not in a capture, for the same reason.
-
-/// Spins every non-physics entity about Y. Physics-driven entities are excluded
-/// (Without<RigidBodyDescriptor>) so this never fights Jolt for the same pose.
-void SpinDemoSystem(Assisi::App::SystemContext &ctx)
-{
-    constexpr float kRadiansPerSecond = 1.0f;
-    const glm::quat step =
-        glm::angleAxis(kRadiansPerSecond * ctx.dt, glm::vec3(0.f, 1.f, 0.f));
-
-    Assisi::ECS::Scene &scene = ctx.world.scene;
-    for (auto [entity, transform] :
-         scene.Query<Assisi::ECS::Transform>(Assisi::ECS::Without<Assisi::Physics::RigidBodyDescriptor>{}))
-    {
-        (void)transform;
-        // Transform is ACOMP(tracked), and the query hands out an unstamped
-        // reference: write through GetMut so PropagateTransforms actually sees
-        // the change, or the world matrix keeps the old pose.
-        if (Assisi::ECS::Transform *mutable_ = scene.GetMut<Assisi::ECS::Transform>(entity))
-            mutable_->rotation = step * mutable_->rotation;
-    }
-}
-
-/// Reports the space bar. Registered ActiveWorldOnly, so with two worlds
-/// simulating only the active one reacts — the "one InputContext, N worlds"
-/// rule made visible. Also the demo of SystemContext's nullable input.
-void InputDemoSystem(Assisi::App::SystemContext &ctx)
-{
-    if (ctx.input == nullptr) // headless host: no devices to read
-        return;
-    if (ctx.input->IsKeyPressed(Assisi::Window::Key::Space))
-    {
-        Assisi::Core::Log::Info("InputDemo: space in world '{}' (active={}).", ctx.world.name,
-                                ctx.isActiveWorld);
-    }
-}
-
-void RegisterDemoSystems(Assisi::App::SystemRegistry &systems)
-{
-    systems.Register(Assisi::App::SystemPhase::Update, "SpinDemo", &SpinDemoSystem)
-        // Nothing to spin without Transforms — so in a world that has none (an
-        // empty one, or a streamed-out region later), this costs one array load
-        // per frame instead of a call and a query.
-        .RequireAny<Assisi::ECS::Transform>();
-    systems.Register(Assisi::App::SystemPhase::Update, "InputDemo", &InputDemoSystem)
-        .After("SpinDemo")
-        .ActiveWorldOnly();
-}
-
-/// A second profile, so that "which systems run" is visibly a per-level choice
-/// rather than a global one. `assets/levels/Test.alvl` selects it by name, and a
-/// world built from it keeps the input probe but does no spinning — load it
-/// alongside a default-profile level and only one of the two animates.
-///
-/// It is also where the bounce is switched on, and that is the more interesting
-/// half: a profile installer receives the whole World, not just its registry, so
-/// it can set up the *engine* state its systems need as well as the systems
-/// themselves. App::BounceSystem does nothing without contact reporting, and
-/// contact reporting is off by default, so the two are enabled together in one
-/// place rather than left for a level author to remember separately.
-void RegisterDemoProfiles(Assisi::App::WorldManager &worlds)
-{
-    worlds.RegisterProfile(
-        "Static",
-        [](Assisi::App::World &world)
-        {
-            world.physics.SetContactReporting(true);
-
-            world.systems
-                .Register(Assisi::App::SystemPhase::FixedUpdate, "Bounce", &Assisi::App::BounceSystem)
-                // A world with no Bounce components never calls it — and this is
-                // the level's own gate, so a second resident level without
-                // bouncers pays nothing for this one having them.
-                .RequireAny<Assisi::Physics::Bounce>();
-
-            world.systems.Register(Assisi::App::SystemPhase::Update, "InputDemo", &InputDemoSystem)
-                .ActiveWorldOnly();
-        });
-}
 } // namespace
 
 int main(int argc, char **argv)
@@ -338,9 +249,7 @@ int main(int argc, char **argv)
         return EXIT_SUCCESS;
     }
 
-    Assisi::Editor::EditorApp app({.registerGameSystems = &RegisterDemoSystems,
-                                   .registerProfiles    = &RegisterDemoProfiles,
-                                   .startupLevel        = std::string(startupLevel),
+    Assisi::Editor::EditorApp app({.startupLevel        = std::string(startupLevel),
                                    .autoJoinEndpoint    = autoJoinEndpoint,
                                    .restrictedViewer    = pieClient,
                                    .enableEditorVisuals = editorVisuals});

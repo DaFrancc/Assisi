@@ -25,6 +25,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # tools/reflectgen (so `import reflectgen` works)
 
 import reflectgen  # noqa: E402
+import reflect_parser  # noqa: E402
 
 FIXTURES = HERE / "fixtures"
 GOLDEN = HERE / "golden"
@@ -1089,6 +1090,97 @@ class MessageHandlerTest(unittest.TestCase):
             summary = reflectgen.check_message_handlers([path])
             self.assertIn("A::Fire -> A::HandleFire", summary)
             self.assertIn("B::Fire -> (no handler)", summary)
+
+
+class SystemTest(unittest.TestCase):
+    """ASYSTEM: the grammar, and the three whole-tree checks.
+
+    All three checks are only answerable across the tree, because a name is what
+    a *file* says: two modules claiming it collide no matter which one a level
+    loads, and an `after` naming a system this build did not link is a level that
+    installs a system which never runs.
+    """
+
+    SOURCE = (
+        "namespace Game {\n"
+        "ASYSTEM(FixedUpdate) void BounceSystem(SystemContext &ctx);\n"
+        "ASYSTEM(Update, name = \"Spin\", after = Bounce, activeWorldOnly)\n"
+        "void SpinDemoSystem(SystemContext &ctx);\n"
+        "}\n")
+
+    def _systems(self, text):
+        return reflect_parser.find_systems(reflect_parser.strip_comments(text), Path("T.hpp"))
+
+    def test_grammar_reaches_the_definition(self):
+        found = {s.name: s for s in self._systems(self.SOURCE)}
+        self.assertEqual(set(found), {"Bounce", "Spin"})
+        # The default name drops a trailing "System": BounceSystem in code is
+        # Bounce in a file.
+        self.assertEqual(found["Bounce"].phase, "FixedUpdate")
+        self.assertFalse(found["Bounce"].active_world_only)
+        self.assertEqual(found["Spin"].after, ["Bounce"])
+        self.assertTrue(found["Spin"].active_world_only)
+        self.assertEqual(found["Spin"].fqn, "::Game::SpinDemoSystem")
+
+    def test_the_phase_decides_the_context_type(self):
+        # The check the manual Register/RegisterRender split leaves to the caller.
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Render) void DrawSystem(SystemContext &ctx);\n")
+        self.assertIn("RenderContext", str(caught.exception))
+
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Update) void TickSystem(RenderContext &ctx);\n")
+        self.assertIn("SystemContext", str(caught.exception))
+
+    def test_require_any_is_refused_with_the_reason(self):
+        # Deliberately not part of ASYSTEM: reflectgen reads a declaration, not a
+        # body, so it cannot verify a gate — and too tight a one is a system that
+        # silently never runs.
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Update, requireAny) void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("RequireAny", str(caught.exception))
+
+    def test_duplicate_names_are_a_build_error_naming_both(self):
+        with tempfile.TemporaryDirectory() as d:
+            first = Path(d) / "A.hpp"
+            first.write_text("ASYSTEM(Update) void BounceSystem(SystemContext &ctx);\n", encoding="utf-8")
+            second = Path(d) / "B.hpp"
+            second.write_text("namespace Other {\n"
+                              "ASYSTEM(Update, name = \"Bounce\") void OtherSystem(SystemContext &ctx);\n"
+                              "}\n", encoding="utf-8")
+
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_systems([first, second])
+            message = str(caught.exception)
+            self.assertIn("two systems are named", message)
+            self.assertIn("BounceSystem", message)
+            self.assertIn("OtherSystem", message)
+
+    def test_an_after_naming_nothing_is_a_build_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text("ASYSTEM(Update, after = Ghost) void TickSystem(SystemContext &ctx);\n",
+                            encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_systems([path])
+            self.assertIn("Ghost", str(caught.exception))
+
+    def test_an_ordering_cycle_is_a_build_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text("ASYSTEM(Update, after = B) void ASystem(SystemContext &ctx);\n"
+                            "ASYSTEM(Update, after = A) void BSystem(SystemContext &ctx);\n",
+                            encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_systems([path])
+            self.assertIn("cycle", str(caught.exception))
+
+    def test_a_valid_set_lists_what_it_found(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(self.SOURCE, encoding="utf-8")
+            lines = reflectgen.check_systems([path])
+            self.assertIn("2 system(s)", lines[0])
 
 
 class IncludePathTest(unittest.TestCase):

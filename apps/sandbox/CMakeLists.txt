@@ -6,6 +6,8 @@ Assisi_apply_defaults(Assisi-Sandbox)
 # per-binary: reflection linking (below) and asset staging.
 target_sources(Assisi-Sandbox
   PRIVATE
+    "src/DemoSystems.cpp"
+    "src/DemoSystems.hpp"
     "src/main.cpp"
     "src/ServerApp.cpp"
     "src/ServerApp.hpp"
@@ -21,6 +23,24 @@ target_link_libraries(Assisi-Sandbox
     Assisi::Physics
     Assisi::NetSync
 )
+
+# The game's own ASYSTEM declarations. Scanning them is what puts them in the
+# catalog: a level names a system, and the declaration in a reflected header is
+# the registration — there is no registerGameSystems to call.
+#
+# Reflected on an INTERFACE lib rather than on the executable, because
+# assisi_reflect links the generated OBJECT library into its target and an
+# executable cannot be linked into. Same shape the NetSync tests use.
+add_library(Assisi-Sandbox-Systems INTERFACE)
+target_include_directories(Assisi-Sandbox-Systems INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}/src")
+target_link_libraries(Assisi-Sandbox-Systems INTERFACE Assisi::App)
+assisi_reflect(
+  TARGET Assisi-Sandbox-Systems
+  HEADERS
+    src/DemoSystems.hpp
+)
+target_link_libraries(Assisi-Sandbox PRIVATE Assisi-Sandbox-Systems)
+target_sources(Assisi-Sandbox PRIVATE $<TARGET_OBJECTS:Assisi-Sandbox-Systems-Generated>)
 
 assisi_link_reflections(Assisi-Sandbox)
 

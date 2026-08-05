@@ -8,9 +8,10 @@
 /// These live here rather than in Assisi::Physics because a system needs a
 /// SystemContext, and App is the layer that owns one — Physics deliberately does
 /// not depend on it. They are plain functions, never installed automatically: a
-/// profile registers the ones its levels need (see WorldManager::RegisterProfile
-/// and docs/world-system-binding-design-notes.md), so a world that has no use for
-/// one does not run it.
+/// file names the ones it needs (docs/blueprint-system-concept.md §8), so a world
+/// that has no use for one does not run it.
+
+#include <Assisi/Core/Reflect/Annotations.hpp>
 
 namespace Assisi::App
 {
@@ -54,9 +55,13 @@ inline constexpr float kMinBounceSpeed = 0.001f;
 /// physics step: it consumes the contacts the previous step found, and the
 /// velocity it writes is the one the next step simulates, with no frame of wasted
 /// motion in between. The world's PhysicsWorld must have contact reporting on
-/// (PhysicsWorld::SetContactReporting) — without it there are no contacts and this
-/// does nothing at all, silently. Registering it alongside `.RequireAny<Physics::Bounce>()`
-/// keeps it out of the schedule entirely in worlds that have no bouncers.
+/// **It turns contact reporting on for its own world**, once, on first run. That
+/// used to be the *level's* job through its profile, which meant a level that
+/// forgot the line got a system that ran and silently did nothing. The need
+/// belongs to the system, so anyone who names it gets it — one branch per fixed
+/// step, and it survives a world that turns reporting back off. The cost is that
+/// the very first step of a world's life has no contacts yet, which is one step
+/// of a bounce nobody can see.
 ///
 /// @par Behaviour worth knowing
 /// - Only *new* contacts bounce. A body already resting on a surface reports
@@ -68,6 +73,6 @@ inline constexpr float kMinBounceSpeed = 0.001f;
 ///   optional.
 /// - One bounce per entity per step: a body landing in a corner touches two
 ///   surfaces, and reflecting twice would send it back where it came from.
-void BounceSystem(SystemContext &ctx);
+ASYSTEM(FixedUpdate) void BounceSystem(SystemContext &ctx);
 
 } // namespace Assisi::App

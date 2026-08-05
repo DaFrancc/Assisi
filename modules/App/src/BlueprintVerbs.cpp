@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/App/BlueprintVerbs.hpp>
 
+#include <Assisi/App/SystemCatalog.hpp>
+
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
@@ -22,6 +24,13 @@ std::optional<uint32_t> SpawnBlueprint(World &world, std::string_view source, co
         return std::nullopt;
 
     const std::vector<ECS::Entity> members = Runtime::MembersOf(world.scene, *id);
+
+    // The systems the blueprint names, queued for the next safe point. This is
+    // what closes the hole "a component whose system was never installed just does
+    // nothing" across a spawn: the behaviour a piece of content needs travels with
+    // it, instead of depending on the level having happened to install it.
+    if (const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(source))
+        QueueSystemInstall(world, definition->systems, source);
 
     // The prepared form holds asset *ids*, not loaded meshes, so a spawn has to
     // run the same resolve a level load runs — otherwise a spawned car arrives

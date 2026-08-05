@@ -164,6 +164,47 @@
 /// See Assisi/NetSync/MessageDispatch.hpp.
 #define AMSG_HANDLER(...)
 
+/// ASYSTEM(phase, ...) — marks a declaration as a system a file may name.
+///
+///   ASYSTEM(FixedUpdate)                           void BounceSystem(SystemContext &ctx);
+///   ASYSTEM(Update, activeWorldOnly)               void InputDemoSystem(SystemContext &ctx);
+///   ASYSTEM(Update, name = "Spin", after = Bounce) void SpinDemoSystem(SystemContext &ctx);
+///
+/// A system is `(phase, name, function, ordering, scope)`, and data can supply
+/// only the name — so the rest lives on the function, three lines above the code
+/// it describes, rather than in a registration call somewhere else or restated in
+/// every level file. Linking a module registers its systems; there is no
+/// `registerGameSystems` to keep in step.
+///
+/// Phase is mandatory and positional; everything after it is a flag or a
+/// `key = value`, which is the AMSG grammar, so there is one thing to learn
+/// rather than two. Recognised: `name` (defaults to the function name with a
+/// trailing "System" stripped), `after`, `before`, and the `activeWorldOnly`
+/// flag. `after`/`before` may be repeated.
+///
+/// **Render implies `RenderContext &`**, every other phase `SystemContext &`,
+/// and reflectgen enforces it — a correctness check the manual
+/// Register/RegisterRender split leaves to the caller.
+///
+/// **No gate.** `RequireAny`/`RequireAll` are deliberately not part of this. A
+/// gate is a skip test, not a query: it can only ever be a conservative superset,
+/// exclusions can never contribute to one, and reflectgen cannot verify it
+/// because it reads a declaration and not a body. Too loose costs one call; too
+/// tight is a system that silently never runs, which is the exact failure the
+/// whole design opens with. SystemRegistry::RequireAny stays as a *per-frame
+/// skip* for code that registers by hand.
+///
+/// Duplicate names, an `after`/`before` naming nothing, and ordering cycles are
+/// whole-tree build errors — the same shape as the handler pass.
+///
+/// Free functions only, like AMSG_HANDLER, and for the same reason: a lambda has
+/// no declaration to scan, and a `static` one has no linkage for the table to
+/// reference. It costs nothing, because the house rule is already that a system
+/// keeps its state in components and never in itself.
+///
+/// See Assisi/App/SystemCatalog.hpp.
+#define ASYSTEM(...)
+
 /// AENUM() — marks an `enum class` so reflectgen records its enumerators, making
 /// it usable as an AFIELD type (serialized by value, edited as a dropdown). The
 /// enum must be defined in the same header as the component(s) that use it, and

@@ -91,25 +91,11 @@ struct EntitySelectionChangedEvent
 ///    template work adds the game-side lifecycle surface).
 struct EditorConfig
 {
-    /// Called once at startup with the game's system registry. May be null
-    /// (an editor with no game logic — pure level editing).
-    ///
-    /// What this registers becomes the **default profile**: the systems every
-    /// world gets unless its level names another one. Each world receives its
-    /// own instance, so this is invoked once per world, not once per session —
-    /// an installer with one-time side effects is a bug.
-    std::function<void(App::SystemRegistry &)> registerGameSystems;
-
-    /// Called once at startup, after the default profile is registered, for a
-    /// game that has more than one system set — a menu level that runs no
-    /// gameplay, a level with an extra simulation its neighbours don't need.
-    /// Register them with WorldManager::RegisterProfile(name, installer); a
-    /// level selects one by name through its `"profile"` key. May be null (the
-    /// common case: one profile for everything).
-    ///
-    /// May also call SetDefaultProfile to point the unnamed case at something
-    /// other than what registerGameSystems installed.
-    std::function<void(App::WorldManager &)> registerProfiles;
+    // Systems are declared with ASYSTEM and reach the catalog by being linked,
+    // and a level names the ones it wants. There is nothing for a game to
+    // register here, which is the point: `registerGameSystems` and
+    // `registerProfiles` were two hooks a host had to remember to call, and a
+    // host that forgot got a world that physics-stepped and ran no game logic.
 
     /// Virtual path (under the asset root) of a level to open once at
     /// startup, e.g. "levels/Materials.alvl". Empty = none. Resolved through
@@ -716,7 +702,7 @@ class EditorApp : public Assisi::App::Application
     /// The edited world's level identity as it was before Play. A join replaces
     /// the play scene with the *host's* level, so both have to be put back.
     std::string _prePlayLevelPath;
-    std::string _prePlayProfile;
+    std::vector<std::string> _prePlaySystems;
 
     /// The Play control's net mode, as an index into the dropdown. Sticky for
     /// the process and reset at launch: it is a per-session testing choice

@@ -4,6 +4,7 @@
 #include "ImGuiQueries.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
@@ -112,35 +113,23 @@ void EditorApp::OnStart()
     // unchanged — it still hands out a SystemRegistry — so a game that knows
     // nothing about profiles keeps working.
     //
-    // Registered before the first Create() below, because that world is given the
-    // default profile the moment it exists.
-    if (_editorConfig.registerGameSystems)
+    // Systems come from the level's own list now, resolved through SystemCatalog —
+    // which every ASYSTEM declaration in the link has already populated. There is
+    // nothing for the game to register here, and nothing to forget to call.
+    if (!_warnedGameRenderSystems && !Assisi::App::SystemCatalog::Instance().All().empty())
     {
-        _worlds.RegisterProfile("Default",
-                                [this](Assisi::App::World &world)
-                                {
-                                    _editorConfig.registerGameSystems(world.systems);
-
-                                    // Once, not once per world: what this warns about is
-                                    // how the game registered, not anything about a world.
-                                    if (!_warnedGameRenderSystems && world.systems.HasRenderSystems())
-                                    {
-                                        _warnedGameRenderSystems = true;
-                                        Assisi::Core::Log::Warn(
-                                            "EditorApp: the game registered render system(s), which "
-                                            "do not run in-editor — the editor owns rendering. They "
-                                            "will run in the standalone game build only.");
-                                    }
-                                });
-        _worlds.SetDefaultProfile("Default");
-    }
-
-    // Any further named profiles the game has, for levels that want a different
-    // set than the default. After the default is registered, so a game can point
-    // SetDefaultProfile at one of its own instead.
-    if (_editorConfig.registerProfiles)
-    {
-        _editorConfig.registerProfiles(_worlds);
+        for (const Assisi::App::SystemDefinition &definition : Assisi::App::SystemCatalog::Instance().All())
+        {
+            if (!definition.isRender)
+                continue;
+            // Once, not once per world: what this warns about is how the game
+            // declared its systems, not anything about a world.
+            _warnedGameRenderSystems = true;
+            Assisi::Core::Log::Warn("EditorApp: system '{}' is a Render system, which does not run "
+                                    "in-editor — the editor owns rendering. It will run in the "
+                                    "standalone game build only.",
+                                    definition.name);
+        }
     }
 
     // The editor's starting world. It holds both roles: active (rendered,
@@ -155,10 +144,9 @@ void EditorApp::OnStart()
     _scene           = &_world->scene;
     _physics         = &_world->physics;
 
-    // Create() deliberately installs nothing, so a world built in memory (rather
-    // than loaded from a level naming its profile) is given the default here. A
-    // startup level opened below re-applies whatever that level asks for.
-    _worlds.ApplyProfile(*_world, /*name=*/"");
+    // Create() deliberately installs nothing, and a world built in memory names no
+    // systems — a startup level opened below applies whatever that level asks for.
+    (void)_worlds.ApplySystems(*_world, {}, "(new world)");
 
     // Editor-only undo/redo. Binds the edited world's scene (stable for the
     // session — level loads Clear it in place, never swap the object). The rebind

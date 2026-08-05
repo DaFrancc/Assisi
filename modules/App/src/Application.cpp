@@ -12,6 +12,8 @@
 
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
+
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Chiara/Serializer.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -515,6 +517,14 @@ void Application::Run()
         {
             ASSISI_PROFILE_SCOPE("drain-main");
             _jobs.DrainMain(_mainThreadTaskBudget);
+
+            // System installs queued by a blueprint spawn land here too, and for
+            // the same reason the loads above do: spawning usually happens inside
+            // a system, and SystemRegistry invalidates its cached execution order
+            // on every registration — so registering mid-walk mutates what is
+            // being iterated. Before OnUpdate, so a spawn made last frame is
+            // running this one.
+            DrainSystemInstalls();
         }
         const Clock::time_point drainEnd = Clock::now();
 

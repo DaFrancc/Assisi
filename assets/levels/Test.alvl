@@ -446,6 +446,9 @@
       "name": "Entity_11"
     }
   ],
-  "profile": "Static",
+  "systems": [
+    "Bounce",
+    "InputDemo"
+  ],
   "version": 2
 }

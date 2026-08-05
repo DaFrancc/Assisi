@@ -52,6 +52,9 @@ from reflect_parser import (  # noqa: F401
     parse_radio_spec,
     parse_enum_constants,
     find_handlers,
+    find_systems,
+    parse_header_systems,
+    SystemInfo,
     strip_comments,
     _detect_include_path,
 )
@@ -281,7 +284,84 @@ def check_message_handlers(headers) -> str:
     # without the build refusing to proceed over a decision that is theirs.
     for fqn in sorted(set(messages_by_fqn) - {f.lstrip(':') for f in bound}):
         lines.append(f'  {fqn} -> (no handler)')
+
+    lines.extend(check_systems(headers))
     return '\n'.join(lines) + '\n'
+
+
+def check_systems(headers) -> list:
+    """Duplicate names, dangling after/before, and ordering cycles — whole-tree.
+
+    All three are only answerable at this scope: a name is what a *file* says, so
+    two modules claiming it collide no matter which one a level loads, and an
+    `after` naming a system in a module this build did not link is a level that
+    installs a system that never runs. The alternative to catching them here is
+    catching them as a level that quietly does nothing.
+    """
+    systems: list = []
+    for header in headers:
+        try:
+            systems.extend(parse_header_systems(Path(header).resolve()))
+        except ValueError:
+            raise
+        except Exception:
+            # A header that will not parse is already a hard error in the
+            # per-header pass; repeating it here would bury the real message.
+            continue
+
+    by_name: dict = {}
+    for system in sorted(systems, key=lambda s: (s.header, s.function)):
+        if system.name in by_name:
+            first = by_name[system.name]
+            raise ValueError(
+                f"two systems are named '{system.name}':\n"
+                f"  {first.fqn} in {first.header}\n"
+                f"  {system.fqn} in {system.header}\n"
+                f"A file names a system by this string, so two of them cannot be told apart. Give one "
+                f"an explicit ASYSTEM(..., name = \"...\").")
+        by_name[system.name] = system
+
+    # Edges: after means "this runs later", before means "this runs earlier".
+    # Both are checked against the whole tree, because an ordering constraint on a
+    # system nobody declares is a constraint that will never be honoured.
+    edges: dict = {name: set() for name in by_name}
+    for system in systems:
+        for target in system.after + system.before:
+            if target not in by_name:
+                raise ValueError(
+                    f"{Path(system.header).name}: system '{system.name}' orders itself against "
+                    f"'{target}', which no ASYSTEM declares. An ordering constraint naming nothing is "
+                    f"silently no constraint at all.")
+        for target in system.after:
+            edges[system.name].add(target)   # target runs first
+        for target in system.before:
+            edges[target].add(system.name)   # this one runs first
+
+    # Depth-first with a colour mark: grey means "on the current path", which is
+    # exactly a cycle when we meet it again.
+    WHITE, GREY, BLACK = 0, 1, 2
+    colour = {name: WHITE for name in by_name}
+
+    def visit(name: str, path: list) -> None:
+        colour[name] = GREY
+        for dependency in sorted(edges[name]):
+            if colour[dependency] == GREY:
+                loop = path[path.index(dependency):] if dependency in path else [dependency]
+                raise ValueError(
+                    f"systems order themselves in a cycle: {' -> '.join(loop + [dependency])}. "
+                    f"No execution order satisfies it, so one of the after/before pairs has to go.")
+            if colour[dependency] == WHITE:
+                visit(dependency, path + [dependency])
+        colour[name] = BLACK
+
+    for name in sorted(by_name):
+        if colour[name] == WHITE:
+            visit(name, [name])
+
+    lines = [f'{len(by_name)} system(s)']
+    for name, system in sorted(by_name.items()):
+        lines.append(f'  {name} [{system.phase}] -> {system.fqn.lstrip(":")}')
+    return lines
 
 
 def main():
@@ -352,9 +432,10 @@ def main():
         # traceback with the reason buried at the bottom.
         try:
             components, messages, handlers = parse_header_full(header)
+            systems = parse_header_systems(header)
             _check_unsupported(components, header.name)
 
-            if not components and not messages and not handlers:
+            if not components and not messages and not handlers and not systems:
                 # Still write the file, empty. The build declares this path as an
                 # output, so producing nothing turns a header that legitimately
                 # registers nothing — a handler-only header, say — into a missing
@@ -378,8 +459,10 @@ def main():
                       f'{len(msg.fields)} field(s))')
             for handler in handlers:
                 print(f'  found: {handler.name} (handler for {handler.message})')
+            for system in systems:
+                print(f'  found: {system.name} (system, {system.phase})')
 
-            cpp = generate_cpp(components, include_path, messages, handlers)
+            cpp = generate_cpp(components, include_path, messages, handlers, systems)
         except Exception as e:
             print(f'  error: {e}', file=sys.stderr)
             ok = False
