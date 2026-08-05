@@ -121,7 +121,11 @@ std::vector<LevelInstance> InstancesForSave(const InstanceTable &table)
         if (row->levelInstanceIndex < 0)
             continue;
 
-        out.push_back(LevelInstance{.name = row->name, .source = row->source, .transform = row->transform});
+        out.push_back(LevelInstance{.name      = row->name,
+                                    .source    = row->source,
+                                    .transform = row->transform,
+                                    .overrides = row->overrides,
+                                    .removed   = row->removed});
     }
     return out;
 }
@@ -193,8 +197,79 @@ void QualifyReferences(nlohmann::json &components, std::string_view prefix)
     }
 }
 
+void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &componentOverrides,
+                         std::string_view context)
+{
+    if (!componentOverrides.is_object())
+        return;
+
+    for (const auto &[componentName, claim] : componentOverrides.items())
+    {
+        const bool alreadyRemoved =
+            std::find(member.removedComponents.begin(), member.removedComponents.end(), componentName) !=
+            member.removedComponents.end();
+
+        if (claim.is_null())
+        {
+            // A note saying "this instance does not have it", not an edit — so if
+            // the blueprint later drops the component itself, the note becomes a
+            // harmless no-op rather than an error.
+            member.components.erase(componentName);
+            if (!alreadyRemoved)
+                member.removedComponents.emplace_back(componentName);
+            continue;
+        }
+        if (!claim.is_object())
+            continue;
+
+        if (alreadyRemoved)
+        {
+            Core::Log::Warn("Blueprint: '{}' overrides fields of '{}', which an inner file removed. The "
+                            "removal wins and the override is dropped — decide which one should go.",
+                            context, componentName);
+            continue;
+        }
+
+        // Per field, outermost winning. An add lands here too, against an absent
+        // component: the object becomes the whole claim and the deserialize fills
+        // the rest from C++ defaults.
+        nlohmann::json &target = member.components[componentName];
+        if (!target.is_object())
+            target = nlohmann::json::object();
+        for (const auto &[fieldName, value] : claim.items())
+            target[fieldName] = value;
+    }
+}
+
+bool IsMemberRemoved(std::string_view memberName, const std::vector<std::string> &removed)
+{
+    for (const std::string &path : removed)
+    {
+        if (memberName == path)
+            return true;
+        if (memberName.size() > path.size() && memberName.starts_with(path) && memberName[path.size()] == '/')
+            return true;
+    }
+    return false;
+}
+
 namespace
 {
+
+/// Reads an instance entry's `overrides` and `removed` into @p out.
+void ReadInstanceClaims(const nlohmann::json &entry, LevelInstance &out)
+{
+    if (const auto it = entry.find("overrides"); it != entry.end() && it->is_object())
+        out.overrides = *it;
+    if (const auto it = entry.find("removed"); it != entry.end() && it->is_array())
+    {
+        for (const auto &path : *it)
+        {
+            if (path.is_string())
+                out.removed.push_back(path.get<std::string>());
+        }
+    }
+}
 
 /// True if @p components declares a Parent whose target is not null. Such a member
 /// is positioned relative to that parent, so the instance's placement must not be
@@ -271,10 +346,65 @@ void FlattenInstance(FlattenState &state, const nlohmann::json &entry, std::stri
                                              source, name, local.scale.x, local.scale.y, local.scale.z));
     }
 
+    const std::string childPrefix = prefix + name + "/";
+    const std::size_t first       = state.out->members.size();
+
     state.stack.push_back(childSource);
-    FlattenInto(state, ReadFile(childSource), childSource, prefix + name + "/",
-                ComposeTransform(placement, local));
+    FlattenInto(state, ReadFile(childSource), childSource, childPrefix, ComposeTransform(placement, local));
     state.stack.pop_back();
+
+    // The entry's claims apply to what the recursion just produced, and to nothing
+    // else — an override is written where the edit was made and addresses downward
+    // (§5). They land *after* the child flattened, so an override of a member the
+    // child itself instances (`car_3/wheel_fl`) is reached by the same rule as a
+    // direct one.
+    LevelInstance claims;
+    ReadInstanceClaims(entry, claims);
+    if (claims.overrides.empty() && claims.removed.empty())
+        return;
+
+    // Removed here, not held as a hole: these removals are authored in the file, so
+    // every instance of it has the same member list, and the list *is* the index
+    // NetIds are assigned from. A per-instance removal (from a level placing this
+    // one) is different and leaves a hole — see StageInstance.
+    for (std::size_t i = state.out->members.size(); i-- > first;)
+    {
+        const std::string_view path = state.out->members[i].name;
+        if (!path.starts_with(childPrefix))
+            continue;
+        if (IsMemberRemoved(path.substr(childPrefix.size()), claims.removed))
+        {
+            state.declared.erase(state.out->members[i].name);
+            state.out->members.erase(state.out->members.begin() + static_cast<std::ptrdiff_t>(i));
+        }
+    }
+
+    for (const auto &[memberPath, componentOverrides] : claims.overrides.items())
+    {
+        const std::string full = childPrefix + memberPath;
+
+        BlueprintMemberDesc *member = nullptr;
+        for (std::size_t i = first; i < state.out->members.size(); ++i)
+        {
+            if (state.out->members[i].name == full)
+            {
+                member = &state.out->members[i];
+                break;
+            }
+        }
+
+        if (member == nullptr)
+        {
+            // Dropped rather than refused, and banning renames is what makes that
+            // clean: a missing member can only mean deliberate deletion, so there
+            // is no second reading in which this discards a real edit (§6).
+            Core::Log::Warn("Blueprint: '{}' overrides '{}', which '{}' no longer declares — dropped.", source,
+                            full, childSource);
+            continue;
+        }
+
+        ApplyMemberOverride(*member, componentOverrides, full);
+    }
 }
 
 void FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_view source,

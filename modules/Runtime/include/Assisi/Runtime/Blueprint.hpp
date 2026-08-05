@@ -52,6 +52,16 @@ struct BlueprintMemberDesc
     /// chain; a parentless one is in file space, and the placement composes onto
     /// it directly (§3, "the component is absolute").
     bool parented = false;
+
+    /// Components an inner file deliberately deleted from this member with a
+    /// `null` override.
+    ///
+    /// Recorded rather than simply absent, because absent and deleted have
+    /// different answers for an *outer* override of the same component: an add
+    /// starts from C++ defaults, but resurrecting a deleted component from a field
+    /// edit would silently bring back every other field of something somebody
+    /// removed on purpose (§5). Removal wins and the outer override is dropped.
+    std::vector<std::string> removedComponents;
 };
 
 /// @brief A blueprint file, parsed and flattened once.
@@ -121,6 +131,31 @@ struct LevelInstance
     /// Where to put it. Only translation, rotation and *uniform* scale — a
     /// non-uniform scale here fails the load rather than being clamped (§3).
     ECS::Transform transform;
+
+    /// What this instance changed: `{ memberPath: { ComponentName: {...} | null } }`.
+    ///
+    /// **Recorded, not computed.** An override exists because somebody edited that
+    /// field, not because a comparison found a difference — the computed version
+    /// was built once and it silently froze the old values into every instance as
+    /// fake overrides the moment the blueprint changed. A field nobody touched
+    /// re-reads from the source on every load, which is what makes "fix it once,
+    /// fixed everywhere" true and is the whole point of the format.
+    ///
+    /// Addresses downward and never upward: a level placing a lot may override
+    /// `car_3/wheel_fl/…`. `null` reads unambiguously as "this instance does not
+    /// have that component", since a real component is always an object.
+    nlohmann::json overrides = nlohmann::json::object();
+
+    /// Member paths this instance does not have. Removing a wheel from the third
+    /// car of a placed lot is `["car_3/wheel_fl"]` — the same addressing overrides
+    /// use, rather than a second scheme. A path also removes everything beneath
+    /// it, so a whole nested instance can go.
+    ///
+    /// **Instances only shrink.** There is no way to add a member, because an
+    /// instance's members must always be a subset of what its file declares —
+    /// that invariant is what makes validating an instance, generating a typed
+    /// view from the file alone, and dropping orphaned overrides safely possible.
+    std::vector<std::string> removed;
 };
 
 /// @brief One row of the world's instance table.
@@ -143,6 +178,14 @@ struct BlueprintInstance
     /// told "the level's third instance" rather than being sent its overrides
     /// (§9), and what lets a save write the instance back where it came from.
     int32_t levelInstanceIndex = -1;
+
+    /// What this instance changed, and which members it does not have — see
+    /// LevelInstance. Held so a save writes back exactly what was read, and so the
+    /// editor has a record to add to. There are no *runtime* overrides: a caller
+    /// that wants a red car writes the component after spawning, which is typed,
+    /// direct, and expresses things overrides cannot (§5).
+    nlohmann::json           overrides = nlohmann::json::object();
+    std::vector<std::string> removed;
 };
 
 /// @brief The world's instance table: one row per live instance, never per member.
@@ -223,6 +266,39 @@ class InstanceTable
 ///
 /// No-op for an empty prefix, and for any field whose value is not a string.
 void QualifyReferences(nlohmann::json &components, std::string_view prefix);
+
+/// @brief Merges one member's component overrides into its description.
+///
+/// The merge lattice, in one place because it is the part of the format most
+/// easily decided differently at two keyboards:
+///
+///   - **Outermost wins, per field.** A level's override beats the blueprint's for
+///     the same field only, so a lot setting a wheel's colour and a level setting
+///     its radius both apply. The alternative reading — an outer claim replacing
+///     the whole inner set — is how someone loses edits.
+///   - **`null` removes the component**, and a removal already recorded beats an
+///     outer field override, with a warning naming the member and the component.
+///     Neither claim can be honoured and the engine cannot know which is the
+///     mistake, so the load succeeds, the component stays gone, and a human
+///     decides.
+///   - **An add starts from C++ defaults**, never from what the blueprint had
+///     before an inner level removed it — a re-add is a new component that happens
+///     to share a name. This falls out for free: a deserialize starts from a
+///     value-initialised component and writes only the fields present.
+///   - **Two adds merge per field**, outermost winning, exactly as two field
+///     overrides do. An add is an object claim like any other.
+///
+/// @p context names the instance for the warning, e.g. `car_3/wheel_fl`.
+void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &componentOverrides,
+                         std::string_view context);
+
+/// @brief Whether @p memberName is covered by @p removed — named exactly, or
+/// beneath a removed path.
+///
+/// The prefix rule is what lets a whole nested instance be removed: `car_3`
+/// removes `car_3/body` too, and nothing has to know whether the path named a
+/// member or an instance.
+[[nodiscard]] bool IsMemberRemoved(std::string_view memberName, const std::vector<std::string> &removed);
 
 /// @brief Reads an instance placement. Absent fields keep their defaults, so
 /// `{"position": [0,4,0]}` is a legal transform.
