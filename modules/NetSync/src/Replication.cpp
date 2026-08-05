@@ -42,7 +42,8 @@ std::uint64_t PackEntity(ECS::Entity entity)
 /// first and component second — which the shift gives for free.
 std::uint64_t PackComponentRef(NetId netId, Core::Reflect::ComponentId componentId)
 {
-    return (static_cast<std::uint64_t>(netId) << 32) | static_cast<std::uint64_t>(componentId);
+    // .value: packing into a sortable integer, not a NetId operation.
+    return (static_cast<std::uint64_t>(netId.value) << 32) | static_cast<std::uint64_t>(componentId);
 }
 
 /// The component half of a packed ref. There is deliberately no NetId half: the
@@ -475,7 +476,8 @@ NetId ReplicationServer::EnsureNetId(ECS::Entity entity)
     if (!_scene.Has<Replicated>(entity))
         return InvalidNetId;
 
-    const NetId netId = _nextNetId++;
+    // The one place that turns a raw counter into an id — see _nextNetId.
+    const NetId netId{_nextNetId++};
     _netIdByEntity.emplace(PackEntity(entity), netId);
     _entityByNetId.emplace(netId, entity);
     // Ids only ever climb, so the live set stays sorted by appending.
@@ -737,8 +739,10 @@ void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
 
     const auto low  = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
                                        PackComponentRef(netId, 0));
+    // netId + 1: the exclusive upper bound of this netId's packed-ref range,
+    // spelled explicitly since NetId has no arithmetic of its own.
     const auto high = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
-                                       PackComponentRef(netId + 1, 0));
+                                       PackComponentRef(NetId{netId.value + 1}, 0));
     connection.ackedComponents.erase(low, high);
 
     connection.baselines.erase(netId);
@@ -761,8 +765,10 @@ void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
 
         const auto recordLow  = std::lower_bound(record.components.begin(), record.components.end(),
                                                  PackComponentRef(netId, 0));
+        // netId + 1: the exclusive upper bound of this netId's packed-ref range,
+        // spelled explicitly since NetId has no arithmetic of its own.
         const auto recordHigh = std::lower_bound(record.components.begin(), record.components.end(),
-                                                 PackComponentRef(netId + 1, 0));
+                                                 PackComponentRef(NetId{netId.value + 1}, 0));
         record.components.erase(recordLow, recordHigh);
     }
 }
@@ -1135,7 +1141,9 @@ void ReplicationServer::DispatchIntent(ClientId sender, ConnectionDiagnostics &d
     // a handler — or the control check — can do anything with them.
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
-    { return PackEntity(EntityOf(static_cast<NetId>(wire))); };
+    // The codec's entity-ref slot is a bare uint64_t; NetId{...} here is the
+    // wire boundary where that number becomes a NetId.
+    { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
 
     const std::uint64_t before = diagnostics.intentsOutOfRange + diagnostics.intentsNotYours;
 
@@ -1204,7 +1212,8 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
     // "nothing" for exactly the entity the event is about.
     Core::Reflect::CodecContext codec;
     codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
-    { return static_cast<std::uint64_t>(EnsureNetId(UnpackEntity(packed))); };
+    // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
+    { return EnsureNetId(UnpackEntity(packed)).value; };
 
     Core::BitWriter writer;
     if (!Core::Reflect::WriteMessage(*meta, event, writer, &codec))
@@ -1241,7 +1250,7 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
             Core::BitWriter announcement;
             WriteMessageType(MessageType::Announcement, announcement);
             announcement.WriteVarUInt64(_simTick);
-            announcement.WriteVarUInt32(subject);
+            announcement.WriteVarUInt32(subject.value); // wire write
             announcement.WriteBytes(bytes);
             _transport.Send(connection.id, announcement.Data(), Net::SendMode::Reliable, Net::Lane::Control);
             ++connection.diagnostics.announcementsSent;
@@ -1388,7 +1397,9 @@ void ReplicationServer::DispatchHostEvents()
 
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
-    { return PackEntity(EntityOf(static_cast<NetId>(wire))); };
+    // The codec's entity-ref slot is a bare uint64_t; NetId{...} here is the
+    // wire boundary where that number becomes a NetId.
+    { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
 
     NetContext context{HostClientId, _session, &_scene};
 
@@ -1418,7 +1429,8 @@ void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index 
     Core::BitWriter writer;
     Core::Reflect::CodecContext codec;
     codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
-    { return static_cast<std::uint64_t>(NetIdOf(UnpackEntity(packed))); };
+    // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
+    { return NetIdOf(UnpackEntity(packed)).value; };
     if (!Core::Reflect::WriteMessage(*meta, intent, writer, &codec))
         return;
 
@@ -1445,7 +1457,8 @@ void ReplicationServer::ReconcileNetIds()
         NetId               netId;
         if (it == _netIdByEntity.end())
         {
-            netId = _nextNetId++;
+            // The other place that turns a raw counter into an id — see EnsureNetId.
+            netId = NetId{_nextNetId++};
             _netIdByEntity.emplace(key, netId);
             _entityByNetId.emplace(netId, entity);
         }
@@ -1677,7 +1690,7 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         // that does not replicate resolves to zero rather than to a local handle
         // the peer would misread as one of its own.
         const NetId referenced = NetIdOf(UnpackEntity(packed));
-        return static_cast<std::uint64_t>(referenced);
+        return referenced.value; // wire boundary
     };
 
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
@@ -1716,8 +1729,10 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     // shape of the despawn comparison, one level down.
     const auto ackedLow  = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
                                             PackComponentRef(netId, 0));
+    // netId + 1: the exclusive upper bound of this netId's packed-ref range,
+    // spelled explicitly since NetId has no arithmetic of its own.
     const auto ackedHigh = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
-                                            PackComponentRef(netId + 1, 0));
+                                            PackComponentRef(NetId{netId.value + 1}, 0));
 
     std::vector<Core::Reflect::ComponentId> removed;
     for (auto it = ackedLow; it != ackedHigh; ++it)
@@ -1899,7 +1914,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
                         std::back_inserter(despawns));
     writer.WriteVarUInt32(static_cast<std::uint32_t>(despawns.size()));
     for (const NetId netId : despawns)
-        writer.WriteVarUInt32(netId);
+        writer.WriteVarUInt32(netId.value); // wire write
 
     // Collect, order, drain to a budget. The ordering is a Tribes-style priority
     // accumulator: every live entity gains max(Replicated::priority, eps) each
@@ -1966,8 +1981,11 @@ void ReplicationServer::SendSnapshot(Connection &connection)
                 // from the client's point of view.
                 const auto low  = std::lower_bound(connection.ackedComponents.begin(),
                                                    connection.ackedComponents.end(), PackComponentRef(netId, 0));
+                // netId + 1: the exclusive upper bound of this netId's packed-ref
+                // range, spelled explicitly since NetId has no arithmetic of its own.
                 const auto high = std::lower_bound(connection.ackedComponents.begin(),
-                                                   connection.ackedComponents.end(), PackComponentRef(netId + 1, 0));
+                                                   connection.ackedComponents.end(),
+                                                   PackComponentRef(NetId{netId.value + 1}, 0));
                 record.components.insert(record.components.end(), low, high);
             }
             continue;
@@ -1984,7 +2002,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         }
 
         writer.WriteBool(true);
-        writer.WriteVarUInt32(netId);
+        writer.WriteVarUInt32(netId.value); // wire write
         writer.WriteBool(!known); // isSpawn
 
         WriteEntityComponents(netId, entity, sinceChangeTick, connection, writer, record.components);
@@ -2199,7 +2217,8 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
     // NetIds, exactly as they do inside a component block.
     Core::Reflect::CodecContext codec;
     codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
-    { return static_cast<std::uint64_t>(NetIdOf(UnpackEntity(packed))); };
+    // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
+    { return NetIdOf(UnpackEntity(packed)).value; };
 
     if (!Core::Reflect::WriteMessage(*meta, intent, writer, &codec))
         return false;
@@ -2217,7 +2236,8 @@ void ReplicationClient::DispatchEvent(const Core::Reflect::MessageMeta &meta, Co
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
     {
-        const ECS::Entity mirror = EntityOf(static_cast<NetId>(wire));
+        // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
+        const ECS::Entity mirror = EntityOf(NetId{static_cast<std::uint32_t>(wire)});
         return (static_cast<std::uint64_t>(mirror.index)) | (static_cast<std::uint64_t>(mirror.generation) << 32);
     };
 
@@ -2264,7 +2284,7 @@ void ReplicationClient::HandleAnnouncement(Core::BitReader &reader)
 {
     DeferredAnnouncement pending;
     pending.serverTick = reader.ReadVarUInt64();
-    pending.subject    = reader.ReadVarUInt32();
+    pending.subject    = NetId{reader.ReadVarUInt32()}; // wire read
     pending.messageId  = Core::Reflect::ReadMessageId(reader);
     if (!reader.Ok() || pending.messageId == Core::Reflect::kInvalidMessageId)
         return;
@@ -2430,7 +2450,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     }
     for (std::uint32_t i = 0; i < despawnCount; ++i)
     {
-        const NetId netId = reader.ReadVarUInt32();
+        const NetId netId = NetId{reader.ReadVarUInt32()}; // wire read
         if (!reader.Ok())
             return false;
 
@@ -2461,7 +2481,8 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     Core::Reflect::CodecContext context;
     context.entityFromWire = [this, &refSites](std::uint64_t wire) -> std::uint64_t
     {
-        const NetId netId = static_cast<NetId>(wire);
+        // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
+        const NetId netId = NetId{static_cast<std::uint32_t>(wire)};
         if (netId == InvalidNetId)
         {
             refSites.push_back(RefSite{InvalidNetId, true}); // a genuine null reference
@@ -2479,7 +2500,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
     while (reader.Ok() && reader.ReadBool())
     {
-        const NetId netId   = reader.ReadVarUInt32();
+        const NetId netId   = NetId{reader.ReadVarUInt32()}; // wire read
         const bool  isSpawn = reader.ReadBool();
         if (!reader.Ok() || netId == InvalidNetId)
         {

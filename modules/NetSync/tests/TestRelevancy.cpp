@@ -683,6 +683,6 @@ TEST_CASE("a departing connection takes its provider state with it")
 
     REQUIRE(provider->forgotten.size() == 1);
     CHECK(provider->forgotten.front() == id);
-    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), 1));
+    CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), NetId{1}));
     CHECK(harness.server.RelevantSet(harness.serverSide()).empty());
 }

@@ -263,7 +263,7 @@ TEST_CASE("a quantized body record is at least 2.5x smaller than the whole-value
     { return netIdBits + 1 + 32 * 3 + 32 * 4 + (asleep ? 0 : 32 * 6); };
 
     BodyState awake;
-    awake.netId           = 7; // one varint byte, same on both sides of the ratio
+    awake.netId           = NetId{7}; // one varint byte, same on both sides of the ratio
     awake.position        = {12.5f, -3.25f, 100.125f};
     awake.rotation        = glm::normalize(glm::quat{0.3f, 0.5f, -0.2f, 0.8f});
     awake.linearVelocity  = {-4.5f, 12.25f, 0.f};
@@ -341,7 +341,7 @@ TEST_CASE("quantized body state round-trips within a quantum")
     const BodyQuantization &q = Quantization();
 
     BodyState source;
-    source.netId           = 42;
+    source.netId           = NetId{42};
     source.position        = {12.5f, -3.25f, 100.125f};
     source.rotation        = glm::normalize(glm::quat{0.3f, 0.5f, -0.2f, 0.8f});
     source.linearVelocity  = {-4.5f, 12.25f, 0.f};
