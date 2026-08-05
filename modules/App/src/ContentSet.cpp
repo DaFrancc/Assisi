@@ -32,19 +32,15 @@ bool IsContentFile(const std::filesystem::path &path)
 
 } // namespace
 
-ContentSet BuildContentSet()
+std::vector<std::string> ScanContentPaths()
 {
-    ContentSet set;
+    std::vector<std::string> paths;
 
     const std::filesystem::path root = Core::AssetSystem::GetRoot();
 
     std::error_code ec;
     if (root.empty() || !std::filesystem::is_directory(root, ec))
-    {
-        Core::Log::Warn("ContentSet: no asset root, so the content set is empty.");
-        set.hash = Core::kFnvOffsetBasis;
-        return set;
-    }
+        return paths;
 
     for (std::filesystem::recursive_directory_iterator it(root, ec), end; it != end; it.increment(ec))
     {
@@ -61,12 +57,28 @@ ContentSet BuildContentSet()
         std::string virtualPath = std::filesystem::relative(it->path(), root, ec).generic_string();
         if (ec || virtualPath.empty())
             continue;
-        set.paths.push_back(std::move(virtualPath));
+        paths.push_back(std::move(virtualPath));
     }
 
     // Filesystem enumeration order is not stable across machines; the sort is what
-    // makes the combine below a function of the *set* rather than of the walk.
-    std::sort(set.paths.begin(), set.paths.end());
+    // makes the combine in BuildContentSet a function of the *set* rather than of
+    // the walk.
+    std::sort(paths.begin(), paths.end());
+    return paths;
+}
+
+ContentSet BuildContentSet()
+{
+    ContentSet set;
+    set.paths = ScanContentPaths();
+
+    const std::filesystem::path root = Core::AssetSystem::GetRoot();
+    if (set.paths.empty())
+    {
+        std::error_code ec;
+        if (root.empty() || !std::filesystem::is_directory(root, ec))
+            Core::Log::Warn("ContentSet: no asset root, so the content set is empty.");
+    }
 
     std::uint64_t combined = Core::kFnvOffsetBasis;
     const auto    fold     = [&combined](std::uint64_t value)

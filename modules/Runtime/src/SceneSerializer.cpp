@@ -9,6 +9,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 
 #include <cmath>
@@ -487,12 +488,16 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
     staged.definition = definition;
     staged.placement  = entry.transform;
     staged.overrides  = entry.overrides;
-    staged.id         = table.Add(BlueprintInstance{.name               = entry.name,
-                                                    .source             = definition->source,
-                                                    .transform          = entry.transform,
-                                                    .levelInstanceIndex = levelInstanceIndex,
-                                                    .overrides          = entry.overrides,
-                                                    .removed            = entry.removed});
+    staged.id = table.Add(BlueprintInstance{.name      = entry.name,
+                                            .source    = definition->source,
+                                            .transform = entry.transform,
+                                            // Anything the loader places came out of a file, so it is
+                                            // authored by construction. A placement made outside a load
+                                            // decides for itself — see PlaceInstance.
+                                            .authored           = levelInstanceIndex >= 0,
+                                            .levelInstanceIndex = levelInstanceIndex,
+                                            .overrides          = entry.overrides,
+                                            .removed            = entry.removed});
 
     staged.members.reserve(definition->members.size());
     staged.resolved.reserve(definition->members.size());
@@ -1114,22 +1119,75 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
 // Runtime expansion
 // ---------------------------------------------------------------------------
 
-std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, InstanceTable &table,
-                                                       std::string_view source, const ECS::Transform &placement)
+std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(ECS::Scene         &scene,
+                                                                               InstanceTable       &table,
+                                                                               const LevelInstance &entry,
+                                                                               bool                 authored)
 {
     if (s_context || s_rawContextScene != nullptr)
     {
-        Core::Log::Error("ExpandInstance: a serialization context is already active on this thread.");
+        Core::Log::Error("PlaceInstance: a serialization context is already active on this thread.");
         return std::nullopt;
     }
 
-    // Its own name context, holding only this instance's members. A runtime spawn
-    // has no file around it, so there is nothing else its references could name —
-    // and giving it the whole scene's names would let a blueprint silently wire
-    // itself to whatever happened to share a name.
+    // Its own name context, holding only this instance's members. Placing one
+    // outside a level load has no file around it, so there is nothing else its
+    // references could name — and giving it the whole scene's names would let a
+    // blueprint silently wire itself to whatever happened to share a name.
     ScopedContextReset guard;
     s_context = SerializationContext{};
 
+    StagedInstance instance;
+    const auto     unwind = [&]
+    {
+        for (const ECS::Entity member : instance.members)
+        {
+            if (member != ECS::NullEntity)
+                scene.Destroy(member);
+        }
+        if (instance.id != 0)
+            table.Remove(instance.id);
+    };
+
+    try
+    {
+        instance = StageInstance(scene, table, entry, /*levelInstanceIndex=*/-1);
+        CommitInstance(scene, instance, entry.name);
+    }
+    catch (const std::exception &ex)
+    {
+        // All or nothing (§7): a missing nested file three members in must leave no
+        // partial instance behind.
+        Core::Log::Error("Blueprint: placing '{}' failed: {}", entry.source, ex.what());
+        unwind();
+        return std::nullopt;
+    }
+
+    if (!s_context->unresolvedRefNames.empty())
+    {
+        Core::Log::Error("Blueprint: '{}' has {} reference(s) naming a member it does not declare; the first "
+                         "is '{}'.",
+                         entry.source, s_context->unresolvedRefNames.size(),
+                         s_context->unresolvedRefNames.front());
+        unwind();
+        return std::nullopt;
+    }
+
+    // Authorship is decided here rather than inside StageInstance, because it is a
+    // property of *who asked* rather than of the file.
+    if (authored)
+    {
+        BlueprintInstance row = *table.Find(instance.id);
+        row.authored          = true;
+        table.RestoreAt(instance.id, std::move(row));
+    }
+
+    return ExpandedInstance{.instanceId = instance.id, .members = std::move(instance.members)};
+}
+
+std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, InstanceTable &table,
+                                                       std::string_view source, const ECS::Transform &placement)
+{
     // No instance name: the members are `body`, not `car_3/body`, because nothing
     // placed this one and no file addresses into it.
     const LevelInstance entry{.name      = {},
@@ -1138,42 +1196,106 @@ std::optional<uint32_t> SceneSerializer::ExpandInstance(ECS::Scene &scene, Insta
                               .overrides = nlohmann::json::object(),
                               .removed   = {}};
 
-    StagedInstance instance;
-    try
+    const std::optional<ExpandedInstance> placed = PlaceInstance(scene, table, entry, /*authored=*/false);
+    return placed ? std::optional<uint32_t>{placed->instanceId} : std::nullopt;
+}
+
+bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS::Entity> entities,
+                                         const std::filesystem::path &path, const ECS::Transform &origin)
+{
+    if (entities.empty())
     {
-        instance = StageInstance(scene, table, entry, /*levelInstanceIndex=*/-1);
-        CommitInstance(scene, instance, /*instanceName=*/"");
+        Core::Log::Error("Blueprint: nothing selected to save.");
+        return false;
     }
-    catch (const std::exception &ex)
+    if (s_context || s_rawContextScene != nullptr)
     {
-        // All or nothing (§7): a missing nested file three members in must leave no
-        // partial instance behind.
-        Core::Log::Error("SpawnBlueprint: '{}' failed: {}", source, ex.what());
-        for (const ECS::Entity member : instance.members)
-        {
-            if (member != ECS::NullEntity)
-                scene.Destroy(member);
-        }
-        if (instance.id != 0)
-            table.Remove(instance.id);
-        return std::nullopt;
+        Core::Log::Error("SaveEntitiesToFile: a serialization context is already active on this thread.");
+        return false;
     }
 
-    if (!s_context->unresolvedRefNames.empty())
+    for (const ECS::Entity entity : entities)
     {
-        Core::Log::Error("SpawnBlueprint: '{}' has {} reference(s) naming a member it does not declare; the "
-                         "first is '{}'.",
-                         source, s_context->unresolvedRefNames.size(), s_context->unresolvedRefNames.front());
-        for (const ECS::Entity member : instance.members)
+        if (scene.Has<ECS::BlueprintMember>(entity))
         {
-            if (member != ECS::NullEntity)
-                scene.Destroy(member);
+            // Nesting is an `instances` entry, not copied entities. Copying them
+            // would bake the inner blueprint into the new file and stop a fix to it
+            // from reaching this one — the exact thing the format exists to avoid.
+            Core::Log::Error("Blueprint: the selection contains a blueprint member. Prune it from its "
+                             "instance first, or nest by adding an `instances` entry by hand.");
+            return false;
         }
-        table.Remove(instance.id);
-        return std::nullopt;
     }
 
-    return instance.id;
+    const auto &registry = Core::Reflect::ComponentRegistry::Instance();
+
+    ScopedContextReset guard;
+    s_context = SerializationContext{};
+
+    // Names first, so a reference between two selected entities resolves whichever
+    // order they are serialized in.
+    std::unordered_set<std::string> usedNames;
+    std::vector<std::string>        names;
+    names.reserve(entities.size());
+    for (const ECS::Entity entity : entities)
+    {
+        std::string name = UniqueName(AuthoredName(scene, entity), usedNames);
+        s_context->entityToName.emplace(EntityKey(entity.index, entity.generation), name);
+        names.push_back(std::move(name));
+    }
+
+    nlohmann::json doc;
+    doc["version"]  = 2;
+    doc["entities"] = nlohmann::json::array();
+
+    for (std::size_t i = 0; i < entities.size(); ++i)
+    {
+        const ECS::Entity entity = entities[i];
+
+        nlohmann::json written;
+        written["name"]       = names[i];
+        written["components"] = nlohmann::json::object();
+
+        for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
+        {
+            if (meta->name == "Name")
+                continue; // the entity's `name` key already carries it
+
+            const void *component = meta->getByEntity(&scene, entity.index, entity.generation);
+            if (component == nullptr)
+                continue;
+            written["components"][meta->name] = meta->serialize(component);
+        }
+
+        // Around the new file's own origin, so the result is placeable. A parented
+        // entity is already relative to its parent and reaches the origin through
+        // the chain; dividing it too would divide twice.
+        if (!scene.Has<Parent>(entity))
+        {
+            if (const ECS::Transform *transform = scene.Get<ECS::Transform>(entity))
+                written["components"]["Transform"] = TransformToJson(InverseComposeTransform(origin, *transform));
+        }
+
+        doc["entities"].push_back(std::move(written));
+    }
+
+    std::error_code ec;
+    std::filesystem::create_directories(path.parent_path(), ec);
+
+    std::ofstream file(path, std::ios::binary);
+    if (!file.is_open())
+    {
+        Core::Log::Error("Blueprint: cannot open '{}' for writing.", path.string());
+        return false;
+    }
+    file << doc.dump(2);
+    if (!file.good())
+    {
+        Core::Log::Error("Blueprint: write failed for '{}'.", path.string());
+        return false;
+    }
+
+    return true;
 }
 
 // ---------------------------------------------------------------------------

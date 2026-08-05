@@ -1,5 +1,6 @@
 add_executable(Assisi-Runtime-Tests
   main.cpp
+  TestBlueprintAuthoring.cpp
   TestBlueprintExpansion.cpp
   TestBlueprintOverrides.cpp
   TestBlueprintPreparedForm.cpp

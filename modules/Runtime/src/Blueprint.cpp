@@ -73,6 +73,20 @@ ECS::Transform ComposeTransform(const ECS::Transform &placement, const ECS::Tran
     return out;
 }
 
+ECS::Transform InverseComposeTransform(const ECS::Transform &placement, const ECS::Transform &world)
+{
+    // Exact only under the uniform-scale rule, same as the forward form: with one
+    // scale factor the division below is a scalar and the rotation is unaffected
+    // by it.
+    const float scale = placement.scale.x != 0.f ? placement.scale.x : 1.f;
+
+    ECS::Transform out;
+    out.rotation = glm::normalize(glm::inverse(placement.rotation) * world.rotation);
+    out.position = (glm::inverse(placement.rotation) * (world.position - placement.position)) / scale;
+    out.scale    = world.scale / scale;
+    return out;
+}
+
 // ---------------------------------------------------------------------------
 // The instance table
 // ---------------------------------------------------------------------------
@@ -189,7 +203,7 @@ std::vector<LevelInstance> InstancesForSave(const InstanceTable &table)
         // A runtime spawn is not level content: it exists because something in the
         // game asked for it, and writing it into the file would make it authored
         // the next time the level loads.
-        if (row->levelInstanceIndex < 0)
+        if (!row->authored)
             continue;
 
         out.push_back(LevelInstance{.name      = row->name,

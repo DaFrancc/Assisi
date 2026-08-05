@@ -205,10 +205,19 @@ struct BlueprintInstance
     /// because an override is recorded relative to it (§3).
     ECS::Transform transform;
 
+    /// Whether this instance is **level content** — placed by an author, and
+    /// written back when the level saves.
+    ///
+    /// Distinct from `levelInstanceIndex` because an instance the author places in
+    /// the editor is authored but has no index yet; it gets one the next time the
+    /// file is written. Deriving "should this be saved?" from the index instead
+    /// dropped every freshly placed instance on the first save.
+    bool authored = false;
+
     /// Index in the level file's `instances` array for an instance the level
-    /// placed, or -1 for one spawned at runtime. What lets a joining client be
-    /// told "the level's third instance" rather than being sent its overrides
-    /// (§9), and what lets a save write the instance back where it came from.
+    /// placed, or -1 for one that was never in a file — a runtime spawn, or one
+    /// the author placed since the last load. What lets a joining client be told
+    /// "the level's third instance" rather than being sent its overrides (§9).
     int32_t levelInstanceIndex = -1;
 
     /// What this instance changed, and which members it does not have — see
@@ -323,6 +332,17 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// blueprint; two spellings of this that differ in the low bits are a silent
 /// cross-build desync (docs/blueprint-implementation-plan.md §5, risk 1).
 [[nodiscard]] ECS::Transform ComposeTransform(const ECS::Transform &placement, const ECS::Transform &local);
+
+/// @brief The exact inverse: what @p local would have to be for
+/// `ComposeTransform(placement, local)` to equal @p world.
+///
+/// This is how an override is recorded relative to its instance, and how "create
+/// a blueprint from this selection" writes members around the new file's own
+/// origin rather than around wherever they happened to be standing. Kept beside
+/// its forward form on purpose — the two must agree to the bit, and they are the
+/// pair a cross-build desync would come from.
+[[nodiscard]] ECS::Transform InverseComposeTransform(const ECS::Transform &placement,
+                                                     const ECS::Transform &world);
 
 /// @brief Whether @p transform's scale is uniform enough to compose exactly.
 [[nodiscard]] bool HasUniformScale(const ECS::Transform &transform);
