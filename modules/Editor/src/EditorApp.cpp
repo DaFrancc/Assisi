@@ -4,6 +4,7 @@
 #include "ImGuiQueries.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/World.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
@@ -675,7 +676,11 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
         // Runs at display rate over every physics-driven Transform, so it belongs
         // in the render breakdown rather than being lumped in with physics.
         ASSISI_PROFILE_SCOPE("physics-interpolate");
-        _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha());
+        // The resolver, because a parented body's pose comes back in world space
+        // and its Transform is an offset from its parent — without it every
+        // parented body drifts by its parent's transform once per frame.
+        _physics->InterpolateTransforms(*_scene, GetInterpolationAlpha(),
+                                        Assisi::App::ParentWorldResolver(*_scene));
     }
 
     // Immediately after the writeback and before Render() propagates world
@@ -1106,7 +1111,8 @@ void EditorApp::ApplyEditRebind(Assisi::ECS::Entity entity, Assisi::Core::Reflec
             const auto *tc   = _scene->Get<Runtime::Transform>(entity);
             const auto *desc = _scene->Get<Physics::RigidBodyDescriptor>(entity);
             if (tc && desc && _scene->Get<Physics::RigidBody>(entity) == nullptr)
-                _physics->AddBodyFromDescriptor(*_scene, entity, *tc, *desc);
+                _physics->AddBodyFromDescriptor(*_scene, entity, *tc, *desc,
+                                                Assisi::App::ParentWorldResolver(*_scene));
         }
         else
         {

@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/App/LevelRuntime.hpp>
 
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
@@ -35,7 +36,7 @@ void RebindSceneAssetsAndPhysics(ECS::Scene &scene, Render::AssetCache &cache, c
                                  Physics::PhysicsWorld &physics)
 {
     Runtime::ResolveSceneAssets(scene, cache, database);
-    physics.RebuildSceneBodies(scene);
+    (void)BuildSceneBodies(scene, physics);
 }
 
 namespace
@@ -89,7 +90,7 @@ bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::Phys
     if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath))
         return false;
 
-    physics.RebuildSceneBodies(scene);
+    (void)BuildSceneBodies(scene, physics);
     return true;
 }
 

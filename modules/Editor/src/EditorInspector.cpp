@@ -2,6 +2,7 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetId.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -748,7 +749,8 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
         if (tc != nullptr && desc != nullptr &&
             _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) == nullptr)
         {
-            _physics->AddBodyFromDescriptor(*_scene, _selectedEntity, *tc, *desc);
+            _physics->AddBodyFromDescriptor(*_scene, _selectedEntity, *tc, *desc,
+                                            Assisi::App::ParentWorldResolver(*_scene));
         }
     }
 

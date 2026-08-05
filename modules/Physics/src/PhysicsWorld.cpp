@@ -523,15 +523,50 @@ RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const Co
     return RigidBody{bodyId};
 }
 
+namespace
+{
+
+/// A parent's rotation alone, with scale divided out of each basis vector.
+///
+/// Exact for uniform scale, which is what a blueprint instance root is
+/// constrained to (docs/blueprint-system-concept.md §3) — and a non-uniformly
+/// scaled parent has no exact rotation to extract in the first place, because
+/// the composition is a shear rather than a TRS.
+glm::quat ParentRotation(const glm::mat4 &parent)
+{
+    const glm::mat3 basis(parent);
+    return glm::quat_cast(
+        glm::mat3(glm::normalize(basis[0]), glm::normalize(basis[1]), glm::normalize(basis[2])));
+}
+
+} // namespace
+
 RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
-                                              const RigidBodyDescriptor &descriptor)
+                                              const RigidBodyDescriptor &descriptor, const ParentWorldFn &parentWorld)
 {
     const BodyMotion motion = descriptor.isStatic ? BodyMotion::Static : BodyMotion::Dynamic;
     const ColliderShapeDesc shape{.shape       = descriptor.shape,
                                   .halfExtents = descriptor.halfExtents,
                                   .radius      = descriptor.radius,
                                   .halfHeight  = descriptor.halfHeight};
-    const RigidBody body = AddBody(transform.position, transform.rotation, shape, motion);
+
+    // Jolt places bodies in world space, and a parented Transform is an offset
+    // from its parent — the same mismatch InterpolateTransforms undoes on the way
+    // back out. Without this a parented body spawns at its *local* pose and stays
+    // there, which for a blueprint member means the instance's placement is
+    // simply ignored.
+    glm::vec3 position = transform.position;
+    glm::quat rotation = transform.rotation;
+    if (parentWorld)
+    {
+        if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
+        {
+            position = glm::vec3(*parent * glm::vec4(position, 1.f));
+            rotation = glm::normalize(ParentRotation(*parent) * rotation);
+        }
+    }
+
+    const RigidBody body = AddBody(position, rotation, shape, motion);
     if (descriptor.enableCCD)
         SetBodyCCD(body, true);
     (void)scene.Add<RigidBody>(entity, body);
@@ -546,11 +581,11 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
     return body;
 }
 
-void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene)
+void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene, const ParentWorldFn &parentWorld)
 {
     Clear();
     for (auto [entity, transform, descriptor] : scene.Query<ECS::Transform, RigidBodyDescriptor>())
-        AddBodyFromDescriptor(scene, entity, transform, descriptor);
+        AddBodyFromDescriptor(scene, entity, transform, descriptor, parentWorld);
 }
 
 void PhysicsWorld::Clear()
@@ -682,7 +717,7 @@ void PhysicsWorld::CaptureState()
     }
 }
 
-void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
+void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha, const ParentWorldFn &parentWorld)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
@@ -725,17 +760,30 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
         // so it renders stable. Snapping still tracks a slow creep exactly (it
         // writes curPosition/curRotation every frame) — it only drops the blend.
         const glm::vec3 positionDelta = s.curPosition - s.prevPosition;
-        const glm::vec3 targetPosition = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
+        glm::vec3       targetPosition = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
                                              ? s.curPosition
                                              : glm::mix(s.prevPosition, s.curPosition, alpha);
 
         // 1 - |dot(prev, cur)| is ~0 for near-identical orientations; abs folds the
         // quaternion q/-q double cover. slerp keeps angular speed constant across
         // the blend and is renormalised since the result feeds the render matrix.
-        const float     rotationDelta  = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
-        const glm::quat targetRotation = rotationDelta < kRestRotationDelta
-                                             ? s.curRotation
-                                             : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
+        const float rotationDelta  = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
+        glm::quat   targetRotation = rotationDelta < kRestRotationDelta
+                                         ? s.curRotation
+                                         : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
+
+        // Jolt reports world space; a Transform under a parent is an offset *from*
+        // that parent. Writing one into the other and letting PropagateTransforms
+        // multiply by the parent again applies the parent twice — silently, and
+        // once more every frame. Convert instead.
+        if (parentWorld)
+        {
+            if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
+            {
+                targetPosition = glm::vec3(glm::inverse(*parent) * glm::vec4(targetPosition, 1.f));
+                targetRotation = glm::normalize(glm::inverse(ParentRotation(*parent)) * targetRotation);
+            }
+        }
 
         // Nothing moved: skip the write entirely rather than stamp a change tick
         // for a pose identical to the one already there.
