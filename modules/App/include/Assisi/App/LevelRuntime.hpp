@@ -34,6 +34,7 @@ namespace Assisi::Runtime
 // drags in nlohmann/json — and this header is included (via World.hpp) almost
 // everywhere. Callers that build a header include that themselves.
 struct LevelHeader;
+class InstanceTable;
 } // namespace Assisi::Runtime
 
 namespace Assisi::App
@@ -95,11 +96,14 @@ enum class AssetCacheReset : std::uint8_t
 /// @p header (optional) receives the level's non-entity metadata — notably the
 /// system profile it asks for, which the caller applies to the world it loaded
 /// into (docs/world-system-binding-design-notes.md §3).
+///
+/// @p instances (optional) receives one row per blueprint instance the level
+/// places. A level that places any and is given none fails to load rather than
+/// arriving without most of its content.
 bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
                const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-               Runtime::SceneRenderer &sceneRenderer,
-               AssetCacheReset reset = AssetCacheReset::ClearFirst,
-               Runtime::LevelHeader *header = nullptr);
+               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset = AssetCacheReset::ClearFirst,
+               Runtime::LevelHeader *header = nullptr, Runtime::InstanceTable *instances = nullptr);
 
 /// @brief LoadLevel from an absolute filesystem path instead of a virtual one.
 ///
@@ -111,9 +115,8 @@ bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCac
 /// file itself that lives outside it.
 bool LoadLevelFile(ECS::Scene &scene, const std::filesystem::path &path, Render::AssetCache &cache,
                    const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-                   Runtime::SceneRenderer &sceneRenderer,
-                   AssetCacheReset reset = AssetCacheReset::ClearFirst,
-                   Runtime::LevelHeader *header = nullptr);
+                   Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset = AssetCacheReset::ClearFirst,
+                   Runtime::LevelHeader *header = nullptr, Runtime::InstanceTable *instances = nullptr);
 
 /// @brief The simulation half of LoadLevel: deserialize the level and rebuild
 /// its physics bodies, with no asset cache and no renderer involved.
@@ -133,7 +136,8 @@ bool LoadLevelFile(ECS::Scene &scene, const std::filesystem::path &path, Render:
 /// above, so including it does not yet give a caller a render-free dependency
 /// footprint — only a render-free call. Untangling the header is part of the
 /// App core/presentation split committed to in the networking design notes.
-bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics);
+bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics,
+                  Runtime::InstanceTable *instances = nullptr);
 
 /// @brief Per-frame streaming upgrade: while the cache has async loads in
 /// flight (and for one frame after the last finishes, to pick up the final

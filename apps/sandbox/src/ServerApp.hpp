@@ -20,6 +20,7 @@
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -80,6 +81,12 @@ class ServerApp final : public Assisi::App::Application
 
     Assisi::ECS::Scene            _scene;
     Assisi::Physics::PhysicsWorld _physics;
+
+    /// This process's blueprint instances. A headless server has no App::World, so
+    /// it holds the table itself — and it needs one for the same reason a windowed
+    /// host does: a level that places instances refuses to load without somewhere
+    /// to record them.
+    Assisi::Runtime::InstanceTable _instances;
 
     /// Constructed only in a networked role, so the offline mode never
     /// initializes GameNetworkingSockets at all.

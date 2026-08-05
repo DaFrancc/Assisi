@@ -1,5 +1,6 @@
 add_executable(Assisi-App-Tests
   main.cpp
+  TestBlueprintLevel.cpp
   TestBounce.cpp
   TestChildProcess.cpp
   TestSystemRegistry.cpp

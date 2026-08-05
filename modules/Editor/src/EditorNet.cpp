@@ -244,9 +244,9 @@ void EditorApp::BuildJoinedWorld()
                                                              : Assisi::App::AssetCacheReset::ClearFirst;
     const bool loaded = level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
                             ? Assisi::App::LoadLevelFile(*_scene, file, _assetCache, _assetDatabase, *_physics,
-                                                         _sceneRenderer, reset, &header)
+                                                         _sceneRenderer, reset, &header, &_world->instances)
                             : Assisi::App::LoadLevel(*_scene, level.path, _assetCache, _assetDatabase, *_physics,
-                                                     _sceneRenderer, reset, &header);
+                                                     _sceneRenderer, reset, &header, &_world->instances);
     if (!loaded)
     {
         FailJoin("'" + level.path + "' failed to load.");
@@ -297,8 +297,10 @@ bool EditorApp::WritePieTempLevel(Assisi::NetSync::LevelIdentity &outLevel)
         return false;
     }
 
-    const Assisi::Runtime::LevelHeader header{.profile = _world != nullptr ? _world->profile : std::string{}};
-    if (!Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header))
+    const Assisi::Runtime::LevelHeader header{.instances = {},
+                                              .profile = _world != nullptr ? _world->profile : std::string{}};
+    if (!Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header,
+                                                      _world != nullptr ? &_world->instances : nullptr))
     {
         Assisi::Core::Log::Error("PIE: could not write the temp level '{}'.", resolved->string());
         return false;

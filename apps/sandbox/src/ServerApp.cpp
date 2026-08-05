@@ -88,7 +88,7 @@ void ServerApp::OnStart()
         // LoadLevelSim, not LoadLevel: no asset cache, no scene renderer,
         // nothing GPU-owned to evict. Mesh and material GUIDs stay in the scene
         // as authored data for replication; the server never resolves them.
-        if (!Assisi::App::LoadLevelSim(_scene, _options.level, _physics))
+        if (!Assisi::App::LoadLevelSim(_scene, _options.level, _physics, &_instances))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
             RequestClose();
@@ -193,7 +193,7 @@ void ServerApp::BuildJoinedWorld()
         return;
     }
 
-    if (!Assisi::App::LoadLevelSim(_scene, hello->level.path, _physics))
+    if (!Assisi::App::LoadLevelSim(_scene, hello->level.path, _physics, &_instances))
     {
         fail("'" + hello->level.path + "' failed to load.");
         return;

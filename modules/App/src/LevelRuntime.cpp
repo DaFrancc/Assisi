@@ -5,6 +5,7 @@
 #include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <optional>
@@ -63,10 +64,17 @@ void FinishLoad(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetD
 
 bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
                const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset,
-               Runtime::LevelHeader *header)
+               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset, Runtime::LevelHeader *header,
+               Runtime::InstanceTable *instances)
 {
-    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, header))
+    // Before the load, not after: the load *fills* the cache, and the member list
+    // it caches is what resolves a BlueprintMember's index back to a name for the
+    // rest of the level's life. ClearFirst means "the old asset set is gone",
+    // which is exactly when the old level's blueprints stop being wanted.
+    if (reset == AssetCacheReset::ClearFirst)
+        Runtime::ClearBlueprintCache();
+
+    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, header, instances))
         return false;
 
     FinishLoad(scene, cache, database, physics, sceneRenderer, reset);
@@ -75,19 +83,24 @@ bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCac
 
 bool LoadLevelFile(ECS::Scene &scene, const std::filesystem::path &path, Render::AssetCache &cache,
                    const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-                   Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset,
-                   Runtime::LevelHeader *header)
+                   Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset, Runtime::LevelHeader *header,
+                   Runtime::InstanceTable *instances)
 {
-    if (!Runtime::SceneSerializer::LoadFromDisk(scene, path, /*onProgress=*/{}, header))
+    if (reset == AssetCacheReset::ClearFirst)
+        Runtime::ClearBlueprintCache();
+
+    if (!Runtime::SceneSerializer::LoadFromDisk(scene, path, /*onProgress=*/{}, header, instances))
         return false;
 
     FinishLoad(scene, cache, database, physics, sceneRenderer, reset);
     return true;
 }
 
-bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics)
+bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics,
+                  Runtime::InstanceTable *instances)
 {
-    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath))
+    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, /*header=*/nullptr,
+                                                instances))
         return false;
 
     (void)BuildSceneBodies(scene, physics);

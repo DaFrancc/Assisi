@@ -22,6 +22,7 @@
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 
 #include <atomic>
 #include <cstddef>
@@ -79,6 +80,16 @@ struct World
 
     ECS::Scene            scene;
     Physics::PhysicsWorld physics;
+
+    /// One row per live blueprint instance in this world: which file it is of,
+    /// where it was placed, and where the level file put it.
+    ///
+    /// The world owns it, not the scene, because it is not entity data — the only
+    /// thing a blueprint leaves on the entities is the ECS::BlueprintMember tag,
+    /// which says *which* instance an entity belongs to and never *what* that
+    /// instance is. Ids are per world and restart at 1 on every load, because the
+    /// table is discarded with the world (docs/blueprint-system-concept.md §2).
+    Runtime::InstanceTable instances;
 
     /// This world's game systems, installed once by its profile (see
     /// WorldManager::RegisterProfile). Per world rather than per app because a

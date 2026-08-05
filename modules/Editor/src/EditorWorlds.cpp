@@ -58,7 +58,7 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     // docs/multi-scene-design-notes.md §0.)
     Assisi::Runtime::LevelHeader header;
     if (!Assisi::App::LoadLevel(world.scene, virtualPath, _assetCache, _assetDatabase, world.physics,
-                                _sceneRenderer, Assisi::App::AssetCacheReset::Keep, &header))
+                                _sceneRenderer, Assisi::App::AssetCacheReset::Keep, &header, &world.instances))
     {
         // Destroy the half-created world rather than leaving an empty resident:
         // it holds no role yet, so this always succeeds.

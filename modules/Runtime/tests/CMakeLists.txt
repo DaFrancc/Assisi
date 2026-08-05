@@ -1,5 +1,6 @@
 add_executable(Assisi-Runtime-Tests
   main.cpp
+  TestBlueprintExpansion.cpp
   TestDrawItem.cpp
   TestMeshCuller.cpp
   TestFrustum.cpp

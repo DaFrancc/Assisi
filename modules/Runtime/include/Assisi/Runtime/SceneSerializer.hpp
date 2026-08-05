@@ -75,6 +75,7 @@
 
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 
 namespace Assisi::Runtime
 {
@@ -84,6 +85,12 @@ namespace Assisi::Runtime
 /// levels load unchanged.
 struct LevelHeader
 {
+    /// What this file instances, in file order — **as read**. Filled by Load and
+    /// never consulted by Save, which builds the array from the live instance
+    /// table instead. The index into it is how a level-placed instance is named on
+    /// the wire, so the order is part of the format rather than an artefact.
+    std::vector<LevelInstance> instances;
+
     /// @brief Which system profile the level wants installed into the world it
     /// loads into (docs/world-system-binding-design-notes.md §3). Empty means
     /// "the host's default profile" — the common case, so most levels never
@@ -110,7 +117,20 @@ class SceneSerializer
     /// The header must be passed by every save that wants to preserve it: a
     /// Scene does not carry it (it is a property of the level, not of the
     /// entities), so a save that omits it strips the field from the file.
-    static nlohmann::json Save(ECS::Scene &scene, const LevelHeader &header = {});
+    ///
+    /// Entities carrying ECS::BlueprintMember are **not** written as entities. They
+    /// belong to an instance, and writing them as well would bake a copy of the
+    /// blueprint into the level and undo the entire point — a fix to the blueprint
+    /// would stop propagating. The `instances` array is built from @p instances
+    /// rather than from `header`, so there is one source of truth for where an
+    /// instance is: move the row and the file follows.
+    ///
+    /// @p instances is required if the scene holds any member at all. Without it
+    /// the members are still skipped, and the result would be a level missing both
+    /// its instances *and* the entities they expanded into — so that case logs an
+    /// error rather than quietly writing a smaller level.
+    static nlohmann::json Save(ECS::Scene &scene, const LevelHeader &header = {},
+                               const InstanceTable *instances = nullptr);
 
     /// @brief Deserialize entities and components from a JSON value into the scene.
     ///
@@ -120,6 +140,12 @@ class SceneSerializer
     /// the dominant, entity-scaling cost — ending at 1.0.
     /// @p header (optional) receives the file's non-entity metadata; left
     /// untouched if the load fails its version check.
+    ///
+    /// @p instances receives one row per instance the file places, and is where
+    /// the ids the BlueprintMember tags carry are allocated. Passing nullptr for a
+    /// file that *has* instances fails the load rather than dropping them: a
+    /// caller with nowhere to put the table cannot hold the level either, and a
+    /// silently instance-free level is a level missing most of its content.
     ///
     /// **Throws** `std::runtime_error` on a wrong `version` or a malformed file
     /// (see the naming rules in the file comment). A version mismatch throws
@@ -131,22 +157,39 @@ class SceneSerializer
     /// Returning quietly instead is what made a version mismatch read as a
     /// *successful* load of an empty level all the way up to the caller.
     static void Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress = {},
-                     LevelHeader *header = nullptr);
+                     LevelHeader *header = nullptr, InstanceTable *instances = nullptr);
+
+    /// @brief Expands one instance of @p source into @p scene at @p placement,
+    /// outside any level load.
+    ///
+    /// The runtime spawn path (§7's SpawnBlueprint is a thin wrapper). All or
+    /// nothing: a missing nested file three members in leaves no partial instance.
+    ///
+    /// References inside the blueprint resolve among its own members and nowhere
+    /// else, which is the whole difference from the level-load path: a runtime
+    /// spawn has no file around it to point at.
+    ///
+    /// @return the new instance id, or nullopt if the blueprint could not be used.
+    [[nodiscard]] static std::optional<uint32_t> ExpandInstance(ECS::Scene &scene, InstanceTable &instances,
+                                                                std::string_view      source,
+                                                                const ECS::Transform &placement);
 
     /// @brief Write the scene to a JSON file at the given filesystem path.
     ///
     /// @return true on success, false if the file could not be opened.
-    static bool SaveToFile(ECS::Scene &scene, const std::filesystem::path &path,
-                           const LevelHeader &header = {});
+    static bool SaveToFile(ECS::Scene &scene, const std::filesystem::path &path, const LevelHeader &header = {},
+                           const InstanceTable *instances = nullptr);
 
     /// @brief Load the scene from an asset-relative path via AssetSystem.
     ///
     /// @param assetPath  Virtual path relative to the asset root (e.g. "levels/main.json").
     /// @param onProgress Optional; forwarded to Load() (see it) for load-progress UI.
     /// @param header     Optional; receives the file's non-entity metadata.
+    /// @param instances  Optional; forwarded to Load() (see it). A file with
+    ///                   instances fails to load without one.
     /// @return true on success, false on any IO or parse error.
-    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
-                             const ProgressFn &onProgress = {}, LevelHeader *header = nullptr);
+    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress = {},
+                             LevelHeader *header = nullptr, InstanceTable *instances = nullptr);
 
     /// @brief Load the scene from an absolute filesystem path, bypassing the
     /// asset system.
@@ -155,7 +198,8 @@ class SceneSerializer
     /// writes so its clients can load the *unsaved* scene it is simulating.
     /// Otherwise identical to LoadFromFile, failure handling included.
     static bool LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
-                             const ProgressFn &onProgress = {}, LevelHeader *header = nullptr);
+                             const ProgressFn &onProgress = {}, LevelHeader *header = nullptr,
+                             InstanceTable *instances = nullptr);
 
     /// @brief Moves a set of entities' component *data* from one scene to another.
     ///
