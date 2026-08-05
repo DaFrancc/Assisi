@@ -187,8 +187,16 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
         writer.WriteInt32(LoadPod<std::int32_t>(address));
         return true;
     case FieldType::UInt32:
-        writer.WriteUInt32(LoadPod<std::uint32_t>(address));
+    {
+        // A plain integer unless it names a blueprint instance, in which case it is
+        // a local id and the wire wants the instance's baseNetId — the same
+        // translation an EntityRef gets below, for the same reason.
+        const std::uint32_t value = LoadPod<std::uint32_t>(address);
+        writer.WriteUInt32(field.instanceRef && context != nullptr && context->instanceToWire
+                               ? context->instanceToWire(value)
+                               : value);
         return true;
+    }
     case FieldType::Int64:
         writer.WriteInt64(LoadPod<std::int64_t>(address));
         return true;
@@ -305,8 +313,13 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
         StorePod(address, reader.ReadInt32());
         return true;
     case FieldType::UInt32:
-        StorePod(address, reader.ReadUInt32());
+    {
+        const std::uint32_t wire = reader.ReadUInt32();
+        StorePod(address, field.instanceRef && context != nullptr && context->instanceFromWire
+                              ? context->instanceFromWire(wire)
+                              : wire);
         return true;
+    }
     case FieldType::Int64:
         StorePod(address, reader.ReadInt64());
         return true;
@@ -490,6 +503,15 @@ void AppendWireFields(std::string &text, const std::vector<FieldMeta> &fields)
         text += BoundText(field.hasMin, field.minValue);
         text += " max=";
         text += BoundText(field.hasMax, field.maxValue);
+
+        // An instanceRef UInt32 carries a baseNetId where a plain one carries the
+        // number itself. Two builds disagreeing about that exchange values from two
+        // different id spaces and agree about every one of them, so it belongs in
+        // the hash — unlike `controlled`, which changes which messages are accepted
+        // and never how bytes decode. Only emitted when set, so no existing
+        // description (and no deployed hash) moves.
+        if (field.instanceRef)
+            text += " instanceref";
 
         if (field.type == FieldType::Enum)
         {

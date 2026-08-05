@@ -124,6 +124,13 @@ struct CodecContext
     std::function<std::uint64_t(std::uint64_t)> entityToWire;
     /// Decode side: wire id → local packed handle. The inverse of entityToWire.
     std::function<std::uint64_t(std::uint64_t)> entityFromWire;
+
+    /// Encode side: local blueprint instance id → the instance's `baseNetId`.
+    /// Applied to `AFIELD(instanceRef)` UInt32 fields, for the same reason
+    /// entityToWire exists: the local number names nothing on the other machine.
+    std::function<std::uint32_t(std::uint32_t)> instanceToWire;
+    /// Decode side: `baseNetId` → local instance id. The inverse.
+    std::function<std::uint32_t(std::uint32_t)> instanceFromWire;
 };
 
 /// @brief Number of fields the codec encodes for @p meta — its non-transient
