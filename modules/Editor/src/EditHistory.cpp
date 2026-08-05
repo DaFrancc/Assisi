@@ -4,9 +4,12 @@
 
 #include <utility>
 
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 namespace Assisi::Editor
@@ -54,8 +57,9 @@ struct ApplyingGuard
 // Construction / stack management
 // ---------------------------------------------------------------------------
 
-EditHistory::EditHistory(Assisi::ECS::Scene &scene, RebindHook rebind)
-    : _scene(scene), _rebind(std::move(rebind))
+EditHistory::EditHistory(Assisi::ECS::Scene &scene, RebindHook rebind,
+                         Assisi::Runtime::InstanceTable *instances)
+    : _scene(scene), _instances(instances), _rebind(std::move(rebind))
 {
     // A missing hook becomes a no-op so the engine never has to null-check it;
     // tests and the pre-wiring stages pass none.
@@ -217,8 +221,158 @@ bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
     txn.selectionBefore = gesture.selection;
     txn.selectionAfter  = gesture.selection;
     txn.cmds.push_back(ComponentDelta{gesture.entity, gesture.id, gesture.before, after});
+
+    // Transacted with the edit, not recorded separately: undo has to take the
+    // override back with the value, or it leaves a note claiming this instance
+    // changed a field it no longer does.
+    if (std::optional<InstanceDelta> record = RecordOverride(gesture.entity, gesture.id, gesture.before, after))
+        txn.cmds.push_back(std::move(*record));
+
     Push(std::move(txn));
     return true;
+}
+
+std::optional<std::string> EditHistory::NameForOverrideTarget(Entity target, std::uint32_t instanceId) const
+{
+    if (_instances == nullptr || target == Assisi::ECS::NullEntity || !_scene.IsAlive(target))
+        return std::nullopt;
+
+    if (const Assisi::ECS::BlueprintMember *tag = _scene.Get<Assisi::ECS::BlueprintMember>(target))
+    {
+        const Rt::BlueprintInstance *row = _instances->Find(tag->instanceId);
+        if (row == nullptr)
+            return std::nullopt;
+
+        const Rt::BlueprintDefinition *definition = Rt::GetBlueprintDefinition(row->source);
+        if (definition == nullptr || tag->memberIndex >= definition->members.size())
+            return std::nullopt;
+
+        const std::string &memberPath = definition->members[tag->memberIndex].name;
+
+        // Same instance: relative, because expansion prefixes an override's
+        // references with the instance's own name — so `wheel_fl` here becomes
+        // `car_3/wheel_fl` when it is applied.
+        if (tag->instanceId == instanceId)
+            return memberPath;
+
+        // Another instance: reach it through the writing file's scope, which is
+        // where its full path is addressable.
+        return row->name.empty() ? std::optional<std::string>{} : "/" + row->name + "/" + memberPath;
+    }
+
+    // An ordinary entity of the writing file. The leading slash is what keeps it
+    // from being read as a member of this instance.
+    if (const Rt::Name *name = _scene.Get<Rt::Name>(target); name != nullptr && !name->value.View().empty())
+        return "/" + std::string{name->value.View()};
+
+    return std::nullopt;
+}
+
+nlohmann::json EditHistory::ReferenceSafeOverride(const nlohmann::json &component,
+                                                  const Reflect::ComponentMeta &meta,
+                                                  std::uint32_t                 instanceId) const
+{
+    nlohmann::json out = component;
+
+    for (const Reflect::FieldMeta &field : meta.fields)
+    {
+        if (field.type != Reflect::FieldType::EntityRef)
+            continue;
+
+        const auto it = out.find(field.name);
+        if (it == out.end() || it->is_null())
+            continue; // no target is the same thing in both spellings
+        if (!it->is_number_unsigned())
+            continue; // not a raw-context capture; leave whatever it is alone
+
+        const std::uint64_t packed = it->get<std::uint64_t>();
+        const Entity        target{static_cast<std::uint32_t>(packed & 0xFFFFFFFFull),
+                            static_cast<std::uint32_t>(packed >> 32)};
+
+        if (const std::optional<std::string> name = NameForOverrideTarget(target, instanceId))
+        {
+            *it = *name;
+            continue;
+        }
+
+        Core::Log::Warn("Editor: '{}::{}' points at an entity this level cannot name, so the override does "
+                        "not record it. Give the target a name, or wire it inside the blueprint.",
+                        meta.name, field.name);
+        out.erase(field.name);
+    }
+
+    return out;
+}
+
+std::optional<InstanceDelta> EditHistory::RecordOverride(Entity entity, Reflect::ComponentId id,
+                                                         const std::optional<nlohmann::json> &before,
+                                                         const std::optional<nlohmann::json> &after)
+{
+    if (_instances == nullptr)
+        return std::nullopt;
+
+    const Assisi::ECS::BlueprintMember *tag = _scene.Get<Assisi::ECS::BlueprintMember>(entity);
+    if (tag == nullptr)
+        return std::nullopt;
+
+    const Rt::BlueprintInstance *row = _instances->Find(tag->instanceId);
+    if (row == nullptr)
+        return std::nullopt;
+
+    const Rt::BlueprintDefinition *definition = Rt::GetBlueprintDefinition(row->source);
+    if (definition == nullptr || tag->memberIndex >= definition->members.size())
+        return std::nullopt;
+
+    const Reflect::ComponentMeta *meta = Reflect::ComponentRegistry::Instance().ById(id);
+    if (meta == nullptr)
+        return std::nullopt;
+
+    const std::string &memberPath = definition->members[tag->memberIndex].name;
+
+    Rt::BlueprintInstance updated = *row;
+    if (!updated.overrides.is_object())
+        updated.overrides = nlohmann::json::object();
+    nlohmann::json &claim = updated.overrides[memberPath];
+    if (!claim.is_object())
+        claim = nlohmann::json::object();
+
+    if (!after.has_value())
+    {
+        // The component was removed. `null` reads unambiguously as removal, since a
+        // real component is always an object.
+        claim[meta->name] = nullptr;
+    }
+    else if (!before.has_value())
+    {
+        // Added: the whole object is the claim, since there is no blueprint value
+        // for any of its fields to fall back to.
+        claim[meta->name] = ReferenceSafeOverride(*after, *meta, tag->instanceId);
+    }
+    else
+    {
+        // Only the fields this gesture actually moved. Recording the whole object
+        // would pin every *other* field of the component at today's blueprint
+        // value, which is how "fix it once, fixed everywhere" quietly stops being
+        // true for that member.
+        nlohmann::json &componentClaim = claim[meta->name];
+        if (!componentClaim.is_object())
+            componentClaim = nlohmann::json::object();
+
+        const nlohmann::json safeAfter = ReferenceSafeOverride(*after, *meta, tag->instanceId);
+        for (const auto &[fieldName, value] : safeAfter.items())
+        {
+            const auto previous = before->find(fieldName);
+            if (previous == before->end() || *previous != value)
+                componentClaim[fieldName] = value;
+        }
+
+        if (componentClaim.empty())
+            return std::nullopt; // nothing the file can express changed
+    }
+
+    InstanceDelta delta{.instanceId = tag->instanceId, .before = *row, .after = updated};
+    _instances->RestoreAt(tag->instanceId, std::move(updated));
+    return delta;
 }
 
 void EditHistory::CommitGesture(Entity entity, Reflect::ComponentId id)
@@ -337,6 +491,21 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
             }
         });
 
+        // Phase 1b — instance records. Before the components, because a member's
+        // component restore may want the row it belongs to; and it is pure
+        // bookkeeping either way, with no scene state to order against.
+        ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
+            const auto *idl = std::get_if<InstanceDelta>(&cmd);
+            if (idl == nullptr || _instances == nullptr)
+                return;
+
+            const auto &state = undo ? idl->before : idl->after;
+            if (state.has_value())
+                _instances->RestoreAt(idl->instanceId, *state);
+            else
+                _instances->Remove(idl->instanceId);
+        });
+
         // Phase 2 — components: restore/remove standalone component deltas, and add
         // the full component set of every just-revived entity.
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
@@ -345,6 +514,8 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
                 RestoreComponent(cd->entity, cd->id, undo ? cd->before : cd->after);
                 return;
             }
+            if (std::holds_alternative<InstanceDelta>(cmd))
+                return; // handled above
             const auto &ed    = std::get<EntityDelta>(cmd);
             const auto &state  = undo ? ed.before : ed.after;
             if (state.has_value())

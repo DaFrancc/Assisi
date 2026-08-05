@@ -242,6 +242,17 @@ class InstanceTable
     /// member list in disguise.
     void Remove(uint32_t id);
 
+    /// @brief Puts a row back at an exact id, for undo.
+    ///
+    /// The editor's history stores the id it recorded against, and an undo has to
+    /// land on that same id or every BlueprintMember tag pointing at it becomes an
+    /// orphan. Add() cannot do this — it hands out the next free id, which after a
+    /// delete-then-undo is a different one.
+    ///
+    /// Also advances the allocator past @p id, so a later Add cannot collide with a
+    /// row that was restored from under it.
+    void RestoreAt(uint32_t id, BlueprintInstance instance);
+
     /// @brief Every live instance, in id order. For the editor's outliner and for
     /// a save, which writes one entry per row.
     [[nodiscard]] std::vector<std::pair<uint32_t, const BlueprintInstance *>> All() const;

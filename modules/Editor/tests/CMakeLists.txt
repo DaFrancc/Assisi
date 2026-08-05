@@ -6,6 +6,7 @@
 add_executable(Assisi-Editor-Tests
   main.cpp
   TestEditHistory.cpp
+  TestInstanceHistory.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
 )
 

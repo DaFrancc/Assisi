@@ -5,6 +5,8 @@
 
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/World.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/EventQueue.hpp>
@@ -162,7 +164,10 @@ void EditorApp::OnStart()
     // session — level loads Clear it in place, never swap the object). The rebind
     // hook rebuilds the transient state serialization drops after an apply. See
     // EditHistory.hpp.
-    _history.emplace(*_scene, MakeEditRebindHook());
+    // The instance table comes with it: an edit to a blueprint member has to move
+    // the instance's override record in the same transaction, or undo takes the
+    // value back and leaves the note claiming the instance changed it.
+    _history.emplace(*_scene, MakeEditRebindHook(), &_world->instances);
 
     // Editor reconcile pass: give every asset a `.aast` GUID sidecar and build
     // the GUID→path database. Runs here (not in Application) because it is
@@ -1012,6 +1017,38 @@ bool EditorApp::IsMirrored(Assisi::ECS::Entity entity) const
 }
 
 bool EditorApp::IsEditable(Assisi::ECS::Entity entity) const { return IsEditable() && !IsMirrored(entity); }
+
+std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
+{
+    if (entity == Assisi::ECS::NullEntity || _scene == nullptr)
+        return "(none)";
+
+    // A member's instance first, because that is the part that disambiguates: a
+    // level of forty cars has forty entities called "wheel_fl", and the picker's
+    // job is to tell them apart.
+    if (_world != nullptr)
+    {
+        if (const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(entity))
+        {
+            if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
+            {
+                const Assisi::Runtime::BlueprintDefinition *definition =
+                    Assisi::Runtime::GetBlueprintDefinition(row->source);
+                const std::string memberPath =
+                    definition != nullptr && tag->memberIndex < definition->members.size()
+                        ? definition->members[tag->memberIndex].name
+                        : std::format("#{}", tag->memberIndex);
+
+                return std::format("{} › {}", row->name.empty() ? row->source : row->name, memberPath);
+            }
+        }
+    }
+
+    if (const auto *name = _scene->Get<Assisi::Runtime::Name>(entity); name != nullptr && !name->value.Empty())
+        return std::string{name->value.View()};
+
+    return std::format("Entity [{}:{}]", entity.index, entity.generation);
+}
 
 bool EditorApp::IsEditable() const
 {

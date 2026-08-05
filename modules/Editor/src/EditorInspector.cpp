@@ -4,6 +4,8 @@
 
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetId.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Core/AssetPath.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
@@ -414,13 +416,13 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             auto      *ref   = static_cast<Assisi::ECS::Entity *>(fp);
             const bool empty = (*ref == Assisi::ECS::NullEntity);
 
-            char preview[32];
+            std::string preview;
             if (empty)
-                std::snprintf(preview, sizeof(preview), "(none)");
+                preview = "(none)";
             else if (!_scene->IsAlive(*ref))
-                std::snprintf(preview, sizeof(preview), "[%u:%u] (dangling)", ref->index, ref->generation);
+                preview = std::format("[{}:{}] (dangling)", ref->index, ref->generation);
             else
-                std::snprintf(preview, sizeof(preview), "Entity [%u:%u]", ref->index, ref->generation);
+                preview = DescribeEntity(*ref);
 
             const bool  armedForThis = _eyedropperArmed && _eyedropperMeta == &meta &&
                                       _eyedropperFieldOffset == field.offset;
@@ -448,7 +450,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                                                : "Eyedropper: then left-click an entity in the scene");
 
             ImGui::SameLine();
-            if (ImGui::BeginCombo(field.name.c_str(), preview))
+            if (ImGui::BeginCombo(field.name.c_str(), preview.c_str()))
             {
                 if (ImGui::Selectable("(none)", empty))
                 {
@@ -458,10 +460,9 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                 _scene->ForEachEntity(
                     [&](Assisi::ECS::Entity e)
                     {
-                        char label[32];
-                        std::snprintf(label, sizeof(label), "Entity [%u:%u]", e.index, e.generation);
-                        const bool selected = (e == *ref);
-                        if (ImGui::Selectable(label, selected))
+                        const std::string label    = DescribeEntity(e);
+                        const bool        selected = (e == *ref);
+                        if (ImGui::Selectable(label.c_str(), selected))
                         {
                             *ref   = e;
                             edited = true;
@@ -1129,7 +1130,41 @@ void EditorApp::DrawInspector()
     const bool editable = IsEditable(_selectedEntity);
     ImGui::BeginDisabled(!editable);
 
-    ImGui::Text("Entity [%u:%u]", _selectedEntity.index, _selectedEntity.generation);
+    ImGui::TextUnformatted(DescribeEntity(_selectedEntity).c_str());
+
+    // A member's header block: which blueprint, which member, which instance, and
+    // a way back to the instance itself. Without it a member reads as an ordinary
+    // entity right up until a save quietly turns the edit into an override.
+    if (const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(_selectedEntity))
+    {
+        if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
+        {
+            const Assisi::Runtime::BlueprintDefinition *definition =
+                Assisi::Runtime::GetBlueprintDefinition(row->source);
+            const std::string memberPath =
+                definition != nullptr && tag->memberIndex < definition->members.size()
+                    ? definition->members[tag->memberIndex].name
+                    : std::format("#{}", tag->memberIndex);
+
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.65f, 0.85f, 0.65f, 1.f});
+            ImGui::Text("%s of %s", memberPath.c_str(), row->source.c_str());
+            ImGui::PopStyleColor();
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Editing a field here records an override on this instance — the fields you "
+                                  "do not touch keep following the blueprint.");
+            }
+
+            if (ImGui::SmallButton("Select instance"))
+            {
+                _selectedInstance = tag->instanceId;
+                _selectedEntity   = Assisi::ECS::NullEntity;
+            }
+            ImGui::SameLine();
+            ImGui::TextDisabled("%s", row->name.empty() ? "(spawned at runtime)" : row->name.c_str());
+        }
+    }
+
     DrawReplicationSection(mirrored);
 
     // Rename field: every entity gets an always-available name box. It reads the

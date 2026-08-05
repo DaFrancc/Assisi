@@ -7,7 +7,9 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentMeta.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
@@ -25,6 +27,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
+#include <map>
 #include <optional>
 #include <string>
 #include <utility>
@@ -206,7 +209,7 @@ void EditorApp::PausePlay()
     // guaranteed to outlive the pause (play-created worlds can be destroyed).
     if (Assisi::App::World *edited = _worlds.Edited())
     {
-        _pausedHistory.emplace(edited->scene, MakeEditRebindHook());
+        _pausedHistory.emplace(edited->scene, MakeEditRebindHook(), &edited->instances);
     }
     SetPlayState(PlayState::Paused);
 }
@@ -802,9 +805,17 @@ void EditorApp::DrawEntityListWindow()
     // frame it. AllowDoubleClick makes Selectable fire on both, so the double
     // click is distinguished by IsMouseDoubleClicked.
     Assisi::ECS::Entity focusRequest = Assisi::ECS::NullEntity;
-    _scene->ForEachEntity(
-        [&](Assisi::ECS::Entity entity)
-        {
+
+    // Members are gathered per instance and drawn under a collapsible row instead
+    // of loose in the list, because a level of forty cars is two hundred rows of
+    // "body", "wheel_fl", "wheel_fl", … otherwise. Built each frame: membership is
+    // a query, and a cached list is the stored member list this design refuses.
+    std::map<std::uint32_t, std::vector<Assisi::ECS::Entity>> members;
+    for (auto [entity, tag] : _scene->Query<Assisi::ECS::BlueprintMember>())
+        members[tag.instanceId].push_back(entity);
+
+    const auto drawEntityRow = [&](Assisi::ECS::Entity entity)
+    {
             // Show the entity's Name if it has a non-empty one; otherwise fall back
             // to its [index:generation] id. PushID(index) keeps rows distinct even
             // when two entities share a name.
@@ -826,10 +837,16 @@ void EditorApp::DrawEntityListWindow()
             if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowDoubleClick))
             {
                 _selectedEntity = entity;
+                // Selecting a member keeps its instance in view for the inspector's
+                // header; selecting a loose entity clears it, so the two modes can
+                // never be half on.
+                const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(entity);
+                _selectedInstance = tag != nullptr ? tag->instanceId : 0;
+
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 {
                     // Defer the focus: it reads the transform and starts an
-                    // animation, so keep it out of the ForEachEntity scan.
+                    // animation, so keep it out of the scan.
                     focusRequest = entity;
                 }
             }
@@ -847,7 +864,52 @@ void EditorApp::DrawEntityListWindow()
                 _scrollToEntity = Assisi::ECS::NullEntity;
             }
             ImGui::PopID();
+    };
+
+    // Loose entities first: an instance is a group and reads better as one block
+    // than interleaved with whatever happens to sit between its members in the
+    // scan.
+    _scene->ForEachEntity(
+        [&](Assisi::ECS::Entity entity)
+        {
+            if (!_scene->Has<Assisi::ECS::BlueprintMember>(entity))
+                drawEntityRow(entity);
         });
+
+    for (const auto &[instanceId, instanceMembers] : members)
+    {
+        const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(instanceId);
+
+        char header[128];
+        std::snprintf(header, sizeof(header), "%s (%s)",
+                      row != nullptr && !row->name.empty() ? row->name.c_str() : "instance",
+                      row != nullptr ? row->source.c_str() : "?");
+
+        ImGui::PushID(static_cast<int32_t>(0x8000'0000u | instanceId));
+
+        // The row itself selects the *instance*: the gizmo then moves the whole
+        // group and writes its placement, recording no member overrides. Expanding
+        // it and clicking a member is the other mode.
+        const bool instanceSelected = _selectedInstance == instanceId && _selectedEntity == Assisi::ECS::NullEntity;
+        ImGuiTreeNodeFlags flags    = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow |
+                                   ImGuiTreeNodeFlags_OpenOnDoubleClick;
+        if (instanceSelected)
+            flags |= ImGuiTreeNodeFlags_Selected;
+
+        const bool open = ImGui::TreeNodeEx(header, flags);
+        if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
+        {
+            _selectedInstance = instanceId;
+            _selectedEntity   = Assisi::ECS::NullEntity;
+        }
+        if (open)
+        {
+            for (const Assisi::ECS::Entity member : instanceMembers)
+                drawEntityRow(member);
+            ImGui::TreePop();
+        }
+        ImGui::PopID();
+    }
 
     if (focusRequest != Assisi::ECS::NullEntity)
     {

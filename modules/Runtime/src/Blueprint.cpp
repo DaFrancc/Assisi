@@ -95,6 +95,15 @@ void InstanceTable::Remove(uint32_t id)
     _rows.erase(id);
 }
 
+void InstanceTable::RestoreAt(uint32_t id, BlueprintInstance instance)
+{
+    if (id == 0)
+        return; // 0 is never a live instance
+
+    _rows[id] = std::move(instance);
+    _nextId   = std::max(_nextId, id + 1);
+}
+
 std::vector<std::pair<uint32_t, const BlueprintInstance *>> InstanceTable::All() const
 {
     // Sorted, because a save writes one entry per row and the file's byte content
