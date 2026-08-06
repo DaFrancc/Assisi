@@ -270,6 +270,20 @@ std::string QualifyName(std::string_view prefix, std::string_view name)
 /// Reflection is what makes this possible at all: a reference is a *string* in the
 /// file, indistinguishable from any other string without asking the component what
 /// its fields mean.
+/// True if @p components declares a Parent whose target is not null. Such a member
+/// is positioned relative to that parent, so the instance's placement must not be
+/// composed onto it a second time.
+bool DeclaresParent(const nlohmann::json &components)
+{
+    if (!components.is_object())
+        return false;
+    const auto it = components.find("Parent");
+    if (it == components.end() || !it->is_object())
+        return false;
+    const auto parent = it->find("parent");
+    return parent != it->end() && !parent->is_null();
+}
+
 template <typename Fn> void ForEachEntityRef(nlohmann::json &components, Fn &&rewrite)
 {
     if (!components.is_object())
@@ -394,6 +408,30 @@ void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &comp
         for (const auto &[fieldName, value] : claim.items())
             target[fieldName] = value;
     }
+
+    // Here rather than at the call sites, because `parented` is a fact *about*
+    // `components` and this is the only thing that changes them after flatten
+    // computed it. An override may add a Parent (the member stops being in world
+    // space) or null one out (it starts being), and that answer decides whether the
+    // instance's placement composes onto its Transform — so a stale value puts the
+    // member the whole placement away from where the author put it.
+    const bool wasParented = member.parented;
+    member.parented        = DeclaresParent(member.components);
+    if (wasParented == member.parented)
+        return;
+
+    // The flip also invalidates the composition flatten already did. A member that
+    // has just become parented is holding a Transform with the chain's placement
+    // baked in and must give it back; one that has just been cut loose never got it
+    // and now needs it. Doing only the first half is what put a member the whole
+    // nesting placement away from its instance.
+    ECS::Transform current;
+    if (const auto it = member.components.find("Transform"); it != member.components.end())
+        current = TransformFromJson(*it);
+
+    member.components["Transform"] = TransformToJson(
+        member.parented ? InverseComposeTransform(member.placement, current)
+                        : ComposeTransform(member.placement, current));
 }
 
 bool IsMemberRemoved(std::string_view memberName, const std::vector<std::string> &removed)
@@ -424,20 +462,6 @@ void ReadInstanceClaims(const nlohmann::json &entry, LevelInstance &out)
                 out.removed.push_back(path.get<std::string>());
         }
     }
-}
-
-/// True if @p components declares a Parent whose target is not null. Such a member
-/// is positioned relative to that parent, so the instance's placement must not be
-/// composed onto it a second time.
-bool DeclaresParent(const nlohmann::json &components)
-{
-    if (!components.is_object())
-        return false;
-    const auto it = components.find("Parent");
-    if (it == components.end() || !it->is_object())
-        return false;
-    const auto parent = it->find("parent");
-    return parent != it->end() && !parent->is_null();
 }
 
 /// Reads @p source through the asset system and parses it. Throws with a message
@@ -609,6 +633,11 @@ void FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_vie
             member.components = entity.value("components", nlohmann::json::object());
             QualifyReferences(member.components, prefix);
             member.parented = DeclaresParent(member.components);
+
+            // Kept whether or not it is used below: an override applied after this
+            // can flip `parented`, and reversing the decision needs the exact
+            // transform the decision was made with.
+            member.placement = placement;
 
             // The nested placement composes onto a member that is in its file's own
             // space. A parented one is already relative to a member that got the

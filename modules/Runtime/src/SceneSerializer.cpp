@@ -714,6 +714,20 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
             }
         }
 
+        // An override this instance wrote may have flipped `parented` after the
+        // definition was flattened *and* prepared. The prepared block is the
+        // authority for a component the instance did not claim, so correcting the
+        // JSON is not enough — the nesting placement is baked into the bytes that
+        // were just decoded, and it comes off here or not at all.
+        if (const bool bakedIn = !staged.definition->members[i].parented; bakedIn != !desc.parented)
+        {
+            if (ECS::Transform *transform = scene.GetMut<ECS::Transform>(e))
+            {
+                *transform = desc.parented ? InverseComposeTransform(desc.placement, *transform)
+                                           : ComposeTransform(desc.placement, *transform);
+            }
+        }
+
         // The root is placement and only placement, and it does not exist after
         // expansion (§3): a parentless member's Transform ends up in world space.
         // A parented one is relative to a member that already absorbed the
