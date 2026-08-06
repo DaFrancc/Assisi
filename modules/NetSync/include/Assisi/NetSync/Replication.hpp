@@ -361,6 +361,33 @@ class InstanceInfoProvider
     /// members must fall back to replicating individually rather than being
     /// described by an index the client would resolve to a different file.
     [[nodiscard]] virtual bool Describe(ECS::InstanceId instanceId, InstanceInfo &out) = 0;
+
+    /// @brief Does @p component still hold what the blueprint says it should?
+    ///
+    /// This is the saving. A client expands the instance from the same file, so
+    /// a member's untouched components are already correct over there and
+    /// sending them is pure waste — a parking lot of a hundred identical cars
+    /// should cost one record each, not three components per wheel.
+    ///
+    /// Asked only on the empty baseline, so it is a spawn-time cost, never a
+    /// per-tick one. **Compared by value, not by change tick**: a tick says when
+    /// something was written, and a component written back to its authored value
+    /// — or written in the same tick the instance was created — would be skipped
+    /// or sent wrongly. A wrongly skipped component stays wrong until the next
+    /// keyframe sweep, and a wrongly skipped *unchanging* one stays wrong for
+    /// ever.
+    ///
+    /// Default false: without an implementation nothing is elided and every
+    /// member sends full state, which is the pre-blueprint behaviour.
+    [[nodiscard]] virtual bool MatchesAuthored(ECS::InstanceId instanceId, std::uint32_t memberIndex,
+                                               Core::Reflect::ComponentId id, const void *component)
+    {
+        (void)instanceId;
+        (void)memberIndex;
+        (void)id;
+        (void)component;
+        return false;
+    }
 };
 
 /// @brief Per-connection counters, for debug overlays and tests.
