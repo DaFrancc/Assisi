@@ -15,7 +15,9 @@
 /// change to either one's wire handling is a change to both.
 
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -311,6 +313,56 @@ class RelevancyProvider
     virtual void ForgetClient(ClientId client) { (void)client; }
 };
 
+/// @brief What the server needs to know about one blueprint instance to name it
+/// on the wire instead of sending its members as unrelated entities.
+///
+/// The instance table that holds this lives in `App::World`, which NetSync does
+/// not depend on and must not — so it arrives through a provider, the same shape
+/// and the same reason as RelevancyProvider above.
+struct InstanceInfo
+{
+    /// Index into the sorted content-set manifest both sides agreed on at the
+    /// handshake. An index rather than a path because the join already refuses
+    /// on a content-set hash mismatch, so both sides have the same list in the
+    /// same order — and a path per spawn would be the largest field in the
+    /// record by an order of magnitude.
+    std::uint32_t blueprintIndex = 0;
+
+    /// Where the instance was placed. The client composes its members from this
+    /// and the blueprint, so it must be the same transform the server expanded
+    /// with, not the root's current pose — there is no root.
+    ECS::Transform placement;
+
+    /// How many members the blueprint declares. Fixes the width of the NetId
+    /// block, so it must be the flattened count *after* authored removals, which
+    /// is what `BlueprintDefinition::members.size()` is.
+    std::uint32_t memberCount = 0;
+};
+
+/// @brief Answers "what is instance 7?" for the server.
+///
+/// Installed by App, which owns the instance table. Absent, the server has no
+/// way to describe an instance and every member replicates as an ordinary
+/// entity — correct, just larger, and the state blueprints replication exists
+/// to improve on.
+class InstanceInfoProvider
+{
+  public:
+    virtual ~InstanceInfoProvider() = default;
+
+    InstanceInfoProvider()                                        = default;
+    InstanceInfoProvider(const InstanceInfoProvider &)            = delete;
+    InstanceInfoProvider &operator=(const InstanceInfoProvider &) = delete;
+
+    /// @brief Fill @p out for @p instanceId, or return false if it names nothing.
+    ///
+    /// False is a complete answer, not an error: an instance spawned from a
+    /// blueprint outside the content set cannot be named by index, and its
+    /// members must fall back to replicating individually rather than being
+    /// described by an index the client would resolve to a different file.
+    [[nodiscard]] virtual bool Describe(ECS::InstanceId instanceId, InstanceInfo &out) = 0;
+};
+
 /// @brief Per-connection counters, for debug overlays and tests.
 struct ConnectionDiagnostics
 {
@@ -508,6 +560,19 @@ class ReplicationServer
     void SetRelevancyProvider(std::unique_ptr<RelevancyProvider> provider);
 
     [[nodiscard]] RelevancyProvider *Relevancy() const { return _relevancy.get(); }
+
+    /// @brief Install the provider that describes blueprint instances, or null
+    /// to replicate every member as an ordinary entity.
+    ///
+    /// Null is the default. Installing one changes how NetIds are handed out —
+    /// an instance's members take a contiguous block — so install it before the
+    /// first entity replicates, not mid-session: ids already assigned are never
+    /// reissued, and a half-blocked instance would have no base to send.
+    void SetInstanceInfoProvider(std::unique_ptr<InstanceInfoProvider> provider);
+
+    /// Not named InstanceInfo(): that is the struct above, and a member function
+    /// of that name would shadow the type inside this class.
+    [[nodiscard]] InstanceInfoProvider *Instances() const { return _instanceInfo.get(); }
 
     /// @brief Set the entities @p connection views the world from.
     ///
@@ -1121,9 +1186,39 @@ class ReplicationServer
     std::vector<NetId>                          _liveNetIds;    ///< Sorted; rebuilt each ReconcileNetIds.
 
     /// Raw counter, not a NetId — see ECS::InstanceTable::_nextId for why: the
-    /// type is opaque everywhere except the two places that turn a count into an
-    /// identity, EnsureNetId and ReconcileNetIds.
+    /// type is opaque everywhere except the places that turn a count into an
+    /// identity: EnsureNetId, ReconcileNetIds, and EnsureInstanceBlock.
+    ///
+    /// An instance reserves `memberCount` ids at once rather than one, which is
+    /// what makes a member's id derivable as `base + memberIndex` and lets one
+    /// spawn record stand in for every member.
     std::uint32_t _nextNetId = 1;
+
+    /// The contiguous NetId range one instance's members occupy.
+    struct InstanceBlock
+    {
+        NetId         base;              ///< Member 0's id. Member i is base + i.
+        std::uint32_t memberCount = 0;
+        InstanceInfo  info;              ///< Captured at allocation — see below.
+    };
+
+    /// Allocated blocks, by instance. The info is captured **once**, when the
+    /// block is allocated, rather than re-read per snapshot: the record a
+    /// connection has not acked yet must describe the instance as it was when
+    /// its ids were handed out, or a late joiner and an early one would compose
+    /// the same members from different placements.
+    std::unordered_map<ECS::InstanceId, InstanceBlock> _instanceBlocks;
+
+    std::unique_ptr<InstanceInfoProvider> _instanceInfo;
+
+    /// @brief The NetId @p entity should take as a blueprint member, or
+    /// InvalidNetId if it is not one the server can describe.
+    ///
+    /// Reached from both id-assignment paths, so an instance gets one block
+    /// whether its first member is noticed by an event send or by the snapshot
+    /// walk. Returning InvalidNetId is the ordinary-entity fallback, not a
+    /// failure.
+    NetId EnsureInstanceBlock(ECS::Entity entity);
 
     std::uint64_t _simTick     = 0;
     std::uint64_t _snapshotDiv = 3; ///< tickRateHz / snapshotHz, at least 1.
