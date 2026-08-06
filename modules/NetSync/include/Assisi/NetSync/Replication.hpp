@@ -1275,6 +1275,35 @@ struct InstanceRecord
     ECS::Transform placement;
 };
 
+/// @brief Turns a record into local entities, client-side.
+///
+/// Installed by App, which owns the blueprint cache and the manifest the
+/// `blueprintIndex` indexes into. NetSync cannot do this itself — expansion is
+/// Runtime's job and NetSync does not depend on Runtime.
+///
+/// This is what makes blueprint replication cheaper than sending entities: the
+/// client builds every member from the blueprint, so the server never has to
+/// send what the file already says.
+class InstanceExpander
+{
+  public:
+    virtual ~InstanceExpander() = default;
+
+    InstanceExpander()                                    = default;
+    InstanceExpander(const InstanceExpander &)            = delete;
+    InstanceExpander &operator=(const InstanceExpander &) = delete;
+
+    /// @brief Expand @p record locally, appending its members to @p out **in
+    /// member order** — the order `baseNetId + i` indexes.
+    ///
+    /// Returning false, or the wrong number of members, is fatal to the session
+    /// rather than survivable: the client would otherwise bind member ids to the
+    /// wrong entities and every later delta would land on the wrong one. A
+    /// blueprint that fails to expand here has already passed the content-set
+    /// hash, so this is a real disagreement about the file, not a missing asset.
+    [[nodiscard]] virtual bool Expand(const InstanceRecord &record, std::vector<ECS::Entity> &out) = 0;
+};
+
 class ReplicationClient
 {
   public:
@@ -1437,6 +1466,15 @@ class ReplicationClient
     [[nodiscard]] NetId NetIdOf(ECS::Entity entity) const;
 
     [[nodiscard]] std::size_t ReplicatedEntityCount() const { return _entityByNetId.size(); }
+
+    /// @brief Install what turns an instance record into local entities.
+    ///
+    /// Absent, records are remembered and nothing is built — the members still
+    /// arrive as ordinary entities, which is correct and merely larger.
+    void SetInstanceExpander(std::unique_ptr<InstanceExpander> expander)
+    {
+        _instanceExpander = std::move(expander);
+    }
 
     /// @brief The instances the server has named, keyed by base NetId.
     ///
@@ -1722,6 +1760,8 @@ class ReplicationClient
     /// individual snapshot: a record is a fact about the session, not about the
     /// packet that carried it, and the same one arrives repeatedly until acked.
     std::unordered_map<NetId, InstanceRecord>            _instanceRecords;
+
+    std::unique_ptr<InstanceExpander>                    _instanceExpander;
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
     std::vector<PendingRef>                              _pendingRefs;
