@@ -6,8 +6,13 @@ NetSync+Core/ECS, reflectgen+the five strong-type commits.
 
 **Status: this branch is not mergeable as it stands.**
 
-`[VERIFIED]` = I reproduced or confirmed it directly in this session.
-Everything else is a reviewer's reading, unconfirmed by me — check before acting.
+**Start at §9.** Every claim in §§0-6 has since been re-checked against the code
+by an adversarial verifier. §9 carries the verdicts, the order to work in, which
+fixes have to land together, and the nine findings that turned out to be wrong.
+The `[VERIFIED]` markers below predate that pass and are now redundant — §9
+supersedes them, including where it disagrees.
+
+Nothing here is fixed yet. Picked up 2026-08-05, deferred by decision.
 
 ---
 
@@ -468,6 +473,9 @@ entities-before-instances ordering, dedup on full paths, cycle detection.
 
 ## 7. Suggested order
 
+**Superseded by §9.** Kept for the record; §9 is the order to work from — it is
+cross-slice and it drops the findings that turned out to be wrong.
+
 1. **The two doc lies** (B1's doc, B14's doc) — they actively stop people looking.
 2. **Data-corrupting editor bugs**: B1, B2, B3, B4, B5. B1 is two lines.
 3. **B16** (dead `CancelSystemInstalls` → UAF) and **B17** (cache race) — both
@@ -500,3 +508,118 @@ split and `ApplySystems`' resolve-before-clear; `ContentSet`'s sort-and-normaliz
 arithmetic (the suffix rule is right); `ResetOverride`'s copy-before-`RestoreAt`;
 `LoadLevelFromPath`'s refusal genuinely preceding both `ShutdownNetSession` and
 the scene replacement.
+
+**§9.4 corrects four of these.** Read that before trusting this list.
+
+---
+
+## 9. Verification pass
+
+A separate adversarial verifier re-checked every claim above against the code,
+with two delegated sub-passes for §5 (S1-S26) and §6 (T1-T14). Its brief was to
+be willing to call a finding wrong: a false finding sends someone editing correct
+code, which this branch has already paid for once.
+
+Result: **21 of 23 B-findings confirmed as written**; B11 overstated, none
+already fixed. Four §5/§6 claims were wrong and are dropped in §9.5.
+
+### 9.1 B-verdicts
+
+Confirmed as written: B1-B8, B12-B20, B22, B23. Adjusted:
+
+- **B9** — confirmed, but the defect is only the *Transform of parentless
+  members*. Other components' elision still works; "nothing ever matches" was
+  broader than the bug.
+- **B10** — confirmed. Nit: reaching `NetId{1}` needs `base = 0xFFFFFFFF`; the
+  doc's `0xFFFFFFFE` lands on `NetId{0}`, which the delta path already refuses.
+- **B11** — **overstated.** The budget bypass is real (records written before
+  both budget checks, never consulting `maxSnapshotBytes`). The stall claim is
+  miscalibrated: GNS accepts unreliable sends to `k_cbMaxUnreliableMsgSizeSend`
+  = 16,500 bytes, so a 100-instance ~5 KB snapshot is fragmented and delivered
+  on a healthy link. Hard failure needs ~330+ instances. Fix it; it is not a
+  100-instance blocker.
+- **B20** — confirmed, low as hedged. **Plus a sibling the reviewer missed**: the
+  `LoadLevel`-failure return at `EditorLevels.cpp:735` has the same defect over a
+  *cleared* scene and is more reachable. One fix should cover both.
+- **B21** — confirmed, reclassified. Every hole produces a downstream C++ compile
+  error, not silent corruption. Bad diagnostics, not data loss.
+
+**§0's pattern is worse than four.** The sweep found six more instances:
+`Replication.cpp:745-748` (B6), `BlueprintReplication.cpp:92-94` (B9),
+`World.cpp:304-306` (B17), `Replication.hpp:1526-1530` + `Replication.cpp:2704-2708`
+(S26), `World.hpp:193-203` (S6), `Replication.hpp:1519-1520` (S13).
+
+### 9.2 Order to work from
+
+**Tier 1 — corrupts user data, reachable in the editor today.**
+B1 (two lines, independent, do first) → B2 → B4 → S17 → B3 → S18 → B5 → B19 → S15.
+
+**Tier 2 — crashes waiting.**
+B16 (= S7, one defect, don't double-fix) → B17 + S1 (same function).
+
+**Tier 3 — wire correctness.** Context no single reviewer could see: **per B15,
+none of §2 is reachable in a production session today** — it is all
+test-harness-only. Urgent for merge quality, not for live users.
+B7 → B8 → B6 → B9 → B13 → B15 → B12 → B11 → B10 → then S5/S13/S9/S10/S12.
+
+**Tier 4 — codegen/build hygiene.**
+B22 (worst: silent all-spawns-fail at runtime) → B14 + its doc lie → B21 and
+T14's keyword patch → B23 → S24.
+
+**Tier 5 — semantics, docs, polish.**
+B18, B20 (+ its `:735` sibling), the S1-S4 blueprint-semantics set, S6/S26 stale
+comments, S8, S14, S16, S19, S20, S21, S23.
+
+**Tests.** Land T2's `==` at `NetSync/tests/TestBlueprintReplication.cpp:281`,
+T1's non-identity-placement case, T7's reordering case, and the coverage T12
+names (B6/B7/B8/B13 especially) **before** touching §2. The plan's own risk 3
+says so and the verification bears it out.
+
+### 9.3 Ordering constraints
+
+- **B7 + B8 + B13 + B11 are one design change, not four patches.** B8's real fix
+  puts member existence in the record, which changes the format B7's erase and
+  resend predicates must agree on; B13's `instances` scrub is the same
+  lifecycle; B11's record-section budget touches the same path. One protocol
+  bump, tests first. Fixing B7 alone gets partially reverted by B8.
+- **B2 + B3 + S3 (+ the S2/S4 doc decisions) are one "override application"
+  change** — all in `QualifyName`/`ApplyMemberOverride`/`CommitInstance`. B2's
+  slash semantics decide what S3's nested qualification must produce.
+- **B9's fix must land with T1's test fix.** The existing identity-placement test
+  passes before *and* after, so B9 alone proves nothing.
+- **B16 resolves S7 outright** — same defect. It also defuses the test-order
+  landmine at `TestBlueprintReplication.cpp:320`.
+- **B17 and S1 edit the same function** (`GetBlueprintDefinition`): one patch —
+  move `PrepareBlueprint` inside the try, add synchronization.
+- **B15 last among the wire items.** Wiring it before B6-B13 ships the feature
+  broken; after, it is the validation step. Its `ContentSet` job change is
+  independent and can land early.
+
+### 9.4 §8 entries that were cleared too easily
+
+- *"every client-side bounds check on counts"* — a record's `memberCount`
+  (`Replication.cpp:2720`) has no intrinsic upper bound; only the
+  expander-equality check saves it. B10's unguarded wraps are counts discipline
+  too. The blanket clause overreaches.
+- *"all five strong-id sentinel pairings and every `.value` boundary"* — B10's
+  wraps *are* `.value` boundary sites. "Every" was not true when written.
+- *"`LoadLevelFromPath`'s refusal preceding the scene replacement"* — true only
+  of the declared-systems pre-check. The post-load failure returns (`:735`,
+  `:751`) still leave a replaced or cleared scene with stale bookkeeping.
+- *"`EnsureInstanceBlock` reached from both id paths"* — reached, yes, but S11
+  shows its duplicate-tag guard gap. Fine today; worth a comment when B8's fix
+  touches that code.
+
+### 9.5 Dropped — wrong, or not worth acting on
+
+| item | why |
+|---|---|
+| T3's claim that `TestBlueprintReplication.cpp:188`, `:228`, `:245` share the `>=` weakness | **Wrong.** Those assertions encode "outside the block" and "disjoint blocks" exactly; an aliasing mutant lands inside the block and is caught. `:245` already uses `==`. Only `:281` (T2) has the real flaw. Do not "fix" the correct assertions. |
+| S25, the `BinaryCodec` half | **Wrong.** `BinaryCodec.cpp` handles `InstanceRef` fully (`:192` write, `:321` read). The cited `:724` `default: continue` is inside `FieldsWithinBounds`, where skipping non-numerics is correct. Keep only the Inspector half. |
+| S5's "shows in the outliner" | Wrong detail. The entity list is member-driven, so a fully-despawned instance shows no row; the ghost is a stale viewport icon and an invisible pick target. The leak itself stands. |
+| S11 | Guard genuinely absent, but **no reachable producer** — flatten's uniqueness check and monotonic `InstanceId`s. Latent. |
+| S22 | Same shape: the only reachable throw fires before any mutation; the post-mutation throws need duplicate member paths, which flatten forbids. Latent. |
+| S9's cross-level-aliasing half | No `ReplicationServer` survives a level change today. Keep only the in-session-growth half. |
+| B11's "~21 instances stalls the join" framing | Recalibrated — see §9.1. |
+| T14's sorted-manifest mutation | Overstated. It survives the Python suite as claimed, but dies in `TestInstanceViews.cpp:77`'s index-compare against `parking_lot.abp`'s deliberately-unsorted flatten order — the guard the generator's docstring names. The other two T14 survivors stand. |
+| S12 as a live bug | `NetSession::Disconnect` destroys the object right after `Reset()`. Fix opportunistically or just document it. |
