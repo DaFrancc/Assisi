@@ -487,6 +487,23 @@ compose with nesting: `car_with_antenna.abp` overriding its nested `car` to
 point at `/antenna` resolves inside `car_with_antenna.abp`. That is §5's
 "written where the edit was made", applied to references.
 
+**One rule, two namespaces.** A name with no leading slash resolves in the
+namespace of the thing being addressed; a leading slash resolves in the
+namespace of the file that wrote the text. For a reference authored inside its
+own file those are the same namespace — which is why ordinary files never need
+the slash, and why `/body` and `body` are interchangeable there. They diverge
+in exactly one situation: an override, where the writer and the target are
+different files.
+
+**The implementation invariant that keeps it unambiguous:** after flatten, a
+reference carries a leading slash *if and only if* it is level-scoped.
+Everything a blueprint could resolve — its own entities' references, and any
+override it writes on a nested instance — is fully resolved into definition
+space with no slash left. Without that, a top-level file's own `/body` reaches
+expansion looking identical to a level-scoped `/body` and meaning the opposite,
+which is exactly the bug round 7 found (B2/S3). The resolution happens where
+both scopes are still known and never again.
+
 Forbidding outward references was considered and rejected — it would mean a
 placed turret could never be wired to a level's marker in the editor, which is
 a large hole to leave in nesting. A name that does not resolve becomes null

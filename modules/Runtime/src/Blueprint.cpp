@@ -257,7 +257,7 @@ std::map<std::string, BlueprintDefinition, std::less<>> &Cache()
 /// A leading slash means "the file that wrote this", which for a reference
 /// authored inside a file *is* that file — so it prefixes exactly like a plain
 /// name here. The two only diverge for an override, where the writing file and the
-/// file being addressed are different (§6).
+/// file being addressed are different (§6); QualifyOverrideReferences is that case.
 std::string QualifyName(std::string_view prefix, std::string_view name)
 {
     if (!name.empty() && name.front() == '/')
@@ -265,11 +265,14 @@ std::string QualifyName(std::string_view prefix, std::string_view name)
     return std::string{prefix} + std::string{name};
 }
 
-} // namespace
-
-void QualifyReferences(nlohmann::json &components, std::string_view prefix)
+/// Calls @p rewrite on every EntityRef field of every component in @p components.
+///
+/// Reflection is what makes this possible at all: a reference is a *string* in the
+/// file, indistinguishable from any other string without asking the component what
+/// its fields mean.
+template <typename Fn> void ForEachEntityRef(nlohmann::json &components, Fn &&rewrite)
 {
-    if (prefix.empty() || !components.is_object())
+    if (!components.is_object())
         return;
 
     const auto &registry = Core::Reflect::ComponentRegistry::Instance();
@@ -288,9 +291,65 @@ void QualifyReferences(nlohmann::json &components, std::string_view prefix)
             if (it == componentData.end() || !it->is_string())
                 continue;
 
-            *it = QualifyName(prefix, it->get<std::string>());
+            *it = rewrite(it->get<std::string>());
         }
     }
+}
+
+} // namespace
+
+void QualifyReferences(nlohmann::json &components, std::string_view prefix)
+{
+    // Runs even at an empty prefix, where it only strips the slash. That strip is
+    // the whole point: it is what makes a surviving '/' downstream mean exactly one
+    // thing — level scope — instead of two. See the invariant on the declaration.
+    ForEachEntityRef(components, [prefix](const std::string &name) { return QualifyName(prefix, name); });
+}
+
+void QualifyOverrideReferences(nlohmann::json &componentOverrides, std::string_view writerPrefix,
+                               std::string_view targetPrefix)
+{
+    if (!componentOverrides.is_object())
+        return;
+
+    for (auto &[componentName, claim] : componentOverrides.items())
+    {
+        // A null claim is a removal note, not an edit — it has no fields to resolve.
+        if (!claim.is_object())
+            continue;
+
+        // The one place the two namespaces are both live. A plain name addresses
+        // downward into the instance being overridden; a leading slash addresses the
+        // file that wrote the claim. Both leave here fully qualified, so nothing
+        // downstream has to know which form the author used.
+        nlohmann::json wrapper{{componentName, claim}};
+        ForEachEntityRef(wrapper,
+                         [writerPrefix, targetPrefix](std::string_view name)
+                         {
+                             if (!name.empty() && name.front() == '/')
+                             {
+                                 name.remove_prefix(1);
+                                 return std::string{writerPrefix} + std::string{name};
+                             }
+                             return std::string{targetPrefix} + std::string{name};
+                         });
+        claim = wrapper.at(componentName);
+    }
+}
+
+void QualifyInstanceReferences(nlohmann::json &components, std::string_view prefix)
+{
+    ForEachEntityRef(components,
+                     [prefix](std::string_view name)
+                     {
+                         // By now every reference a blueprint could resolve already is
+                         // (the invariant on QualifyReferences), so a surviving slash
+                         // can only be level-scoped: it names an entity of the file that
+                         // placed this instance, and must not take the instance prefix.
+                         if (!name.empty() && name.front() == '/')
+                             return std::string{name.substr(1)};
+                         return std::string{prefix} + std::string{name};
+                     });
 }
 
 void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &componentOverrides,
@@ -499,7 +558,12 @@ void FlattenInstance(FlattenState &state, const nlohmann::json &entry, std::stri
             continue;
         }
 
-        ApplyMemberOverride(*member, componentOverrides, full);
+        // Resolved here, where both scopes are still known: `prefix` is where the
+        // writing file's own entities live, `childPrefix` is the instance being
+        // addressed. One step later there is no way to tell them apart.
+        nlohmann::json qualified = componentOverrides;
+        QualifyOverrideReferences(qualified, prefix, childPrefix);
+        ApplyMemberOverride(*member, qualified, full);
     }
 }
 
