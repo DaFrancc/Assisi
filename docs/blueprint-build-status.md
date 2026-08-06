@@ -127,24 +127,31 @@ Built so far, all under `TestBlueprintReplication.cpp`:
 | 7c tag | The `instanceId` ↔ `baseNetId` translation (`9147585`) |
 | 7d | Block escalation — naming one member pulls the instance (`e66ba06`) |
 
-**Not built, and worth knowing before measuring anything:** the wire is currently
-*larger*, not smaller. Members still replicate as ordinary entities alongside
-their record. The saving the whole design is for — a member costing zero bytes
-until it differs from the blueprint — needs the server to know the authored
-component set and skip what the client can already derive. That is the rest of
-7b/7c.
+| App halves | The provider and the expander, over a real blueprint (`db3af9b`) |
+| 7b saving | A member matching its blueprint costs no component bytes (`3bfcc81`) |
+| 7d re-entry | Re-entry inside a round trip resends the record (`285f305`) |
 
-Also outstanding: **the App-side expander.** Everything above is the interface
-and a test fake — nothing yet expands a real blueprint on a client. That is the
-single largest remaining piece and the one that unlocks the byte saving, since
-it is what gives a member a blueprint-derived baseline to delta against. With it
-go `Mirrored` / `SyncMirrorBody` handling for members and the rule that a
-mirrored member runs no authority physics.
+**The saving is real and measured**, in `modules/App/tests`: the same scene
+replicated with and without the manifest, and an edited member costing more than
+an untouched one. Elision is **by value against the prepared block**, never by
+change tick — a tick says when something was written, so a component written
+back to its authored value, or written in the same tick the instance was
+created, would be judged wrongly, and a wrongly skipped unchanging component
+stays wrong for ever.
 
-7d's remaining half: instance-granular re-entry escalation in `ForgetAcked`, and
-a per-connection known-instance vector under the in-flight/ack discipline
-(`knownInstances` exists but re-entry within one round trip is not yet
-instance-granular).
+An overridden member is never elided: the override lives in the level, which a
+mid-session joiner never read.
+
+Mirrored members get **no authority physics**. The expander calls
+`SceneSerializer::PlaceInstance` and deliberately not `App::SpawnBlueprint` —
+the verb also builds Jolt bodies, and a member that simulated locally would
+argue with the server every tick. Motion arrives as body state and the client
+raises a mirror body through the ordinary path.
+
+**Still open:** the install-queue hook that makes a joining client install the
+systems a blueprint names (R14 — the cross-machine half of the founding
+"system never installed" failure, recorded in the concept review as W1), and
+D-C / `kExpansionVersion`.
 
 A failed expansion refuses the snapshot and logs why; carrying that reason into a
 disconnect the user sees needs the session layer and is not wired.
