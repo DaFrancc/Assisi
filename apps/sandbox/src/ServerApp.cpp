@@ -3,6 +3,7 @@
 #include "ServerApp.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
@@ -88,6 +89,18 @@ void ServerApp::OnStart()
         // LoadLevelSim, not LoadLevel: no asset cache, no scene renderer,
         // nothing GPU-owned to evict. Mesh and material GUIDs stay in the scene
         // as authored data for replication; the server never resolves them.
+        // Checked even though a headless server installs no systems at all. The
+        // file naming behaviour this build cannot supply is a broken file, and a
+        // server that serves it hands every client a level the host itself is
+        // not running — worse than refusing, because it looks like it worked.
+        if (!Assisi::App::LevelSystemsAreDeclared(_options.level))
+        {
+            Log::Error("Server: refusing '{}' — it names a system this build does not declare.",
+                       _options.level);
+            RequestClose();
+            return;
+        }
+
         if (!Assisi::App::LoadLevelSim(_scene, _options.level, _physics, &_instances))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
@@ -194,6 +207,16 @@ void ServerApp::BuildJoinedWorld()
         Log::Error("Client: level content hash mismatch for '{}' — host {}, local {}.", hello->level.path,
                    Assisi::Core::ToHex64(hello->level.contentHash), Assisi::Core::ToHex64(*localHash));
         fail("your copy of '" + hello->level.path + "' differs from the host's; sync it and retry.");
+        return;
+    }
+
+    // Same refusal joining as hosting. The content hash above proves the file is
+    // byte-identical to the host's, which says nothing about whether *this*
+    // build declares the systems it names — an older client can match the file
+    // exactly and still be unable to run it.
+    if (!Assisi::App::LevelSystemsAreDeclared(hello->level.path))
+    {
+        fail("'" + hello->level.path + "' names a system this build does not declare.");
         return;
     }
 
