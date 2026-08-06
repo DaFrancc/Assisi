@@ -34,7 +34,9 @@ no warnings. (14, not 13: stage 9 adds a `blueprint-views` Python suite.)
 
 ### 7b, 7c, 7d — blueprint replication
 
-Nothing started. See the warning below. **This is the only blueprint work left.**
+**Partly built** — the id discipline and the wire format are in, the savings and
+the App-side halves are not. See "The network, as far as it goes" below for
+exactly what stands. **This is the only blueprint work left.**
 
 **7e is cancelled** by decision (2026-08-05): `BlueprintSpawnFromLevel` was
 provisional by design and gets deleted when `replication-plan-v4.md` §5's
@@ -105,19 +107,39 @@ gain.
 
 ---
 
-## Read this before touching the network
+## The network, as far as it goes
 
-`ECS::BlueprintMember` is `ACOMP(replicable)` — which the design requires (§2:
-membership is state with a current value) — but the `instanceId` ↔ `baseNetId`
-translation that makes it *mean* anything on a client is 7b/7c work. So today a
-joining client receives a tag whose `instanceId` is the **server's** per-world
-counter, which names nothing on its side.
+**The tag's translation is done** (`9147585`). `ECS::BlueprintMember` is
+`ACOMP(replicable)`, and its `instanceId` — a per-world, per-machine counter — is
+now rewritten at the codec boundary: out as the instance's base NetId, back in as
+the receiving machine's own id. An instance never expanded locally resolves to
+zero, so the tag is invalid rather than pointing at an unrelated instance. This
+was the "inert by luck" hole earlier revisions of this file warned about.
 
-This is inert rather than wrong: the whole design rule is that no system reads
-the tag, and the editor's outliner falls back to "instance (?)" for an id its
-table does not know. But it is inert by luck, not by construction. If you want it
-safe before 7b lands, dropping `replicable` from the tag is one word, and 7b puts
-it back with the translation beside it.
+Built so far, all under `TestBlueprintReplication.cpp`:
+
+| Ref | What |
+|---|---|
+| R4, R7 | `InstanceInfoProvider`; members take one contiguous NetId block (`2a22ec5`) |
+| R5, R3 | The record on the wire, section ordering, **protocol 8** (`fabfb4a`) |
+| R6 | Despawn run-length encoding; the empty record section costs one bit (`3b89834`) |
+| 7c core | `InstanceExpander` and the `base + i` binding (`d34b2e0`) |
+| 7c tag | The `instanceId` ↔ `baseNetId` translation (`9147585`) |
+
+**Not built, and worth knowing before measuring anything:** the wire is currently
+*larger*, not smaller. Members still replicate as ordinary entities alongside
+their record. The saving the whole design is for — a member costing zero bytes
+until it differs from the blueprint — needs the server to know the authored
+component set and skip what the client can already derive. That is the rest of
+7b/7c.
+
+Also outstanding: the App-side expander (this is all interfaces and a fake so
+far — nothing yet expands a real blueprint on a client), `Mirrored` /
+`SyncMirrorBody` handling for members, and **7d** per-instance relevancy in its
+entirety.
+
+A failed expansion refuses the snapshot and logs why; carrying that reason into a
+disconnect the user sees needs the session layer and is not wired.
 
 The other half of the same gap: the join's strip is still per-entity, so a level
 that places instances will duplicate their non-replicated members on a client.
