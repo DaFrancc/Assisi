@@ -17,6 +17,7 @@ add_executable(Assisi-App-Tests
   main.cpp
   TestBlueprintLevel.cpp
   TestBlueprintVerbs.cpp
+  $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:TestBlueprintReplication.cpp>
   TestBounce.cpp
   TestChildProcess.cpp
   TestInstanceViews.cpp
@@ -58,6 +59,10 @@ target_sources(Assisi-App-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-Runtime-Generated>
   $<TARGET_OBJECTS:Assisi-Physics-Generated>
   $<TARGET_OBJECTS:Assisi-App-TestSystems-Generated>
+  # Replicated is an ACOMP in NetSync; without its registrations the loader has
+  # no ComponentId for it and a blueprint declaring one silently gets an entity
+  # that never replicates.
+  $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:$<TARGET_OBJECTS:Assisi-NetSync-Generated>>
 )
 
 add_test(NAME App COMMAND Assisi-App-Tests)

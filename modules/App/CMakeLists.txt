@@ -18,6 +18,7 @@ target_sources(Assisi-App
     "src/AppConfig.cpp"
     "src/Application.cpp"
     "src/BlueprintVerbs.cpp"
+    $<$<BOOL:${ASSISI_ENABLE_NETWORKING}>:src/BlueprintReplication.cpp>
     "src/ChildProcess.cpp"
     "src/ChiaraPanel.cpp"
     "src/ContentSet.cpp"
@@ -47,6 +48,14 @@ target_link_libraries(Assisi-App
   PRIVATE
     nlohmann_json::nlohmann_json
 )
+
+# Only when networking is on, and only for BlueprintReplication.cpp — the
+# adapters that let NetSync replicate blueprints without knowing what one is.
+# Acyclic: NetSync links Core/ECS/Math/Net/Physics and neither App nor Runtime,
+# which is exactly why the provider/expander seams exist.
+if (ASSISI_ENABLE_NETWORKING)
+  target_link_libraries(Assisi-App PUBLIC Assisi::NetSync)
+endif()
 
 # The engine's own systems. A declaration in a scanned header *is* the
 # registration — the generated OBJECT library is pulled fully into every final
