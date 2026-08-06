@@ -4,9 +4,9 @@ Where `docs/blueprint-implementation-plan.md` actually stands on the `blueprints
 branch, what was decided while building, and what is left. Written so the next
 person to open this does not have to re-derive any of it from the diff.
 
-Every commit listed is green on `make gd` and `make gcc-ship`, 13/13 ctest in
+Every commit listed is green on `make gd` and `make gcc-ship`, 14/14 ctest in
 both, and the four `assets/levels/*.alvl` load through the headless server with
-no warnings.
+no warnings. (14, not 13: stage 9 adds a `blueprint-views` Python suite.)
 
 ---
 
@@ -26,22 +26,82 @@ no warnings.
 | 8 | `4cbc649` | `ASYSTEM`, the catalog, and profiles deleted outright |
 | 5b rest | `83b28eb` | Override marks, per-field and per-component reset, auto-naming |
 | review 1 | `48a6ea3` | Reset stayed one press behind; multi-select; a blueprint's scale went into the placement |
-| 5d, 5e | (this branch) | Blueprint editing mode, re-expansion on save, history truncation, the stale-copy host gate |
+| 5d, 5e | `c1c2091` | Blueprint editing mode, re-expansion on save, history truncation, the stale-copy host gate |
+| 9 | `4231176` | `InstanceView<T>` codegen, the typed verbs, and the reflectgen ban on storing one |
+| ids | `9253e33`…`ddf322d` | The five weak id aliases became strong types (see below) |
 
 ## Not built
 
 ### 7b, 7c, 7d — blueprint replication
 
-Nothing started. See the warning below.
+Nothing started. See the warning below. **This is the only blueprint work left.**
 
 **7e is cancelled** by decision (2026-08-05): `BlueprintSpawnFromLevel` was
 provisional by design and gets deleted when `replication-plan-v4.md` §5's
 shared-baseline join lands, so building it means building something to throw
 away. The join rework replaces it.
 
-### 9 — `InstanceView<T>` codegen
+---
 
-Nothing started.
+## Stage 9, and the one thing that can rot in it
+
+The generator is `tools/reflectgen/blueprint_views.py`, reached through
+`reflectgen --instance-views`. It emits, per opted-in blueprint: the
+`InstanceView<T>` specialization (nested exactly as the file nests),
+`InstanceViewTraits<T>` carrying the source path so a typed spawn takes no
+string, and a free `FillInstanceView`. The opt-in list is stated in the top-level
+`CMakeLists.txt` — deliberately not a glob, because this is the one place content
+reaches into the build graph. A **depfile** carries the nested files, which the
+build cannot know about without reading a blueprint first.
+
+**The rot risk:** member names are now produced by two implementations of one
+rule — `blueprint_views.py` at build time and `Blueprint.cpp`'s `FlattenInto` at
+run time. A divergence does not fail to compile. It resolves a field to
+`NullEntity`, and the car simply has no wheels.
+
+The guard is the manifest: the generated header ends with
+`kGeneratedInstanceViews`, the member list this build believes in, and
+`TestInstanceViews`' first case walks it against `GetBlueprintDefinition` for
+**every opted-in blueprint** — order included, because a member's index is what
+its NetId is assigned from. Opting a blueprint in is therefore enough to cover
+it; nobody has to remember to write a case.
+
+The fixtures under `modules/App/tests/blueprints/` are chosen, not arbitrary:
+`parking_lot.abp` declares an entity `car_body` beside an instance `car` with a
+member `body` (the collision that grouping avoids and flattening would not), and
+`depot.abp` removes `car` from the lot, which must cascade to `car/*` while
+leaving `car_body` alone — the `car/` vs `car_` distinction.
+
+A view is move-only. Note this contradicts the concept doc's other description of
+it as "a plain aggregate of handles": in C++20 a deleted copy constructor costs
+the type its aggregate-ness. Move-only won, because the doc reasons explicitly
+about `optional` holding a move-only view.
+
+Storing a view in a reflected type is a build error with **no `transient`
+escape hatch**, unlike the ordinary unserializable-field check. The objection is
+not that it cannot serialize — it is that its handles go stale, so a stored view
+is a member list by another name.
+
+---
+
+## The id types
+
+`ECS::InstanceId`, `NetSync::NetId`, `Net::ConnectionId`,
+`Reflect::ComponentId` and `Reflect::MessageId` are now strong types rather than
+`uint32_t` aliases: aggregates with a public `value`, no constructor (so
+aggregate initialization is the only way in, which blocks the implicit
+conversion in both directions), no arithmetic, plus `std::hash` and
+`std::formatter`.
+
+**Their sentinels are not uniform, and that is deliberate.** `ComponentId` uses
+`~0` and treats **0 as a valid id** — it is an ordinal that indexes `_pools`
+directly. The other four use 0 as invalid, so zeroed memory names nothing.
+`MessageId` is one-based for exactly that reason. Do not "unify" `IsValid`
+across them; each definition says why it is what it is.
+
+`FieldMask` was left a plain `uint64_t` on purpose: it is a bitmask, not an id
+space, so a strong type would mean re-exporting the bit operators for no safety
+gain.
 
 ---
 

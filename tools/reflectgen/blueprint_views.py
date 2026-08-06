@@ -251,6 +251,7 @@ def render_instance_views(views):
         '#include <Assisi/Runtime/Blueprint.hpp>',
         '#include <Assisi/Runtime/InstanceView.hpp>',
         '',
+        '#include <span>',
         '#include <string_view>',
         '',
         'namespace Assisi::Blueprints',
@@ -315,6 +316,38 @@ def render_instance_views(views):
             field = path.replace('/', '.')
             lines.append(f'    view.{field} = FindMember(scene, table, view.instanceId, "{path}");')
         lines.append('}')
+
+    # The manifest: the member names this generator believes each blueprint has,
+    # in order. It exists to be *checked* — the same names are produced a second
+    # time at run time by Blueprint.cpp's FlattenInto, and a divergence between
+    # the two would resolve a field to NullEntity in code that compiles and
+    # spawns fine. TestInstanceViews walks this list against
+    # GetBlueprintDefinition, so every opted-in blueprint is covered the moment
+    # it is opted in, rather than only the ones somebody wrote a case for.
+    #
+    # Order is part of the claim, not incidental: a member's index is what its
+    # NetId is assigned from.
+    lines.append('')
+    lines.append('/// One opted-in blueprint and the members this build generated for it.')
+    lines.append('struct GeneratedInstanceView')
+    lines.append('{')
+    lines.append('    std::string_view                  source;')
+    lines.append('    std::span<const std::string_view> members;')
+    lines.append('};')
+    lines.append('')
+
+    for type_name, source, _, members in views:
+        joined = ', '.join(f'"{path}"' for path in members)
+        lines.append(f'inline constexpr std::string_view kMembersOf{type_name}[] = {{{joined}}};'
+                     if members else
+                     f'inline constexpr std::span<const std::string_view> kMembersOf{type_name}{{}};')
+
+    lines.append('')
+    lines.append('/// Every view this build generated, for the cross-check against the loader.')
+    lines.append('inline constexpr GeneratedInstanceView kGeneratedInstanceViews[] = {')
+    for type_name, source, _, _ in views:
+        lines.append(f'    {{"{source}", kMembersOf{type_name}}},')
+    lines.append('};')
 
     lines.append('')
     lines.append('} // namespace Assisi::Runtime')
