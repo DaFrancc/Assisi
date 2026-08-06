@@ -61,6 +61,15 @@ class ServerApp final : public Assisi::App::Application
     explicit ServerApp(ServerOptions options);
     ~ServerApp() override;
 
+    /// @brief True when the server closed because it could not start, rather
+    /// than because it finished.
+    ///
+    /// OnStart is void, so a refusal there cannot return a code — but a
+    /// dedicated server exiting 0 after refusing its level is worse than the
+    /// refusal it is reporting: systemd, Docker and CI all read that as a clean
+    /// shutdown and either ignore it or restart-loop in silence.
+    [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
+
   protected:
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
@@ -69,6 +78,8 @@ class ServerApp final : public Assisi::App::Application
     void FlushDeferred() override;
 
   private:
+    bool _startupFailed = false;
+
     void ReportStatus();
 
     /// Client only: build the world the host's handshake names — resolve the

@@ -97,6 +97,7 @@ void ServerApp::OnStart()
         {
             Log::Error("Server: refusing '{}' — it names a system this build does not declare.",
                        _options.level);
+            _startupFailed = true;
             RequestClose();
             return;
         }
@@ -104,6 +105,7 @@ void ServerApp::OnStart()
         if (!Assisi::App::LoadLevelSim(_scene, _options.level, _physics, &_instances))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
+            _startupFailed = true; // same reason as above: exiting 0 here hid a failed start
             RequestClose();
             return;
         }
