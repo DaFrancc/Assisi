@@ -125,6 +125,7 @@ Built so far, all under `TestBlueprintReplication.cpp`:
 | R6 | Despawn run-length encoding; the empty record section costs one bit (`3b89834`) |
 | 7c core | `InstanceExpander` and the `base + i` binding (`d34b2e0`) |
 | 7c tag | The `instanceId` ↔ `baseNetId` translation (`9147585`) |
+| 7d | Block escalation — naming one member pulls the instance (`e66ba06`) |
 
 **Not built, and worth knowing before measuring anything:** the wire is currently
 *larger*, not smaller. Members still replicate as ordinary entities alongside
@@ -133,10 +134,17 @@ until it differs from the blueprint — needs the server to know the authored
 component set and skip what the client can already derive. That is the rest of
 7b/7c.
 
-Also outstanding: the App-side expander (this is all interfaces and a fake so
-far — nothing yet expands a real blueprint on a client), `Mirrored` /
-`SyncMirrorBody` handling for members, and **7d** per-instance relevancy in its
-entirety.
+Also outstanding: **the App-side expander.** Everything above is the interface
+and a test fake — nothing yet expands a real blueprint on a client. That is the
+single largest remaining piece and the one that unlocks the byte saving, since
+it is what gives a member a blueprint-derived baseline to delta against. With it
+go `Mirrored` / `SyncMirrorBody` handling for members and the rule that a
+mirrored member runs no authority physics.
+
+7d's remaining half: instance-granular re-entry escalation in `ForgetAcked`, and
+a per-connection known-instance vector under the in-flight/ack discipline
+(`knownInstances` exists but re-entry within one round trip is not yet
+instance-granular).
 
 A failed expansion refuses the snapshot and logs why; carrying that reason into a
 disconnect the user sees needs the session layer and is not wired.
