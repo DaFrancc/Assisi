@@ -622,6 +622,10 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     # Default-deny is enforced here (not only in main) so every path that emits
     # code — the CLI and direct callers such as the golden tests — refuses an
     # unserializable field rather than silently dropping it.
+    # Before the serialization checks, because "a view may not be stored" is the
+    # more specific complaint and the one worth reading first.
+    _check_no_instance_views(components, include_path)
+    _check_no_instance_views(messages, include_path)
     _check_unsupported(components, include_path)
     _check_unsupported(messages, include_path)
     _check_asset_fields(components, include_path)
@@ -822,6 +826,31 @@ static const bool {var_name} = []() -> bool
         blocks.append('\n' + gen_system_registration(system))
 
     return ''.join(blocks)
+
+
+def _check_no_instance_views(components: list[ComponentInfo], header_name: str) -> None:
+    """Default-deny an InstanceView field anywhere in a reflected type.
+
+    Stronger than _check_unsupported below, and deliberately so: that one lets a
+    field through once it is marked AFIELD(transient), and skips a transient
+    component's fields entirely. This one has no escape hatch, because the
+    problem is not that a view cannot be serialized — it is that a view *stored*
+    anywhere is a member list that goes stale, which is the failure the whole
+    blueprint design is built to prevent (docs/blueprint-system-concept.md §7).
+    A view lives in the scope of the call that produced it; only the instance id
+    may outlive it, and an ECS::InstanceId field is the supported way to say so.
+    """
+    for comp in components:
+        for f in comp.fields:
+            bare = f.cpp_type.replace(' ', '')
+            if 'InstanceView<' not in bare:
+                continue
+            raise ValueError(
+                f"{header_name}: field '{comp.name}::{f.name}' has type "
+                f"'{f.cpp_type}'. A reflected type may not hold an InstanceView: "
+                f"the handles in one go stale, so storing it is a member list by "
+                f"another name. Keep the ECS::InstanceId instead and re-resolve "
+                f"with FindInstance<T> when you need the members.")
 
 
 def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:

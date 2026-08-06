@@ -349,6 +349,39 @@ class ParserEdgeCaseTest(unittest.TestCase):
         self.assertIn("Assisi::Core::Reflect::FieldType::Unknown", cpp)  # in the meta table
         self.assertNotIn("c.data", cpp)  # but never (de)serialized
 
+    def test_an_instance_view_field_is_a_hard_error(self):
+        # A stored view is a member list that goes stale — the failure the
+        # blueprint design exists to prevent, so this has no escape hatch.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD() Runtime::InstanceView<Car> car = {}; };\n}\n"
+        )
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn("may not hold an InstanceView", str(caught.exception))
+
+    def test_a_transient_instance_view_field_is_still_a_hard_error(self):
+        # The distinction that matters: AFIELD(transient) excuses a type that
+        # cannot serialize, but the objection here is to storing it at all, so
+        # transient must NOT be a way through.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD(transient) InstanceView<Car> car = {}; "
+            "AFIELD() int32_t a = 0; };\n}\n"
+        )
+        with self.assertRaises(ValueError):
+            reflectgen.generate_cpp(components, "N/C.hpp")
+
+    def test_an_instance_id_field_is_the_supported_way(self):
+        # The id is what may be kept, so this must keep working — otherwise the
+        # ban above would have no legal alternative to point at.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD() ECS::InstanceId instance = {}; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")  # must not raise
+        self.assertIn("instance", cpp)
+
 
 class UnsupportedTypeTest(unittest.TestCase):
     """The UNSUPPORTED_TYPES guard must hard-fail rather than silently skip."""

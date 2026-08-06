@@ -36,6 +36,7 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/InstanceView.hpp>
 
 #include <cstdint>
 #include <optional>
@@ -108,5 +109,56 @@ bool ExplodeInstance(World &world, ECS::InstanceId instanceId);
 /// instance without it would happily produce a `Car` over a crate's members.
 [[nodiscard]] const Runtime::BlueprintInstance *FindInstance(World &world, ECS::InstanceId instanceId,
                                                              std::string_view expectedSource = {});
+
+/// @brief Spawns the blueprint @p T names and returns a typed view of its members.
+///
+/// Takes no string at all: the source comes from `InstanceViewTraits<T>`, which
+/// the same generated header supplies, so the file the view was generated from
+/// and the file it spawns cannot drift apart.
+///
+/// `T` must have been opted into view generation; anything else fails here with
+/// an incomplete type rather than compiling into a spawn that returns handles
+/// nobody named.
+///
+/// The declaration order matters: these are defined after the untyped calls so
+/// their unqualified names resolve to them. `FillInstanceView` is found by ADL
+/// on the view, which is why this header does not include the generated one —
+/// a library build has no blueprints opted in and must not require the file to
+/// exist.
+template <typename T>
+[[nodiscard]] std::optional<Runtime::InstanceView<T>> SpawnBlueprint(World &world,
+                                                                     const ECS::Transform &placement)
+{
+    const std::optional<ECS::InstanceId> instanceId =
+        SpawnBlueprint(world, Runtime::InstanceViewTraits<T>::kSource, placement);
+    if (!instanceId.has_value())
+        return std::nullopt;
+
+    Runtime::InstanceView<T> view;
+    view.instanceId = *instanceId;
+    FillInstanceView(view, world.scene, world.instances);
+    return view;
+}
+
+/// @brief A typed view over an instance that already exists, or nullopt.
+///
+/// The source check is the part that has to exist either way: building a `Car`
+/// view over a crate's members would otherwise resolve every field to
+/// NullEntity and look like a spawn that half-worked. This is why the instance
+/// table has to exist (docs/blueprint-system-concept.md §7).
+///
+/// Re-resolves every handle, so it is also how a caller holding only the id
+/// gets a fresh view after members have come and gone.
+template <typename T>
+[[nodiscard]] std::optional<Runtime::InstanceView<T>> FindInstance(World &world, ECS::InstanceId instanceId)
+{
+    if (FindInstance(world, instanceId, Runtime::InstanceViewTraits<T>::kSource) == nullptr)
+        return std::nullopt;
+
+    Runtime::InstanceView<T> view;
+    view.instanceId = instanceId;
+    FillInstanceView(view, world.scene, world.instances);
+    return view;
+}
 
 } // namespace Assisi::App

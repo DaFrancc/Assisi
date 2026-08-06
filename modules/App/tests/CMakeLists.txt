@@ -19,11 +19,24 @@ add_executable(Assisi-App-Tests
   TestBlueprintVerbs.cpp
   TestBounce.cpp
   TestChildProcess.cpp
+  TestInstanceViews.cpp
   TestSystemRegistry.cpp
   TestWorld.cpp
 )
 
 Assisi_apply_test_defaults(Assisi-App-Tests)
+
+# The typed-view test spawns the *same* blueprints the build generated views
+# from, so it has to reach the directory the generator read. Handed in rather
+# than copied into the test: a second copy of the fixtures would drift, and the
+# whole point of the test is that the generated names and the runtime names
+# cannot drift.
+target_compile_definitions(Assisi-App-Tests PRIVATE
+  ASSISI_INSTANCE_VIEW_ASSETS="${CMAKE_CURRENT_SOURCE_DIR}/blueprints"
+)
+# The generated header this includes is ordered by Assisi::App, which the
+# generator target is attached to — stating it again here would be a forward
+# reference, because this file is configured before the top-level call runs.
 
 target_include_directories(Assisi-App-Tests SYSTEM PRIVATE
   "${doctest_SOURCE_DIR}"

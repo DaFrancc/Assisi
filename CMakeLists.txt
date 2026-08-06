@@ -907,6 +907,24 @@ if (ASSISI_ENABLE_NETWORKING)
     assisi_check_message_handlers()
 endif()
 
+# Typed views for the blueprints this project opts in. Here rather than in a
+# module for a different reason than the passes above: it attaches to Assisi-App,
+# so App must already exist — and the list is a *project* statement about which
+# content is allowed to reach into the build graph, which is not a thing a module
+# should be deciding on a project's behalf.
+#
+# The two below are the App test suite's fixtures, and they are the opted-in set
+# on purpose: they are what proves the generated field names and the runtime
+# member names agree. A game adds its own here.
+if (ASSISI_BUILD_TESTS)
+    assisi_generate_instance_views(
+        ASSET_ROOT "${CMAKE_SOURCE_DIR}/modules/App/tests/blueprints"
+        BLUEPRINTS
+            "Car=car.abp"
+            "ParkingLot=parking_lot.abp"
+    )
+endif()
+
 # Notes for module CMakeLists:
 # - Each module target should link:
 #     Assisi::Options, Assisi::Warnings, Assisi::Perf, Assisi::Deps
