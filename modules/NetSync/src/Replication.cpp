@@ -993,6 +993,7 @@ void ReplicationServer::HandleAck(Connection &connection, Core::BitReader &reade
 
     connection.acked           = std::move(record->netIds);
     connection.ackedComponents = std::move(record->components);
+    connection.knownInstances  = std::move(record->instances);
     connection.ackedTick       = record->serverTick;
     ++connection.diagnostics.acksReceived;
 
@@ -1972,6 +1973,59 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         std::includes(connection.acked.begin(), connection.acked.end(), effective.begin(), effective.end());
     WriteSnapshotHeader(header, writer);
 
+    // Instance records, ahead of everything else in the packet. An instance has
+    // to be named before any block that belongs to it, because the client
+    // composes a member's baseline from the blueprint rather than from empty —
+    // a block arriving first would have nothing to delta against.
+    //
+    // Emitted for every instance with a relevant member, not only ones whose
+    // members won the priority budget this tick. A record for an instance whose
+    // members are all starved is exactly right: the client expands it from the
+    // blueprint immediately and the deltas catch up.
+    std::vector<ECS::InstanceId> neededInstances;
+    for (const NetId netId : effective)
+    {
+        const ECS::BlueprintMember *tag = _scene.Get<ECS::BlueprintMember>(EntityOf(netId));
+        if (tag == nullptr || !tag->instanceId.IsValid())
+            continue;
+        // Only instances that actually got a block: one the provider could not
+        // describe has members replicating as ordinary entities, and naming it
+        // would point the client at a blueprint index nothing agreed on.
+        if (!_instanceBlocks.contains(tag->instanceId))
+            continue;
+        neededInstances.push_back(tag->instanceId);
+    }
+    std::sort(neededInstances.begin(), neededInstances.end());
+    neededInstances.erase(std::unique(neededInstances.begin(), neededInstances.end()), neededInstances.end());
+
+    std::vector<ECS::InstanceId> freshInstances;
+    std::set_difference(neededInstances.begin(), neededInstances.end(), connection.knownInstances.begin(),
+                        connection.knownInstances.end(), std::back_inserter(freshInstances));
+
+    writer.WriteVarUInt32(static_cast<std::uint32_t>(freshInstances.size()));
+    for (const ECS::InstanceId instanceId : freshInstances)
+    {
+        const InstanceBlock &block = _instanceBlocks.find(instanceId)->second;
+        writer.WriteVarUInt32(block.info.blueprintIndex);
+        writer.WriteVarUInt32(block.base.value); // wire write
+        writer.WriteVarUInt32(block.memberCount);
+
+        // Full precision, not quantized like BodyState: both sides compose every
+        // member's transform from this one, so a rounding difference here is a
+        // difference in every member's pose, permanently, on a member that never
+        // changes and is therefore never corrected.
+        writer.WriteFloat(block.info.placement.position.x);
+        writer.WriteFloat(block.info.placement.position.y);
+        writer.WriteFloat(block.info.placement.position.z);
+        writer.WriteFloat(block.info.placement.rotation.w);
+        writer.WriteFloat(block.info.placement.rotation.x);
+        writer.WriteFloat(block.info.placement.rotation.y);
+        writer.WriteFloat(block.info.placement.rotation.z);
+        writer.WriteFloat(block.info.placement.scale.x);
+        writer.WriteFloat(block.info.placement.scale.y);
+        writer.WriteFloat(block.info.placement.scale.z);
+    }
+
     // Despawns: everything the client is known to have that it should no longer
     // have. Falls straight out of the same set difference that already found
     // destroyed entities — which is why leaving relevancy is not a second
@@ -1993,6 +2047,9 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     // number, instead of by whichever NetId happened to be lowest.
     SentSnapshot record;
     record.serverTick = _simTick;
+    // Cumulative, like netIds: what the client will know once this lands, not
+    // the records that went out in it.
+    record.instances  = neededInstances;
     record.netIds.reserve(effective.size());
     record.written.reserve(effective.size());
 
@@ -2514,6 +2571,46 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     // already moved past, and applying it would visibly rewind everything.
     if (_snapshotsApplied > 0 && header.serverTick <= _lastAppliedTick)
         return true;
+
+    // Instance records, first in the packet and read before anything else can
+    // reference them. Recording only — turning a record into expanded members is
+    // 7c. Until then a member block still arrives as an ordinary entity, so
+    // reading this wrong is a desync of the whole stream rather than a missing
+    // car, which is why it is bounded like every other count here.
+    const std::uint32_t recordCount = reader.ReadVarUInt32();
+    if (!reader.Ok() || recordCount > 65536u)
+    {
+        reader.Invalidate();
+        return false;
+    }
+    for (std::uint32_t i = 0; i < recordCount; ++i)
+    {
+        InstanceRecord entry;
+        entry.blueprintIndex = reader.ReadVarUInt32();
+        entry.base           = NetId{reader.ReadVarUInt32()}; // wire read
+        entry.memberCount    = reader.ReadVarUInt32();
+
+        entry.placement.position.x = reader.ReadFloat();
+        entry.placement.position.y = reader.ReadFloat();
+        entry.placement.position.z = reader.ReadFloat();
+        entry.placement.rotation.w = reader.ReadFloat();
+        entry.placement.rotation.x = reader.ReadFloat();
+        entry.placement.rotation.y = reader.ReadFloat();
+        entry.placement.rotation.z = reader.ReadFloat();
+        entry.placement.scale.x    = reader.ReadFloat();
+        entry.placement.scale.y    = reader.ReadFloat();
+        entry.placement.scale.z    = reader.ReadFloat();
+
+        if (!reader.Ok() || entry.memberCount == 0 || !entry.base.IsValid())
+        {
+            reader.Invalidate();
+            return false;
+        }
+
+        // Idempotent: a record is resent until acked, so the same instance
+        // arrives repeatedly and the second one must change nothing.
+        _instanceRecords.insert_or_assign(entry.base, entry);
+    }
 
     const std::uint32_t despawnCount = reader.ReadVarUInt32();
     if (!reader.Ok() || despawnCount > 65536u)

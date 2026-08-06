@@ -796,6 +796,13 @@ class ReplicationServer
         /// entity, which is small and, unlike a fixed bitmask, has no ceiling on
         /// how many component types the game may register.
         std::vector<std::uint64_t> components;
+
+        /// The instances this connection is known to have been told about as of
+        /// this snapshot — cumulative, like `netIds`, not the delta that went
+        /// out in it. An instance whose members all stopped being relevant drops
+        /// out, so re-entry resends the record rather than leaving the client to
+        /// compose members against something it has forgotten.
+        std::vector<ECS::InstanceId> instances;
     };
 
     struct Connection
@@ -813,6 +820,12 @@ class ReplicationServer
         std::vector<NetId>         acked;
         std::vector<std::uint64_t> ackedComponents;
         std::uint64_t              ackedTick = 0;
+
+        /// Instances this connection has acked a record for, sorted. A record is
+        /// resent every snapshot until it lands here, the same discipline the
+        /// entity set runs under — and for the same reason, since a member block
+        /// the client cannot attribute to an instance is a corrupt mirror.
+        std::vector<ECS::InstanceId> knownInstances;
 
         /// One entry per entity this connection has acked. Erased when its
         /// despawn acks: NetIds are never reused, so without that this grows
@@ -1250,6 +1263,18 @@ class ReplicationServer
 };
 
 /// @brief The receiving half. Applies snapshots into a local scene.
+/// @brief One instance the server has named, as the client received it.
+///
+/// Keyed by `base` because that is the only handle the wire carries — member
+/// blocks arrive as `base + memberIndex` and are attributed by range.
+struct InstanceRecord
+{
+    std::uint32_t  blueprintIndex = 0;
+    NetId          base;
+    std::uint32_t  memberCount = 0;
+    ECS::Transform placement;
+};
+
 class ReplicationClient
 {
   public:
@@ -1412,6 +1437,16 @@ class ReplicationClient
     [[nodiscard]] NetId NetIdOf(ECS::Entity entity) const;
 
     [[nodiscard]] std::size_t ReplicatedEntityCount() const { return _entityByNetId.size(); }
+
+    /// @brief The instances the server has named, keyed by base NetId.
+    ///
+    /// Recorded but not yet acted on: expanding one into local members is 7c.
+    /// Exposed now so the receiving half can be tested before the half that
+    /// consumes it exists.
+    [[nodiscard]] const std::unordered_map<NetId, InstanceRecord> &InstanceRecords() const
+    {
+        return _instanceRecords;
+    }
 
     /// @brief Bumped every time an applied snapshot changed the *shape* of the
     /// mirrored world — an entity spawned or despawned, a component added or
@@ -1682,6 +1717,11 @@ class ReplicationClient
     Core::Reflect::ComponentId _rigidBodyComponentId  = Core::Reflect::kInvalidComponentId;
 
     std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
+
+    /// Instances named by the server, keyed by base NetId. Never cleared by an
+    /// individual snapshot: a record is a fact about the session, not about the
+    /// packet that carried it, and the same one arrives repeatedly until acked.
+    std::unordered_map<NetId, InstanceRecord>            _instanceRecords;
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
     std::vector<PendingRef>                              _pendingRefs;
