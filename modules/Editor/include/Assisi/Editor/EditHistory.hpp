@@ -219,11 +219,22 @@ class EditHistory
     ///
     /// The redo stack goes with it: a redo naming a destroyed entity would recreate
     /// it into a slot the world has moved on from.
-    std::size_t ForgetEntities(std::span<const Assisi::ECS::Entity> destroyed);
+    ///
+    /// @p scene names the world @p destroyed came from, and handles from any other
+    /// scene are refused wholesale. That parameter is not bookkeeping: a handle is
+    /// (slot, generation) with **no scene identity in it**, and every Scene numbers
+    /// from {0,0}, so a doomed handle in one world compares equal to a live,
+    /// unrelated entity in another. The one caller sweeps every resident world at
+    /// once (a blueprint save re-expands every live copy), so without this the
+    /// level world's dead members truncate the blueprint world's history.
+    std::size_t ForgetEntities(const Assisi::ECS::Scene             &scene,
+                               std::span<const Assisi::ECS::Entity> destroyed);
 
     /// @brief What ForgetEntities would drop, without dropping it — so a save can
-    /// say how much history is at stake before the author commits to it.
-    [[nodiscard]] std::size_t CountForgettable(std::span<const Assisi::ECS::Entity> destroyed) const;
+    /// say how much history is at stake before the author commits to it. Same
+    /// cross-scene rule: @p scene must be the one @p destroyed came from.
+    [[nodiscard]] std::size_t CountForgettable(const Assisi::ECS::Scene             &scene,
+                                               std::span<const Assisi::ECS::Entity> destroyed) const;
 
     /// @brief True while an Undo()/Redo() is applying. The capture layer checks
     /// this to avoid recording the edits the apply itself makes (re-entrancy).

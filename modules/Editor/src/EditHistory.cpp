@@ -162,13 +162,22 @@ std::size_t ForgettableCount(const std::vector<Transaction>       &undo,
 
 } // namespace
 
-std::size_t EditHistory::CountForgettable(std::span<const Assisi::ECS::Entity> destroyed) const
+std::size_t EditHistory::CountForgettable(const Assisi::ECS::Scene             &scene,
+                                          std::span<const Assisi::ECS::Entity> destroyed) const
 {
+    if (&scene != &_scene)
+        return 0;
     return ForgettableCount(_undo, destroyed);
 }
 
-std::size_t EditHistory::ForgetEntities(std::span<const Assisi::ECS::Entity> destroyed)
+std::size_t EditHistory::ForgetEntities(const Assisi::ECS::Scene             &scene,
+                                        std::span<const Assisi::ECS::Entity> destroyed)
 {
+    // Refused before anything is compared, not filtered afterwards: the handles
+    // themselves carry nothing that distinguishes them from this scene's.
+    if (&scene != &_scene)
+        return 0;
+
     const std::size_t drop = ForgettableCount(_undo, destroyed);
     if (drop == 0)
         return 0;

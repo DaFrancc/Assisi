@@ -407,7 +407,22 @@ void EditorApp::ReexpandInstancesOf(const std::string &source)
 
     // What each instance loses, from the name diff. Only reachable now — the new
     // definitions exist and nothing has been touched yet.
-    std::vector<Assisi::ECS::Entity> doomedEverywhere;
+    //
+    // Grouped by world and never flattened. A handle is (slot, generation) with no
+    // scene identity in it and every Scene numbers from {0,0}, so a doomed handle
+    // from one resident world compares equal to a live, unrelated entity in
+    // another — and this loop deliberately spans every resident world.
+    std::vector<std::pair<Assisi::App::World *, std::vector<Assisi::ECS::Entity>>> doomedByWorld;
+    const auto doomedFor = [&doomedByWorld](Assisi::App::World *world) -> std::vector<Assisi::ECS::Entity> &
+    {
+        for (auto &[owner, list] : doomedByWorld)
+        {
+            if (owner == world)
+                return list;
+        }
+        return doomedByWorld.emplace_back(world, std::vector<Assisi::ECS::Entity>{}).second;
+    };
+
     for (PendingReexpand &pending : collected)
     {
         const Assisi::Runtime::BlueprintInstance *row = pending.world->instances.Find(pending.instanceId);
@@ -429,7 +444,7 @@ void EditorApp::ReexpandInstancesOf(const std::string &source)
             if (member == Assisi::ECS::NullEntity)
                 continue;
             pending.doomed.push_back(member);
-            doomedEverywhere.push_back(member);
+            doomedFor(pending.world).push_back(member);
 
             if (std::find(_pendingReexpandRemoved.begin(), _pendingReexpandRemoved.end(), name) ==
                 _pendingReexpandRemoved.end())
@@ -442,13 +457,14 @@ void EditorApp::ReexpandInstancesOf(const std::string &source)
     _pendingReexpand       = std::move(collected);
     _pendingReexpandSource = source;
 
-    // How much history the truncation costs. Only the edited world has one, so this
-    // is one question rather than a sum over worlds.
+    // How much history the truncation costs. Only one resident world has a history,
+    // so at most one term of this sum is non-zero — the rest name a scene the
+    // history refuses. Asking per world is what makes that true.
     _pendingReexpandUndoLoss = 0;
-    if (!doomedEverywhere.empty())
+    if (Assisi::Editor::EditHistory *history = ActiveHistory())
     {
-        if (Assisi::Editor::EditHistory *history = ActiveHistory())
-            _pendingReexpandUndoLoss = history->CountForgettable(doomedEverywhere);
+        for (const auto &[world, doomed] : doomedByWorld)
+            _pendingReexpandUndoLoss += history->CountForgettable(world->scene, doomed);
     }
 
     // Nothing at stake — the overwhelmingly common edit, which changes values.
@@ -462,8 +478,20 @@ void EditorApp::ApplyPendingReexpand()
     if (_pendingReexpand.empty())
         return;
 
-    std::vector<Assisi::ECS::Entity> destroyedEverywhere;
-    std::size_t                      instancesUpdated = 0;
+    // Grouped by world for the same reason the doomed list is — see ReexpandInstancesOf.
+    std::vector<std::pair<Assisi::App::World *, std::vector<Assisi::ECS::Entity>>> destroyedByWorld;
+    const auto destroyedFor =
+        [&destroyedByWorld](Assisi::App::World *world) -> std::vector<Assisi::ECS::Entity> &
+    {
+        for (auto &[owner, list] : destroyedByWorld)
+        {
+            if (owner == world)
+                return list;
+        }
+        return destroyedByWorld.emplace_back(world, std::vector<Assisi::ECS::Entity>{}).second;
+    };
+
+    std::size_t instancesUpdated = 0;
 
     for (const PendingReexpand &pending : _pendingReexpand)
     {
@@ -488,8 +516,11 @@ void EditorApp::ApplyPendingReexpand()
             continue; // already logged, and nothing was changed
 
         ++instancesUpdated;
-        destroyedEverywhere.insert(destroyedEverywhere.end(), result->destroyed.begin(),
-                                   result->destroyed.end());
+        if (!result->destroyed.empty())
+        {
+            std::vector<Assisi::ECS::Entity> &list = destroyedFor(pending.world);
+            list.insert(list.end(), result->destroyed.begin(), result->destroyed.end());
+        }
         RebuildInstanceTransients(world, result->members);
     }
 
@@ -498,11 +529,15 @@ void EditorApp::ApplyPendingReexpand()
     for (const PendingReexpand &pending : _pendingReexpand)
         pending.world->scene.FlushDestroyed();
 
-    if (!destroyedEverywhere.empty())
+    if (!destroyedByWorld.empty())
     {
         if (Assisi::Editor::EditHistory *history = ActiveHistory())
         {
-            if (const std::size_t dropped = history->ForgetEntities(destroyedEverywhere); dropped > 0)
+            std::size_t dropped = 0;
+            for (const auto &[world, destroyed] : destroyedByWorld)
+                dropped += history->ForgetEntities(world->scene, destroyed);
+
+            if (dropped > 0)
             {
                 Assisi::Core::Log::Info("Blueprint '{}': {} undo step(s) dropped — they named members the "
                                         "edit removed.",
