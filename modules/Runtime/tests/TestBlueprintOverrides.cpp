@@ -441,6 +441,118 @@ TEST_CASE("References: inside a file, a leading slash and a plain name mean the 
     CHECK(parent->parent == MemberOf(scene, table, ECS::InstanceId{1}, "body"));
 }
 
+// ---------------------------------------------------------------------------
+// `parented` and placement. Whether a member is parented decides whether the
+// instance's placement composes onto its Transform: a parentless member ends up
+// in world space, a parented one is already relative to a member that absorbed
+// the placement. An override may add or remove Parent, so the answer cannot be
+// decided before the overrides are in.
+// ---------------------------------------------------------------------------
+
+namespace
+{
+nlohmann::json Place(float x)
+{
+    return {{"position", {x, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}};
+}
+
+/// hub and body both parentless at rest; wheel_fl hangs off body.
+nlohmann::json RigFile()
+{
+    return {{"version", 2},
+            {"entities", nlohmann::json::array({{{"name", "hub"}, {"components", {{"Transform", Place(0.f)}}}},
+                                                {{"name", "body"}, {"components", {{"Transform", Place(1.f)}}}},
+                                                {{"name", "wheel_fl"},
+                                                 {"components",
+                                                  {{"Transform", Place(2.f)},
+                                                   {"Parent", {{"parent", "body"}}}}}}})}};
+}
+} // namespace
+
+TEST_CASE("Placement: an override that adds Parent stops the placement composing onto it")
+{
+    const std::filesystem::path root = FreshRoot("parent_added");
+    Write(root, "rig.abp", RigFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "r"},
+                                                 {"source", "rig.abp"},
+                                                 {"transform", Place(100.f)},
+                                                 // body becomes a child of hub.
+                                                 {"overrides", {{"body", {{"Parent", {{"parent", "hub"}}}}}}}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    // Now relative to hub, which already absorbed the placement — so body keeps its
+    // authored 1.0 and does not also take the instance's 100.
+    const ECS::Transform *body =
+        scene.Get<ECS::Transform>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
+    REQUIRE(body != nullptr);
+    CHECK(body->position.x == doctest::Approx(1.f));
+}
+
+TEST_CASE("Placement: an override that removes Parent lets the placement compose onto it")
+{
+    const std::filesystem::path root = FreshRoot("parent_removed");
+    Write(root, "rig.abp", RigFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "r"},
+                                                 {"source", "rig.abp"},
+                                                 {"transform", Place(100.f)},
+                                                 // wheel_fl is cut loose from body.
+                                                 {"overrides", {{"wheel_fl", {{"Parent", nullptr}}}}}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    const ECS::Entity wheel = MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl");
+    REQUIRE(scene.Get<Runtime::Parent>(wheel) == nullptr);
+
+    // Parentless now, so it is in world space and must carry the instance's 100.
+    const ECS::Transform *transform = scene.Get<ECS::Transform>(wheel);
+    REQUIRE(transform != nullptr);
+    CHECK(transform->position.x == doctest::Approx(102.f));
+}
+
+TEST_CASE("Placement: adding Parent to a nested member also undoes the placement already baked in")
+{
+    const std::filesystem::path root = FreshRoot("parent_nested");
+    Write(root, "rig.abp", RigFile());
+    // rig is nested, so its parentless members had the *lot's* placement composed
+    // into their Transform at flatten — before any override could say otherwise.
+    Write(root, "lot.abp",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances",
+            nlohmann::json::array({{{"name", "r1"}, {"source", "rig.abp"}, {"transform", Place(10.f)}}})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "L"},
+                                                 {"source", "lot.abp"},
+                                                 {"transform", Place(100.f)},
+                                                 {"overrides",
+                                                  {{"r1/body", {{"Parent", {{"parent", "r1/hub"}}}}}}}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    // body is now relative to hub, which sits at the rig's origin. Its authored
+    // local was 1, and neither the lot's 10 nor the level's 100 belongs to it any
+    // more — the 10 was composed in at flatten and has to come back out.
+    const ECS::Transform *body =
+        scene.Get<ECS::Transform>(MemberOf(scene, table, ECS::InstanceId{1}, "r1/body"));
+    REQUIRE(body != nullptr);
+    CHECK(body->position.x == doctest::Approx(1.f));
+}
+
 TEST_CASE("Overrides: a save writes back what was read, and reloading gives the same world")
 {
     const std::filesystem::path root = FreshRoot("roundtrip");

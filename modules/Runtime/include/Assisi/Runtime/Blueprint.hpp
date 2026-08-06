@@ -79,7 +79,20 @@ struct BlueprintMemberDesc
     /// relative to that parent and the instance's placement reaches it through the
     /// chain; a parentless one is in file space, and the placement composes onto
     /// it directly (§3, "the component is absolute").
+    ///
+    /// Recomputed whenever `components` changes — an override may add a Parent or
+    /// null one out, and this decides whether a whole placement lands on the
+    /// member's Transform. See ApplyMemberOverride, which owns both.
     bool parented = false;
+
+    /// The accumulated placement of the nesting chain at this member's declaration
+    /// site, composed into its Transform above iff `parented` was false at flatten.
+    ///
+    /// Kept because the decision is reversible: an override applied *after* flatten
+    /// can flip `parented`, and undoing or applying the composition needs the exact
+    /// transform that was used. It is per member rather than per instance because
+    /// members declared at different depths accumulated different chains.
+    ECS::Transform placement;
 
     /// This member's components, encoded once (§11). Spawning decodes these;
     /// `components` above stays the authority for anything an instance overrode,
