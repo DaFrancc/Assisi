@@ -1222,6 +1222,18 @@ class ReplicationServer
     /// the same members from different placements.
     std::unordered_map<ECS::InstanceId, InstanceBlock> _instanceBlocks;
 
+    /// The same blocks as `(base, memberCount)`, sorted by base, for answering
+    /// "which instance owns this NetId?" — which relevancy asks once per relevant
+    /// entity per connection per snapshot and the map above cannot answer.
+    ///
+    /// Stays sorted by construction: `_nextNetId` only climbs, so each new block
+    /// starts above every existing one and appending is enough.
+    std::vector<std::pair<NetId, std::uint32_t>> _blockRanges;
+
+    /// Scratch for relevancy's block escalation. A member, not a local, so a
+    /// snapshot does not allocate.
+    std::vector<NetId> _escalateScratch;
+
     std::unique_ptr<InstanceInfoProvider> _instanceInfo;
 
     /// @brief The NetId @p entity should take as a blueprint member, or

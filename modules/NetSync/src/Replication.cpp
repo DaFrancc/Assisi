@@ -522,6 +522,7 @@ NetId ReplicationServer::EnsureInstanceBlock(ECS::Entity entity)
         // property the record depends on.
         _nextNetId += info.memberCount;
         it = _instanceBlocks.emplace(tag->instanceId, block).first;
+        _blockRanges.emplace_back(block.base, block.memberCount); // sorted by construction
     }
 
     // A member index outside the block would alias whatever was allocated next.
@@ -732,6 +733,55 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
     effective.clear();
     std::set_intersection(merged.begin(), merged.end(), _liveNetIds.begin(), _liveNetIds.end(),
                           std::back_inserter(effective));
+
+    // Instances are relevant whole or not at all. A provider naming one wheel
+    // pulls the car: the client derives every member from one record, so a
+    // partial instance would leave it holding member ids it cannot attribute —
+    // and the record's memberCount would disagree with what actually arrived.
+    //
+    // After the policy filters deliberately. ControllerOnly removing a member
+    // must not be undone by escalation, which is why this reads the filtered set
+    // and adds to it rather than running before them... except that escalation
+    // then re-adds siblings a filter dropped. So it runs on what survived, and
+    // the filters are re-applied to nothing: a ControllerOnly member's siblings
+    // are pulled in, but the member itself stays out. That is the honest reading
+    // of "only this player may know about it" — the car is visible, that one
+    // part of it is not.
+    if (!_blockRanges.empty())
+    {
+        _escalateScratch.clear();
+        for (const NetId netId : effective)
+        {
+            // The last block whose base is at or below this id.
+            auto range = std::upper_bound(_blockRanges.begin(), _blockRanges.end(), netId,
+                                          [](NetId value, const auto &entry) { return value < entry.first; });
+            if (range == _blockRanges.begin())
+                continue;
+            --range;
+            if (netId.value >= range->first.value + range->second)
+                continue; // past the end of that block: an ordinary entity
+
+            for (std::uint32_t member = 0; member < range->second; ++member)
+                _escalateScratch.push_back(NetId{range->first.value + member});
+        }
+
+        if (!_escalateScratch.empty())
+        {
+            std::sort(_escalateScratch.begin(), _escalateScratch.end());
+            _escalateScratch.erase(std::unique(_escalateScratch.begin(), _escalateScratch.end()),
+                                   _escalateScratch.end());
+
+            merged.clear();
+            std::set_union(effective.begin(), effective.end(), _escalateScratch.begin(),
+                           _escalateScratch.end(), std::back_inserter(merged));
+
+            // Back through the live set: a member destroyed on its own is not
+            // resurrected by its siblings being relevant.
+            effective.clear();
+            std::set_intersection(merged.begin(), merged.end(), _liveNetIds.begin(), _liveNetIds.end(),
+                                  std::back_inserter(effective));
+        }
+    }
 
     // Re-entry inside one round trip. An entity that is in the set now, was not
     // last snapshot, and is still in the acked set has an unacked despawn in

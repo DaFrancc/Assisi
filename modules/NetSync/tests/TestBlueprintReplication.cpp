@@ -67,16 +67,49 @@ class FakeInstances final : public InstanceInfoProvider
 
 struct Fixture
 {
-    Net::NetTransport transport;
-    ECS::Scene        scene;
-    ReplicationServer server{transport, scene};
-    FakeInstances    *instances = nullptr;
+    Net::NetTransport                               transport;
+    ECS::Scene                                      scene;
+    ECS::Scene                                      clientScene;
+    std::pair<Net::ConnectionId, Net::ConnectionId> pair;
+    ReplicationServer                               server;
+    ReplicationClient                               client;
+    FakeInstances                                  *instances = nullptr;
 
-    Fixture()
+    Fixture() : pair(transport.CreateLoopbackPair()), server(transport, scene), client(transport, clientScene, pair.second)
     {
         auto owned = std::make_unique<FakeInstances>();
         instances  = owned.get();
         server.SetInstanceInfoProvider(std::move(owned));
+    }
+
+    /// Bring a connection all the way to ready. Relevancy state only exists once
+    /// snapshots are actually going out, so a test about who sees what has to
+    /// get past the handshake.
+    void Connect()
+    {
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
+        server.AddConnection(pair.first);
+        Step(6);
+    }
+
+    void Step(int times)
+    {
+        for (int i = 0; i < times; ++i)
+        {
+            std::vector<Net::NetEvent> events;
+            transport.Poll(events);
+            for (const Net::NetEvent &event : events)
+            {
+                if (event.type != Net::NetEvent::Type::Message)
+                    continue;
+                if (event.connection == pair.first)
+                    server.HandleMessage(pair.first, event.payload);
+                else
+                    client.HandleMessage(event.payload);
+            }
+            server.Tick(++tick);
+        }
     }
 
     /// A replicated member of @p id at @p index.
@@ -526,6 +559,87 @@ TEST_CASE("Blueprint replication: an expansion that comes up short is refused")
     // The record is not kept, so a retry is a clean retry rather than a partial
     // instance nothing will ever finish.
     CHECK(client.InstanceRecords().empty());
+}
+
+namespace
+{
+
+/// Names exactly the NetIds it is told to, so a test can say "the provider sees
+/// one wheel" and nothing else.
+class PickyProvider final : public RelevancyProvider
+{
+  public:
+    void Compute(const RelevancyQuery &query, std::vector<NetId> &out) override
+    {
+        (void)query;
+        out = named;
+    }
+
+    std::vector<NetId> named;
+};
+
+} // namespace
+
+TEST_CASE("Blueprint replication: naming one member pulls the whole instance")
+{
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 4);
+
+    std::vector<ECS::Entity> members;
+    for (std::uint32_t index = 0; index < 4; ++index)
+        members.push_back(fixture.Member(ECS::InstanceId{1}, index));
+    const ECS::Entity loose = fixture.Loose();
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(members[0]);
+    REQUIRE(base != InvalidNetId);
+
+    auto  owned    = std::make_unique<PickyProvider>();
+    auto *provider = owned.get();
+    // One wheel, and nothing else at all — not even the loose entity.
+    provider->named = {NetId{base.value + 2}};
+    fixture.server.SetRelevancyProvider(std::move(owned));
+
+    fixture.Connect();
+
+    // The whole car is relevant, because the client derives all four members
+    // from one record and a partial instance is one it cannot attribute.
+    for (std::uint32_t index = 0; index < 4; ++index)
+        CHECK(fixture.server.IsRelevant(fixture.pair.first,NetId{base.value + index}));
+
+    // ...and escalation pulls in the instance, not the neighbourhood.
+    CHECK_FALSE(fixture.server.IsRelevant(fixture.pair.first,fixture.server.NetIdOf(loose)));
+}
+
+TEST_CASE("Blueprint replication: a dead member is not resurrected by its siblings")
+{
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+
+    std::vector<ECS::Entity> members;
+    for (std::uint32_t index = 0; index < 3; ++index)
+        members.push_back(fixture.Member(ECS::InstanceId{1}, index));
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(members[0]);
+
+    auto  owned    = std::make_unique<PickyProvider>();
+    auto *provider = owned.get();
+    provider->named = {base};
+    fixture.server.SetRelevancyProvider(std::move(owned));
+    fixture.Connect();
+
+    // One member dies on its own — pruning and per-member destruction are both
+    // legal, so escalation must go back through the live set rather than
+    // trusting the block's width.
+    const NetId dead = fixture.server.NetIdOf(members[1]);
+    fixture.scene.Destroy(members[1]);
+    fixture.scene.FlushDestroyed();
+    fixture.Step(6); // enough for a snapshot to actually go out and recompute
+
+    CHECK(fixture.server.IsRelevant(fixture.pair.first,base));
+    CHECK(fixture.server.IsRelevant(fixture.pair.first,NetId{base.value + 2}));
+    CHECK_FALSE(fixture.server.IsRelevant(fixture.pair.first,dead));
 }
 
 TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
