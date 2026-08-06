@@ -58,6 +58,13 @@ from reflect_parser import (  # noqa: F401
     strip_comments,
     _detect_include_path,
 )
+from blueprint_views import (  # noqa: F401
+    ViewError,
+    build_tree,
+    flatten_member_names,
+    generate as generate_instance_views,
+    render_instance_views,
+)
 import reflect_codegen  # noqa: F401
 from reflect_codegen import (  # noqa: F401
     gen_message_forward,
@@ -366,7 +373,9 @@ def check_systems(headers) -> list:
 
 def main():
     parser = argparse.ArgumentParser(description='Assisi reflection code generator')
-    parser.add_argument('headers', nargs='+', type=Path,
+    # Optional only because --instance-views reads .abp files instead; every
+    # other mode still requires at least one, checked below.
+    parser.add_argument('headers', nargs='*', type=Path,
                         help='Header file(s) to process')
     parser.add_argument('--outdir', type=Path,
                         help='Output directory for .generated.cpp files')
@@ -384,7 +393,49 @@ def main():
                         help='Instead of generating registrations, check that no message type '
                              'has two AMSG_HANDLER declarations across every header given, and '
                              'write the handler map to this path.')
+    parser.add_argument('--instance-views', dest='views_out', type=Path, default=None,
+                        help='Instead of generating registrations, write the generated '
+                             'InstanceView<T> specializations for every blueprint given '
+                             'with --blueprint to this path.')
+    parser.add_argument('--blueprint', dest='blueprints', action='append', default=[],
+                        metavar='TypeName=path/to/file.abp',
+                        help='Opt one blueprint into typed-view generation. Repeatable.')
+    parser.add_argument('--asset-root', dest='asset_root', type=Path, default=None,
+                        help='Directory the --blueprint paths are relative to.')
+    parser.add_argument('--depfile', dest='depfile', type=Path, default=None,
+                        help='Write a Make-style depfile for --instance-views. Nested '
+                             'blueprints are only discovered by reading the files, so the '
+                             'build cannot state the dependency list up front.')
     args = parser.parse_args()
+
+    if args.views_out is not None:
+        if args.asset_root is None:
+            parser.error('--instance-views requires --asset-root')
+
+        specs = []
+        for entry in args.blueprints:
+            name, separator, source = entry.partition('=')
+            if not separator or not name or not source:
+                parser.error(f"--blueprint expects TypeName=path, got '{entry}'")
+            specs.append((name, source))
+
+        args.views_out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            text, dependencies = generate_instance_views(args.asset_root, specs)
+        except ViewError as error:
+            print(f'reflectgen: error: {error}', file=sys.stderr)
+            sys.exit(1)
+
+        args.views_out.write_text(text, encoding='utf-8')
+        if args.depfile is not None:
+            args.depfile.parent.mkdir(parents=True, exist_ok=True)
+            paths = ' '.join(str(Path(args.asset_root) / source) for source in dependencies)
+            args.depfile.write_text(f'{args.views_out}: {paths}\n', encoding='utf-8')
+        print(f'reflectgen: {len(specs)} instance view(s) -> {args.views_out}')
+        sys.exit(0)
+
+    if not args.headers:
+        parser.error('at least one header is required')
 
     if args.traits_out is not None:
         args.traits_out.parent.mkdir(parents=True, exist_ok=True)
