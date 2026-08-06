@@ -256,7 +256,16 @@ void EditorApp::BuildJoinedWorld()
     // The world is the host's level for the duration; StopPlay puts the edited
     // world's identity and profile back.
     _world->levelPath = level.addressing == Assisi::NetSync::LevelAddressing::Virtual ? level.path : std::string{};
-    (void)_worlds.ApplySystems(*_world, header.systems, level.path);
+    // Loud rather than fatal here: tearing a join down mid-way needs an unwind
+    // this function has no path for. A client that cannot install the host's
+    // systems will mirror state and run none of the behaviour, which is worth
+    // shouting about even when it cannot be refused outright.
+    if (!_worlds.ApplySystems(*_world, header.systems, level.path))
+    {
+        Assisi::Core::Log::Error("Join: the host's level '{}' names a system this build does not declare. "
+                                 "Mirrored state will be correct and its behaviour will not run.",
+                                 level.path);
+    }
 
     StripReplicatedEntities();
 

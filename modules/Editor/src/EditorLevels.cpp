@@ -730,7 +730,16 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // ...and its systems, which belong to the level that is now in it. This is the
     // re-target case ApplyProfile's Clear exists for: the world already holds the
     // previous level's profile.
-    (void)_worlds.ApplySystems(*_world, header.systems, virtualPath);
+    //
+    // A failed install fails the load. An unknown system name is a hard error by
+    // design, and this is the path a standalone build takes for its startup
+    // level — discarding it here is what let a misspelled name open a level that
+    // then ran none of its behaviour.
+    if (!_worlds.ApplySystems(*_world, header.systems, virtualPath))
+    {
+        Assisi::Core::Log::Error("Editor: '{}' names a system this build does not declare.", virtualPath);
+        return false;
+    }
 
     // A load also ends any in-progress play session: the snapshot describes the
     // old scene, so it must not survive into the new one.
