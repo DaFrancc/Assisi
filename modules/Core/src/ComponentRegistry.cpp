@@ -91,10 +91,14 @@ void ComponentRegistry::EnsureFinalized() const
     _serializable.clear();
     _replicable.clear();
     _replicableOrdinal.assign(_metas.size(), kInvalidOrdinal);
-    for (ComponentId i = 0; i < _metas.size(); ++i)
+    // Raw counter, not a ComponentId — this is the loop that walks the
+    // name-sorted table and hands the position itself out as the id, the one
+    // place a plain count becomes an identity. Every other use of `i` below is
+    // an array index (into _metas/_replicableOrdinal), not an id operation.
+    for (std::uint32_t i = 0; i < _metas.size(); ++i)
     {
-        _metas[i].id = i;
-        _idByType.emplace(_metas[i].typeIndex, i);
+        _metas[i].id = ComponentId{i}; // the one place a raw counter becomes an id
+        _idByType.emplace(_metas[i].typeIndex, ComponentId{i});
         if (_metas[i].serializable)
             _serializable.push_back(&_metas[i]);
         // Ordinal is position among the replicable types, in the same ascending
@@ -132,7 +136,8 @@ std::span<const ComponentMeta *const> ComponentRegistry::ReplicableComponents() 
 std::size_t ComponentRegistry::ReplicableOrdinalOf(ComponentId id) const
 {
     EnsureFinalized();
-    return id < _replicableOrdinal.size() ? _replicableOrdinal[id] : kInvalidOrdinal;
+    // .value: array index into _replicableOrdinal.
+    return id.value < _replicableOrdinal.size() ? _replicableOrdinal[id.value] : kInvalidOrdinal;
 }
 
 const ComponentMeta *ComponentRegistry::Find(std::string_view name) const
@@ -179,7 +184,8 @@ ComponentId ComponentRegistry::IdOf(std::string_view name) const
 const ComponentMeta *ComponentRegistry::ById(ComponentId id) const
 {
     EnsureFinalized();
-    return id < _metas.size() ? &_metas[id] : nullptr;
+    // .value: array index into _metas.
+    return id.value < _metas.size() ? &_metas[id.value] : nullptr;
 }
 
 ComponentId ComponentIdOfType(std::type_index type)

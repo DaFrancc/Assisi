@@ -232,9 +232,10 @@ struct Scene
     /// direction.
     [[nodiscard]] std::size_t ComponentCount(Core::Reflect::ComponentId id) const
     {
-        if (id >= _pools.size() || !_pools[id].pool || !_pools[id].size)
+        // .value throughout this function: array index into _pools.
+        if (id.value >= _pools.size() || !_pools[id.value].pool || !_pools[id.value].size)
             return 0;
-        return _pools[id].size(_pools[id].pool);
+        return _pools[id.value].size(_pools[id.value].pool);
     }
 
     /// @brief The last-written tick of the entity's component identified by
@@ -249,9 +250,10 @@ struct Scene
     /// is the correct answer in each case.
     uint64_t ChangeTickById(Entity entity, Core::Reflect::ComponentId id) const
     {
-        if (id >= _pools.size() || !_pools[id].changeTick)
+        // .value: array index into _pools.
+        if (id.value >= _pools.size() || !_pools[id.value].changeTick)
             return 0;
-        return _pools[id].changeTick(_pools[id].pool, entity);
+        return _pools[id.value].changeTick(_pools[id.value].pool, entity);
     }
 
     /// @brief True if the entity's component @p id was written after @p sinceTick.
@@ -266,8 +268,9 @@ struct Scene
     /// untracked components or an entity without that component.
     void MarkChanged(Entity entity, Core::Reflect::ComponentId id)
     {
-        if (id < _pools.size() && _pools[id].stamp)
-            _pools[id].stamp(_pools[id].pool, entity, ++_changeTick);
+        // .value: array index into _pools.
+        if (id.value < _pools.size() && _pools[id.value].stamp)
+            _pools[id.value].stamp(_pools[id.value].pool, entity, ++_changeTick);
     }
 
     /// @brief Removes the entity's component identified by ComponentId rather than
@@ -276,8 +279,9 @@ struct Scene
     /// scene has no pool for that id or the entity lacks that component.
     void RemoveById(Entity entity, Core::Reflect::ComponentId id)
     {
-        if (id < _pools.size() && _pools[id].pool && _pools[id].remove)
-            _pools[id].remove(_pools[id].pool, entity);
+        // .value: array index into _pools.
+        if (id.value < _pools.size() && _pools[id.value].pool && _pools[id.value].remove)
+            _pools[id.value].remove(_pools[id.value].pool, entity);
     }
 
     /// @brief Returns a lazy view over all entities that have every component in Ts.
@@ -438,9 +442,10 @@ struct Scene
     template <typename T> SparseSet<T> *GetPool() const
     {
         const Core::Reflect::ComponentId id = Core::Reflect::ComponentIdOf<T>();
-        if (id >= _pools.size() || !_pools[id].pool)
+        // .value: array index into _pools.
+        if (id.value >= _pools.size() || !_pools[id.value].pool)
             return nullptr;
-        return static_cast<SparseSet<T> *>(_pools[id].pool);
+        return static_cast<SparseSet<T> *>(_pools[id.value].pool);
     }
 
     template <typename T> SparseSet<T> &GetOrCreatePool()
@@ -450,10 +455,11 @@ struct Scene
                       "Scene component types must be registered with the reflection "
                       "system (ACOMP); this T has no ComponentId.");
 
-        if (id >= _pools.size())
-            _pools.resize(id + 1);
+        // .value throughout: array index into / size of _pools.
+        if (id.value >= _pools.size())
+            _pools.resize(id.value + 1);
 
-        PoolStorage &slot = _pools[id];
+        PoolStorage &slot = _pools[id.value];
         if (!slot.pool)
         {
             auto *pool = new SparseSet<T>();

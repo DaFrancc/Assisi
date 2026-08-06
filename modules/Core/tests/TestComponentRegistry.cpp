@@ -134,9 +134,14 @@ TEST_CASE("ComponentRegistry assigns dense alphabetical ids")
         const auto all = registry.All();
         // <= not < : other test files may register their own fixtures into this
         // shared registry, and duplicate names would still be a valid sort.
-        for (ComponentId i = 0; i < all.size(); ++i)
+        //
+        // Raw counter, not a ComponentId — this walks the table by array index
+        // (into `all`) and does arithmetic (`i - 1`), neither of which a
+        // ComponentId supports on purpose. See ComponentRegistry::EnsureFinalized
+        // for the one place a counter like this becomes an id.
+        for (std::uint32_t i = 0; i < all.size(); ++i)
         {
-            CHECK(all[i].id == i);
+            CHECK(all[i].id == ComponentId{i});
             if (i > 0)
                 CHECK(all[i - 1].name <= all[i].name);
         }
