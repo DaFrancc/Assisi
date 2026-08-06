@@ -2641,8 +2641,34 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         }
 
         // Idempotent: a record is resent until acked, so the same instance
-        // arrives repeatedly and the second one must change nothing.
-        _instanceRecords.insert_or_assign(entry.base, entry);
+        // arrives repeatedly and only the first one expands.
+        const auto [slot, inserted] = _instanceRecords.insert_or_assign(entry.base, entry);
+        (void)slot;
+        if (!inserted || _instanceExpander == nullptr)
+            continue;
+
+        std::vector<ECS::Entity> members;
+        if (!_instanceExpander->Expand(entry, members) || members.size() != entry.memberCount)
+        {
+            // Fatal, not survivable. Binding a short or failed expansion would
+            // attach member ids to the wrong entities, and every delta after
+            // this one would land on the wrong member — a mirror that is wrong
+            // rather than incomplete.
+            Core::Log::Error("NetSync: could not expand instance blueprint {} ({} members expected, {} "
+                             "produced) — refusing the snapshot",
+                             entry.blueprintIndex, entry.memberCount, members.size());
+            _instanceRecords.erase(entry.base);
+            reader.Invalidate();
+            return false;
+        }
+
+        for (std::uint32_t member = 0; member < entry.memberCount; ++member)
+        {
+            // The binding the whole scheme rests on: member i *is* base + i, so
+            // the server never sends a member list.
+            _entityByNetId.insert_or_assign(NetId{entry.base.value + member}, members[member]);
+        }
+        ++_structureRevision;
     }
 
     // Runs, not ids — see the encoder. The count bounds the number of runs; each

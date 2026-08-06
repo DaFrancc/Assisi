@@ -304,6 +304,160 @@ TEST_CASE("Blueprint replication: the record survives a round trip and is idempo
     CHECK(entry.placement.position.x == doctest::Approx(1.f));
 }
 
+namespace
+{
+
+/// Stands in for App's blueprint expansion. Builds @p memberCount bare entities,
+/// which is all the binding needs to be checked.
+class FakeExpander final : public InstanceExpander
+{
+  public:
+    explicit FakeExpander(std::uint32_t produce = 0) : _produce(produce) {}
+
+    [[nodiscard]] bool Expand(const InstanceRecord &record, std::vector<ECS::Entity> &out) override
+    {
+        ++calls;
+        if (fail)
+            return false;
+        const std::uint32_t count = _produce != 0 ? _produce : record.memberCount;
+        for (std::uint32_t i = 0; i < count; ++i)
+        {
+            const ECS::Entity entity = scene->Create();
+            (void)scene->Add(entity, ECS::Transform{});
+            out.push_back(entity);
+        }
+        return true;
+    }
+
+    ECS::Scene *scene = nullptr;
+    bool        fail  = false;
+    int         calls = 0;
+
+  private:
+    std::uint32_t _produce = 0;
+};
+
+} // namespace
+
+TEST_CASE("Blueprint replication: the client expands a record into bound members")
+{
+    Net::NetTransport transport;
+    ECS::Scene        serverScene;
+    ECS::Scene        clientScene;
+    const auto        pair = transport.CreateLoopbackPair();
+
+    ReplicationServer server{transport, serverScene};
+    ReplicationClient client{transport, clientScene, pair.second};
+
+    auto  ownedInfo = std::make_unique<FakeInstances>();
+    ownedInfo->Add(ECS::InstanceId{1}, 3);
+    server.SetInstanceInfoProvider(std::move(ownedInfo));
+
+    auto  ownedExpander = std::make_unique<FakeExpander>();
+    auto *expander      = ownedExpander.get();
+    expander->scene     = &clientScene;
+    client.SetInstanceExpander(std::move(ownedExpander));
+
+    for (std::uint32_t index = 0; index < 3; ++index)
+    {
+        const ECS::Entity entity = serverScene.Create();
+        (void)serverScene.Add(entity, ECS::Transform{});
+        (void)serverScene.Add(entity, Replicated{});
+        (void)serverScene.Add(entity,
+                              ECS::BlueprintMember{.instanceId = ECS::InstanceId{1}, .memberIndex = index});
+    }
+
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
+    server.AddConnection(pair.first);
+
+    std::uint64_t tick = 1;
+    for (int i = 0; i < 10; ++i)
+    {
+        std::vector<Net::NetEvent> events;
+        transport.Poll(events);
+        for (const Net::NetEvent &event : events)
+        {
+            if (event.type != Net::NetEvent::Type::Message)
+                continue;
+            if (event.connection == pair.first)
+                server.HandleMessage(pair.first, event.payload);
+            else
+                client.HandleMessage(event.payload);
+        }
+        server.Tick(tick++);
+    }
+
+    // Expanded once despite the record being resent until acked, and the members
+    // it built are the ones the server's ids now name.
+    CHECK(expander->calls == 1);
+    CHECK(client.ReplicatedEntityCount() == 3);
+
+    const InstanceRecord &entry = client.InstanceRecords().begin()->second;
+    for (std::uint32_t member = 0; member < entry.memberCount; ++member)
+    {
+        const ECS::Entity mirror = client.EntityOf(NetId{entry.base.value + member});
+        CHECK(mirror != ECS::NullEntity);
+        CHECK(clientScene.IsAlive(mirror));
+    }
+}
+
+TEST_CASE("Blueprint replication: an expansion that comes up short is refused")
+{
+    Net::NetTransport transport;
+    ECS::Scene        serverScene;
+    ECS::Scene        clientScene;
+    const auto        pair = transport.CreateLoopbackPair();
+
+    ReplicationServer server{transport, serverScene};
+    ReplicationClient client{transport, clientScene, pair.second};
+
+    auto ownedInfo = std::make_unique<FakeInstances>();
+    ownedInfo->Add(ECS::InstanceId{1}, 3);
+    server.SetInstanceInfoProvider(std::move(ownedInfo));
+
+    // Two members where the record says three: the disagreement that would bind
+    // member ids to the wrong entities if it were tolerated.
+    auto  ownedExpander = std::make_unique<FakeExpander>(/*produce=*/2);
+    auto *expander      = ownedExpander.get();
+    expander->scene     = &clientScene;
+    client.SetInstanceExpander(std::move(ownedExpander));
+
+    for (std::uint32_t index = 0; index < 3; ++index)
+    {
+        const ECS::Entity entity = serverScene.Create();
+        (void)serverScene.Add(entity, ECS::Transform{});
+        (void)serverScene.Add(entity, Replicated{});
+        (void)serverScene.Add(entity,
+                              ECS::BlueprintMember{.instanceId = ECS::InstanceId{1}, .memberIndex = index});
+    }
+
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
+    server.AddConnection(pair.first);
+
+    std::uint64_t tick = 1;
+    for (int i = 0; i < 6; ++i)
+    {
+        std::vector<Net::NetEvent> events;
+        transport.Poll(events);
+        for (const Net::NetEvent &event : events)
+        {
+            if (event.type != Net::NetEvent::Type::Message)
+                continue;
+            if (event.connection == pair.first)
+                server.HandleMessage(pair.first, event.payload);
+            else
+                client.HandleMessage(event.payload);
+        }
+        server.Tick(tick++);
+    }
+
+    // The record is not kept, so a retry is a clean retry rather than a partial
+    // instance nothing will ever finish.
+    CHECK(client.InstanceRecords().empty());
+}
+
 TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
 {
     Net::NetTransport transport;
