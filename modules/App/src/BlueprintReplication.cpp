@@ -2,6 +2,7 @@
 
 #include <Assisi/App/BlueprintReplication.hpp>
 
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
@@ -166,6 +167,18 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
             Runtime::SceneSerializer::PlaceInstance(_world.scene, _world.instances, entry, /*authored=*/false);
         if (!placed.has_value())
             return false;
+
+        // The systems the blueprint names, queued for the next safe point —
+        // exactly what SpawnBlueprint does on the host, and for a sharper reason
+        // here. The client never ran the spawn, so without this a client-side
+        // system the content needs (effects, prediction, audio) silently does not
+        // run: "a component whose system was never installed just does nothing",
+        // now across machines rather than across a spawn.
+        //
+        // A union, and idempotent — Install skips what is already present — so a
+        // hundred cars arriving install one Bounce.
+        if (const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(entry.source))
+            QueueSystemInstall(_world, definition->systems, entry.source);
 
         // Parallel to the blueprint's member list, which is exactly the order
         // `base + i` indexes — the two orderings being the same one is the whole

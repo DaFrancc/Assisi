@@ -26,6 +26,7 @@
 #include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/BlueprintVerbs.hpp>
 #include <Assisi/App/ContentSet.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
@@ -290,6 +291,36 @@ TEST_CASE("Blueprint over the wire: an edited member still arrives edited")
     const ECS::Transform *mirrored = fixture.guest.scene.Get<ECS::Transform>(mirror);
     REQUIRE(mirrored != nullptr);
     CHECK(mirrored->position.y == doctest::Approx(7.5f));
+}
+
+TEST_CASE("Blueprint over the wire: the guest installs the systems the blueprint names")
+{
+    const std::filesystem::path root = FreshRoot();
+
+    // A car that needs a system to behave. The guest never ran SpawnBlueprint,
+    // so without the install hook it would hold the components and run none of
+    // the code — the founding failure of this whole design, across machines
+    // (docs/blueprint-concept-review.md W1).
+    nlohmann::json car   = CarFile();
+    car["systems"]       = nlohmann::json::array({"Counter"});
+    Write(root, "car.abp", car);
+
+    const App::ContentSet content = App::BuildContentSet();
+
+    Fixture fixture;
+    fixture.Connect(content.paths);
+
+    REQUIRE_FALSE(fixture.guest.systems.Has("Counter"));
+
+    REQUIRE(App::SpawnBlueprint(fixture.host, "car.abp", {}).has_value());
+    fixture.Step(12);
+
+    // Queued, so it lands at the next safe point rather than mid-walk. The frame
+    // loop calls this at DrainMain; there is no frame loop here.
+    App::DrainSystemInstalls();
+
+    CHECK(fixture.guest.systems.Has("Counter"));
+    CHECK(fixture.host.systems.Has("Counter"));
 }
 
 TEST_CASE("Blueprint over the wire: a blueprint outside the content set still replicates")
