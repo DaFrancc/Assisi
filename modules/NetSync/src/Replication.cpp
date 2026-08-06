@@ -2002,7 +2002,14 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     std::set_difference(neededInstances.begin(), neededInstances.end(), connection.knownInstances.begin(),
                         connection.knownInstances.end(), std::back_inserter(freshInstances));
 
-    writer.WriteVarUInt32(static_cast<std::uint32_t>(freshInstances.size()));
+    // One bit, not a varint zero, when there is nothing to say. A game with no
+    // blueprint instances — or a steady state where every record is acked, which
+    // is nearly every snapshot — must not pay a byte per snapshot per connection
+    // for a feature it is not using. The empty-snapshot byte budget in
+    // TestRelevancy is what holds this honest.
+    writer.WriteBool(!freshInstances.empty());
+    if (!freshInstances.empty())
+        writer.WriteVarUInt32(static_cast<std::uint32_t>(freshInstances.size()));
     for (const ECS::InstanceId instanceId : freshInstances)
     {
         const InstanceBlock &block = _instanceBlocks.find(instanceId)->second;
@@ -2034,9 +2041,35 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     std::vector<NetId> despawns;
     std::set_difference(connection.acked.begin(), connection.acked.end(), effective.begin(), effective.end(),
                         std::back_inserter(despawns));
-    writer.WriteVarUInt32(static_cast<std::uint32_t>(despawns.size()));
+    // Run-length encoded, which is what the contiguous blocks buy: a destroyed
+    // car is one run rather than one varint per wheel, and a revoked instance
+    // leaving relevancy is the same shape. Ordinary entities rarely form runs
+    // and cost one extra byte each for the length — the trade is deliberate,
+    // since the case that matters is the one that scales with member count.
+    //
+    // `despawns` comes out of set_difference already ascending, which is what
+    // makes a single pass enough.
+    std::vector<std::pair<NetId, std::uint32_t>> despawnRuns;
     for (const NetId netId : despawns)
-        writer.WriteVarUInt32(netId.value); // wire write
+    {
+        if (!despawnRuns.empty())
+        {
+            auto &[start, length] = despawnRuns.back();
+            if (netId.value == start.value + length)
+            {
+                ++length;
+                continue;
+            }
+        }
+        despawnRuns.emplace_back(netId, 1u);
+    }
+
+    writer.WriteVarUInt32(static_cast<std::uint32_t>(despawnRuns.size()));
+    for (const auto &[start, length] : despawnRuns)
+    {
+        writer.WriteVarUInt32(start.value); // wire write
+        writer.WriteVarUInt32(length);
+    }
 
     // Collect, order, drain to a budget. The ordering is a Tribes-style priority
     // accumulator: every live entity gains max(Replicated::priority, eps) each
@@ -2577,7 +2610,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     // 7c. Until then a member block still arrives as an ordinary entity, so
     // reading this wrong is a desync of the whole stream rather than a missing
     // car, which is why it is bounded like every other count here.
-    const std::uint32_t recordCount = reader.ReadVarUInt32();
+    const std::uint32_t recordCount = reader.ReadBool() ? reader.ReadVarUInt32() : 0u;
     if (!reader.Ok() || recordCount > 65536u)
     {
         reader.Invalidate();
@@ -2612,6 +2645,8 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         _instanceRecords.insert_or_assign(entry.base, entry);
     }
 
+    // Runs, not ids — see the encoder. The count bounds the number of runs; each
+    // run's length is bounded separately below.
     const std::uint32_t despawnCount = reader.ReadVarUInt32();
     if (!reader.Ok() || despawnCount > 65536u)
     {
@@ -2620,17 +2655,37 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     }
     for (std::uint32_t i = 0; i < despawnCount; ++i)
     {
-        const NetId netId = NetId{reader.ReadVarUInt32()}; // wire read
-        if (!reader.Ok())
-            return false;
-
-        const auto it = _entityByNetId.find(netId);
-        if (it != _entityByNetId.end())
+        const NetId         start  = NetId{reader.ReadVarUInt32()}; // wire read
+        const std::uint32_t length = reader.ReadVarUInt32();
+        // Bounded like every other count on this path: the run is attacker-
+        // controlled, and an unchecked length here is a loop the packet dictates
+        // the size of.
+        if (!reader.Ok() || length == 0 || length > 65536u)
         {
+            reader.Invalidate();
+            return false;
+        }
+
+        for (std::uint32_t offset = 0; offset < length; ++offset)
+        {
+            const NetId netId{start.value + offset};
+            const auto  it = _entityByNetId.find(netId);
+            if (it == _entityByNetId.end())
+                continue; // a run may name ids this client never had
+
             _scene.Destroy(it->second);
             _entityByNetId.erase(it);
             DestroyMirrorBody(netId);
             ++_structureRevision;
+        }
+
+        // The record goes with the run when the run covers a whole instance. A
+        // client that kept it would compose members against an instance the
+        // server has stopped describing.
+        if (const auto record = _instanceRecords.find(start);
+            record != _instanceRecords.end() && record->second.memberCount == length)
+        {
+            _instanceRecords.erase(record);
         }
     }
 

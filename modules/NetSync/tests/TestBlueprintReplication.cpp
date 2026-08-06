@@ -304,6 +304,74 @@ TEST_CASE("Blueprint replication: the record survives a round trip and is idempo
     CHECK(entry.placement.position.x == doctest::Approx(1.f));
 }
 
+TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
+{
+    Net::NetTransport transport;
+    ECS::Scene        serverScene;
+    ECS::Scene        clientScene;
+    const auto        pair = transport.CreateLoopbackPair();
+
+    ReplicationServer server{transport, serverScene};
+    ReplicationClient client{transport, clientScene, pair.second};
+
+    auto  owned     = std::make_unique<FakeInstances>();
+    auto *instances = owned.get();
+    instances->Add(ECS::InstanceId{1}, 6);
+    server.SetInstanceInfoProvider(std::move(owned));
+
+    std::vector<ECS::Entity> members;
+    for (std::uint32_t index = 0; index < 6; ++index)
+    {
+        const ECS::Entity entity = serverScene.Create();
+        (void)serverScene.Add(entity, ECS::Transform{});
+        (void)serverScene.Add(entity, Replicated{});
+        (void)serverScene.Add(entity,
+                              ECS::BlueprintMember{.instanceId = ECS::InstanceId{1}, .memberIndex = index});
+        members.push_back(entity);
+    }
+
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
+    server.AddConnection(pair.first);
+
+    std::uint64_t tick = 1;
+    const auto    step = [&](int times)
+    {
+        for (int i = 0; i < times; ++i)
+        {
+            std::vector<Net::NetEvent> events;
+            transport.Poll(events);
+            for (const Net::NetEvent &event : events)
+            {
+                if (event.type != Net::NetEvent::Type::Message)
+                    continue;
+                if (event.connection == pair.first)
+                    server.HandleMessage(pair.first, event.payload);
+                else
+                    client.HandleMessage(event.payload);
+            }
+            server.Tick(tick++);
+        }
+    };
+
+    step(10);
+    REQUIRE(client.ReplicatedEntityCount() == 6);
+    REQUIRE(client.InstanceRecords().size() == 1);
+
+    for (const ECS::Entity member : members)
+        serverScene.Destroy(member);
+    serverScene.FlushDestroyed();
+
+    step(10);
+
+    // All six gone, and — the point of the run — the record went with them,
+    // because the run covered the whole block. A client holding a record for an
+    // instance the server no longer describes would compose future members
+    // against a placement nobody is maintaining.
+    CHECK(client.ReplicatedEntityCount() == 0);
+    CHECK(client.InstanceRecords().empty());
+}
+
 TEST_CASE("Blueprint replication: a block is allocated once and outlives the tick")
 {
     Fixture fixture;
