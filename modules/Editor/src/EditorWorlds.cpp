@@ -68,7 +68,15 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     }
 
     world.levelPath = virtualPath;
-    (void)_worlds.ApplySystems(world, header.systems, virtualPath);
+    // Same hard error as every other load: a world that cannot have the systems
+    // its level names must not go Active running none of them.
+    if (!_worlds.ApplySystems(world, header.systems, virtualPath))
+    {
+        Assisi::Core::Log::Error("Load as new world: '{}' names a system this build does not declare.",
+                                 virtualPath);
+        _worlds.Destroy(world.name);
+        return false;
+    }
     world.state     = Assisi::App::WorldState::Active;
     // A world created during play simulates immediately; one created while editing
     // stays frozen, because nothing outside the edited world has a restore story.

@@ -335,7 +335,13 @@ void EditorApp::StopPlay()
     if (_world != nullptr && (_world->levelPath != _prePlayLevelPath || _world->systemNames != _prePlaySystems))
     {
         _world->levelPath = _prePlayLevelPath;
-        (void)_worlds.ApplySystems(*_world, _prePlaySystems, _prePlayLevelPath);
+        // Restoring a list that already installed once, so a failure here means
+        // the catalog changed under a running session — nothing to abort, but
+        // the editor is now short the systems it had before play.
+        if (!_worlds.ApplySystems(*_world, _prePlaySystems, _prePlayLevelPath))
+        {
+            Assisi::Core::Log::Error("StopPlay: could not restore '{}'s systems.", _prePlayLevelPath);
+        }
     }
 
     SetPlayState(PlayState::Editing);

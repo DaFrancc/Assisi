@@ -201,7 +201,13 @@ class WorldManager
     ///         no systems rather than some. A half-installed world runs and looks
     ///         nearly right, which is the failure mode worth avoiding; the caller
     ///         refuses the load.
-    bool ApplySystems(World &world, std::span<const std::string> names, std::string_view context);
+    /// `[[nodiscard]]`, and it earned it: every caller but one was discarding the
+    /// result with `(void)`, so a level naming a system this build does not
+    /// declare loaded, went Active, and ran none of it — silently. Discarding is
+    /// still allowed where it is genuinely meaningless (an empty list), but it
+    /// now has to be written down rather than typed by habit.
+    [[nodiscard]] bool ApplySystems(World &world, std::span<const std::string> names,
+                                    std::string_view context);
 
     /// @brief Destroys the named world.
     ///
