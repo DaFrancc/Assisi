@@ -1519,6 +1519,37 @@ bool SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesystem::pat
     }
 }
 
+bool SceneSerializer::ReadLevelSystems(std::string_view assetPath, std::vector<std::string> &out)
+{
+    out.clear();
+
+    const auto text = Core::AssetSystem::ReadText(assetPath);
+    if (!text)
+    {
+        Core::Log::Error("SceneSerializer: cannot read asset '{}'", assetPath);
+        return false;
+    }
+
+    try
+    {
+        const nlohmann::json doc = nlohmann::json::parse(*text);
+        if (const auto it = doc.find("systems"); it != doc.end() && it->is_array())
+        {
+            for (const auto &name : *it)
+            {
+                if (name.is_string())
+                    out.push_back(name.get<std::string>());
+            }
+        }
+    }
+    catch (const std::exception &error)
+    {
+        Core::Log::Error("SceneSerializer: cannot parse '{}': {}", assetPath, error.what());
+        return false;
+    }
+    return true;
+}
+
 bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress,
                                    LevelHeader *header, InstanceTable *instances)
 {

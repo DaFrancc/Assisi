@@ -314,6 +314,19 @@ class SceneSerializer
     /// @param instances  Optional; forwarded to Load() (see it). A file with
     ///                   instances fails to load without one.
     /// @return true on success, false on any IO or parse error.
+    /// @brief The systems a level names, read **without** loading it.
+    ///
+    /// Exists because a load that fails after filling the scene cannot be undone.
+    /// The editor loads into the world it already has, so by the time an unknown
+    /// system name is discovered the previous level is already gone — refusing
+    /// then leaves a world holding new content and no systems, which is worse
+    /// than either outcome. Checking the names first is the only way to refuse
+    /// cleanly.
+    ///
+    /// @return false when the file cannot be read or parsed. An absent `systems`
+    ///   array is success with an empty list, which is the normal case.
+    [[nodiscard]] static bool ReadLevelSystems(std::string_view assetPath, std::vector<std::string> &out);
+
     static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress = {},
                              LevelHeader *header = nullptr, InstanceTable *instances = nullptr);
 
