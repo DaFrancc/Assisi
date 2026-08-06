@@ -70,6 +70,21 @@ World &WorldManager::Create(std::string_view label)
 
 bool WorldManager::ApplySystems(World &world, std::span<const std::string> names, std::string_view context)
 {
+    // **Resolve before destroying anything.** This used to clear first and find
+    // out afterwards, so a list with one bad name left the world running *no*
+    // systems — strictly worse than the state it was asked to replace, and worse
+    // than Install's own contract, which is already all-or-nothing. A failed call
+    // now leaves the running systems exactly as they were.
+    // The level's request is recorded whether or not it could be honoured — it is
+    // what a save round-trips, and a failed install must not rewrite the file.
+    // **Before** the guard below for exactly that reason: it records what the file
+    // asked for, which stays true no matter what could be installed.
+    world.systemNames.assign(names.begin(), names.end());
+
+    std::vector<const SystemDefinition *> resolved;
+    if (!SystemCatalog::Instance().Resolve(names, resolved, context))
+        return false;
+
     // Never stack one list on another: Register is append-only and a repeated
     // name binds every After()/Before() edge to the first entry, so re-targeting a
     // world (the editor opening another level into the one it edits) must start
@@ -83,14 +98,10 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // contact log nothing reads.
     world.physics.SetContactReporting(false);
 
-    // The level's request is recorded whether or not it could be honoured — it is
-    // what a save round-trips, and a failed install must not rewrite the file.
-    world.systemNames.assign(names.begin(), names.end());
-
-    if (names.empty())
-        return true; // a level that needs no systems is the normal case, not a warning
-
-    return SystemCatalog::Instance().Install(world, names, context);
+    // An empty list is the normal case, not a warning: the clear above is the
+    // whole job.
+    SystemCatalog::Instance().ApplyResolved(world, resolved);
+    return true;
 }
 
 void WorldManager::EraseWorld(World &world)
