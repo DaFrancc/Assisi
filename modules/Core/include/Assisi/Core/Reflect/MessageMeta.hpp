@@ -19,6 +19,7 @@
 /// field like any other field.
 
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <string>
 #include <typeindex>
@@ -35,11 +36,26 @@ namespace Assisi::Core::Reflect
 /// registry finalize — the same scheme, and the same safety argument, as
 /// `ComponentId`: the handshake refuses on a protocol-hash mismatch, and
 /// hash-equal builds have identical message sets and therefore identical ids.
-using MessageId = std::uint32_t;
+/// An aggregate, matching ComponentId and the NetSync ids: aggregate
+/// initialization (`MessageId{7}`) is the only way in, which is what blocks the
+/// implicit conversion in both directions. No arithmetic — the one place a
+/// count becomes an id is the registry's finalize loop, and it says so.
+///
+/// Note the sentinel differs from ComponentId's despite the shared scheme: zero
+/// is invalid *here*, because message ids start at one.
+struct MessageId
+{
+    std::uint32_t value = 0;
+
+    [[nodiscard]] constexpr bool IsValid() const { return value != 0; }
+
+    friend constexpr bool operator==(MessageId, MessageId)  = default;
+    friend constexpr auto operator<=>(MessageId, MessageId) = default;
+};
 
 /// @brief The never-valid MessageId. Zero, so a value-initialized id is invalid
 /// and dense ids start at one.
-inline constexpr MessageId kInvalidMessageId = 0;
+inline constexpr MessageId kInvalidMessageId{0};
 
 /// @brief Which way a message travels, and therefore who is allowed to send it.
 ///
@@ -119,3 +135,23 @@ template <typename T>
 struct MessageTraits;
 
 } // namespace Assisi::Core::Reflect
+
+/// Prints as the bare number, so a log line reads "message 7" without every
+/// call site spelling `.value`. Without it the type would be strictly worse to
+/// hold than the integer it replaces, which is how a good rule gets worked
+/// around.
+template <> struct std::formatter<Assisi::Core::Reflect::MessageId> : std::formatter<std::uint32_t>
+{
+    auto format(Assisi::Core::Reflect::MessageId id, std::format_context &ctx) const
+    {
+        return std::formatter<std::uint32_t>::format(id.value, ctx);
+    }
+};
+
+template <> struct std::hash<Assisi::Core::Reflect::MessageId>
+{
+    [[nodiscard]] std::size_t operator()(Assisi::Core::Reflect::MessageId id) const noexcept
+    {
+        return std::hash<std::uint32_t>{}(id.value);
+    }
+};

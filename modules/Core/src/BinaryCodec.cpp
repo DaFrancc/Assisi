@@ -632,7 +632,7 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
     // wherever the previous one ended, so byte-aligning it to make the prefix
     // prettier would cost up to seven bits per message for nothing.
     const std::size_t bodyBits = body.BitsWritten();
-    writer.WriteVarUInt32(meta.id);
+    writer.WriteVarUInt32(meta.id.value); // wire write
     writer.WriteVarUInt32(static_cast<std::uint32_t>(bodyBits));
 
     BitReader   copy(body.Data());
@@ -648,7 +648,7 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
 
 MessageId ReadMessageId(BitReader &reader)
 {
-    const MessageId id = reader.ReadVarUInt32();
+    const MessageId id{reader.ReadVarUInt32()}; // wire read
     return reader.Failed() ? kInvalidMessageId : id;
 }
 
@@ -856,7 +856,7 @@ std::string MessageLayoutDescription(std::span<const MessageMeta> messages)
 
     for (const MessageMeta &meta : messages)
     {
-        text += std::to_string(meta.id);
+        text += std::to_string(meta.id.value); // hashed layout text
         text += ' ';
         text += meta.name;
 

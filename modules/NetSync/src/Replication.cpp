@@ -2311,7 +2311,7 @@ void ReplicationClient::HandleAnnouncement(Core::BitReader &reader)
     // Re-encode the id in front of the body so DispatchEvent sees the same shape
     // it sees in the snapshot section.
     Core::BitWriter body;
-    body.WriteVarUInt32(pending.messageId);
+    body.WriteVarUInt32(pending.messageId.value); // wire write
     const std::uint32_t bodyBits = reader.ReadVarUInt32();
     body.WriteVarUInt32(bodyBits);
     std::size_t remaining = bodyBits;
