@@ -42,15 +42,16 @@ void InputDemoSystem(Assisi::App::SystemContext &ctx)
                                 ctx.isActiveWorld);
     }
 
-    // F3 drops a Bouncer. It is a blueprint whose only member is replicated, so
-    // on a host this is the shortest path to watching a spawned instance reach a
-    // client — record, block, expansion and all.
-    //
-    // **Spawns into whatever world this system is running in**, which is the
-    // authority's on a host and a *mirror* on a client. On a mirror the entity is
-    // local-only: it will not replicate anywhere, and the server will despawn
-    // nothing because it never knew about it. That is worth knowing before
-    // reading anything into what a client sees after pressing this.
+}
+
+void BouncerSpawnSystem(Assisi::App::SystemContext &ctx)
+{
+    if (ctx.input == nullptr) // headless host: no devices to read
+        return;
+
+    // Bouncer's only member is replicated, so on a host this is the shortest
+    // path to watching a spawned instance reach a client — record, block,
+    // expansion and all. See the header for what it does *not* prove.
     if (ctx.input->IsKeyPressed(Assisi::Window::Key::F3))
     {
         Assisi::ECS::Transform at;

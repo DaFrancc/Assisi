@@ -33,4 +33,19 @@ ASYSTEM(Update, name = "SpinDemo") void SpinDemoSystem(Assisi::App::SystemContex
 ASYSTEM(Update, name = "InputDemo", after = SpinDemo, activeWorldOnly)
 void InputDemoSystem(Assisi::App::SystemContext &ctx);
 
+/// Drops a Bouncer on F3. Its own system rather than a branch inside InputDemo,
+/// because a level that wants this does not thereby want the space-bar logger,
+/// and naming behaviour one piece at a time is the whole point of the systems
+/// list replacing profiles.
+///
+/// `activeWorldOnly`, and it null-checks input regardless: a headless host has
+/// no devices, so this is inert there even when a level names it.
+///
+/// **Spawns into the world it runs in.** On a client that world is a mirror and
+/// the entity is local-only — it replicates nowhere and the server never learns
+/// of it. Watching a Bouncer reach a client means pressing this on the
+/// authority.
+ASYSTEM(Update, name = "BouncerSpawn", after = SpinDemo, activeWorldOnly)
+void BouncerSpawnSystem(Assisi::App::SystemContext &ctx);
+
 } // namespace Sandbox
