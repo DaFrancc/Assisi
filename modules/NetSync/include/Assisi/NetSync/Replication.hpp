@@ -1294,14 +1294,22 @@ class InstanceExpander
     InstanceExpander &operator=(const InstanceExpander &) = delete;
 
     /// @brief Expand @p record locally, appending its members to @p out **in
-    /// member order** — the order `baseNetId + i` indexes.
+    /// member order** — the order `baseNetId + i` indexes — and reporting the
+    /// local instance id it created in @p outInstance.
+    ///
+    /// The id is what closes the tag's translation. A `BlueprintMember` arriving
+    /// over the wire carries the *server's* instance id, which names nothing
+    /// here; the codec rewrites it through this, so the tag means the same thing
+    /// on both machines. An expander that has no instance table may leave
+    /// @p outInstance default and the tag will simply stay unresolved.
     ///
     /// Returning false, or the wrong number of members, is fatal to the session
     /// rather than survivable: the client would otherwise bind member ids to the
     /// wrong entities and every later delta would land on the wrong one. A
     /// blueprint that fails to expand here has already passed the content-set
     /// hash, so this is a real disagreement about the file, not a missing asset.
-    [[nodiscard]] virtual bool Expand(const InstanceRecord &record, std::vector<ECS::Entity> &out) = 0;
+    [[nodiscard]] virtual bool Expand(const InstanceRecord &record, std::vector<ECS::Entity> &out,
+                                      ECS::InstanceId &outInstance) = 0;
 };
 
 class ReplicationClient
@@ -1762,6 +1770,11 @@ class ReplicationClient
     std::unordered_map<NetId, InstanceRecord>            _instanceRecords;
 
     std::unique_ptr<InstanceExpander>                    _instanceExpander;
+
+    /// Base NetId → the local instance id the expander made for it. What
+    /// `instanceFromWire` reads, so a replicated BlueprintMember tag names this
+    /// machine's instance rather than the server's.
+    std::unordered_map<NetId, ECS::InstanceId>           _instanceIdByBase;
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
     std::vector<PendingRef>                              _pendingRefs;

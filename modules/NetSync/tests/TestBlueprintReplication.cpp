@@ -314,11 +314,15 @@ class FakeExpander final : public InstanceExpander
   public:
     explicit FakeExpander(std::uint32_t produce = 0) : _produce(produce) {}
 
-    [[nodiscard]] bool Expand(const InstanceRecord &record, std::vector<ECS::Entity> &out) override
+    [[nodiscard]] bool Expand(const InstanceRecord &record, std::vector<ECS::Entity> &out,
+                              ECS::InstanceId &outInstance) override
     {
         ++calls;
         if (fail)
             return false;
+        // A local id of this machine's own choosing — deliberately not the
+        // server's, which is the whole point of the translation.
+        outInstance = ECS::InstanceId{100u + static_cast<std::uint32_t>(calls)};
         const std::uint32_t count = _produce != 0 ? _produce : record.memberCount;
         for (std::uint32_t i = 0; i < count; ++i)
         {
@@ -400,6 +404,72 @@ TEST_CASE("Blueprint replication: the client expands a record into bound members
         CHECK(mirror != ECS::NullEntity);
         CHECK(clientScene.IsAlive(mirror));
     }
+}
+
+TEST_CASE("Blueprint replication: a replicated tag names the client's instance, not the server's")
+{
+    Net::NetTransport transport;
+    ECS::Scene        serverScene;
+    ECS::Scene        clientScene;
+    const auto        pair = transport.CreateLoopbackPair();
+
+    ReplicationServer server{transport, serverScene};
+    ReplicationClient client{transport, clientScene, pair.second};
+
+    // A server-side id chosen to be nothing the client would produce, so a tag
+    // that crossed untranslated is visible rather than coincidentally right.
+    const ECS::InstanceId serverInstance{7};
+
+    auto ownedInfo = std::make_unique<FakeInstances>();
+    ownedInfo->Add(serverInstance, 2);
+    server.SetInstanceInfoProvider(std::move(ownedInfo));
+
+    auto  ownedExpander = std::make_unique<FakeExpander>();
+    auto *expander      = ownedExpander.get();
+    expander->scene     = &clientScene;
+    client.SetInstanceExpander(std::move(ownedExpander));
+
+    for (std::uint32_t index = 0; index < 2; ++index)
+    {
+        const ECS::Entity entity = serverScene.Create();
+        (void)serverScene.Add(entity, ECS::Transform{});
+        (void)serverScene.Add(entity, Replicated{});
+        (void)serverScene.Add(entity, ECS::BlueprintMember{.instanceId = serverInstance, .memberIndex = index});
+    }
+
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
+    server.AddConnection(pair.first);
+
+    std::uint64_t tick = 1;
+    for (int i = 0; i < 12; ++i)
+    {
+        std::vector<Net::NetEvent> events;
+        transport.Poll(events);
+        for (const Net::NetEvent &event : events)
+        {
+            if (event.type != Net::NetEvent::Type::Message)
+                continue;
+            if (event.connection == pair.first)
+                server.HandleMessage(pair.first, event.payload);
+            else
+                client.HandleMessage(event.payload);
+        }
+        server.Tick(tick++);
+    }
+
+    const InstanceRecord &entry  = client.InstanceRecords().begin()->second;
+    const ECS::Entity     mirror = client.EntityOf(entry.base);
+    REQUIRE(mirror != ECS::NullEntity);
+
+    const ECS::BlueprintMember *tag = clientScene.Get<ECS::BlueprintMember>(mirror);
+    REQUIRE(tag != nullptr);
+
+    // The hole this closes: before the codec hooks, the tag arrived carrying the
+    // server's per-world counter, which names nothing here.
+    CHECK(tag->instanceId != serverInstance);
+    CHECK(tag->instanceId == ECS::InstanceId{101});
+    CHECK(tag->memberIndex == 0);
 }
 
 TEST_CASE("Blueprint replication: an expansion that comes up short is refused")

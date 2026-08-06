@@ -1760,6 +1760,16 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         return referenced.value; // wire boundary
     };
 
+    // A BlueprintMember's instanceId is per-world and per-machine, so it is
+    // rewritten to the instance's base NetId on the way out and back to the
+    // peer's own id on the way in. Without this the tag replicates as a number
+    // that names nothing on the far side.
+    context.instanceToWire = [this](std::uint32_t instanceId) -> std::uint32_t
+    {
+        const auto block = _instanceBlocks.find(ECS::InstanceId{instanceId});
+        return block == _instanceBlocks.end() ? 0u : block->second.base.value;
+    };
+
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
 
     // This entity's own policy, read live. There is deliberately no cache: the
@@ -2648,7 +2658,8 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             continue;
 
         std::vector<ECS::Entity> members;
-        if (!_instanceExpander->Expand(entry, members) || members.size() != entry.memberCount)
+        ECS::InstanceId          localInstance;
+        if (!_instanceExpander->Expand(entry, members, localInstance) || members.size() != entry.memberCount)
         {
             // Fatal, not survivable. Binding a short or failed expansion would
             // attach member ids to the wrong entities, and every delta after
@@ -2668,6 +2679,8 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             // the server never sends a member list.
             _entityByNetId.insert_or_assign(NetId{entry.base.value + member}, members[member]);
         }
+        if (localInstance.IsValid())
+            _instanceIdByBase.insert_or_assign(entry.base, localInstance);
         ++_structureRevision;
     }
 
@@ -2747,6 +2760,16 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         }
         refSites.push_back(RefSite{netId, true});
         return PackEntity(it->second);
+    };
+
+    // The other half of the tag's translation: what arrives is the instance's
+    // base NetId, and what this machine stores is its own instance id. Zero when
+    // the instance was never expanded here, which leaves the tag invalid rather
+    // than pointing at an unrelated local instance.
+    context.instanceFromWire = [this](std::uint32_t base) -> std::uint32_t
+    {
+        const auto local = _instanceIdByBase.find(NetId{base});
+        return local == _instanceIdByBase.end() ? 0u : local->second.value;
     };
 
     while (reader.Ok() && reader.ReadBool())
