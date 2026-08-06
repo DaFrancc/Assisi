@@ -98,11 +98,14 @@ TEST_CASE("message ids are dense, alphabetical, and never zero")
     const MessageRegistry &registry = MessageRegistry::Instance();
     REQUIRE(registry.Count() >= 4);
 
-    MessageId expected = 1;
-    std::string previousName;
+    // A raw counter rather than a MessageId, for the reason MessageId has no
+    // arithmetic: what this walks is the sequence 1, 2, 3…, and the claim under
+    // test is that the ids happen to be it.
+    std::uint32_t expected = 1;
+    std::string   previousName;
     for (const MessageMeta &meta : registry.All())
     {
-        CHECK(meta.id == expected);
+        CHECK(meta.id == MessageId{expected});
         // Zero has to stay invalid so a value-initialized id claims nothing,
         // matching every other id in the engine.
         CHECK(meta.id != kInvalidMessageId);
@@ -117,7 +120,7 @@ TEST_CASE("message ids are dense, alphabetical, and never zero")
     }
 
     CHECK(registry.ById(kInvalidMessageId) == nullptr);
-    CHECK(registry.ById(static_cast<MessageId>(registry.Count() + 1)) == nullptr);
+    CHECK(registry.ById(MessageId{static_cast<std::uint32_t>(registry.Count() + 1)}) == nullptr);
     CHECK(registry.IdOf(typeid(NotAMessage)) == kInvalidMessageId);
 }
 

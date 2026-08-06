@@ -66,7 +66,10 @@ void MessageRegistry::EnsureFinalized() const
     // every other id in the engine.
     for (std::size_t i = 0; i < _metas.size(); ++i)
     {
-        _metas[i].id = static_cast<MessageId>(i + 1);
+        // Braced rather than a cast: this is the one place a count becomes an
+        // id, and braces refuse the narrowing that static_cast would perform
+        // silently. One-based, so zero stays the value nothing ever has.
+        _metas[i].id = MessageId{static_cast<std::uint32_t>(i + 1)};
         _idByType.emplace(_metas[i].typeIndex, _metas[i].id);
     }
 
@@ -109,9 +112,11 @@ MessageId MessageRegistry::IdOf(std::string_view name) const
 const MessageMeta *MessageRegistry::ById(MessageId id) const
 {
     EnsureFinalized();
-    if (id == kInvalidMessageId || id > _metas.size())
+    // .value: ids are dense and one-based, so this is an array index, not an
+    // identity comparison.
+    if (id == kInvalidMessageId || id.value > _metas.size())
         return nullptr;
-    return &_metas[id - 1];
+    return &_metas[id.value - 1];
 }
 
 } // namespace Assisi::Core::Reflect
