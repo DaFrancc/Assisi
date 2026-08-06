@@ -210,6 +210,88 @@ TEST_CASE("Blueprint over the wire: the guest's tag names the guest's instance")
     }
 }
 
+TEST_CASE("Blueprint over the wire: an untouched member costs no component bytes")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+    const App::ContentSet content = App::BuildContentSet();
+
+    // The same world, spawned the same way, twice — once with the manifest and
+    // once without. The difference is the whole point of the design, so it is
+    // measured rather than asserted.
+    const auto bytesFor = [&](const std::vector<std::string> &manifest, bool moveOne)
+    {
+        Fixture fixture;
+        fixture.Connect(manifest);
+
+        const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(fixture.host, "car.abp", {});
+        REQUIRE(id.has_value());
+
+        if (moveOne)
+        {
+            // One member differs from the file, so it must still travel.
+            const ECS::Entity body = App::FindMember(fixture.host, *id, "body");
+            REQUIRE(body != ECS::NullEntity);
+            ECS::Transform *pose = fixture.host.scene.GetMut<ECS::Transform>(body);
+            REQUIRE(pose != nullptr);
+            pose->position.y = 42.f;
+            // GetMut already stamps the change tick.
+        }
+
+        fixture.Step(14);
+        CHECK(fixture.client.ReplicatedEntityCount() == 3);
+        const NetSync::ConnectionDiagnostics *stats = fixture.server.Diagnostics(fixture.pair.first);
+        REQUIRE(stats != nullptr);
+        return stats->bytesSent;
+    };
+
+    const std::uint64_t derived = bytesFor(content.paths, /*moveOne=*/false);
+    const std::uint64_t sent    = bytesFor({}, /*moveOne=*/false);
+
+    // The members are identical to the file, so with a manifest their components
+    // are not on the wire at all — the client already has them.
+    CHECK(derived < sent);
+
+    // ...and a member that actually differs is not elided, or the mirror would
+    // be quietly wrong.
+    const std::uint64_t withEdit = bytesFor(content.paths, /*moveOne=*/true);
+    CHECK(withEdit > derived);
+}
+
+TEST_CASE("Blueprint over the wire: an edited member still arrives edited")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+    const App::ContentSet content = App::BuildContentSet();
+
+    Fixture fixture;
+    fixture.Connect(content.paths);
+
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(fixture.host, "car.abp", {});
+    REQUIRE(id.has_value());
+
+    const ECS::Entity wheel = App::FindMember(fixture.host, *id, "wheel_l");
+    REQUIRE(wheel != ECS::NullEntity);
+    ECS::Transform *pose = fixture.host.scene.GetMut<ECS::Transform>(wheel);
+    REQUIRE(pose != nullptr);
+    pose->position.y = 7.5f;
+    // GetMut already stamps the change tick.
+
+    fixture.Step(14);
+
+    const auto rows = fixture.guest.instances.All();
+    REQUIRE(rows.size() == 1);
+    const ECS::Entity mirror = App::FindMember(fixture.guest, rows[0].first, "wheel_l");
+    REQUIRE(mirror != ECS::NullEntity);
+
+    // The elision is by value, so a member that stopped matching the file is
+    // sent — this is the assertion that would fail if the skip were driven by a
+    // change tick that happened to predate the spawn.
+    const ECS::Transform *mirrored = fixture.guest.scene.Get<ECS::Transform>(mirror);
+    REQUIRE(mirrored != nullptr);
+    CHECK(mirrored->position.y == doctest::Approx(7.5f));
+}
+
 TEST_CASE("Blueprint over the wire: a blueprint outside the content set still replicates")
 {
     const std::filesystem::path root = FreshRoot();

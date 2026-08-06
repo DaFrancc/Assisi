@@ -2,7 +2,10 @@
 
 #include <Assisi/App/BlueprintReplication.hpp>
 
+#include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Core/Reflect/BinaryCodec.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/NetSync/Replication.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -65,6 +68,55 @@ class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
         out.memberCount    = static_cast<std::uint32_t>(definition->members.size());
         out.placement      = row->transform;
         return true;
+    }
+
+    [[nodiscard]] bool MatchesAuthored(ECS::InstanceId instanceId, std::uint32_t memberIndex,
+                                       Core::Reflect::ComponentId id, const void *component) override
+    {
+        const Runtime::BlueprintInstance *row = _world.instances.Find(instanceId);
+        if (row == nullptr)
+            return false;
+
+        const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(row->source);
+        if (definition == nullptr || memberIndex >= definition->members.size())
+            return false;
+
+        // An overridden member is not the file's member. The override is recorded
+        // in the *level*, which a client joining mid-session never read, so its
+        // expansion produced the file's value and the override has to travel as
+        // ordinary state.
+        if (row->overrides.contains(definition->members[memberIndex].name))
+            return false;
+
+        // The prepared block is exactly what the client decoded when it expanded,
+        // so comparing against it compares against what the far side actually
+        // holds — not against a re-derivation that could drift from it.
+        const std::vector<std::byte> *authored = nullptr;
+        for (const Runtime::PreparedComponent &prepared : definition->members[memberIndex].prepared)
+        {
+            if (prepared.id == id)
+            {
+                authored = &prepared.block;
+                break;
+            }
+        }
+        if (authored == nullptr)
+            return false; // the blueprint does not declare it; the client cannot have derived it
+
+        const Core::Reflect::ComponentMeta *meta = Core::Reflect::ComponentRegistry::Instance().ById(id);
+        if (meta == nullptr)
+            return false;
+
+        // Encoded the same way the prepared form was, with no codec context:
+        // a component holding an entity reference encodes a local handle here and
+        // a *member index* there, so it can never compare equal and simply
+        // travels as state. Correct, and the case is rare enough not to chase.
+        Core::BitWriter live;
+        if (!Core::Reflect::WriteComponent(*meta, component, live, Core::Reflect::kAllFields, nullptr))
+            return false;
+
+        return live.Data().size() == authored->size() &&
+               std::equal(authored->begin(), authored->end(), live.Data().begin());
     }
 
   private:

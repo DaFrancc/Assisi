@@ -1885,6 +1885,10 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     // no body state, leaving the mirror frozen at its load pose.
     const bool bodied = ReplicatesAsBody(entity, excluded);
 
+    // Read once rather than per component: the blueprint baseline below needs it
+    // for every component this entity has.
+    const ECS::BlueprintMember *memberTag = _scene.Get<ECS::BlueprintMember>(entity);
+
     for (std::size_t slot = 0; slot < _replicatedComponents.size(); ++slot)
     {
         if (excluded.Test(_replicatedOrdinals[slot]))
@@ -1918,6 +1922,21 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         // point of not having a separate full-state message.
         if (sinceChangeTick != 0 && clientHasIt && !_scene.ChangedById(entity, id, sinceChangeTick))
             continue;
+
+        // The blueprint baseline. On the empty baseline a member does not start
+        // from nothing on the far side — the client expanded the same file — so
+        // a component still holding its authored value is already correct there.
+        //
+        // Deliberately not recorded as absent: `outComponents` above still lists
+        // it, because the client really does have it. Treating it as missing
+        // would make the removal diff announce a removal for a component nobody
+        // removed.
+        if (sinceChangeTick == 0 && !clientHasIt && memberTag != nullptr && _instanceInfo != nullptr &&
+            _instanceBlocks.contains(memberTag->instanceId) &&
+            _instanceInfo->MatchesAuthored(memberTag->instanceId, memberTag->memberIndex, id, component))
+        {
+            continue;
+        }
 
         // ...and on that empty baseline a bodied entity's Transform still goes,
         // because it carries scale and the initial placement the client builds
