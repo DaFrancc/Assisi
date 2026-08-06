@@ -3,6 +3,7 @@
 
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
 #include <utility>
@@ -163,6 +164,25 @@ void DrainSystemInstalls()
 void CancelSystemInstalls(const World &world)
 {
     std::erase_if(Pending(), [&world](const PendingInstall &pending) { return pending.world == &world; });
+}
+
+bool LevelSystemsAreDeclared(std::string_view virtualPath)
+{
+    std::vector<std::string> wanted;
+    if (!Runtime::SceneSerializer::ReadLevelSystems(virtualPath, wanted))
+        return false;
+
+    // Every offender, not just the first: a file with three bad names should
+    // need one run to fix, not three.
+    bool ok = true;
+    for (const std::string &name : wanted)
+    {
+        if (SystemCatalog::Instance().Find(name) != nullptr)
+            continue;
+        Core::Log::Error("'{}' names system '{}', which this build does not declare.", virtualPath, name);
+        ok = false;
+    }
+    return ok;
 }
 
 } // namespace Assisi::App

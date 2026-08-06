@@ -129,6 +129,20 @@ void QueueSystemInstall(World &world, std::span<const std::string> names, std::s
 /// streaming ever arrives.
 void DrainSystemInstalls();
 
+/// @brief True when every system the level at @p virtualPath names is declared
+/// by this build. Logs each offender.
+///
+/// Reads the file's system list *without* loading it, so a caller can refuse
+/// before replacing a scene it cannot put back. Every load path wants this,
+/// including the headless server: a dedicated server that installs no systems
+/// still must not accept a file naming behaviour this build cannot supply —
+/// silently serving a level it cannot run is the same failure as the editor
+/// silently opening one.
+///
+/// A file that cannot be read or parsed is *not* declared valid: the caller
+/// gets false and the read logs why.
+[[nodiscard]] bool LevelSystemsAreDeclared(std::string_view virtualPath);
+
 /// @brief Drops every queued install without applying it. For a world that is
 /// about to be destroyed, whose queue entries would otherwise name freed memory.
 void CancelSystemInstalls(const World &world);

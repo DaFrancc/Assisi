@@ -716,20 +716,10 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // content with none of its behaviour, and the level it replaced is already
     // gone. Checked before ShutdownNetSession for the same reason — a refused
     // load must not have ended the session on the way to refusing.
+    if (!Assisi::App::LevelSystemsAreDeclared(virtualPath))
     {
-        std::vector<std::string> wanted;
-        if (!Assisi::Runtime::SceneSerializer::ReadLevelSystems(virtualPath, wanted))
-            return false;
-
-        for (const std::string &name : wanted)
-        {
-            if (Assisi::App::SystemCatalog::Instance().Find(name) != nullptr)
-                continue;
-            Assisi::Core::Log::Error("Editor: '{}' names system '{}', which this build does not declare — "
-                                     "refusing to open it.",
-                                     virtualPath, name);
-            return false;
-        }
+        Assisi::Core::Log::Error("Editor: refusing to open '{}'.", virtualPath);
+        return false;
     }
 
     ShutdownNetSession();
