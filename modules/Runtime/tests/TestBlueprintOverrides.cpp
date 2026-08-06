@@ -28,6 +28,7 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -321,6 +322,123 @@ TEST_CASE("Overrides: a nested file's own claims are baked into its member list"
     REQUIRE(definition->members.size() == 1);
     CHECK(definition->members[0].name == "car_1/body");
     CHECK(definition->members[0].components.at("Camera").at("fovDegrees").get<float>() == doctest::Approx(21.f));
+}
+
+// ---------------------------------------------------------------------------
+// Reference scope (§6): one rule, two namespaces.
+//
+//   no leading slash -> the namespace of the thing being addressed
+//   leading slash    -> the namespace of the file that wrote the text
+//
+// For a component authored in its own file those are the same namespace, which
+// is why ordinary files never need the slash. They diverge for an override,
+// where the writer and the target are different files.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("References: a level's override reaches its own entities through a leading slash")
+{
+    const std::filesystem::path root = FreshRoot("refs_level");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({{{"name", "spawn_marker"}}})},
+           {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                 {"source", "car.abp"},
+                                                 // Written by the level, so '/' is the level's scope.
+                                                 {"overrides",
+                                                  {{"wheel_fl", {{"Parent", {{"parent", "/spawn_marker"}}}}}}}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    ECS::Entity marker = ECS::NullEntity;
+    for (auto [entity, name] : scene.Query<Runtime::Name>())
+    {
+        if (name.value.View() == "spawn_marker")
+            marker = entity;
+    }
+    REQUIRE(marker != ECS::NullEntity);
+
+    // Not car_3/spawn_marker, which does not exist and would refuse the file.
+    const Runtime::Parent *parent =
+        scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
+    REQUIRE(parent != nullptr);
+    CHECK(parent->parent == marker);
+}
+
+TEST_CASE("References: a nested file's override resolves in that file, not the instance")
+{
+    const std::filesystem::path root = FreshRoot("refs_nested");
+    Write(root, "car.abp", CarFile());
+    // The antenna belongs to this file, and this file writes the claim — so '/'
+    // means here, one level below whatever ends up instancing it.
+    Write(root, "car_with_antenna.abp",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({{{"name", "antenna"}}})},
+           {"instances", nlohmann::json::array({{{"name", "car"},
+                                                 {"source", "car.abp"},
+                                                 {"overrides",
+                                                  {{"wheel_fl", {{"Parent", {{"parent", "/antenna"}}}}}}}}})}});
+    // Wrapped one level deeper on purpose. With car_with_antenna.abp as the root of
+    // its own definition its scope and the definition root coincide, and an
+    // unqualified '/antenna' resolves correctly by accident — the degenerate input
+    // this bug hides behind. Nesting it under a garage makes the writing file's
+    // scope `rig/`, which is the thing that has to be remembered.
+    Write(root, "garage.abp",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "rig"}, {"source", "car_with_antenna.abp"}}})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "g"}, {"source", "garage.abp"}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    const ECS::Entity antenna = MemberOf(scene, table, ECS::InstanceId{1}, "rig/antenna");
+    REQUIRE(antenna != ECS::NullEntity);
+
+    const Runtime::Parent *parent =
+        scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "rig/car/wheel_fl"));
+    REQUIRE(parent != nullptr);
+    CHECK(parent->parent == antenna);
+}
+
+TEST_CASE("References: inside a file, a leading slash and a plain name mean the same thing")
+{
+    const std::filesystem::path root = FreshRoot("refs_selfscope");
+    // Authored in car.abp's own entity, so the writing file and the addressed file
+    // are one and the same. This is the case that makes the '/' marker unambiguous
+    // downstream: it has to be resolved away at flatten, or a level-scoped
+    // reference and a file's own reference arrive at expansion looking identical.
+    Write(root, "slashy.abp",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({{{"name", "body"}},
+                                               {{"name", "wheel_fl"},
+                                                {"components", {{"Parent", {{"parent", "/body"}}}}}}})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "s"}, {"source", "slashy.abp"}}})}});
+
+    const BlueprintDefinition *definition = Runtime::GetBlueprintDefinition("slashy.abp");
+    REQUIRE(definition != nullptr);
+    const std::optional<uint32_t> wheel = definition->IndexOf("wheel_fl");
+    REQUIRE(wheel.has_value());
+    // Resolved at flatten: no slash survives into the definition.
+    CHECK(definition->members[*wheel].components.at("Parent").at("parent").get<std::string>() == "body");
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    const Runtime::Parent *parent =
+        scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
+    REQUIRE(parent != nullptr);
+    CHECK(parent->parent == MemberOf(scene, table, ECS::InstanceId{1}, "body"));
 }
 
 TEST_CASE("Overrides: a save writes back what was read, and reloading gives the same world")

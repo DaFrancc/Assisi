@@ -384,13 +384,43 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// answered first. Applied once per nesting level at flatten time and once more
 /// for the instance's own name at expansion.
 ///
-/// A leading `/` on a name means "the file that wrote this", which for a
-/// reference authored inside the file *is* that file, so it is stripped and the
-/// name prefixed like any other. The two only diverge for an override, where the
-/// writing file and the file being addressed are different (§6).
+/// **One rule, two namespaces (§6).** A name with no leading `/` resolves in the
+/// namespace of the thing being addressed; a leading `/` resolves in the namespace
+/// of the file that *wrote the text*. For a reference authored inside its own file
+/// those are the same namespace, which is why ordinary files never need the slash.
+/// They diverge for an override, where writer and target are different files —
+/// QualifyOverrideReferences is that case, and the only one.
 ///
-/// No-op for an empty prefix, and for any field whose value is not a string.
+/// **The invariant the rest of the system rests on:** after flatten, a reference
+/// carries a leading `/` *if and only if* it is level-scoped. Everything a
+/// blueprint could resolve — its own entities' references, and any override it
+/// writes on a nested instance — is fully resolved into definition space with no
+/// slash left. That is why this runs even at an empty prefix, where all it does is
+/// strip the slash: without that strip a top-level file's own `/body` reaches
+/// expansion looking exactly like a level-scoped one and meaning the opposite.
+///
+/// No-op for any field whose value is not a string.
 void QualifyReferences(nlohmann::json &components, std::string_view prefix);
+
+/// @brief Resolves an override's references, where two namespaces are both live.
+///
+/// A plain name addresses downward into the instance being overridden
+/// (@p targetPrefix); a leading `/` addresses the file that wrote the claim
+/// (@p writerPrefix). Both come out fully qualified into definition space, so the
+/// invariant above holds and nothing downstream needs to know which form was used.
+///
+/// Called where both prefixes are still in scope — one step later the writing
+/// file's identity is gone and the two cases are indistinguishable.
+void QualifyOverrideReferences(nlohmann::json &componentOverrides, std::string_view writerPrefix,
+                               std::string_view targetPrefix);
+
+/// @brief Resolves a definition's references against the instance being expanded.
+///
+/// The other side of the invariant: by expansion time every reference a blueprint
+/// could resolve already is, so a surviving leading `/` can only be level-scoped —
+/// an entity of the file that placed this instance. It keeps its bare name and
+/// does *not* take the instance prefix. Everything else addresses downward and does.
+void QualifyInstanceReferences(nlohmann::json &components, std::string_view prefix);
 
 /// @brief Merges one member's component overrides into its description.
 ///

@@ -705,11 +705,11 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
                     continue;
                 }
 
-                // Qualified through a one-key wrapper because QualifyReferences
-                // takes a component *set* — it has to look the component up to
-                // know which of its fields are references.
+                // Qualified through a one-key wrapper because the qualifier takes a
+                // component *set* — it has to look the component up to know which of
+                // its fields are references.
                 nlohmann::json wrapper{{componentName, componentData}};
-                QualifyReferences(wrapper, prefix);
+                QualifyInstanceReferences(wrapper, prefix);
                 meta->addToScene(&scene, e.index, e.generation, wrapper.at(componentName));
             }
         }
