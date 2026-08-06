@@ -6,6 +6,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/DistanceRelevancy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
@@ -478,13 +479,68 @@ NetId ReplicationServer::EnsureNetId(ECS::Entity entity)
     if (!_scene.Has<Replicated>(entity))
         return InvalidNetId;
 
-    // The one place that turns a raw counter into an id — see _nextNetId.
-    const NetId netId{_nextNetId++};
+    // A blueprint member takes its id from its instance's block, so that every
+    // member is derivable from one base and one record can stand in for all of
+    // them. Falls through to the counter when there is no instance to describe.
+    NetId netId = EnsureInstanceBlock(entity);
+    if (netId == InvalidNetId)
+        netId = NetId{_nextNetId++}; // turns a raw counter into an id — see _nextNetId
+
     _netIdByEntity.emplace(PackEntity(entity), netId);
     _entityByNetId.emplace(netId, entity);
-    // Ids only ever climb, so the live set stays sorted by appending.
-    _liveNetIds.push_back(netId);
+
+    // Sorted insert rather than an append. Ids no longer only climb: a block is
+    // reserved whole, so member 0 can be assigned after member 2 and take a
+    // lower id than one already in the list.
+    _liveNetIds.insert(std::lower_bound(_liveNetIds.begin(), _liveNetIds.end(), netId), netId);
     return netId;
+}
+
+NetId ReplicationServer::EnsureInstanceBlock(ECS::Entity entity)
+{
+    if (_instanceInfo == nullptr)
+        return InvalidNetId;
+
+    const ECS::BlueprintMember *tag = _scene.Get<ECS::BlueprintMember>(entity);
+    if (tag == nullptr || !tag->instanceId.IsValid())
+        return InvalidNetId;
+
+    auto it = _instanceBlocks.find(tag->instanceId);
+    if (it == _instanceBlocks.end())
+    {
+        InstanceInfo info;
+        if (!_instanceInfo->Describe(tag->instanceId, info) || info.memberCount == 0)
+            return InvalidNetId; // not describable: its members replicate individually
+
+        InstanceBlock block;
+        block.base        = NetId{_nextNetId};
+        block.memberCount = info.memberCount;
+        block.info        = info;
+
+        // The whole range at once. Reserving lazily per member would let an
+        // ordinary entity land in the middle of the block and break the one
+        // property the record depends on.
+        _nextNetId += info.memberCount;
+        it = _instanceBlocks.emplace(tag->instanceId, block).first;
+    }
+
+    // A member index outside the block would alias whatever was allocated next.
+    // Refuse and let it replicate as an ordinary entity: the tag disagreeing
+    // with the definition is a bug, but a colliding NetId is a corrupt mirror.
+    if (tag->memberIndex >= it->second.memberCount)
+    {
+        Core::Log::Error("Replication: instance {} member index {} is outside its block of {} — "
+                         "replicating it as a loose entity",
+                         tag->instanceId, tag->memberIndex, it->second.memberCount);
+        return InvalidNetId;
+    }
+
+    return NetId{it->second.base.value + tag->memberIndex};
+}
+
+void ReplicationServer::SetInstanceInfoProvider(std::unique_ptr<InstanceInfoProvider> provider)
+{
+    _instanceInfo = std::move(provider);
 }
 
 ClientId ReplicationServer::ControllerOf(ECS::Entity entity) const
@@ -1463,8 +1519,12 @@ void ReplicationServer::ReconcileNetIds()
         NetId               netId;
         if (it == _netIdByEntity.end())
         {
-            // The other place that turns a raw counter into an id — see EnsureNetId.
-            netId = NetId{_nextNetId++};
+            // The other id-assignment path, and it has to reach the block too:
+            // an instance whose members are first noticed by the snapshot walk
+            // rather than by an event send must still get one contiguous range.
+            netId = EnsureInstanceBlock(entity);
+            if (netId == InvalidNetId)
+                netId = NetId{_nextNetId++};
             _netIdByEntity.emplace(key, netId);
             _entityByNetId.emplace(netId, entity);
         }

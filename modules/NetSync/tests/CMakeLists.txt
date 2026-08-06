@@ -22,6 +22,7 @@ add_executable(Assisi-NetSync-Tests
   TestInputCommand.cpp
   TestNetClock.cpp
   TestNetSession.cpp
+  TestBlueprintReplication.cpp
   TestBodyReplication.cpp
   TestComponentMaskCodec.cpp
   TestControl.cpp
