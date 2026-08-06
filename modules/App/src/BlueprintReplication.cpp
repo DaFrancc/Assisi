@@ -152,6 +152,13 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
         // ordinary deltas, so an override here would be a second, conflicting
         // source of truth for the same fields.
 
+        // **PlaceInstance, deliberately not App::SpawnBlueprint.** The verb also
+        // builds Jolt bodies; this must not. A mirrored member has no authority
+        // over its own motion — that arrives as body state and the client raises
+        // a mirror body for it through the ordinary path — so giving it a
+        // simulated body here would have two things moving one entity and the
+        // solver arguing with the server every tick.
+        //
         // authored=false, for the same reason a runtime spawn is: this instance
         // exists because the server said so, and writing it into a saved level
         // would make it authored content the next time that level loads.
