@@ -20,7 +20,9 @@
 
 #include <ostream>
 
+#include <cstddef>
 #include <filesystem>
+#include <iterator>
 #include <optional>
 
 #include <Assisi/App/BlueprintVerbs.hpp>
@@ -46,6 +48,36 @@ void UseGeneratedAssets()
 }
 
 } // namespace
+
+TEST_CASE("Instance view: the generated member list is the one the loader produces")
+{
+    UseGeneratedAssets();
+
+    // The one that matters most, and the only one that scales: the names in a
+    // view come from blueprint_views.py at build time, and the names a spawn
+    // resolves come from Blueprint.cpp's FlattenInto at run time. Two
+    // implementations of one rule. This walks every opted-in blueprint rather
+    // than a hand-written list, so a blueprint is covered the moment somebody
+    // opts it in — the cases below can only ever check the fixtures they name.
+    REQUIRE(std::size(Runtime::kGeneratedInstanceViews) > 0);
+
+    for (const Runtime::GeneratedInstanceView &view : Runtime::kGeneratedInstanceViews)
+    {
+        CAPTURE(view.source);
+        const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(view.source);
+        REQUIRE(definition != nullptr);
+
+        REQUIRE(definition->members.size() == view.members.size());
+        for (std::size_t i = 0; i < view.members.size(); ++i)
+        {
+            // Order too, not just membership: a member's index is what its NetId
+            // is assigned from, so a reordering is a wire-visible change even
+            // when the set is identical.
+            CAPTURE(i);
+            CHECK(definition->members[i].name == view.members[i]);
+        }
+    }
+}
 
 TEST_CASE("Instance view: every generated field is the member of that name")
 {

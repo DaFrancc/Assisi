@@ -922,6 +922,7 @@ if (ASSISI_BUILD_TESTS)
         BLUEPRINTS
             "Car=car.abp"
             "ParkingLot=parking_lot.abp"
+            "Depot=depot.abp"
     )
 endif()
 
