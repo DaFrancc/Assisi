@@ -83,6 +83,21 @@ class SystemCatalog
     /// @brief The definition @p name refers to, or nullptr.
     [[nodiscard]] const SystemDefinition *Find(std::string_view name) const;
 
+    /// @brief Look every name up, all or nothing, logging each one this build
+    /// does not declare.
+    ///
+    /// Split out of Install so a caller can find out whether a list *can* be
+    /// installed before destroying what the world is already running. That is
+    /// the whole reason it is public: Install resolves atomically, but a caller
+    /// that clears first has already thrown the old list away by the time
+    /// Install can say no.
+    [[nodiscard]] bool Resolve(std::span<const std::string> names,
+                               std::vector<const SystemDefinition *> &out, std::string_view context) const;
+
+    /// @brief Register an already-resolved list into @p world, skipping any it
+    /// already has. Cannot fail — every name was checked by Resolve.
+    void ApplyResolved(World &world, std::span<const SystemDefinition *const> resolved) const;
+
     /// @brief Every declared system, in name order. For the editor's picker and
     /// for diagnostics naming what *is* available when a level names something
     /// that is not.

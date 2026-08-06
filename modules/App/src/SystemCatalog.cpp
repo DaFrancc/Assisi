@@ -65,10 +65,21 @@ const SystemDefinition *SystemCatalog::Find(std::string_view name) const
 
 bool SystemCatalog::Install(World &world, std::span<const std::string> names, std::string_view context) const
 {
+    std::vector<const SystemDefinition *> resolved;
+    if (!Resolve(names, resolved, context))
+        return false;
+    ApplyResolved(world, resolved);
+    return true;
+}
+
+bool SystemCatalog::Resolve(std::span<const std::string> names, std::vector<const SystemDefinition *> &out,
+                            std::string_view context) const
+{
     // Resolve everything first. A half-installed world runs and looks nearly
     // right, which is worse than a refused load — and the name that failed is the
     // one thing the author needs to be told.
-    std::vector<const SystemDefinition *> resolved;
+    std::vector<const SystemDefinition *> &resolved = out;
+    resolved.clear();
     resolved.reserve(names.size());
 
     bool ok = true;
@@ -89,9 +100,11 @@ bool SystemCatalog::Install(World &world, std::span<const std::string> names, st
         }
         resolved.push_back(definition);
     }
-    if (!ok)
-        return false;
+    return ok;
+}
 
+void SystemCatalog::ApplyResolved(World &world, std::span<const SystemDefinition *const> resolved) const
+{
     for (const SystemDefinition *definition : resolved)
     {
         // A union, not a concatenation: two nested blueprints both naming Bounce
@@ -116,8 +129,6 @@ bool SystemCatalog::Install(World &world, std::span<const std::string> names, st
                 handle.ActiveWorldOnly();
         }
     }
-
-    return true;
 }
 
 void QueueSystemInstall(World &world, std::span<const std::string> names, std::string_view context)
