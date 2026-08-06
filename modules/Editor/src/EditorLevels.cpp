@@ -91,13 +91,28 @@ void EditorApp::DrawLevelsWindow()
         // dirty tracking after Stop restores the pre-play scene.
         // ...and only into the edited world: another resident world is someone
         // else's level, and the dirty token tracks the edited history alone.
-        const bool canSave = (_playState == PlayState::Editing) && IsEditable();
+        // ...and into the file the edited world actually came from, which is the
+        // world's own levelPath and never the combo box. The combo picks what Load
+        // would open next; it is not touched by startup (LoadLevelFromPath) or by
+        // travel, so reading it here wrote the open level's contents over whatever
+        // file happened to be selected — and SaveLevelToPath then retargets
+        // levelPath to it and marks the editor clean, so nothing warns you.
+        const bool named   = IsEditable() && !_world->levelPath.empty();
+        const bool canSave = (_playState == PlayState::Editing) && named;
         ImGui::BeginDisabled(!canSave);
         if (ImGui::Button("Save", ImVec2(-1.0f, 0.0f)))
-            SaveLevel(_levelFiles[static_cast<std::size_t>(_selectedLevel)]);
+            (void)SaveLevelToPath(_world->levelPath);
         ImGui::EndDisabled();
         if (!canSave && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("Stop play mode to save (avoids overwriting the level with simulation state).");
+        {
+            // A world with no levelPath was never a file — there is nothing to save
+            // *back* to, and picking a name is exactly what Save As is.
+            ImGui::SetTooltip(_playState != PlayState::Editing
+                                  ? "Stop play mode to save (avoids overwriting the level with "
+                                    "simulation state)."
+                              : IsEditable() ? "This world has never been saved — use Save As to name it."
+                                             : "Only the edited world can be saved.");
+        }
     }
 
     ImGui::Separator();

@@ -365,7 +365,11 @@ than a silently missing field.
   the shape of it is checked.
 - 5d's by-eye check is unpaid: drag a car, save, confirm the file holds zero
   member overrides.
-- The Levels panel's Save used to write to whatever the *combo* had selected
-  rather than the level that was open — load `Test`, scroll to `Materials`, save,
-  and `Materials.alvl` got `Test`'s contents. Fixed on the way past; `SaveLevel`
-  now goes through `SaveLevelToPath(_world->levelPath)`.
+- The Levels panel's Save wrote to whatever the *combo* had selected rather than
+  the level that was open — load `Test`, scroll to `Materials`, save, and
+  `Materials.alvl` got `Test`'s contents, your own edits went nowhere, and
+  `SaveLevelToPath` then retargeted `_world->levelPath` at `Materials` and marked
+  the editor clean. This entry previously claimed it was "fixed on the way past";
+  it was not, and the line was byte-identical to `dev` until round 7 caught it
+  (B1). The button now calls `SaveLevelToPath(_world->levelPath)` directly, and
+  is disabled for a world that has no path yet — Save As is how one gets named.
