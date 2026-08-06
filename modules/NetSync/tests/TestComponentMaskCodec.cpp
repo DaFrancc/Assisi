@@ -67,7 +67,7 @@ ComponentMeta MaskHolderMeta()
     field.type   = FieldType::ComponentMask;
     field.offset = 0;
     meta.fields.push_back(field);
-    meta.id = 0;
+    meta.id = ComponentId{0}; // finalized-looking id for WriteComponent's check; 0 is a real id here
     return meta;
 }
 
@@ -242,7 +242,7 @@ TEST_CASE("a hostile element count cannot outrun the buffer")
     // Same framing WriteComponent produces — id, then the one-bit field mask —
     // with an absurd count spliced into the body.
     Assisi::Core::BitWriter hostile;
-    hostile.WriteVarUInt32(meta.id);
+    hostile.WriteVarUInt32(meta.id.value); // wire write
     hostile.WriteBits64(1, 1); // the single wire field is present
     hostile.WriteVarUInt64(1'000'000'000ull);
 

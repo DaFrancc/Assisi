@@ -569,7 +569,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     // reconstructs, which the round-trip tests depend on.
     mask &= LowFieldMask(fieldCount);
 
-    writer.WriteVarUInt32(meta.id);
+    writer.WriteVarUInt32(meta.id.value); // wire write
     writer.WriteBits64(mask, static_cast<std::uint32_t>(fieldCount));
 
     std::size_t codecIndex = 0;
@@ -759,7 +759,7 @@ bool SkipMessageBody(BitReader &reader)
 
 ComponentId ReadComponentId(BitReader &reader)
 {
-    const ComponentId id = reader.ReadVarUInt32();
+    const ComponentId id{reader.ReadVarUInt32()}; // wire read
     return reader.Failed() ? kInvalidComponentId : id;
 }
 
@@ -822,7 +822,7 @@ std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
 
     for (const ComponentMeta &meta : components)
     {
-        text += std::to_string(meta.id);
+        text += std::to_string(meta.id.value); // hashed layout text, printf-shaped
         text += ' ';
         text += meta.name;
         // Whether the component replicates at all is wire semantics, not layout:

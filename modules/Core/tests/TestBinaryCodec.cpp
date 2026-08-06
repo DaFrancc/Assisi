@@ -38,6 +38,7 @@ using Assisi::Core::AssetPath;
 using Assisi::Core::BitReader;
 using Assisi::Core::BitWriter;
 using Assisi::Core::ShortString;
+using Assisi::Core::Reflect::ComponentId;
 using Assisi::Core::Reflect::ComponentMeta;
 using Assisi::Core::Reflect::FieldMask;
 using Assisi::Core::Reflect::FieldMeta;
@@ -152,7 +153,7 @@ ComponentMeta MakeGatedMeta()
                        .serializable    = true,
                        .tracksChanges   = true,
                        .replicable      = true,
-                       .id              = 5};
+                       .id              = ComponentId{5}};
 
     meta.fields.push_back(Field("shared", FieldType::Int32, OffsetOf(&Gated::shared)));
     meta.fields.push_back(Field("secret", FieldType::Int32, OffsetOf(&Gated::secret), false, true));
@@ -174,7 +175,7 @@ ComponentMeta MakeAllTypesMeta()
                        .serializable    = true,
                        .tracksChanges   = true,
                        .replicable      = true,
-                       .id              = 3};
+                       .id              = ComponentId{3}};
 
     meta.fields.push_back(Field("floatValue", FieldType::Float, OffsetOf(&AllTypes::floatValue)));
     meta.fields.push_back(Field("doubleValue", FieldType::Double, OffsetOf(&AllTypes::doubleValue)));
@@ -556,7 +557,7 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
         CHECK(hashWith([](ComponentMeta &m) { m.fields.erase(m.fields.end() - 2); }) != base);
     }
     SUBCASE("a renamed component") { CHECK(hashWith([](ComponentMeta &m) { m.name = "Other"; }) != base); }
-    SUBCASE("a reassigned id") { CHECK(hashWith([](ComponentMeta &m) { m.id = 4; }) != base); }
+    SUBCASE("a reassigned id") { CHECK(hashWith([](ComponentMeta &m) { m.id = ComponentId{4}; }) != base); }
     SUBCASE("a field turning transient — the mask width changes")
     {
         CHECK(hashWith([](ComponentMeta &m) { m.fields[1].transient = true; }) != base);

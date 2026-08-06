@@ -42,8 +42,9 @@ std::uint64_t PackEntity(ECS::Entity entity)
 /// first and component second — which the shift gives for free.
 std::uint64_t PackComponentRef(NetId netId, Core::Reflect::ComponentId componentId)
 {
-    // .value: packing into a sortable integer, not a NetId operation.
-    return (static_cast<std::uint64_t>(netId.value) << 32) | static_cast<std::uint64_t>(componentId);
+    // .value on both: packing into a sortable integer, not a NetId/ComponentId
+    // operation.
+    return (static_cast<std::uint64_t>(netId.value) << 32) | static_cast<std::uint64_t>(componentId.value);
 }
 
 /// The component half of a packed ref. There is deliberately no NetId half: the
@@ -51,7 +52,8 @@ std::uint64_t PackComponentRef(NetId netId, Core::Reflect::ComponentId component
 /// diffing and needs the component out of each pair.
 Core::Reflect::ComponentId ComponentIdOfRef(std::uint64_t packed)
 {
-    return static_cast<Core::Reflect::ComponentId>(packed & 0xFFFFFFFFull);
+    // packed key boundary: unpacking a sortable integer back into an id.
+    return Core::Reflect::ComponentId{static_cast<std::uint32_t>(packed & 0xFFFFFFFFull)};
 }
 
 ECS::Entity UnpackEntity(std::uint64_t packed)
@@ -737,12 +739,14 @@ void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
         connection.acked.erase(slot);
     }
 
+    // ComponentId{0}: the packed key's lower bound, not "invalid" — 0 is the
+    // lowest possible ordinal, and component ids are dense from there.
     const auto low  = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
-                                       PackComponentRef(netId, 0));
+                                       PackComponentRef(netId, Core::Reflect::ComponentId{0}));
     // netId + 1: the exclusive upper bound of this netId's packed-ref range,
     // spelled explicitly since NetId has no arithmetic of its own.
     const auto high = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
-                                       PackComponentRef(NetId{netId.value + 1}, 0));
+                                       PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
     connection.ackedComponents.erase(low, high);
 
     connection.baselines.erase(netId);
@@ -763,12 +767,14 @@ void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
 
         std::erase_if(record.written, [netId](const WrittenEntity &entry) { return entry.netId == netId; });
 
+        // ComponentId{0}: the packed key's lower bound, not "invalid" — 0 is the
+        // lowest possible ordinal, and component ids are dense from there.
         const auto recordLow  = std::lower_bound(record.components.begin(), record.components.end(),
-                                                 PackComponentRef(netId, 0));
+                                                 PackComponentRef(netId, Core::Reflect::ComponentId{0}));
         // netId + 1: the exclusive upper bound of this netId's packed-ref range,
         // spelled explicitly since NetId has no arithmetic of its own.
         const auto recordHigh = std::lower_bound(record.components.begin(), record.components.end(),
-                                                 PackComponentRef(NetId{netId.value + 1}, 0));
+                                                 PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
         record.components.erase(recordLow, recordHigh);
     }
 }
@@ -1727,12 +1733,14 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     // to consult for "this component is gone" — so it is found by diffing this
     // entity's slice of the acked baseline against what it has now. Exactly the
     // shape of the despawn comparison, one level down.
+    // ComponentId{0}: the packed key's lower bound, not "invalid" — 0 is the
+    // lowest possible ordinal, and component ids are dense from there.
     const auto ackedLow  = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
-                                            PackComponentRef(netId, 0));
+                                            PackComponentRef(netId, Core::Reflect::ComponentId{0}));
     // netId + 1: the exclusive upper bound of this netId's packed-ref range,
     // spelled explicitly since NetId has no arithmetic of its own.
     const auto ackedHigh = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
-                                            PackComponentRef(NetId{netId.value + 1}, 0));
+                                            PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
 
     std::vector<Core::Reflect::ComponentId> removed;
     for (auto it = ackedLow; it != ackedHigh; ++it)
@@ -1745,7 +1753,7 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
 
     writer.WriteVarUInt32(static_cast<std::uint32_t>(removed.size()));
     for (const Core::Reflect::ComponentId id : removed)
-        writer.WriteVarUInt32(id);
+        writer.WriteVarUInt32(id.value); // wire write
 
     // For an entity the *solver* owns, motion travels as body state, not as a
     // Transform. Sending both would double the cost of every moving object and
@@ -1979,13 +1987,18 @@ void ReplicationServer::SendSnapshot(Connection &connection)
                 // Carry its component baseline forward untouched: we told the
                 // client nothing about this entity, so nothing about it changed
                 // from the client's point of view.
+                //
+                // ComponentId{0}: the packed key's lower bound, not "invalid" —
+                // 0 is the lowest possible ordinal, and component ids are dense
+                // from there.
                 const auto low  = std::lower_bound(connection.ackedComponents.begin(),
-                                                   connection.ackedComponents.end(), PackComponentRef(netId, 0));
+                                                   connection.ackedComponents.end(),
+                                                   PackComponentRef(netId, Core::Reflect::ComponentId{0}));
                 // netId + 1: the exclusive upper bound of this netId's packed-ref
                 // range, spelled explicitly since NetId has no arithmetic of its own.
                 const auto high = std::lower_bound(connection.ackedComponents.begin(),
                                                    connection.ackedComponents.end(),
-                                                   PackComponentRef(NetId{netId.value + 1}, 0));
+                                                   PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
                 record.components.insert(record.components.end(), low, high);
             }
             continue;
@@ -2564,7 +2577,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         }
         for (std::uint32_t i = 0; i < removedCount; ++i)
         {
-            const auto componentId = static_cast<Core::Reflect::ComponentId>(reader.ReadVarUInt32());
+            const Core::Reflect::ComponentId componentId{reader.ReadVarUInt32()}; // wire read
             if (!reader.Ok())
                 return false;
 
