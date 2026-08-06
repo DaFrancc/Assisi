@@ -181,7 +181,10 @@ enum class RejectReason : std::uint8_t
 ///    (same plan, M5).
 ///  - 6 → 7: `ClientHello.contentSetHash` and `RejectReason::ContentMismatch`
 ///    (docs/blueprint-system-concept.md §9).
-inline constexpr std::uint32_t kNetProtocolVersion = 7;
+/// 8: the snapshot gained an instance-record section, ahead of despawns. A v7
+/// client reads that count as its despawn count and desyncs the whole stream, so
+/// this is a refuse-to-join change, not a tolerable one.
+inline constexpr std::uint32_t kNetProtocolVersion = 8;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.

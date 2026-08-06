@@ -242,6 +242,68 @@ TEST_CASE("Blueprint replication: a member index outside the block is refused, n
     CHECK(beyond.value >= base.value + 2);
 }
 
+TEST_CASE("Blueprint replication: the record survives a round trip and is idempotent")
+{
+    Net::NetTransport transport;
+    ECS::Scene        serverScene;
+    ECS::Scene        clientScene;
+    const auto        pair = transport.CreateLoopbackPair();
+
+    ReplicationServer server{transport, serverScene};
+    ReplicationClient client{transport, clientScene, pair.second};
+
+    auto  owned     = std::make_unique<FakeInstances>();
+    auto *instances = owned.get();
+    instances->Add(ECS::InstanceId{1}, 2, /*blueprintIndex=*/4);
+    server.SetInstanceInfoProvider(std::move(owned));
+
+    for (std::uint32_t index = 0; index < 2; ++index)
+    {
+        const ECS::Entity entity = serverScene.Create();
+        (void)serverScene.Add(entity, ECS::Transform{});
+        (void)serverScene.Add(entity, Replicated{});
+        (void)serverScene.Add(entity,
+                              ECS::BlueprintMember{.instanceId = ECS::InstanceId{1}, .memberIndex = index});
+    }
+
+    // Both sides agree trivially on the content set: this is about the record
+    // crossing, not about what is on disk.
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
+    server.AddConnection(pair.first);
+
+    // Several steps: the record is resent until acked, so this also covers the
+    // resend arriving at a client that already has it — which must change
+    // nothing rather than accumulate a second row.
+    std::uint64_t tick = 1;
+    for (int step = 0; step < 8; ++step)
+    {
+        std::vector<Net::NetEvent> events;
+        transport.Poll(events);
+        for (const Net::NetEvent &event : events)
+        {
+            if (event.type != Net::NetEvent::Type::Message)
+                continue;
+            if (event.connection == pair.first)
+                server.HandleMessage(pair.first, event.payload);
+            else
+                client.HandleMessage(event.payload);
+        }
+        server.Tick(tick++);
+    }
+
+    const auto &records = client.InstanceRecords();
+    REQUIRE(records.size() == 1);
+
+    const InstanceRecord &entry = records.begin()->second;
+    CHECK(entry.blueprintIndex == 4);
+    CHECK(entry.memberCount == 2);
+    CHECK(entry.base.IsValid());
+    // The placement is what every member's transform is composed from, so it
+    // travels at full precision rather than quantized.
+    CHECK(entry.placement.position.x == doctest::Approx(1.f));
+}
+
 TEST_CASE("Blueprint replication: a block is allocated once and outlives the tick")
 {
     Fixture fixture;
