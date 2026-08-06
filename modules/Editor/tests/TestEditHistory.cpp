@@ -765,10 +765,10 @@ TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below 
     const Entity destroyed[] = {doomed};
 
     // Asked without acting, so a save can say what it costs before committing.
-    CHECK(hist.CountForgettable(destroyed) == 4);
+    CHECK(hist.CountForgettable(scene, destroyed) == 4);
     CHECK(hist.UndoDepth() == 5);
 
-    CHECK(hist.ForgetEntities(destroyed) == 4);
+    CHECK(hist.ForgetEntities(scene, destroyed) == 4);
 
     // Only E survives: everything at or below D goes, including C — which names
     // nothing dead but sits under a step that can never be replayed.
@@ -782,10 +782,55 @@ TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below 
     // and is why nothing may compare handles across scenes.
     const Entity bystander = scene.Create();
     const Entity none[]    = {bystander};
-    CHECK(hist.CountForgettable(none) == 0);
-    CHECK(hist.ForgetEntities(none) == 0);
+    CHECK(hist.CountForgettable(scene, none) == 0);
+    CHECK(hist.ForgetEntities(scene, none) == 0);
     CHECK(hist.UndoDepth() == 1);
 
     const Entity untouched[] = {kept};
-    CHECK(hist.CountForgettable(untouched) == 1); // E does name it
+    CHECK(hist.CountForgettable(scene, untouched) == 1); // E does name it
+}
+
+TEST_CASE("EditHistory: handles from another Scene never truncate this stack")
+{
+    // Blueprint mode does not replace the level world, it creates a second one
+    // beside it, and saving a blueprint re-expands every live copy in *every*
+    // resident world. So the destroyed list handed to the one active history mixes
+    // handles from worlds that have no history at all. Every Scene numbers from
+    // {0,0}, which makes a doomed handle over there equal to a live, unrelated
+    // entity over here. The history has to refuse handles that did not come from
+    // its own scene rather than compare them.
+    Scene edited;
+    Scene bystanderWorld;
+
+    const Entity kept = edited.Create();
+    REQUIRE(edited.Add(kept, Transform{}) != nullptr);
+
+    const Entity strayer = bystanderWorld.Create();
+    REQUIRE(bystanderWorld.Add(strayer, Transform{}) != nullptr);
+    REQUIRE(strayer == kept); // the aliasing this test exists for
+
+    const auto tid = IdOf("Transform");
+    const auto now = CaptureComponent(edited, kept, tid);
+
+    EditHistory hist(edited);
+    for (const char *label : {"A", "B", "C"})
+    {
+        Transaction txn;
+        txn.label = label;
+        txn.cmds.push_back(ComponentDelta{kept, tid, now, now});
+        hist.Push(std::move(txn));
+    }
+    REQUIRE(hist.UndoDepth() == 3);
+
+    // Nothing in *this* scene died, so nothing is forgettable — even though the
+    // handle compares equal to one this stack names three times.
+    const Entity destroyedElsewhere[] = {strayer};
+    CHECK(hist.CountForgettable(bystanderWorld, destroyedElsewhere) == 0);
+    CHECK(hist.ForgetEntities(bystanderWorld, destroyedElsewhere) == 0);
+    CHECK(hist.UndoDepth() == 3);
+
+    // The identical handle, named as this scene's, still truncates normally — the
+    // guard is about provenance, not about refusing work.
+    const Entity destroyedHere[] = {kept};
+    CHECK(hist.CountForgettable(edited, destroyedHere) == 3);
 }
