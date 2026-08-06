@@ -246,7 +246,9 @@ int main(int argc, char **argv)
             return EXIT_FAILURE;
         }
         serverApp.Run();
-        return EXIT_SUCCESS;
+        // A server that refused to start must say so in its exit code, or a
+        // supervisor reads the clean shutdown as a normal one.
+        return serverApp.StartupFailed() ? EXIT_FAILURE : EXIT_SUCCESS;
     }
 
     Assisi::Editor::EditorApp app({.startupLevel        = std::string(startupLevel),
