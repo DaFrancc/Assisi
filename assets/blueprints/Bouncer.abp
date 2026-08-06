@@ -1,0 +1,63 @@
+{
+  "systems": [
+    "Bounce"
+  ],
+  "entities": [
+    {
+      "components": {
+        "Bounce": {
+          "rebound": 0.800000011920929
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "excluded": [],
+          "priority": 1.0,
+          "relevance": 0
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.30000001192092896,
+            0.30000001192092896,
+            0.30000001192092896
+          ],
+          "halfHeight": 0.5,
+          "isStatic": false,
+          "radius": 0.5,
+          "shape": 0
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.9238793253898621,
+            0.0,
+            0.0,
+            -0.3826841711997986
+          ],
+          "scale": [
+            0.600000262260437,
+            0.6000003218650818,
+            0.6000000238418579
+          ]
+        }
+      },
+      "name": "Entity_11"
+    }
+  ],
+  "version": 2
+}

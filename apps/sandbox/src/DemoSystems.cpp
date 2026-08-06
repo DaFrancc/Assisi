@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include "DemoSystems.hpp"
 
+#include <Assisi/App/BlueprintVerbs.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Scene.hpp>
@@ -39,6 +40,36 @@ void InputDemoSystem(Assisi::App::SystemContext &ctx)
     {
         Assisi::Core::Log::Info("InputDemo: space in world '{}' (active={}).", ctx.world.name,
                                 ctx.isActiveWorld);
+    }
+
+    // F3 drops a Bouncer. It is a blueprint whose only member is replicated, so
+    // on a host this is the shortest path to watching a spawned instance reach a
+    // client — record, block, expansion and all.
+    //
+    // **Spawns into whatever world this system is running in**, which is the
+    // authority's on a host and a *mirror* on a client. On a mirror the entity is
+    // local-only: it will not replicate anywhere, and the server will despawn
+    // nothing because it never knew about it. That is worth knowing before
+    // reading anything into what a client sees after pressing this.
+    if (ctx.input->IsKeyPressed(Assisi::Window::Key::F3))
+    {
+        Assisi::ECS::Transform at;
+        // Above the pile, and nudged off-centre per press so a held key makes a
+        // heap rather than a tower of coincident bodies fighting each other.
+        const float spread = static_cast<float>(ctx.simTick % 7u) * 0.25f - 0.75f;
+        at.position        = {spread, 8.f, spread * 0.5f};
+
+        const std::optional<Assisi::ECS::InstanceId> spawned =
+            Assisi::App::SpawnBlueprint(ctx.world, "blueprints/Bouncer.abp", at);
+        if (spawned.has_value())
+        {
+            Assisi::Core::Log::Info("InputDemo: spawned Bouncer as instance {} in world '{}'.", *spawned,
+                                    ctx.world.name);
+        }
+        else
+        {
+            Assisi::Core::Log::Warn("InputDemo: could not spawn blueprints/Bouncer.abp.");
+        }
     }
 }
 
