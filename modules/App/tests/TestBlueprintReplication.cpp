@@ -1,0 +1,230 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+/// @file TestBlueprintReplication.cpp
+/// @brief A real blueprint, spawned on a host, arriving on a client as a
+/// blueprint rather than as a pile of entities.
+///
+/// The NetSync suite drives the same machinery with fakes, which pins the wire
+/// format and the id discipline. What it cannot check is the claim the whole
+/// design rests on: that the client's *own* expansion of the same file produces
+/// the same members, in the same order, at the same places — without the server
+/// sending any of it (docs/blueprint-system-concept.md §9).
+///
+/// Both sides share an asset root here, which is what a matching content-set
+/// hash means in production.
+
+#include <doctest/doctest.h>
+
+#include <ostream>
+
+#include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <string>
+#include <vector>
+
+#include <Assisi/App/BlueprintReplication.hpp>
+#include <Assisi/App/BlueprintVerbs.hpp>
+#include <Assisi/App/ContentSet.hpp>
+#include <Assisi/App/World.hpp>
+#include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
+#include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Net/NetTransport.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
+#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
+
+using namespace Assisi;
+
+namespace
+{
+
+std::filesystem::path FreshRoot()
+{
+    const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi_bpnet";
+    std::error_code             ec;
+    std::filesystem::remove_all(root, ec);
+    std::filesystem::create_directories(root);
+    REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
+    Runtime::ClearBlueprintCache();
+    return root;
+}
+
+void Write(const std::filesystem::path &root, const std::string &name, const nlohmann::json &doc)
+{
+    std::ofstream out(root / name, std::ios::binary);
+    out << doc.dump(2);
+    REQUIRE(out.good());
+}
+
+nlohmann::json At(float x, float y, float z)
+{
+    return {{"Transform",
+             {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
+}
+
+/// A body and two wheels, every member replicated so the server hands the whole
+/// instance a block.
+nlohmann::json CarFile()
+{
+    auto body     = At(0.f, 0.f, 0.f);
+    body["Replicated"] = nlohmann::json::object();
+    auto left     = At(-1.f, 0.f, 0.f);
+    left["Replicated"] = nlohmann::json::object();
+    auto right    = At(1.f, 0.f, 0.f);
+    right["Replicated"] = nlohmann::json::object();
+
+    return {{"version", 2},
+            {"entities", nlohmann::json::array({{{"name", "body"}, {"components", body}},
+                                                {{"name", "wheel_l"}, {"components", left}},
+                                                {{"name", "wheel_r"}, {"components", right}}})}};
+}
+
+struct Fixture
+{
+    Net::NetTransport                               transport;
+    App::World                                      host;
+    App::World                                      guest;
+    std::pair<Net::ConnectionId, Net::ConnectionId> pair;
+    NetSync::ReplicationServer                      server;
+    NetSync::ReplicationClient                      client;
+    std::uint64_t                                   tick = 0;
+
+    Fixture()
+        : pair(transport.CreateLoopbackPair()), server(transport, host.scene),
+          client(transport, guest.scene, pair.second)
+    {
+    }
+
+    void Connect(const std::vector<std::string> &manifest)
+    {
+        App::InstallInstanceInfoProvider(server, host, manifest);
+        App::InstallInstanceExpander(client, guest, manifest);
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
+        server.AddConnection(pair.first);
+    }
+
+    void Step(int times)
+    {
+        for (int i = 0; i < times; ++i)
+        {
+            std::vector<Net::NetEvent> events;
+            transport.Poll(events);
+            for (const Net::NetEvent &event : events)
+            {
+                if (event.type != Net::NetEvent::Type::Message)
+                    continue;
+                if (event.connection == pair.first)
+                    server.HandleMessage(pair.first, event.payload);
+                else
+                    client.HandleMessage(event.payload);
+            }
+            server.Tick(++tick);
+        }
+    }
+};
+
+} // namespace
+
+TEST_CASE("Blueprint over the wire: the client expands the same file the host spawned")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+
+    const App::ContentSet content = App::BuildContentSet();
+    REQUIRE(content.paths.size() == 1);
+
+    Fixture fixture;
+    fixture.Connect(content.paths);
+
+    ECS::Transform at;
+    at.position = {12.f, 0.f, 3.f};
+    const std::optional<ECS::InstanceId> spawned = App::SpawnBlueprint(fixture.host, "car.abp", at);
+    REQUIRE(spawned.has_value());
+
+    fixture.Step(12);
+
+    // Three members here, three members there — built locally from the file, not
+    // received one by one.
+    CHECK(fixture.client.ReplicatedEntityCount() == 3);
+    REQUIRE(fixture.client.InstanceRecords().size() == 1);
+
+    // The guest has a real instance in its own table, of the right blueprint.
+    REQUIRE(fixture.guest.instances.Size() == 1);
+    const auto rows = fixture.guest.instances.All();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].second->source == "car.abp");
+    // Not authored: it exists because the server said so, and saving this level
+    // must not turn it into content.
+    CHECK_FALSE(rows[0].second->authored);
+
+    // Named members resolve on the guest, which is what says the expansion — not
+    // just the entity count — matched.
+    const ECS::InstanceId guestInstance = rows[0].first;
+    for (const char *name : {"body", "wheel_l", "wheel_r"})
+    {
+        const ECS::Entity member = App::FindMember(fixture.guest, guestInstance, name);
+        CAPTURE(name);
+        CHECK(member != ECS::NullEntity);
+    }
+
+    // ...and it landed where the host put it. The placement crossed once, in the
+    // record; every member's pose was composed locally from it.
+    const ECS::Entity guestBody = App::FindMember(fixture.guest, guestInstance, "wheel_r");
+    const ECS::Transform *pose  = fixture.guest.scene.Get<ECS::Transform>(guestBody);
+    REQUIRE(pose != nullptr);
+    CHECK(pose->position.x == doctest::Approx(13.f)); // 12 placement + 1 local
+    CHECK(pose->position.z == doctest::Approx(3.f));
+}
+
+TEST_CASE("Blueprint over the wire: the guest's tag names the guest's instance")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+
+    const App::ContentSet content = App::BuildContentSet();
+
+    Fixture fixture;
+    fixture.Connect(content.paths);
+
+    // Burn a few instance ids on the host so its numbering cannot coincide with
+    // the guest's, which starts at 1.
+    for (int i = 0; i < 3; ++i)
+        (void)App::SpawnBlueprint(fixture.host, "car.abp", {});
+    const std::optional<ECS::InstanceId> spawned = App::SpawnBlueprint(fixture.host, "car.abp", {});
+    REQUIRE(spawned.has_value());
+
+    fixture.Step(14);
+
+    const auto rows = fixture.guest.instances.All();
+    REQUIRE(!rows.empty());
+
+    // Every mirrored member's tag names an instance in the *guest's* table.
+    for (auto [entity, tag] : fixture.guest.scene.Query<ECS::BlueprintMember>())
+    {
+        (void)entity;
+        CAPTURE(tag.instanceId.value);
+        CHECK(fixture.guest.instances.Find(tag.instanceId) != nullptr);
+    }
+}
+
+TEST_CASE("Blueprint over the wire: a blueprint outside the content set still replicates")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+
+    Fixture fixture;
+    // An empty manifest: nothing can be named by index, so the provider refuses
+    // every instance and the members fall back to ordinary entities.
+    fixture.Connect({});
+
+    REQUIRE(App::SpawnBlueprint(fixture.host, "car.abp", {}).has_value());
+    fixture.Step(12);
+
+    // Still mirrored — correct, merely larger — and with no record to expand.
+    CHECK(fixture.client.ReplicatedEntityCount() == 3);
+    CHECK(fixture.client.InstanceRecords().empty());
+    CHECK(fixture.guest.instances.Size() == 0);
+}
