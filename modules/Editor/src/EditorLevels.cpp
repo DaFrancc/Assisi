@@ -13,6 +13,7 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <imgui.h>
@@ -709,6 +710,28 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // fighting the host over the same scene. Both are the wrong outcome, and
     // neither is something the protocol should have to express — so end the
     // session first and let the player start a new one.
+    // **Before anything is torn down.** The load below replaces the scene in
+    // place, so a level whose systems cannot be installed has to be refused here
+    // or not at all: discovering it afterwards leaves the world holding the new
+    // content with none of its behaviour, and the level it replaced is already
+    // gone. Checked before ShutdownNetSession for the same reason — a refused
+    // load must not have ended the session on the way to refusing.
+    {
+        std::vector<std::string> wanted;
+        if (!Assisi::Runtime::SceneSerializer::ReadLevelSystems(virtualPath, wanted))
+            return false;
+
+        for (const std::string &name : wanted)
+        {
+            if (Assisi::App::SystemCatalog::Instance().Find(name) != nullptr)
+                continue;
+            Assisi::Core::Log::Error("Editor: '{}' names system '{}', which this build does not declare — "
+                                     "refusing to open it.",
+                                     virtualPath, name);
+            return false;
+        }
+    }
+
     ShutdownNetSession();
 
     // The engine does the whole load: deserialize, drop the old asset set, evict
