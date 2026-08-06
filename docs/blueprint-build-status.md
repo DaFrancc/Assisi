@@ -29,14 +29,13 @@ no warnings. (14, not 13: stage 9 adds a `blueprint-views` Python suite.)
 | 5d, 5e | `c1c2091` | Blueprint editing mode, re-expansion on save, history truncation, the stale-copy host gate |
 | 9 | `4231176` | `InstanceView<T>` codegen, the typed verbs, and the reflectgen ban on storing one |
 | ids | `9253e33`…`ddf322d` | The five weak id aliases became strong types (see below) |
+| 7b, 7c, 7d | `2a22ec5`…`d2388b7` | Blueprint replication, end to end (see "The network") |
 
 ## Not built
 
-### 7b, 7c, 7d — blueprint replication
-
-**Partly built** — the id discipline and the wire format are in, the savings and
-the App-side halves are not. See "The network, as far as it goes" below for
-exactly what stands. **This is the only blueprint work left.**
+Nothing. **7b, 7c and 7d are built** — see "The network" below. The only item
+still carried is D-C / `kExpansionVersion`, deferred by decision and not
+blocking.
 
 **7e is cancelled** by decision (2026-08-05): `BlueprintSpawnFromLevel` was
 provisional by design and gets deleted when `replication-plan-v4.md` §5's
@@ -107,7 +106,7 @@ gain.
 
 ---
 
-## The network, as far as it goes
+## The network
 
 **The tag's translation is done** (`9147585`). `ECS::BlueprintMember` is
 `ACOMP(replicable)`, and its `instanceId` — a per-world, per-machine counter — is
@@ -126,7 +125,6 @@ Built so far, all under `TestBlueprintReplication.cpp`:
 | 7c core | `InstanceExpander` and the `base + i` binding (`d34b2e0`) |
 | 7c tag | The `instanceId` ↔ `baseNetId` translation (`9147585`) |
 | 7d | Block escalation — naming one member pulls the instance (`e66ba06`) |
-
 | App halves | The provider and the expander, over a real blueprint (`db3af9b`) |
 | 7b saving | A member matching its blueprint costs no component bytes (`3bfcc81`) |
 | 7d re-entry | Re-entry inside a round trip resends the record (`285f305`) |
@@ -148,10 +146,18 @@ the verb also builds Jolt bodies, and a member that simulated locally would
 argue with the server every tick. Motion arrives as body state and the client
 raises a mirror body through the ordinary path.
 
-**Still open:** the install-queue hook that makes a joining client install the
-systems a blueprint names (R14 — the cross-machine half of the founding
-"system never installed" failure, recorded in the concept review as W1), and
-D-C / `kExpansionVersion`.
+A joining client installs the systems a blueprint names (`d2388b7`, R14) — the
+cross-machine half of the founding "system never installed" failure, W1 in the
+concept review. Same call the host's spawn makes, queued for the next safe
+point, idempotent.
+
+**Still open:** D-C / `kExpansionVersion`, which was deferred by decision and is
+not blocking. Blueprint replication itself is done.
+
+**Before merging to `dev`:** `kNetProtocolVersion` is 8 and the bump is
+refuse-to-join by design — a v7 client reads the record count as its despawn
+count and desyncs the whole stream. Anything running the old build will not
+connect.
 
 A failed expansion refuses the snapshot and logs why; carrying that reason into a
 disconnect the user sees needs the session layer and is not wired.
