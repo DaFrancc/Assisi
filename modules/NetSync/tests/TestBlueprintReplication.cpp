@@ -93,6 +93,12 @@ struct Fixture
         Step(6);
     }
 
+    /// While set, the client's acks are buffered instead of delivered. The only
+    /// way to put a leave and a re-entry *inside* one round trip, which is the
+    /// case the instance-granular re-entry rule exists for.
+    bool                                holdAcks = false;
+    std::vector<std::vector<std::byte>> heldAcks;
+
     void Step(int times)
     {
         for (int i = 0; i < times; ++i)
@@ -104,12 +110,27 @@ struct Fixture
                 if (event.type != Net::NetEvent::Type::Message)
                     continue;
                 if (event.connection == pair.first)
-                    server.HandleMessage(pair.first, event.payload);
+                {
+                    if (holdAcks)
+                        heldAcks.emplace_back(event.payload.begin(), event.payload.end());
+                    else
+                        server.HandleMessage(pair.first, event.payload);
+                }
                 else
+                {
                     client.HandleMessage(event.payload);
+                }
             }
             server.Tick(++tick);
         }
+    }
+
+    void ReleaseAcks()
+    {
+        holdAcks = false;
+        for (const std::vector<std::byte> &payload : heldAcks)
+            server.HandleMessage(pair.first, payload);
+        heldAcks.clear();
     }
 
     /// A replicated member of @p id at @p index.
@@ -609,6 +630,50 @@ TEST_CASE("Blueprint replication: naming one member pulls the whole instance")
 
     // ...and escalation pulls in the instance, not the neighbourhood.
     CHECK_FALSE(fixture.server.IsRelevant(fixture.pair.first,fixture.server.NetIdOf(loose)));
+}
+
+TEST_CASE("Blueprint replication: leaving and re-entering resends the record")
+{
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+
+    std::vector<ECS::Entity> members;
+    for (std::uint32_t index = 0; index < 3; ++index)
+        members.push_back(fixture.Member(ECS::InstanceId{1}, index));
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(members[0]);
+
+    auto  owned     = std::make_unique<PickyProvider>();
+    auto *provider  = owned.get();
+    provider->named = {base};
+    fixture.server.SetRelevancyProvider(std::move(owned));
+    fixture.Connect();
+
+    REQUIRE(fixture.client.InstanceRecords().size() == 1);
+
+    // Acks stop landing, so the server's knownInstances keeps saying the client
+    // has the record. Without holding them the ordinary cumulative-set mechanism
+    // clears it anyway and this case never arises — an earlier version of this
+    // test passed with the rule deleted for exactly that reason.
+    fixture.holdAcks = true;
+
+    // Out of the set: the client despawns the whole block as one run, which takes
+    // its record with it.
+    provider->named.clear();
+    fixture.Step(4);
+    CHECK(fixture.client.InstanceRecords().empty());
+
+    // ...and straight back in, still inside the round trip. The record has to
+    // come again — the client threw it away, and a member arriving with no
+    // record is one it cannot attribute to any instance.
+    provider->named = {base};
+    fixture.Step(4);
+    fixture.ReleaseAcks();
+    fixture.Step(4);
+
+    CHECK(fixture.client.InstanceRecords().size() == 1);
+    CHECK(fixture.client.ReplicatedEntityCount() == 3);
 }
 
 TEST_CASE("Blueprint replication: a dead member is not resurrected by its siblings")

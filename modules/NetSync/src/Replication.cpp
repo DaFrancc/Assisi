@@ -800,6 +800,23 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
         if (!std::binary_search(connection.acked.begin(), connection.acked.end(), netId))
             continue; // already forgotten — the empty-baseline path has it covered
         ForgetAcked(connection, netId);
+
+        // Instance-granular, because forgetting a member is not enough. The
+        // client destroyed the whole instance when the despawn landed — the run
+        // covered the block and took the record with it — so re-entry has to
+        // resend the record too. Without this the member arrives as full state
+        // with nothing to attach it to, and the expander is never asked to
+        // rebuild what the client threw away.
+        if (const ECS::BlueprintMember *tag = _scene.Get<ECS::BlueprintMember>(EntityOf(netId));
+            tag != nullptr && tag->instanceId.IsValid())
+        {
+            if (const auto known = std::lower_bound(connection.knownInstances.begin(),
+                                                    connection.knownInstances.end(), tag->instanceId);
+                known != connection.knownInstances.end() && *known == tag->instanceId)
+            {
+                connection.knownInstances.erase(known);
+            }
+        }
     }
 
     // Boundary thrash is invisible otherwise — it looks exactly like ordinary
