@@ -1,6 +1,6 @@
 {
   "systems": [
-    "InputDemo",
+    "BouncerSpawn",
     "Bounce"
   ],
   "entities": [

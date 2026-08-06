@@ -222,7 +222,22 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
 
     // Content is committed, so the world can be given its systems. Before the
     // swap: the moment it goes Active the frame loop will dispatch it.
-    (void)ApplySystems(incoming, header.systems, levelPath);
+    //
+    // **A failed install fails the travel.** An unknown system name is a hard
+    // error by design (docs/blueprint-system-concept.md §8), and it was being
+    // discarded here — so a level naming a system this build does not declare
+    // loaded happily and then ran none of it. That is the "component whose
+    // system was never installed just does nothing" failure arriving through
+    // the very mechanism meant to prevent it, and it is silent: the level looks
+    // fine and simply has no behaviour.
+    if (!ApplySystems(incoming, header.systems, levelPath))
+    {
+        Core::Log::Error("Travel to '{}' failed: it names a system this build does not declare. Staying "
+                         "in '{}'.",
+                         levelPath, outgoing != nullptr ? outgoing->name : std::string_view{"(none)"});
+        EraseWorld(incoming);
+        return nullptr;
+    }
 
     World *const result = SwapToActive(incoming, std::string(levelPath));
     Core::Log::Info("Travel: now in '{}' ({}), {} world(s) resident.", result->name, levelPath,
@@ -442,7 +457,16 @@ World *WorldManager::PromotePendingLoad()
     // The worker parked the level's requested systems here; install them now that we
     // are back on the main thread and the task is joined. Passing the field to a
     // function that also writes it is safe — ApplySystems copies first.
-    (void)ApplySystems(*incoming, std::vector<std::string>(incoming->systemNames), incoming->levelPath);
+    //
+    // Hard error, as on the synchronous path: a level naming a system this build
+    // does not declare must not be promoted to Active running none of it.
+    if (!ApplySystems(*incoming, std::vector<std::string>(incoming->systemNames), incoming->levelPath))
+    {
+        Core::Log::Error("Preload of '{}' names a system this build does not declare; discarding it.", path);
+        EraseWorld(*incoming);
+        _pending.reset();
+        return nullptr;
+    }
 
     World *const result = SwapToActive(*incoming, path);
     Core::Log::Info("Preload promoted: now in '{}' ({}), {} world(s) resident.", result->name, path,
