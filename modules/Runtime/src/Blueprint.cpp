@@ -6,6 +6,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
@@ -204,6 +205,20 @@ const BlueprintInstance *FindInstance(const InstanceTable &table, ECS::InstanceI
     if (!expectedSource.empty() && row->source != expectedSource)
         return nullptr;
     return row;
+}
+
+std::string UniqueInstanceName(const InstanceTable &table, std::string_view stem)
+{
+    return UniqueName(stem,
+                      [&table](std::string_view candidate)
+                      {
+                          for (const auto &[id, row] : table.All())
+                          {
+                              if (row->name == candidate)
+                                  return true;
+                          }
+                          return false;
+                      });
 }
 
 std::vector<LevelInstance> InstancesForSave(const InstanceTable &table)

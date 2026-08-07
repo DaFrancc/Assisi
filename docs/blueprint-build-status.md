@@ -385,5 +385,53 @@ than a silently missing field.
   captured and restored in one call each — the table goes back **whole**, ids and
   allocator included, because an allocator that regressed would hand out an id an
   undoable delete still has a claim on. `modules/Editor/tests/TestPrePlayState.cpp`
-  covers the restore; **the by-eye pass is unpaid** — join a host, stop, save, and
-  confirm the file holds your instances and not the host's.
+  covers the restore; the by-eye pass was walked on 2026-08-07 — a dedicated host
+  on a level with one placed instance, an editor joining it, Stop, Save: the file
+  came back with no instances, and the session's own log shows the join and the
+  `StopPlay` that followed it.
+- Instance names were unique by the caller's good manners rather than by rule
+  (S17): "Place instance" stepped a colliding name to `car_1`,
+  `CreateBlueprintFromSelection` checked nothing, so two selections saved as
+  `turret.abp` in one level placed two instances called `turret`. Both claim
+  `turret/…`, which the loader refuses outright — a level that saves and never
+  reopens. The rule now lives in two places that cannot drift: `PlaceInstance`
+  **refuses** a non-empty name already live (the one door both gestures come
+  through), and `Runtime::UniqueInstanceName` is what the editor calls first so
+  an author gets `car_1` rather than a refusal. Unnamed instances are exempt and
+  must stay so — a runtime spawn and a replicated mirror both pass no name, and
+  refusing the second bullet would break replication.
+
+  **S17's stated mechanism is wrong and the tests now say so.** It reported that
+  an instance may take a name already belonging to an *entity*, leaving
+  "two things answering to one name". They do not collide: the entity claims
+  `car` and the instance claims `car/body`, and no reference can mean both.
+  `TestBlueprintExpansion.cpp` pins that as legal, alongside the three collisions
+  that are real — two instances of one name, two entities of one name, and an
+  entity whose name spells a member path (`car/body`). The last two came in
+  through the Inspector's rename box, which validated nothing, and are fixed here
+  too.
+- **`Runtime/Naming.hpp` is now the one statement of what may be called what.**
+  Two rules: a name holds no `/`, and a name is unique among its own kind. The
+  second rule falls out of the first — given no name contains a separator and
+  every member path does, entity names and member paths are disjoint *by
+  construction* rather than by anyone remembering to cross-check them.
+
+  One stateless walk (`UniqueName`) serves both namespaces through
+  `UniqueEntityName` and `UniqueInstanceName`. Stateless matters: a counter that
+  remembered what it handed out would drift the moment a name went unused, an
+  object was deleted, or an undo ran — offering `car_5` in a level with no cars.
+  It replaces `CreateEntity`'s open-coded copy of the same loop, which is where
+  the rule had drifted in the first place. Side effect worth knowing: the first
+  new entity is now `Entity` rather than `Entity_1`, matching the first car being
+  `car`.
+
+  `ValidateName` returns `std::expected<void, NameError>`, so the rename box says
+  *why* under the field and load puts the same reason in its refusal. Load still
+  signals by throwing — `SceneSerializer::Load` returns void and generated
+  component deserialization throws from nlohmann regardless — so the conversion
+  happens at that boundary; three throws there collapsed into one sourced from
+  the rule. Taking exceptions out of `Load` itself is a separate pass.
+
+  A rename is **refused**, not auto-suffixed, unlike a new entity's name: a fresh
+  entity has no name worth keeping, but a rename is something the author typed on
+  purpose, and quietly storing `crate_1` for `crate` is an edit they did not make.

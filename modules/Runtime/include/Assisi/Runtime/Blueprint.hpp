@@ -335,6 +335,22 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 [[nodiscard]] const BlueprintInstance *FindInstance(const InstanceTable &table, ECS::InstanceId instanceId,
                                                     std::string_view expectedSource = {});
 
+/// @brief @p stem, or the first `stem_N` no live instance in @p table is using.
+///
+/// An instance's name is the prefix its members are addressed by, so two live
+/// instances of one name mean two entities answering to `car/body` — which the
+/// loader refuses outright (`nameToEntity` claims each path once). A level saved
+/// with both is a level that never opens again.
+///
+/// This is the polite half of that rule: the editor calls it so an author who
+/// places a second car gets `car_1` instead of a refusal. The refusal itself
+/// lives in `SceneSerializer::PlaceInstance`, because a rule enforced only by
+/// the callers who remember it is the bug this was written for (round-7 S17:
+/// "Place instance" uniquified, "Create blueprint from selection" did not).
+///
+/// Unnamed instances are not considered and never collide — see PlaceInstance.
+[[nodiscard]] std::string UniqueInstanceName(const InstanceTable &table, std::string_view stem);
+
 /// @brief The `instances` array a save should write for a live table, in id order.
 ///
 /// Built from the table rather than kept alongside it, so there is one source of
