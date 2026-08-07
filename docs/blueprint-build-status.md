@@ -373,3 +373,17 @@ than a silently missing field.
   it was not, and the line was byte-identical to `dev` until round 7 caught it
   (B1). The button now calls `SaveLevelToPath(_world->levelPath)` directly, and
   is disabled for a world that has no path yet — Save As is how one gets named.
+- Run used to capture the edited world's level path and system list and nothing
+  else, so Stop put those back and left the **instance table** wherever the
+  session had moved it (B4). A join loads the host's level into the edited world,
+  which clears the table and refills it with the host's rows, all `authored` — so
+  Join → Stop left you editing your own level with somebody else's instances in
+  it, no dirty marker, and the next Save wrote them to your file over your own. A
+  `SpawnBlueprint` during play was the same bug without the networking: a row
+  that outlived the session as a ghost the outliner drew with no live members.
+  The three fields are now one `PrePlayState` (`modules/Editor/src/PrePlayState.cpp`),
+  captured and restored in one call each — the table goes back **whole**, ids and
+  allocator included, because an allocator that regressed would hand out an id an
+  undoable delete still has a claim on. `modules/Editor/tests/TestPrePlayState.cpp`
+  covers the restore; **the by-eye pass is unpaid** — join a host, stop, save, and
+  confirm the file holds your instances and not the host's.

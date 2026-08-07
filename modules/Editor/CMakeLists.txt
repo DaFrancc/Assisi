@@ -11,6 +11,7 @@ target_sources(Assisi-Editor
   PUBLIC
     "include/Assisi/Editor/EditHistory.hpp"
     "include/Assisi/Editor/EditorApp.hpp"
+    "include/Assisi/Editor/PrePlayState.hpp"
   PRIVATE
     "src/EditHistory.cpp"
     "src/EditorApp.cpp"
@@ -25,6 +26,7 @@ target_sources(Assisi-Editor
     "src/EditorOptions.cpp"
     "src/EditorPlay.cpp"
     "src/EditorWorlds.cpp"
+    "src/PrePlayState.cpp"
     "src/ImGuiQueries.hpp"
 )
 
