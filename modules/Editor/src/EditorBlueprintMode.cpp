@@ -20,6 +20,7 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Render/MeshPass.hpp>
 #include <Assisi/Runtime/EditorOnly.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
@@ -330,16 +331,31 @@ void EditorApp::SubmitInstanceIcons()
 // Re-expansion on save (stage 5d)
 // ---------------------------------------------------------------------------
 
-void EditorApp::ReexpandInstancesOf(const std::string &source)
+void EditorApp::MarkInstancesStale(const std::string &source)
 {
-    // One collection at a time. A save while the prompt is up would replace what the
-    // author is being asked about with something else, under the same buttons.
-    if (!_pendingReexpand.empty())
-        return;
+    if (std::find(_staleInstanceSources.begin(), _staleInstanceSources.end(), source) ==
+        _staleInstanceSources.end())
+    {
+        _staleInstanceSources.push_back(source);
+    }
+    Assisi::Core::Log::Warn("Blueprint '{}': live copies left out of date with the file. Hosting is "
+                            "refused until they catch up or the level is reloaded.",
+                            source);
+}
 
-    // Everything the edit reaches, gathered **before** the cache is dropped: the
-    // answer lives in the definitions that are about to go, and a member's name is
-    // the only thing that connects a live tag to its replacement.
+std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const std::string &source)
+{
+    // Everything the edit reaches, gathered **before the file is written**: the
+    // answer lives in the definition as it stands now, and a member's name is the
+    // only thing that connects a live tag to its replacement.
+    //
+    // Before the write, not merely before the invalidation. `GetBlueprintDefinition`
+    // parses from disk whenever the cache is cold, so running this after `SaveToFile`
+    // only worked while the cache happened to be warm — and a cancelled save leaves
+    // it cold, because Cancel has to drop the entry it wrote. So the retry read the
+    // *new* file as the "previous" definition, found nothing removed, and saved
+    // without asking. The one ordering that does not depend on cache state is this
+    // one: ask while the old contents are still the contents.
     std::vector<PendingReexpand> collected;
     std::vector<std::string>     skipped;
 
@@ -391,6 +407,23 @@ void EditorApp::ReexpandInstancesOf(const std::string &source)
                 pending.previousMemberNames.reserve(definition->members.size());
                 for (const auto &member : definition->members)
                     pending.previousMemberNames.push_back(member.name);
+
+                // The entities behind those names, resolved here and not later. A
+                // member tag holds an index into *this* definition, so this is the
+                // last moment an index can be turned into the right entity — see
+                // PendingReexpand::previousMemberEntities. Walked by tag rather than
+                // through Runtime::FindMember per name: one query for the whole
+                // instance instead of one per member, and no name lookup at all.
+                pending.previousMemberEntities.assign(definition->members.size(),
+                                                      Assisi::ECS::NullEntity);
+                for (auto [entity, tag] : world.scene.Query<Assisi::ECS::BlueprintMember>())
+                {
+                    if (tag.instanceId == id &&
+                        tag.memberIndex < pending.previousMemberEntities.size())
+                    {
+                        pending.previousMemberEntities[tag.memberIndex] = entity;
+                    }
+                }
                 collected.push_back(std::move(pending));
             }
         });
@@ -398,12 +431,37 @@ void EditorApp::ReexpandInstancesOf(const std::string &source)
     for (const std::string &name : skipped)
         Assisi::Core::Log::Info("Blueprint '{}': world '{}' skipped (simulating).", source, name);
 
+    return collected;
+}
+
+void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<PendingReexpand> collected)
+{
     // The cache goes regardless of whether anything was live: the next spawn must
     // read what was just written, not what was cached before it.
     Assisi::Runtime::InvalidateBlueprint(source);
 
     if (collected.empty())
         return;
+
+    // One collection at a time: the prompt has one set of buttons, and answering it
+    // must mean what it said. So this save does not get to ask — but it does not get
+    // to pass in silence either, which is what the guard used to do from the top of
+    // the function. Sitting above the collection, it returned before the cache was
+    // dropped: the file was on disk, `GetBlueprintDefinition` still handed out the
+    // contents from before it, and every later spawn built the old thing while the
+    // author was told nothing. Editing the file and losing the edit are not supposed
+    // to look identical.
+    //
+    // Below the invalidation, the only thing left to skip is the live copies' catch-up
+    // — and there is already a name for a file whose copies are behind it. This is the
+    // "Leave them" answer, given on the author's behalf because there was no way to
+    // ask: the write stands, the cache is honest, the copies are recorded as stale,
+    // and hosting stays refused until they catch up or the level is reloaded.
+    if (!_pendingReexpand.empty())
+    {
+        MarkInstancesStale(source);
+        return;
+    }
 
     // What each instance loses, from the name diff. Only reachable now — the new
     // definitions exist and nothing has been touched yet.
@@ -439,8 +497,10 @@ void EditorApp::ReexpandInstancesOf(const std::string &source)
             if (definition->IndexOf(name).has_value())
                 continue;
 
-            const Assisi::ECS::Entity member = Assisi::Runtime::FindMember(
-                pending.world->scene, pending.world->instances, pending.instanceId, name);
+            // From the capture, never from a fresh lookup: `definition` here is the
+            // file as it now is, and `name` is by construction something it does not
+            // declare — so any name-based resolution can only fail.
+            const Assisi::ECS::Entity member = pending.previousMemberEntities[i];
             if (member == Assisi::ECS::NullEntity)
                 continue;
             pending.doomed.push_back(member);
@@ -457,20 +517,38 @@ void EditorApp::ReexpandInstancesOf(const std::string &source)
     _pendingReexpand       = std::move(collected);
     _pendingReexpandSource = source;
 
-    // How much history the truncation costs. Only one resident world has a history,
-    // so at most one term of this sum is non-zero — the rest name a scene the
-    // history refuses. Asking per world is what makes that true.
+    // How much history the truncation costs — every stack, not the active one.
+    // Asking `ActiveHistory()` was the bug that made this prompt unreachable: a
+    // blueprint-mode save destroys members in the *level* worlds while the active
+    // history is the blueprint world's, and `CountForgettable` returns 0 for a scene
+    // it is not bound to. So the count was always 0, the prompt never opened, and
+    // `ForgetEntities` then declined on the same test — leaving the level's stack
+    // holding transactions that named entities which had just been destroyed.
+    //
+    // Each history self-filters by scene, so the pairing below is a full cross
+    // product on purpose: only the terms that match contribute.
     _pendingReexpandUndoLoss = 0;
-    if (Assisi::Editor::EditHistory *history = ActiveHistory())
+    for (Assisi::Editor::EditHistory *history : AllHistories())
     {
         for (const auto &[world, doomed] : doomedByWorld)
             _pendingReexpandUndoLoss += history->CountForgettable(world->scene, doomed);
     }
 
-    // Nothing at stake — the overwhelmingly common edit, which changes values.
-    // Ask only when there is something to lose.
+    // Nothing at stake — the overwhelmingly common edit, which changes values, and
+    // the only outcome at all when no history names the members that are going. Say
+    // which it was: "no dialog appeared" and "the dialog is broken" look identical
+    // from the outside, and this function spent a review round in the second state
+    // being read as the first.
+    Assisi::Core::Log::Info("Blueprint '{}': {} member(s) removed from {} live cop(y/ies), {} undo step(s) "
+                            "at stake.",
+                            source, _pendingReexpandRemoved.size(), _pendingReexpand.size(),
+                            _pendingReexpandUndoLoss);
+
     if (_pendingReexpandUndoLoss == 0)
         ApplyPendingReexpand();
+
+    // Otherwise the save is left waiting: DrawSaveConfirmModal raises the gate on
+    // this frame, and SaveLevelToPath holds what Cancel needs until it is answered.
 }
 
 void EditorApp::ApplyPendingReexpand()
@@ -531,11 +609,17 @@ void EditorApp::ApplyPendingReexpand()
 
     if (!destroyedByWorld.empty())
     {
-        if (Assisi::Editor::EditHistory *history = ActiveHistory())
+        // Every stack, for the reason ReexpandInstancesOf spells out: the members
+        // that went are not necessarily in the world whose history is active, and a
+        // stack that keeps a transaction naming a destroyed entity is holding a
+        // handle that the next dense rebuild can hand to something else entirely.
         {
             std::size_t dropped = 0;
-            for (const auto &[world, destroyed] : destroyedByWorld)
-                dropped += history->ForgetEntities(world->scene, destroyed);
+            for (Assisi::Editor::EditHistory *history : AllHistories())
+            {
+                for (const auto &[world, destroyed] : destroyedByWorld)
+                    dropped += history->ForgetEntities(world->scene, destroyed);
+            }
 
             if (dropped > 0)
             {
@@ -559,63 +643,76 @@ void EditorApp::ApplyPendingReexpand()
     _pendingReexpandSource.clear();
 }
 
-void EditorApp::DrawReexpandConfirmModal()
+void EditorApp::DrawSaveConfirmModal()
 {
-    if (_pendingReexpand.empty() || _pendingReexpandUndoLoss == 0)
+    if (!_pendingSaveConfirm)
         return;
 
-    constexpr const char *kTitle = "Blueprint saved";
+    // Titled for what it costs, not for what happened. "Blueprint saved" read as a
+    // receipt, and a receipt is the one thing an author dismisses without reading —
+    // which for this dialog meant throwing away undo history by reflex.
+    constexpr const char *kTitle = "Saving will discard undo history";
     if (!ImGui::IsPopupOpen(kTitle))
         ImGui::OpenPopup(kTitle);
 
     if (!ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         return;
 
-    ImGui::Text("'%s' was written.", _pendingReexpandSource.c_str());
+    // The cost first and in the warning colour: it is the only part of this that
+    // cannot be taken back, and the rest of the dialog is context for it.
+    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.75f, 0.2f, 1.f));
+    ImGui::TextWrapped("%zu undo step%s will be discarded and cannot be recovered.",
+                       _pendingReexpandUndoLoss, _pendingReexpandUndoLoss == 1 ? "" : "s");
+    ImGui::PopStyleColor();
     ImGui::Spacing();
 
     std::string removed;
     for (const std::string &name : _pendingReexpandRemoved)
         removed += (removed.empty() ? "" : ", ") + name;
-    ImGui::TextWrapped("Bringing its %zu live cop%s up to date removes: %s", _pendingReexpand.size(),
-                       _pendingReexpand.size() == 1 ? "y" : "ies", removed.c_str());
-
+    ImGui::TextWrapped("Saving '%s' removes %s from its %zu live cop%s.", _pendingReexpandSource.c_str(),
+                       removed.c_str(), _pendingReexpand.size(),
+                       _pendingReexpand.size() == 1 ? "y" : "ies");
     ImGui::Spacing();
-    ImGui::TextWrapped("%zu undo step%s name those entities and cannot be replayed afterwards. They will "
-                       "be dropped.",
-                       _pendingReexpandUndoLoss, _pendingReexpandUndoLoss == 1 ? "" : "s");
+    ImGui::TextWrapped("Those undo steps name the entities being removed, so they cannot be replayed once "
+                       "the removal happens. Redo goes with them.");
 
     ImGui::Spacing();
     ImGui::Separator();
-    ImGui::TextDisabled("Declining keeps your history; the copies stay as they are until the level "
-                        "is reloaded. The file on disk is saved either way.");
+    ImGui::TextDisabled("Cancel puts the file back exactly as it was and changes nothing else.");
     ImGui::Spacing();
 
-    if (ImGui::Button("Update copies", ImVec2(160.f, 0.f)))
+    if (ImGui::Button("Save and discard the history", ImVec2(220.f, 0.f)))
     {
         ApplyPendingReexpand();
+        _pendingSaveConfirm.reset();
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Leave them", ImVec2(120.f, 0.f)))
+    // The middle answer, kept because stage 5e is built on it: the write stands and
+    // the copies stay behind it, which is legal, recorded, and refuses hosting until
+    // it is resolved. Worth keeping distinct from Cancel — one is "save it, I will
+    // deal with the copies later", the other is "I did not want any of this".
+    if (ImGui::Button("Save, leave copies", ImVec2(160.f, 0.f)))
     {
-        // Remembered, because it is now possible to host a world whose copies of this
-        // file disagree with the file every client will read (stage 5e).
-        if (std::find(_staleInstanceSources.begin(), _staleInstanceSources.end(),
-                      _pendingReexpandSource) == _staleInstanceSources.end())
-        {
-            _staleInstanceSources.push_back(_pendingReexpandSource);
-        }
-        Assisi::Core::Log::Warn("Blueprint '{}': live copies left out of date with the file. Hosting is "
-                                "refused until they catch up or the level is reloaded.",
-                                _pendingReexpandSource);
+        MarkInstancesStale(_pendingReexpandSource);
 
         _pendingReexpand.clear();
         _pendingReexpandRemoved.clear();
         _pendingReexpandUndoLoss = 0;
         _pendingReexpandSource.clear();
+        _pendingSaveConfirm.reset();
         ImGui::CloseCurrentPopup();
     }
+    ImGui::SameLine();
+    if (ImGui::Button("Cancel", ImVec2(100.f, 0.f)))
+    {
+        CancelPendingSave();
+        ImGui::CloseCurrentPopup();
+    }
+    // Enter lands on the answer that loses nothing. The first button is the one this
+    // dialog exists to slow down, so it must not also be the one a keypress aimed at
+    // whatever was on screen a moment ago happens to hit.
+    ImGui::SetItemDefaultFocus();
 
     ImGui::EndPopup();
 }
