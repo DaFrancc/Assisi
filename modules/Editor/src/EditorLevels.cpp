@@ -305,17 +305,8 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
 
     // A name unique in this level, because it is the prefix its members are
     // addressed by: `car_3/wheel_fl` has to name exactly one entity.
-    const std::string stem = std::filesystem::path(source).stem().string();
-    std::string       name = stem;
-    for (uint32_t suffix = 1;; ++suffix)
-    {
-        bool taken = false;
-        for (const auto &[id, row] : _world->instances.All())
-            taken = taken || row->name == name;
-        if (!taken)
-            break;
-        name = stem + "_" + std::to_string(suffix);
-    }
+    const std::string name = Assisi::Runtime::UniqueInstanceName(
+        _world->instances, std::filesystem::path(source).stem().string());
 
     const Assisi::Runtime::LevelInstance entry{.name      = name,
                                                .source    = source,
@@ -439,7 +430,14 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
 
     ClearSelection();
 
-    const Assisi::Runtime::LevelInstance entry{.name      = name,
+    // The same uniqueness the Blueprints panel's "Place instance" applies. The
+    // typed name is the *file's*, and two selections saved as `turret.abp` in one
+    // level would otherwise place two instances called `turret` — both claiming
+    // `turret/…`, so the level would save and never reload (round-7 S17). The
+    // file keeps the name that was typed; only the instance is stepped on.
+    const std::string instanceName = Assisi::Runtime::UniqueInstanceName(_world->instances, name);
+
+    const Assisi::Runtime::LevelInstance entry{.name      = instanceName,
                                                .source    = source,
                                                .transform = placement,
                                                .overrides = nlohmann::json::object(),
