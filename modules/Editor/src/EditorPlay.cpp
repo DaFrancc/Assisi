@@ -134,10 +134,13 @@ void EditorApp::StartPlay(NetIntent intent)
             });
     }
 
-    // The edited world's level identity, so Stop can put it back: a join
-    // replaces the play scene with the *host's* level and retargets both.
-    _prePlayLevelPath = _world != nullptr ? _world->levelPath : std::string{};
-    _prePlaySystems   = _world != nullptr ? _world->systemNames : std::vector<std::string>{};
+    // Everything else about the edited world a session can move, so Stop can put
+    // it back: a join replaces the play scene with the *host's* level and
+    // retargets its identity, its systems and its instance table. One capture
+    // rather than one per field — see PrePlayState.hpp for what that is guarding
+    // against.
+    _prePlay = _world != nullptr ? CapturePrePlayState(_world->levelPath, _world->systemNames, _world->instances)
+                                 : PrePlayState{};
 
     SetPlayState(PlayState::Playing);
     _netIntent   = intent;
@@ -329,23 +332,28 @@ void EditorApp::StopPlay()
         Assisi::App::RebindSceneAssetsAndPhysics(*_scene, _assetCache, _assetDatabase, *_physics);
     }
 
-    // A joined session loaded the *host's* level into this world and retargeted
-    // both its identity and its systems. The entities are back; put those back
-    // too, or Save would write the editing scene out over the host's filename.
-    if (_world != nullptr && (_world->levelPath != _prePlayLevelPath || _world->systemNames != _prePlaySystems))
+    // A joined session loaded the *host's* level into this world, retargeting its
+    // identity, its systems and its instance table; a spawn during play moved the
+    // table on its own. The entities are back; put the rest back too, or Save
+    // would write the editing scene out over the host's filename — and write the
+    // host's instances into the author's file (round-7 B4).
+    if (_world != nullptr &&
+        RestorePrePlayState(_prePlay, _world->levelPath, _world->systemNames, _world->instances))
     {
-        _world->levelPath = _prePlayLevelPath;
         // Restoring a list that already installed once, so a failure here means
         // the catalog changed under a running session — nothing to abort, but
         // the editor is now short the systems it had before play.
-        if (!_worlds.ApplySystems(*_world, _prePlaySystems, _prePlayLevelPath))
+        if (!_worlds.ApplySystems(*_world, _prePlay.systemNames, _prePlay.levelPath))
         {
-            Assisi::Core::Log::Error("StopPlay: could not restore '{}'s systems.", _prePlayLevelPath);
+            Assisi::Core::Log::Error("StopPlay: could not restore '{}'s systems.", _prePlay.levelPath);
         }
     }
 
     SetPlayState(PlayState::Editing);
     _playSnapshot.clear();
+    // Session state, dropped with the session — and it holds a copy of the whole
+    // instance table, which there is no reason to carry until the next Run.
+    _prePlay = PrePlayState{};
 
     Assisi::Core::Log::Info("Play: stopped (scene restored at exact identity).");
 }
