@@ -21,10 +21,40 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <optional>
 #include <string>
 
 namespace Assisi::Editor
 {
+namespace
+{
+
+// The whole file as bytes, or nullopt if it is not there (or cannot be read —
+// the two are the same answer to the only caller, which is a save asking what it
+// is about to overwrite). Binary, not text: a level is UTF-8 JSON today, and a
+// byte-for-byte restore must not depend on that staying true.
+std::optional<std::string> ReadWholeFile(const std::filesystem::path &path)
+{
+    std::ifstream file(path, std::ios::binary);
+    if (!file.is_open())
+        return std::nullopt;
+    return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+}
+
+// Puts @p bytes back, reporting whether it worked. Failure is worth a caller's
+// attention: it means the file holds contents the author declined.
+bool WriteWholeFile(const std::filesystem::path &path, const std::string &bytes)
+{
+    std::ofstream file(path, std::ios::binary | std::ios::trunc);
+    if (!file.is_open())
+        return false;
+    file.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+    return file.good();
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Levels window
@@ -668,12 +698,44 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     if (_scene == nullptr || _world == nullptr)
         return false;
 
+    // A save still waiting on its confirmation owns the previous contents of its
+    // file, and Cancel's whole promise is that it can put them back. A second write
+    // would leave that backup describing bytes no longer anywhere, so the promise
+    // would quietly stop being true — refuse instead, and say which dialog is in the
+    // way. Round-7 S18: the old code let the second save through and dropped its
+    // re-expansion on the floor without a word.
+    if (_pendingSaveConfirm)
+    {
+        Assisi::Core::Log::Error("SaveLevel: refusing to write '{}' — the save of '{}' is still waiting on "
+                                 "an answer. Answer that dialog first.",
+                                 virtualPath, _pendingSaveConfirm->virtualPath);
+        return false;
+    }
+
     const auto resolved = Assisi::Core::AssetSystem::Resolve(virtualPath);
     if (!resolved)
     {
         Assisi::Core::Log::Error("SaveLevel: cannot resolve path for '{}'", virtualPath);
         return false;
     }
+
+    // Read before overwriting: this is the last moment the previous contents exist,
+    // and Cancel is a promise to put them back. One extra read of a file that is
+    // about to be rewritten in full, on an explicit gesture — cheap next to
+    // serializing the scene, and the only alternative is predicting the cost of a
+    // write without doing it.
+    std::optional<std::string> previousBytes = ReadWholeFile(*resolved);
+
+    // For the same reason and in the same breath: what the live copies of this file
+    // are made of *now*. Gathering it after the write reads the new contents as the
+    // old ones whenever the definition cache is cold — which a cancelled save
+    // guarantees, since cancelling has to drop what the write cached.
+    std::vector<PendingReexpand> reexpandTargets = CollectReexpandTargets(virtualPath);
+
+    const std::string   previousLevelPath = _world->levelPath;
+    const bool          blueprint         = InBlueprintMode();
+    const std::uint64_t previousSavedToken = blueprint ? _blueprintSavedToken : _savedStateToken;
+
     // Carry the world's systems back into the file. A Scene does not know them —
     // they are a property of the level — so a save that dropped them would silently
     // strip the field from every level the editor touches.
@@ -688,7 +750,7 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     // Record the history position that now matches disk — IsSceneDirty compares
     // against this to drive the title's unsaved-changes marker. Which history that
     // is depends on which world is being edited.
-    if (InBlueprintMode())
+    if (blueprint)
     {
         if (_blueprintHistory)
             _blueprintSavedToken = _blueprintHistory->CurrentStateToken();
@@ -700,10 +762,93 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
 
     // Stage 5d: every live copy of what was just written catches up, wherever it is
     // resident. A level save normally finds nothing — a file cannot instance itself —
-    // so this costs one walk of the instance tables and stops.
-    ReexpandInstancesOf(virtualPath);
+    // so the walk above came back empty and this drops the cache and stops.
+    ReexpandInstancesOf(virtualPath, std::move(reexpandTargets));
+
+    // ...unless catching them up would cost undo history, in which case the prompt
+    // is up and this save is not finished. Hold everything Cancel needs until it is
+    // answered; the copies need nothing held, because ApplyPendingReexpand is the
+    // only thing that destroys a member and it has not run.
+    if (_pendingReexpandUndoLoss > 0)
+    {
+        _pendingSaveConfirm = PendingSaveConfirm{.virtualPath           = virtualPath,
+                                                 .resolved              = *resolved,
+                                                 .previousBytes         = std::move(previousBytes),
+                                                 .world                 = _world,
+                                                 .previousLevelPath     = previousLevelPath,
+                                                 .previousSavedToken    = previousSavedToken,
+                                                 .savedTokenIsBlueprint = blueprint};
+    }
 
     return true;
+}
+
+void EditorApp::CancelPendingSave()
+{
+    if (!_pendingSaveConfirm)
+        return;
+    const PendingSaveConfirm &save = *_pendingSaveConfirm;
+
+    // The file first, because it is the only thing that left the process.
+    if (save.previousBytes)
+    {
+        if (WriteWholeFile(save.resolved, *save.previousBytes))
+        {
+            Assisi::Core::Log::Info("Editor: save of '{}' cancelled; the file is as it was.",
+                                    save.virtualPath);
+        }
+        else
+        {
+            // Said loudly, because the author declined and the decline did not take:
+            // the file holds contents they refused, and nothing else will say so.
+            Assisi::Core::Log::Error("Editor: save of '{}' was cancelled but the previous contents could "
+                                     "not be written back — the file holds the NEW version.",
+                                     save.virtualPath);
+        }
+    }
+    else
+    {
+        // There was no file before this save (Save As to a fresh name), so putting
+        // things back means there is no file after it either.
+        std::error_code ec;
+        std::filesystem::remove(save.resolved, ec);
+        if (ec)
+        {
+            Assisi::Core::Log::Error("Editor: save of '{}' was cancelled but the new file could not be "
+                                     "removed: {}",
+                                     save.virtualPath, ec.message());
+        }
+        else
+        {
+            Assisi::Core::Log::Info("Editor: save of '{}' cancelled; the file it created is gone.",
+                                    save.virtualPath);
+        }
+    }
+
+    // The cache was dropped against contents that are no longer on disk — drop it
+    // again so the next spawn reads what is actually there now.
+    Assisi::Runtime::InvalidateBlueprint(save.virtualPath);
+
+    // Only onto the world the save was for. A world that is no longer the edited one
+    // must not have its level path rewritten from under whoever holds it now; the
+    // modal makes that unreachable today, and this is what keeps it unreachable if
+    // the modal ever stops being one.
+    if (save.world == _world && _world != nullptr)
+    {
+        _world->levelPath = save.previousLevelPath;
+        if (save.savedTokenIsBlueprint)
+            _blueprintSavedToken = save.previousSavedToken;
+        else
+            _savedStateToken = save.previousSavedToken;
+    }
+
+    // The copies were never touched, so there is nothing to put back about them —
+    // and nothing stale either, since the file is once again what they expanded from.
+    _pendingReexpand.clear();
+    _pendingReexpandRemoved.clear();
+    _pendingReexpandUndoLoss = 0;
+    _pendingReexpandSource.clear();
+    _pendingSaveConfirm.reset();
 }
 
 void EditorApp::LoadLevel(const std::string &name)
@@ -795,6 +940,18 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
 
     // A load expands every instance from the files as they are now, so nothing this
     // world holds can still be behind one (stage 5e).
+    //
+    // An unanswered save is dropped rather than cancelled: its file stays as it was
+    // written, because a load is not a rejection of it and the world it was asked
+    // about is gone either way. Said out loud, since "the dialog vanished" would
+    // otherwise be indistinguishable from having answered it.
+    if (_pendingSaveConfirm)
+    {
+        Assisi::Core::Log::Warn("Editor: the load of '{}' left the save of '{}' unanswered — the file "
+                                "keeps what was written to it.",
+                                virtualPath, _pendingSaveConfirm->virtualPath);
+        _pendingSaveConfirm.reset();
+    }
     _staleInstanceSources.clear();
     _pendingReexpand.clear();
     _pendingReexpandRemoved.clear();
