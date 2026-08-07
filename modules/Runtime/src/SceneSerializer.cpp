@@ -12,6 +12,7 @@
 #include <Assisi/Runtime/EditorOnly.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 
 #include <cmath>
 #include <cstdint>
@@ -975,16 +976,20 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
             throw std::runtime_error(std::format("entity #{} has no name", i));
 
         std::string name = entityJson.at("name").get<std::string>();
-        if (name.empty())
-            throw std::runtime_error(std::format("entity #{} has an empty name", i));
-        if (name.size() > Core::kShortStringMax)
-        {
-            // Refused rather than truncated: truncation is how two members become
-            // indistinguishable, and an override that then picks the wrong one is
-            // exactly the failure named entities exist to prevent.
-            throw std::runtime_error(std::format("entity name '{}' is longer than the {}-byte limit", name,
-                                                 Core::kShortStringMax));
-        }
+
+        // One rule, stated once, in Naming.hpp — the editor's rename box refuses
+        // exactly what this refuses, so a name the editor accepts is a name that
+        // reloads. Banning the separator is what makes entity names and instance
+        // member paths disjoint *by construction* (every member path has one and
+        // no entity name does), which is why `car` the entity and `car` the
+        // instance can coexist without anyone cross-checking them.
+        //
+        // The throw is this function's contract, not the rule's: `Load` returns
+        // void and every failure in it reaches `LoadFromFile`'s catch. The rule
+        // itself is an expected, and converting `Load` wholesale is its own pass.
+        if (const std::expected<void, NameError> valid = ValidateName(name); !valid.has_value())
+            throw std::runtime_error(std::format("entity #{} is named '{}': {}", i, name,
+                                                 Describe(valid.error())));
         names.push_back(std::move(name));
     }
 
@@ -1217,6 +1222,35 @@ std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(
     {
         Core::Log::Error("PlaceInstance: a serialization context is already active on this thread.");
         return std::nullopt;
+    }
+
+    // A name is the prefix its members are addressed by, so two live instances of
+    // one name mean two entities answering to `car/body`. Load refuses that
+    // outright ("'car/body' is claimed twice"), which makes a level saved with
+    // both a level that never opens again — authored happily, lost on reopen.
+    //
+    // Here rather than at the two editor gestures, because this is the one door
+    // they both come through: "Place instance" checked and
+    // CreateBlueprintFromSelection did not, which is round-7 S17 and exactly what
+    // a per-caller rule produces. Before the context is engaged and before a
+    // single member exists, so a refusal leaves the scene untouched rather than
+    // relying on the unwind below.
+    //
+    // Unnamed instances are exempt and must stay that way: a runtime spawn and a
+    // replicated mirror both pass no name, nothing addresses their members by
+    // path, and refusing the second bullet would break replication.
+    if (!entry.name.empty())
+    {
+        for (const auto &[id, row] : table.All())
+        {
+            if (row->name == entry.name)
+            {
+                Core::Log::Error("Blueprint: an instance named '{}' is already live in this world; placing a "
+                                 "second would make '{}/…' name two entities.",
+                                 entry.name, entry.name);
+                return std::nullopt;
+            }
+        }
     }
 
     // Its own name context, holding only this instance's members. Placing one

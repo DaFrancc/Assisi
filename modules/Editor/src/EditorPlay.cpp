@@ -14,6 +14,7 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 #include <Assisi/Window/InputContext.hpp>
 #include <Assisi/Window/Key.hpp>
@@ -384,20 +385,14 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
     // stable, but says nothing. A unique-in-scene default keeps the file readable
     // and keeps two entities from racing for the same one.
     {
-        std::string candidate;
-        for (std::uint32_t suffix = 1;; ++suffix)
-        {
-            candidate = "Entity_" + std::to_string(suffix);
-            bool taken = false;
-            _scene->ForEachEntity(
-                [&](Assisi::ECS::Entity other)
-                {
-                    const auto *name = _scene->Get<Assisi::Runtime::Name>(other);
-                    taken = taken || (name != nullptr && name->value.View() == candidate);
-                });
-            if (!taken)
-                break;
-        }
+        // The same walk the Blueprints panel uses for instance names, over the
+        // entity namespace instead — one rule, two namespaces (Naming.hpp).
+        //
+        // The first one is now `Entity` rather than `Entity_1`: the walk only
+        // suffixes what is taken, which is what makes the first car `car` and not
+        // `car_1`. Being consistent about that across both namespaces is the point
+        // of sharing the walk at all.
+        const std::string candidate = Assisi::Runtime::UniqueEntityName(*_scene, "Entity");
         (void)_scene->Add<Assisi::Runtime::Name>(entity,
                                                  {Assisi::Core::ShortString{candidate}});
     }

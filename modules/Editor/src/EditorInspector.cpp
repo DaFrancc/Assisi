@@ -14,6 +14,7 @@
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 
 #include <imgui.h>
 // After imgui.h, not sorted with it: ImGuizmo.h uses ImDrawList/ImU32 without
@@ -1318,12 +1319,45 @@ void EditorApp::DrawInspector()
         if (nameComp != nullptr)
             nameComp->value.ToCStr(nameBuf, sizeof(nameBuf));
         ImGui::SetNextItemWidth(-1.f);
-        if (ImGui::InputTextWithHint("##entityname", "Name", nameBuf, sizeof(nameBuf)))
+        const bool edited = ImGui::InputTextWithHint("##entityname", "Name", nameBuf, sizeof(nameBuf));
+
+        // What the name may be, asked of the same rule the loader enforces — so a
+        // name the box accepts is a name the level reloads with. Two entities of
+        // one name, or a name spelling `car/body`, both make the loader refuse the
+        // file outright: authored happily, lost on reopen (round-7 S17's
+        // neighbourhood).
+        //
+        // Refused rather than auto-suffixed, unlike a *new* entity's name. A fresh
+        // entity has no name worth keeping, so stepping it to `Entity_1` costs
+        // nothing; a rename is something the author typed on purpose, and quietly
+        // storing `crate_1` when they asked for `crate` is the edit they did not
+        // make. Empty is not refused — it means "no name", and the entity falls
+        // back to its id in the list.
+        const std::string_view typed{nameBuf};
+        std::string_view       refusal;
+        if (!typed.empty())
+        {
+            if (const auto valid = Assisi::Runtime::ValidateName(typed); !valid.has_value())
+                refusal = Assisi::Runtime::Describe(valid.error());
+            else if (Assisi::Runtime::EntityNameTaken(*_scene, typed, _selectedEntity))
+                refusal = "another entity already has this name";
+        }
+
+        if (edited && refusal.empty())
         {
             if (nameComp == nullptr)
                 nameComp = _scene->Add<Assisi::Runtime::Name>(_selectedEntity, {});
             if (nameComp != nullptr)
                 nameComp->value.Assign(nameBuf);
+        }
+        if (!refusal.empty())
+        {
+            // Said every frame the field holds a bad name, not once on the
+            // keystroke that made it bad: the box still shows what was typed, so
+            // an explanation that had already scrolled away would leave the author
+            // looking at a name the entity does not have and no reason why.
+            ImGui::TextColored(ImVec4(1.f, 0.5f, 0.4f, 1.f), "%.*s", static_cast<int>(refusal.size()),
+                               refusal.data());
         }
     }
     ImGui::Separator();
