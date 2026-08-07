@@ -28,6 +28,7 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 using namespace Assisi;
@@ -382,6 +383,223 @@ TEST_CASE("Blueprint: a level entity may point into an instance by path")
     const ECS::BlueprintMember *tag = scene.Get<ECS::BlueprintMember>(parent->parent);
     REQUIRE(tag != nullptr);
     CHECK(tag->memberIndex == 0); // car_3/body
+}
+
+// --- One namespace, and what actually collides in it ------------------------
+//
+// Entity names and instance member paths are keys in one map (`nameToEntity`),
+// which is what lets a level entity point at `car_3/body` at all. These four
+// cases pin exactly where that shared namespace bites and where it does not —
+// the editor's uniqueness guards are built to the answer, so if one of these
+// ever flips, a guard is now either too weak or theatre.
+
+TEST_CASE("Blueprint: an instance and an entity may share a name")
+{
+    // They read as a collision and are not one: the entity claims `car`, the
+    // instance claims `car/body` and `car/wheel_fl`, and no reference can mean
+    // both. Pinned because the obvious 'fix' — forbidding it — would reject
+    // levels that are fine, and a guard nobody can justify is a guard that gets
+    // widened until it hurts.
+    const std::filesystem::path root = FreshRoot("nameshare");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({Entity("car", At(5.f, 0.f, 0.f))})},
+           {"instances", nlohmann::json::array({{{"name", "car"}, {"source", "car.abp"}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    CHECK(table.Size() == 1);
+}
+
+TEST_CASE("Blueprint: two instances of one name are refused, not silently merged")
+{
+    // Both claim `car/body`. Reachable from the editor: CreateBlueprintFromSelection
+    // names the instance after the file and checks nothing, so this is a level the
+    // author can save and then never open again.
+    const std::filesystem::path root = FreshRoot("dupinstance");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl", {{"version", 2},
+                              {"entities", nlohmann::json::array()},
+                              {"instances", nlohmann::json::array({{{"name", "car"}, {"source", "car.abp"}},
+                                                                   {{"name", "car"}, {"source", "car.abp"}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+}
+
+TEST_CASE("Blueprint: an entity named like a member path is refused")
+{
+    // The one way an entity name and an instance name genuinely collide: the
+    // entity spells the separator itself. Reachable from the Inspector's rename
+    // box, which accepts any string.
+    const std::filesystem::path root = FreshRoot("slashname");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({Entity("car/body", At(5.f, 0.f, 0.f))})},
+           {"instances", nlohmann::json::array({{{"name", "car"}, {"source", "car.abp"}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+}
+
+TEST_CASE("Blueprint: two entities of one name are refused")
+{
+    // Reachable the same way, and the reason the rename box needs a guard at all.
+    const std::filesystem::path root = FreshRoot("dupentity");
+    Write(root, "main.alvl", {{"version", 2},
+                              {"entities", nlohmann::json::array({Entity("crate", At(0.f, 0.f, 0.f)),
+                                                                  Entity("crate", At(1.f, 0.f, 0.f))})}});
+
+    ECS::Scene scene;
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl"));
+}
+
+TEST_CASE("Blueprint: placing a second instance under a live name is refused")
+{
+    // The guard sits here, at the one door both editor gestures come through,
+    // rather than at each gesture — "Place instance" already uniquified and
+    // "Create blueprint from selection" did not, which is exactly the shape of
+    // bug a per-caller rule produces (round-7 S17). A refusal at the choke point
+    // cannot be forgotten by the next caller.
+    const std::filesystem::path root = FreshRoot("dupplace");
+    Write(root, "car.abp", CarFile());
+
+    ECS::Scene    scene;
+    InstanceTable table;
+
+    const Runtime::LevelInstance entry{
+        .name = "car", .source = "car.abp", .transform = {}, .overrides = nlohmann::json::object(), .removed = {}};
+    REQUIRE(SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true).has_value());
+    const std::size_t after_first = scene.AliveCount();
+
+    CHECK_FALSE(SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true).has_value());
+
+    // Refused before anything was built, not unwound afterwards: a half-placed
+    // instance that got cleaned up still burns entity slots the undo history has
+    // handles into.
+    CHECK(table.Size() == 1);
+    CHECK(scene.AliveCount() == after_first);
+}
+
+TEST_CASE("Blueprint: unnamed instances may repeat — a spawn is not a name")
+{
+    // Runtime spawns and replicated mirrors pass no name (ExpandInstance and
+    // BlueprintReplication both leave it empty), and nothing addresses their
+    // members by path. A hundred bullets are not a hundred collisions, and a
+    // guard that did not say so would break replication outright.
+    const std::filesystem::path root = FreshRoot("unnamed");
+    Write(root, "car.abp", CarFile());
+
+    ECS::Scene    scene;
+    InstanceTable table;
+
+    const Runtime::LevelInstance entry{
+        .name = {}, .source = "car.abp", .transform = {}, .overrides = nlohmann::json::object(), .removed = {}};
+    CHECK(SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/false).has_value());
+    CHECK(SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/false).has_value());
+    CHECK(table.Size() == 2);
+}
+
+TEST_CASE("Blueprint: UniqueInstanceName steps past the names already taken")
+{
+    // What the editor calls before placing, so the author gets `car_1` rather
+    // than a refusal. The refusal above is the backstop; this is the manners.
+    const std::filesystem::path root = FreshRoot("uniquename");
+    Write(root, "car.abp", CarFile());
+
+    ECS::Scene    scene;
+    InstanceTable table;
+
+    CHECK(Runtime::UniqueInstanceName(table, "car") == "car");
+
+    const auto place = [&](const std::string &name)
+    {
+        const Runtime::LevelInstance entry{.name      = name,
+                                           .source    = "car.abp",
+                                           .transform = {},
+                                           .overrides = nlohmann::json::object(),
+                                           .removed   = {}};
+        REQUIRE(SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true).has_value());
+    };
+
+    place("car");
+    CHECK(Runtime::UniqueInstanceName(table, "car") == "car_1");
+
+    place("car_1");
+    CHECK(Runtime::UniqueInstanceName(table, "car") == "car_2");
+
+    // The suffix walk skips what is taken rather than counting rows: `car_2` is
+    // free here even though three instances are live.
+    place("car_3");
+    CHECK(Runtime::UniqueInstanceName(table, "car") == "car_2");
+}
+
+TEST_CASE("Naming: the separator is the one character a name may not hold")
+{
+    CHECK(Runtime::ValidateName("car").has_value());
+    CHECK(Runtime::ValidateName("car_3").has_value());
+    CHECK(Runtime::ValidateName("Entity 12").has_value()); // spaces are fine; only '/' addresses
+
+    REQUIRE_FALSE(Runtime::ValidateName("").has_value());
+    CHECK(Runtime::ValidateName("").error() == Runtime::NameError::Empty);
+
+    REQUIRE_FALSE(Runtime::ValidateName("car/body").has_value());
+    CHECK(Runtime::ValidateName("car/body").error() == Runtime::NameError::ContainsSeparator);
+    // Leading and trailing count too — `/car` is how an override addresses the
+    // writing file, so a name spelling one would be read as an address.
+    CHECK(Runtime::ValidateName("/car").error() == Runtime::NameError::ContainsSeparator);
+
+    REQUIRE_FALSE(Runtime::ValidateName(std::string(Core::kShortStringMax + 1, 'a')).has_value());
+    CHECK(Runtime::ValidateName(std::string(Core::kShortStringMax + 1, 'a')).error() ==
+          Runtime::NameError::TooLong);
+    CHECK(Runtime::ValidateName(std::string(Core::kShortStringMax, 'a')).has_value()); // the limit itself fits
+}
+
+TEST_CASE("Naming: an entity name walks past what is taken, and knows itself")
+{
+    ECS::Scene scene;
+
+    const auto name = [&scene](std::string_view value)
+    {
+        const ECS::Entity e = scene.Create();
+        (void)scene.Add(e, Runtime::Name{Core::ShortString{value}});
+        return e;
+    };
+
+    CHECK(Runtime::UniqueEntityName(scene, "Entity") == "Entity");
+
+    const ECS::Entity first = name("Entity");
+    CHECK(Runtime::UniqueEntityName(scene, "Entity") == "Entity_1");
+
+    name("Entity_1");
+    CHECK(Runtime::UniqueEntityName(scene, "Entity") == "Entity_2");
+
+    // An entity does not conflict with itself: renaming `Entity` to `Entity` is a
+    // no-op, not a refusal, which is what keeps the rename box from rejecting the
+    // name already in its own field.
+    CHECK(Runtime::EntityNameTaken(scene, "Entity"));
+    CHECK_FALSE(Runtime::EntityNameTaken(scene, "Entity", first));
+
+    // "No name" is not a name — any number of entities may have none.
+    CHECK_FALSE(Runtime::EntityNameTaken(scene, ""));
+}
+
+TEST_CASE("Blueprint: an entity named with the separator is refused on its own")
+{
+    // Not only when an instance happens to collide with it: the name is malformed
+    // whatever else the level holds, and refusing it here is what lets everything
+    // downstream assume entity names and member paths cannot overlap.
+    const std::filesystem::path root = FreshRoot("slashonly");
+    Write(root, "main.alvl",
+          {{"version", 2}, {"entities", nlohmann::json::array({Entity("car/body", At(0.f, 0.f, 0.f))})}});
+
+    ECS::Scene scene;
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl"));
 }
 
 TEST_CASE("Blueprint: a level with instances refuses to load with nowhere to record them")
