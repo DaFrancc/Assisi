@@ -40,6 +40,7 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/EditHistory.hpp>
+#include <Assisi/Editor/PrePlayState.hpp>
 
 #include <nvrhi/nvrhi.h>
 
@@ -944,10 +945,11 @@ class EditorApp : public Assisi::App::Application
     /// against. Mirrors arrive with authored asset ids and null GPU pointers;
     /// this is what tells the frame loop to look again.
     std::uint64_t _netStructureRevision = 0;
-    /// The edited world's level identity as it was before Play. A join replaces
-    /// the play scene with the *host's* level, so both have to be put back.
-    std::string _prePlayLevelPath;
-    std::vector<std::string> _prePlaySystems;
+    /// The edited world as Run found it, minus its entities (those are
+    /// `_playSnapshot` below, which needs exact-identity handling this does not).
+    /// A join replaces the play scene with the *host's* level — its identity, its
+    /// systems and its instance table — so all of it has to be put back.
+    PrePlayState _prePlay;
 
     /// The Play control's net mode, as an index into the dropdown. Sticky for
     /// the process and reset at launch: it is a per-session testing choice

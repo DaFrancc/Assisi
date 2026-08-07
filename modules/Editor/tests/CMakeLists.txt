@@ -7,7 +7,9 @@ add_executable(Assisi-Editor-Tests
   main.cpp
   TestEditHistory.cpp
   TestInstanceHistory.cpp
+  TestPrePlayState.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
 )
 
 Assisi_apply_test_defaults(Assisi-Editor-Tests)
