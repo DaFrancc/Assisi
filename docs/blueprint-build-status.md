@@ -435,3 +435,50 @@ than a silently missing field.
   A rename is **refused**, not auto-suffixed, unlike a new entity's name: a fresh
   entity has no name worth keeping, but a rename is something the author typed on
   purpose, and quietly storing `crate_1` for `crate` is an edit they did not make.
+- `ReexpandInstancesOf`'s "one collection at a time" guard used to sit at the top
+  of the function and `return` (S18). Everything below it was skipped —
+  **including `InvalidateBlueprint`**, which has nothing to do with the prompt.
+  So a save arriving while an earlier prompt was up wrote the file and left
+  `GetBlueprintDefinition` handing out the contents from *before* the write, with
+  nothing logged: editing a blueprint and losing the edit looked identical. The
+  guard now sits below the collection and the invalidation, and takes the
+  declining answer on the author's behalf rather than returning quietly — the
+  write stands, the cache is honest, and the source goes into
+  `_staleInstanceSources`, which refuses hosting until the copies catch up or the
+  level is reloaded. That is exactly the prompt's own "Leave them", so both now go
+  through one `MarkInstancesStale`.
+
+  **The prompt this guards had never once opened**, which is how it went a whole
+  review round without anyone noticing what the guard did. `ReexpandInstancesOf`
+  measured the undo cost through `ActiveHistory()`, and
+  `EditHistory::CountForgettable` refuses a scene it is not bound to. A
+  blueprint-mode save destroys members in the *level* worlds while
+  `ActiveHistory()` is `_blueprintHistory`, bound to the blueprint world — so the
+  count came back 0 every time, `ApplyPendingReexpand` ran straight through, and
+  the author was never asked. `ForgetEntities` then declined on the same test, so
+  the level's `_history` was left holding transactions naming entities that had
+  just been destroyed: dangling handles, and after a dense rebuild an undo that
+  writes into whatever entity inherited the slot.
+
+  Both sites now ask **every** history via `AllHistories()` rather than the active
+  one. No world→history map is needed and none was added: `CountForgettable` and
+  `ForgetEntities` each take a scene and return 0 for one they do not own, so the
+  cross product is self-filtering and stays correct however many histories there
+  come to be. Asking "where do I record this edit" and "what does this edit cost"
+  were the same call, and they are not the same question.
+- The confirmation itself was written as a receipt — titled "Blueprint saved",
+  leading with what was written and mentioning the history third. That is the
+  shape an author dismisses by reflex, which for this dialog means throwing away
+  undo history without reading. It now leads with the cost in the warning colour,
+  the destructive button says what it does (`Update copies and drop the history`),
+  and `SetItemDefaultFocus` sits on `Cancel` so a stray Enter lands on the answer
+  that loses nothing.
+
+  A warning *sound* was tried and dropped. Windows has `MessageBeep`, one call
+  with no dependency; Linux has no way to make a noise without either a link
+  dependency (libcanberra, libpulse) or launching a player and babysitting it,
+  and neither is worth it for a chime on a dialog that is already modal, centred
+  and titled with its cost. The place for it is an audio module — miniaudio-style
+  backend plus a synthesized two-tone chime, no asset and no theme lookup — and
+  the call belongs at the same point in `ReexpandInstancesOf`, once per prompt
+  rather than once per frame.

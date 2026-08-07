@@ -442,6 +442,20 @@ class EditorApp : public Assisi::App::Application
     /// nullptr (the simulation owns the scene, edits are neither captured nor
     /// undoable). This is the single switch every capture/undo site routes through.
     [[nodiscard]] Assisi::Editor::EditHistory *ActiveHistory();
+    /// @brief Every history that exists right now, active or not.
+    ///
+    /// For the sites that ask what an edit *costs* rather than where to record it.
+    /// Those are not the same question, and answering the first with
+    /// @ref ActiveHistory was wrong: a blueprint save destroys members in the level
+    /// worlds while the active history is the blueprint world's, and EditHistory
+    /// refuses any scene it is not bound to — so the cost always came back 0, the
+    /// "this will drop N undo steps" prompt never opened, and the level's stack kept
+    /// transactions naming entities that no longer existed.
+    ///
+    /// No world→history map is needed, and deliberately so: `CountForgettable` and
+    /// `ForgetEntities` both take the scene and return 0 for one they do not own, so
+    /// asking all of them and summing is correct however many there come to be.
+    [[nodiscard]] std::vector<Assisi::Editor::EditHistory *> AllHistories();
     /// @brief True when the scene has edits not yet written to disk — the active
     /// history's position differs from the one recorded at the last successful
     /// SaveLevel. Drives the window-title `*` marker.
@@ -577,6 +591,19 @@ class EditorApp : public Assisi::App::Application
         /// The member names the live tags were written against. Captured before the
         /// definition cache is dropped, because nothing can reconstruct them after.
         std::vector<std::string> previousMemberNames;
+        /// The entity behind each of those names, in the same order, and captured in
+        /// the same breath and for a sharper version of the same reason.
+        ///
+        /// A `BlueprintMember` tag carries an *index*, and only the definition those
+        /// tags were written against can say which name that index means. Once the
+        /// cache is dropped, `Runtime::FindMember` resolves names through the **new**
+        /// file — and the members this diff is looking for are precisely the ones the
+        /// new file no longer declares, so it returned NullEntity for every one of
+        /// them. The doomed set was structurally always empty: nothing was ever
+        /// reported as removed, the prompt never opened, and the save destroyed
+        /// members and truncated history without asking. Resolve while the old
+        /// mapping is still the live one, and the question is answerable.
+        std::vector<Assisi::ECS::Entity> previousMemberEntities;
         /// Members this instance loses, resolved from the name diff. Empty for the
         /// common edit, which changes values and adds nothing and removes nothing.
         std::vector<Assisi::ECS::Entity> doomed;
@@ -590,20 +617,90 @@ class EditorApp : public Assisi::App::Application
     /// so editing the car changes the lot too.
     ///
     /// If the edit deletes members and that would cost undo history, this stops and
-    /// asks (@ref _pendingReexpand) rather than doing it — see
-    /// DrawReexpandConfirmModal. Nothing about the file on disk depends on the answer;
-    /// declining leaves the live copies stale until the level is reloaded, which is
-    /// exactly where they were before 5d existed.
-    void ReexpandInstancesOf(const std::string &source);
+    /// asks (@ref _pendingReexpand) rather than doing it — see DrawSaveConfirmModal.
+    /// The save is not finished until that is answered: Cancel puts the file back
+    /// (@ref CancelPendingSave), so unlike every earlier version of this, the write
+    /// is not a fait accompli by the time the author is told what it costs.
+    ///
+    /// **The cache is dropped unconditionally**, before any of that: it is a statement
+    /// about the file, not about the copies, and a save that skipped it would leave
+    /// `GetBlueprintDefinition` handing out the contents from before the write. A save
+    /// arriving while an earlier prompt is still up cannot ask a second question, so it
+    /// takes the declining answer (@ref MarkInstancesStale) rather than returning
+    /// quietly — round-7 S18.
+    ///
+    /// @param collected must come from @ref CollectReexpandTargets, called **before**
+    ///        the file was written. It cannot be gathered here: by this point the new
+    ///        contents are on disk, and a cold cache would parse them as the old ones.
+    void ReexpandInstancesOf(const std::string &source, std::vector<PendingReexpand> collected);
+
+    /// @brief Which live instances a save of @p source would have to bring up to date,
+    /// and what each of them is made of right now.
+    ///
+    /// **Call before writing the file.** Every field here describes the state the save
+    /// is about to replace, and two of them — the member names and the entities behind
+    /// them — exist only until it does. `GetBlueprintDefinition` falls back to parsing
+    /// from disk when the cache is cold, so gathering after the write is correct only
+    /// by luck of the cache being warm; a cancelled save is exactly the case that
+    /// leaves it cold, and the retry then saw no change at all.
+    [[nodiscard]] std::vector<PendingReexpand> CollectReexpandTargets(const std::string &source);
+
+    /// @brief Records @p source as a file whose live copies are behind it, and says so.
+    ///
+    /// Idempotent. The single place stage 5e's stale set is added to, so the two ways
+    /// of declining a catch-up — the prompt's "Leave them" and a save that could not be
+    /// asked about — leave the editor in the same state and log the same sentence.
+    void MarkInstancesStale(const std::string &source);
 
     /// @brief Performs the work @ref ReexpandInstancesOf collected. Truncates the
     /// history of any world that lost a member, and rebuilds physics and assets for
     /// every member that survived or arrived.
     void ApplyPendingReexpand();
 
-    /// @brief The "this costs you N undo steps" prompt. No-op when nothing is
-    /// pending.
-    void DrawReexpandConfirmModal();
+    /// @brief The "this save costs you N undo steps — save anyway?" gate. No-op when
+    /// no save is waiting on an answer.
+    void DrawSaveConfirmModal();
+
+    /// @brief Puts back everything the un-answered save changed, and says so.
+    ///
+    /// The live copies need no undoing — @ref ApplyPendingReexpand is the only thing
+    /// that destroys a member and it has not run — so this is the file, the world's
+    /// level path, and the saved-state token that drives the dirty marker. The cache
+    /// is dropped again afterwards, because it was dropped against contents that are
+    /// no longer on disk.
+    void CancelPendingSave();
+
+    /// @brief A written file whose save has not been agreed to yet, and everything
+    /// needed to put the world back exactly as it was.
+    ///
+    /// The write happens first and is undone on Cancel, rather than the cost being
+    /// predicted before writing. Predicting it would mean deriving the new member
+    /// names from the blueprint world's scene — a second implementation of the rule
+    /// `Runtime/Naming.hpp` exists to be the only copy of, and the diff has to come
+    /// from the file anyway, because the file is what every live copy re-expands
+    /// from. So the file is the question, and this is the answer key.
+    struct PendingSaveConfirm
+    {
+        /// The virtual path written, which is also what the definition cache keys on.
+        std::string virtualPath;
+        /// Where it landed, resolved once at save time — Cancel must not depend on
+        /// the asset roots still resolving the same way.
+        std::filesystem::path resolved;
+        /// The file's previous contents, or nullopt when the save created it (Save As
+        /// to a new name) and Cancel therefore has to remove it again.
+        std::optional<std::string> previousBytes;
+        /// The world the save was for. Compared before anything is restored onto it:
+        /// a handle to a world that is no longer the edited one must not have its
+        /// level path rewritten from under whoever holds it now.
+        Assisi::App::World *world = nullptr;
+        /// What `_world->levelPath` was before the save retargeted it (Save As).
+        std::string previousLevelPath;
+        /// The dirty-marker token before the save cleared it, and which of the two
+        /// it belongs to.
+        std::uint64_t previousSavedToken = 0;
+        bool          savedTokenIsBlueprint = false;
+    };
+    std::optional<PendingSaveConfirm> _pendingSaveConfirm;
 
     // --- Moving an instance -------------------------------------------------
     //
