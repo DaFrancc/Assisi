@@ -1111,6 +1111,18 @@ Assisi::Editor::EditHistory *EditorApp::ActiveHistory()
     return nullptr;
 }
 
+std::vector<Assisi::Editor::EditHistory *> EditorApp::AllHistories()
+{
+    std::vector<Assisi::Editor::EditHistory *> histories;
+    histories.reserve(3);
+    for (std::optional<Assisi::Editor::EditHistory> *slot : {&_history, &_pausedHistory, &_blueprintHistory})
+    {
+        if (*slot)
+            histories.push_back(&**slot);
+    }
+    return histories;
+}
+
 bool EditorApp::IsSceneDirty()
 {
     // Dirty tracks the *editing* history (where saves happen), not a paused scratch.
@@ -1416,7 +1428,7 @@ void EditorApp::OnImGui()
     }
     { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
     { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
-    { ASSISI_PROFILE_SCOPE("panel/reexpand-modal"); DrawReexpandConfirmModal(); }
+    { ASSISI_PROFILE_SCOPE("panel/save-confirm-modal"); DrawSaveConfirmModal(); }
     if (!blueprintMode)
     {
         { ASSISI_PROFILE_SCOPE("panel/host-modal"); DrawHostUnsavedModal(); }
