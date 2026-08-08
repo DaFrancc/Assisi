@@ -370,13 +370,13 @@ std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const 
                 for (const auto &[id, row] : world.instances.All())
                 {
                     (void)id;
-                    const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
+                    const Assisi::Runtime::BlueprintResult definition =
                         Assisi::Runtime::GetBlueprintDefinition(row->source);
-                    if (definition == nullptr)
+                    if (!definition)
                         continue;
                     if (row->source == source ||
-                        std::find(definition->closure.begin(), definition->closure.end(), source) !=
-                            definition->closure.end())
+                        std::find((*definition)->closure.begin(), (*definition)->closure.end(), source) !=
+                            (*definition)->closure.end())
                     {
                         skipped.push_back(world.name);
                         break;
@@ -387,25 +387,25 @@ std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const 
 
             for (const auto &[id, row] : world.instances.All())
             {
-                const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
+                const Assisi::Runtime::BlueprintResult definition =
                     Assisi::Runtime::GetBlueprintDefinition(row->source);
-                if (definition == nullptr)
+                if (!definition)
                     continue;
 
                 // By closure, not by path: a lot's flattened member list contains
                 // the car's members, so editing the car changes the lot as well.
                 const bool touched =
-                    row->source == source || std::find(definition->closure.begin(),
-                                                       definition->closure.end(),
-                                                       source) != definition->closure.end();
+                    row->source == source || std::find((*definition)->closure.begin(),
+                                                       (*definition)->closure.end(),
+                                                       source) != (*definition)->closure.end();
                 if (!touched)
                     continue;
 
                 PendingReexpand pending;
                 pending.world      = &world;
                 pending.instanceId = id;
-                pending.previousMemberNames.reserve(definition->members.size());
-                for (const auto &member : definition->members)
+                pending.previousMemberNames.reserve((*definition)->members.size());
+                for (const auto &member : (*definition)->members)
                     pending.previousMemberNames.push_back(member.name);
 
                 // The entities behind those names, resolved here and not later. A
@@ -414,7 +414,7 @@ std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const 
                 // PendingReexpand::previousMemberEntities. Walked by tag rather than
                 // through Runtime::FindMember per name: one query for the whole
                 // instance instead of one per member, and no name lookup at all.
-                pending.previousMemberEntities.assign(definition->members.size(),
+                pending.previousMemberEntities.assign((*definition)->members.size(),
                                                       Assisi::ECS::NullEntity);
                 for (auto [entity, tag] : world.scene.Query<Assisi::ECS::BlueprintMember>())
                 {
@@ -486,15 +486,15 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
         const Assisi::Runtime::BlueprintInstance *row = pending.world->instances.Find(pending.instanceId);
         if (row == nullptr)
             continue;
-        const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
+        const Assisi::Runtime::BlueprintResult definition =
             Assisi::Runtime::GetBlueprintDefinition(row->source);
-        if (definition == nullptr)
+        if (!definition)
             continue; // the file broke; ReexpandInstance will refuse it and say so
 
         for (std::size_t i = 0; i < pending.previousMemberNames.size(); ++i)
         {
             const std::string &name = pending.previousMemberNames[i];
-            if (definition->IndexOf(name).has_value())
+            if ((*definition)->IndexOf(name).has_value())
                 continue;
 
             // From the capture, never from a fresh lookup: `definition` here is the

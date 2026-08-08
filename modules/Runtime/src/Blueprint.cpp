@@ -11,11 +11,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <expected>
 #include <format>
 #include <map>
 #include <memory>
 #include <mutex>
-#include <stdexcept>
 #include <unordered_set>
 #include <utility>
 
@@ -180,13 +180,13 @@ ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, ECS::Insta
     if (row == nullptr)
         return ECS::NullEntity;
 
-    const std::shared_ptr<const BlueprintDefinition> definition = GetBlueprintDefinition(row->source);
-    if (definition == nullptr)
+    const BlueprintResult definition = GetBlueprintDefinition(row->source);
+    if (!definition)
         return ECS::NullEntity;
 
     // Once, here — after which the scan compares integers rather than strings per
     // entity, which is the whole reason the tag carries an index.
-    const std::optional<uint32_t> index = definition->IndexOf(name);
+    const std::optional<uint32_t> index = (*definition)->IndexOf(name);
     if (!index.has_value())
         return ECS::NullEntity;
 
@@ -502,19 +502,36 @@ void ReadInstanceClaims(const nlohmann::json &entry, LevelInstance &out)
     }
 }
 
-/// Reads @p source through the asset system and parses it. Throws with a message
-/// naming the file on any failure; the caller turns that into a log line.
-nlohmann::json ReadFile(std::string_view source)
+/// Reads @p source through the asset system and parses it.
+///
+/// Logs which file is wrong before returning the kind, here and at every failure
+/// site below: by the time this reaches the caller, `source` may be a file three
+/// levels of nesting under the one it asked for, and nothing above can name it.
+///
+/// Parsed with `allow_exceptions=false` so a malformed file is a value here rather
+/// than a throw the boundary has to catch — the same shape AssetSidecar and
+/// MaterialFile use.
+std::expected<nlohmann::json, BlueprintError> ReadFile(std::string_view source)
 {
     const auto text = Core::AssetSystem::ReadText(source);
     if (!text)
-        throw std::runtime_error(std::format("cannot read '{}'", source));
+    {
+        Core::Log::Error("Blueprint: cannot read '{}'.", source);
+        return std::unexpected(BlueprintError::FileUnreadable);
+    }
 
-    nlohmann::json doc = nlohmann::json::parse(*text);
+    nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
+    if (doc.is_discarded())
+    {
+        Core::Log::Error("Blueprint: '{}' is not readable JSON.", source);
+        return std::unexpected(BlueprintError::MalformedJson);
+    }
+
     if (doc.value("version", 0) != 2)
     {
-        throw std::runtime_error(
-            std::format("'{}' is version {} (this build reads version 2)", source, doc.value("version", 0)));
+        Core::Log::Error("Blueprint: '{}' is version {} (this build reads version 2).", source,
+                         doc.value("version", 0));
+        return std::unexpected(BlueprintError::UnsupportedVersion);
     }
     return doc;
 }
@@ -526,18 +543,26 @@ struct FlattenState
     std::unordered_set<std::string>         declared; ///< Member names claimed so far.
 };
 
-void FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_view source,
-                 const std::string &prefix, const ECS::Transform &placement);
+std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohmann::json &doc,
+                                                std::string_view source, const std::string &prefix,
+                                                const ECS::Transform &placement);
 
 /// One nested instance entry: resolve the source, compose the placement, recurse.
-void FlattenInstance(FlattenState &state, const nlohmann::json &entry, std::string_view source,
-                     const std::string &prefix, const ECS::Transform &placement)
+std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const nlohmann::json &entry,
+                                                    std::string_view source, const std::string &prefix,
+                                                    const ECS::Transform &placement)
 {
     if (!entry.contains("name") || !entry.at("name").is_string())
-        throw std::runtime_error(std::format("'{}' has an instance with no name", source));
+    {
+        Core::Log::Error("Blueprint: '{}' has an instance with no name.", source);
+        return std::unexpected(BlueprintError::MissingName);
+    }
     if (!entry.contains("source") || !entry.at("source").is_string())
-        throw std::runtime_error(std::format("'{}' instance '{}' has no source", source,
-                                             entry.at("name").get<std::string>()));
+    {
+        Core::Log::Error("Blueprint: '{}' instance '{}' has no source.", source,
+                         entry.at("name").get<std::string>());
+        return std::unexpected(BlueprintError::MissingSource);
+    }
 
     const std::string name        = entry.at("name").get<std::string>();
     const std::string childSource = entry.at("source").get<std::string>();
@@ -549,7 +574,8 @@ void FlattenInstance(FlattenState &state, const nlohmann::json &entry, std::stri
         std::string chain;
         for (const std::string &link : state.stack)
             chain += link + " -> ";
-        throw std::runtime_error(std::format("instance cycle: {}{}", chain, childSource));
+        Core::Log::Error("Blueprint: instance cycle: {}{}.", chain, childSource);
+        return std::unexpected(BlueprintError::InstanceCycle);
     }
 
     const ECS::Transform local = TransformFromJson(entry.value("transform", nlohmann::json::object()));
@@ -558,17 +584,27 @@ void FlattenInstance(FlattenState &state, const nlohmann::json &entry, std::stri
     // rejected: it lets the file say one thing while the game does another.
     if (!HasUniformScale(local))
     {
-        throw std::runtime_error(std::format("'{}' instance '{}' has a non-uniform scale ({}, {}, {}); an "
-                                             "instance may only translate, rotate, or scale uniformly",
-                                             source, name, local.scale.x, local.scale.y, local.scale.z));
+        Core::Log::Error("Blueprint: '{}' instance '{}' has a non-uniform scale ({}, {}, {}); an instance may "
+                         "only translate, rotate, or scale uniformly.",
+                         source, name, local.scale.x, local.scale.y, local.scale.z);
+        return std::unexpected(BlueprintError::NonUniformScale);
     }
 
     const std::string childPrefix = prefix + name + "/";
     const std::size_t first       = state.out->members.size();
 
+    // Hoisted out of the recursive call: the read has to be checked before the
+    // recursion it feeds, which is the one shape the old throw let us skip.
+    const std::expected<nlohmann::json, BlueprintError> childDoc = ReadFile(childSource);
+    if (!childDoc)
+        return std::unexpected(childDoc.error());
+
     state.stack.push_back(childSource);
-    FlattenInto(state, ReadFile(childSource), childSource, childPrefix, ComposeTransform(placement, local));
+    const std::expected<void, BlueprintError> flattened =
+        FlattenInto(state, *childDoc, childSource, childPrefix, ComposeTransform(placement, local));
     state.stack.pop_back();
+    if (!flattened)
+        return std::unexpected(flattened.error());
 
     // The entry's claims apply to what the recursion just produced, and to nothing
     // else — an override is written where the edit was made and addresses downward
@@ -578,7 +614,7 @@ void FlattenInstance(FlattenState &state, const nlohmann::json &entry, std::stri
     LevelInstance claims;
     ReadInstanceClaims(entry, claims);
     if (claims.overrides.empty() && claims.removed.empty())
-        return;
+        return {};
 
     // Removed here, not held as a hole: these removals are authored in the file, so
     // every instance of it has the same member list, and the list *is* the index
@@ -627,10 +663,13 @@ void FlattenInstance(FlattenState &state, const nlohmann::json &entry, std::stri
         QualifyOverrideReferences(qualified, prefix, childPrefix);
         ApplyMemberOverride(*member, qualified, full);
     }
+
+    return {};
 }
 
-void FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_view source,
-                 const std::string &prefix, const ECS::Transform &placement)
+std::expected<void, BlueprintError> FlattenInto(FlattenState &state, const nlohmann::json &doc,
+                                                std::string_view source, const std::string &prefix,
+                                                const ECS::Transform &placement)
 {
     if (std::find(state.out->closure.begin(), state.out->closure.end(), source) == state.out->closure.end())
         state.out->closure.emplace_back(source);
@@ -660,13 +699,17 @@ void FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_vie
             if (!entity.contains("name") || !entity.at("name").is_string() ||
                 entity.at("name").get<std::string>().empty())
             {
-                throw std::runtime_error(std::format("'{}' has an entity with no name", source));
+                Core::Log::Error("Blueprint: '{}' has an entity with no name.", source);
+                return std::unexpected(BlueprintError::MissingName);
             }
 
             BlueprintMemberDesc member;
             member.name = prefix + entity.at("name").get<std::string>();
             if (!state.declared.insert(member.name).second)
-                throw std::runtime_error(std::format("'{}' declares two members named '{}'", source, member.name));
+            {
+                Core::Log::Error("Blueprint: '{}' declares two members named '{}'.", source, member.name);
+                return std::unexpected(BlueprintError::DuplicateMember);
+            }
 
             member.components = entity.value("components", nlohmann::json::object());
             QualifyReferences(member.components, prefix);
@@ -696,13 +739,46 @@ void FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_vie
     if (const auto instances = doc.find("instances"); instances != doc.end() && instances->is_array())
     {
         for (const auto &entry : *instances)
-            FlattenInstance(state, entry, source, prefix, placement);
+        {
+            const std::expected<void, BlueprintError> flattened =
+                FlattenInstance(state, entry, source, prefix, placement);
+            if (!flattened)
+                return std::unexpected(flattened.error());
+        }
     }
+
+    return {};
 }
 
 } // namespace
 
-std::shared_ptr<const BlueprintDefinition> GetBlueprintDefinition(std::string_view source)
+std::string_view Describe(BlueprintError error)
+{
+    switch (error)
+    {
+    case BlueprintError::FileUnreadable:
+        return "the file, or one it instances, could not be read";
+    case BlueprintError::MalformedJson:
+        return "the file is not readable JSON";
+    case BlueprintError::UnsupportedVersion:
+        return "the file is a version this build does not read";
+    case BlueprintError::MissingName:
+        return "an entity or instance in the file has no name";
+    case BlueprintError::MissingSource:
+        return "an instance in the file names no source";
+    case BlueprintError::InstanceCycle:
+        return "the file is reachable from itself by instancing";
+    case BlueprintError::DuplicateMember:
+        return "two members flatten to the same name";
+    case BlueprintError::NonUniformScale:
+        return "an instance has a non-uniform scale";
+    case BlueprintError::ComponentRejected:
+        return "a member holds component values the reflection layer refuses";
+    }
+    return "the file cannot be used";
+}
+
+BlueprintResult GetBlueprintDefinition(std::string_view source)
 {
     const std::lock_guard lock(CacheMutex());
 
@@ -713,16 +789,30 @@ std::shared_ptr<const BlueprintDefinition> GetBlueprintDefinition(std::string_vi
     auto definition    = std::make_shared<BlueprintDefinition>();
     definition->source = std::string{source};
 
-    // Everything that can fail is inside, including the prepare step. Preparing
-    // deserializes each member, and a generated deserializer reads a float as
-    // `j.at("fov").get<float>()` — so a file saying "wide" where a number goes
-    // throws from the last line of the build. Callers wrote themselves against a
-    // nullptr (FindMember, Save, ReexpandInstance's precondition); an exception
-    // out of here reaches them as a level the user cannot save.
+    // Reading and flattening report failure by value; the try is here for the
+    // *prepare* step and for nlohmann. Preparing deserializes each member, and a
+    // generated deserializer reads a float as `j.at("fov").get<float>()` — so a
+    // file saying "wide" where a number goes throws from the last line of the
+    // build. That throw is a dependency's, caught here and turned into an error
+    // the caller can read, because callers as ordinary as the editor's Save reach
+    // this while walking a scene.
+    //
+    // Nothing is cached on failure, on either path: a blueprint that failed once
+    // because its nested file was missing must be readable the moment somebody
+    // adds it, rather than staying broken until the level reloads.
     try
     {
+        const std::expected<nlohmann::json, BlueprintError> doc = ReadFile(source);
+        if (!doc)
+            return std::unexpected(doc.error());
+
         FlattenState state{.out = definition.get(), .stack = {std::string{source}}, .declared = {}};
-        FlattenInto(state, ReadFile(source), source, /*prefix=*/"", ECS::Transform{});
+        if (const std::expected<void, BlueprintError> flattened =
+                FlattenInto(state, *doc, source, /*prefix=*/"", ECS::Transform{});
+            !flattened)
+        {
+            return std::unexpected(flattened.error());
+        }
 
         std::sort(definition->closure.begin(), definition->closure.end());
         definition->closure.erase(std::unique(definition->closure.begin(), definition->closure.end()),
@@ -732,15 +822,12 @@ std::shared_ptr<const BlueprintDefinition> GetBlueprintDefinition(std::string_vi
         // a hundred bullets must not re-read and re-parse bullet.abp a hundred
         // times.
         if (!SceneSerializer::PrepareBlueprint(*definition))
-            return nullptr;
+            return std::unexpected(BlueprintError::ComponentRejected);
     }
     catch (const std::exception &ex)
     {
-        // Nothing is cached on failure. A blueprint that failed once because its
-        // nested file was missing must be readable the moment somebody adds it,
-        // rather than staying broken until the level reloads.
         Core::Log::Error("Blueprint: cannot use '{}': {}", source, ex.what());
-        return nullptr;
+        return std::unexpected(BlueprintError::ComponentRejected);
     }
 
     return cache.emplace(std::string{source}, std::move(definition)).first->second;

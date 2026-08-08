@@ -424,11 +424,11 @@ std::string MemberPathName(const InstanceTable &instances, const ECS::BlueprintM
     if (row == nullptr)
         return {};
 
-    const std::shared_ptr<const BlueprintDefinition> definition = GetBlueprintDefinition(row->source);
-    if (definition == nullptr || tag.memberIndex >= definition->members.size())
+    const BlueprintResult definition = GetBlueprintDefinition(row->source);
+    if (!definition || tag.memberIndex >= (*definition)->members.size())
         return {};
 
-    const std::string &leaf = definition->members[tag.memberIndex].name;
+    const std::string &leaf = (*definition)->members[tag.memberIndex].name;
     return row->name.empty() ? leaf : row->name + "/" + leaf;
 }
 
@@ -527,9 +527,16 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
             entry.name, entry.transform.scale.x, entry.transform.scale.y, entry.transform.scale.z));
     }
 
-    const std::shared_ptr<const BlueprintDefinition> definition = GetBlueprintDefinition(entry.source);
-    if (definition == nullptr)
-        throw std::runtime_error(std::format("instance '{}' cannot use '{}'", entry.name, entry.source));
+    const BlueprintResult loaded = GetBlueprintDefinition(entry.source);
+    if (!loaded)
+    {
+        // The reason comes from the definition rather than being invented here: the
+        // file that actually failed may be several levels of nesting below
+        // `entry.source`, and this call site cannot know which.
+        throw std::runtime_error(std::format("instance '{}' cannot use '{}': {}", entry.name, entry.source,
+                                             Describe(loaded.error())));
+    }
+    const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
 
     StagedInstance staged;
     staged.definition = definition;
@@ -1342,12 +1349,12 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
     // uniform.
     //
     // The check itself has to be non-throwing for that to hold, and it is —
-    // GetBlueprintDefinition answers nullptr for every way a file can be bad,
+    // GetBlueprintDefinition reports every way a file can be bad as an error value,
     // including a member value the reflection layer refuses.
-    if (GetBlueprintDefinition(row.source) == nullptr)
+    if (const BlueprintResult definition = GetBlueprintDefinition(row.source); !definition)
     {
-        Core::Log::Error("Blueprint: '{}' no longer loads; instance {} is left as it was.", row.source,
-                         instanceId);
+        Core::Log::Error("Blueprint: '{}' no longer loads ({}); instance {} is left as it was.", row.source,
+                         Describe(definition.error()), instanceId);
         return std::nullopt;
     }
 

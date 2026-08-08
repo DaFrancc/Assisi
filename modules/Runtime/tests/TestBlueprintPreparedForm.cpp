@@ -35,6 +35,8 @@
 
 using namespace Assisi;
 using Assisi::Runtime::BlueprintDefinition;
+using Assisi::Runtime::BlueprintError;
+using Assisi::Runtime::BlueprintResult;
 using Assisi::Runtime::Camera;
 using Assisi::Runtime::InstanceTable;
 using Assisi::Runtime::MeshRenderer;
@@ -80,8 +82,9 @@ TEST_CASE("Prepared form: every component a member declares is encoded once")
                                                                      {"rotation", {1.f, 0.f, 0.f, 0.f}},
                                                                      {"scale", {1.f, 1.f, 1.f}}}}}}}})}});
 
-    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("car.abp");
-    REQUIRE(definition != nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("car.abp");
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
     REQUIRE(definition->members.size() == 1);
 
     const auto &prepared = definition->members[0].prepared;
@@ -94,7 +97,9 @@ TEST_CASE("Prepared form: every component a member declares is encoded once")
 
     // Cached by virtual path, so the second ask is the same object rather than a
     // second parse.
-    CHECK(Runtime::GetBlueprintDefinition("car.abp") == definition);
+    const BlueprintResult again = Runtime::GetBlueprintDefinition("car.abp");
+    REQUIRE(again.has_value());
+    CHECK(*again == definition);
 }
 
 TEST_CASE("Prepared form: a spawn decodes to the same values a JSON load produces")
@@ -232,11 +237,13 @@ TEST_CASE("Prepared form: a blueprint naming a reference it does not declare is 
 
     // Caught when the definition is built rather than at every spawn: a blueprint
     // whose wiring names nothing is broken about itself, not about where it is used.
-    CHECK(Runtime::GetBlueprintDefinition("car.abp") == nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("car.abp");
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK(loaded.error() == BlueprintError::ComponentRejected);
 }
 
 // ---------------------------------------------------------------------------
-// A malformed member value is a nullptr, not an exception
+// A malformed member value is an error value, not an exception
 // ---------------------------------------------------------------------------
 //
 // Preparing a member deserializes it, and a generated deserializer reads a float
@@ -266,20 +273,23 @@ TEST_CASE("Prepared form: a member value of the wrong type is unusable, not a th
     const std::filesystem::path root = FreshRoot("mistyped");
     Write(root, "car.abp", MistypedCar());
 
-    std::shared_ptr<const BlueprintDefinition> definition;
+    // The nlohmann throw out of the generated deserializer is caught at the
+    // boundary and handed back as a value; nothing escapes to the caller.
+    BlueprintResult definition;
     CHECK_NOTHROW(definition = Runtime::GetBlueprintDefinition("car.abp"));
-    CHECK(definition == nullptr);
+    REQUIRE_FALSE(definition.has_value());
+    CHECK(definition.error() == BlueprintError::ComponentRejected);
 
     // Nothing was cached, so fixing the file is enough — the failure does not
     // outlive itself and wait for a level unload to clear.
-    CHECK_NOTHROW(Runtime::GetBlueprintDefinition("car.abp"));
-    CHECK(Runtime::GetBlueprintDefinition("car.abp") == nullptr);
+    CHECK_NOTHROW((void)Runtime::GetBlueprintDefinition("car.abp"));
+    CHECK_FALSE(Runtime::GetBlueprintDefinition("car.abp").has_value());
 
     Write(root, "car.abp", {{"version", 2},
                             {"entities", nlohmann::json::array({{{"name", "body"},
                                                                  {"components",
                                                                   {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
-    CHECK(Runtime::GetBlueprintDefinition("car.abp") != nullptr);
+    CHECK(Runtime::GetBlueprintDefinition("car.abp").has_value());
 }
 
 TEST_CASE("Prepared form: FindMember on an instance whose file went bad answers, not throws")

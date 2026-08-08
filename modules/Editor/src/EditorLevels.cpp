@@ -556,12 +556,12 @@ const nlohmann::json *EditorApp::OverrideClaimFor(Assisi::ECS::Entity entity, co
     if (row == nullptr || !row->overrides.is_object())
         return nullptr;
 
-    const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
+    const Assisi::Runtime::BlueprintResult definition =
         Assisi::Runtime::GetBlueprintDefinition(row->source);
-    if (definition == nullptr || tag->memberIndex >= definition->members.size())
+    if (!definition || tag->memberIndex >= (*definition)->members.size())
         return nullptr;
 
-    const auto member = row->overrides.find(definition->members[tag->memberIndex].name);
+    const auto member = row->overrides.find((*definition)->members[tag->memberIndex].name);
     if (member == row->overrides.end() || !member->is_object())
         return nullptr;
 
@@ -583,12 +583,12 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     if (row == nullptr)
         return;
 
-    const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
+    const Assisi::Runtime::BlueprintResult definition =
         Assisi::Runtime::GetBlueprintDefinition(row->source);
-    if (definition == nullptr || tag->memberIndex >= definition->members.size())
+    if (!definition || tag->memberIndex >= (*definition)->members.size())
         return;
 
-    const Assisi::Runtime::BlueprintMemberDesc &desc = definition->members[tag->memberIndex];
+    const Assisi::Runtime::BlueprintMemberDesc &desc = (*definition)->members[tag->memberIndex];
 
     // A copy, taken now: `row` points into the table, and RestoreAt below writes
     // through it — so reading `*row` afterwards for the transaction's "before"

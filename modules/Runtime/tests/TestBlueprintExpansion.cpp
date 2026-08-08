@@ -33,6 +33,8 @@
 
 using namespace Assisi;
 using Assisi::Runtime::BlueprintDefinition;
+using Assisi::Runtime::BlueprintError;
+using Assisi::Runtime::BlueprintResult;
 using Assisi::Runtime::InstanceTable;
 using Assisi::Runtime::SceneSerializer;
 
@@ -92,9 +94,9 @@ const ECS::Transform *TransformOf(ECS::Scene &scene, const InstanceTable &table,
 {
     const Runtime::BlueprintInstance *row = table.Find(instanceId);
     REQUIRE(row != nullptr);
-    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition(row->source);
-    REQUIRE(definition != nullptr);
-    const std::optional<uint32_t> index = definition->IndexOf(memberName);
+    const BlueprintResult definition = Runtime::GetBlueprintDefinition(row->source);
+    REQUIRE(definition.has_value());
+    const std::optional<uint32_t> index = (*definition)->IndexOf(memberName);
     REQUIRE(index.has_value());
 
     for (auto [entity, tag] : scene.Query<ECS::BlueprintMember>())
@@ -112,8 +114,9 @@ TEST_CASE("Blueprint: a file flattens to a member list in file order")
     const std::filesystem::path root = FreshRoot("flatten");
     Write(root, "car.abp", CarFile());
 
-    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("car.abp");
-    REQUIRE(definition != nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("car.abp");
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
     REQUIRE(definition->members.size() == 2);
 
     // File order, because it is NetId order on both machines.
@@ -144,8 +147,9 @@ TEST_CASE("Blueprint: nesting flattens to one member list with path names")
                                                  {"source", "car.abp"},
                                                  {"transform", Placement(20.f, 0.f, 0.f)}}})}});
 
-    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("lot.abp");
-    REQUIRE(definition != nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("lot.abp");
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
 
     // One list, entities first then each instance's members — no tree, no inner
     // ids. The nested root evaporates exactly as the outer one does.
@@ -183,7 +187,12 @@ TEST_CASE("Blueprint: a cycle is refused rather than expanded")
            {"instances", nlohmann::json::array({{{"name", "a"}, {"source", "a.abp"}}})}});
 
     // Unrecoverable if missed: a containing b containing a expands forever.
-    CHECK(Runtime::GetBlueprintDefinition("a.abp") == nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("a.abp");
+    REQUIRE_FALSE(loaded.has_value());
+    // The *reason*, not just the refusal: a cycle and a missing file both used to
+    // come back as a bare nullptr, so a test asserting only that could not tell
+    // this case from the one below it.
+    CHECK(loaded.error() == BlueprintError::InstanceCycle);
 }
 
 TEST_CASE("Blueprint: a non-uniform instance scale is refused, not clamped")
@@ -202,7 +211,9 @@ TEST_CASE("Blueprint: a non-uniform instance scale is refused, not clamped")
     // Clamping to an axis was rejected: it lets the file say one thing while the
     // game does another. Composing it is not an option either — the product is a
     // shear, which no Transform can represent.
-    CHECK(Runtime::GetBlueprintDefinition("lot.abp") == nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("lot.abp");
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK(loaded.error() == BlueprintError::NonUniformScale);
 }
 
 TEST_CASE("Blueprint: a missing nested file leaves nothing behind")
@@ -213,7 +224,9 @@ TEST_CASE("Blueprint: a missing nested file leaves nothing behind")
            {"entities", nlohmann::json::array({Entity("sign", At(0.f, 0.f, 0.f))})},
            {"instances", nlohmann::json::array({{{"name", "car_1"}, {"source", "gone.abp"}}})}});
 
-    CHECK(Runtime::GetBlueprintDefinition("lot.abp") == nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("lot.abp");
+    REQUIRE_FALSE(loaded.has_value());
+    CHECK(loaded.error() == BlueprintError::FileUnreadable);
 
     ECS::Scene    scene;
     InstanceTable table;

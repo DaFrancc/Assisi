@@ -1263,11 +1263,11 @@ void EditorApp::DrawInspector()
     {
         if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
         {
-            const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
+            const Assisi::Runtime::BlueprintResult definition =
                 Assisi::Runtime::GetBlueprintDefinition(row->source);
             const std::string memberPath =
-                definition != nullptr && tag->memberIndex < definition->members.size()
-                    ? definition->members[tag->memberIndex].name
+                definition && tag->memberIndex < (*definition)->members.size()
+                    ? (*definition)->members[tag->memberIndex].name
                     : std::format("#{}", tag->memberIndex);
 
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.65f, 0.85f, 0.65f, 1.f});

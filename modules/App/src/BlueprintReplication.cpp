@@ -61,13 +61,12 @@ class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
         // The member count has to be the definition's, not a count of live
         // members: it fixes the width of the NetId block, and a member destroyed
         // later must not shrink the block its siblings were numbered from.
-        const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
-            Runtime::GetBlueprintDefinition(row->source);
-        if (definition == nullptr || definition->members.empty())
+        const Runtime::BlueprintResult definition = Runtime::GetBlueprintDefinition(row->source);
+        if (!definition || (*definition)->members.empty())
             return false;
 
         out.blueprintIndex = static_cast<std::uint32_t>(index);
-        out.memberCount    = static_cast<std::uint32_t>(definition->members.size());
+        out.memberCount    = static_cast<std::uint32_t>((*definition)->members.size());
         out.placement      = row->transform;
         return true;
     }
@@ -79,23 +78,22 @@ class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
         if (row == nullptr)
             return false;
 
-        const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
-            Runtime::GetBlueprintDefinition(row->source);
-        if (definition == nullptr || memberIndex >= definition->members.size())
+        const Runtime::BlueprintResult definition = Runtime::GetBlueprintDefinition(row->source);
+        if (!definition || memberIndex >= (*definition)->members.size())
             return false;
 
         // An overridden member is not the file's member. The override is recorded
         // in the *level*, which a client joining mid-session never read, so its
         // expansion produced the file's value and the override has to travel as
         // ordinary state.
-        if (row->overrides.contains(definition->members[memberIndex].name))
+        if (row->overrides.contains((*definition)->members[memberIndex].name))
             return false;
 
         // The prepared block is exactly what the client decoded when it expanded,
         // so comparing against it compares against what the far side actually
         // holds — not against a re-derivation that could drift from it.
         const std::vector<std::byte> *authored = nullptr;
-        for (const Runtime::PreparedComponent &prepared : definition->members[memberIndex].prepared)
+        for (const Runtime::PreparedComponent &prepared : (*definition)->members[memberIndex].prepared)
         {
             if (prepared.id == id)
             {
@@ -179,9 +177,8 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
         //
         // A union, and idempotent — Install skips what is already present — so a
         // hundred cars arriving install one Bounce.
-        if (const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
-                Runtime::GetBlueprintDefinition(entry.source))
-            QueueSystemInstall(_world, definition->systems, entry.source);
+        if (const Runtime::BlueprintResult definition = Runtime::GetBlueprintDefinition(entry.source))
+            QueueSystemInstall(_world, (*definition)->systems, entry.source);
 
         // Parallel to the blueprint's member list, which is exactly the order
         // `base + i` indexes — the two orderings being the same one is the whole

@@ -33,6 +33,7 @@
 
 using namespace Assisi;
 using Assisi::Runtime::BlueprintDefinition;
+using Assisi::Runtime::BlueprintResult;
 using Assisi::Runtime::Camera;
 using Assisi::Runtime::InstanceTable;
 using Assisi::Runtime::SceneSerializer;
@@ -71,9 +72,9 @@ ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, ECS::Instanc
 {
     const Runtime::BlueprintInstance *row = table.Find(id);
     REQUIRE(row != nullptr);
-    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition(row->source);
-    REQUIRE(definition != nullptr);
-    const std::optional<uint32_t> index = definition->IndexOf(name);
+    const BlueprintResult definition = Runtime::GetBlueprintDefinition(row->source);
+    REQUIRE(definition.has_value());
+    const std::optional<uint32_t> index = (*definition)->IndexOf(name);
     if (!index.has_value())
         return ECS::NullEntity;
 
@@ -317,8 +318,9 @@ TEST_CASE("Overrides: a nested file's own claims are baked into its member list"
     // The claims are authored *in* lot.abp, so every instance of the lot has the
     // same member list — and the removal really removes rather than leaving a
     // hole, because there is no per-instance variation for the index to preserve.
-    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("lot.abp");
-    REQUIRE(definition != nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("lot.abp");
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
     REQUIRE(definition->members.size() == 1);
     CHECK(definition->members[0].name == "car_1/body");
     CHECK(definition->members[0].components.at("Camera").at("fovDegrees").get<float>() == doctest::Approx(21.f));
@@ -424,8 +426,9 @@ TEST_CASE("References: inside a file, a leading slash and a plain name mean the 
            {"entities", nlohmann::json::array()},
            {"instances", nlohmann::json::array({{{"name", "s"}, {"source", "slashy.abp"}}})}});
 
-    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("slashy.abp");
-    REQUIRE(definition != nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition("slashy.abp");
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
     const std::optional<uint32_t> wheel = definition->IndexOf("wheel_fl");
     REQUIRE(wheel.has_value());
     // Resolved at flatten: no slash survives into the definition.

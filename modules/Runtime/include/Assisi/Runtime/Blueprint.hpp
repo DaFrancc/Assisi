@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <memory>
 #include <optional>
 #include <string>
@@ -143,20 +144,47 @@ struct BlueprintDefinition
     [[nodiscard]] std::optional<uint32_t> IndexOf(std::string_view name) const;
 };
 
+/// @brief Why a file could not become a definition.
+///
+/// Says what *kind* of thing is wrong, not which file or member — the specifics
+/// are known only inside the recursive flatten, often several nested files below
+/// the one the caller named, so they are logged at the point they are still
+/// known. A caller that asked for `lot.abp` learns that an instance cycle exists;
+/// the chain that proves it (`lot.abp -> car.abp -> lot.abp`) is in the log.
+/// Same split as NameError in Naming.hpp.
+enum class BlueprintError
+{
+    FileUnreadable,    ///< The asset system could not read the file, or one it instances.
+    MalformedJson,     ///< Read, but not parseable as JSON.
+    UnsupportedVersion,///< A `version` this build does not read.
+    MissingName,       ///< An entity or instance entry with no usable `name`.
+    MissingSource,     ///< An instance entry that names no `source`.
+    InstanceCycle,     ///< A file reachable from itself by instancing; expands forever.
+    DuplicateMember,   ///< Two members would flatten to one name, making references ambiguous.
+    NonUniformScale,   ///< An instance placement that shears; cannot compose exactly (§3).
+    ComponentRejected, ///< A member's component values the reflection layer refuses.
+};
+
+/// @brief One line saying what is wrong, for a log or a field hint.
+[[nodiscard]] std::string_view Describe(BlueprintError error);
+
+/// @brief A definition, or why the file could not become one. The success value is
+/// never null.
+using BlueprintResult = std::expected<std::shared_ptr<const BlueprintDefinition>, BlueprintError>;
+
 /// @brief Parses and flattens @p source, caching the result by virtual path.
 ///
-/// @return nullptr if the file cannot be read or is malformed — a missing nested
-///         file, a cycle in the instance graph, a duplicate member name, a
-///         non-uniform instance scale, or a member whose component values the
-///         reflection layer refuses. Every one of those is logged with the file
-///         and the member it is about. **Never throws**: callers as ordinary as
-///         the editor's Save reach this while walking a scene, and a level the
-///         user cannot save is a worse failure than a level with one broken
-///         blueprint in it.
+/// @return the definition, or the reason it could not be built. **Never throws**:
+///         callers as ordinary as the editor's Save reach this while walking a
+///         scene, and a level the user cannot save is a worse failure than a level
+///         with one broken blueprint in it. The specific file and member are
+///         already logged by the time this returns — a caller that only needs to
+///         know whether it worked can ask `.has_value()` without logging again.
 ///
 /// A blueprint is parsed **once**: spawning a hundred bullets must not re-read and
 /// re-parse `bullet.abp` a hundred times (§11). Cleared on level unload, never
-/// evicted during a level.
+/// evicted during a level. A failure is **not** cached: a blueprint that failed
+/// because its nested file was missing is readable the moment somebody adds it.
 ///
 /// **Safe to call from any thread.** Async travel deserializes on a worker and
 /// stages instances there, while the editor asks for the same definitions per
@@ -166,7 +194,9 @@ struct BlueprintDefinition
 /// ClearBlueprintCache() or an InvalidateBlueprint() from another thread. A
 /// definition is immutable once built, so holding one across an eviction gets the
 /// content it was built with, not a torn read of the next one.
-std::shared_ptr<const BlueprintDefinition> GetBlueprintDefinition(std::string_view source);
+///
+/// The success value is never null.
+[[nodiscard]] BlueprintResult GetBlueprintDefinition(std::string_view source);
 
 /// @brief Drops every cached definition. Call on level unload, and after editing a
 /// blueprint on disk.

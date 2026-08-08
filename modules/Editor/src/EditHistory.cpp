@@ -318,11 +318,11 @@ std::optional<std::string> EditHistory::NameForOverrideTarget(Entity target, ECS
         if (row == nullptr)
             return std::nullopt;
 
-        const std::shared_ptr<const Rt::BlueprintDefinition> definition = Rt::GetBlueprintDefinition(row->source);
-        if (definition == nullptr || tag->memberIndex >= definition->members.size())
+        const Rt::BlueprintResult definition = Rt::GetBlueprintDefinition(row->source);
+        if (!definition || tag->memberIndex >= (*definition)->members.size())
             return std::nullopt;
 
-        const std::string &memberPath = definition->members[tag->memberIndex].name;
+        const std::string &memberPath = (*definition)->members[tag->memberIndex].name;
 
         // Same instance: relative, because expansion prefixes an override's
         // references with the instance's own name — so `wheel_fl` here becomes
@@ -394,15 +394,15 @@ std::optional<InstanceDelta> EditHistory::RecordOverride(Entity entity, Reflect:
     if (row == nullptr)
         return std::nullopt;
 
-    const std::shared_ptr<const Rt::BlueprintDefinition> definition = Rt::GetBlueprintDefinition(row->source);
-    if (definition == nullptr || tag->memberIndex >= definition->members.size())
+    const Rt::BlueprintResult definition = Rt::GetBlueprintDefinition(row->source);
+    if (!definition || tag->memberIndex >= (*definition)->members.size())
         return std::nullopt;
 
     const Reflect::ComponentMeta *meta = Reflect::ComponentRegistry::Instance().ById(id);
     if (meta == nullptr)
         return std::nullopt;
 
-    const std::string &memberPath = definition->members[tag->memberIndex].name;
+    const std::string &memberPath = (*definition)->members[tag->memberIndex].name;
 
     Rt::BlueprintInstance updated = *row;
     if (!updated.overrides.is_object())
