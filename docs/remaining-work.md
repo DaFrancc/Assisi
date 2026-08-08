@@ -109,6 +109,33 @@ round-6 items that had been waiting on a decision are resolved in §5.
     inheriting its `-debug` preset, with matching build/test presets and
     `make gcc-asan` / `make test-gcc-tsan` targets. Deps don't link
     `Assisi::Sanitize`, so third-party code stays uninstrumented.
+  - **The tsan suite was red for third-party reasons and is now green**
+    (2026-08-07). Four targets failed — Net, NetSync, Physics, App — and not one
+    report was a race on our own data. The triage, so nobody redoes it:
+    - **Jolt** (`TempAllocator.h`, `JobSystem.h`). Its solver coordinates
+      workers through barriers tsan does not model as happens-before edges.
+      Those are *headers*, inlined into our instrumented TUs, which is how they
+      reach the sanitizer at all despite the dep not linking `Assisi::Sanitize`.
+      **Removed, not suppressed:** a sanitized build steps physics on
+      `JPH::JobSystemSingleThreaded` (`PhysicsWorld.cpp`, `ASSISI_PHYSICS_TSAN`).
+      Jolt's results do not depend on worker count, so the same physics is
+      exercised; everything around it still runs threaded. Reproduces
+      identically under gcc *and* clang, so it is not a toolchain artefact.
+    - **GameNetworkingSockets** — lock-order-inversion between its global lock
+      and its per-connection locks, an ordering its own source documents as
+      intended, reached only through its public API. Not suppressible: tsan's
+      deadlock detector drops GNS's frames with the fast unwinder, and building
+      GNS with `-g -fno-omit-frame-pointer` does not bring them back (tried,
+      verified applied, reverted). So the deadlock detector is off
+      (`detect_deadlocks=0`); the race detector, which is what finds our bugs,
+      stays on. See `.tsan-suppressions` for the full argument.
+    - **doctest's signal handler** — allocates inside the handler. Suppressed.
+    - Two genuine bugs of ours fell out of the triage and are fixed: a forked
+      child kept the parent's signal handlers until `execv` (`ChildProcess.cpp`),
+      and `TestWorld`'s pool-sharing check assumed a threaded job system.
+    - The gate was verified to still bite: with `Blueprint.cpp`'s cache mutex
+      removed, tsan reports 458 data races in Assisi code. Re-verify that way
+      after touching the suppressions.
   - **`-ffast-math` split** resolved in `5da431a`: now applies to Release *and*
     RelWithDebInfo, with `-fno-finite-math-only` appended so the non-finite
     guards stay live (verified empirically — under plain `-ffast-math` an

@@ -107,6 +107,19 @@ bool ChildProcess::Spawn(const std::filesystem::path &executable, const std::vec
     if (pid == 0)
     {
         // --- child ---------------------------------------------------------
+        // First, before anything that can take time. Until execv replaces the
+        // image the child still carries the *parent's* signal handlers, and a
+        // signal arriving in that window runs the parent's handler in the child
+        // — with the parent's atexit chain behind it. Terminate() sends SIGTERM
+        // and can easily beat exec: the window is short, but a sanitized build
+        // widens it enough that the test suite hits it every run, where the
+        // handler doctest installed reported a crash and printed a second,
+        // partial test summary from a process that was never a test runner.
+        // The editor spawning and immediately closing a play-in-editor client
+        // is the same shape.
+        for (int sig = 1; sig < NSIG; ++sig)
+            ::signal(sig, SIG_DFL); // EINVAL on the unmaskable ones; nothing to do about those
+
 #if defined(__linux__)
         // The one case the parent cannot clean up from its own side. Without
         // this, an editor that crashes (or is killed with -9) leaves its viewer
