@@ -318,7 +318,7 @@ std::optional<std::string> EditHistory::NameForOverrideTarget(Entity target, ECS
         if (row == nullptr)
             return std::nullopt;
 
-        const Rt::BlueprintDefinition *definition = Rt::GetBlueprintDefinition(row->source);
+        const std::shared_ptr<const Rt::BlueprintDefinition> definition = Rt::GetBlueprintDefinition(row->source);
         if (definition == nullptr || tag->memberIndex >= definition->members.size())
             return std::nullopt;
 
@@ -394,7 +394,7 @@ std::optional<InstanceDelta> EditHistory::RecordOverride(Entity entity, Reflect:
     if (row == nullptr)
         return std::nullopt;
 
-    const Rt::BlueprintDefinition *definition = Rt::GetBlueprintDefinition(row->source);
+    const std::shared_ptr<const Rt::BlueprintDefinition> definition = Rt::GetBlueprintDefinition(row->source);
     if (definition == nullptr || tag->memberIndex >= definition->members.size())
         return std::nullopt;
 

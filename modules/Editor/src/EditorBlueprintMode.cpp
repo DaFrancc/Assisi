@@ -370,7 +370,7 @@ std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const 
                 for (const auto &[id, row] : world.instances.All())
                 {
                     (void)id;
-                    const Assisi::Runtime::BlueprintDefinition *definition =
+                    const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
                         Assisi::Runtime::GetBlueprintDefinition(row->source);
                     if (definition == nullptr)
                         continue;
@@ -387,7 +387,7 @@ std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const 
 
             for (const auto &[id, row] : world.instances.All())
             {
-                const Assisi::Runtime::BlueprintDefinition *definition =
+                const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
                     Assisi::Runtime::GetBlueprintDefinition(row->source);
                 if (definition == nullptr)
                     continue;
@@ -486,7 +486,7 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
         const Assisi::Runtime::BlueprintInstance *row = pending.world->instances.Find(pending.instanceId);
         if (row == nullptr)
             continue;
-        const Assisi::Runtime::BlueprintDefinition *definition =
+        const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
             Assisi::Runtime::GetBlueprintDefinition(row->source);
         if (definition == nullptr)
             continue; // the file broke; ReexpandInstance will refuse it and say so

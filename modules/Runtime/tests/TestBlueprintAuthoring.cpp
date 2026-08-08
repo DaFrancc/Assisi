@@ -98,7 +98,7 @@ TEST_CASE("Authoring: a selection saved as a blueprint places back exactly where
     // The file is authored around its own origin, so the body sits at zero rather
     // than at (10,0,0). Without this every copy would appear wherever the original
     // happened to be standing, and the second one would be ten units off.
-    const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition("crate.abp");
+    const std::shared_ptr<const Runtime::BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("crate.abp");
     REQUIRE(definition != nullptr);
     REQUIRE(definition->members.size() == 2);
     CHECK(definition->members[0].name == "body");
@@ -241,7 +241,8 @@ TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
     const std::vector<ECS::Entity> selection{cube};
     REQUIRE(SceneSerializer::SaveEntitiesToFile(scene, selection, root / "small_crate.abp", origin));
 
-    const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition("small_crate.abp");
+    const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
+        Runtime::GetBlueprintDefinition("small_crate.abp");
     REQUIRE(definition != nullptr);
     REQUIRE(definition->members.size() == 1);
     CHECK(Runtime::TransformFromJson(definition->members[0].components.at("Transform")).scale.x ==
@@ -294,7 +295,7 @@ TEST_CASE("Authoring: a reference leaving the selection is nulled, not dangled")
 
     // The file cannot name what it does not contain, so the reference is null —
     // which loads, rather than refusing on an unknown name.
-    const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition("crate.abp");
+    const std::shared_ptr<const Runtime::BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("crate.abp");
     REQUIRE(definition != nullptr);
     CHECK(definition->members[1].components.at("Parent").at("parent").is_null());
 }

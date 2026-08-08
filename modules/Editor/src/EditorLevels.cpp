@@ -556,7 +556,7 @@ const nlohmann::json *EditorApp::OverrideClaimFor(Assisi::ECS::Entity entity, co
     if (row == nullptr || !row->overrides.is_object())
         return nullptr;
 
-    const Assisi::Runtime::BlueprintDefinition *definition =
+    const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
         Assisi::Runtime::GetBlueprintDefinition(row->source);
     if (definition == nullptr || tag->memberIndex >= definition->members.size())
         return nullptr;
@@ -583,7 +583,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     if (row == nullptr)
         return;
 
-    const Assisi::Runtime::BlueprintDefinition *definition =
+    const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
         Assisi::Runtime::GetBlueprintDefinition(row->source);
     if (definition == nullptr || tag->memberIndex >= definition->members.size())
         return;

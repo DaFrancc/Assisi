@@ -19,6 +19,7 @@
 #include <format>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -423,7 +424,7 @@ std::string MemberPathName(const InstanceTable &instances, const ECS::BlueprintM
     if (row == nullptr)
         return {};
 
-    const BlueprintDefinition *definition = GetBlueprintDefinition(row->source);
+    const std::shared_ptr<const BlueprintDefinition> definition = GetBlueprintDefinition(row->source);
     if (definition == nullptr || tag.memberIndex >= definition->members.size())
         return {};
 
@@ -434,9 +435,15 @@ std::string MemberPathName(const InstanceTable &instances, const ECS::BlueprintM
 /// Everything one placed instance produced, kept so a later failure can undo it.
 struct StagedInstance
 {
-    ECS::InstanceId            id;
-    const BlueprintDefinition *definition = nullptr;
-    ECS::Transform             placement;
+    ECS::InstanceId id;
+
+    /// Held, not borrowed. A load stages every instance before committing any of
+    /// them, so this outlives the lookup that produced it — and on the async-travel
+    /// worker, a blueprint save on the main thread can evict the cache entry in
+    /// between.
+    std::shared_ptr<const BlueprintDefinition> definition;
+
+    ECS::Transform placement;
 
     /// Parallel to definition->members, with NullEntity where this instance
     /// removed one. A hole rather than a shorter list because the index *is* the
@@ -520,7 +527,7 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
             entry.name, entry.transform.scale.x, entry.transform.scale.y, entry.transform.scale.z));
     }
 
-    const BlueprintDefinition *definition = GetBlueprintDefinition(entry.source);
+    const std::shared_ptr<const BlueprintDefinition> definition = GetBlueprintDefinition(entry.source);
     if (definition == nullptr)
         throw std::runtime_error(std::format("instance '{}' cannot use '{}'", entry.name, entry.source));
 
@@ -1333,6 +1340,10 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
     // throw is structurally unreachable: the definition loaded, so its member names
     // are unique, and the placement was accepted once already, so its scale is
     // uniform.
+    //
+    // The check itself has to be non-throwing for that to hold, and it is —
+    // GetBlueprintDefinition answers nullptr for every way a file can be bad,
+    // including a member value the reflection layer refuses.
     if (GetBlueprintDefinition(row.source) == nullptr)
     {
         Core::Log::Error("Blueprint: '{}' no longer loads; instance {} is left as it was.", row.source,
