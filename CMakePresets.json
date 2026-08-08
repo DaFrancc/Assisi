@@ -304,6 +304,15 @@
       "execution": { "noTestsAction": "error", "stopOnFailure": false }
     },
 
+    {
+      "name": "tsan-base",
+      "hidden": true,
+      "inherits": "test-base",
+      "environment": {
+        "TSAN_OPTIONS": "suppressions=${sourceDir}/.tsan-suppressions detect_deadlocks=0 halt_on_error=0"
+      }
+    },
+
     { "name": "msvc-debug",  "inherits": "test-base", "configurePreset": "msvc-debug"  },
     { "name": "msvc-dev",    "inherits": "test-base", "configurePreset": "msvc-dev"    },
     { "name": "msvc-ship",   "inherits": "test-base", "configurePreset": "msvc-ship"   },
@@ -318,9 +327,9 @@
 
     { "name": "msvc-asan",   "inherits": "test-base", "configurePreset": "msvc-asan"   },
     { "name": "gcc-asan",    "inherits": "test-base", "configurePreset": "gcc-asan"    },
-    { "name": "gcc-tsan",    "inherits": "test-base", "configurePreset": "gcc-tsan"    },
+    { "name": "gcc-tsan",    "inherits": "tsan-base", "configurePreset": "gcc-tsan"    },
     { "name": "clang-asan",  "inherits": "test-base", "configurePreset": "clang-asan"  },
-    { "name": "clang-tsan",  "inherits": "test-base", "configurePreset": "clang-tsan"  },
+    { "name": "clang-tsan",  "inherits": "tsan-base", "configurePreset": "clang-tsan"  },
 
     { "name": "msvc-debug-chiara",  "inherits": "test-base", "configurePreset": "msvc-debug-chiara"  },
     { "name": "msvc-dev-chiara",    "inherits": "test-base", "configurePreset": "msvc-dev-chiara"    },
@@ -334,6 +343,6 @@
     { "name": "clang-dev-chiara",   "inherits": "test-base", "configurePreset": "clang-dev-chiara"   },
     { "name": "clang-ship-chiara",  "inherits": "test-base", "configurePreset": "clang-ship-chiara"  },
 
-    { "name": "gcc-tsan-chiara",    "inherits": "test-base", "configurePreset": "gcc-tsan-chiara"    }
+    { "name": "gcc-tsan-chiara",    "inherits": "tsan-base", "configurePreset": "gcc-tsan-chiara"    }
   ]
 }

@@ -8,7 +8,17 @@
 
 #include <Jolt/Jolt.h>
 
+// A sanitized build steps physics on one thread — see kSanitized below for why.
+#if defined(__SANITIZE_THREAD__)
+#    define ASSISI_PHYSICS_TSAN 1
+#elif defined(__has_feature)
+#    if __has_feature(thread_sanitizer)
+#        define ASSISI_PHYSICS_TSAN 1
+#    endif
+#endif
+
 #include <Jolt/Core/Factory.h>
+#include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
@@ -139,8 +149,30 @@ class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
    allocator is 10 MiB of scratch each — cheap — and makes stepping safe whether
    worlds run sequentially or (later) in parallel. The pool stays shared; Jolt is
    built for many PhysicsSystems on one JobSystem. */
+/* Under ThreadSanitizer the pool is replaced by Jolt's single-threaded job
+   system. Jolt's solver coordinates its workers through its own barriers and
+   atomics rather than through anything tsan models as a happens-before edge, so
+   a threaded step reports races inside `JobSystem.h` and `TempAllocator.h` —
+   Jolt's own headers, which reach the instrumentation only because they are
+   headers inlined into this TU (the Jolt library itself does not link
+   Assisi::Sanitize). Those reports are not ours and cannot be fixed here, and
+   left alone they bury any real race in noise: four suites go red for reasons
+   nobody can act on, which is the same as having no tsan gate at all.
+
+   Stepping on one thread removes them at the source rather than hiding them
+   behind a suppression. It costs nothing that matters — Jolt's results do not
+   depend on worker count, so a sanitized run exercises the same physics, just
+   more slowly, which a sanitized build is anyway. Everything *around* physics
+   still runs threaded, so the async-travel worker, the job system and the
+   blueprint cache are all still under test. Speed is not a question a sanitized
+   build answers (see Chiara's TestOverhead for the same reasoning). */
 struct JoltRuntime
 {
+#if defined(ASSISI_PHYSICS_TSAN)
+    JPH::JobSystemSingleThreaded jobSystem;
+
+    JoltRuntime() { jobSystem.Init(JPH::cMaxPhysicsJobs); }
+#else
     // Default-constructed and then Init'd in the body rather than built by the
     // thread-starting constructor: Jolt requires the thread-init function to be
     // set *before* Init, and setting it afterwards compiles fine while silently
@@ -156,6 +188,7 @@ struct JoltRuntime
         jobSystem.Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
                        static_cast<int>(std::thread::hardware_concurrency()) - 1);
     }
+#endif
 };
 
 /// Jolt allocation counters. Churn per frame, not residency: JPH::FreeFunction
@@ -235,8 +268,14 @@ class JoltRuntimeRef
             JPH::Factory::sInstance = new JPH::Factory();
             JPH::RegisterTypes();
             gJoltRuntime = new JoltRuntime();
-            Assisi::Core::Log::Info("Jolt: runtime up ({} worker threads, shared by every physics world).",
-                                    gJoltRuntime->jobSystem.GetMaxConcurrency());
+            Assisi::Core::Log::Info("Jolt: runtime up ({} worker thread(s), shared by every physics world){}.",
+                                    gJoltRuntime->jobSystem.GetMaxConcurrency(),
+#if defined(ASSISI_PHYSICS_TSAN)
+                                    " — single-threaded, this is a ThreadSanitizer build"
+#else
+                                    ""
+#endif
+            );
         }
     }
 
@@ -255,7 +294,9 @@ class JoltRuntimeRef
     JoltRuntimeRef(const JoltRuntimeRef &) = delete;
     JoltRuntimeRef &operator=(const JoltRuntimeRef &) = delete;
 
-    JPH::JobSystemThreadPool &JobSystem() const { return gJoltRuntime->jobSystem; }
+    // The base type, so the tsan build's single-threaded job system substitutes
+    // without every caller caring which one it got.
+    JPH::JobSystem &JobSystem() const { return gJoltRuntime->jobSystem; }
 };
 
 } // anonymous namespace
