@@ -311,10 +311,15 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
 
     // The worker touches ONLY this world's scene and physics — both untouched by
     // anything else while Loading — plus a copied path and the shared progress
-    // atomic. No cache, no renderer, no manager state (asset resolution is GPU
-    // work and stays on the main thread, in PumpPendingLoad). The world address is
-    // stable, so capturing it is safe across any _worlds reallocation the main
-    // thread may do meanwhile.
+    // atomic. No renderer, no manager state (asset resolution is GPU work and stays
+    // on the main thread, in PumpPendingLoad). The world address is stable, so
+    // capturing it is safe across any _worlds reallocation the main thread may do
+    // meanwhile.
+    //
+    // The one shared thing it *does* reach is the blueprint definition cache:
+    // staging an instance asks for a definition, and the editor asks for the same
+    // ones per frame on the main thread. That cache is synchronised and hands out
+    // shared ownership for exactly this reason — see Runtime::GetBlueprintDefinition.
     World *const w = &incoming;
     Core::Task<bool> task = _services.jobs->Run(
         Core::Pool::Worker,

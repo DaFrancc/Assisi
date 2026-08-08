@@ -84,7 +84,7 @@ nlohmann::json CrateFile()
 /// reconstruct afterwards.
 std::vector<std::string> MemberNames(std::string_view source)
 {
-    const BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(source);
+    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition(source);
     REQUIRE(definition != nullptr);
     std::vector<std::string> names;
     names.reserve(definition->members.size());

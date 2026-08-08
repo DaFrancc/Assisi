@@ -13,6 +13,8 @@
 #include <cmath>
 #include <format>
 #include <map>
+#include <memory>
+#include <mutex>
 #include <stdexcept>
 #include <unordered_set>
 #include <utility>
@@ -178,7 +180,7 @@ ECS::Entity FindMember(ECS::Scene &scene, const InstanceTable &table, ECS::Insta
     if (row == nullptr)
         return ECS::NullEntity;
 
-    const BlueprintDefinition *definition = GetBlueprintDefinition(row->source);
+    const std::shared_ptr<const BlueprintDefinition> definition = GetBlueprintDefinition(row->source);
     if (definition == nullptr)
         return ECS::NullEntity;
 
@@ -261,10 +263,31 @@ namespace
 /// Every cached definition, keyed by virtual path. Deliberately not evicted during
 /// a level: the tag's memberIndex is only meaningful while its file's member list
 /// is cached, and both are discarded together at unload (§2).
-std::map<std::string, BlueprintDefinition, std::less<>> &Cache()
+///
+/// Shared ownership rather than storage, because the cache is not the only owner.
+/// A worker thread staging instances during async travel is walking a definition
+/// it asked for a moment ago, and a level unload or a blueprint save on the main
+/// thread must not pull it out from under that walk. Eviction drops the cache's
+/// claim; the definition goes when the last holder does.
+std::map<std::string, std::shared_ptr<const BlueprintDefinition>, std::less<>> &Cache()
 {
-    static std::map<std::string, BlueprintDefinition, std::less<>> cache;
+    static std::map<std::string, std::shared_ptr<const BlueprintDefinition>, std::less<>> cache;
     return cache;
+}
+
+/// Guards every access to Cache(). Held across the *build* too, not just the map
+/// operations: the build reads a file and flattens it, and releasing the lock in
+/// the middle would let a level unload land between "not cached" and "insert",
+/// leaving the dead level's definition in the new level's cache. Building the same
+/// file twice is the only thing the wider hold costs, and it costs it once per
+/// file per level.
+///
+/// No re-entrancy to worry about: nesting recurses through FlattenInto/ReadFile,
+/// never back through GetBlueprintDefinition.
+std::mutex &CacheMutex()
+{
+    static std::mutex mutex;
+    return mutex;
 }
 
 /// `prefix + name`, with a leading '/' on @p name stripped first.
@@ -679,19 +702,37 @@ void FlattenInto(FlattenState &state, const nlohmann::json &doc, std::string_vie
 
 } // namespace
 
-const BlueprintDefinition *GetBlueprintDefinition(std::string_view source)
+std::shared_ptr<const BlueprintDefinition> GetBlueprintDefinition(std::string_view source)
 {
+    const std::lock_guard lock(CacheMutex());
+
     auto &cache = Cache();
     if (const auto it = cache.find(source); it != cache.end())
-        return &it->second;
+        return it->second;
 
-    BlueprintDefinition definition;
-    definition.source = std::string{source};
+    auto definition    = std::make_shared<BlueprintDefinition>();
+    definition->source = std::string{source};
 
+    // Everything that can fail is inside, including the prepare step. Preparing
+    // deserializes each member, and a generated deserializer reads a float as
+    // `j.at("fov").get<float>()` — so a file saying "wide" where a number goes
+    // throws from the last line of the build. Callers wrote themselves against a
+    // nullptr (FindMember, Save, ReexpandInstance's precondition); an exception
+    // out of here reaches them as a level the user cannot save.
     try
     {
-        FlattenState state{.out = &definition, .stack = {std::string{source}}, .declared = {}};
+        FlattenState state{.out = definition.get(), .stack = {std::string{source}}, .declared = {}};
         FlattenInto(state, ReadFile(source), source, /*prefix=*/"", ECS::Transform{});
+
+        std::sort(definition->closure.begin(), definition->closure.end());
+        definition->closure.erase(std::unique(definition->closure.begin(), definition->closure.end()),
+                                  definition->closure.end());
+
+        // Once, here — a blueprint is parsed and encoded one time, because spawning
+        // a hundred bullets must not re-read and re-parse bullet.abp a hundred
+        // times.
+        if (!SceneSerializer::PrepareBlueprint(*definition))
+            return nullptr;
     }
     catch (const std::exception &ex)
     {
@@ -702,32 +743,26 @@ const BlueprintDefinition *GetBlueprintDefinition(std::string_view source)
         return nullptr;
     }
 
-    std::sort(definition.closure.begin(), definition.closure.end());
-    definition.closure.erase(std::unique(definition.closure.begin(), definition.closure.end()),
-                             definition.closure.end());
-
-    // Once, here — a blueprint is parsed and encoded one time, because spawning a
-    // hundred bullets must not re-read and re-parse bullet.abp a hundred times.
-    if (!SceneSerializer::PrepareBlueprint(definition))
-        return nullptr;
-
-    return &cache.emplace(std::string{source}, std::move(definition)).first->second;
+    return cache.emplace(std::string{source}, std::move(definition)).first->second;
 }
 
 void ClearBlueprintCache()
 {
+    const std::lock_guard lock(CacheMutex());
     Cache().clear();
 }
 
 void InvalidateBlueprint(std::string_view source)
 {
+    const std::lock_guard lock(CacheMutex());
+
     // Everything whose closure names it, not just the file itself: a parking lot's
     // flattened member list *contains* the car's members, so editing the car
     // changes the lot's definition too.
     std::erase_if(Cache(),
                   [source](const auto &entry)
                   {
-                      const std::vector<std::string> &closure = entry.second.closure;
+                      const std::vector<std::string> &closure = entry.second->closure;
                       return std::find(closure.begin(), closure.end(), source) != closure.end();
                   });
 }

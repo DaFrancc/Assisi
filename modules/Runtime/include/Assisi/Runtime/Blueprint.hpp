@@ -17,6 +17,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -145,17 +146,33 @@ struct BlueprintDefinition
 /// @brief Parses and flattens @p source, caching the result by virtual path.
 ///
 /// @return nullptr if the file cannot be read or is malformed — a missing nested
-///         file, a cycle in the instance graph, a duplicate member name, or a
-///         non-uniform instance scale. Every one of those is logged with the file
-///         and the member it is about.
+///         file, a cycle in the instance graph, a duplicate member name, a
+///         non-uniform instance scale, or a member whose component values the
+///         reflection layer refuses. Every one of those is logged with the file
+///         and the member it is about. **Never throws**: callers as ordinary as
+///         the editor's Save reach this while walking a scene, and a level the
+///         user cannot save is a worse failure than a level with one broken
+///         blueprint in it.
 ///
 /// A blueprint is parsed **once**: spawning a hundred bullets must not re-read and
 /// re-parse `bullet.abp` a hundred times (§11). Cleared on level unload, never
 /// evicted during a level.
-const BlueprintDefinition *GetBlueprintDefinition(std::string_view source);
+///
+/// **Safe to call from any thread.** Async travel deserializes on a worker and
+/// stages instances there, while the editor asks for the same definitions per
+/// frame on the main thread. The cache is synchronised, and the returned
+/// definition is shared ownership rather than a borrow — it stays alive and
+/// unchanged for as long as the caller holds it, even across a
+/// ClearBlueprintCache() or an InvalidateBlueprint() from another thread. A
+/// definition is immutable once built, so holding one across an eviction gets the
+/// content it was built with, not a torn read of the next one.
+std::shared_ptr<const BlueprintDefinition> GetBlueprintDefinition(std::string_view source);
 
 /// @brief Drops every cached definition. Call on level unload, and after editing a
 /// blueprint on disk.
+///
+/// Drops the *cache's* claim on them. Anything still holding a definition keeps
+/// it; the memory goes when the last holder lets go.
 void ClearBlueprintCache();
 
 /// @brief Drops one cached definition and everything that instances it.
@@ -163,6 +180,9 @@ void ClearBlueprintCache();
 /// The editor's re-expand path, which cannot invalidate only the edited file: a
 /// parking lot's flattened member list contains the car's members, so editing the
 /// car changes the lot's definition too.
+///
+/// Drops the cache's claim, as ClearBlueprintCache does — the next ask rebuilds
+/// from disk, and a caller mid-way through the old one is not cut off.
 void InvalidateBlueprint(std::string_view source);
 
 /// @brief One entry of a file's `instances` array — a source, a placement, and
