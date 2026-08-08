@@ -12,26 +12,6 @@
 namespace Assisi::App
 {
 
-namespace
-{
-
-/// One world's pending install, queued from wherever the spawn happened and
-/// applied at the frame's safe point.
-struct PendingInstall
-{
-    World                   *world = nullptr;
-    std::vector<std::string> names;
-    std::string              context;
-};
-
-std::vector<PendingInstall> &Pending()
-{
-    static std::vector<PendingInstall> pending;
-    return pending;
-}
-
-} // namespace
-
 SystemCatalog &SystemCatalog::Instance()
 {
     static SystemCatalog catalog;
@@ -136,45 +116,32 @@ void QueueSystemInstall(World &world, std::span<const std::string> names, std::s
     if (names.empty())
         return;
 
-    // Coalesced per world, so a hundred bullets spawned in one frame queue one
-    // entry rather than a hundred.
-    for (PendingInstall &pending : Pending())
-    {
-        if (pending.world != &world)
-            continue;
-        for (const std::string &name : names)
-        {
-            if (std::find(pending.names.begin(), pending.names.end(), name) == pending.names.end())
-                pending.names.push_back(name);
-        }
-        return;
-    }
+    World::PendingSystems &pending = world.pendingSystems;
 
-    Pending().push_back(PendingInstall{
-        .world = &world, .names = {names.begin(), names.end()}, .context = std::string{context}});
+    // The first spawn to open the queue owns the error message. Arbitrary only
+    // when several are equally to blame, and better than the alternative of
+    // keeping a context per name for a diagnostic that names one file.
+    if (pending.names.empty())
+        pending.context.assign(context);
+
+    // A union, so a hundred bullets spawned in one frame leave one name rather
+    // than a hundred.
+    for (const std::string &name : names)
+    {
+        if (std::find(pending.names.begin(), pending.names.end(), name) == pending.names.end())
+            pending.names.push_back(name);
+    }
 }
 
-void DrainSystemInstalls()
+void DrainSystemInstalls(World &world)
 {
-    if (Pending().empty())
+    if (world.pendingSystems.names.empty())
         return;
 
     // Moved out first: an installer could in principle queue more, and appending
     // to the vector being walked is how that becomes an infinite frame.
-    std::vector<PendingInstall> batch;
-    batch.swap(Pending());
-
-    for (const PendingInstall &pending : batch)
-    {
-        if (pending.world == nullptr)
-            continue;
-        (void)SystemCatalog::Instance().Install(*pending.world, pending.names, pending.context);
-    }
-}
-
-void CancelSystemInstalls(const World &world)
-{
-    std::erase_if(Pending(), [&world](const PendingInstall &pending) { return pending.world == &world; });
+    const World::PendingSystems batch = std::exchange(world.pendingSystems, World::PendingSystems{});
+    (void)SystemCatalog::Instance().Install(world, batch.names, batch.context);
 }
 
 bool LevelSystemsAreDeclared(std::string_view virtualPath)

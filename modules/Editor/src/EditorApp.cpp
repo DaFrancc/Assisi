@@ -1017,6 +1017,18 @@ void EditorApp::OnUpdate(float dt)
     }
 }
 
+void EditorApp::InstallQueuedSystems()
+{
+    // Every resident world, not just the active one: a blueprint can be spawned
+    // into a background world, and a queue nobody drains is a car that holds its
+    // components and runs none of the code.
+    //
+    // Loading worlds included, and harmlessly — their scene belongs to a worker
+    // until promotion, but the system registry is main-thread only, and promotion
+    // runs ApplySystems, which clears the queue anyway.
+    _worlds.ForEach([](Assisi::App::World &world) { Assisi::App::DrainSystemInstalls(world); });
+}
+
 void EditorApp::FlushDeferred()
 {
     // End-of-frame: apply entities queued by Scene::Destroy() this frame. Runs
