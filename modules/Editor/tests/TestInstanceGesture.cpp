@@ -227,6 +227,60 @@ TEST_CASE("InstanceGesture: a click that moves nothing records nothing")
     CHECK_FALSE(fixture.history->CanUndo());
 }
 
+TEST_CASE("InstanceGesture: an all-parented instance still records its move")
+{
+    Fixture fixture("parented");
+
+    // Every member attached to something outside the instance, which is what a
+    // level-side Parent override does (round-7 B3's territory). The placement
+    // reaches none of them now — a parented member rides along through its parent,
+    // so carrying it here would apply the move twice — and the gesture is left with
+    // no member pose to compare. The *record* still moved, and the record is what
+    // InstancesForSave writes.
+    const ECS::Entity anchor = fixture.scene.Create();
+    (void)fixture.scene.Add<Transform>(anchor);
+    for (const ECS::Entity member : Runtime::MembersOf(fixture.scene, fixture.id))
+        (void)fixture.scene.Add<Runtime::Parent>(member, Runtime::Parent{anchor});
+
+    for (int32_t frame = 0; frame < 10; ++frame)
+        fixture.HeldFrame(0.5f);
+    fixture.ReleasedFrame();
+
+    // The three states have to agree. Before this was fixed they did not: the row
+    // was at 5, the save would have written 5, and the history was empty — so the
+    // move was on disk, not undoable, and never marked the scene dirty.
+    CHECK(fixture.history->UndoDepth() == 1);
+    CHECK(fixture.table.Find(fixture.id)->transform.position.x == doctest::Approx(5.f));
+
+    REQUIRE(fixture.history->CanUndo());
+    (void)fixture.history->Undo();
+    CHECK(fixture.table.Find(fixture.id)->transform.position.x == doctest::Approx(0.f));
+}
+
+TEST_CASE("InstanceGesture: an instance whose members are all gone still records its move")
+{
+    Fixture fixture("nomembers");
+
+    // Deleting every member does not remove the row — InstanceTable::Remove is a
+    // separate call the entity delete never makes — so the instance is still
+    // selectable and still saved, with nothing left for the placement to carry.
+    for (const ECS::Entity member : Runtime::MembersOf(fixture.scene, fixture.id))
+        fixture.scene.Destroy(member);
+    fixture.scene.FlushDestroyed();
+    REQUIRE(Runtime::MembersOf(fixture.scene, fixture.id).empty());
+
+    for (int32_t frame = 0; frame < 10; ++frame)
+        fixture.HeldFrame(0.5f);
+    fixture.ReleasedFrame();
+
+    CHECK(fixture.history->UndoDepth() == 1);
+    CHECK(fixture.table.Find(fixture.id)->transform.position.x == doctest::Approx(5.f));
+
+    REQUIRE(fixture.history->CanUndo());
+    (void)fixture.history->Undo();
+    CHECK(fixture.table.Find(fixture.id)->transform.position.x == doctest::Approx(0.f));
+}
+
 TEST_CASE("InstanceGesture: an idle sweep on a closed gesture does nothing")
 {
     Fixture fixture("idle");
