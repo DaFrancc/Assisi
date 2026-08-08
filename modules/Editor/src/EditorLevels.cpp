@@ -935,6 +935,10 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // the history. (Load's Scene::Clear already reset the registry.)
     if (_history)
         _history->Clear();
+    // And the same for an instance drag caught mid-gesture by the load: its
+    // snapshot names entities in the scene that just went away, so committing it
+    // would write a transaction against handles that now mean something else.
+    _instanceGesture.Abandon();
     _pausedHistory.reset(); // a load ends any play session, scratch history included
     _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
 
