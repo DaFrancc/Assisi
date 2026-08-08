@@ -29,7 +29,9 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/NetSync/NetSession.hpp>
+#if defined(ASSISI_NETWORKING)
+#    include <Assisi/NetSync/NetSession.hpp>
+#endif
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/GeometryArena.hpp>
@@ -210,6 +212,13 @@ class EditorApp : public Assisi::App::Application
     /// because a multi-selection runs it once per entity.
     void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
                                const glm::mat4 &world);
+    // --- Networking ---------------------------------------------------------
+    // Compiled out entirely without ASSISI_ENABLE_NETWORKING: the definitions
+    // live in EditorNet.cpp and EditorPlay.cpp, which the build drops or guards
+    // to match. The editor is fully usable without them — what disappears is the
+    // multiplayer panel, hosting, joining, and play-in-editor *clients*. Plain
+    // play-in-editor is not networking and stays.
+#if defined(ASSISI_NETWORKING)
     void DrawNetworkWindow();     // negotiated level + live net stats; see EditorNet.cpp
     void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"; see EditorNet.cpp
     /// @brief The two host-side authoring warnings: a level with nothing marked
@@ -220,6 +229,7 @@ class EditorApp : public Assisi::App::Application
     void PollNetSession(float dt); // top of the fixed step: connection events, messages, join progress
     void TickNetSession();        // end of the fixed step: snapshots (host) or input (client)
     void SmoothNetView();         // once per frame, AFTER the physics writeback: interpolation + correction smoothing
+#endif // ASSISI_NETWORKING
 
     // --- Networked play (docs/replication-plan-v4.md §3.6) ------------------
     // One rule the rest falls out of: **a network session exists only inside a
@@ -229,6 +239,11 @@ class EditorApp : public Assisi::App::Application
     // *play* scene, which the editor already treats as disposable, so nearly
     // every guard an "editing while joined" mode would need is machinery the
     // play snapshot/restore already provides.
+
+    // NetIntent and JoinPhase stay outside the networking guard on purpose:
+    // `Standalone` is what *ordinary* Play is, so StartPlay takes one either way
+    // and the whole play path would need two spellings without them. Without
+    // networking the other enumerators are simply never reached.
 
     /// @brief What the current (or next) play session does on the network.
     enum class NetIntent : std::uint8_t
@@ -249,6 +264,7 @@ class EditorApp : public Assisi::App::Application
         Live,       ///< Handshake answered; snapshots are being applied.
     };
 
+#if defined(ASSISI_NETWORKING)
     /// @brief True while a session exists and is not Offline.
     [[nodiscard]] bool IsNetSessionActive() const;
 
@@ -297,6 +313,7 @@ class EditorApp : public Assisi::App::Application
     /// @brief Terminate and reap every play-in-editor client, then delete the
     /// temp level. Safe to call when there are none.
     void ShutdownPieClients();
+#endif // ASSISI_NETWORKING
 
     /// @brief Diagnostic (end of OnImGui): warns with full ImGui internal state
     /// when a widget holds ActiveId for seconds with no mouse button down and no
@@ -340,6 +357,10 @@ class EditorApp : public Assisi::App::Application
 
     // --- Inspector helpers ---
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
+    // The inspector's replication surfaces. Every one of them reads or writes a
+    // NetSync::Replicated marker, so without networking there is no component for
+    // them to be about — the inspector simply has no replication block.
+#if defined(ASSISI_NETWORKING)
     /// @brief The inspector's replication block: the Replicated checkbox, the
     /// session-scoped NetId, which of the two client timelines a mirror is on,
     /// and the warnings that catch an entity that will not replicate the way its
@@ -373,6 +394,7 @@ class EditorApp : public Assisi::App::Application
 
     /// ...and the single *write*, undo-recorded. Same reason.
     void SetSelectedEntitySends(const Assisi::Core::Reflect::ComponentMeta &meta, bool sends);
+#endif // ASSISI_NETWORKING
 
     /// Whether the game config forbids @p meta outright, in which case a
     /// per-entity control for it would be a switch that cannot matter.
@@ -1002,6 +1024,13 @@ class EditorApp : public Assisi::App::Application
     Assisi::ECS::Scene                *_scene   = nullptr; ///< == &_world->scene.
     Assisi::Physics::PhysicsWorld     *_physics = nullptr; ///< == &_world->physics.
 
+    // Networked play. `_netIntent` is the role this play session was entered
+    // for; `_joinPhase` tracks a client through connect -> build -> live.
+    // Unguarded for the same reason the enums are: Standalone is ordinary Play.
+    NetIntent _netIntent = NetIntent::Standalone;
+    JoinPhase _joinPhase = JoinPhase::None;
+
+#if defined(ASSISI_NETWORKING)
     /// The networked session, when there is one. Created on Host/Join and
     /// destroyed on Disconnect (and before any level load), because it holds a
     /// reference to the scene it replicates and a level load replaces that
@@ -1014,11 +1043,6 @@ class EditorApp : public Assisi::App::Application
     /// Why the last Host/Join failed. Held here rather than read back off the
     /// session, because a failed attempt destroys the session that knows.
     std::string _netError;
-
-    // Networked play. `_netIntent` is the role this play session was entered
-    // for; `_joinPhase` tracks a client through connect -> build -> live.
-    NetIntent _netIntent = NetIntent::Standalone;
-    JoinPhase _joinPhase = JoinPhase::None;
 
     /// The content-set scan, kicked when a session starts. Until it lands, a host
     /// sends no ServerHello and a client sends no ClientHello, and the join
@@ -1054,12 +1078,15 @@ class EditorApp : public Assisi::App::Application
     /// against. Mirrors arrive with authored asset ids and null GPU pointers;
     /// this is what tells the frame loop to look again.
     std::uint64_t _netStructureRevision = 0;
+#endif // ASSISI_NETWORKING
+
     /// The edited world as Run found it, minus its entities (those are
     /// `_playSnapshot` below, which needs exact-identity handling this does not).
     /// A join replaces the play scene with the *host's* level — its identity, its
     /// systems and its instance table — so all of it has to be put back.
     PrePlayState _prePlay;
 
+#if defined(ASSISI_NETWORKING)
     /// The Play control's net mode, as an index into the dropdown. Sticky for
     /// the process and reset at launch: it is a per-session testing choice
     /// ("this time, host with two viewers"), not a preference worth persisting
@@ -1073,6 +1100,7 @@ class EditorApp : public Assisi::App::Application
     std::vector<Assisi::App::ChildProcess> _pieClients;
     /// The temp level a PIE host wrote for its clients to load. Deleted at Stop.
     std::filesystem::path _pieTempLevel;
+#endif // ASSISI_NETWORKING
 
     // --- Rendering ---
     // The engine's default scene-render path owns lighting + the mesh pipeline;

@@ -19,7 +19,9 @@
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/ContentSet.hpp>
 #include <Assisi/ECS/Scene.hpp>
-#include <Assisi/NetSync/NetSession.hpp>
+#if defined(ASSISI_NETWORKING)
+#    include <Assisi/NetSync/NetSession.hpp>
+#endif
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 
@@ -106,8 +108,12 @@ class ServerApp final : public Assisi::App::Application
     Assisi::App::ContentSetHashJob _contentSetHash;
 
     /// Constructed only in a networked role, so the offline mode never
-    /// initializes GameNetworkingSockets at all.
+    /// initializes GameNetworkingSockets at all — and without networking built
+    /// there is no role that would, so the member goes too. Offline (headless
+    /// simulation) is not a networking feature and keeps working.
+#if defined(ASSISI_NETWORKING)
     std::unique_ptr<Assisi::NetSync::NetSession> _session;
+#endif
 
     /// Host only: the entities it moves each tick, so the demo world is
     /// actually in motion.

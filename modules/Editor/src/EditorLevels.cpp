@@ -888,7 +888,9 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
         return false;
     }
 
+#if defined(ASSISI_NETWORKING)
     ShutdownNetSession();
+#endif
 
     // The engine does the whole load: deserialize, drop the old asset set, evict
     // the renderer's cached bindings, re-resolve assets and rebuild physics. What

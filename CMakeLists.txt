@@ -168,6 +168,22 @@ else()
   endif()
 endif()
 
+# ---- Feature macros visible to source
+#
+# ASSISI_NETWORKING mirrors the CMake option into the preprocessor. Most of the
+# tree needs no guard — networking code lives in its own translation units, which
+# the option simply leaves out of the build (see App's BlueprintReplication.cpp).
+# The macro is for the two places that cannot do that: EditorApp holds a
+# NetSession by value-owning pointer in a *public header*, and Sandbox's
+# ServerApp has a headless mode that exists with or without sockets.
+#
+# On Assisi-Options rather than a single target, because it has to agree
+# everywhere — a header compiled with the macro in one target and without it in
+# another is an ODR violation with a different class layout on each side.
+if (ASSISI_ENABLE_NETWORKING)
+  target_compile_definitions(Assisi-Options INTERFACE ASSISI_NETWORKING)
+endif()
+
 # ---- Warnings (always ON; warnings-as-errors is a separate switch)
 if (MSVC)
   target_compile_options(Assisi-Warnings INTERFACE

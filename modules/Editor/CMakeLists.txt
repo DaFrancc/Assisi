@@ -22,7 +22,6 @@ target_sources(Assisi-Editor
     "src/EditorGizmo.cpp"
     "src/EditorInspector.cpp"
     "src/EditorLevels.cpp"
-    "src/EditorNet.cpp"
     "src/EditorOptions.cpp"
     "src/EditorPlay.cpp"
     "src/EditorWorlds.cpp"
@@ -43,13 +42,27 @@ target_link_libraries(Assisi-Editor
     # Render, Physics, Window, ECS, Core. Runtime is also a direct dependency
     # of EditHistory, kept explicit.
     Assisi::App
-    Assisi::NetSync
     Assisi::Runtime
     nlohmann_json::nlohmann_json
   PRIVATE
     # The transform gizmo (EditorGizmo.cpp) only; not part of the public API.
     imguizmo::imguizmo
 )
+
+# EditorNet.cpp is the multiplayer panel and the session plumbing — networking
+# from the first line, so it leaves the build entirely rather than being wrapped
+# in one enormous #if. Added with if()/target_sources rather than a $<BOOL:...>
+# genex so the SOURCES property stays a list of real filenames (see the same note
+# in modules/App/tests/CMakeLists.txt).
+#
+# The link is PUBLIC because EditorApp.hpp names NetSync types in its own
+# interface — the session pointer and the level-identity accessors — so a
+# consumer of the editor compiles against them too. Guarded by ASSISI_NETWORKING
+# on both sides.
+if (ASSISI_ENABLE_NETWORKING)
+  target_sources(Assisi-Editor PRIVATE "src/EditorNet.cpp")
+  target_link_libraries(Assisi-Editor PUBLIC Assisi::NetSync)
+endif()
 
 add_library(Assisi::Editor ALIAS Assisi-Editor)
 

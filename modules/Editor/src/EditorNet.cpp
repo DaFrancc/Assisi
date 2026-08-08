@@ -400,17 +400,6 @@ void EditorApp::ShutdownPieClients()
 // Someone who does want to go somewhere specific can double-click an entity in
 // the list, which is the deliberate version of the same thing.
 
-void EditorApp::OnShutdown()
-{
-    // Closing the window is a way of ending a play session, and the two things
-    // that outlive this process if nobody says otherwise are a socket and a
-    // fleet of viewer windows. Deliberately *not* a full StopPlay: the scene
-    // restore it runs re-resolves assets against a renderer that is on its way
-    // down, and nothing is going to look at the result.
-    ShutdownNetSession();
-    ShutdownPieClients();
-}
-
 void EditorApp::ShutdownNetSession()
 {
     if (!_netSession)

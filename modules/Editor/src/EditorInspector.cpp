@@ -10,7 +10,9 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
-#include <Assisi/NetSync/NetComponents.hpp>
+#if defined(ASSISI_NETWORKING)
+#    include <Assisi/NetSync/NetComponents.hpp>
+#endif
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
@@ -832,6 +834,8 @@ void EditorApp::RemoveComponentFromSelected(const Assisi::Core::Reflect::Compone
         history->CommitGesture(_selectedEntity, meta.id);
 }
 
+// The whole replication surface — see the declarations in EditorApp.hpp.
+#if defined(ASSISI_NETWORKING)
 void EditorApp::DrawReplicationSection(bool mirrored)
 {
     using namespace Assisi::Core::Reflect;
@@ -1142,6 +1146,7 @@ void EditorApp::DrawReplicationPolicy()
 
     ImGui::TreePop();
 }
+#endif // ASSISI_NETWORKING
 
 void EditorApp::DrawInstanceInspector()
 {
@@ -1298,7 +1303,11 @@ void EditorApp::DrawInspector()
         }
     }
 
+#if defined(ASSISI_NETWORKING)
     DrawReplicationSection(mirrored);
+#else
+    (void)mirrored; // no replication block to draw; `mirrored` is always false
+#endif
 
     // Rename field: every entity gets an always-available name box. It reads the
     // optional Name component and creates one on first edit, so naming an entity
@@ -1442,6 +1451,7 @@ void EditorApp::DrawInspector()
         // in the replication section. Neither owns any state: both read
         // SelectedEntitySends and write SetSelectedEntitySends, so they are two
         // renderings of one mask rather than two copies to keep in step.
+#if defined(ASSISI_NETWORKING)
         if (meta->replicable && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
         {
             const bool gameVeto = IsComponentGameVetoed(*meta);
@@ -1475,6 +1485,7 @@ void EditorApp::DrawInspector()
                     ImGui::SetTooltip("Withheld: stays on this machine. Click to send it.");
             }
         }
+#endif // ASSISI_NETWORKING
 
         // Overridden here? A member's inspector otherwise looks exactly like any
         // other entity's, right up until a save turns the edit into an override —
@@ -1518,6 +1529,7 @@ void EditorApp::DrawInspector()
             // Only worth saying on an entity that is *trying* to replicate; on a
             // local entity every component is unreplicated and the note would be
             // noise on every row.
+#if defined(ASSISI_NETWORKING)
             if (!meta->replicable && _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity))
             {
                 ImGui::TextDisabled("not replicated — type lacks ACOMP(replicable)");
@@ -1527,6 +1539,7 @@ void EditorApp::DrawInspector()
                                       "per type, in the component's header, not per entity.");
                 }
             }
+#endif // ASSISI_NETWORKING
 
             const bool edited = EditComponentFields(const_cast<void *>(compPtr), *meta);
             // Field edits write component memory by offset, bypassing Scene::GetMut's
