@@ -7,6 +7,7 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
@@ -744,7 +745,15 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
     // Default-construct it: an empty JSON object leaves every field at its default
     // via the per-field if-contains deserialization — the same path the level
     // loader uses, so no component needs a bespoke "make default" hook.
-    meta.addToScene(_scene, _selectedEntity.index, _selectedEntity.generation, nlohmann::json::object());
+    // An empty object has no field for a reader to reject, so this cannot fail
+    // today — checked anyway, because "cannot fail" is a property of the argument
+    // and the argument is one edit away from not being empty.
+    if (!meta.addToScene(_scene, _selectedEntity.index, _selectedEntity.generation,
+                         nlohmann::json::object()))
+    {
+        Assisi::Core::Log::Error("Editor: could not add a default '{}'.", meta.name);
+        return;
+    }
 
     // A couple of components carry runtime state beyond their reflected fields;
     // wire it up so the add takes effect immediately rather than at next reload.

@@ -323,8 +323,19 @@ void EditorApp::StopPlay()
             {
                 for (const Assisi::Editor::ComponentSnapshot &comp : snap.components)
                 {
+                    // Captured from the live scene when play started, so a refusal
+                    // is the codec failing to read its own output — and the editing
+                    // scene is mid-restore with no earlier state to fall back to.
                     if (const auto *meta = registry.ById(comp.id); meta != nullptr && meta->addToScene)
-                        meta->addToScene(_scene, snap.handle.index, snap.handle.generation, comp.data);
+                    {
+                        if (!meta->addToScene(_scene, snap.handle.index, snap.handle.generation, comp.data))
+                        {
+                            Assisi::Core::Log::Error(
+                                "Editor: leaving play lost '{}' — it did not read back from the snapshot "
+                                "taken when play started. This is an engine bug.",
+                                meta->name);
+                        }
+                    }
                 }
             }
         }

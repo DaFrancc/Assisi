@@ -48,13 +48,34 @@ ECS::Transform TransformFromJson(const nlohmann::json &value)
     if (!value.is_object())
         return out;
 
-    if (const auto it = value.find("position"); it != value.end() && it->is_array() && it->size() == 3)
-        out.position = {(*it)[0].get<float>(), (*it)[1].get<float>(), (*it)[2].get<float>()};
-    if (const auto it = value.find("rotation"); it != value.end() && it->is_array() && it->size() == 4)
-        out.rotation = glm::quat{(*it)[0].get<float>(), (*it)[1].get<float>(), (*it)[2].get<float>(),
-                                 (*it)[3].get<float>()};
-    if (const auto it = value.find("scale"); it != value.end() && it->is_array() && it->size() == 3)
-        out.scale = {(*it)[0].get<float>(), (*it)[1].get<float>(), (*it)[2].get<float>()};
+    // Every slot checked, not just the array's length: this guarded `is_array()`
+    // and `size()` and then read the elements as floats, so a hand-edited
+    // `"position": ["a","b","c"]` was the right shape and still threw. A slot that
+    // is not a number leaves the whole field at its default — this reads a
+    // *placement*, whose caller (an instance entry) has already been validated,
+    // and there is nothing here to hand a failure back to.
+    const auto readAll = [&value](const char *key, std::size_t count, float *into)
+    {
+        const auto it = value.find(key);
+        if (it == value.end() || !it->is_array() || it->size() != count)
+            return false;
+        for (std::size_t i = 0; i < count; ++i)
+        {
+            if (!(*it)[i].is_number())
+                return false;
+        }
+        for (std::size_t i = 0; i < count; ++i)
+            into[i] = (*it)[i].get<float>();
+        return true;
+    };
+
+    float scratch[4] = {};
+    if (readAll("position", 3, scratch))
+        out.position = {scratch[0], scratch[1], scratch[2]};
+    if (readAll("rotation", 4, scratch))
+        out.rotation = glm::quat{scratch[0], scratch[1], scratch[2], scratch[3]};
+    if (readAll("scale", 3, scratch))
+        out.scale = {scratch[0], scratch[1], scratch[2]};
 
     return out;
 }

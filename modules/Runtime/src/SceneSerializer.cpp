@@ -126,6 +126,8 @@ std::string_view Describe(LevelError error)
         return "an instance names a blueprint that will not load";
     case LevelError::UnresolvedReference:
         return "a reference names something the file does not declare";
+    case LevelError::MalformedComponent:
+        return "a component field holds something the engine cannot read";
     case LevelError::ContextBusy:
         return "a serialization context is already active on this thread";
     case LevelError::InstanceNotLive:
@@ -337,8 +339,17 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
     {
         for (const CapturedComponent &c : captured[i])
         {
-            if (c.meta->addToScene)
-                c.meta->addToScene(&dst, created[i].index, created[i].generation, c.data);
+            // The data came out of Save on the *source* scene a moment ago, so a
+            // refusal here means the codec disagrees with itself rather than that
+            // a file is wrong. Loud, and the migration continues: the entity has
+            // already moved and there is nothing to roll back to.
+            if (c.meta->addToScene &&
+                !c.meta->addToScene(&dst, created[i].index, created[i].generation, c.data))
+            {
+                Core::Log::Error("SceneSerializer: migrating '{}' lost a component the source scene had "
+                                 "written — this is an engine bug, not a bad file.",
+                                 c.meta->name);
+            }
         }
     }
 
@@ -775,7 +786,16 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
                 // its fields are references.
                 nlohmann::json wrapper{{componentName, componentData}};
                 QualifyInstanceReferences(wrapper, prefix);
-                meta->addToScene(&scene, e.index, e.generation, wrapper.at(componentName));
+                // The definition was read once and prepared, and PrepareBlueprint
+                // refuses a member whose values do not read — so a failure here is
+                // a claim the *instance* wrote, and the member simply does not get
+                // that component rather than the whole expansion collapsing.
+                if (!meta->addToScene(&scene, e.index, e.generation, wrapper.at(componentName)))
+                {
+                    Core::Log::Error("Blueprint: instance '{}' member '{}' overrides '{}' with something "
+                                     "unreadable — the component is left as the blueprint had it.",
+                                     instanceName, staged.resolved[i].name, componentName);
+                }
             }
         }
 
@@ -1157,7 +1177,15 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
                 Core::Log::Warn("SceneSerializer: non-serializable component '{}' - skipped", compName);
                 continue;
             }
-            meta->addToScene(&scene, e.index, e.generation, compData);
+            if (!meta->addToScene(&scene, e.index, e.generation, compData))
+            {
+                // The hook has already logged the component, the field and the
+                // mismatch; this adds the entity, which it had no way to know.
+                Core::Log::Error("SceneSerializer: entity '{}' has an unreadable '{}' — the file is refused.",
+                                 names[i], compName);
+                scene.Clear();
+                return std::unexpected(LevelError::MalformedComponent);
+            }
         }
     }
 
@@ -1259,7 +1287,16 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
             const Core::Reflect::ComponentMeta *meta = registry.Find(componentName);
             if (meta == nullptr || !meta->serializable)
                 continue; // reported at expansion, where there is an instance to name
-            meta->addToScene(&scratch, scratchEntities[i].index, scratchEntities[i].generation, componentData);
+            if (!meta->addToScene(&scratch, scratchEntities[i].index, scratchEntities[i].generation,
+                                  componentData))
+            {
+                // Refused here rather than at every spawn: a blueprint whose member
+                // values the engine cannot read is broken about itself, and this is
+                // the one place that reads them.
+                Core::Log::Error("Blueprint: '{}' member '{}' has an unreadable '{}'.", definition.source,
+                                 member.name, componentName);
+                return false;
+            }
         }
     }
 

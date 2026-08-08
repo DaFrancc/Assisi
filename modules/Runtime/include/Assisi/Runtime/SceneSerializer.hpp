@@ -134,6 +134,7 @@ enum class LevelError
     NonUniformScale,     ///< An instance placement that shears; cannot compose exactly (§3).
     BlueprintUnusable,   ///< An instance names a blueprint that will not load; see BlueprintError.
     UnresolvedReference, ///< An EntityRef naming an entity or member the file does not declare.
+    MalformedComponent,  ///< A component field is present but unreadable — a string where a number goes.
     ContextBusy,         ///< A serialization context is already active on this thread (a caller bug).
     InstanceNotLive,     ///< Re-expansion was asked for an instance id no longer in the table.
     NameAlreadyLive,     ///< Placing would put two instances of one name in a world.

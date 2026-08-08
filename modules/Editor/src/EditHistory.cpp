@@ -537,7 +537,17 @@ bool EditHistory::AddComponentForRestore(Entity entity, Reflect::ComponentId id,
     // rejects an already-present component, so a value edit must clear the old one
     // first (design doc §6/§8.8).
     _scene.RemoveById(entity, id);
-    meta->addToScene(&_scene, entity.index, entity.generation, data);
+    // The payload is what this history captured from a live component, so a
+    // refusal means the codec cannot read back what it just wrote. The old value
+    // is already gone by then, so there is nothing to restore — say so instead of
+    // reporting an undo that quietly dropped a component.
+    if (!meta->addToScene(&_scene, entity.index, entity.generation, data))
+    {
+        Assisi::Core::Log::Error("EditHistory: '{}' could not be restored from its own snapshot — this is "
+                                 "an engine bug. The component is now missing from the entity.",
+                                 meta->name);
+        return false;
+    }
     return true;
 }
 

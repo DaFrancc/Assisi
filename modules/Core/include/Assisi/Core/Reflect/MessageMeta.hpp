@@ -120,7 +120,10 @@ struct MessageMeta
 
     /// @brief Deserialize JSON into a caller-owned instance. Absent keys leave
     /// the instance's current value untouched.
-    std::function<void(const nlohmann::json &j, void *out_ptr)> deserialize;
+    ///
+    /// @return false when a field is present but unreadable, having logged which
+    ///         one. Absent keys are not failures — see ComponentMeta::addToScene.
+    std::function<bool(const nlohmann::json &j, void *out_ptr)> deserialize;
 };
 
 /// @brief The same three facts as MessageMeta's grammar fields, available at

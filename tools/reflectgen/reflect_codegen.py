@@ -98,8 +98,9 @@ def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
         return TypeCodegen(
             'Enum',
             'static_cast<std::int64_t>({a})',
-            'if (j.contains("{f}")) {a} = static_cast<' + f.enum_info.fqn +
-            '>(j.at("{f}").get<std::int64_t>());')
+            '{{ std::int64_t _n = static_cast<std::int64_t>({a}); '
+            'if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "{f}", _n)) return false; '
+            '{a} = static_cast<' + f.enum_info.fqn + '>(_n); }}')
     return TYPES.get(f.cpp_type)
 
 
@@ -229,13 +230,16 @@ def _gen_message_serialize(fields: list[FieldInfo]) -> str:
     return '\n'.join(lines)
 
 
-def _gen_message_deserialize(fields: list[FieldInfo]) -> str:
+def _gen_message_deserialize(fields: list[FieldInfo], name: str) -> str:
     serializable = [f for f in fields if _is_serializable(f)]
     if not serializable:
-        return '(void)j;\n(void)out_ptr;'
-    lines = ['auto& a = *static_cast<T*>(out_ptr);']
+        return '(void)j;\n(void)out_ptr;\nreturn true;'
+    lines = [f'constexpr const char* _comp = "{name}";',
+             '(void)_comp;',
+             'auto& a = *static_cast<T*>(out_ptr);']
     for f in serializable:
         lines.append(_message_field_tc(f).deserialize.format(f=f.name, a=f'a.{f.name}'))
+    lines.append('return true;')
     return '\n'.join(lines)
 
 
@@ -256,10 +260,15 @@ def _gen_serialize(fields: list[FieldInfo]) -> str:
     return '\n'.join(lines)
 
 
-def _gen_deserialize(fields: list[FieldInfo]) -> str:
+def _gen_deserialize(fields: list[FieldInfo], name: str) -> str:
+    """The addToScene body. Returns false without touching the scene when a field
+    is present but unreadable — the component is never half-applied, because every
+    field lands on a local `comp` and only a complete one reaches Scene::Add."""
     serializable = [f for f in fields if _is_serializable(f)]
 
     lines = [
+        f'constexpr const char* _comp = "{name}";',
+        '(void)_comp;',
         'auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);',
         'Assisi::ECS::Entity e{entity_index, entity_gen};',
         'T comp{};',
@@ -272,21 +281,29 @@ def _gen_deserialize(fields: list[FieldInfo]) -> str:
             lines.append(_field_tc(f).deserialize.format(f=f.name, a=f'comp.{f.name}'))
 
     lines.append('(void)scene.Add(e, comp);')
+    lines.append('return true;')
     return '\n'.join(lines)
 
 
-def _gen_deserialize_asset(fields: list[FieldInfo]) -> str:
+def _gen_deserialize_asset(fields: list[FieldInfo], name: str) -> str:
     """Deserialize for an AASSET: write fields into a caller-owned instance
     (out_ptr), no scene/entity machinery. Per-field 'if present' so absent keys
-    leave the instance's current value untouched (forward-compat)."""
+    leave the instance's current value untouched (forward-compat).
+
+    Unlike the component path this writes straight into the caller's instance, so
+    a false return can leave the fields before the bad one already applied. The
+    caller is handing in an instance it owns and is expected to drop it."""
     serializable = [f for f in fields if _is_serializable(f)]
 
     if not serializable:
-        return '(void)j;\n(void)out_ptr;'
+        return '(void)j;\n(void)out_ptr;\nreturn true;'
 
-    lines = ['auto& a = *static_cast<T*>(out_ptr);']
+    lines = [f'constexpr const char* _comp = "{name}";',
+             '(void)_comp;',
+             'auto& a = *static_cast<T*>(out_ptr);']
     for f in serializable:
         lines.append(_field_tc(f).deserialize.format(f=f.name, a=f'a.{f.name}'))
+    lines.append('return true;')
     return '\n'.join(lines)
 
 
@@ -424,7 +441,7 @@ def _gen_message_block(msg: MessageInfo) -> str:
     var_name    = f'_reflectgen_msg_{msg.name}'
     field_metas = ',\n            '.join(_gen_field_meta(f) for f in msg.fields)
     serialize   = _indent(_gen_message_serialize(msg.fields), 12)
-    deserialize = _indent(_gen_message_deserialize(msg.fields), 12)
+    deserialize = _indent(_gen_message_deserialize(msg.fields, msg.name), 12)
 
     direction   = 'Intent' if msg.direction == 'intent' else 'Event'
     reliability = 'Reliable' if msg.reliability == 'reliable' else 'Unreliable'
@@ -506,7 +523,7 @@ def _gen_asset_block(comp: ComponentInfo) -> str:
     var_name = f'_reflectgen_{comp.name}'
     field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
     serialize   = _indent(_gen_serialize(comp.fields), 12)
-    deserialize = _indent(_gen_deserialize_asset(comp.fields), 12)
+    deserialize = _indent(_gen_deserialize_asset(comp.fields, comp.name), 12)
 
     return f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
@@ -677,6 +694,9 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     # asset-only header (e.g. Geometry's MaterialData) must NOT pull in
     # ComponentRegistry / ECS::Scene — its home module does not link ECS.
     includes = []
+    # Unconditional: every deserialize body reads its fields through these, and
+    # every kind of registration (component, asset, message) emits one.
+    includes.append('#include <Assisi/Core/Reflect/JsonRead.hpp>')
     if component_infos:
         includes.append('#include <Assisi/Core/Reflect/ComponentRegistry.hpp>')
         includes.append('#include <Assisi/ECS/Scene.hpp>')
@@ -748,7 +768,7 @@ static const bool {var_name} = []() -> bool
 
         field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
         serialize   = _indent(_gen_serialize(comp.fields), 12)
-        deserialize = _indent(_gen_deserialize(comp.fields), 12)
+        deserialize = _indent(_gen_deserialize(comp.fields, comp.name), 12)
 
         blocks.append(f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
