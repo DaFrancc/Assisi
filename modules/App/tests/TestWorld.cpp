@@ -13,6 +13,7 @@
 #include <thread>
 #include <vector>
 
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/TestSystems.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -730,6 +731,110 @@ TEST_CASE("Re-applying a list replaces the previous systems rather than stacking
     CHECK(Runs(world, "Counter") == 1); // not run again — it is gone
     CHECK(Runs(world, "Follower") == 1);
     CHECK(world.systemNames == std::vector<std::string>{"Follower"});
+}
+
+TEST_CASE("A queued install belongs to one world and cannot reach another")
+{
+    // The queue used to be a process-global list keyed by raw World*, drained one
+    // line after the marshalled work where deferred level loads — the things that
+    // free worlds — land. Destroying a world left an entry naming freed memory.
+    // Owned by the world, the entry cannot outlive it; this is the regression
+    // guard for anyone who moves it back out.
+    Assisi::App::Test::RunCounts::Instance().Reset();
+
+    WorldManager worlds;
+    World       &doomed   = worlds.Create("Doomed");
+    World       &survivor = worlds.Create("Survivor");
+
+    QueueSystemInstall(doomed, std::vector<std::string>{"Counter"}, "car.abp");
+    QueueSystemInstall(survivor, std::vector<std::string>{"Follower"}, "car.abp");
+    CHECK(doomed.pendingSystems.names == std::vector<std::string>{"Counter"});
+    CHECK(survivor.pendingSystems.names == std::vector<std::string>{"Follower"});
+
+    REQUIRE(worlds.Destroy(doomed.name));
+
+    // The survivor is still owed exactly its own install, and draining it is not
+    // a walk over anything the dead world could still be in.
+    DrainSystemInstalls(survivor);
+    CHECK(survivor.systems.Has("Follower"));
+    CHECK_FALSE(survivor.systems.Has("Counter"));
+    CHECK(survivor.pendingSystems.names.empty());
+}
+
+TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
+{
+    // A blueprint spawned into the level being replaced has already asked for its
+    // systems. ApplySystems clears the registry and installs the new level's list,
+    // so a surviving queue entry installs the old blueprint's system into a level
+    // that never named it — a frame later, where nothing connects it to the load.
+    Assisi::Core::EventQueue events;
+    Assisi::App::Test::RunCounts::Instance().Reset();
+
+    WorldManager worlds;
+    World       &world = worlds.Create("Retargeted");
+
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "levels/Old.alvl"));
+    QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
+
+    // Open another level into the same world — the editor's Open Level.
+    REQUIRE(worlds.ApplySystems(world, {}, "levels/New.alvl"));
+    CHECK(world.pendingSystems.names.empty());
+
+    DrainSystemInstalls(world);
+    CHECK_FALSE(world.systems.Has("Counter"));
+    CHECK_FALSE(world.systems.Has("Follower"));
+    TickUpdate(world, events);
+    CHECK(Runs(world, "Follower") == 0);
+}
+
+TEST_CASE("A refused system list leaves the queued installs alone")
+{
+    // ApplySystems is all-or-nothing: a refused list leaves the world running
+    // exactly what it was running, so the installs that level queued are still
+    // owed. Dropping them on the failure path would strip a live level's
+    // blueprints of their behaviour.
+    Assisi::App::Test::RunCounts::Instance().Reset();
+
+    WorldManager worlds;
+    World       &world = worlds.Create("Refused");
+
+    REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "levels/Live.alvl"));
+    QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
+
+    CHECK_FALSE(worlds.ApplySystems(world, std::vector<std::string>{"Nonexistent"}, "levels/Bad.alvl"));
+    DrainSystemInstalls(world);
+
+    CHECK(world.systems.Has("Counter"));
+    CHECK(world.systems.Has("Follower"));
+}
+
+TEST_CASE("A spawn queues a union, and draining it twice installs once")
+{
+    // A hundred bullets in one frame must leave one name, not a hundred — and the
+    // drain has to clear what it applied, or every later frame reinstalls it.
+    // Re-registering a name is not idempotent: After()/Before() bind to the first
+    // entry, so a repeat corrupts the ordering graph.
+    Assisi::App::Test::RunCounts::Instance().Reset();
+
+    WorldManager worlds;
+    World       &world = worlds.Create("Spawned");
+    REQUIRE(worlds.ApplySystems(world, {}, "levels/Empty.alvl"));
+
+    QueueSystemInstall(world, std::vector<std::string>{"Counter"}, "car.abp");
+    QueueSystemInstall(world, std::vector<std::string>{"Counter", "Follower"}, "truck.abp");
+    CHECK(world.pendingSystems.names == std::vector<std::string>{"Counter", "Follower"});
+
+    // The first spawn to open the queue owns the diagnostic.
+    CHECK(world.pendingSystems.context == "car.abp");
+
+    DrainSystemInstalls(world);
+    CHECK(world.pendingSystems.names.empty());
+    DrainSystemInstalls(world);
+
+    Assisi::Core::EventQueue events;
+    TickUpdate(world, events);
+    CHECK(Runs(world, "Counter") == 1);
+    CHECK(Runs(world, "Follower") == 1);
 }
 
 TEST_CASE("A level's system list survives a save/load round trip")

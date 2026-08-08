@@ -85,6 +85,14 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     if (!SystemCatalog::Instance().Resolve(names, resolved, context))
         return false;
 
+    // The queue belongs to the content being replaced, so it goes with it. A
+    // blueprint spawned into the outgoing level has already asked for its systems;
+    // drained after this, they would install into a level that never named them, a
+    // frame later, with nothing left to connect them to the load. Deliberately
+    // after the Resolve guard above: a refused list leaves the world running
+    // exactly what it was, so its installs are still owed.
+    world.pendingSystems = {};
+
     // Never stack one list on another: Register is append-only and a repeated
     // name binds every After()/Before() edge to the first entry, so re-targeting a
     // world (the editor opening another level into the one it edits) must start

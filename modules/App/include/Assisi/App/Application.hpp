@@ -124,6 +124,18 @@ class Application
     /// is a no-op: Application owns no scene, so the app must opt in.
     virtual void FlushDeferred() {}
 
+    /// @brief Called once per frame at the main-thread safe point — after the
+    /// marshalled work where deferred level loads land, before OnUpdate — to apply
+    /// the system installs a blueprint spawn queued (App::DrainSystemInstalls, per
+    /// resident world). Default is a no-op, for the same reason FlushDeferred's is:
+    /// Application owns no worlds, so the app must opt in.
+    ///
+    /// Ordering is the whole point. Spawning a blueprint usually happens *inside* a
+    /// system, and SystemRegistry invalidates its cached execution order on every
+    /// registration — so installing mid-walk mutates what is being iterated. Doing
+    /// it here costs one frame: the car exists immediately and drives from the next.
+    virtual void InstallQueuedSystems() {}
+
     /// @warning Both assert in a headless process, which has neither. Guard with
     /// IsHeadless() (or HasPresentation()) in code that runs in both modes.
     Window::WindowContext &GetWindow() const;
