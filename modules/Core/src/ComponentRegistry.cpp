@@ -6,7 +6,17 @@
 #include <Assisi/Core/Reflect/ReplicableLimits.hpp>
 
 #include <algorithm>
+#include <mutex>
 #include <utility>
+
+namespace
+{
+/// Guards the one-time finalization below. A file static rather than a member so
+/// <mutex> stays out of a header most of the engine includes; the registry is a
+/// singleton, and a second instance in a test sharing this lock is merely
+/// coarser, never wrong.
+std::mutex g_finalizeMutex;
+} // namespace
 
 namespace Assisi::Core::Reflect
 {
@@ -39,7 +49,7 @@ void ComponentRegistry::Register(ComponentMeta meta)
     // genuine bug, so this is loud in debug and a dropped component in release —
     // a component that is absent fails visibly at Find(), whereas renumbering
     // silently mis-maps every id in the process.
-    if (_finalized)
+    if (_finalized.load(std::memory_order_acquire))
     {
         // Log first, assert second: the assert does not return — it aborts (or, under
         // the test handler, throws) — so anything after it is unreachable in debug.
@@ -60,7 +70,20 @@ void ComponentRegistry::Register(ComponentMeta meta)
 
 void ComponentRegistry::EnsureFinalized() const
 {
-    if (_finalized)
+    // Acquire, and it is the whole point: a thread that sees the flag set must
+    // also see every table the finalizing thread built below. A plain bool here
+    // was a data race — the sort, the id assignment and the _serializable /
+    // _replicable vectors are all written under it, and the first ask can come
+    // from a worker (async travel deserializes off the main thread and walks
+    // this registry there) while the main thread asks for the same thing.
+    if (_finalized.load(std::memory_order_acquire))
+        return;
+
+    const std::lock_guard lock(g_finalizeMutex);
+
+    // Re-checked under the lock: the loser of the race would otherwise sort and
+    // re-id a table the winner has already handed pointers into.
+    if (_finalized.load(std::memory_order_relaxed))
         return;
 
     std::sort(_metas.begin(), _metas.end(),
@@ -124,7 +147,9 @@ void ComponentRegistry::EnsureFinalized() const
                          _replicable.size(), kReplicableComponentCount);
     }
 
-    _finalized = true;
+    // Release, pairing with the acquire above: everything written in this
+    // function happens-before any thread that observes the flag set.
+    _finalized.store(true, std::memory_order_release);
 }
 
 std::span<const ComponentMeta *const> ComponentRegistry::ReplicableComponents() const
