@@ -19,7 +19,7 @@ namespace Assisi::App
 std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view source,
                                               const ECS::Transform &placement)
 {
-    const std::optional<ECS::InstanceId> id =
+    const std::expected<ECS::InstanceId, Runtime::LevelError> id =
         Runtime::SceneSerializer::ExpandInstance(world.scene, world.instances, source, placement);
     if (!id)
         return std::nullopt;
@@ -65,7 +65,7 @@ std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view sou
             world.physics.AddBodyFromDescriptor(world.scene, member, *transform, *descriptor, parentWorld);
     }
 
-    return id;
+    return *id;
 }
 
 bool DestroyInstance(World &world, ECS::InstanceId instanceId)

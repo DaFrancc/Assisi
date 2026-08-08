@@ -27,6 +27,8 @@
 
 using namespace Assisi;
 using Assisi::Runtime::Camera;
+using Assisi::Runtime::LevelError;
+using Assisi::Runtime::LevelResult;
 using Assisi::Runtime::MeshRenderer;
 using Assisi::Runtime::Parent;
 using Assisi::Runtime::SceneSerializer;
@@ -41,7 +43,7 @@ TEST_CASE("SceneSerializer: transform values survive a round-trip")
                                             .scale    = {4.f, 5.f, 6.f}}) != nullptr);
 
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
 
     const auto *t = loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(t != nullptr);
@@ -67,7 +69,7 @@ TEST_CASE("SceneSerializer: forward parent reference survives a round-trip")
     REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
 
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
 
     // Load allocates fresh sequential entities: serial 0 -> {0,0} (the child),
     // serial 1 -> {1,0} (the parent).
@@ -97,7 +99,7 @@ TEST_CASE("SceneSerializer: child-before-parent fixture loads the hierarchy")
                                  {"scale", {1.f, 1.f, 1.f}}}}}}}})}}; // [1] body
 
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, fixture);
+    REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
 
     const auto *pc = loaded.Get<Parent>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(pc != nullptr);
@@ -125,7 +127,7 @@ TEST_CASE("SceneSerializer: a name survives the round trip and is the entity's N
     CHECK_FALSE(saved.at("entities")[0].at("components").contains("Name"));
 
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, saved);
+    REQUIRE(SceneSerializer::Load(loaded, saved).has_value());
     const auto *name = loaded.Get<Runtime::Name>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(name != nullptr);
     CHECK(name->value.View() == "wheel_fl");
@@ -157,7 +159,7 @@ TEST_CASE("SceneSerializer: an unnamed entity is given a name, and duplicates ar
 
     // And it reloads, which a file with two "Cube"s would not.
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, saved);
+    REQUIRE(SceneSerializer::Load(loaded, saved).has_value());
     CHECK(loaded.AliveCount() == 3);
 
     // Deterministic: the same scene saves to the same names, so an override written
@@ -173,7 +175,9 @@ TEST_CASE("SceneSerializer: two entities with the same name refuse the file")
                                             {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
 
     ECS::Scene loaded;
-    CHECK_THROWS(SceneSerializer::Load(loaded, fixture));
+    const LevelResult result = SceneSerializer::Load(loaded, fixture);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::DuplicateName);
     CHECK(loaded.AliveCount() == 0);
 }
 
@@ -181,22 +185,31 @@ TEST_CASE("SceneSerializer: a missing or empty name refuses the file")
 {
     ECS::Scene loaded;
 
+    // Absent and present-but-unusable are different kinds, and the file is wrong
+    // in a different way in each: MissingName means the key is not there at all,
+    // InvalidName means ValidateName looked at it and said no.
     const nlohmann::json missing = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"components", nlohmann::json::object()}}})}};
-    CHECK_THROWS(SceneSerializer::Load(loaded, missing));
+    const LevelResult noName = SceneSerializer::Load(loaded, missing);
+    REQUIRE_FALSE(noName.has_value());
+    CHECK(noName.error() == LevelError::MissingName);
 
     const nlohmann::json empty = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", ""}, {"components", nlohmann::json::object()}}})}};
-    CHECK_THROWS(SceneSerializer::Load(loaded, empty));
+    const LevelResult emptyName = SceneSerializer::Load(loaded, empty);
+    REQUIRE_FALSE(emptyName.has_value());
+    CHECK(emptyName.error() == LevelError::InvalidName);
 
     // Truncating instead is how two members become indistinguishable.
     const nlohmann::json tooLong = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", std::string(Core::kShortStringMax + 1, 'x')},
                                              {"components", nlohmann::json::object()}}})}};
-    CHECK_THROWS(SceneSerializer::Load(loaded, tooLong));
+    const LevelResult longName = SceneSerializer::Load(loaded, tooLong);
+    REQUIRE_FALSE(longName.has_value());
+    CHECK(longName.error() == LevelError::InvalidName);
 }
 
 TEST_CASE("SceneSerializer: a reference to an undeclared name refuses the file")
@@ -210,7 +223,9 @@ TEST_CASE("SceneSerializer: a reference to an undeclared name refuses the file")
                                             {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
 
     ECS::Scene loaded;
-    CHECK_THROWS(SceneSerializer::Load(loaded, fixture));
+    const LevelResult result = SceneSerializer::Load(loaded, fixture);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::UnresolvedReference);
     CHECK(loaded.AliveCount() == 0);
 }
 
@@ -223,8 +238,10 @@ TEST_CASE("SceneSerializer: a v1 file is refused rather than read positionally")
         {"entities", nlohmann::json::array({{{"components", {{"Parent", {{"parent", 1}}}}}},
                                             {{"components", nlohmann::json::object()}}})}};
 
-    ECS::Scene loaded;
-    CHECK_THROWS(SceneSerializer::Load(loaded, v1)); // the version check refuses it first
+    ECS::Scene        loaded;
+    const LevelResult result = SceneSerializer::Load(loaded, v1);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::UnsupportedVersion); // the version check refuses it first
     CHECK(loaded.AliveCount() == 0);
 }
 
@@ -235,7 +252,7 @@ TEST_CASE("SceneSerializer: a null reference stays null")
         {"entities", nlohmann::json::array({{{"name", "loose"}, {"components", {{"Parent", {{"parent", nullptr}}}}}}})}};
 
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, fixture);
+    REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
     const auto *pc = loaded.Get<Parent>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(pc != nullptr);
     CHECK(pc->parent == ECS::NullEntity);
@@ -247,7 +264,7 @@ TEST_CASE("SceneSerializer: an empty scene round-trips to an empty scene")
     ECS::Scene loaded;
     loaded.Create(); // pre-existing entity that Load must clear away
 
-    SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
     CHECK(loaded.AliveCount() == 0);
 }
 
@@ -271,7 +288,7 @@ TEST_CASE("SceneSerializer: MeshRenderer asset ids round-trip; GPU handles don't
     REQUIRE(scene.Add(e, renderer) != nullptr);
 
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
 
     const MeshRenderer *mrc =
         loaded.Get<MeshRenderer>(ECS::Entity{.index = 0, .generation = 0});
@@ -293,7 +310,7 @@ TEST_CASE("SceneSerializer: multiple components on one entity all round-trip")
     REQUIRE(scene.Add(e, Camera{.fovDegrees = 42.f, .isActive = true}) != nullptr);
 
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, SceneSerializer::Save(scene));
+    REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
 
     const ECS::Entity le{.index = 0, .generation = 0};
     const auto *t = loaded.Get<Transform>(le);
@@ -312,7 +329,9 @@ TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
 
     const nlohmann::json future = {{"version", 999}, {"entities", nlohmann::json::array()}};
-    CHECK_THROWS(SceneSerializer::Load(scene, future)); // rejected before the scene is cleared
+    const LevelResult    result = SceneSerializer::Load(scene, future);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::UnsupportedVersion); // rejected before the scene is cleared
 
     CHECK(scene.AliveCount() == 1);
     CHECK(scene.Get<Transform>(e) != nullptr);
@@ -420,7 +439,7 @@ TEST_CASE("SceneSerializer: unknown component names are skipped, not fatal")
                                                  {"scale", {1.f, 1.f, 1.f}}}}}}}})}};
 
     ECS::Scene loaded;
-    SceneSerializer::Load(loaded, fixture);
+    REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
 
     const auto *t = loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0});
     REQUIRE(t != nullptr);
@@ -557,7 +576,7 @@ TEST_CASE("SceneSerializer: one non-finite float does not brick the whole level 
     REQUIRE(SceneSerializer::SaveToFile(scene, root / "nan.alvl"));
 
     ECS::Scene  loaded;
-    const bool  ok = SceneSerializer::LoadFromFile(loaded, "nan.alvl");
+    const bool  ok = SceneSerializer::LoadFromFile(loaded, "nan.alvl").has_value();
     CHECK(ok); // the load must not fail wholesale
     // The well-formed entity must survive — one bad float can't empty the scene.
     CHECK(loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0}) != nullptr);

@@ -120,7 +120,7 @@ struct Fixture
     {
         Write(root / "cart.abp", CartFile());
 
-        const std::optional<ECS::InstanceId> placed =
+        const auto placed =
             SceneSerializer::ExpandInstance(scene, table, "cart.abp", {});
         REQUIRE(placed.has_value());
         id = *placed;

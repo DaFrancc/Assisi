@@ -117,7 +117,7 @@ TEST_CASE("Prepared form: a spawn decodes to the same values a JSON load produce
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<ECS::InstanceId> id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
 
     const ECS::Entity body = MemberOf(scene, table, *id, "body");
@@ -152,8 +152,8 @@ TEST_CASE("Prepared form: two spawns hold their own vector storage")
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<ECS::InstanceId> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
-    const std::optional<ECS::InstanceId> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
 
@@ -184,8 +184,8 @@ TEST_CASE("Prepared form: a reference decodes to this instance's member, not the
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<ECS::InstanceId> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
-    const std::optional<ECS::InstanceId> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
 

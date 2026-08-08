@@ -64,10 +64,12 @@
 /// presence on the entity is preserved but no data is restored.
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <functional>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -113,6 +115,37 @@ struct LevelHeader
     std::vector<std::string> systems;
 };
 
+/// @brief Why a level file could not be loaded, or an instance could not be placed.
+///
+/// Says what *kind* of thing is wrong; which entity, which member and which name
+/// are logged where they are known, exactly as BlueprintError does in
+/// Blueprint.hpp. Every one of these is a file that means something other than
+/// what it says — the alternative to refusing is a silently mis-wired scene.
+enum class LevelError
+{
+    FileUnreadable,      ///< The asset system or filesystem could not read the file.
+    MalformedJson,       ///< Read, but not parseable as JSON.
+    UnsupportedVersion,  ///< A `version` this build does not read. Refused before the scene is cleared.
+    NoInstanceTable,     ///< The file places instances and the caller passed no table to put them in.
+    MissingName,         ///< An entity or instance entry with no `name`.
+    MissingSource,       ///< An instance entry that names no `source`.
+    InvalidName,         ///< A name ValidateName refuses — empty, too long, or holding a `/`.
+    DuplicateName,       ///< Two entities, or two claims on one member path, under one name.
+    NonUniformScale,     ///< An instance placement that shears; cannot compose exactly (§3).
+    BlueprintUnusable,   ///< An instance names a blueprint that will not load; see BlueprintError.
+    UnresolvedReference, ///< An EntityRef naming an entity or member the file does not declare.
+    ContextBusy,         ///< A serialization context is already active on this thread (a caller bug).
+    InstanceNotLive,     ///< Re-expansion was asked for an instance id no longer in the table.
+    NameAlreadyLive,     ///< Placing would put two instances of one name in a world.
+};
+
+/// @brief One line saying what is wrong, for a log or a field hint.
+[[nodiscard]] std::string_view Describe(LevelError error);
+
+/// @brief A load either worked or it did not; there is nothing to hand back on
+/// success beyond that. The scene is the output.
+using LevelResult = std::expected<void, LevelError>;
+
 class SceneSerializer
 {
   public:
@@ -157,17 +190,17 @@ class SceneSerializer
     /// caller with nowhere to put the table cannot hold the level either, and a
     /// silently instance-free level is a level missing most of its content.
     ///
-    /// **Throws** `std::runtime_error` on a wrong `version` or a malformed file
-    /// (see the naming rules in the file comment). A version mismatch throws
-    /// before the scene is cleared, so a direct caller keeps what it had;
-    /// everything else is a file this got partway through, and clears. The
-    /// LoadFrom* wrappers below turn every throw into `false` plus an empty scene,
-    /// so only a direct caller sees the exception.
+    /// **Never throws.** A wrong `version` or a malformed file (see the naming
+    /// rules in the file comment) comes back as a LevelError. A version mismatch
+    /// is refused *before* the scene is cleared, so that caller keeps what it had;
+    /// every other failure is a file this got partway through, and leaves an empty
+    /// scene rather than a half-built one.
     ///
-    /// Returning quietly instead is what made a version mismatch read as a
-    /// *successful* load of an empty level all the way up to the caller.
-    static void Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress = {},
-                     LevelHeader *header = nullptr, InstanceTable *instances = nullptr);
+    /// Returning a bare bool — or nothing — is what made a version mismatch read
+    /// as a *successful* load of an empty level all the way up to the caller.
+    [[nodiscard]] static LevelResult Load(ECS::Scene &scene, const nlohmann::json &j,
+                                          const ProgressFn &onProgress = {}, LevelHeader *header = nullptr,
+                                          InstanceTable *instances = nullptr);
 
     /// @brief Expands one instance of @p source into @p scene at @p placement,
     /// outside any level load.
@@ -179,10 +212,10 @@ class SceneSerializer
     /// else, which is the whole difference from the level-load path: a runtime
     /// spawn has no file around it to point at.
     ///
-    /// @return the new instance id, or nullopt if the blueprint could not be used.
-    [[nodiscard]] static std::optional<ECS::InstanceId> ExpandInstance(ECS::Scene &scene, InstanceTable &instances,
-                                                                std::string_view      source,
-                                                                const ECS::Transform &placement);
+    /// @return the new instance id, or why the blueprint could not be used.
+    [[nodiscard]] static std::expected<ECS::InstanceId, LevelError>
+    ExpandInstance(ECS::Scene &scene, InstanceTable &instances, std::string_view source,
+                   const ECS::Transform &placement);
 
     /// @brief What a placement produced.
     struct ExpandedInstance
@@ -207,10 +240,8 @@ class SceneSerializer
     ///        A runtime spawn is false: it exists because something in the game
     ///        asked for it, and writing it into the file would make it authored the
     ///        next time the level loads.
-    [[nodiscard]] static std::optional<ExpandedInstance> PlaceInstance(ECS::Scene &scene,
-                                                                       InstanceTable       &instances,
-                                                                       const LevelInstance &entry,
-                                                                       bool                 authored);
+    [[nodiscard]] static std::expected<ExpandedInstance, LevelError>
+    PlaceInstance(ECS::Scene &scene, InstanceTable &instances, const LevelInstance &entry, bool authored);
 
     /// @brief What a re-expansion left behind.
     struct ReexpandedInstance
@@ -256,10 +287,11 @@ class SceneSerializer
     /// of @p instanceId. This strips reflected components only. Rebuild those from
     /// `members` afterwards.
     ///
-    /// @return nullopt, having changed nothing, if the instance is not live or its
-    ///         file no longer loads. Both are checked before the first member is
-    ///         touched, which is what makes "changed nothing" true.
-    [[nodiscard]] static std::optional<ReexpandedInstance>
+    /// @return an error, having changed nothing, if the instance is not live
+    ///         (InstanceNotLive) or its file no longer loads (BlueprintUnusable).
+    ///         Both are checked before the first member is touched, which is what
+    ///         makes "changed nothing" true.
+    [[nodiscard]] static std::expected<ReexpandedInstance, LevelError>
     ReexpandInstance(ECS::Scene &scene, InstanceTable &instances, ECS::InstanceId instanceId,
                      std::span<const std::string> previousMemberNames);
 
@@ -323,12 +355,15 @@ class SceneSerializer
     /// than either outcome. Checking the names first is the only way to refuse
     /// cleanly.
     ///
-    /// @return false when the file cannot be read or parsed. An absent `systems`
-    ///   array is success with an empty list, which is the normal case.
-    [[nodiscard]] static bool ReadLevelSystems(std::string_view assetPath, std::vector<std::string> &out);
+    /// @return the names, or why the file could not be read or parsed. An absent
+    ///   `systems` array is success with an empty list, which is the normal case.
+    [[nodiscard]] static std::expected<std::vector<std::string>, LevelError>
+    ReadLevelSystems(std::string_view assetPath);
 
-    static bool LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress = {},
-                             LevelHeader *header = nullptr, InstanceTable *instances = nullptr);
+    [[nodiscard]] static LevelResult LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
+                                                  const ProgressFn &onProgress = {},
+                                                  LevelHeader      *header     = nullptr,
+                                                  InstanceTable    *instances  = nullptr);
 
     /// @brief Load the scene from an absolute filesystem path, bypassing the
     /// asset system.
@@ -336,9 +371,10 @@ class SceneSerializer
     /// For levels that are not assets: the temp snapshot a play-in-editor host
     /// writes so its clients can load the *unsaved* scene it is simulating.
     /// Otherwise identical to LoadFromFile, failure handling included.
-    static bool LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
-                             const ProgressFn &onProgress = {}, LevelHeader *header = nullptr,
-                             InstanceTable *instances = nullptr);
+    [[nodiscard]] static LevelResult LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
+                                                  const ProgressFn &onProgress = {},
+                                                  LevelHeader      *header     = nullptr,
+                                                  InstanceTable    *instances  = nullptr);
 
     /// @brief Moves a set of entities' component *data* from one scene to another.
     ///
