@@ -225,3 +225,109 @@ TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both k
 
     CHECK(count == 1); // no uniqueness check → both duplicates persist
 }
+
+// ---------------------------------------------------------------------------
+// EnsureFinalized's thread safety — verified, but not compilable as it stands
+// ---------------------------------------------------------------------------
+//
+// Finalization is lazy: the first ask sorts _metas, drops duplicates, assigns
+// every id and fills _serializable/_replicable/_replicableOrdinal. The first ask
+// can come from any thread — async travel deserializes on a worker and walks
+// this registry there while the main thread does too — so it is a one-time
+// initialization and needs to say so. It now does: an atomic flag with
+// acquire/release plus a double-checked lock.
+//
+// **This case cannot be compiled here.** It needs a registry that has *never*
+// been queried, and the only one this file can reach is Instance(), which
+// earlier cases in this binary have already finalized — every thread would take
+// the fast path and the case would pass whether or not the lock exists. That
+// exact vacuous version was written first and caught by removing the lock and
+// getting zero reports. A fresh registry is what makes it real, and
+// ComponentRegistry() is private on purpose (one registry per process).
+//
+// It was run, by making that constructor public temporarily:
+//   * with the lock — clean under `make gcc-tsan`;
+//   * with the `lock_guard` in EnsureFinalized removed — 393 data races,
+//     naming ComponentRegistry.cpp's sort comparator and ComponentMeta's move
+//     constructor/assignment, i.e. two threads sorting the same vector.
+//
+// To re-run it: make ComponentRegistry() public, uncomment below, add <atomic>,
+// <cstdint>, <string>, <thread> and <vector>, then `make test-gcc-tsan`. To keep
+// it permanently instead, it needs its own test binary — nothing else linked
+// into it may query the registry — following the Assisi-Chiara-PreInit-Tests
+// pattern in modules/Chiara/tests/CMakeLists.txt, which exists for the same
+// reason ("Initialize has not been called yet" cannot hold in a shared process).
+//
+// TEST_CASE("ComponentRegistry: racing the first finalize is safe")
+// {
+//     ComponentRegistry registry;
+//
+//     // Enough entries that the sort is not a single compare — the wider the
+//     // finalize window, the more reliably two threads are inside it at once.
+//     // Deliberately not in name order, so the sort actually moves things.
+//     std::vector<std::string> names;
+//     names.reserve(64);
+//     for (std::int32_t i = 63; i >= 0; --i)
+//         names.push_back("Race" + std::string(i < 10 ? "0" : "") + std::to_string(i));
+//     for (const std::string &name : names)
+//         registry.Register(Meta(name.c_str(), typeid(RegAlpha))); // typeIndex is not under test
+//
+//     constexpr std::int32_t kThreads = 8;
+//
+//     // Released together, so they arrive at EnsureFinalized simultaneously
+//     // rather than one winning outright and the rest taking the fast path.
+//     std::atomic<bool>         go{false};
+//     std::atomic<std::int32_t> ready{0};
+//     std::atomic<std::int32_t> disagreements{0};
+//     std::vector<std::thread>  workers;
+//     workers.reserve(kThreads);
+//
+//     for (std::int32_t index = 0; index < kThreads; ++index)
+//     {
+//         workers.emplace_back(
+//             [index, &registry, &go, &ready, &disagreements]
+//             {
+//                 ready.fetch_add(1, std::memory_order_release);
+//                 while (!go.load(std::memory_order_acquire))
+//                 {
+//                 }
+//
+//                 // A different finalizing entry point per thread, so whichever
+//                 // one wins, the others are inside a different accessor.
+//                 switch (index % 3)
+//                 {
+//                 case 0:
+//                     if (registry.All().size() != 64)
+//                         disagreements.fetch_add(1, std::memory_order_relaxed);
+//                     break;
+//                 case 1:
+//                     if (registry.SerializableComponents().size() != 64)
+//                         disagreements.fetch_add(1, std::memory_order_relaxed);
+//                     break;
+//                 default:
+//                     if (registry.IdOf("Race00") == kInvalidComponentId)
+//                         disagreements.fetch_add(1, std::memory_order_relaxed);
+//                     break;
+//                 }
+//
+//                 // Ids are handed out during finalization, so a half-numbered
+//                 // or re-sorted table shows up here.
+//                 for (const auto &meta : registry.All())
+//                 {
+//                     if (registry.ById(meta.id) != &meta)
+//                         disagreements.fetch_add(1, std::memory_order_relaxed);
+//                 }
+//             });
+//     }
+//
+//     while (ready.load(std::memory_order_acquire) < kThreads)
+//     {
+//     }
+//     go.store(true, std::memory_order_release);
+//
+//     for (std::thread &worker : workers)
+//         worker.join();
+//
+//     CHECK(disagreements.load(std::memory_order_relaxed) == 0);
+//     CHECK(registry.All().size() == 64);
+// }
