@@ -6,6 +6,16 @@
 
 #include <doctest/doctest.h>
 
+// A ThreadSanitizer build steps physics on Jolt's single-threaded job system, so
+// there is no pool to spin up — see PhysicsWorld.cpp's JoltRuntime for why.
+#if defined(__SANITIZE_THREAD__)
+#    define ASSISI_APP_TSAN 1
+#elif defined(__has_feature)
+#    if __has_feature(thread_sanitizer)
+#        define ASSISI_APP_TSAN 1
+#    endif
+#endif
+
 #include <chrono>
 #include <cstddef>
 #include <filesystem>
@@ -147,10 +157,17 @@ TEST_CASE("Resident worlds share one physics thread pool")
     // Guard against the test passing vacuously: on a multi-core machine the
     // first world must actually have spun the pool up, or "no growth" below
     // would prove nothing.
+    //
+    // Except under tsan, where the pool is deliberately Jolt's single-threaded
+    // job system and there is nothing to spin up. The check below still means
+    // something there — it is the one that would catch a pool per world — but
+    // this guard cannot, so it is skipped rather than weakened for every build.
+#if !defined(ASSISI_APP_TSAN)
     if (std::thread::hardware_concurrency() > 1u)
     {
         REQUIRE(afterFirst > baseline);
     }
+#endif
 
     for (int32_t i = 0; i < 4; ++i)
     {
