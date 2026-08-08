@@ -6,9 +6,11 @@
 add_executable(Assisi-Editor-Tests
   main.cpp
   TestEditHistory.cpp
+  TestInstanceGesture.cpp
   TestInstanceHistory.cpp
   TestPrePlayState.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
 )
 

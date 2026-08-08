@@ -40,6 +40,7 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/EditHistory.hpp>
+#include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
 
 #include <nvrhi/nvrhi.h>
@@ -711,9 +712,14 @@ class EditorApp : public Assisi::App::Application
     // three so a typed number and a dragged handle produce the same edit, the same
     // undo entry, and the same rounding.
 
-    /// @brief Opens a placement gesture on @p instanceId: snapshots the record and
-    /// every member's pose, because the undo entry needs both and neither is
-    /// reconstructible afterwards. Idempotent while the same gesture is open.
+    /// @brief Opens a placement gesture on @p instanceId against the viewed world
+    /// and its history: snapshots the record and every member's pose, because the
+    /// undo entry needs both and neither is reconstructible afterwards. Idempotent
+    /// while the same gesture is open, so a site may call it every frame of a drag.
+    ///
+    /// A site that calls this must also call `_instanceGesture.Hold()` for as long
+    /// as it still has the placement. It must *not* close the gesture itself — see
+    /// SweepInstanceGesture.
     void BeginInstanceGesture(Assisi::ECS::InstanceId instanceId);
 
     /// @brief Moves @p instanceId to @p placement, carrying its members by the
@@ -727,10 +733,15 @@ class EditorApp : public Assisi::App::Application
     /// authored.
     void ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const Assisi::Runtime::Transform &placement);
 
-    /// @brief Closes the open placement gesture into one transaction labelled
-    /// @p label, carrying the record and every pose that actually moved. No-op if
-    /// nothing moved — a click without a drag is not an edit.
-    void EndInstanceGesture(const char *label);
+    /// @brief Closes the open placement gesture into one transaction, carrying the
+    /// record and every pose that actually moved, unless an edit site held it this
+    /// frame. No-op if nothing moved — a click without a drag is not an edit.
+    ///
+    /// Called once from OnImGui after every panel has drawn, and from nowhere else.
+    /// Neither edit site may close the gesture on its own: the gizmo draws first and
+    /// cannot see that the Inspector is mid-scrub, which is how one dragged field
+    /// used to record a transaction per frame (round-7 B19).
+    void SweepInstanceGesture();
 
     /// @brief The Inspector, when what is selected is an *instance* rather than an
     /// entity — its identity and its placement, typed rather than only dragged.
@@ -1180,10 +1191,11 @@ class EditorApp : public Assisi::App::Application
     // An instance drag in progress. Snapshotted at the press edge rather than
     // captured through EditHistory's gesture machinery, which is keyed by
     // (entity, component) — this gesture moves several entities *and* a record,
-    // so it has no single key. An invalid id = not dragging.
-    Assisi::ECS::InstanceId                                           _instanceDragId;
-    Assisi::Runtime::BlueprintInstance                                _instanceDragRow;
-    std::vector<std::pair<Assisi::ECS::Entity, nlohmann::json>>       _instanceDragPoses;
+    // so it has no single key.
+    //
+    // Its own type, because it is shared by two edit sites that must not each
+    // decide when it is over: see InstanceGesture.hpp for what that cost.
+    Assisi::Editor::InstanceGesture _instanceGesture;
 
     // Physics freeze while an Inspector field is being held (see
     // HandlePhysicsEditing / ThawEditedBody). Dragging a Transform field on a
