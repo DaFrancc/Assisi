@@ -17,9 +17,6 @@
 #include <Assisi/Runtime/Naming.hpp>
 
 #include <imgui.h>
-// After imgui.h, not sorted with it: ImGuizmo.h uses ImDrawList/ImU32 without
-// declaring them and does not include imgui.h itself.
-#include <ImGuizmo.h>
 
 #include <nlohmann/json.hpp>
 
@@ -1183,13 +1180,21 @@ void EditorApp::DrawInstanceInspector()
     if (ImGui::IsItemHovered())
         ImGui::SetTooltip("Uniform: an instance may translate, rotate, or scale evenly, and nothing else.");
 
-    // The same press/release shape a drag has, so typing a number and dragging a
-    // handle produce one undo entry each and not one per frame.
-    if (ImGui::IsItemActivated() || ImGui::IsItemActive())
+    // Any of the three still held keeps the gesture open; they are one control as
+    // far as the author is concerned, so IsItemActive on the scale drag alone (the
+    // last item drawn) would not speak for the other two. IsAnyItemActive does, and
+    // it is safe to be broad here: holding an unrelated widget only delays the
+    // commit by as long as it is held, whereas missing the hold splits one drag
+    // into one transaction per frame.
+    if (ImGui::IsAnyItemActive())
+    {
+        _instanceGesture.Hold();
         _captureEditingActive = true;
+    }
     if (edited)
     {
         BeginInstanceGesture(_selectedInstance);
+        _instanceGesture.Hold();
         _captureEditingActive = true;
 
         Assisi::Runtime::Transform placement;
@@ -1198,19 +1203,10 @@ void EditorApp::DrawInstanceInspector()
         placement.scale    = glm::vec3(scale);
         ApplyInstancePlacement(_selectedInstance, placement);
     }
-    // Deactivation of *any* of the three closes the gesture; they are one control as
-    // far as the author is concerned, so IsItemDeactivatedAfterEdit (which speaks
-    // only for the scale drag above) is not enough on its own.
-    //
-    // ...but not while the gizmo has it. Both write the same gesture, the gizmo runs
-    // first in the frame, and ImGuizmo is not an ImGui item — so without this the
-    // "nothing is active" clause would close a gesture mid-drag and push one
-    // transaction per frame for the whole drag.
-    // ImGuizmo::IsUsing rather than IsUsingGizmo(), which also counts *hovering*: a
-    // typed edit followed by the mouse drifting over the handles would otherwise
-    // leave the gesture open until it drifted off again.
-    if (_instanceDragId.IsValid() && !ImGui::IsAnyItemActive() && !ImGuizmo::IsUsing())
-        EndInstanceGesture("Move Instance");
+    // No close here either — SweepInstanceGesture owns that, after every panel has
+    // had its say. This panel in particular must not: it early-returns when the
+    // selection goes away, so a close of its own would be skipped on exactly the
+    // frame a mid-drag deselect made it matter.
 
     if (!row->overrides.empty() || !row->removed.empty())
     {

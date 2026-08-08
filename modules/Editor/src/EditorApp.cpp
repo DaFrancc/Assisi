@@ -1443,6 +1443,15 @@ void EditorApp::OnImGui()
     if (!_physicsFreezeRequested)
         ThawEditedBody();
 
+    // Same shape, one gesture up: the gizmo and the Inspector both move an
+    // instance's placement, and neither can see whether the other still has it —
+    // the gizmo draws first, so its old "nobody is holding *me*" close cut an
+    // Inspector scrub into one transaction per frame (round-7 B19). Both now only
+    // raise a hold; here, with every panel drawn, is where the drag is known to be
+    // over. Before the capture sweep below only for readability — the two gesture
+    // systems are independent.
+    SweepInstanceGesture();
+
     // After every panel has drawn (so each open gesture sees its final value):
     // commit finished drags/typing, drop no-ops, abandon dead-entity gestures.
     // Never mid-panel — the commit only reads the scene + stores JSON, but keeping

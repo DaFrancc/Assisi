@@ -26,6 +26,7 @@ target_sources(Assisi-Editor
     "src/EditorOptions.cpp"
     "src/EditorPlay.cpp"
     "src/EditorWorlds.cpp"
+    "src/InstanceGesture.cpp"
     "src/PrePlayState.cpp"
     "src/ImGuiQueries.hpp"
 )
