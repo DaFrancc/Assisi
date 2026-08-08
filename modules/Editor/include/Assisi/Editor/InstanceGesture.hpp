@@ -78,6 +78,11 @@ class InstanceGesture
     /// held it this frame. Nothing is recorded for a gesture that moved nothing — a
     /// click without a drag is not an edit — and nothing is recorded when
     /// @p history is null.
+    ///
+    /// "Moved nothing" means the *placement* is where it was, not that no member
+    /// shifted. The two part company on an instance the placement reaches no member
+    /// of — every member parented elsewhere, or no members left — where taking the
+    /// members as the evidence left the move saved but not undoable (round-7 S15).
     void EndFrame(Assisi::ECS::Scene &scene, const Assisi::Runtime::InstanceTable &instances,
                   EditHistory *history, const char *label);
 
