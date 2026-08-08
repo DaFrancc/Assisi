@@ -30,7 +30,8 @@ std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view sou
     // what closes the hole "a component whose system was never installed just does
     // nothing" across a spawn: the behaviour a piece of content needs travels with
     // it, instead of depending on the level having happened to install it.
-    if (const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(source))
+    if (const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
+            Runtime::GetBlueprintDefinition(source))
         QueueSystemInstall(world, definition->systems, source);
 
     // The prepared form holds asset *ids*, not loaded meshes, so a spawn has to

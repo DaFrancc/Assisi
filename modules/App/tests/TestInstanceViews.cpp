@@ -64,7 +64,8 @@ TEST_CASE("Instance view: the generated member list is the one the loader produc
     for (const Runtime::GeneratedInstanceView &view : Runtime::kGeneratedInstanceViews)
     {
         CAPTURE(view.source);
-        const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(view.source);
+        const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
+            Runtime::GetBlueprintDefinition(view.source);
         REQUIRE(definition != nullptr);
 
         REQUIRE(definition->members.size() == view.members.size());

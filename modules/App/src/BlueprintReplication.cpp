@@ -61,7 +61,8 @@ class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
         // The member count has to be the definition's, not a count of live
         // members: it fixes the width of the NetId block, and a member destroyed
         // later must not shrink the block its siblings were numbered from.
-        const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(row->source);
+        const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
+            Runtime::GetBlueprintDefinition(row->source);
         if (definition == nullptr || definition->members.empty())
             return false;
 
@@ -78,7 +79,8 @@ class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
         if (row == nullptr)
             return false;
 
-        const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(row->source);
+        const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
+            Runtime::GetBlueprintDefinition(row->source);
         if (definition == nullptr || memberIndex >= definition->members.size())
             return false;
 
@@ -177,7 +179,8 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
         //
         // A union, and idempotent — Install skips what is already present — so a
         // hundred cars arriving install one Bounce.
-        if (const Runtime::BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(entry.source))
+        if (const std::shared_ptr<const Runtime::BlueprintDefinition> definition =
+                Runtime::GetBlueprintDefinition(entry.source))
             QueueSystemInstall(_world, definition->systems, entry.source);
 
         // Parallel to the blueprint's member list, which is exactly the order
