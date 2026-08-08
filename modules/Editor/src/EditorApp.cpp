@@ -1075,11 +1075,11 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
         {
             if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
             {
-                const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
+                const Assisi::Runtime::BlueprintResult definition =
                     Assisi::Runtime::GetBlueprintDefinition(row->source);
                 const std::string memberPath =
-                    definition != nullptr && tag->memberIndex < definition->members.size()
-                        ? definition->members[tag->memberIndex].name
+                    definition && tag->memberIndex < (*definition)->members.size()
+                        ? (*definition)->members[tag->memberIndex].name
                         : std::format("#{}", tag->memberIndex);
 
                 return std::format("{} › {}", row->name.empty() ? row->source : row->name, memberPath);

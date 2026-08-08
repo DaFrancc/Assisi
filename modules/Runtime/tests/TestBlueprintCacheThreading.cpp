@@ -31,6 +31,7 @@
 
 using namespace Assisi;
 using Assisi::Runtime::BlueprintDefinition;
+using Assisi::Runtime::BlueprintResult;
 
 namespace
 {
@@ -101,9 +102,8 @@ TEST_CASE("Blueprint cache: eight threads build and look up at once")
                     {
                         const std::int32_t which = (index + step) % kSources;
 
-                        const std::shared_ptr<const BlueprintDefinition> definition =
-                            Runtime::GetBlueprintDefinition(SourceName(which));
-                        if (definition == nullptr || definition->members.empty())
+                        const BlueprintResult definition = Runtime::GetBlueprintDefinition(SourceName(which));
+                        if (!definition || (*definition)->members.empty())
                         {
                             nulls.fetch_add(1, std::memory_order_relaxed);
                             continue;
@@ -111,7 +111,7 @@ TEST_CASE("Blueprint cache: eight threads build and look up at once")
 
                         // Read through it as a caller would, so a torn or
                         // half-inserted definition is something this notices.
-                        for (const Runtime::BlueprintMemberDesc &member : definition->members)
+                        for (const Runtime::BlueprintMemberDesc &member : (*definition)->members)
                         {
                             if (member.name.empty())
                                 nulls.fetch_add(1, std::memory_order_relaxed);
@@ -129,16 +129,22 @@ TEST_CASE("Blueprint cache: eight threads build and look up at once")
     // Built once, however many threads asked: the cache is the whole reason
     // spawning a hundred bullets does not reparse bullet.abp a hundred times.
     for (std::int32_t index = 0; index < kSources; ++index)
-        CHECK(Runtime::GetBlueprintDefinition(SourceName(index)) ==
-              Runtime::GetBlueprintDefinition(SourceName(index)));
+    {
+        const BlueprintResult first  = Runtime::GetBlueprintDefinition(SourceName(index));
+        const BlueprintResult second = Runtime::GetBlueprintDefinition(SourceName(index));
+        REQUIRE(first.has_value());
+        REQUIRE(second.has_value());
+        CHECK(*first == *second);
+    }
 }
 
 TEST_CASE("Blueprint cache: a definition handed out survives the cache being cleared")
 {
     const std::filesystem::path root = FreshRoot("clear");
 
-    const std::shared_ptr<const BlueprintDefinition> held = Runtime::GetBlueprintDefinition(SourceName(0));
-    REQUIRE(held != nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition(SourceName(0));
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const BlueprintDefinition> held = *loaded;
     REQUIRE_FALSE(held->members.empty());
     const std::string expected = held->members.front().name;
 
@@ -156,8 +162,9 @@ TEST_CASE("Blueprint cache: a definition handed out survives its file being inva
 
     // The nesting one, so invalidating the inner file evicts this outer entry too —
     // the eviction a caller holding the outer definition never asked for.
-    const std::shared_ptr<const BlueprintDefinition> held = Runtime::GetBlueprintDefinition(SourceName(1));
-    REQUIRE(held != nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition(SourceName(1));
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const BlueprintDefinition> held = *loaded;
     const std::size_t members = held->members.size();
 
     Runtime::InvalidateBlueprint(SourceName(0));
@@ -191,9 +198,8 @@ TEST_CASE("Blueprint cache: lookups race an eviction without tearing the map")
                     // A miss is legitimate here only if the file cannot be built,
                     // which it always can — an eviction just means the next ask
                     // rebuilds it.
-                    const std::shared_ptr<const BlueprintDefinition> definition =
-                        Runtime::GetBlueprintDefinition(SourceName(which));
-                    if (definition == nullptr || definition->source != SourceName(which))
+                    const BlueprintResult definition = Runtime::GetBlueprintDefinition(SourceName(which));
+                    if (!definition || (*definition)->source != SourceName(which))
                         torn.fetch_add(1, std::memory_order_relaxed);
                 }
             });

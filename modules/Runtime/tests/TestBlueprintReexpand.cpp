@@ -35,6 +35,7 @@
 
 using namespace Assisi;
 using Assisi::Runtime::BlueprintDefinition;
+using Assisi::Runtime::BlueprintResult;
 using Assisi::Runtime::InstanceTable;
 using Assisi::Runtime::LevelInstance;
 using Assisi::Runtime::SceneSerializer;
@@ -84,8 +85,9 @@ nlohmann::json CrateFile()
 /// reconstruct afterwards.
 std::vector<std::string> MemberNames(std::string_view source)
 {
-    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition(source);
-    REQUIRE(definition != nullptr);
+    const BlueprintResult loaded = Runtime::GetBlueprintDefinition(source);
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
     std::vector<std::string> names;
     names.reserve(definition->members.size());
     for (const auto &member : definition->members)
