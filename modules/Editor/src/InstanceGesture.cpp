@@ -15,6 +15,21 @@ namespace Assisi::Editor
 namespace
 {
 namespace Rt = Assisi::Runtime;
+
+/// @brief Whether the placement is not the one that was snapshotted.
+///
+/// Exact, with no tolerance. `InstancesForSave` writes the row verbatim, so a
+/// placement a tolerance forgave would still reach disk — the same hole this
+/// comparison exists to close, one size smaller.
+///
+/// Field by field rather than `operator==`: Transform carries `worldMatrix`,
+/// which PropagateTransforms owns and no author edits, so a defaulted comparison
+/// would answer a question about derived state.
+bool PlacementChanged(const Rt::Transform &before, const Rt::Transform &after)
+{
+    return before.position != after.position || before.rotation != after.rotation ||
+           before.scale != after.scale;
+}
 } // namespace
 
 void InstanceGesture::Begin(Assisi::ECS::Scene &scene, const Rt::InstanceTable &instances,
@@ -75,11 +90,22 @@ void InstanceGesture::EndFrame(Assisi::ECS::Scene &scene, const Rt::InstanceTabl
             }
 
             // Only if something actually moved — a click without a drag is not an
-            // edit, the same rule the capture gestures apply. The record alone is
-            // cmds.size() == 1 and proves nothing: it is pushed unconditionally
-            // above, and is identical on both sides when the placement did not
-            // change.
-            if (txn.cmds.size() > 1)
+            // edit, the same rule the capture gestures apply.
+            //
+            // The placement is asked about directly, because it is what a save
+            // writes. Counting member deltas instead was asking a proxy question:
+            // "did anything the placement carries move?" agrees with "did the
+            // placement move?" only while an instance has a member the placement
+            // reaches. It has none when every member is parented elsewhere — those
+            // ride along through their parent, so ApplyInstancePlacement skips them
+            // — or when the members have been deleted out from under the row. Then
+            // the move was written to the file, absent from the history, and never
+            // dirtied the title bar: the three disagreeing, with the one that
+            // touches disk winning (round-7 S15).
+            //
+            // Both halves are needed. A member can move without the placement
+            // moving, which is an override on that member, and that still records.
+            if (PlacementChanged(_row.transform, now->transform) || txn.cmds.size() > 1)
                 history->Push(std::move(txn));
         }
     }
