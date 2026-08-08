@@ -72,7 +72,10 @@
 
 namespace Assisi::ECS
 {
-class Scene;
+// `struct`, matching the definition in ECS/Scene.hpp. The tags have to agree:
+// under the Microsoft C++ ABI the class-key is part of the decorated name, so a
+// mismatched forward declaration is a link error there and nothing at all here.
+struct Scene;
 }
 
 namespace Assisi::NetSync

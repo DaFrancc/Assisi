@@ -148,7 +148,10 @@ TEST_CASE("Resident worlds share one physics thread pool")
     // sized to the machine (docs/multi-scene-design-notes.md §1). Measured
     // rather than asserted structurally, because the sharing lives inside
     // PhysicsWorld's private impl.
-    const std::size_t baseline = ThreadCount();
+    // Sampled here because it has to be read before the first world exists, but
+    // only *used* by the vacuity guard below — which tsan compiles out, since
+    // there the pool is deliberately Jolt's single-threaded job system.
+    [[maybe_unused]] const std::size_t baseline = ThreadCount();
 
     WorldManager worlds;
     worlds.Create("First"); // brings the shared Jolt runtime up

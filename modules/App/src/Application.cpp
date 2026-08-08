@@ -361,9 +361,9 @@ void Application::Run()
     TimerResolutionScope timerResolution;
 #endif
 
-    // Clock is already aliased at file scope; only Seconds is local.
-    using Seconds = std::chrono::duration<double>;
-
+    // Clock and Seconds are both aliased at file scope; the local re-declaration
+    // that used to sit here shadowed the outer one and said in a comment that it
+    // did not.
     const double physicsStep = 1.0 / _config.physicsHz;
 
     OnStart();

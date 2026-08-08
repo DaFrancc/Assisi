@@ -350,7 +350,7 @@ TEST_CASE("an unhandled message is reported rather than silently swallowed")
                        .direction   = MessageDirection::Event,
                        .reliability = MessageReliability::Unreliable,
                        .independent = true,
-                       .id          = 999,
+                       .id          = MessageId{999},
                        .serialize   = nullptr,
                        .deserialize = nullptr};
 

@@ -17,7 +17,7 @@
       },
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "ASSISI_WARNINGS_AS_ERRORS": "OFF",
+        "ASSISI_WARNINGS_AS_ERRORS": "ON",
         "ASSISI_ENABLE_FAST_MATH": "ON",
         "ASSISI_ENABLE_SANITIZERS": "OFF",
         "ASSISI_SANITIZER_SET": "address;undefined"
