@@ -74,9 +74,13 @@ enum class WorldState : std::uint8_t
 /// components point into, and ECS::Scene is likewise pinned.
 struct World
 {
-    World() = default;
+    World()  = default;
+    ~World() = default;
+
     World(const World &)            = delete;
     World &operator=(const World &) = delete;
+    World(World &&)                 = delete;
+    World &operator=(World &&)      = delete;
 
     ECS::Scene            scene;
     Physics::PhysicsWorld physics;
@@ -108,6 +112,29 @@ struct World
     /// without touching this list — those belong to the blueprint's file, not to
     /// the level's.
     std::vector<std::string> systemNames;
+
+    /// Systems a blueprint spawned into this world has asked for, waiting for the
+    /// frame's safe point (App::QueueSystemInstall / App::DrainSystemInstalls).
+    ///
+    /// **A member, not a process-global list keyed by `World*`.** That list was
+    /// the previous design, and it could outlive the world it named: the frame
+    /// loop drains one line after the marshalled work where deferred level loads
+    /// land, which is exactly what frees worlds, so a queued entry became a
+    /// use-after-free — or worse, was inherited by whatever the allocator put at
+    /// that address next. Owned by the world, none of that is expressible: the
+    /// queue cannot outlive its world, and replacing the world's content
+    /// (ApplySystems) drops it with the rest of what that content owned.
+    struct PendingSystems
+    {
+        /// A union, not a concatenation — a hundred bullets spawned in one frame
+        /// leave one name, not a hundred.
+        std::vector<std::string> names;
+        /// Named in the error if one of them turns out to be undeclared: the
+        /// blueprint that asked first. Whichever spawn opened the queue owns the
+        /// message, which is arbitrary only when several are equally to blame.
+        std::string context;
+    };
+    PendingSystems pendingSystems;
 
     /// Unique key within the manager. Deliberately NOT the level path: travel
     /// A→B→A leaves two worlds of one path resident, so names are generated.
@@ -168,6 +195,10 @@ class WorldManager
 
     WorldManager(const WorldManager &)            = delete;
     WorldManager &operator=(const WorldManager &) = delete;
+    // Every world it owns holds a `manager` back-pointer to it, so relocating one
+    // dangles all of them.
+    WorldManager(WorldManager &&)            = delete;
+    WorldManager &operator=(WorldManager &&) = delete;
 
     /// @brief Creates a world and returns it. The name is generated from
     /// @p label plus a monotonic counter, so callers never collide and two
@@ -192,15 +223,21 @@ class WorldManager
 
     /// @brief Installs @p names into @p world, replacing whatever it had.
     ///
-    /// Clears first (see SystemRegistry::Clear — re-registering over an existing
-    /// set corrupts the ordering graph, because After()/Before() bind to the
-    /// first entry of a name), then installs from SystemCatalog.
+    /// Resolves every name first, then clears (see SystemRegistry::Clear —
+    /// re-registering over an existing set corrupts the ordering graph, because
+    /// After()/Before() bind to the first entry of a name) and installs from
+    /// SystemCatalog. The clear also takes @p world's **queued** installs
+    /// (`World::pendingSystems`): systems asked for by a blueprint the outgoing
+    /// level spawned belong to content this call is replacing, and draining them
+    /// afterwards would install them into the incoming level.
     ///
     /// @param context Named in the error when a name is unknown — the level path.
-    /// @return false if any name is unknown, in which case the world is left with
-    ///         no systems rather than some. A half-installed world runs and looks
-    ///         nearly right, which is the failure mode worth avoiding; the caller
-    ///         refuses the load.
+    /// @return false if any name is unknown, in which case **nothing changed** —
+    ///         not the registry, not the queue. A half-installed world runs and
+    ///         looks nearly right, which is the failure mode worth avoiding; the
+    ///         caller refuses the load. (`world.systemNames` is the exception: it
+    ///         records what the file asked for either way, since that is what a
+    ///         save round-trips.)
     /// `[[nodiscard]]`, and it earned it: every caller but one was discarding the
     /// result with `(void)`, so a level naming a system this build does not
     /// declare loaded, went Active, and ran none of it — silently. Discarding is

@@ -13,7 +13,6 @@
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
 
-#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Chiara/Serializer.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -523,8 +522,9 @@ void Application::Run()
             // a system, and SystemRegistry invalidates its cached execution order
             // on every registration — so registering mid-walk mutates what is
             // being iterated. Before OnUpdate, so a spawn made last frame is
-            // running this one.
-            DrainSystemInstalls();
+            // running this one. Through the app, which is what owns the worlds the
+            // queues live on.
+            InstallQueuedSystems();
         }
         const Clock::time_point drainEnd = Clock::now();
 

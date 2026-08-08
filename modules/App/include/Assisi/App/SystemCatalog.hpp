@@ -133,16 +133,23 @@ class SystemCatalog
 /// Not `FlushDestroyed`: that is a different point, at end of frame, called per
 /// host rather than by the engine. Installs want the one that runs before the
 /// walk over systems begins.
+///
+/// The queue is `World::pendingSystems` — the world's own, so it cannot outlive
+/// it. See that member for what the process-global version cost.
 void QueueSystemInstall(World &world, std::span<const std::string> names, std::string_view context);
 
-/// @brief Applies every queued install. Called by the frame loop at DrainMain;
-/// no-op when nothing is queued.
+/// @brief Applies @p world's queued installs. Driven once per frame by
+/// Application::InstallQueuedSystems; no-op when nothing is queued.
 ///
 /// **Nothing is ever uninstalled.** SystemRegistry::RequireAny already makes an
 /// idle system cost a couple of array loads per phase, so there is almost nothing
 /// to reclaim, and loading a level flushes everything anyway. Revisit if
 /// streaming ever arrives.
-void DrainSystemInstalls();
+///
+/// Per world rather than "drain everything": the queue lives on the world, so
+/// there is no global list to walk, and a caller holding a `World` is exactly who
+/// knows the world is still alive.
+void DrainSystemInstalls(World &world);
 
 /// @brief True when every system the level at @p virtualPath names is declared
 /// by this build. Logs each offender.
@@ -157,9 +164,5 @@ void DrainSystemInstalls();
 /// A file that cannot be read or parsed is *not* declared valid: the caller
 /// gets false and the read logs why.
 [[nodiscard]] bool LevelSystemsAreDeclared(std::string_view virtualPath);
-
-/// @brief Drops every queued install without applying it. For a world that is
-/// about to be destroyed, whose queue entries would otherwise name freed memory.
-void CancelSystemInstalls(const World &world);
 
 } // namespace Assisi::App

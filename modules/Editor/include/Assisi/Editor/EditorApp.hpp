@@ -172,6 +172,7 @@ class EditorApp : public Assisi::App::Application
     void OnResize(int32_t width, int32_t height) override;
     void OnRenderTargetsChanged(const nvrhi::FramebufferInfo &framebufferInfo) override;
     void FlushDeferred() override;
+    void InstallQueuedSystems() override;
     void OnShutdown() override;
 
   private:
