@@ -19,7 +19,12 @@ namespace
 
 std::int32_t g_evaluations = 0;
 
-[[nodiscard]] double CountedValue()
+/// `maybe_unused` because being unreferenced is the thing the second case below
+/// proves: in a Chiara-disabled build ASSISI_PROFILE_COUNTER never evaluates its
+/// argument, so this is parsed, type-checked and never called. Clang notices
+/// (-Wunneeded-internal-declaration) and is right — it is describing the
+/// behaviour under test, not a mistake.
+[[nodiscard]] [[maybe_unused]] double CountedValue()
 {
     ++g_evaluations;
     return 1.0;

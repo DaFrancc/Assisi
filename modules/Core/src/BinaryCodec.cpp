@@ -715,7 +715,10 @@ bool FieldsWithinBounds(std::span<const FieldMeta> fields, const void *object, s
         const void *address = FieldAddress(object, field.offset);
         switch (field.type)
         {
-        case FieldType::Float:  value = *static_cast<const float *>(address); break;
+        // Explicit, like the 64-bit cases below: the widening is intended — the
+        // whole comparison runs in double — and saying so is what keeps
+        // -Wdouble-promotion (clang) from reading it as an accident.
+        case FieldType::Float:  value = static_cast<double>(*static_cast<const float *>(address)); break;
         case FieldType::Double: value = *static_cast<const double *>(address); break;
         case FieldType::Int32:  value = *static_cast<const std::int32_t *>(address); break;
         case FieldType::UInt32: value = *static_cast<const std::uint32_t *>(address); break;

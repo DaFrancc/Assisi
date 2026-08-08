@@ -50,10 +50,20 @@ struct M4DupB
 ComponentMeta Meta(const char *name, std::type_index type, bool serializable = true)
 {
     // Every member listed so -Wmissing-field-initializers stays quiet; the
-    // type-erased hooks are unused by these tests.
-    return ComponentMeta{
-        .name = name, .typeIndex = type, .fields = {}, .serialize = {}, .addToScene = {},
-        .iterateEntities = {}, .getByEntity = {}, .serializable = serializable, .id = kInvalidComponentId};
+    // type-erased hooks are unused by these tests. Keep this exhaustive — the
+    // comment above was true when it was written and then two hooks were added
+    // without it, which is exactly the drift -Werror now catches.
+    return ComponentMeta{.name            = name,
+                         .typeIndex       = type,
+                         .fields          = {},
+                         .serialize       = {},
+                         .addToScene      = {},
+                         .iterateEntities = {},
+                         .getByEntity     = {},
+                         .construct       = {},
+                         .getMutable      = {},
+                         .serializable    = serializable,
+                         .id              = kInvalidComponentId};
 }
 
 // Registered from a static initializer, before main and therefore before any

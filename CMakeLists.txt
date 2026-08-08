@@ -113,6 +113,25 @@ function(Assisi_apply_test_defaults target_name)
         PROPERTIES COMPILE_OPTIONS "-Wno-c2y-extensions;-Wno-double-promotion;-Wno-#warnings")
     endif()
   endif()
+
+  # GCC-only, optimized configs only: -Warray-bounds mis-models an object made by
+  # std::make_shared whose derived part holds a container, and reports the
+  # container as "partly outside" an allocation of exactly the object's own size.
+  # It fires from inside <bits/stl_vector.h>, attributed to our .cpp, and only
+  # once inlining has run — which is why debug never sees it and ship does.
+  #
+  # Suppressed rather than worked around: the alternative is contorting a test
+  # fixture (a shared_ptr-held Sink with a std::vector<std::string> member) to
+  # dodge a diagnostic that is wrong about it. Scoped to test sources so a real
+  # out-of-bounds in engine code is still an error.
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    get_target_property(_test_sources_gcc "${target_name}" SOURCES)
+    if (_test_sources_gcc)
+      set_source_files_properties(${_test_sources_gcc}
+        TARGET_DIRECTORY "${target_name}"
+        PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-Wno-array-bounds>")
+    endif()
+  endif()
 endfunction()
 
 
