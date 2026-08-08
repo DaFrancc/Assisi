@@ -39,7 +39,16 @@ struct ComponentMeta
     ///   entity_index — Entity::index of the target entity.
     ///   entity_gen   — Entity::generation of the target entity.
     ///   j            — JSON object for this component.
-    std::function<void(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen,
+    ///
+    /// @return false when a field is *present and unreadable* — a string where a
+    ///         number goes, an array of the wrong length. Nothing is added to the
+    ///         scene in that case: every field lands on a local instance first, so
+    ///         the entity never receives a half-applied component. The specific
+    ///         component, field and mismatch are logged before it returns.
+    ///         An **absent** key is not a failure; it leaves the field at its C++
+    ///         default, which is what lets a component gain a field without
+    ///         refusing every level saved before it.
+    std::function<bool(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen,
                        const nlohmann::json &j)>
         addToScene;
 

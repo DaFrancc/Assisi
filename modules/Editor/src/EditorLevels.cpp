@@ -666,7 +666,15 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     {
         nlohmann::json wrapper{{component, resolved}};
         Assisi::Runtime::QualifyReferences(wrapper, original.name.empty() ? "" : original.name + "/");
-        meta->addToScene(_scene, entity.index, entity.generation, wrapper.at(component));
+        // `resolved` is either the blueprint's own value or an override the editor
+        // wrote, so a refusal means one of those is malformed on disk. The reset
+        // leaves the component off rather than half-applied; the log names it.
+        if (!meta->addToScene(_scene, entity.index, entity.generation, wrapper.at(component)))
+        {
+            Assisi::Core::Log::Error("Editor: resetting '{}' on '{}' failed — its stored value is not "
+                                     "readable, so the component is now absent.",
+                                     component, original.name);
+        }
     }
 
     _world->instances.RestoreAt(tag->instanceId, updated);

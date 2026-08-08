@@ -337,6 +337,71 @@ TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")
     CHECK(scene.Get<Transform>(e) != nullptr);
 }
 
+// ---------------------------------------------------------------------------
+// Component field values. The generated deserializers used to read a field as
+// `j.at("f").get<float>()` behind a `contains()` guard — which proves the key is
+// there and says nothing about its type, so a mistyped field threw out of
+// nlohmann. Now the type is checked and the file is refused by name.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SceneSerializer: a field of the wrong type refuses the file rather than throwing")
+{
+    // The key is present, so the old contains() guard let it through.
+    const nlohmann::json fixture = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", "eye"},
+                                             {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
+
+    ECS::Scene loaded;
+    LevelResult result;
+    CHECK_NOTHROW(result = SceneSerializer::Load(loaded, fixture));
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::MalformedComponent);
+
+    // Refused, not partly applied: a level with one bad float must not come back
+    // as a level missing one component and holding every other.
+    CHECK(loaded.AliveCount() == 0);
+}
+
+TEST_CASE("SceneSerializer: an array field of the wrong length refuses the file")
+{
+    // Two elements where three go. The old codegen walked off _v[2] rather than
+    // checking the size, so this threw from inside glm's initializer.
+    const nlohmann::json fixture = {
+        {"version", 2},
+        {"entities",
+         nlohmann::json::array({{{"name", "body"},
+                                 {"components", {{"Transform", {{"position", {0.f, 0.f, 0.f}},
+                                                                {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                                                {"scale", {1.f, 1.f}}}}}}}})}};
+
+    ECS::Scene loaded;
+    LevelResult result;
+    CHECK_NOTHROW(result = SceneSerializer::Load(loaded, fixture));
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::MalformedComponent);
+    CHECK(loaded.AliveCount() == 0);
+}
+
+TEST_CASE("SceneSerializer: an absent field is not a failure and keeps its default")
+{
+    // The other half of the rule, and the one that has to stay silent: this is
+    // how a component gains a field without refusing every level saved before it.
+    // A file that simply does not mention `isActive` is an ordinary old file.
+    const nlohmann::json fixture = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", "eye"},
+                                             {"components", {{"Camera", {{"fovDegrees", 42.f}}}}}}})}};
+
+    ECS::Scene loaded;
+    REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
+
+    const Camera *camera = loaded.Get<Camera>(ECS::Entity{.index = 0, .generation = 0});
+    REQUIRE(camera != nullptr);
+    CHECK(camera->fovDegrees == doctest::Approx(42.f));
+    CHECK(camera->isActive == Camera{}.isActive); // the C++ default, silently and correctly
+}
+
 TEST_CASE("SceneSerializer: a version mismatch through a file fails the load, not just the log")
 {
     // It used to only log. LoadFromFile then returned true over an empty scene, so

@@ -144,7 +144,8 @@ class CodegenTest(unittest.TestCase):
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
         self.assertIn('"label", Assisi::Core::Reflect::FieldType::String', cpp)
         self.assertIn("std::string(c.label.View())", cpp)          # serialize
-        self.assertIn('comp.label.Assign(j.at("label").get<std::string>())', cpp)  # deserialize
+        self.assertIn('ReadString(j, _comp, "label", _s)', cpp)       # deserialize, type-checked
+        self.assertIn('comp.label.Assign(_s)', cpp)                    # ...then assigned
 
     def test_asset_id_serializes_via_the_core_helpers(self):
         comps = _parse_source(
@@ -448,7 +449,7 @@ class AssetTypeTest(unittest.TestCase):
         # Deserialize writes into the caller's instance, not a scene.
         self.assertIn("void* out_ptr", cpp)
         self.assertIn("auto& a = *static_cast<T*>(out_ptr)", cpp)
-        self.assertIn("a.MetallicFactor = j.at(\"MetallicFactor\")", cpp)
+        self.assertIn('ReadFloat(j, _comp, "MetallicFactor", a.MetallicFactor)', cpp)
         # Transient field is in the meta table but never (de)serialized.
         self.assertIn('"cache", Assisi::Core::Reflect::FieldType::Int32', cpp)
         self.assertNotIn("a.cache", cpp)
@@ -576,7 +577,8 @@ class EnumTest(unittest.TestCase):
         self.assertIn("FieldType::Enum", cpp)
         self.assertIn('{ "Capsule", 5 }', cpp)
         self.assertIn("static_cast<std::int64_t>(c.shape)", cpp)
-        self.assertIn("static_cast<N::Shape>(j.at(\"shape\").get<std::int64_t>())", cpp)
+        self.assertIn('ReadInt64(j, _comp, "shape", _n)', cpp)
+        self.assertIn("comp.shape = static_cast<N::Shape>(_n)", cpp)
         self.assertIn("#include <cstdint>", cpp)
 
     def test_non_integer_enumerator_is_rejected(self):

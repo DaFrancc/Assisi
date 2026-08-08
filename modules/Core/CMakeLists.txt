@@ -17,6 +17,7 @@ target_sources(Assisi-Core
     "src/ComponentRegistry.cpp"
     "src/MessageRegistry.cpp"
     "src/JobSystem.cpp"
+    "src/JsonRead.cpp"
     "src/LooseFileProvider.cpp"
     "src/Logger.cpp"
     "src/Platform.cpp"

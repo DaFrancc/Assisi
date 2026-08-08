@@ -24,9 +24,12 @@ _ASSET_PATH_VECTOR = TypeCodegen(
     'AssetPathVector',
     '[&]{{ nlohmann::json _arr = nlohmann::json::array(); '
     'for (const auto& _p : {a}) _arr.push_back(std::string(_p.View())); return _arr; }}()',
-    '{{ if (j.contains("{f}")) {{ {a}.clear(); '
-    'for (const auto& _e : j.at("{f}")) {{ Assisi::Core::AssetPath _p; '
-    '_p.Assign(_e.get<std::string>()); {a}.push_back(_p); }} }} }}')
+    '{{ const nlohmann::json* _r = nullptr; '
+    'if (Assisi::Core::Reflect::FindArray(j, _comp, "{f}", _r)) {{ {a}.clear(); '
+    'for (const auto& _e : *_r) {{ if (!_e.is_string()) {{ '
+    'Assisi::Core::Reflect::ReportBadField(_comp, "{f}", "an array of strings", *_r); return false; }} '
+    'Assisi::Core::AssetPath _p; _p.Assign(_e.get<std::string>()); {a}.push_back(_p); }} }} '
+    'else if (j.contains("{f}")) return false; }}')
 
 
 # Shared codegen for std::vector<Core::AssetId> — the material-override list.
@@ -37,8 +40,10 @@ _ASSET_ID_VECTOR = TypeCodegen(
     'AssetIdVector',
     '[&]{{ nlohmann::json _arr = nlohmann::json::array(); '
     'for (const auto& _e : {a}) _arr.push_back(Assisi::Core::SerializeAssetId(_e)); return _arr; }}()',
-    '{{ if (j.contains("{f}")) {{ {a}.clear(); '
-    'for (const auto& _e : j.at("{f}")) {a}.push_back(Assisi::Core::DeserializeAssetId(_e)); }} }}')
+    '{{ const nlohmann::json* _r = nullptr; '
+    'if (Assisi::Core::Reflect::FindArray(j, _comp, "{f}", _r)) {{ {a}.clear(); '
+    'for (const auto& _e : *_r) {a}.push_back(Assisi::Core::DeserializeAssetId(_e)); }} '
+    'else if (j.contains("{f}")) return false; }}')
 
 
 # Shared codegen for Reflect::ComponentMask. Both directions route through the
@@ -47,7 +52,7 @@ _ASSET_ID_VECTOR = TypeCodegen(
 _COMPONENT_MASK = TypeCodegen(
     'ComponentMask',
     'Assisi::Core::Reflect::SerializeComponentMask({a})',
-    '{{ if (j.contains("{f}")) {a} = Assisi::Core::Reflect::DeserializeComponentMask(j.at("{f}")); }}')
+    '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Core::Reflect::DeserializeComponentMask(*_r); }}')
 
 
 # Serialize expressions produce values for json initializer lists.
@@ -62,54 +67,54 @@ TYPES: dict[str, TypeCodegen] = {
     'float':     TypeCodegen(
         'Float',
         '{a}',
-        'if (j.contains("{f}")) {a} = j.at("{f}").get<float>();'),
+        'if (!Assisi::Core::Reflect::ReadFloat(j, _comp, "{f}", {a})) return false;'),
     'double':    TypeCodegen(
         'Double',
         '{a}',
-        'if (j.contains("{f}")) {a} = j.at("{f}").get<double>();'),
+        'if (!Assisi::Core::Reflect::ReadDouble(j, _comp, "{f}", {a})) return false;'),
     'int32_t':   TypeCodegen(
         'Int32',
         '{a}',
-        'if (j.contains("{f}")) {a} = j.at("{f}").get<int32_t>();'),
+        'if (!Assisi::Core::Reflect::ReadInt32(j, _comp, "{f}", {a})) return false;'),
     'uint32_t':  TypeCodegen(
         'UInt32',
         '{a}',
-        'if (j.contains("{f}")) {a} = j.at("{f}").get<uint32_t>();'),
+        'if (!Assisi::Core::Reflect::ReadUInt32(j, _comp, "{f}", {a})) return false;'),
     'int64_t':   TypeCodegen(
         'Int64',
         '{a}',
-        'if (j.contains("{f}")) {a} = j.at("{f}").get<int64_t>();'),
+        'if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "{f}", {a})) return false;'),
     'uint64_t':  TypeCodegen(
         'UInt64',
         '{a}',
-        'if (j.contains("{f}")) {a} = j.at("{f}").get<uint64_t>();'),
+        'if (!Assisi::Core::Reflect::ReadUInt64(j, _comp, "{f}", {a})) return false;'),
     'bool':      TypeCodegen(
         'Bool',
         '{a}',
-        'if (j.contains("{f}")) {a} = j.at("{f}").get<bool>();'),
+        'if (!Assisi::Core::Reflect::ReadBool(j, _comp, "{f}", {a})) return false;'),
     'glm::vec2': TypeCodegen(
         'Vec2',
         '{{ {a}.x, {a}.y }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = {{ _v[0].get<float>(), _v[1].get<float>() }}; }} }}'),
+        '{{ float _v[2] = {{ {a}.x, {a}.y }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 2, _v)) return false; {a} = {{ _v[0], _v[1] }}; }}'),
     'glm::vec3': TypeCodegen(
         'Vec3',
         '{{ {a}.x, {a}.y, {a}.z }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>() }}; }} }}'),
+        '{{ float _v[3] = {{ {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 3, _v)) return false; {a} = {{ _v[0], _v[1], _v[2] }}; }}'),
     'glm::vec4': TypeCodegen(
         'Vec4',
         '{{ {a}.x, {a}.y, {a}.z, {a}.w }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = {{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
+        '{{ float _v[4] = {{ {a}.x, {a}.y, {a}.z, {a}.w }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = {{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
     'glm::quat': TypeCodegen(
         'Quat',
         '{{ {a}.w, {a}.x, {a}.y, {a}.z }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = glm::quat{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>() }}; }} }}'),
+        '{{ float _v[4] = {{ {a}.w, {a}.x, {a}.y, {a}.z }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 4, _v)) return false; {a} = glm::quat{{ _v[0], _v[1], _v[2], _v[3] }}; }}'),
     # glm::mat4 — 16 floats in column-major order (m[col][row]). Serialized as a
     # flat JSON array of 16; glm::mat4's 16-scalar constructor consumes the same
     # column-major order, so the round-trip is exact.
     'glm::mat4': TypeCodegen(
         'Mat4',
         '{{ {a}[0][0], {a}[0][1], {a}[0][2], {a}[0][3], {a}[1][0], {a}[1][1], {a}[1][2], {a}[1][3], {a}[2][0], {a}[2][1], {a}[2][2], {a}[2][3], {a}[3][0], {a}[3][1], {a}[3][2], {a}[3][3] }}',
-        '{{ if (j.contains("{f}")) {{ const auto& _v = j.at("{f}"); {a} = glm::mat4{{ _v[0].get<float>(), _v[1].get<float>(), _v[2].get<float>(), _v[3].get<float>(), _v[4].get<float>(), _v[5].get<float>(), _v[6].get<float>(), _v[7].get<float>(), _v[8].get<float>(), _v[9].get<float>(), _v[10].get<float>(), _v[11].get<float>(), _v[12].get<float>(), _v[13].get<float>(), _v[14].get<float>(), _v[15].get<float>() }}; }} }}'),
+        '{{ float _v[16] = {{ {a}[0][0], {a}[0][1], {a}[0][2], {a}[0][3], {a}[1][0], {a}[1][1], {a}[1][2], {a}[1][3], {a}[2][0], {a}[2][1], {a}[2][2], {a}[2][3], {a}[3][0], {a}[3][1], {a}[3][2], {a}[3][3] }}; if (!Assisi::Core::Reflect::ReadFloatArray(j, _comp, "{f}", 16, _v)) return false; {a} = glm::mat4{{ _v[0], _v[1], _v[2], _v[3], _v[4], _v[5], _v[6], _v[7], _v[8], _v[9], _v[10], _v[11], _v[12], _v[13], _v[14], _v[15] }}; }}'),
     # ECS::Entity — serialized through SceneSerializer, whose active context
     # decides whether the reference is a name (a level file), an index within a
     # moved set (entity migration) or a packed handle (an undo payload). Accepts
@@ -117,11 +122,11 @@ TYPES: dict[str, TypeCodegen] = {
     'ECS::Entity': TypeCodegen(
         'EntityRef',
         'Assisi::Runtime::SceneSerializer::EntityToRef({a})',
-        '{{ if (j.contains("{f}")) {{ {a} = Assisi::Runtime::SceneSerializer::RefToEntity(j.at("{f}")); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Runtime::SceneSerializer::RefToEntity(*_r); else {a} = Assisi::ECS::NullEntity; }}'),
     'Assisi::ECS::Entity': TypeCodegen(
         'EntityRef',
         'Assisi::Runtime::SceneSerializer::EntityToRef({a})',
-        '{{ if (j.contains("{f}")) {{ {a} = Assisi::Runtime::SceneSerializer::RefToEntity(j.at("{f}")); }} else {{ {a} = Assisi::ECS::NullEntity; }} }}'),
+        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Runtime::SceneSerializer::RefToEntity(*_r); else {a} = Assisi::ECS::NullEntity; }}'),
     # ECS::InstanceId — a uint32 underneath and its own type on purpose, so the
     # codec can tell "which blueprint instance" from every other unsigned integer
     # and translate it to the instance's baseNetId on the wire. JSON carries the
@@ -132,15 +137,15 @@ TYPES: dict[str, TypeCodegen] = {
     'InstanceId': TypeCodegen(
         'InstanceRef',
         '{a}.value',
-        '{{ if (j.contains("{f}")) {{ {a} = Assisi::ECS::InstanceId{{ j.at("{f}").get<std::uint32_t>() }}; }} }}'),
+        '{{ std::uint32_t _n = {a}.value; if (!Assisi::Core::Reflect::ReadUInt32(j, _comp, "{f}", _n)) return false; {a} = Assisi::ECS::InstanceId{{ _n }}; }}'),
     'ECS::InstanceId': TypeCodegen(
         'InstanceRef',
         '{a}.value',
-        '{{ if (j.contains("{f}")) {{ {a} = Assisi::ECS::InstanceId{{ j.at("{f}").get<std::uint32_t>() }}; }} }}'),
+        '{{ std::uint32_t _n = {a}.value; if (!Assisi::Core::Reflect::ReadUInt32(j, _comp, "{f}", _n)) return false; {a} = Assisi::ECS::InstanceId{{ _n }}; }}'),
     'Assisi::ECS::InstanceId': TypeCodegen(
         'InstanceRef',
         '{a}.value',
-        '{{ if (j.contains("{f}")) {{ {a} = Assisi::ECS::InstanceId{{ j.at("{f}").get<std::uint32_t>() }}; }} }}'),
+        '{{ std::uint32_t _n = {a}.value; if (!Assisi::Core::Reflect::ReadUInt32(j, _comp, "{f}", _n)) return false; {a} = Assisi::ECS::InstanceId{{ _n }}; }}'),
     # Core::ShortString — a small fixed-capacity inline string (e.g. an entity
     # Name). Serialized as a JSON string of its view; Assign() re-imposes the
     # capacity on load. Same codegen as AssetPath but a distinct FieldType so the
@@ -149,26 +154,26 @@ TYPES: dict[str, TypeCodegen] = {
     'ShortString': TypeCodegen(
         'String',
         'std::string({a}.View())',
-        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
     'Core::ShortString': TypeCodegen(
         'String',
         'std::string({a}.View())',
-        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
     'Assisi::Core::ShortString': TypeCodegen(
         'String',
         'std::string({a}.View())',
-        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
     # Core::AssetPath — a fixed-capacity virtual asset path. Serialized as a JSON
     # string of its view; Assign() re-imposes the length limit on load. Accepts
     # both qualified and unqualified names.
     'AssetPath': TypeCodegen(
         'AssetPath',
         'std::string({a}.View())',
-        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
     'Assisi::Core::AssetPath': TypeCodegen(
         'AssetPath',
         'std::string({a}.View())',
-        '{{ if (j.contains("{f}")) {a}.Assign(j.at("{f}").get<std::string>()); }}'),
+        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
     # std::vector<Core::AssetPath> — a variable-length list of virtual paths
     # (e.g. MeshRenderer's per-slot material overrides). Serialized as a JSON
     # array of strings; deserialize clears then rebuilds, so a shorter saved
@@ -184,15 +189,15 @@ TYPES: dict[str, TypeCodegen] = {
     'AssetId': TypeCodegen(
         'AssetId',
         'Assisi::Core::SerializeAssetId({a})',
-        '{{ if (j.contains("{f}")) {a} = Assisi::Core::DeserializeAssetId(j.at("{f}")); }}'),
+        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Core::DeserializeAssetId(*_r); }}'),
     'Core::AssetId': TypeCodegen(
         'AssetId',
         'Assisi::Core::SerializeAssetId({a})',
-        '{{ if (j.contains("{f}")) {a} = Assisi::Core::DeserializeAssetId(j.at("{f}")); }}'),
+        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Core::DeserializeAssetId(*_r); }}'),
     'Assisi::Core::AssetId': TypeCodegen(
         'AssetId',
         'Assisi::Core::SerializeAssetId({a})',
-        '{{ if (j.contains("{f}")) {a} = Assisi::Core::DeserializeAssetId(j.at("{f}")); }}'),
+        '{{ const nlohmann::json* _r = nullptr; if (Assisi::Core::Reflect::FindField(j, "{f}", _r)) {a} = Assisi::Core::DeserializeAssetId(*_r); }}'),
     # std::vector<Core::AssetId> — MeshRenderer's per-slot material overrides.
     'std::vector<AssetId>':               _ASSET_ID_VECTOR,
     'std::vector<Core::AssetId>':         _ASSET_ID_VECTOR,
