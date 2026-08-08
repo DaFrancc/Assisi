@@ -21,8 +21,14 @@ target_link_libraries(Assisi-Sandbox
     # link, so the dependency survives the editor being dropped from a build.
     Assisi::App
     Assisi::Physics
-    Assisi::NetSync
 )
+
+# ServerApp keeps its Offline role without networking — headless simulation is a
+# separate thing from replication — so the file stays in the build and guards the
+# Host/Client halves internally.
+if (ASSISI_ENABLE_NETWORKING)
+  target_link_libraries(Assisi-Sandbox PRIVATE Assisi::NetSync)
+endif()
 
 # The game's own ASYSTEM declarations. Scanning them is what puts them in the
 # catalog: a level names a system, and the declaration in a reflected header is

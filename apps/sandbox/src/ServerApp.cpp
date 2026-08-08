@@ -9,7 +9,9 @@
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
-#include <Assisi/NetSync/NetComponents.hpp>
+#if defined(ASSISI_NETWORKING)
+#    include <Assisi/NetSync/NetComponents.hpp>
+#endif
 
 #include <chrono>
 #include <cmath>
@@ -25,8 +27,10 @@ namespace Sandbox
 namespace
 {
 
+#if defined(ASSISI_NETWORKING)
 namespace Net     = Assisi::Net;
 namespace NetSync = Assisi::NetSync;
+#endif
 namespace ECS     = Assisi::ECS;
 namespace Log     = Assisi::Core::Log;
 
@@ -50,6 +54,7 @@ constexpr double kReportIntervalSeconds = 5.0;
 /// refused each other over the same CRLF-checked-out level — on the same
 /// machine. Two spellings of a hash that peers compare is the bug, not the
 /// duplication.
+#if defined(ASSISI_NETWORKING)
 std::optional<std::uint64_t> HashLevelFile(const std::string &virtualPath)
 {
     const auto resolved = Assisi::Core::AssetSystem::Resolve(virtualPath);
@@ -58,6 +63,7 @@ std::optional<std::uint64_t> HashLevelFile(const std::string &virtualPath)
 
     return Assisi::Core::HashTextFileNormalized(*resolved);
 }
+#endif // ASSISI_NETWORKING
 
 } // namespace
 
@@ -79,10 +85,12 @@ void ServerApp::OnStart()
     Log::Info("Server: headless {}, {} Hz fixed step{}.", roleName, GetConfig().physicsHz,
               _options.tickLimit > 0 ? std::format(", stopping after {} ticks", _options.tickLimit) : std::string{});
 
+#if defined(ASSISI_NETWORKING)
     // Before any session can exist: the quantization is inside the handshake
     // hash, so it has to be settled before the first hello is written.
     NetSync::LoadQuantizationFromConfig();
     NetSync::LoadSmoothingFromConfig();
+#endif
 
     if (!_options.level.empty())
     {
@@ -119,6 +127,16 @@ void ServerApp::OnStart()
         return;
     }
 
+#if !defined(ASSISI_NETWORKING)
+    // A networked role in a build configured without networking. Refused out
+    // loud rather than quietly degraded to Offline: a --host that hosts nothing
+    // is a worse outcome than one that says it cannot.
+    Log::Error("Server: this build was configured with ASSISI_ENABLE_NETWORKING=OFF, so --host and "
+               "--connect do nothing. Reconfigure with networking on, or use --server for headless "
+               "simulation.");
+    RequestClose();
+    return;
+#else
     NetSync::ReplicationConfig config;
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
     _session          = std::make_unique<NetSync::NetSession>(_scene, &_physics, config);
@@ -170,10 +188,12 @@ void ServerApp::OnStart()
     {
         RequestClose();
     }
+#endif // ASSISI_NETWORKING
 }
 
 void ServerApp::BuildJoinedWorld()
 {
+#if defined(ASSISI_NETWORKING)
     const NetSync::ServerHello *hello = _session->Handshake();
     if (hello == nullptr)
         return;
@@ -245,12 +265,14 @@ void ServerApp::BuildJoinedWorld()
     _session->ConfirmLevelReady();
     Log::Info("Client: built '{}' ({} replicated entities stripped) and answered the handshake.",
               hello->level.path, doomed.size());
+#endif // ASSISI_NETWORKING
 }
 
 void ServerApp::OnFixedUpdate(float dt)
 {
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
+#if defined(ASSISI_NETWORKING)
     if (_session)
     {
         // Before Poll, so a hello that has been waiting on the scan goes out on
@@ -278,13 +300,16 @@ void ServerApp::OnFixedUpdate(float dt)
             return;
         }
     }
+#endif // ASSISI_NETWORKING
 
     _physics.Update(dt);
 
     // Immediately after the step, before the snapshot below: a mirror woken by a
     // contact the server never had has to be put back before anything reads it.
+#if defined(ASSISI_NETWORKING)
     if (_session)
         _session->AfterPhysicsStep();
+#endif
 
     // Move the demo world. Writes go through GetMut because that is what stamps
     // the change tick the delta is computed from — a write through a plain
@@ -300,14 +325,16 @@ void ServerApp::OnFixedUpdate(float dt)
     // tick it is stamped with. A headless client has no devices to sample, so
     // it sends an empty command — enough to exercise the input path and give
     // the server something to measure its buffer depth against.
+#if defined(ASSISI_NETWORKING)
     if (_session)
         _session->Tick(GetSimTick());
+#endif
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
         RequestClose();
 }
 
-void ServerApp::OnUpdate(float dt)
+void ServerApp::OnUpdate([[maybe_unused]] float dt)
 {
     // Write the render pose for remote entities. A headless client renders
     // nothing, but running it here keeps this loop the same shape as a windowed
@@ -316,8 +343,10 @@ void ServerApp::OnUpdate(float dt)
     // Its *convergence* assertions must never read these Transforms, though:
     // for a bodied mirror this adds a decaying cosmetic offset on top of the
     // physics pose, and the physics pose is the one that is authoritative.
+#if defined(ASSISI_NETWORKING)
     if (_session)
         _session->SmoothView(dt);
+#endif
 
     ReportStatus();
 }
@@ -336,6 +365,7 @@ void ServerApp::ReportStatus()
     _lastReportSeconds           = now;
     _lastReportTick              = tick;
 
+#if defined(ASSISI_NETWORKING)
     if (!_session || !_session->IsActive())
     {
         Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
@@ -354,6 +384,10 @@ void ServerApp::ReportStatus()
                   tickRate, _session->StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
                   stats.snapshotsRejected, stats.serverTick);
     }
+#else
+    // Offline is the only role this build has, so there is one line to print.
+    Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
+#endif
 }
 
 void ServerApp::FlushDeferred()
@@ -366,6 +400,7 @@ void ServerApp::FlushDeferred()
 
 void ServerApp::OnShutdown()
 {
+#if defined(ASSISI_NETWORKING)
     if (_session && _session->IsClient())
     {
         const NetSync::SessionStats stats = _session->Stats();
@@ -373,12 +408,15 @@ void ServerApp::OnShutdown()
                   GetSimTick(), stats.snapshotsApplied, stats.snapshotsRejected, stats.replicatedEntities);
     }
     else
+#endif
     {
         Log::Info("Server: stopped after {} ticks.", GetSimTick());
     }
 
+#if defined(ASSISI_NETWORKING)
     // Before the scene and physics world it holds a reference to.
     _session.reset();
+#endif
 }
 
 } // namespace Sandbox

@@ -21,7 +21,9 @@
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
-#include <Assisi/NetSync/NetComponents.hpp>
+#if defined(ASSISI_NETWORKING)
+#    include <Assisi/NetSync/NetComponents.hpp>
+#endif
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Window/Key.hpp>
 
@@ -96,8 +98,10 @@ void EditorApp::OnStart()
     // hash, so it has to be settled before the first hello is written. The
     // smoothing is not — it is purely local — but it reads from the same file
     // and there is no reason to defer it.
+#if defined(ASSISI_NETWORKING)
     Assisi::NetSync::LoadQuantizationFromConfig();
     Assisi::NetSync::LoadSmoothingFromConfig();
+#endif
 
     // What the manager needs to turn a level file into a running world when the
     // game travels. Installed once; captured by pointer, and all three outlive it.
@@ -188,6 +192,7 @@ void EditorApp::OnStart()
     // path it exists to test. The world it ends up showing is the host's, built
     // from the handshake (BuildJoinedWorld); whatever level was loaded above is
     // discarded on the way, and Stop brings it back.
+#if defined(ASSISI_NETWORKING)
     if (!_editorConfig.autoJoinEndpoint.empty())
     {
         std::string   address = "127.0.0.1";
@@ -209,6 +214,7 @@ void EditorApp::OnStart()
         _netPort = static_cast<int32_t>(port);
         StartPlay(NetIntent::Join);
     }
+#endif // ASSISI_NETWORKING
 
     // --- Systems ---
     _systems.Register(Assisi::App::SystemPhase::Update, "EntityPicking",
@@ -682,10 +688,12 @@ void EditorApp::OnRender(Assisi::Render::RenderFrame &frame)
     // matrices: a bodied mirror's visual offset is *added on top of* the pose
     // the writeback just wrote, so this cannot run before it. A no-op unless
     // this editor is a connected client.
+#if defined(ASSISI_NETWORKING)
     {
         ASSISI_PROFILE_SCOPE("net-smooth-view");
         SmoothNetView();
     }
+#endif
 
     // Refresh the editor camera's world matrix from its TRS before the view
     // matrix is derived from it; SceneRenderer propagates the game scene it draws.
@@ -736,7 +744,9 @@ void EditorApp::OnFixedUpdate(float dt)
     // Poll first: a command that arrived for this tick should be applied on this
     // tick, not the next one. It also advances the join state machine, which is
     // why it takes dt.
+#if defined(ASSISI_NETWORKING)
     PollNetSession(dt);
+#endif
 
     // **In the editor, the play state is a flat switch: while it is not Playing,
     // nothing steps anywhere.** Not "the world you are looking at is frozen" —
@@ -789,12 +799,16 @@ void EditorApp::OnFixedUpdate(float dt)
     // server never had — client poses differ by whatever the last correction has
     // not yet removed, and Jolt wakes by island — has to be put back before
     // anything reads it, and before this frame's render writeback picks it up.
+#if defined(ASSISI_NETWORKING)
     if (_netSession)
         _netSession->AfterPhysicsStep();
+#endif
 
     // Last: a snapshot describes the world at the *end* of the tick it is
     // stamped with, so it has to be built after everything that moves it.
+#if defined(ASSISI_NETWORKING)
     TickNetSession();
+#endif
 }
 
 void EditorApp::OnUpdate(float dt)
@@ -833,16 +847,20 @@ void EditorApp::OnUpdate(float dt)
     // load frees the old asset set and re-resolves, and the fixed step that
     // noticed the handshake runs mid-frame. A failure inside sets _pendingStopPlay,
     // which the next block picks up on this same frame.
+#if defined(ASSISI_NETWORKING)
     if (_pendingJoinBuild)
     {
         _pendingJoinBuild = false;
         BuildJoinedWorld();
     }
+#endif
+#if defined(ASSISI_NETWORKING)
     if (_pendingStopPlay)
     {
         _pendingStopPlay = false;
         StopPlay();
     }
+#endif
 
     // A world requested from the Game panel is created here, at the frame's safe
     // point — the same reason level loads are marshalled: it resolves assets and
@@ -954,6 +972,7 @@ void EditorApp::OnUpdate(float dt)
     // world replicated correctly and drew nothing. The client's structure
     // revision is the signal; resolving is idempotent, so acting on it late
     // costs a frame of billboard and never correctness.
+#if defined(ASSISI_NETWORKING)
     if (_netSession != nullptr && _netSession->Client() != nullptr)
     {
         if (const std::uint64_t revision = _netSession->Client()->StructureRevision();
@@ -963,6 +982,7 @@ void EditorApp::OnUpdate(float dt)
             Assisi::Runtime::ResolveSceneAssets(*_scene, _assetCache, _assetDatabase);
         }
     }
+#endif
 
     // Worlds that simulate but are not drawn get neither the pose write-back nor
     // the transform propagation the render path does for the world it draws. Give
@@ -1054,9 +1074,32 @@ Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
     { ApplyEditRebind(entity, id, present); };
 }
 
+// A lifecycle override, so it exists in every build — it used to live in
+// EditorNet.cpp only because everything it does happens to be networking, which
+// left the vtable with a hole the moment that file left the build.
+void EditorApp::OnShutdown()
+{
+#if defined(ASSISI_NETWORKING)
+    // Closing the window is a way of ending a play session, and the two things
+    // that outlive this process if nobody says otherwise are a socket and a
+    // fleet of viewer windows. Deliberately *not* a full StopPlay: the scene
+    // restore it runs re-resolves assets against a renderer that is on its way
+    // down, and nothing is going to look at the result.
+    ShutdownNetSession();
+    ShutdownPieClients();
+#endif
+}
+
 bool EditorApp::IsMirrored(Assisi::ECS::Entity entity) const
 {
+#if defined(ASSISI_NETWORKING)
     return _scene != nullptr && _scene->IsAlive(entity) && _scene->Has<Assisi::NetSync::Mirrored>(entity);
+#else
+    // No replication, so nothing in this scene came from anyone else. Every
+    // entity is authored here and therefore editable.
+    (void)entity;
+    return false;
+#endif
 }
 
 bool EditorApp::IsEditable(Assisi::ECS::Entity entity) const { return IsEditable() && !IsMirrored(entity); }
@@ -1423,7 +1466,9 @@ void EditorApp::OnImGui()
         { ASSISI_PROFILE_SCOPE("panel/diagnostics");  DrawDiagnosticsWindow(); }
         { ASSISI_PROFILE_SCOPE("panel/chiara");       DrawChiaraWindow(); }
         { ASSISI_PROFILE_SCOPE("panel/game-control"); DrawGameControlWindow(); }
+#if defined(ASSISI_NETWORKING)
         { ASSISI_PROFILE_SCOPE("panel/network");      DrawNetworkWindow(); }
+#endif
     }
     { ASSISI_PROFILE_SCOPE("panel/entity-list");  DrawEntityListWindow(); }
     { ASSISI_PROFILE_SCOPE("panel/history");      DrawHistoryWindow(); }
@@ -1441,10 +1486,12 @@ void EditorApp::OnImGui()
     { ASSISI_PROFILE_SCOPE("panel/asset-browser"); DrawAssetBrowser(); }
     { ASSISI_PROFILE_SCOPE("panel/stale-modal");  DrawStaleResolutionModal(); }
     { ASSISI_PROFILE_SCOPE("panel/save-confirm-modal"); DrawSaveConfirmModal(); }
+#if defined(ASSISI_NETWORKING)
     if (!blueprintMode)
     {
         { ASSISI_PROFILE_SCOPE("panel/host-modal"); DrawHostUnsavedModal(); }
     }
+#endif
 
     // Release the Inspector's physics freeze here rather than inside the panel.
     // The panel cannot be trusted to observe its own release: DrawInspector

@@ -12,7 +12,9 @@
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
-#include <Assisi/NetSync/NetComponents.hpp>
+#if defined(ASSISI_NETWORKING)
+#    include <Assisi/NetSync/NetComponents.hpp>
+#endif
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
@@ -60,6 +62,7 @@ void EditorApp::StartPlay(NetIntent intent)
         return;
     }
 
+#if defined(ASSISI_NETWORKING)
     // Play-in-editor hosting sidesteps both gates below, structurally rather
     // than by exception: its clients load a temp snapshot of the scene as it is
     // *right now*, so "the level was never saved" and "the level on disk is not
@@ -111,6 +114,7 @@ void EditorApp::StartPlay(NetIntent intent)
         }
     }
     _hostIgnoreDirty = false;
+#endif // ASSISI_NETWORKING
 
     // Snapshot the whole scene so Stop can restore it exactly, discarding whatever
     // play mode changes (physics settling, spawns, etc.). Unlike a Save()/Load()
@@ -146,9 +150,16 @@ void EditorApp::StartPlay(NetIntent intent)
     SetPlayState(PlayState::Playing);
     _netIntent   = intent;
     _joinPhase   = JoinPhase::None;
+#if defined(ASSISI_NETWORKING)
     _joinElapsed = 0.f;
+#endif
     Assisi::Core::Log::Info("Play: started (scene snapshotted, {} entities).", _playSnapshot.size());
 
+#if !defined(ASSISI_NETWORKING)
+    // Standalone is the only intent this build can service — everything below
+    // needs a session, and there is no transport to make one from.
+    return;
+#else
     if (intent == NetIntent::Standalone)
         return;
 
@@ -212,6 +223,7 @@ void EditorApp::StartPlay(NetIntent intent)
         // port nothing is listening on fails immediately and confusingly.
         SpawnPieClients(_pieClientCount);
     }
+#endif // ASSISI_NETWORKING
 }
 
 void EditorApp::ResumePlay()
@@ -238,10 +250,12 @@ void EditorApp::PausePlay()
     // application under a live stream. Neither is a state this design defines,
     // and un-pausing semantics for a networked session are a deferred design
     // rather than something to improvise here.
+#if defined(ASSISI_NETWORKING)
     if (IsNetSessionActive())
     {
         return;
     }
+#endif
     // Entering Paused: open a fresh scratch history so edits made while paused are
     // undoable *within the pause*, without ever touching the persistent editing
     // history. Bound to the EDITED world's scene, not whichever world is being
@@ -265,16 +279,18 @@ void EditorApp::StopPlay()
     // stopping. First, so a client's mirrors are dropped before the restore
     // rebuilds the editing scene underneath them, and so a host stops
     // replicating a scene that is about to be torn down and rebuilt.
+#if defined(ASSISI_NETWORKING)
     ShutdownNetSession();
     // Every client this session launched goes with it, and so does the temp
     // level they were loading — "connections do not outlive the level" is the
     // price PIE pays for needing no level-transfer protocol, and a viewer left
     // running against a dead server is the worst version of paying it.
     ShutdownPieClients();
-    _netIntent        = NetIntent::Standalone;
-    _joinPhase        = JoinPhase::None;
     _pendingJoinBuild = false;
     _pendingStopPlay  = false;
+#endif
+    _netIntent        = NetIntent::Standalone;
+    _joinPhase        = JoinPhase::None;
 
     // Discard the scratch pause-history first (whatever the pause let you undo dies
     // with the pause). The editing history is deliberately NOT cleared — the restore
@@ -713,8 +729,14 @@ void EditorApp::DrawGameControlWindow()
         {"Host + 3 clients", NetIntent::Host, 3},
         {"Join…", NetIntent::Join, 0},
     }};
+#if defined(ASSISI_NETWORKING)
     _playNetSelection = std::clamp(_playNetSelection, 0, static_cast<std::int32_t>(kNetModes.size()) - 1);
     const NetModeEntry &netMode = kNetModes[static_cast<std::size_t>(_playNetSelection)];
+#else
+    // Standalone is entry 0 and the only reachable one; the dropdown that would
+    // pick another is not drawn.
+    const NetModeEntry &netMode = kNetModes[0];
+#endif
 
     // The one place a play session starts, so the key and the button cannot
     // drift into meaning different things.
@@ -725,7 +747,9 @@ void EditorApp::DrawGameControlWindow()
             ResumePlay();
             return;
         }
+#if defined(ASSISI_NETWORKING)
         _pieClientCount = netMode.clients;
+#endif
         StartPlay(netMode.intent);
     };
 
@@ -762,7 +786,11 @@ void EditorApp::DrawGameControlWindow()
     // world, and a client-side one detonates the join contract outright. v1
     // disables them; mid-session level change is a deferred renegotiation of
     // the ServerHello level contract, not a v1 casualty.
+#if defined(ASSISI_NETWORKING)
     const bool networked = IsNetSessionActive();
+#else
+    constexpr bool networked = false;
+#endif
     const auto netTooltip = [networked](const char *text)
     {
         if (networked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -781,6 +809,7 @@ void EditorApp::DrawGameControlWindow()
 
     ImGui::SameLine();
     ImGui::SetNextItemWidth(150.f);
+#if defined(ASSISI_NETWORKING)
     ImGui::BeginDisabled(!editing);
     if (ImGui::BeginCombo("##netmode", netMode.label))
     {
@@ -795,6 +824,7 @@ void EditorApp::DrawGameControlWindow()
         ImGui::EndCombo();
     }
     ImGui::EndDisabled();
+#endif
     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
     {
         ImGui::SetTooltip("What Run does on the network. \"Host + N\" opens N more windows of this build "
@@ -804,6 +834,7 @@ void EditorApp::DrawGameControlWindow()
 
     // The endpoint, shown only for Join: an address field that is dead weight in
     // every other mode.
+#if defined(ASSISI_NETWORKING)
     if (netMode.intent == NetIntent::Join)
     {
         ImGui::SetNextItemWidth(130.f);
@@ -815,6 +846,7 @@ void EditorApp::DrawGameControlWindow()
         _netPort = std::clamp(_netPort, 1, 65535);
         ImGui::EndDisabled();
     }
+#endif
 
     ImGui::SameLine();
     ImGui::BeginDisabled(!playing || networked);
@@ -1106,7 +1138,11 @@ void EditorApp::DrawEntityListWindow()
             ImGui::PushID(static_cast<int32_t>(entity.index));
             // Mirrors are tinted, because "why can't I move this one" should be
             // answerable by looking rather than by clicking.
+#if defined(ASSISI_NETWORKING)
             const bool mirrored = _scene->Has<Assisi::NetSync::Mirrored>(entity);
+#else
+            constexpr bool mirrored = false; // nothing arrives from elsewhere
+#endif
             if (mirrored)
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.55f, 0.75f, 1.f, 1.f});
 
