@@ -1075,7 +1075,7 @@ std::string EditorApp::DescribeEntity(Assisi::ECS::Entity entity) const
         {
             if (const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(tag->instanceId))
             {
-                const Assisi::Runtime::BlueprintDefinition *definition =
+                const std::shared_ptr<const Assisi::Runtime::BlueprintDefinition> definition =
                     Assisi::Runtime::GetBlueprintDefinition(row->source);
                 const std::string memberPath =
                     definition != nullptr && tag->memberIndex < definition->members.size()

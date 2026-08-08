@@ -22,6 +22,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 
 #include <Assisi/Core/AssetSystem.hpp>
@@ -79,7 +80,7 @@ TEST_CASE("Prepared form: every component a member declares is encoded once")
                                                                      {"rotation", {1.f, 0.f, 0.f, 0.f}},
                                                                      {"scale", {1.f, 1.f, 1.f}}}}}}}})}});
 
-    const BlueprintDefinition *definition = Runtime::GetBlueprintDefinition("car.abp");
+    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("car.abp");
     REQUIRE(definition != nullptr);
     REQUIRE(definition->members.size() == 1);
 
@@ -232,4 +233,106 @@ TEST_CASE("Prepared form: a blueprint naming a reference it does not declare is 
     // Caught when the definition is built rather than at every spawn: a blueprint
     // whose wiring names nothing is broken about itself, not about where it is used.
     CHECK(Runtime::GetBlueprintDefinition("car.abp") == nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// A malformed member value is a nullptr, not an exception
+// ---------------------------------------------------------------------------
+//
+// Preparing a member deserializes it, and a generated deserializer reads a float
+// as `j.at("fovDegrees").get<float>()` — which throws if the file says a string.
+// That is the *last* step of building a definition, so it is the step most likely
+// to be left outside the error path, and the contract callers wrote themselves
+// against says nullptr (Blueprint.hpp). The three below are the callers that
+// documented the promise; the editor's Save is the one a user meets.
+
+namespace
+{
+
+/// A blueprint whose one member declares a Camera with a string where the float
+/// goes — malformed in a way only the prepare step can see.
+nlohmann::json MistypedCar()
+{
+    return {{"version", 2},
+            {"entities", nlohmann::json::array({{{"name", "body"},
+                                                 {"components",
+                                                  {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
+}
+
+} // namespace
+
+TEST_CASE("Prepared form: a member value of the wrong type is unusable, not a throw")
+{
+    const std::filesystem::path root = FreshRoot("mistyped");
+    Write(root, "car.abp", MistypedCar());
+
+    std::shared_ptr<const BlueprintDefinition> definition;
+    CHECK_NOTHROW(definition = Runtime::GetBlueprintDefinition("car.abp"));
+    CHECK(definition == nullptr);
+
+    // Nothing was cached, so fixing the file is enough — the failure does not
+    // outlive itself and wait for a level unload to clear.
+    CHECK_NOTHROW(Runtime::GetBlueprintDefinition("car.abp"));
+    CHECK(Runtime::GetBlueprintDefinition("car.abp") == nullptr);
+
+    Write(root, "car.abp", {{"version", 2},
+                            {"entities", nlohmann::json::array({{{"name", "body"},
+                                                                 {"components",
+                                                                  {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
+    CHECK(Runtime::GetBlueprintDefinition("car.abp") != nullptr);
+}
+
+TEST_CASE("Prepared form: FindMember on an instance whose file went bad answers, not throws")
+{
+    const std::filesystem::path root = FreshRoot("mistyped_find");
+    Write(root, "car.abp", {{"version", 2},
+                            {"entities", nlohmann::json::array({{{"name", "body"},
+                                                                 {"components",
+                                                                  {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
+    Write(root, "main.alvl", {{"version", 2},
+                              {"entities", nlohmann::json::array()},
+                              {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                                    {"source", "car.abp"}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(MemberOf(scene, table, ECS::InstanceId{1}, "body") != ECS::NullEntity);
+
+    // The editor's blueprint save, in the order the editor does it: the file on
+    // disk changes, the cached definition is dropped, and the *live* instance is
+    // still standing with tags that need the file to be readable to mean anything.
+    Write(root, "car.abp", MistypedCar());
+    Runtime::InvalidateBlueprint("car.abp");
+
+    ECS::Entity found = ECS::NullEntity;
+    CHECK_NOTHROW(found = Runtime::FindMember(scene, table, ECS::InstanceId{1}, "body"));
+    CHECK(found == ECS::NullEntity);
+}
+
+TEST_CASE("Prepared form: saving a level whose blueprint went bad does not throw")
+{
+    const std::filesystem::path root = FreshRoot("mistyped_save");
+    Write(root, "car.abp", {{"version", 2},
+                            {"entities", nlohmann::json::array({{{"name", "body"},
+                                                                 {"components",
+                                                                  {{"Camera", {{"fovDegrees", 55.f}}}}}}})}});
+    Write(root, "main.alvl", {{"version", 2},
+                              {"entities", nlohmann::json::array()},
+                              {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                                    {"source", "car.abp"}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    Write(root, "car.abp", MistypedCar());
+    Runtime::InvalidateBlueprint("car.abp");
+
+    // Save walks every member to name it, which is where it asks for the
+    // definition. Throwing here loses the user's level: the one action they take
+    // to keep their work is the one that fails.
+    nlohmann::json saved;
+    CHECK_NOTHROW(saved = SceneSerializer::Save(scene, Runtime::LevelHeader{}, &table));
+    CHECK(saved.contains("instances"));
 }

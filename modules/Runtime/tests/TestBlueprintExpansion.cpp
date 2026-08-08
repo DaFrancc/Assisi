@@ -92,7 +92,7 @@ const ECS::Transform *TransformOf(ECS::Scene &scene, const InstanceTable &table,
 {
     const Runtime::BlueprintInstance *row = table.Find(instanceId);
     REQUIRE(row != nullptr);
-    const BlueprintDefinition *definition = Runtime::GetBlueprintDefinition(row->source);
+    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition(row->source);
     REQUIRE(definition != nullptr);
     const std::optional<uint32_t> index = definition->IndexOf(memberName);
     REQUIRE(index.has_value());
@@ -112,7 +112,7 @@ TEST_CASE("Blueprint: a file flattens to a member list in file order")
     const std::filesystem::path root = FreshRoot("flatten");
     Write(root, "car.abp", CarFile());
 
-    const BlueprintDefinition *definition = Runtime::GetBlueprintDefinition("car.abp");
+    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("car.abp");
     REQUIRE(definition != nullptr);
     REQUIRE(definition->members.size() == 2);
 
@@ -144,7 +144,7 @@ TEST_CASE("Blueprint: nesting flattens to one member list with path names")
                                                  {"source", "car.abp"},
                                                  {"transform", Placement(20.f, 0.f, 0.f)}}})}});
 
-    const BlueprintDefinition *definition = Runtime::GetBlueprintDefinition("lot.abp");
+    const std::shared_ptr<const BlueprintDefinition> definition = Runtime::GetBlueprintDefinition("lot.abp");
     REQUIRE(definition != nullptr);
 
     // One list, entities first then each instance's members — no tree, no inner
