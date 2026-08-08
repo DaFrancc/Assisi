@@ -163,9 +163,9 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
         // authored=false, for the same reason a runtime spawn is: this instance
         // exists because the server said so, and writing it into a saved level
         // would make it authored content the next time that level loads.
-        std::optional<Runtime::SceneSerializer::ExpandedInstance> placed =
+        const std::expected<Runtime::SceneSerializer::ExpandedInstance, Runtime::LevelError> placed =
             Runtime::SceneSerializer::PlaceInstance(_world.scene, _world.instances, entry, /*authored=*/false);
-        if (!placed.has_value())
+        if (!placed)
             return false;
 
         // The systems the blueprint names, queued for the next safe point —

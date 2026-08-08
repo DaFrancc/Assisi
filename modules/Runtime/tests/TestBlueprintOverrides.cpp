@@ -587,7 +587,7 @@ TEST_CASE("Overrides: a save writes back what was read, and reloading gives the 
     // level that reads as a plain car the next time it opens.
     ECS::Scene    reloaded;
     InstanceTable reloadedTable;
-    SceneSerializer::Load(reloaded, saved, {}, nullptr, &reloadedTable);
+    REQUIRE(SceneSerializer::Load(reloaded, saved, {}, nullptr, &reloadedTable).has_value());
     CHECK(reloaded.AliveCount() == 1);
     const Camera *camera = reloaded.Get<Camera>(MemberOf(reloaded, reloadedTable, ECS::InstanceId{1}, "body"));
     REQUIRE(camera != nullptr);

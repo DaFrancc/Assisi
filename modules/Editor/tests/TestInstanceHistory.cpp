@@ -84,7 +84,7 @@ TEST_CASE("EditHistory: editing a member records an override, and undo takes bot
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<ECS::InstanceId> id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
 
     const ECS::Entity body = MemberOf(scene, table, *id, "body");
@@ -133,7 +133,7 @@ TEST_CASE("EditHistory: removing a component from a member records it as a remov
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<ECS::InstanceId> id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
     const ECS::Entity body = MemberOf(scene, table, *id, "body");
 
@@ -167,7 +167,7 @@ TEST_CASE("EditHistory: a reference override is recorded by name, not by handle"
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<ECS::InstanceId> id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
 
     const ECS::Entity body  = MemberOf(scene, table, *id, "body");
@@ -207,7 +207,7 @@ TEST_CASE("EditHistory: editing a loose entity records no instance claim")
 
     ECS::Scene    scene;
     InstanceTable table;
-    const std::optional<ECS::InstanceId> id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
 
     // The rule the whole design rests on: a hand-built entity is indistinguishable

@@ -146,14 +146,14 @@ void DrainSystemInstalls(World &world)
 
 bool LevelSystemsAreDeclared(std::string_view virtualPath)
 {
-    std::vector<std::string> wanted;
-    if (!Runtime::SceneSerializer::ReadLevelSystems(virtualPath, wanted))
+    const auto wanted = Runtime::SceneSerializer::ReadLevelSystems(virtualPath);
+    if (!wanted)
         return false;
 
     // Every offender, not just the first: a file with three bad names should
     // need one run to fix, not three.
     bool ok = true;
-    for (const std::string &name : wanted)
+    for (const std::string &name : *wanted)
     {
         if (SystemCatalog::Instance().Find(name) != nullptr)
             continue;

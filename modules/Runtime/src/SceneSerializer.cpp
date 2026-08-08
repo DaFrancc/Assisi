@@ -100,6 +100,42 @@ struct ScopedContextReset
 
 } // namespace
 
+std::string_view Describe(LevelError error)
+{
+    switch (error)
+    {
+    case LevelError::FileUnreadable:
+        return "the file could not be read";
+    case LevelError::MalformedJson:
+        return "the file is not readable JSON";
+    case LevelError::UnsupportedVersion:
+        return "the file is a version this build does not read";
+    case LevelError::NoInstanceTable:
+        return "the file places blueprint instances and this load has nowhere to put them";
+    case LevelError::MissingName:
+        return "an entity or instance in the file has no name";
+    case LevelError::MissingSource:
+        return "an instance in the file names no source";
+    case LevelError::InvalidName:
+        return "the file gives something a name that is not usable as one";
+    case LevelError::DuplicateName:
+        return "two things in the file answer to one name";
+    case LevelError::NonUniformScale:
+        return "an instance has a non-uniform scale";
+    case LevelError::BlueprintUnusable:
+        return "an instance names a blueprint that will not load";
+    case LevelError::UnresolvedReference:
+        return "a reference names something the file does not declare";
+    case LevelError::ContextBusy:
+        return "a serialization context is already active on this thread";
+    case LevelError::InstanceNotLive:
+        return "no such instance is live";
+    case LevelError::NameAlreadyLive:
+        return "an instance of that name is already live in this world";
+    }
+    return "the file cannot be used";
+}
+
 // ---------------------------------------------------------------------------
 // Public context accessors (called from component serialize/addToScene lambdas)
 // ---------------------------------------------------------------------------
@@ -512,19 +548,27 @@ std::string_view LeafName(std::string_view path)
 /// `car_3/body`, and a member may name a level entity. Deserializing anything
 /// before every name exists resolves those to null and silently unwires the file.
 ///
-/// Throws on a name collision — with a level entity, with another instance, or
+/// Fails on a name collision — with a level entity, with another instance, or
 /// with a member of one. Every one of them makes a reference ambiguous.
+///
+/// @param staged filled as the work happens, **including on failure**. A row is
+///        added to @p table and entities are created before the last thing that
+///        can fail, so the caller has to be able to unwind whatever got as far as
+///        existing; handing that back is what makes "all or nothing" the caller's
+///        to keep rather than a promise this function cannot make.
 /// @param adopt when non-null, a re-expansion: the row already exists and members
 ///        whose names it knows are taken over rather than created.
-StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const LevelInstance &entry,
-                             int32_t levelInstanceIndex, AdoptionSet *adopt = nullptr)
+std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &table,
+                                              const LevelInstance &entry, int32_t levelInstanceIndex,
+                                              StagedInstance &staged, AdoptionSet *adopt = nullptr)
 {
     if (!HasUniformScale(entry.transform))
     {
-        throw std::runtime_error(std::format(
-            "instance '{}' has a non-uniform scale ({}, {}, {}); an instance may only translate, rotate, "
-            "or scale uniformly",
-            entry.name, entry.transform.scale.x, entry.transform.scale.y, entry.transform.scale.z));
+        Core::Log::Error("Blueprint: instance '{}' has a non-uniform scale ({}, {}, {}); an instance may only "
+                         "translate, rotate, or scale uniformly.",
+                         entry.name, entry.transform.scale.x, entry.transform.scale.y,
+                         entry.transform.scale.z);
+        return std::unexpected(LevelError::NonUniformScale);
     }
 
     const BlueprintResult loaded = GetBlueprintDefinition(entry.source);
@@ -533,12 +577,12 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
         // The reason comes from the definition rather than being invented here: the
         // file that actually failed may be several levels of nesting below
         // `entry.source`, and this call site cannot know which.
-        throw std::runtime_error(std::format("instance '{}' cannot use '{}': {}", entry.name, entry.source,
-                                             Describe(loaded.error())));
+        Core::Log::Error("Blueprint: instance '{}' cannot use '{}': {}.", entry.name, entry.source,
+                         Describe(loaded.error()));
+        return std::unexpected(LevelError::BlueprintUnusable);
     }
     const std::shared_ptr<const BlueprintDefinition> &definition = *loaded;
 
-    StagedInstance staged;
     staged.definition = definition;
     staged.placement  = entry.transform;
     staged.overrides  = entry.overrides;
@@ -573,7 +617,10 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
             staged.members.push_back(ECS::NullEntity);
             staged.resolved.emplace_back();
             if (!s_context->nameToEntity.emplace(path, ECS::NullEntity).second)
-                throw std::runtime_error(std::format("'{}' is claimed twice", path));
+            {
+                Core::Log::Error("SceneSerializer: '{}' is claimed twice.", path);
+                return std::unexpected(LevelError::DuplicateName);
+            }
             continue;
         }
 
@@ -597,7 +644,10 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
         staged.resolved.push_back(desc);
 
         if (!s_context->nameToEntity.emplace(path, e).second)
-            throw std::runtime_error(std::format("'{}' is claimed twice", path));
+        {
+            Core::Log::Error("SceneSerializer: '{}' is claimed twice.", path);
+            return std::unexpected(LevelError::DuplicateName);
+        }
 
         // The leaf, not the path: a Name is what the member's own file calls it,
         // and a path would not fit anyway. The path is derived from the tag when
@@ -626,7 +676,7 @@ StagedInstance StageInstance(ECS::Scene &scene, InstanceTable &table, const Leve
                             entry.name.empty() ? memberPath : entry.name + "/" + memberPath);
     }
 
-    return staged;
+    return {};
 }
 
 /// Applies a staged instance's components, then composes the placement onto every
@@ -890,17 +940,19 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
 // Load
 // ---------------------------------------------------------------------------
 
-void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress,
-                           LevelHeader *header, InstanceTable *instances)
+LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress,
+                                  LevelHeader *header, InstanceTable *instances)
 {
     const int32_t version = j.value("version", 0);
     if (version != 2)
     {
-        // Thrown, not returned: a caller that gets no signal reports a *successful*
-        // load of an empty scene, which is how a level silently becomes nothing.
-        // Thrown before the Clear below, so a direct caller keeps what it had.
-        throw std::runtime_error(
-            std::format("unsupported level file version {} (this build reads version 2)", version));
+        // Reported, not swallowed: a caller that gets no signal reports a
+        // *successful* load of an empty scene, which is how a level silently
+        // becomes nothing. Refused before the Clear below, so the caller keeps
+        // what it had.
+        Core::Log::Error("SceneSerializer: unsupported level file version {} (this build reads version 2).",
+                         version);
+        return std::unexpected(LevelError::UnsupportedVersion);
     }
 
     // Read the instance entries before anything is destroyed: a file that names an
@@ -911,8 +963,9 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
     {
         if (instances == nullptr)
         {
-            throw std::runtime_error("the file places blueprint instances, but this load was given no "
-                                     "instance table to put them in");
+            Core::Log::Error("SceneSerializer: the file places blueprint instances, but this load was given "
+                             "no instance table to put them in.");
+            return std::unexpected(LevelError::NoInstanceTable);
         }
 
         placed.reserve(it->size());
@@ -921,12 +974,14 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
             if (!entry.contains("name") || !entry.at("name").is_string() ||
                 entry.at("name").get<std::string>().empty())
             {
-                throw std::runtime_error("an instance entry has no name");
+                Core::Log::Error("SceneSerializer: an instance entry has no name.");
+                return std::unexpected(LevelError::MissingName);
             }
             if (!entry.contains("source") || !entry.at("source").is_string())
             {
-                throw std::runtime_error(
-                    std::format("instance '{}' has no source", entry.at("name").get<std::string>()));
+                Core::Log::Error("SceneSerializer: instance '{}' has no source.",
+                                 entry.at("name").get<std::string>());
+                return std::unexpected(LevelError::MissingSource);
             }
             LevelInstance instance{
                 .name      = entry.at("name").get<std::string>(),
@@ -987,7 +1042,10 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
     {
         const auto &entityJson = entities[i];
         if (!entityJson.contains("name") || !entityJson.at("name").is_string())
-            throw std::runtime_error(std::format("entity #{} has no name", i));
+        {
+            Core::Log::Error("SceneSerializer: entity #{} has no name.", i);
+            return std::unexpected(LevelError::MissingName);
+        }
 
         std::string name = entityJson.at("name").get<std::string>();
 
@@ -998,12 +1056,15 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
         // no entity name does), which is why `car` the entity and `car` the
         // instance can coexist without anyone cross-checking them.
         //
-        // The throw is this function's contract, not the rule's: `Load` returns
-        // void and every failure in it reaches `LoadFromFile`'s catch. The rule
-        // itself is an expected, and converting `Load` wholesale is its own pass.
+        // The rule's own error is a NameError; this function's vocabulary is
+        // LevelError, so the specific reason is logged with the entity index the
+        // caller cannot see and the kind is widened to InvalidName.
         if (const std::expected<void, NameError> valid = ValidateName(name); !valid.has_value())
-            throw std::runtime_error(std::format("entity #{} is named '{}': {}", i, name,
-                                                 Describe(valid.error())));
+        {
+            Core::Log::Error("SceneSerializer: entity #{} is named '{}': {}.", i, name,
+                             Describe(valid.error()));
+            return std::unexpected(LevelError::InvalidName);
+        }
         names.push_back(std::move(name));
     }
 
@@ -1023,8 +1084,9 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
         {
             // Duplicate names make every reference and every override ambiguous,
             // and picking one is picking silently.
+            Core::Log::Error("SceneSerializer: two entities are both named '{}'.", names[i]);
             scene.Clear();
-            throw std::runtime_error(std::format("two entities are both named '{}'", names[i]));
+            return std::unexpected(LevelError::DuplicateName);
         }
 
         // The name is the entity's Name, not a second identity beside it.
@@ -1037,7 +1099,20 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
     std::vector<StagedInstance> staged;
     staged.reserve(placed.size());
     for (std::size_t i = 0; i < placed.size(); ++i)
-        staged.push_back(StageInstance(scene, *instances, placed[i], static_cast<int32_t>(i)));
+    {
+        StagedInstance row;
+        const std::expected<void, LevelError> ok =
+            StageInstance(scene, *instances, placed[i], static_cast<int32_t>(i), row);
+        // Kept either way: what staging got as far as creating is in `row`, and it
+        // has to be reachable for the clear below to be the whole cleanup.
+        staged.push_back(std::move(row));
+        if (!ok)
+        {
+            scene.Clear();
+            instances->Clear();
+            return std::unexpected(ok.error());
+        }
+    }
 
     // Pass 3: deserialize components now that every EntityRef can resolve.
     const size_t entityCount = entities.size();
@@ -1103,10 +1178,13 @@ void SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const Pro
         if (bad.size() > 8)
             list += std::format(", … ({} more)", bad.size() - 8);
 
+        Core::Log::Error("SceneSerializer: {} entity reference(s) name an entity the file does not declare: {}.",
+                         bad.size(), list);
         scene.Clear();
-        throw std::runtime_error(
-            std::format("{} entity reference(s) name an entity the file does not declare: {}", bad.size(), list));
+        return std::unexpected(LevelError::UnresolvedReference);
     }
+
+    return {};
 }
 
 // ---------------------------------------------------------------------------
@@ -1227,15 +1305,14 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
 // Runtime expansion
 // ---------------------------------------------------------------------------
 
-std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(ECS::Scene         &scene,
-                                                                               InstanceTable       &table,
-                                                                               const LevelInstance &entry,
-                                                                               bool                 authored)
+std::expected<SceneSerializer::ExpandedInstance, LevelError>
+SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const LevelInstance &entry,
+                               bool authored)
 {
     if (s_context || s_rawContextScene != nullptr)
     {
         Core::Log::Error("PlaceInstance: a serialization context is already active on this thread.");
-        return std::nullopt;
+        return std::unexpected(LevelError::ContextBusy);
     }
 
     // A name is the prefix its members are addressed by, so two live instances of
@@ -1262,7 +1339,7 @@ std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(
                 Core::Log::Error("Blueprint: an instance named '{}' is already live in this world; placing a "
                                  "second would make '{}/…' name two entities.",
                                  entry.name, entry.name);
-                return std::nullopt;
+                return std::unexpected(LevelError::NameAlreadyLive);
             }
         }
     }
@@ -1286,18 +1363,27 @@ std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(
             table.Remove(instance.id);
     };
 
+    // Staging reports by value; the try is for CommitInstance, which runs the
+    // generated deserializers and so can still take an nlohmann throw on a member
+    // value the reflection layer chokes on. Either way it is all or nothing (§7):
+    // a missing nested file three members in must leave no partial instance behind,
+    // and `instance` now holds whatever got as far as existing.
     try
     {
-        instance = StageInstance(scene, table, entry, /*levelInstanceIndex=*/-1);
+        if (const std::expected<void, LevelError> ok =
+                StageInstance(scene, table, entry, /*levelInstanceIndex=*/-1, instance);
+            !ok)
+        {
+            unwind();
+            return std::unexpected(ok.error());
+        }
         CommitInstance(scene, instance, entry.name);
     }
     catch (const std::exception &ex)
     {
-        // All or nothing (§7): a missing nested file three members in must leave no
-        // partial instance behind.
         Core::Log::Error("Blueprint: placing '{}' failed: {}", entry.source, ex.what());
         unwind();
-        return std::nullopt;
+        return std::unexpected(LevelError::BlueprintUnusable);
     }
 
     if (!s_context->unresolvedRefNames.empty())
@@ -1307,7 +1393,7 @@ std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(
                          entry.source, s_context->unresolvedRefNames.size(),
                          s_context->unresolvedRefNames.front());
         unwind();
-        return std::nullopt;
+        return std::unexpected(LevelError::UnresolvedReference);
     }
 
     // Authorship is decided here rather than inside StageInstance, because it is a
@@ -1322,29 +1408,29 @@ std::optional<SceneSerializer::ExpandedInstance> SceneSerializer::PlaceInstance(
     return ExpandedInstance{.instanceId = instance.id, .members = std::move(instance.members)};
 }
 
-std::optional<SceneSerializer::ReexpandedInstance>
+std::expected<SceneSerializer::ReexpandedInstance, LevelError>
 SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::InstanceId instanceId,
                                   std::span<const std::string> previousMemberNames)
 {
     if (s_context || s_rawContextScene != nullptr)
     {
         Core::Log::Error("ReexpandInstance: a serialization context is already active on this thread.");
-        return std::nullopt;
+        return std::unexpected(LevelError::ContextBusy);
     }
 
     const BlueprintInstance *found = table.Find(instanceId);
     if (found == nullptr)
     {
         Core::Log::Error("Blueprint: cannot re-expand instance {} — no such instance is live.", instanceId);
-        return std::nullopt;
+        return std::unexpected(LevelError::InstanceNotLive);
     }
     // A copy. Staging reads the row back out of the table, and the entry below has to
     // outlive anything that touches it.
     const BlueprintInstance row = *found;
 
     // Both failure checks happen here, before the first member is stripped, which is
-    // what lets the contract promise "changed nothing" on nullopt. Past this point a
-    // throw is structurally unreachable: the definition loaded, so its member names
+    // what lets the contract promise "changed nothing" on an error. Past this point a
+    // failure is structurally unreachable: the definition loaded, so its member names
     // are unique, and the placement was accepted once already, so its scale is
     // uniform.
     //
@@ -1355,7 +1441,7 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
     {
         Core::Log::Error("Blueprint: '{}' no longer loads ({}); instance {} is left as it was.", row.source,
                          Describe(definition.error()), instanceId);
-        return std::nullopt;
+        return std::unexpected(LevelError::BlueprintUnusable);
     }
 
     // What is live now, under the names the *old* definition gave it. A tag whose
@@ -1384,17 +1470,27 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
     StagedInstance staged;
     try
     {
-        staged = StageInstance(scene, table, entry, row.levelInstanceIndex, &adopt);
+        if (const std::expected<void, LevelError> ok =
+                StageInstance(scene, table, entry, row.levelInstanceIndex, staged, &adopt);
+            !ok)
+        {
+            // Unreachable by the reasoning above, and reported rather than swallowed
+            // if that reasoning ever stops holding. There is no unwind: the adopted
+            // members have already been stripped, so the honest thing is to say so
+            // loudly.
+            Core::Log::Error("Blueprint: re-expanding '{}' failed part-way ({}). Reload the level.",
+                             row.source, Describe(ok.error()));
+            return std::unexpected(ok.error());
+        }
         CommitInstance(scene, staged, row.name);
     }
     catch (const std::exception &ex)
     {
-        // Unreachable by the reasoning above, and reported rather than swallowed if
-        // that reasoning ever stops holding. There is no unwind: the adopted members
-        // have already been stripped, so the honest thing is to say so loudly.
+        // Same position, for the throw CommitInstance can still take out of the
+        // generated deserializers.
         Core::Log::Error("Blueprint: re-expanding '{}' failed part-way: {}. Reload the level.", row.source,
                          ex.what());
-        return std::nullopt;
+        return std::unexpected(LevelError::BlueprintUnusable);
     }
 
     if (!s_context->unresolvedRefNames.empty())
@@ -1420,8 +1516,10 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
     return out;
 }
 
-std::optional<ECS::InstanceId> SceneSerializer::ExpandInstance(ECS::Scene &scene, InstanceTable &table,
-                                                       std::string_view source, const ECS::Transform &placement)
+std::expected<ECS::InstanceId, LevelError> SceneSerializer::ExpandInstance(ECS::Scene &scene,
+                                                                          InstanceTable   &table,
+                                                                          std::string_view source,
+                                                                          const ECS::Transform &placement)
 {
     // No instance name: the members are `body`, not `car_3/body`, because nothing
     // placed this one and no file addresses into it.
@@ -1431,8 +1529,11 @@ std::optional<ECS::InstanceId> SceneSerializer::ExpandInstance(ECS::Scene &scene
                               .overrides = nlohmann::json::object(),
                               .removed   = {}};
 
-    const std::optional<ExpandedInstance> placed = PlaceInstance(scene, table, entry, /*authored=*/false);
-    return placed ? std::optional<ECS::InstanceId>{placed->instanceId} : std::nullopt;
+    const std::expected<ExpandedInstance, LevelError> placed =
+        PlaceInstance(scene, table, entry, /*authored=*/false);
+    if (!placed)
+        return std::unexpected(placed.error());
+    return placed->instanceId;
 }
 
 bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS::Entity> entities,
@@ -1560,83 +1661,99 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
     return true;
 }
 
-bool SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
+LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
                                    const ProgressFn &onProgress, LevelHeader *header, InstanceTable *instances)
 {
     std::ifstream file(path);
     if (!file.is_open())
     {
         Core::Log::Error("SceneSerializer: cannot open '{}' for reading", path.string());
-        return false;
+        return std::unexpected(LevelError::FileUnreadable);
+    }
+
+    const nlohmann::json doc = nlohmann::json::parse(file, nullptr, /*allow_exceptions=*/false);
+    if (doc.is_discarded())
+    {
+        Core::Log::Error("SceneSerializer: '{}' is not readable JSON", path.string());
+        return std::unexpected(LevelError::MalformedJson);
     }
 
     try
     {
-        Load(scene, nlohmann::json::parse(file), onProgress, header, instances);
-        return true;
+        return Load(scene, doc, onProgress, header, instances);
     }
     catch (const std::exception &ex)
     {
         // Same contract as LoadFromFile below: a failed load yields an empty
-        // scene rather than a half-populated one.
+        // scene rather than a half-populated one. Load itself no longer throws —
+        // this is for the component `addToScene` hooks it runs, which are
+        // generated code over nlohmann and can.
         Core::Log::Error("SceneSerializer: failed to load '{}': {}", path.string(), ex.what());
         scene.Clear();
-        return false;
+        return std::unexpected(LevelError::MalformedJson);
     }
 }
 
-bool SceneSerializer::ReadLevelSystems(std::string_view assetPath, std::vector<std::string> &out)
+std::expected<std::vector<std::string>, LevelError> SceneSerializer::ReadLevelSystems(
+    std::string_view assetPath)
 {
-    out.clear();
-
     const auto text = Core::AssetSystem::ReadText(assetPath);
     if (!text)
     {
         Core::Log::Error("SceneSerializer: cannot read asset '{}'", assetPath);
-        return false;
+        return std::unexpected(LevelError::FileUnreadable);
     }
 
-    try
+    const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
+    if (doc.is_discarded())
     {
-        const nlohmann::json doc = nlohmann::json::parse(*text);
-        if (const auto it = doc.find("systems"); it != doc.end() && it->is_array())
+        Core::Log::Error("SceneSerializer: cannot parse '{}'", assetPath);
+        return std::unexpected(LevelError::MalformedJson);
+    }
+
+    std::vector<std::string> out;
+    if (const auto it = doc.find("systems"); it != doc.end() && it->is_array())
+    {
+        for (const auto &name : *it)
         {
-            for (const auto &name : *it)
-            {
-                if (name.is_string())
-                    out.push_back(name.get<std::string>());
-            }
+            if (name.is_string())
+                out.push_back(name.get<std::string>());
         }
     }
-    catch (const std::exception &error)
-    {
-        Core::Log::Error("SceneSerializer: cannot parse '{}': {}", assetPath, error.what());
-        return false;
-    }
-    return true;
+    return out;
 }
 
-bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath, const ProgressFn &onProgress,
-                                   LevelHeader *header, InstanceTable *instances)
+LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
+                                          const ProgressFn &onProgress, LevelHeader *header,
+                                          InstanceTable *instances)
 {
     const auto text = Core::AssetSystem::ReadText(assetPath);
     if (!text)
     {
         Core::Log::Error("SceneSerializer: cannot read asset '{}'", assetPath);
-        return false;
+        return std::unexpected(LevelError::FileUnreadable);
+    }
+
+    // A parse failure leaves the scene untouched, so it is refused before Load is
+    // ever called rather than caught after.
+    const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
+    if (doc.is_discarded())
+    {
+        Core::Log::Error("SceneSerializer: '{}' is not readable JSON", assetPath);
+        return std::unexpected(LevelError::MalformedJson);
     }
 
     try
     {
-        Load(scene, nlohmann::json::parse(*text), onProgress, header, instances);
-        return true;
+        return Load(scene, doc, onProgress, header, instances);
     }
     catch (const std::exception &ex)
     {
-        // A parse error leaves the scene untouched; a throw partway through
-        // Load (a malformed component field) leaves it half-populated. Clear
-        // it either way so a failed load yields an empty scene, never a
-        // corrupt one. (ScopedContextReset in Load already freed s_context.)
+        // Load reports its own failures by value and clears as it goes; what is
+        // left for this to catch is a throw out of a component's addToScene hook
+        // partway through, which leaves the scene half-populated. Clear it so a
+        // failed load yields an empty scene, never a corrupt one.
+        // (ScopedContextReset in Load already freed s_context.)
         //
         // Catches std::exception, not just json::exception: Load runs arbitrary
         // component addToScene hooks, and one throwing anything else (bad_alloc,
@@ -1644,7 +1761,7 @@ bool SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath
         // leave the half-populated scene behind.
         Core::Log::Error("SceneSerializer: failed to load '{}': {}", assetPath, ex.what());
         scene.Clear();
-        return false;
+        return std::unexpected(LevelError::MalformedJson);
     }
 }
 

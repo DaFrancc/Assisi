@@ -248,7 +248,7 @@ TEST_CASE("Blueprint: expanding places members, tags them, and records one table
     ECS::Transform placement;
     placement.position = {5.f, 0.f, 0.f};
 
-    const std::optional<ECS::InstanceId> id =
+    const auto id =
         SceneSerializer::ExpandInstance(scene, table, "car.abp", placement);
     REQUIRE(id.has_value());
     CHECK(*id == ECS::InstanceId{1}); // ids start at 1; 0 is never a live instance
@@ -292,8 +292,8 @@ TEST_CASE("Blueprint: a member's reference resolves to its own instance, not ano
     ECS::Scene    scene;
     InstanceTable table;
 
-    const std::optional<ECS::InstanceId> first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
-    const std::optional<ECS::InstanceId> second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto first  = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
+    const auto second = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(first.has_value());
     REQUIRE(second.has_value());
     CHECK(*first != *second);

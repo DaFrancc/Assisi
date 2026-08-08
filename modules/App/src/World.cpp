@@ -224,7 +224,8 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
         // No render services (a headless server): the scene and its bodies are
         // all that matter.
         loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath,
-                                                        /*onProgress=*/{}, &header, &incoming.instances);
+                                                        /*onProgress=*/{}, &header, &incoming.instances)
+                     .has_value();
         if (loaded)
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
     }
@@ -295,7 +296,8 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         Runtime::LevelHeader header;
         const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path,
                                                                /*onProgress=*/{}, &header,
-                                                               &incoming.instances);
+                                                               &incoming.instances)
+                            .has_value();
         if (ok)
         {
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
@@ -329,8 +331,10 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
             // cost); building bodies is the cheap tail to 1.0.
             Runtime::LevelHeader header;
             const bool           ok = Runtime::SceneSerializer::LoadFromFile(
-                w->scene, path, [deserProgress](float f) { deserProgress->store(f * 0.9f); }, &header,
-                &w->instances);
+                                          w->scene, path,
+                                          [deserProgress](float f) { deserProgress->store(f * 0.9f); },
+                                          &header, &w->instances)
+                                          .has_value();
             if (!ok)
                 return false;
             w->propagationTick = BuildSceneBodies(w->scene, w->physics);
