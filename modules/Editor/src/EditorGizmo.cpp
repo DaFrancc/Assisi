@@ -125,6 +125,7 @@ void EditorApp::DrawInstanceGizmo()
     if (nowUsing)
     {
         BeginInstanceGesture(_selectedInstance);
+        _instanceGesture.Hold();
         _captureEditingActive = true;
     }
 
@@ -145,32 +146,32 @@ void EditorApp::DrawInstanceGizmo()
         }
     }
 
-    if (!nowUsing)
-        EndInstanceGesture("Move Instance");
+    // Deliberately no close here. This function runs before the Inspector every
+    // frame and cannot see that one of its Placement fields is mid-scrub, so a
+    // close conditioned on "the gizmo is not held" would fire straight through
+    // somebody else's drag — which is exactly what it used to do, once per frame
+    // (round-7 B19). SweepInstanceGesture, after every panel, is the only closer.
 }
 
 void EditorApp::BeginInstanceGesture(Assisi::ECS::InstanceId instanceId)
 {
-    if (_scene == nullptr || _world == nullptr || !instanceId.IsValid() || _instanceDragId == instanceId)
+    if (_scene == nullptr || _world == nullptr)
         return;
 
-    const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(instanceId);
-    if (row == nullptr)
-        return;
+    _instanceGesture.Begin(*_scene, _world->instances, ActiveHistory(), instanceId);
+}
 
-    _instanceDragId  = instanceId;
-    _instanceDragRow = *row;
-    _instanceDragPoses.clear();
-
-    if (Assisi::Editor::EditHistory *history = ActiveHistory())
+void EditorApp::SweepInstanceGesture()
+{
+    // No scene or no world: whatever the gesture snapshotted named entities in a
+    // scene that is no longer here, so there is nothing coherent to commit against.
+    if (_scene == nullptr || _world == nullptr)
     {
-        const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
-        for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, instanceId))
-        {
-            if (std::optional<nlohmann::json> pose = history->CaptureComponent(member, transformId))
-                _instanceDragPoses.emplace_back(member, std::move(*pose));
-        }
+        _instanceGesture.Abandon();
+        return;
     }
+
+    _instanceGesture.EndFrame(*_scene, _world->instances, ActiveHistory(), "Move Instance");
 }
 
 void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const Rt::Transform &requested)
@@ -226,42 +227,6 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
     Assisi::Runtime::BlueprintInstance updated = *row;
     updated.transform                          = placement;
     _world->instances.RestoreAt(instanceId, std::move(updated));
-}
-
-void EditorApp::EndInstanceGesture(const char *label)
-{
-    if (!_instanceDragId.IsValid() || _scene == nullptr || _world == nullptr)
-        return;
-
-    if (Assisi::Editor::EditHistory *history = ActiveHistory())
-    {
-        const Assisi::Runtime::BlueprintInstance *now = _world->instances.Find(_instanceDragId);
-        if (now != nullptr)
-        {
-            Assisi::Editor::Transaction txn;
-            txn.label = label;
-            txn.cmds.push_back(Assisi::Editor::InstanceDelta{
-                .instanceId = _instanceDragId, .before = _instanceDragRow, .after = *now});
-
-            const auto transformId = Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
-            for (const auto &[member, before] : _instanceDragPoses)
-            {
-                if (!_scene->IsAlive(member))
-                    continue;
-                std::optional<nlohmann::json> after = history->CaptureComponent(member, transformId);
-                if (after != std::optional<nlohmann::json>{before})
-                    txn.cmds.push_back(Assisi::Editor::ComponentDelta{member, transformId, before, after});
-            }
-
-            // Only if something actually moved — a click without a drag is not an
-            // edit, the same rule the gesture machinery applies elsewhere.
-            if (txn.cmds.size() > 1)
-                history->Push(std::move(txn));
-        }
-    }
-
-    _instanceDragId = {};
-    _instanceDragPoses.clear();
 }
 
 void EditorApp::DrawTransformGizmo()
