@@ -3,6 +3,7 @@
 #include <Assisi/Core/JobSystem.hpp>
 
 #include <Assisi/Chiara/Chiara.hpp>
+#include <Assisi/Core/Diagnostics.hpp>
 
 #include <algorithm>
 #include <iterator>
@@ -54,6 +55,10 @@ void JobSystem::WorkerLoop(uint32_t workerIndex)
     // JobSystem with no Application and therefore no InitGuard, and every Chiara
     // entry point is a no-op before Initialize.
     Chiara::RegisterCurrentThread(("worker-" + std::to_string(workerIndex)).c_str());
+
+    // sigaltstack is per-thread. Without this a worker that overflows its stack
+    // faults again inside the crash handler and leaves no report at all.
+    InstallSignalStackForThisThread();
 
     while (true)
     {
