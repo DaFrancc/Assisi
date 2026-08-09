@@ -22,6 +22,7 @@ target_sources(Assisi-App
     "src/ChildProcess.cpp"
     "src/ChiaraPanel.cpp"
     "src/ContentSet.cpp"
+    "src/CrashReport.cpp"
     "src/LevelRuntime.cpp"
     "src/OptionsConfig.cpp"
     "src/PhysicsSystems.cpp"

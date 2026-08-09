@@ -4,14 +4,14 @@
 // --- Platform timer (must come before other Windows headers) ----------------
 #ifdef _WIN32
 #    include <windows.h>
-#    include <dbghelp.h>
 #    include <timeapi.h>
-#    pragma comment(lib, "dbghelp.lib")
 #    pragma comment(lib, "winmm.lib")
 #endif
 
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/CrashReport.hpp>
+#include <Assisi/Core/Diagnostics.hpp>
 
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Chiara/Serializer.hpp>
@@ -33,64 +33,6 @@
 #include <cstdlib>
 #include <optional>
 #include <thread>
-
-#ifdef _WIN32
-
-// Absolute crash-dump path, resolved under the writable user root at startup so
-// the write target is fixed before a crash (doing filesystem resolution inside
-// the handler, on a possibly-corrupt heap, is best avoided). Empty until the
-// Application constructor sets it; the handler falls back to a bare name.
-static std::string gCrashDumpPath;
-
-static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
-{
-    /* Write the minidump FIRST: Log::Fatal heap-allocates (std::format) and
-       takes the logger mutex, either of which can deadlock or re-fault on a
-       corrupted heap — losing the dump exactly when it matters. The dump path
-       below is Win32-only, no CRT heap. */
-    const char *dumpPath    = gCrashDumpPath.empty() ? "crash.dmp" : gCrashDumpPath.c_str();
-    bool        dumpWritten = false;
-    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile != INVALID_HANDLE_VALUE)
-    {
-        MINIDUMP_EXCEPTION_INFORMATION mei{};
-        mei.ThreadId          = GetCurrentThreadId();
-        mei.ExceptionPointers = info;
-        mei.ClientPointers    = FALSE;
-        dumpWritten = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &mei,
-                                        nullptr, nullptr) != FALSE;
-        CloseHandle(hFile);
-    }
-
-    const DWORD code = info->ExceptionRecord->ExceptionCode;
-
-    const char *name = "UNKNOWN";
-    switch (code)
-    {
-    case EXCEPTION_ACCESS_VIOLATION:    name = "ACCESS_VIOLATION";    break;
-    case EXCEPTION_ILLEGAL_INSTRUCTION: name = "ILLEGAL_INSTRUCTION"; break;
-    case EXCEPTION_STACK_OVERFLOW:      name = "STACK_OVERFLOW";      break;
-    case EXCEPTION_INT_DIVIDE_BY_ZERO:  name = "INT_DIVIDE_BY_ZERO";  break;
-    case EXCEPTION_FLT_DIVIDE_BY_ZERO:  name = "FLT_DIVIDE_BY_ZERO";  break;
-    case EXCEPTION_IN_PAGE_ERROR:       name = "IN_PAGE_ERROR";       break;
-    default:                            break;
-    }
-
-    Assisi::Core::Log::Fatal("Crash: unhandled exception 0x{:08X} ({})", static_cast<uint32_t>(code), name);
-    if (dumpWritten)
-    {
-        Assisi::Core::Log::Fatal("Crash: minidump written to {}", dumpPath);
-    }
-
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-
-static void AbortHandler(int)
-{
-    Assisi::Core::Log::Fatal("Crash: abort() called (assertion failure or std::terminate).");
-}
-
-#endif // _WIN32
 
 namespace Assisi::App
 {
@@ -146,18 +88,22 @@ Application::Application()
     {
         Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
     }
-    const std::filesystem::path logPath = Core::AssetSystem::ResolveUser("assisi.log").value_or("assisi.log");
+    // One file per launch, named for when the process started. The previous
+    // scheme truncated a single assisi.log every run, which meant a player
+    // relaunching after a crash destroyed the log that explained it before ever
+    // sending it. Pruning happens in Initialize(), once game.json has said how
+    // many to keep — the file itself has to exist before that so the lines
+    // emitted between here and there are captured.
+    const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::filesystem::path logPath = Core::AssetSystem::ResolveUser(logName).value_or(logName);
     Core::GetLogger().AddSink(std::make_shared<Core::FileSink>(logPath));
 
-#ifdef _WIN32
-    const std::expected<std::filesystem::path, Core::AssetError> dumpPath = Core::AssetSystem::ResolveUser("crash.dmp");
-    if (dumpPath)
-    {
-        gCrashDumpPath = dumpPath->string();
-    }
-    SetUnhandledExceptionFilter(CrashHandler);
-    std::signal(SIGABRT, AbortHandler);
-#endif
+    // Named with the same launch stamp as the log, so a report and the log that
+    // led up to it pair by name. Resolved now, before anything can crash: doing
+    // filesystem resolution inside a handler, on a possibly-corrupt heap, is
+    // exactly what the handler cannot afford.
+    const std::string crashName = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
+    InstallCrashHandlers(Core::AssetSystem::ResolveUser(crashName).value_or(crashName));
 }
 
 bool Application::Initialize()
@@ -204,6 +150,19 @@ bool Application::InitializeCore()
 
     _config  = AppConfig::LoadFromJson();
     _options = OptionsConfig::LoadFromJson();
+
+    // Retention runs here rather than in the constructor because it is game.json
+    // that says how many to keep. The counts are totals including this run: the
+    // log open right now sorts newest and so is always among the survivors.
+    //
+    // Crash reports are pruned at startup, not at crash time — the crash handler
+    // has no business enumerating a directory. This run's report does not exist
+    // yet, so a run that does crash ends with keepDumps + 1 on disk until the
+    // next launch trims it. Overshooting by one beats doing directory work with
+    // a corrupt heap.
+    const std::filesystem::path &userRoot = Core::AssetSystem::GetUserRoot();
+    Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs);
+    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps);
 
     // Either source turns it on; a --server flag must not be undone by a config
     // file that says nothing about headless mode.
