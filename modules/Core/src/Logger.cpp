@@ -7,20 +7,11 @@
 namespace Assisi::Core
 {
 
-// Fatal never blocks. It is normally the last thing the process does, and it
-// runs from the crash handler — where the lock may be held by the very thread
-// that just died, and where blocking hangs the process and loses the
-// diagnostic entirely. So Fatal takes the lock if it is free and writes anyway
-// if it is not: at worst one interleaved line, in a log nobody reads past this
-// point. That is the whole ambition — attempt to preserve the message, and give
-// up gracefully rather than defend the integrity of a process already lost.
-//
-// The unlocked path also reads _sinks without synchronization. Sinks are added
-// once during Application's constructor and never afterward, so there is no
-// writer to race; a Fatal concurrent with AddSink would be the exception, and
-// is accepted on the same grounds.
-//
-// Every other level waits its turn exactly as before.
+// Fatal must not block: it runs from the crash handler, where the lock may be
+// held by the thread that just died. Takes the lock if free, writes anyway if
+// not — an interleaved line beats a hung process and no diagnostic. That path
+// also reads _sinks unsynchronized, which holds because sinks are added once in
+// Application's constructor and never after. Every other level waits its turn.
 static std::unique_lock<std::mutex> AcquireForWrite(std::mutex &mutex, LogLevel level)
 {
     if (level == LogLevel::Fatal)
@@ -62,9 +53,8 @@ void Logger::SetMinLevel(LogLevel level)
     _minLevel.store(level, std::memory_order_relaxed);
 }
 
-// The IsEnabled() checks below are a backstop, not the primary filter — the
-// Log:: free functions already checked before formatting, which is the point at
-// which the check saves anything. These only matter for a direct Log() call.
+// Backstop only. The Log:: free functions filter before formatting, which is
+// where it saves anything; this catches a direct Log() call.
 void Logger::Log(LogLevel level, std::string_view message)
 {
     if (!IsEnabled(level))
