@@ -20,7 +20,14 @@ target_sources(Assisi-NetSync
     "src/NetClock.cpp"
     "src/NetProtocol.cpp"
     "src/NetSession.cpp"
-    "src/Replication.cpp"
+    "src/ReplicationClient.cpp"
+    "src/ReplicationClientMotion.cpp"
+    "src/ReplicationConfig.cpp"
+    "src/ReplicationInternal.hpp"
+    "src/ReplicationServer.cpp"
+    "src/ReplicationServerMessages.cpp"
+    "src/ReplicationServerSnapshot.cpp"
+    "src/ReplicationServerState.cpp"
 )
 
 target_include_directories(Assisi-NetSync
