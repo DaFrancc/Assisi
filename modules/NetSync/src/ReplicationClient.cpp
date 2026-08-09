@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/InstanceRecord.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Logger.hpp>

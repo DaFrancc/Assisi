@@ -20,7 +20,10 @@
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/DistanceRelevancy.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 
 #include <cstdint>
 #include <memory>
