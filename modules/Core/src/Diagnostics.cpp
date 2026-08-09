@@ -51,8 +51,7 @@ void PruneOldFiles(const std::filesystem::path &dir, std::string_view prefix, st
     fs::directory_iterator it(dir, ec);
     if (ec)
     {
-        // A missing directory is the normal first-launch case, not a problem.
-        return;
+        return; // Missing directory is the normal first-launch case.
     }
 
     std::vector<fs::path> matches;
@@ -80,7 +79,7 @@ void PruneOldFiles(const std::filesystem::path &dir, std::string_view prefix, st
         return;
     }
 
-    // Newest first, by name — see the header on why not mtime.
+    // Newest first, by name — see the header for why not mtime.
     std::sort(matches.begin(), matches.end(),
               [](const fs::path &a, const fs::path &b) { return a.filename() > b.filename(); });
 

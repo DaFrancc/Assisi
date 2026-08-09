@@ -57,19 +57,14 @@ struct Sink
 
 /// @brief The global logging service.
 ///
-/// @note Thread-safe. A single mutex serializes the entire Log() fan-out, so
-/// concurrent Log() calls from any thread (e.g. Jolt's JobSystemThreadPool
-/// workers firing a physics callback) neither race on the sink list nor
-/// interleave partial lines on a shared sink (`std::cout`, the log file).
-/// AddSink() takes the same lock, so reconfiguring at runtime is also safe;
-/// SetMinLevel() needs no lock because the level is atomic. The lock is held
-/// across formatting and writing — fine at the engine's current log volume;
-/// revisit only if logging shows up in a profile.
+/// @note Thread-safe. One mutex serializes the Log() fan-out, so concurrent
+/// calls neither race on the sink list nor interleave partial lines. AddSink()
+/// takes it too; SetMinLevel() does not (the level is atomic). The lock is held
+/// across formatting as well as writing — fine at current log volume.
 ///
-/// @note Fatal is the one exception: it try-locks and writes regardless, so a
-/// crash handler cannot hang on a lock held by the thread that just died. A
-/// Fatal racing another logging thread may interleave its line. See the
-/// comment on AcquireForWrite in Logger.cpp.
+/// @note Fatal is the exception: it try-locks and writes regardless, so a crash
+/// handler cannot hang on a lock held by the thread that just died, at the cost
+/// of a possibly interleaved line. See AcquireForWrite in Logger.cpp.
 struct Logger
 {
     /// @brief Adds an output sink. Multiple sinks can be active simultaneously.
@@ -78,13 +73,11 @@ struct Logger
     /// @brief Sets the minimum level — messages below this level are discarded.
     void SetMinLevel(LogLevel level);
 
-    /// @brief Returns whether a message at this level would be emitted.
+    /// @brief Whether a message at this level would be emitted.
     ///
-    /// The Log:: free functions call this *before* formatting, so a suppressed
-    /// message costs one relaxed atomic load rather than a full std::format and
-    /// its string allocation. Relaxed is the right ordering: a level change
-    /// racing a log call may be observed by either, and both outcomes are
-    /// correct — there is no other state the level publishes.
+    /// Also the guard for a call site whose arguments are expensive to build.
+    /// Relaxed: the level publishes no other state, so either side of a race
+    /// with SetMinLevel is a correct answer.
     [[nodiscard]] bool IsEnabled(LogLevel level) const
     {
         return level >= _minLevel.load(std::memory_order_relaxed);
@@ -131,12 +124,8 @@ struct LocFmtStr
 // Free functions
 // -------------------------------------------------------------------------
 
-/// @note Every function here checks the level *before* formatting. Formatting a
-/// message that the level filter then drops is pure waste — it runs the
-/// formatter for every argument and allocates a string only to discard it — and
-/// it is waste the caller cannot avoid, since the arguments are already
-/// evaluated by the time we are called. The early-out is what makes raising the
-/// minimum level actually cheapen the build rather than merely quieten it.
+/// @note Each checks the level before formatting: a suppressed message must not
+/// pay for a std::format and allocation it will never use.
 namespace Log
 {
 

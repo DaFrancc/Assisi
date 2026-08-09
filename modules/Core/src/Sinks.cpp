@@ -50,26 +50,20 @@ static std::string_view LevelColor(LogLevel level)
 bool HasConsoleOutput()
 {
 #ifdef _WIN32
-    // A GUI-subsystem process launched without a console gets NULL here. That
-    // is the case worth catching: a shipped game would otherwise format every
-    // line and hand it to a handle that cannot take it.
+    // NULL for a GUI-subsystem process launched without a console.
     const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
     return handle != nullptr && handle != INVALID_HANDLE_VALUE;
 #else
-    // fd 1 exists unless someone deliberately closed it. It may well be a
-    // redirect rather than a terminal, which is still somewhere worth writing.
+    // fd 1 exists unless deliberately closed; a redirect still counts.
     return fcntl(STDOUT_FILENO, F_GETFD) != -1;
 #endif
 }
 
-// Color belongs to terminals. Piped or redirected output gets the escape
-// sequences embedded in it as literal bytes, which is how a log file ends up
-// full of \033[97m.
 static bool StdoutIsTerminal()
 {
 #ifdef _WIN32
-    // GetConsoleMode succeeds only for a real console handle — it fails when
-    // stdout is a file or a pipe, which is exactly the distinction we want.
+    // GetConsoleMode succeeds only for a real console handle, failing for a
+    // file or pipe — exactly the distinction wanted.
     DWORD mode = 0;
     return GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode) != FALSE;
 #else
@@ -96,15 +90,10 @@ ConsoleSink::ConsoleSink() : _color(StdoutIsTerminal())
 
 void ConsoleSink::Write(LogLevel level, std::string_view message)
 {
-    // Everything goes to stdout so output order is preserved.
-    // Colors already differentiate severity clearly.
-    //
-    // Streamed in pieces rather than std::format'd into one string: the
-    // formatted version allocated a whole decorated copy of every line just to
-    // write it once. These inserters write the parts straight through. The
-    // caller normally holds the logger lock, so the pieces cannot interleave —
-    // the exception is Fatal, which try-locks and may write unlocked, and which
-    // accepts an interleaved line by design.
+    // Streamed in pieces rather than formatted into one string, which allocated
+    // a decorated copy of every line to write it once. The caller holds the
+    // logger lock, so the pieces cannot interleave — except under Fatal, which
+    // try-locks and accepts that by design.
     if (_color)
     {
         std::cout << LevelColor(level) << message << Reset << '\n';
@@ -121,10 +110,8 @@ void ConsoleSink::Write(LogLevel level, std::string_view message)
 
 namespace
 {
-// Local wall-clock time of day, millisecond precision (e.g. "14:23:45.123"),
-// via the cached zone (UTC if no zone data was available). No date: the file is
-// truncated per run, so a single run is unlikely to span midnight, and the
-// run's start is on the file's own mtime anyway.
+// Local time of day, millisecond precision ("14:23:45.123"); UTC if no zone
+// data. No date — the filename already carries the launch date.
 std::string Timestamp()
 {
     using namespace std::chrono;
@@ -137,8 +124,8 @@ std::string Timestamp()
 }
 } // namespace
 
-// Truncate, not append: an append-mode log accumulates every run forever (that
-// was the multi-MB assisi.log). One run per file keeps it bounded.
+// Truncate, not append: appending accumulates every run forever (the multi-MB
+// assisi.log). One file per launch, pruned by Application, keeps it bounded.
 FileSink::FileSink(const std::filesystem::path &path) : _file(path, std::ios::trunc)
 {
 }
@@ -150,8 +137,7 @@ void FileSink::Write(LogLevel /*level*/, std::string_view message)
         return;
     }
     _file << Timestamp() << ' ' << message << '\n';
-    // Flush every line: only a handful per run, and the point of a file log is
-    // to survive the crash that a buffered tail would otherwise be lost to.
+    // Flush every line: a buffered tail is exactly what a hard crash loses.
     _file.flush();
 }
 

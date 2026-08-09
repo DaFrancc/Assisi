@@ -27,9 +27,8 @@ namespace Assisi::App
 namespace
 {
 
-// The report path, as bytes the handler can read with no allocation and no
-// std::string involved. A handler that has to build a path is a handler that
-// fails on the corrupted heap that is half of why it exists.
+// The report path as plain bytes: the handler must not allocate to name its
+// own output file.
 std::array<char, 1024> gReportPath{};
 bool                   gReportPathSet = false;
 
@@ -48,20 +47,17 @@ std::string_view CrashReportExtension() noexcept
 namespace
 {
 
-// MiniDumpNormal alone is thread stacks and nothing else — you get a call stack
-// and no ability to see what any object held. These four additions cost a few MB
-// instead of a few hundred KB and are the difference between "it crashed in
-// this function" and knowing why:
+// MiniDumpNormal alone is thread stacks: a call stack and no way to see what
+// anything held. These four cost a few MB instead of a few hundred KB.
 //   DataSegs                    — globals and statics
-//   IndirectlyReferencedMemory  — the memory the stacks actually point at
+//   IndirectlyReferencedMemory  — the memory the stacks point at
 //   ThreadInfo                  — thread times and contexts
-//   UnloadedModules             — a DLL unloaded out from under a callback
+//   UnloadedModules             — a DLL unloaded under a callback
 constexpr MINIDUMP_TYPE kDumpType = static_cast<MINIDUMP_TYPE>(
     MiniDumpNormal | MiniDumpWithDataSegs | MiniDumpWithIndirectlyReferencedMemory | MiniDumpWithThreadInfo |
     MiniDumpWithUnloadedModules);
 
-// Shared by the exception filter and the abort handler. `info` is null on the
-// abort path, which MiniDumpWriteDump accepts: the dump then describes every
+// `info` is null on the abort path; MiniDumpWriteDump then describes every
 // thread without singling one out as faulting.
 bool WriteDump(EXCEPTION_POINTERS *info) noexcept
 {
@@ -95,9 +91,9 @@ bool WriteDump(EXCEPTION_POINTERS *info) noexcept
 
 LONG WINAPI ExceptionFilter(EXCEPTION_POINTERS *info)
 {
-    // Dump first: Log::Fatal formats and allocates, either of which can re-fault
-    // on the corrupted heap that may well be why we are here. The dump path
-    // below is Win32 only and touches no CRT heap.
+    // Dump first: Log::Fatal formats and allocates, which can re-fault on the
+    // corrupted heap that may be why we are here. WriteDump is Win32 only and
+    // touches no CRT heap.
     const bool dumpWritten = WriteDump(info);
 
     const DWORD code = info->ExceptionRecord->ExceptionCode;
@@ -125,9 +121,8 @@ LONG WINAPI ExceptionFilter(EXCEPTION_POINTERS *info)
 
 void AbortHandler(int)
 {
-    // abort() used to leave a single line of text and nothing else — which is
-    // where every failed ASSISI_ASSERT and every std::terminate lands. It gets
-    // a dump on the same terms as any other crash now.
+    // Every failed ASSISI_ASSERT and std::terminate lands here, so it gets a
+    // dump on the same terms as any other crash.
     const bool dumpWritten = WriteDump(nullptr);
 
     Core::Log::Fatal("Crash: abort() called (assertion failure or std::terminate).");
@@ -169,29 +164,19 @@ std::string_view CrashReportExtension() noexcept
 namespace
 {
 
-// A dedicated stack for the handler. A stack-overflow SIGSEGV arrives with no
-// usable stack left, so without this the handler faults on entry and the crash
-// that most needs explaining is the one that explains nothing.
+// A stack-overflow SIGSEGV arrives with no usable stack, so the handler needs
+// its own or it faults on entry.
 alignas(16) std::array<char, 256 * 1024> gSignalStack{};
 
-// Pre-resolved so the handler never calls a formatter. Everything below writes
-// only string literals and hand-formatted integers.
 constexpr size_t kFrameCapacity = 64;
 void            *gFrames[kFrameCapacity]{};
 
-// Only the first thread to take a fatal signal writes a report. Without this,
-// two threads faulting at once both O_TRUNC the same path and the second can
-// wipe a complete report the first had already written — turning two crashes
-// into zero diagnostics. First one wins; the loser falls straight through to
-// the re-raise.
+// First thread to take a fatal signal wins. Otherwise two concurrent faults
+// both O_TRUNC the path and the second wipes the first's complete report.
 std::atomic_flag gReportClaimed = ATOMIC_FLAG_INIT;
 
-// write(2) is async-signal-safe; std::format, iostreams and malloc are not, so
-// nothing here uses them.
-//
-// EINTR is retried rather than treated as failure. A short write or an
-// interrupted one is not an error, and returning on it silently truncates the
-// report at whatever byte the interruption landed on.
+// write(2) is async-signal-safe; std::format, iostreams and malloc are not.
+// EINTR is retried — returning on it silently truncates the report.
 void WriteAll(int fileDesc, const char *data, size_t size) noexcept
 {
     while (size > 0)
@@ -214,19 +199,11 @@ void WriteAll(int fileDesc, const char *data, size_t size) noexcept
     }
 }
 
-// The report is composed here first and written in one syscall, rather than
-// dribbled out across a dozen writes as it is built. Two reasons, and the
-// second is why this shape was chosen over the obvious one:
-//
-//   - Every write() is a chance for the process to die between calls, and a
-//     file opened but not yet written is a zero-byte report — which looks like
-//     the feature is broken rather than like the process died. One write means
-//     the file is either absent or complete.
-//   - It lets the unwind happen *before* the file is created, so the riskiest
-//     work in the handler is no longer sitting between open() and first write.
-//
-// Bounded and truncating: an overflowing report is clamped, never a buffer
-// overrun in the one piece of code that runs when memory is already suspect.
+// Composed here, then written in one syscall. Every write() between open() and
+// the last byte is a chance to die holding a zero-byte file, which reads as a
+// broken feature rather than a dead process. It also lets the unwind happen
+// before the file exists. Bounded and truncating — this code runs when memory
+// is already suspect.
 struct Report
 {
     std::array<char, 8192> data{};
@@ -283,8 +260,8 @@ struct Report
     }
 };
 
-// Static, not on the (possibly exhausted) stack. Trivially initialized, so it
-// costs no dynamic setup and is ready before main().
+// Static, not on the possibly-exhausted stack. Trivially initialized, so it is
+// ready before main().
 Report gReport;
 
 const char *SignalName(int signal) noexcept
@@ -304,11 +281,9 @@ void SignalHandler(int signal, siginfo_t *info, void *) noexcept
 {
     if (gReportPathSet && !gReportClaimed.test_and_set())
     {
-        // Unwind first, while no file exists yet. backtrace() can allocate on
-        // its very first call (it lazily loads libgcc's unwinder), which is why
-        // InstallCrashHandlers warms it up while the heap is still healthy —
-        // and why anything that might not come back belongs before the open()
-        // rather than between the open and the first write.
+        // Unwind before the file exists, so the riskiest call is not sitting
+        // between open() and first write. backtrace() allocates on its first
+        // call, which is why InstallCrashHandlers warms it up.
         const int frames = backtrace(gFrames, kFrameCapacity);
 
         gReport.used = 0;
@@ -332,14 +307,12 @@ void SignalHandler(int signal, siginfo_t *info, void *) noexcept
 
         if (fd >= 0)
         {
-            // One write, so the file goes from absent to substantially complete
-            // with nothing observable in between.
             WriteAll(fd, gReport.data.data(), gReport.used);
 
-            // Has to come after, because backtrace_symbols_fd only writes to a
-            // descriptor — resolving module+offset into a buffer would mean
-            // backtrace_symbols, which mallocs. By now the file already has its
-            // header, so a death here costs the frame list, not the report.
+            // After, because backtrace_symbols_fd only writes to a descriptor —
+            // resolving module+offset into a buffer would need
+            // backtrace_symbols, which mallocs. The header is already on disk,
+            // so a death here costs the frame list, not the report.
             backtrace_symbols_fd(gFrames, frames, fd);
 
             gReport.used = 0;
@@ -349,9 +322,8 @@ void SignalHandler(int signal, siginfo_t *info, void *) noexcept
         }
     }
 
-    // Restore the default and re-raise, so the process dies of what actually
-    // killed it: the exit status stays truthful, and anything the system would
-    // normally do with a core still happens.
+    // Restore the default and re-raise, so the exit status stays truthful and
+    // whatever the system does with a core still happens.
     std::signal(signal, SIG_DFL);
     raise(signal);
 }
@@ -371,9 +343,9 @@ void InstallCrashHandlers(const std::filesystem::path &path) noexcept
         Core::Log::Warn("Crash report path is too long ({} bytes) — crash reports disabled.", text.size());
     }
 
-    // Warm up the unwinder now, while allocating is still safe. Its first call
-    // dlopen()s libgcc and allocates; doing that inside the handler is exactly
-    // the deadlock we are trying to avoid.
+    // Warm the unwinder while allocating is still safe: its first call dlopens
+    // libgcc and allocates, which inside the handler is the deadlock we are
+    // avoiding.
     void *warmup[4];
     (void)backtrace(warmup, 4);
 
