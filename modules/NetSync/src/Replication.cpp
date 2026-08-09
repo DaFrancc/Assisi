@@ -516,6 +516,11 @@ NetId ReplicationServer::EnsureInstanceBlock(ECS::Entity entity)
         block.base        = NetId{_nextNetId};
         block.memberCount = info.memberCount;
         block.info        = info;
+        // All of them, until a reconcile pass finds otherwise. Every member that
+        // exists is given its id in the same pass this block is allocated in, so
+        // the first pass over the live set is what actually seeds this — see
+        // ReconcileNetIds.
+        block.derivable.assign(info.memberCount, 1u);
 
         // The whole range at once. Reserving lazily per member would let an
         // ordinary entity land in the middle of the block and break the one
@@ -810,12 +815,7 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
         if (const ECS::BlueprintMember *tag = _scene.Get<ECS::BlueprintMember>(EntityOf(netId));
             tag != nullptr && tag->instanceId.IsValid())
         {
-            if (const auto known = std::lower_bound(connection.knownInstances.begin(),
-                                                    connection.knownInstances.end(), tag->instanceId);
-                known != connection.knownInstances.end() && *known == tag->instanceId)
-            {
-                connection.knownInstances.erase(known);
-            }
+            ForgetAckedInstance(connection, tag->instanceId);
         }
     }
 
@@ -899,6 +899,29 @@ void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
         const auto recordHigh = std::lower_bound(record.components.begin(), record.components.end(),
                                                  PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
         record.components.erase(recordLow, recordHigh);
+    }
+}
+
+void ReplicationServer::ForgetAckedInstance(Connection &connection, ECS::InstanceId instanceId)
+{
+    if (const auto known = std::lower_bound(connection.knownInstances.begin(),
+                                            connection.knownInstances.end(), instanceId);
+        known != connection.knownInstances.end() && *known == instanceId)
+    {
+        connection.knownInstances.erase(known);
+    }
+
+    // ...and the ring, for the same reason ForgetAcked scrubs it: `instances` is
+    // installed wholesale by HandleAck, so a straggler ack for a snapshot sent
+    // before the instance left would put it straight back and the resend this
+    // call exists to cause would never happen.
+    for (SentSnapshot &record : connection.inFlight)
+    {
+        if (const auto slot = std::lower_bound(record.instances.begin(), record.instances.end(), instanceId);
+            slot != record.instances.end() && *slot == instanceId)
+        {
+            record.instances.erase(slot);
+        }
     }
 }
 
@@ -1622,6 +1645,23 @@ void ReplicationServer::ReconcileNetIds()
         }
     }
 
+    // Which members a client's own expansion could still stand in for. Monotonic
+    // and never re-set: a member that is missing for one tick may have been
+    // missing when a record went out, and the server has no per-connection
+    // memory of *which* record said what. Over-sending that member's components
+    // from then on is the cheap side of the trade; the expensive side is a
+    // revived member whose authored-equal components are elided against a client
+    // copy that does not exist.
+    for (auto &[instanceId, block] : _instanceBlocks)
+    {
+        (void)instanceId;
+        for (std::uint32_t member = 0; member < block.memberCount; ++member)
+        {
+            if (block.derivable[member] != 0u && !_entityByNetId.contains(NetId{block.base.value + member}))
+                block.derivable[member] = 0u;
+        }
+    }
+
     // Here rather than anywhere incremental: this is the one point per tick that
     // has already accepted the scene as it is, including whatever came back from
     // the dead since the last one.
@@ -1906,6 +1946,23 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     // for every component this entity has.
     const ECS::BlueprintMember *memberTag = _scene.Get<ECS::BlueprintMember>(entity);
 
+    // ...and so is the one question that decides whether the blueprint baseline
+    // may be used at all: did the client's own expansion of this instance
+    // produce this member? A member that was absent for even a tick was either
+    // never expanded there (the record's presence bits said so) or was destroyed
+    // there by a despawn, and in both cases the file's copy is not what the
+    // client holds. Resolved per entity rather than per component, since it is
+    // the same answer for all of them.
+    bool derivedFromBlueprint = false;
+    if (memberTag != nullptr && _instanceInfo != nullptr)
+    {
+        if (const auto block = _instanceBlocks.find(memberTag->instanceId); block != _instanceBlocks.end())
+        {
+            derivedFromBlueprint = memberTag->memberIndex < block->second.memberCount &&
+                                   block->second.derivable[memberTag->memberIndex] != 0u;
+        }
+    }
+
     for (std::size_t slot = 0; slot < _replicatedComponents.size(); ++slot)
     {
         if (excluded.Test(_replicatedOrdinals[slot]))
@@ -1948,8 +2005,7 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         // it, because the client really does have it. Treating it as missing
         // would make the removal diff announce a removal for a component nobody
         // removed.
-        if (sinceChangeTick == 0 && !clientHasIt && memberTag != nullptr && _instanceInfo != nullptr &&
-            _instanceBlocks.contains(memberTag->instanceId) &&
+        if (sinceChangeTick == 0 && !clientHasIt && derivedFromBlueprint &&
             _instanceInfo->MatchesAuthored(memberTag->instanceId, memberTag->memberIndex, id, component))
         {
             continue;
@@ -2098,20 +2154,82 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     std::set_difference(neededInstances.begin(), neededInstances.end(), connection.knownInstances.begin(),
                         connection.knownInstances.end(), std::back_inserter(freshInstances));
 
+    // How many of them this snapshot can afford (B11). The section used to be
+    // written whole, before either budget check, so a join carrying more fresh
+    // instances than `maxSnapshotBytes` allows produced one oversized packet per
+    // snapshot until it was acked, with the entity loop starved behind it.
+    //
+    // Sized from an upper bound rather than by writing and measuring: the count
+    // prefix has to be written before the records, so how many go has to be
+    // decided before any of them does. Three varints at their widest, the ten
+    // raw placement floats, and the presence bits.
+    std::size_t writableRecords = 0;
+    {
+        constexpr std::size_t kVarIntMaxBytes = 5;
+        std::size_t projected = writer.BytesWritten() + kVarIntMaxBytes; // the count prefix
+        for (const ECS::InstanceId instanceId : freshInstances)
+        {
+            const InstanceBlock  &block = _instanceBlocks.find(instanceId)->second;
+            const std::size_t     cost  = 3 * kVarIntMaxBytes + 10 * sizeof(float) + 1 +
+                                     (static_cast<std::size_t>(block.memberCount) + 7) / 8;
+            // Always at least one. A record wider than the whole budget must
+            // still make progress, or the instance is never named and its
+            // members never arrive — a stall traded for one oversized packet is
+            // not a trade.
+            if (writableRecords != 0 && projected + cost > _config.maxSnapshotBytes)
+                break;
+            projected += cost;
+            ++writableRecords;
+        }
+    }
+
+    // The rest wait for the next snapshot, and so must their members: the
+    // section's whole reason for being first is that a member block arriving
+    // before its record has nothing to attribute itself to. Sorted, because the
+    // entity loop below binary-searches it.
+    const std::vector<ECS::InstanceId> deferredInstances(
+        freshInstances.begin() + static_cast<std::ptrdiff_t>(writableRecords), freshInstances.end());
+
     // One bit, not a varint zero, when there is nothing to say. A game with no
     // blueprint instances — or a steady state where every record is acked, which
     // is nearly every snapshot — must not pay a byte per snapshot per connection
     // for a feature it is not using. The empty-snapshot byte budget in
     // TestRelevancy is what holds this honest.
-    writer.WriteBool(!freshInstances.empty());
-    if (!freshInstances.empty())
-        writer.WriteVarUInt32(static_cast<std::uint32_t>(freshInstances.size()));
-    for (const ECS::InstanceId instanceId : freshInstances)
+    writer.WriteBool(writableRecords != 0);
+    if (writableRecords != 0)
+        writer.WriteVarUInt32(static_cast<std::uint32_t>(writableRecords));
+    std::vector<std::uint8_t> presence; ///< Reused across the records below.
+    for (std::size_t i = 0; i < writableRecords; ++i)
     {
-        const InstanceBlock &block = _instanceBlocks.find(instanceId)->second;
+        const InstanceBlock &block = _instanceBlocks.find(freshInstances[i])->second;
         writer.WriteVarUInt32(block.info.blueprintIndex);
         writer.WriteVarUInt32(block.base.value); // wire write
         writer.WriteVarUInt32(block.memberCount);
+
+        // Which members actually exist (B8). The block's width is the
+        // definition's count and never shrinks — the surviving members' ids must
+        // not shift — so "how many ids this instance owns" and "which of them
+        // have an entity behind them" are two different facts and the wire has
+        // to carry both. One bit for the ordinary all-present case; a bit per
+        // member only when the host really has a hole.
+        presence.clear();
+        presence.resize(block.memberCount, 0u);
+        std::uint32_t presentCount = 0;
+        for (std::uint32_t member = 0; member < block.memberCount; ++member)
+        {
+            if (!_entityByNetId.contains(NetId{block.base.value + member}))
+                continue;
+            presence[member] = 1u;
+            ++presentCount;
+        }
+
+        const bool allPresent = presentCount == block.memberCount;
+        writer.WriteBool(allPresent);
+        if (!allPresent)
+        {
+            for (const std::uint8_t member : presence)
+                writer.WriteBool(member != 0u);
+        }
 
         // Full precision, not quantized like BodyState: both sides compose every
         // member's transform from this one, so a rounding difference here is a
@@ -2177,8 +2295,11 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     SentSnapshot record;
     record.serverTick = _simTick;
     // Cumulative, like netIds: what the client will know once this lands, not
-    // the records that went out in it.
-    record.instances  = neededInstances;
+    // the records that went out in it. The ones the byte budget left behind are
+    // the exception — the client cannot know an instance whose record never
+    // went, and claiming otherwise would retire the resend that owes it.
+    std::set_difference(neededInstances.begin(), neededInstances.end(), deferredInstances.begin(),
+                        deferredInstances.end(), std::back_inserter(record.instances));
     record.netIds.reserve(effective.size());
     record.written.reserve(effective.size());
 
@@ -2217,6 +2338,21 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         const ECS::Entity entity = EntityOf(netId);
         if (entity == ECS::NullEntity)
             continue;
+
+        // A member whose record the budget held back waits with it. Left out of
+        // the record entirely, exactly like an entity the byte budget skipped
+        // before the client ever knew it, so the next snapshot still treats it
+        // as a spawn — and by then its record has gone ahead of it.
+        if (!deferredInstances.empty())
+        {
+            const ECS::BlueprintMember *tag = _scene.Get<ECS::BlueprintMember>(entity);
+            if (tag != nullptr && tag->instanceId.IsValid() &&
+                std::binary_search(deferredInstances.begin(), deferredInstances.end(), tag->instanceId))
+            {
+                ++backlog;
+                continue;
+            }
+        }
 
         const bool known = std::binary_search(connection.acked.begin(), connection.acked.end(), netId);
 
@@ -2719,6 +2855,26 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         entry.base           = NetId{reader.ReadVarUInt32()}; // wire read
         entry.memberCount    = reader.ReadVarUInt32();
 
+        // Bounded before it is used as a loop count, not merely as a sanity
+        // check: the presence bits below are `memberCount` reads, so an
+        // unbounded count read off the wire is a loop the packet dictates the
+        // length of. No blueprint has 65536 members; one claiming to has
+        // already failed the content-set hash.
+        if (!reader.Ok() || entry.memberCount == 0 || entry.memberCount > 65536u)
+        {
+            reader.Invalidate();
+            return false;
+        }
+
+        // Which members exist over there. All of them, unless the host says
+        // otherwise — see InstanceRecord::memberPresent.
+        if (!reader.ReadBool())
+        {
+            entry.memberPresent.resize(entry.memberCount);
+            for (std::uint32_t member = 0; member < entry.memberCount; ++member)
+                entry.memberPresent[member] = reader.ReadBool() ? 1u : 0u;
+        }
+
         entry.placement.position.x = reader.ReadFloat();
         entry.placement.position.y = reader.ReadFloat();
         entry.placement.position.z = reader.ReadFloat();
@@ -2730,7 +2886,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         entry.placement.scale.y    = reader.ReadFloat();
         entry.placement.scale.z    = reader.ReadFloat();
 
-        if (!reader.Ok() || entry.memberCount == 0 || !entry.base.IsValid())
+        if (!reader.Ok() || !entry.base.IsValid())
         {
             reader.Invalidate();
             return false;
@@ -2761,6 +2917,26 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
         for (std::uint32_t member = 0; member < entry.memberCount; ++member)
         {
+            if (!entry.HasMember(member))
+            {
+                // The blueprint built it here and the host has no such entity —
+                // pruned since it was placed, or removed from that instance by
+                // the level. Expanding the whole definition and then dropping
+                // the holes is deliberate: the alternative is an expander that
+                // takes a member filter, and every caller of it would have to
+                // keep the file's member order anyway, which is the one thing
+                // `base + i` cannot survive being wrong about.
+                if (members[member] != ECS::NullEntity && _scene.IsAlive(members[member]))
+                    _scene.Destroy(members[member]);
+                continue;
+            }
+            // A hole the *client's* expansion left where the host has a member:
+            // the two disagree about the file, which the content-set hash was
+            // supposed to make impossible. Leaving it unbound costs one member;
+            // binding NullEntity would cost every delta that names it.
+            if (members[member] == ECS::NullEntity)
+                continue;
+
             // The binding the whole scheme rests on: member i *is* base + i, so
             // the server never sends a member list.
             _entityByNetId.insert_or_assign(NetId{entry.base.value + member}, members[member]);
@@ -2778,6 +2954,11 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         reader.Invalidate();
         return false;
     }
+    // Collected before any of it is acted on, because which records to throw away
+    // is a question about *all* the runs together and not about each one in turn
+    // — see below.
+    std::vector<std::pair<NetId, std::uint32_t>> despawnRuns;
+    despawnRuns.reserve(despawnCount);
     for (std::uint32_t i = 0; i < despawnCount; ++i)
     {
         const NetId         start  = NetId{reader.ReadVarUInt32()}; // wire read
@@ -2790,7 +2971,11 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             reader.Invalidate();
             return false;
         }
+        despawnRuns.emplace_back(start, length);
+    }
 
+    for (const auto &[start, length] : despawnRuns)
+    {
         for (std::uint32_t offset = 0; offset < length; ++offset)
         {
             const NetId netId{start.value + offset};
@@ -2803,15 +2988,58 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             DestroyMirrorBody(netId);
             ++_structureRevision;
         }
+    }
 
-        // The record goes with the run when the run covers a whole instance. A
-        // client that kept it would compose members against an instance the
-        // server has stopped describing.
-        if (const auto record = _instanceRecords.find(start);
-            record != _instanceRecords.end() && record->second.memberCount == length)
-        {
-            _instanceRecords.erase(record);
-        }
+    // A record dies with its last member, and that is the *same* predicate the
+    // server resends on — an instance leaves `knownInstances` exactly when no
+    // member of it is left to be relevant. The two used to disagree (B7): the
+    // client erased only when a run started exactly at a record's base and was
+    // exactly its width, so two adjacent instances leaving together — one run of
+    // six over two blocks of three — kept both records while destroying all six
+    // entities. The resend then found the records already present, skipped the
+    // expansion, and the members came back as bare mirrors attributed to
+    // nothing, permanently, because the authored-value elision suppresses
+    // everything still equal to the file on an empty baseline.
+    //
+    // Only records a run actually touched are considered: one whose members have
+    // not arrived yet — held back by the byte budget, or waiting on an expander
+    // — has no bindings either, and must not be mistaken for one that has lost
+    // them all.
+    if (!despawnRuns.empty())
+    {
+        std::erase_if(_instanceRecords,
+                      [this, &despawnRuns](const std::pair<const NetId, InstanceRecord> &row)
+                      {
+                          const NetId base = row.second.base;
+                          // 64-bit, so a block or a run running off the top of
+                          // the id space compares as the range it is rather than
+                          // wrapping into a low one.
+                          const std::uint64_t end =
+                              static_cast<std::uint64_t>(base.value) + row.second.memberCount;
+
+                          const bool touched =
+                              std::any_of(despawnRuns.begin(), despawnRuns.end(),
+                                          [base, end](const auto &run)
+                                          {
+                                              return run.first.value < end &&
+                                                     static_cast<std::uint64_t>(run.first.value) + run.second >
+                                                         base.value;
+                                          });
+                          if (!touched)
+                              return false;
+
+                          for (std::uint32_t member = 0; member < row.second.memberCount; ++member)
+                          {
+                              if (_entityByNetId.contains(NetId{base.value + member}))
+                                  return false;
+                          }
+
+                          // The local instance goes with it: `instanceFromWire`
+                          // would otherwise keep resolving this base to an
+                          // instance whose members are all destroyed.
+                          _instanceIdByBase.erase(base);
+                          return true;
+                      });
     }
 
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
