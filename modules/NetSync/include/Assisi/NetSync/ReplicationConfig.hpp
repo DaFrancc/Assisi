@@ -2,36 +2,14 @@
 #pragma once
 
 /// @file ReplicationConfig.hpp
-/// @brief Relevancy and replication configuration, and the config loader.
-///
-/// The two halves of this protocol are one design and must be read together:
-/// a change to either one's wire handling is a change to both.
+/// @brief What a game tunes about replication, and the loader that reads it.
 
-#include <Assisi/ECS/Entity.hpp>
-#include <Assisi/ECS/InstanceId.hpp>
-#include <Assisi/ECS/Scene.hpp>
-#include <Assisi/ECS/Transform.hpp>
-#include <Assisi/Math/GLM.hpp>
-#include <Assisi/Core/Reflect/ComponentMask.hpp>
-#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
-#include <Assisi/Net/NetTransport.hpp>
-#include <Assisi/NetSync/BodyState.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
-#include <Assisi/NetSync/MessageDispatch.hpp>
-#include <Assisi/NetSync/NetClock.hpp>
-#include <Assisi/NetSync/NetProtocol.hpp>
-#include <Assisi/Physics/PhysicsWorld.hpp>
-
-#include <typeindex>
 
 #include <cstddef>
 #include <cstdint>
-#include <deque>
-#include <functional>
-#include <memory>
-#include <span>
 #include <string>
-#include <unordered_map>
+#include <string_view>
 #include <vector>
 
 namespace Assisi::NetSync
