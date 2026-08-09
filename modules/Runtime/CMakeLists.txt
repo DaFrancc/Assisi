@@ -24,7 +24,13 @@ target_sources(Assisi-Runtime
     "src/Naming.cpp"
     "src/Renderer.cpp"
     "src/SceneRenderer.cpp"
-    "src/SceneSerializer.cpp"
+    "src/SceneSerializerBlueprint.cpp"
+    "src/SceneSerializerContext.hpp"
+    "src/SceneSerializerFiles.cpp"
+    "src/SceneSerializerInstances.cpp"
+    "src/SceneSerializerInstances.hpp"
+    "src/SceneSerializerLevel.cpp"
+    "src/SceneSerializerRefs.cpp"
 )
 
 target_include_directories(Assisi-Runtime
