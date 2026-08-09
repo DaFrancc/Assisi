@@ -62,9 +62,11 @@ struct Sink
 /// takes it too; SetMinLevel() does not (the level is atomic). The lock is held
 /// across formatting as well as writing — fine at current log volume.
 ///
-/// @note Fatal is the exception: it try-locks and writes regardless, so a crash
-/// handler cannot hang on a lock held by the thread that just died, at the cost
-/// of a possibly interleaved line. See AcquireForWrite in Logger.cpp.
+/// @note Fatal is the exception: it try-locks so a crash handler cannot hang on
+/// a lock held by the thread that just died. When the lock is unavailable it
+/// writes the line to stderr instead of to the sinks — writing to a sink
+/// unlocked would be a data race on the sink's own buffers, not merely an
+/// interleaved line. See Logger::Emit in Logger.cpp.
 struct Logger
 {
     /// @brief Adds an output sink. Multiple sinks can be active simultaneously.
@@ -90,6 +92,9 @@ struct Logger
     void Log(LogLevel level, std::source_location loc, std::string_view message);
 
   private:
+    /// @brief Takes the lock and fans a finished line out to every sink.
+    void Emit(LogLevel level, std::string_view line);
+
     std::mutex _mutex;
     std::vector<std::shared_ptr<Sink>> _sinks;
     std::atomic<LogLevel> _minLevel = LogLevel::Trace;
