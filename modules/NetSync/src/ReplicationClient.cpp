@@ -26,9 +26,8 @@ namespace
 /// Ensure @p entity has the component @p meta describes, and hand back a
 /// writable pointer to it.
 ///
-/// Both hooks stamp the change tick, which is what a client applying a snapshot
-/// wants: its own systems watch change ticks too, and an applied snapshot is a
-/// change by any definition.
+/// Both hooks stamp the change tick, which is what a client wants: its own
+/// systems watch change ticks, and an applied snapshot is a change.
 void *EnsureComponent(ECS::Scene &scene, ECS::Entity entity, const Core::Reflect::ComponentMeta &meta)
 {
     if (void *existing = meta.getMutable(&scene, entity.index, entity.generation))
@@ -65,8 +64,8 @@ void ReplicationClient::SetContentSetHash(std::uint64_t hash)
     _contentSetHash      = hash;
     _contentSetHashReady = true;
 
-    // The hash was the last thing missing: a client whose level finished loading
-    // while the scan was still running completes its join here.
+    // If the hash was the last thing missing — level loaded while the content
+    // scan was still running — the join completes here.
     if (_levelReady && !_synchronized)
         ConfirmLevelReady();
 }
@@ -107,9 +106,8 @@ void ReplicationClient::SendAck(std::uint64_t serverTick)
     Core::BitWriter writer;
     WriteMessageType(MessageType::Ack, writer);
     writer.WriteVarUInt64(serverTick);
-    // Unreliable: an ack is a statement about a moment, and the next one
-    // supersedes it. Retransmitting a stale ack would only make the server
-    // delta against an older baseline than it needs to.
+    // Unreliable on purpose: the next ack supersedes this one, and retransmitting
+    // a stale one only makes the server delta against an older baseline.
     _transport.Send(_connection, writer.Data(), Net::SendMode::Unreliable, Net::Lane::Control);
 }
 
@@ -135,9 +133,8 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
     if (meta == nullptr)
     {
         // Unreachable through SendIntent, whose static_assert needs a
-        // MessageTraits specialization that only a registered message has. Kept
-        // because the type-erased entry point is reachable from elsewhere, and
-        // silently sending nothing is the worst possible answer.
+        // MessageTraits specialization only a registered message has — but this
+        // entry point is type-erased, and silently sending nothing is worse.
         Core::Log::Error("NetSync: refusing to send an intent of an unregistered type — is it AMSG?");
         return false;
     }
@@ -157,8 +154,8 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
         return false;
 
     // Reliability is the type's, never the call site's. Both forms ride
-    // Lane::Control: an intent is a statement about the world's future, and it
-    // must not be reordered behind a snapshot the way the input window is.
+    // Lane::Control so an intent is never reordered behind a snapshot the way
+    // the input window is.
     _transport.Send(_connection, writer.Data(),
                     reliable ? Net::SendMode::Reliable : Net::SendMode::Unreliable, Net::Lane::Control);
     return true;
@@ -177,9 +174,9 @@ void ReplicationClient::DispatchEvent(const Core::Reflect::MessageMeta &meta, Co
     NetContext context{InvalidClientId, _session, &_scene};
     if (!MessageDispatch::Instance().Dispatch(meta, context, reader, &codec))
     {
-        // Normal: the server's build may care about something this one does
-        // not. Counted so a handler somebody meant to write is a number rather
-        // than a silence.
+        // Normal — the server's build may care about something this one does not
+        // — but counted, so a handler somebody meant to write shows up as a
+        // number rather than a silence.
         ++_eventsUnhandled;
         (void)Core::Reflect::SkipMessageBody(reader);
         return;
@@ -198,10 +195,10 @@ bool ReplicationClient::ApplyEventSection(Core::BitReader &reader)
         const Core::Reflect::MessageMeta *meta = Core::Reflect::MessageRegistry::Instance().ById(id);
         if (meta == nullptr)
         {
-            // An id this build does not know. The length prefix is exactly what
-            // makes stepping over it possible instead of losing the rest of the
-            // packet — and the handshake means it should never happen between a
-            // matched pair.
+            // An id this build does not know — impossible between a matched pair,
+            // since the handshake compares protocol hashes. The length prefix is
+            // what makes stepping over it possible instead of losing the rest of
+            // the packet.
             if (!Core::Reflect::SkipMessageBody(reader))
                 return false;
             ++_eventsUnhandled;
@@ -222,14 +219,12 @@ void ReplicationClient::HandleAnnouncement(Core::BitReader &reader)
     if (!reader.Ok() || pending.messageId == Core::Reflect::kInvalidMessageId)
         return;
 
-    // The body is copied whole — id prefix and all — so the deferred path and
-    // the immediate one decode identically rather than through two readers with
-    // two chances to disagree.
     const std::size_t bodyStart = (reader.BitsRead() - 0) / 8;
     (void)bodyStart;
 
-    // Re-encode the id in front of the body so DispatchEvent sees the same shape
-    // it sees in the snapshot section.
+    // The body is stored with its id and length prefix back in front of it, so
+    // the deferred path decodes through the exact shape DispatchEvent sees in the
+    // snapshot section rather than a second one that can disagree with it.
     Core::BitWriter body;
     body.WriteVarUInt32(pending.messageId.value); // wire write
     const std::uint32_t bodyBits = reader.ReadVarUInt32();
@@ -248,8 +243,8 @@ void ReplicationClient::HandleAnnouncement(Core::BitReader &reader)
     pending.bytes.assign(encoded.begin(), encoded.end());
     _deferredAnnouncements.push_back(std::move(pending));
 
-    // Try immediately: an announcement about a world we have already caught up
-    // to has nothing to wait for.
+    // An announcement about a world we have already caught up to waits for
+    // nothing.
     DrainAnnouncements();
 }
 
@@ -257,9 +252,9 @@ void ReplicationClient::DrainAnnouncements()
 {
     for (auto it = _deferredAnnouncements.begin(); it != _deferredAnnouncements.end();)
     {
-        // Two conditions, and both are about the same thing: does the world this
-        // message describes exist here yet. The tick stamp covers state the
-        // message implies; the entity check covers the one it names.
+        // Both conditions ask the same thing — does the world this message
+        // describes exist here yet. The tick covers the state it implies, the
+        // subject check the entity it names.
         const bool tickReached = _lastAppliedTick >= it->serverTick;
         const bool subjectHere = it->subject == InvalidNetId || EntityOf(it->subject) != ECS::NullEntity;
         if (!tickReached || !subjectHere)
@@ -296,16 +291,16 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
 
         _tickRateHz = hello.tickRateHz;
         _snapshotHz = hello.snapshotHz;
-        // Two snapshot intervals: enough that one lost or late snapshot does
-        // not empty the buffer, and no more, since every tick of this is
-        // latency the player sees on everyone else's position.
+        // Two snapshot intervals: enough that one lost or late snapshot does not
+        // empty the buffer, no more, since every tick of it is latency on
+        // everyone else's position.
         _interpolationDelayTicks =
             hello.snapshotHz > 0 ? 2.0 * static_cast<double>(hello.tickRateHz) / hello.snapshotHz : 6.0;
         if (hello.protocolHash != NetProtocolHash())
         {
-            // Say so locally too. The server also refuses, but a client that
-            // only ever sees "disconnected" cannot tell a version mismatch from
-            // a network fault.
+            // Say so locally too: the server refuses as well, but a client that
+            // only sees "disconnected" cannot tell a version mismatch from a
+            // network fault.
             _rejectMessage = "protocol mismatch: server and client disagree on component layout";
             Core::Log::Error("NetSync: {}\n  server: {}", _rejectMessage, hello.protocolSummary);
             return;
@@ -314,7 +309,7 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
         _handshake = std::move(hello);
         if (_deferHandshake)
         {
-            // Answer later. Until the local world exists there is nothing for a
+            // Answer later: until the local world exists there is nothing for a
             // NetId to map onto, and a snapshot applied against the wrong world
             // is silently wrong rather than loudly broken.
             _awaitingLevel = true;
@@ -376,10 +371,8 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         return true;
 
     // Instance records, first in the packet and read before anything else can
-    // reference them. Recording only — turning a record into expanded members is
-    // 7c. Until then a member block still arrives as an ordinary entity, so
-    // reading this wrong is a desync of the whole stream rather than a missing
-    // car, which is why it is bounded like every other count here.
+    // reference them. Bounded like every other count on this path: reading this
+    // section wrong desyncs the whole stream, not just one instance.
     const std::uint32_t recordCount = reader.ReadBool() ? reader.ReadVarUInt32() : 0u;
     if (!reader.Ok() || recordCount > 65536u)
     {
@@ -393,11 +386,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         entry.base           = NetId{reader.ReadVarUInt32()}; // wire read
         entry.memberCount    = reader.ReadVarUInt32();
 
-        // Bounded before it is used as a loop count, not merely as a sanity
-        // check: the presence bits below are `memberCount` reads, so an
-        // unbounded count read off the wire is a loop the packet dictates the
-        // length of. No blueprint has 65536 members; one claiming to has
-        // already failed the content-set hash.
+        // Bounded before it is used as a loop count, not as a sanity check: the
+        // presence bits below are `memberCount` reads, so an unbounded count off
+        // the wire is a loop whose length the packet dictates. No real blueprint
+        // has 65536 members.
         if (!reader.Ok() || entry.memberCount == 0 || entry.memberCount > 65536u)
         {
             reader.Invalidate();
@@ -441,10 +433,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         ECS::InstanceId          localInstance;
         if (!_instanceExpander->Expand(entry, members, localInstance) || members.size() != entry.memberCount)
         {
-            // Fatal, not survivable. Binding a short or failed expansion would
-            // attach member ids to the wrong entities, and every delta after
-            // this one would land on the wrong member — a mirror that is wrong
-            // rather than incomplete.
+            // Fatal, not survivable: binding a short or failed expansion attaches
+            // member ids to the wrong entities, and every delta after this one
+            // lands on the wrong member — wrong rather than merely incomplete.
             Core::Log::Error("NetSync: could not expand instance blueprint {} ({} members expected, {} "
                              "produced) — refusing the snapshot",
                              entry.blueprintIndex, entry.memberCount, members.size());
@@ -457,21 +448,20 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         {
             if (!entry.HasMember(member))
             {
-                // The blueprint built it here and the host has no such entity —
-                // pruned since it was placed, or removed from that instance by
-                // the level. Expanding the whole definition and then dropping
-                // the holes is deliberate: the alternative is an expander that
-                // takes a member filter, and every caller of it would have to
-                // keep the file's member order anyway, which is the one thing
-                // `base + i` cannot survive being wrong about.
+                // Built here, but the host has no such entity — pruned since it
+                // was placed, or removed from the instance by the level.
+                // Expanding the whole definition and then dropping the holes is
+                // deliberate: a member-filtered expander would still have to hold
+                // the file's member order, which is the one thing `base + i`
+                // cannot survive being wrong about.
                 if (members[member] != ECS::NullEntity && _scene.IsAlive(members[member]))
                     _scene.Destroy(members[member]);
                 continue;
             }
             // A hole the *client's* expansion left where the host has a member:
             // the two disagree about the file, which the content-set hash was
-            // supposed to make impossible. Leaving it unbound costs one member;
-            // binding NullEntity would cost every delta that names it.
+            // supposed to prevent. Leaving it unbound costs one member; binding
+            // NullEntity would cost every delta that names it.
             if (members[member] == ECS::NullEntity)
                 continue;
 
@@ -492,18 +482,16 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         reader.Invalidate();
         return false;
     }
-    // Collected before any of it is acted on, because which records to throw away
-    // is a question about *all* the runs together and not about each one in turn
-    // — see below.
+    // Collected before any of it is acted on: which records to throw away is a
+    // question about *all* the runs together, not about each one in turn.
     std::vector<std::pair<NetId, std::uint32_t>> despawnRuns;
     despawnRuns.reserve(despawnCount);
     for (std::uint32_t i = 0; i < despawnCount; ++i)
     {
         const NetId         start  = NetId{reader.ReadVarUInt32()}; // wire read
         const std::uint32_t length = reader.ReadVarUInt32();
-        // Bounded like every other count on this path: the run is attacker-
-        // controlled, and an unchecked length here is a loop the packet dictates
-        // the size of.
+        // Bounded like every other count on this path: the length is attacker-
+        // controlled, and unchecked it is a loop the packet sizes.
         if (!reader.Ok() || length == 0 || length > 65536u)
         {
             reader.Invalidate();
@@ -528,21 +516,19 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         }
     }
 
-    // A record dies with its last member, and that is the *same* predicate the
-    // server resends on — an instance leaves `knownInstances` exactly when no
-    // member of it is left to be relevant. The two used to disagree (B7): the
-    // client erased only when a run started exactly at a record's base and was
-    // exactly its width, so two adjacent instances leaving together — one run of
-    // six over two blocks of three — kept both records while destroying all six
-    // entities. The resend then found the records already present, skipped the
-    // expansion, and the members came back as bare mirrors attributed to
-    // nothing, permanently, because the authored-value elision suppresses
-    // everything still equal to the file on an empty baseline.
+    // A record dies with its last member — the *same* predicate the server
+    // resends on, since an instance leaves `knownInstances` exactly when no
+    // member of it is left to be relevant. Anything narrower breaks: matching a
+    // run against a record's exact base and width kept both records alive when
+    // two adjacent instances left in one run (six ids over two blocks of three)
+    // while destroying all six entities, and the resend then found the records
+    // present, skipped the expansion, and left the members as bare mirrors
+    // attributed to nothing — permanently, because authored-value elision
+    // suppresses everything still equal to the file on an empty baseline.
     //
     // Only records a run actually touched are considered: one whose members have
-    // not arrived yet — held back by the byte budget, or waiting on an expander
-    // — has no bindings either, and must not be mistaken for one that has lost
-    // them all.
+    // not arrived yet — held back by the byte budget, or waiting on an expander —
+    // has no bindings either, and must not be mistaken for one that lost them all.
     if (!despawnRuns.empty())
     {
         std::erase_if(_instanceRecords,
@@ -582,11 +568,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    // Records, in field order, every entity reference this component carried and
-    // whether it resolved. Paired afterwards with the component's EntityRef
-    // fields so an unresolved one can be patched when its target arrives —
-    // component data may legitimately name an entity whose spawn is in a later
-    // block or a later snapshot.
+    // Every entity reference a component carried, in field order, and whether it
+    // resolved. Paired afterwards with the component's EntityRef fields so an
+    // unresolved one can be patched when its target arrives.
     struct RefSite
     {
         NetId target   = InvalidNetId;
@@ -614,10 +598,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         return PackEntity(it->second);
     };
 
-    // The other half of the tag's translation: what arrives is the instance's
-    // base NetId, and what this machine stores is its own instance id. Zero when
-    // the instance was never expanded here, which leaves the tag invalid rather
-    // than pointing at an unrelated local instance.
+    // Base NetId in, this machine's own instance id out. Zero when the instance
+    // was never expanded here, which leaves the tag invalid rather than pointing
+    // at an unrelated local instance.
     context.instanceFromWire = [this](std::uint32_t base) -> std::uint32_t
     {
         const auto local = _instanceIdByBase.find(NetId{base});
@@ -637,11 +620,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         auto it = _entityByNetId.find(netId);
         if (it != _entityByNetId.end() && !_scene.IsAlive(it->second))
         {
-            // A client system destroyed this mirror — gameplay runs over the
-            // play world, mirrors included, and that is the decision taken
-            // seriously rather than fenced off. Drop the dead mapping and let
-            // the unknown-NetId path below build a fresh one, rather than
-            // dereferencing a handle whose slot may since have been reused.
+            // A client system destroyed this mirror; gameplay is allowed to run
+            // over mirrors. Drop the dead mapping and let the unknown-NetId path
+            // below build a fresh entity, rather than dereferencing a handle
+            // whose slot may since have been reused.
             _entityByNetId.erase(it);
             DestroyMirrorBody(netId);
             it = _entityByNetId.end();
@@ -656,16 +638,16 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
         if (it == _entityByNetId.end())
         {
-            // Treat an unknown id as a spawn even when the server called it a
-            // delta. That happens after we drop a snapshot the server had
-            // already counted as delivered; refusing here would strand the
-            // entity permanently, while creating it costs one extra full state.
+            // An unknown id is treated as a spawn even when the server called it
+            // a delta — which happens after we drop a snapshot the server counted
+            // as delivered. Refusing would strand the entity permanently;
+            // creating it costs one extra full state.
             const ECS::Entity entity = _scene.Create();
             (void)_scene.Add<Replicated>(entity, Replicated{});
-            // Mirrored is what everything downstream keys off to know this
-            // entity is not ours to write: the editor's read-only guard, the
-            // inspector's replication-path line, and any gameplay system that
-            // needs to tell "the server's crate" from "our crate".
+            // Mirrored is how everything downstream knows this entity is not ours
+            // to write: the editor's read-only guard, the inspector's
+            // replication-path line, and any gameplay system telling "the
+            // server's crate" from "our crate".
             (void)_scene.Add<Mirrored>(entity, Mirrored{});
             it = _entityByNetId.emplace(netId, entity).first;
             ++_structureRevision;
@@ -694,13 +676,12 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             if (!reader.Ok())
                 return false;
 
-            // Losing the descriptor is not an ordinary component removal: this
-            // mirror stops being body-corrected and becomes an interpolated
-            // visual, so its Jolt body has to go with it. Without this the body
-            // outlives its authority and keeps colliding — an invisible obstacle
-            // in the middle of the world, which is a worse bug than the one that
-            // produced it. The stale transient RigidBody would also block any
-            // future rebuild, since SyncMirrorBody keys off its presence.
+            // Losing the descriptor is not an ordinary removal: the mirror stops
+            // being body-corrected and becomes an interpolated visual, so its
+            // Jolt body must go too. Left behind, the body outlives its authority
+            // and keeps colliding — an invisible obstacle — and the stale
+            // transient RigidBody blocks any future rebuild, since SyncMirrorBody
+            // keys off its presence.
             if (_physics != nullptr && componentId == _descriptorComponentId &&
                 _scene.Get<Physics::RigidBody>(entity) != nullptr)
             {
@@ -731,9 +712,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             void *component = EnsureComponent(_scene, entity, *meta);
             if (component == nullptr || !Core::Reflect::ReadComponent(*meta, component, reader, nullptr, &context))
                 return false;
-            // Component data landed. A presentation layer has to re-resolve
-            // whatever it derives from that data — MeshRenderer's GPU pointers
-            // above all — and this counter is the only signal it gets.
+            // This counter is the only signal a presentation layer gets that it
+            // must re-resolve what it derives from component data — MeshRenderer's
+            // GPU pointers above all.
             ++_structureRevision;
 
             // Pair the recorded references with the component's EntityRef
@@ -762,10 +743,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     if (!reader.Ok())
         return false;
 
-    // Motion, for everything the server's physics world owns. After the entity
-    // blocks by construction: the entity and its descriptor exist by now, so a
-    // body built here starts at the authoritative state rather than re-settling
-    // from the level file's pose.
+    // Motion, for everything the server's physics world owns. It follows the
+    // entity blocks so the entity and its descriptor already exist: a body built
+    // here starts at the authoritative state rather than re-settling from the
+    // level file's pose.
     const std::size_t bodySectionStart = reader.BitsRead();
     while (reader.Ok() && reader.ReadBool())
     {
@@ -787,10 +768,9 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     _worldComplete = header.worldComplete;
     _feedback      = ClockFeedback{header.serverTick, header.inputBufferDepth, header.starvedTicks};
 
-    // After the state, never before. A handler for an event about an entity
+    // After the state, never before: a handler for an event about an entity
     // spawned in this same packet must find that entity already there, and the
-    // wire order plus this call site are the entire mechanism — no per-message
-    // sequencing, no waiting.
+    // wire order plus this call site are the entire mechanism.
     if (!ApplyEventSection(reader))
         return false;
 

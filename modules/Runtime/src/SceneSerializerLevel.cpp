@@ -29,13 +29,10 @@ namespace Assisi::Runtime
 namespace
 {
 
-// nlohmann dumps a non-finite float (NaN/Inf — e.g. from a physics blow-up) as
-// the JSON literal `null`, which then throws on reload (get<float>() on null) and
-// would void the entire level. Replace non-finite numbers with 0 in the tree
-// before it is dumped, so every file we write stays loadable — no load-side
-// exceptions, no whole-scene loss from one bad value. Returns the number of
-// values it had to fix up so the caller can warn (a non-finite value in a save is
-// always a symptom of a bug upstream, not something to silently paper over).
+// Replaces every non-finite float in the tree with 0, returning how many it fixed.
+// Must run before any dump: nlohmann writes NaN/Inf as the JSON literal `null`,
+// which throws on reload and voids the whole level. The count is returned so the
+// caller can warn — a non-finite value in a save is always a bug upstream.
 [[nodiscard]] size_t SanitizeNonFinite(nlohmann::json &value)
 {
     size_t fixed = 0;
@@ -60,10 +57,10 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
 {
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    // Pass 1: collect all entity keys into a sorted map so the array order is
-    // deterministic. Members are excluded — an instance entry describes them, and
-    // writing them as entities as well would bake the blueprint into the level.
-    // They still need names, though: a level entity may reference one.
+    // Pass 1: collect entity keys into a sorted map, so array order is deterministic.
+    // Members are excluded — their instance entry describes them, and writing them as
+    // entities too would bake the blueprint into the level. They still need names: a
+    // level entity may reference one.
     std::map<uint64_t, nlohmann::json> entityMap;
     std::map<uint64_t, std::string>    memberNames;
 
@@ -73,10 +70,8 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
         {
             const ECS::Entity entity{idx, gen};
 
-            // Scaffolding the editor stood up to work by — the blueprint editor's
-            // sun above all. Skipping it here is enough for the whole save: passes 2
-            // and 3 both work off `entityMap`, and what never enters it is never
-            // named and never serialized.
+            // Editor scaffolding — the blueprint editor's sun above all. Skipping it
+            // here covers the whole save: passes 2 and 3 both work off `entityMap`.
             if (scene.Has<EditorOnly>(entity))
                 return;
 
@@ -96,9 +91,9 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
                          "instances and their entities will both be missing from the file.");
     }
 
-    // Pass 2: name every entity, before anything serializes — an EntityRef field
-    // resolves to a *name*, and the target may be anywhere in the file, including
-    // ahead of the entity that points at it.
+    // Pass 2: name every entity before anything serializes — an EntityRef resolves
+    // to a *name*, and its target may sit anywhere in the file, including ahead of
+    // the entity pointing at it.
     SerializationContext            ctx;
     std::unordered_set<std::string> usedNames;
     usedNames.reserve(entityMap.size());
@@ -111,8 +106,8 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
         ctx.entityToName.emplace(key, std::move(name));
     }
 
-    // Members address as `car_3/wheel_fl`, resolved through the tag. Added after
-    // the entities so a level entity can never lose its own name to one.
+    // Members address as `car_3/wheel_fl`. Added after the entities, so a level
+    // entity can never lose its own name to one.
     for (auto &[key, path] : memberNames)
     {
         if (!path.empty())
@@ -125,8 +120,8 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
     // Pass 3: serialize components (the context is live, so EntityToRef works).
     for (const auto *meta : registry.SerializableComponents())
     {
-        // Name is the entity's `name` key, written above. Emitting it here as well
-        // would put the same string in two places with no rule about which wins.
+        // The entity's `name` key already carries it; emitting it here as well would
+        // put the same string in two places with no rule about which wins.
         if (meta->name == "Name")
             continue;
 
@@ -142,8 +137,8 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
 
     nlohmann::json result;
     result["version"] = 2;
-    // Only written when set, so levels that need no systems stay free of the key
-    // rather than gaining an empty one on every save.
+    // Only written when set, so a level that needs no systems does not gain an
+    // empty key on every save.
     if (!header.systems.empty())
         result["systems"] = header.systems;
     result["entities"] = nlohmann::json::array();
@@ -152,7 +147,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
         result["entities"].push_back(std::move(entityJson));
 
     // From the live table, not from `header`: the editor moves an instance by
-    // writing its row, and the file follows rather than needing to be told twice.
+    // writing its row, and the file follows.
     if (instances != nullptr)
     {
         const std::vector<LevelInstance> placed = InstancesForSave(*instances);
@@ -165,7 +160,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
                                        {"source", entry.source},
                                        {"transform", TransformToJson(entry.transform)}};
                 // Only when there is something to say, so an instance nobody edited
-                // stays three lines rather than gaining two empty containers.
+                // stays three lines.
                 if (!entry.overrides.empty())
                     written["overrides"] = entry.overrides;
                 if (!entry.removed.empty())
@@ -175,8 +170,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
         }
     }
 
-    // Never persist NaN/Inf: it dumps as null and won't reload. Warn if we had to
-    // fix any up — it means a component held a non-finite value (a bug upstream).
+    // Never persist NaN/Inf: it dumps as null and won't reload.
     if (const size_t fixed = SanitizeNonFinite(result); fixed > 0)
     {
         Core::Log::Warn("SceneSerializer: replaced {} non-finite float value(s) with 0 while saving "
@@ -196,18 +190,16 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     const int32_t version = j.value("version", 0);
     if (version != 2)
     {
-        // Reported, not swallowed: a caller that gets no signal reports a
-        // *successful* load of an empty scene, which is how a level silently
-        // becomes nothing. Refused before the Clear below, so the caller keeps
-        // what it had.
+        // Reported, not swallowed: a caller given no signal reports a *successful*
+        // load of an empty scene. Refused before the Clear below, so the caller
+        // keeps the level it had.
         Core::Log::Error("SceneSerializer: unsupported level file version {} (this build reads version 2).",
                          version);
         return std::unexpected(LevelError::UnsupportedVersion);
     }
 
-    // Read the instance entries before anything is destroyed: a file that names an
-    // instance a caller has nowhere to put must not cost the caller the level it
-    // already had.
+    // Read the instance entries before anything is destroyed: a file naming an
+    // instance the caller has nowhere to put must not cost it the level it had.
     std::vector<LevelInstance> placed;
     if (const auto it = j.find("instances"); it != j.end() && it->is_array() && !it->empty())
     {
@@ -272,8 +264,8 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     scene.Clear();
     if (instances != nullptr)
     {
-        // Ids restart from 1 with the world, because the table is discarded with
-        // it. Nothing may assume an id survives a load (§2).
+        // Ids restart from 1, because the table goes with the world. Nothing may
+        // assume an instance id survives a load (§2).
         instances->Clear();
     }
 
@@ -282,10 +274,9 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
 
     const auto &entities = j.at("entities");
 
-    // Pass 1: read and validate every name, before a single entity is created.
+    // Pass 1: read and validate every name before a single entity is created.
     // Refusing here rather than mid-load is what keeps a bad file from leaving a
-    // half-built scene, and every one of these means the file addresses something
-    // other than what it appears to.
+    // half-built scene.
     std::vector<std::string> names;
     names.reserve(entities.size());
     for (size_t i = 0; i < entities.size(); ++i)
@@ -301,14 +292,13 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
 
         // One rule, stated once, in Naming.hpp — the editor's rename box refuses
         // exactly what this refuses, so a name the editor accepts is a name that
-        // reloads. Banning the separator is what makes entity names and instance
-        // member paths disjoint *by construction* (every member path has one and
-        // no entity name does), which is why `car` the entity and `car` the
-        // instance can coexist without anyone cross-checking them.
+        // reloads. Banning the `/` separator keeps entity names and instance member
+        // paths disjoint *by construction*, which is why `car` the entity and `car`
+        // the instance can coexist without anyone cross-checking them.
         //
-        // The rule's own error is a NameError; this function's vocabulary is
-        // LevelError, so the specific reason is logged with the entity index the
-        // caller cannot see and the kind is widened to InvalidName.
+        // ValidateName speaks NameError and this function speaks LevelError, so the
+        // specific reason is logged with the entity index the caller cannot see, and
+        // the kind widens to InvalidName.
         if (const std::expected<void, NameError> valid = ValidateName(name); !valid.has_value())
         {
             Core::Log::Error("SceneSerializer: entity #{} is named '{}': {}.", i, name,
@@ -318,10 +308,9 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         names.push_back(std::move(name));
     }
 
-    // Pass 2: create every entity up front so nameToEntity is complete before any
-    // component deserializes. A reference may point *forward* to an entity that
-    // has not been created yet; a single pass would resolve those to NullEntity
-    // and silently flatten the hierarchy.
+    // Pass 2: create every entity up front, so nameToEntity is complete before any
+    // component deserializes. A reference may point *forward*, and a single pass
+    // would resolve those to NullEntity and silently flatten the hierarchy.
     s_context->nameToEntity.reserve(names.size());
     std::vector<ECS::Entity> created;
     created.reserve(names.size());
@@ -332,8 +321,8 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
 
         if (!s_context->nameToEntity.emplace(names[i], e).second)
         {
-            // Duplicate names make every reference and every override ambiguous,
-            // and picking one is picking silently.
+            // Duplicate names make every reference and every override ambiguous;
+            // picking one is picking silently.
             Core::Log::Error("SceneSerializer: two entities are both named '{}'.", names[i]);
             scene.Clear();
             return std::unexpected(LevelError::DuplicateName);
@@ -343,9 +332,9 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         (void)scene.Add(e, Name{Core::ShortString{names[i]}});
     }
 
-    // Pass 2b: the same, for every member of every instance. Before any component
-    // deserializes, because a level entity may name `car_3/body` and a member may
-    // name a level entity — resolving either one early nulls it silently.
+    // Pass 2b: the same for every member of every instance, and for the same
+    // reason — a level entity may name `car_3/body` and a member may name a level
+    // entity, so resolving either early nulls it silently.
     std::vector<StagedInstance> staged;
     staged.reserve(placed.size());
     for (std::size_t i = 0; i < placed.size(); ++i)
@@ -353,8 +342,9 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         StagedInstance row;
         const std::expected<void, LevelError> ok =
             StageInstance(scene, *instances, placed[i], static_cast<int32_t>(i), row);
-        // Kept either way: what staging got as far as creating is in `row`, and it
-        // has to be reachable for the clear below to be the whole cleanup.
+        // Pushed even on failure: staging creates entities and a table row before
+        // the last thing that can fail, and unwinding them is the caller's — here,
+        // the wholesale clear below.
         staged.push_back(std::move(row));
         if (!ok)
         {
@@ -368,8 +358,8 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     const size_t entityCount = entities.size();
     for (size_t i = 0; i < entityCount; ++i)
     {
-        // Report progress across this pass — the load's dominant cost. Cheap
-        // enough to call per entity (a few atomic stores through the callback).
+        // This pass is the load's dominant cost, and reporting is cheap enough per
+        // entity (a few atomic stores through the callback).
         if (onProgress)
             onProgress(entityCount == 0 ? 1.f : static_cast<float>(i) / static_cast<float>(entityCount));
 
@@ -380,10 +370,10 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         const ECS::Entity e = created[i];
         for (const auto &[compName, compData] : entityJson.at("components").items())
         {
-            // The entity-level name already wrote this one, and it is authoritative:
-            // a file that also lists Name in components is out of spec, and letting
-            // it through would give the entity a name nothing else in the file
-            // addresses it by.
+            // The entity's `name` key already wrote this one and is authoritative: a
+            // file that also lists Name in components is out of spec, and honouring
+            // it would give the entity a name nothing else in the file addresses it
+            // by.
             if (compName == "Name")
             {
                 Core::Log::Warn("SceneSerializer: entity '{}' lists a Name component; the entity's "
@@ -398,10 +388,9 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
                 Core::Log::Warn("SceneSerializer: unknown component '{}' - skipped", compName);
                 continue;
             }
-            // Non-serializable (ACOMP(transient)) components have no addToScene
-            // hook and are never written by Save; if one appears in a file
-            // (hand-edited or from an older format), skip it rather than deref
-            // a null hook.
+            // ACOMP(transient) components have no addToScene hook and are never
+            // written by Save; one in a file (hand-edited, or an older format) is
+            // skipped rather than dereferencing a null hook.
             if (!meta->serializable)
             {
                 Core::Log::Warn("SceneSerializer: non-serializable component '{}' - skipped", compName);
@@ -409,8 +398,8 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
             }
             if (!meta->addToScene(&scene, e.index, e.generation, compData))
             {
-                // The hook has already logged the component, the field and the
-                // mismatch; this adds the entity, which it had no way to know.
+                // The hook logged the component, the field and the mismatch; this
+                // adds the entity, which it had no way to know.
                 Core::Log::Error("SceneSerializer: entity '{}' has an unreadable '{}' — the file is refused.",
                                  names[i], compName);
                 scene.Clear();
@@ -425,8 +414,8 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         CommitInstance(scene, staged[i], placed[i].name);
 
     // Every reference had to resolve. One that did not means the file names an
-    // entity it does not declare — a rename someone made by hand, a merge that
-    // dropped an entity, or a v1 file whose numeric refs came through here.
+    // entity it does not declare — a hand rename, a merge that dropped an entity,
+    // or a v1 file whose numeric refs came through here.
     if (!s_context->unresolvedRefNames.empty())
     {
         const std::vector<std::string> &bad = s_context->unresolvedRefNames;
@@ -444,9 +433,5 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
 
     return {};
 }
-
-// ---------------------------------------------------------------------------
-// The prepared form
-// ---------------------------------------------------------------------------
 
 } // namespace Assisi::Runtime

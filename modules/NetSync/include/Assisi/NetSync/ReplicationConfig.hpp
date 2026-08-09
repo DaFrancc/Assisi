@@ -42,8 +42,8 @@ struct RelevancyConfig
     ///
     /// The gap is the mechanism, not a refinement: with a single radius, an
     /// entity sitting on the boundary despawns and fully respawns on every
-    /// crossing. A value at or below `radius` is corrected at load, with a
-    /// warning.
+    /// crossing. A value at or below `radius` is widened when the distance
+    /// provider is constructed, with a warning.
     float exitRadius = 75.f;
 
     /// @brief Ticks an entity must stay beyond `exitRadius` before the revoke

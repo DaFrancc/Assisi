@@ -25,8 +25,7 @@ void ReplicationClient::DestroyMirrorBody(NetId netId)
         return;
 
     // Without this the Jolt body outlives its entity and keeps colliding — an
-    // invisible obstacle in the middle of the world, which is a worse bug than
-    // the one that produced it.
+    // invisible obstacle in the middle of the world.
     if (_physics != nullptr)
         _physics->RemoveBody(found->second.body);
     _bodies.erase(found);
@@ -60,10 +59,9 @@ void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
     if (!descriptor->isStatic)
         return;
 
-    // Authored-static geometry moves by being *authored*, so its Transform is
-    // the truth and the collider has to follow it. Without this the client's
-    // visual moves and its collision does not — the worse half of a desync,
-    // because it is invisible until something falls through it.
+    // Static geometry moves by being authored, so its Transform is the truth and
+    // the collider has to follow it. Without this the visual moves and the
+    // collision does not — invisible until something falls through it.
     const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
     _physics->SetBodyTransform(*body, transform->position, transform->rotation);
 }
@@ -80,10 +78,9 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     const ECS::Entity entity = it->second;
     if (_scene.Get<Physics::RigidBody>(entity) == nullptr)
     {
-        // First state for this mirror: build the body the server described.
-        // Both halves have to have arrived — the descriptor says what to build,
-        // the Transform says where — and if either has not, this record is
-        // dropped and the next one (the delta path resends until acked) does it.
+        // First state for this mirror: build the body the server described. Both
+        // halves must have arrived — descriptor says what, Transform says where.
+        // If either has not, drop this record; the delta path resends until acked.
         const ECS::Transform               *transform  = _scene.Get<ECS::Transform>(entity);
         const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
         if (transform == nullptr || descriptor == nullptr)
@@ -103,9 +100,8 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     MirrorBody               &record = _bodies[state.netId];
 
     // How far the two simulations drifted apart since the last correction. Taken
-    // before the snap, against the *physics* pose rather than the rendered one:
-    // this is the number the correction cadence has to be justified by, and
-    // folding the previous frame's cosmetic offset into it would flatter it.
+    // before the snap and against the *physics* pose, not the rendered one:
+    // folding in the cosmetic offset would flatter the number.
     const auto [simulatedPosition, simulatedRotation] = _physics->GetBodyTransform(*body);
     const float divergence                            = glm::length(simulatedPosition - state.position);
 
@@ -113,17 +109,16 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     _corrections.divergenceSum += static_cast<double>(divergence);
     _corrections.divergenceMax = std::max(_corrections.divergenceMax, divergence);
 
-    // The rendered pose right now, which the correction must not change: the
-    // sim is snapped, and the offset absorbs the whole difference so the screen
-    // sees nothing happen at this instant. Successive corrections accumulate
-    // into the same offset, which is what keeps a stream of small ones smooth
-    // rather than each one fighting the last.
+    // The rendered pose, which the correction must not change: the sim is
+    // snapped and the offset absorbs the whole difference, so nothing happens on
+    // screen this instant. Successive corrections accumulate into the same
+    // offset, which keeps a stream of small ones smooth.
     const glm::vec3 renderedPosition = simulatedPosition + record.positionError;
     const glm::quat renderedRotation = record.rotationError * simulatedRotation;
 
-    // The simulation is snapped hard, with no smoothing: extrapolation has to
-    // proceed from a valid physics state, and a half-applied correction is not
-    // one. Hiding the jump belongs to the view.
+    // Snapped hard, with no smoothing: extrapolation has to proceed from a valid
+    // physics state, and a half-applied correction is not one. Hiding the jump
+    // belongs to the view.
     _physics->ApplyBodyState(*body, state.position, state.rotation, state.linearVelocity, state.angularVelocity,
                              /*activate=*/!state.asleep);
 
@@ -133,11 +128,9 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     const ViewSmoothing &smoothing = Smoothing();
     const float          carried   = glm::length(record.positionError);
 
-    // Two ways an offset is not worth carrying. Below the floor the correction
-    // is too small to see, so smoothing it buys nothing and only delays
-    // convergence. Past the ceiling, smoothing reads worse than admitting the
-    // jump: a body sliding half a room to catch up looks like a bug, where a
-    // teleport looks like a teleport.
+    // Two ways an offset is not worth carrying: below the floor it is too small
+    // to see, and past the ceiling a body sliding half a room to catch up reads
+    // worse than admitting the teleport.
     if (carried < smoothing.snapBelowDistance || carried > smoothing.hardSnapDistance)
     {
         record.positionError   = glm::vec3{0.f};
@@ -147,7 +140,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     else
     {
         // A bigger jump gets a shorter window: it is worth being over with
-        // sooner. The time-domain form of the published two-rate split.
+        // sooner. Lerped between the two rates in the band between them.
         record.smoothingWindow =
             carried <= smoothing.smallErrorDistance
                 ? smoothing.positionCorrectionTime
@@ -158,7 +151,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
                                       (smoothing.largeErrorDistance - smoothing.smallErrorDistance)));
 
         // Restarted by every correction, from wherever the picture currently is,
-        // which is what keeps a correction arriving mid-convergence continuous.
+        // so one arriving mid-convergence stays continuous.
         record.positionErrorStart = record.positionError;
         record.rotationErrorStart = record.rotationError;
         record.smoothingElapsed   = 0.f;
@@ -171,7 +164,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
 
 void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
 {
-    // Non-bodied mirrors: interpolate between received samples, unchanged.
+    // Non-bodied mirrors: interpolate between received samples.
     Interpolate(serverTimeTicks);
 
     if (_physics == nullptr || dt <= 0.f)
@@ -192,10 +185,9 @@ void ReplicationClient::SmoothView(double serverTimeTicks, float dt)
         if (record.smoothingWindow <= 0.f)
             continue; // nothing to hide
 
-        // Linear over the window, so the offset is gone by the deadline and
-        // moves at a constant on-screen speed until it is. Advancing in *time*
-        // rather than per frame is what keeps the feel identical at 30 and at
-        // 144 Hz.
+        // Linear over the window, so the offset is gone by the deadline at a
+        // constant on-screen speed. Advancing in *time* rather than per frame is
+        // what keeps the feel identical at 30 and at 144 Hz.
         record.smoothingElapsed += dt;
         const float remaining =
             1.f - std::min(1.f, record.smoothingElapsed / record.smoothingWindow);
@@ -219,9 +211,8 @@ void ReplicationClient::RequestKeyframe()
 
     Core::BitWriter writer;
     WriteMessageType(MessageType::RequestKeyframe, writer);
-    // Reliable: the point of asking is that something is already wrong, and an
-    // unreliable request that gets dropped looks exactly like a button that does
-    // nothing.
+    // Reliable: asking already means something is wrong, and a dropped request
+    // looks exactly like a button that does nothing.
     _transport.Send(_connection, writer.Data(), Net::SendMode::Reliable, Net::Lane::Control);
 }
 
@@ -273,9 +264,8 @@ void ReplicationClient::ResolvePendingRefs()
                       if (component == nullptr)
                           return true;
 
-                      // Write the resolved handle directly at the field's offset:
-                      // this is the same by-offset access the codec itself uses,
-                      // and the type is fixed by FieldType::EntityRef.
+                      // By-offset write, the same access the codec uses; the type
+                      // is fixed by FieldType::EntityRef.
                       auto *slot = reinterpret_cast<ECS::Entity *>(static_cast<std::byte *>(component) +
                                                                    pending.fieldOffset);
                       *slot      = target->second;
@@ -288,11 +278,10 @@ void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
 {
     for (const auto &[netId, entity] : _entityByNetId)
     {
-        // A bodied mirror leaves the interpolation path entirely: it has a real
-        // dynamic body stepped by the local physics and corrected by the wire,
-        // and buffering poses for it would mean rendering it two snapshot
-        // intervals in the past *as well* — the delay local simulation exists to
-        // remove.
+        // A bodied mirror leaves the interpolation path entirely: it is stepped
+        // by the local physics and corrected by the wire, so buffering poses for
+        // it would also render it two snapshot intervals in the past — the delay
+        // local simulation exists to remove.
         if (_bodies.contains(netId))
             continue;
 
@@ -302,8 +291,8 @@ void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
 
         std::deque<TransformSample> &history = _transformHistory[netId];
         // A repeat of the tick we already hold means a snapshot was applied
-        // twice; overwrite rather than append, so the buffer never holds two
-        // samples the interpolator would divide by zero between.
+        // twice. Overwrite rather than append: two samples on the same tick are
+        // a zero span the interpolator would divide by.
         if (!history.empty() && history.back().serverTick == serverTick)
             history.pop_back();
 
@@ -333,8 +322,8 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
             continue;
 
         // Past the newest sample: hold the last known pose rather than
-        // extrapolate. A guess that turns out wrong costs a visible snap when
-        // the real value arrives, and standing still reads better than that.
+        // extrapolate. A wrong guess costs a visible snap when the real value
+        // arrives; standing still reads better.
         if (serverTimeTicks >= static_cast<double>(history.back().serverTick) || history.size() == 1)
         {
             transform->position = history.back().position;
@@ -343,9 +332,8 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
             continue;
         }
 
-        // Before the oldest: the buffer does not reach back that far (a client
-        // that just joined, or a delay someone widened at runtime). Same
-        // answer — show what we have.
+        // Before the oldest: the buffer does not reach back that far — a client
+        // that just joined, or a delay widened at runtime. Same answer.
         if (serverTimeTicks <= static_cast<double>(history.front().serverTick))
         {
             transform->position = history.front().position;
@@ -354,8 +342,8 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
             continue;
         }
 
-        // Find the straddling pair. The buffer is three deep, so a scan is
-        // both simpler and faster than anything cleverer.
+        // Find the straddling pair. The buffer is three deep, so a scan beats
+        // anything cleverer.
         const TransformSample *before = &history.front();
         const TransformSample *after  = &history.back();
         for (std::size_t i = 1; i < history.size(); ++i)
@@ -376,7 +364,7 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
         transform->position = glm::mix(before->position, after->position, t);
         transform->scale    = glm::mix(before->scale, after->scale, t);
         // slerp, not mix: a linear blend of quaternions is not a rotation, and
-        // the error is worst exactly where rotation is fastest.
+        // the error is worst where rotation is fastest.
         transform->rotation = glm::slerp(before->rotation, after->rotation, t);
     }
 }
@@ -434,9 +422,9 @@ void ReplicationClient::Reset()
     _worldComplete     = false;
     _awaitingLevel     = false;
     _rejectMessage.clear();
-    // _structureRevision deliberately survives: it is a monotonic "something
-    // changed" counter a consumer compares against its own last-acted-on value,
-    // and resetting it to 0 would make a rejoin look like no change at all.
+    // _structureRevision deliberately survives: consumers compare it against
+    // their own last-acted-on value, so resetting it to 0 would make a rejoin
+    // look like no change at all.
 }
 
 } // namespace Assisi::NetSync
