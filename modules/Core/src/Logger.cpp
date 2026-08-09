@@ -1,6 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <cstdio>
 #include <format>
+#include <iterator>
 #include <mutex>
 
 #include <Assisi/Core/Logger.hpp>
@@ -109,6 +110,53 @@ Logger &GetLogger()
 {
     static Logger instance;
     return instance;
+}
+
+// Index matches the enumerator value, so LogLevelName is a lookup and
+// ParseLogLevel is a scan. Keep in step with LogLevel.
+static constexpr std::string_view kLevelNames[] = {"trace", "debug", "info", "warn", "error", "fatal"};
+
+std::string_view LogLevelName(LogLevel level)
+{
+    const size_t index = static_cast<size_t>(level);
+    return index < std::size(kLevelNames) ? kLevelNames[index] : "unknown";
+}
+
+std::span<const std::string_view> LogLevelNames()
+{
+    return kLevelNames;
+}
+
+std::optional<LogLevel> ParseLogLevel(std::string_view name)
+{
+    // Case-insensitive: --verbosity Info and --verbosity info are the same
+    // request, and rejecting one of them helps nobody. ASCII only, which is all
+    // the names use.
+    const auto equalsFold = [](std::string_view lhs, std::string_view rhs)
+    {
+        if (lhs.size() != rhs.size())
+        {
+            return false;
+        }
+        for (size_t i = 0; i < lhs.size(); ++i)
+        {
+            const char lower = (lhs[i] >= 'A' && lhs[i] <= 'Z') ? static_cast<char>(lhs[i] - 'A' + 'a') : lhs[i];
+            if (lower != rhs[i])
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    for (size_t i = 0; i < std::size(kLevelNames); ++i)
+    {
+        if (equalsFold(name, kLevelNames[i]))
+        {
+            return static_cast<LogLevel>(i);
+        }
+    }
+    return std::nullopt;
 }
 
 } // namespace Assisi::Core

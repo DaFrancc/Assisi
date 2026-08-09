@@ -28,6 +28,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -51,6 +52,8 @@ constexpr const char *kUsage =
     "  --spawn <n>             --host only: spawn n moving replicated entities\n"
     "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
     "                          until interrupted, the default)\n"
+    "  --verbosity <level>     lowest level to log: trace, debug, info, warn,\n"
+    "                          error, fatal (default trace)\n"
     "  -h, --help              show this help and exit\n";
 
 // Parses argv into the editor config inputs. Returns false with a message
@@ -94,6 +97,32 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
             std::fputs(kUsage, stdout);
             shouldExit = true;
             return true;
+        }
+        if (arg == "--verbosity")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--verbosity requires a level name\n\n%s", kUsage);
+                return false;
+            }
+            const std::string_view value = argv[++i];
+            const std::optional<Assisi::Core::LogLevel> level = Assisi::Core::ParseLogLevel(value);
+            if (!level)
+            {
+                std::fprintf(stderr, "--verbosity: '%.*s' is not a level name. Valid names are:",
+                             static_cast<int>(value.size()), value.data());
+                for (const std::string_view name : Assisi::Core::LogLevelNames())
+                {
+                    std::fprintf(stderr, " %.*s", static_cast<int>(name.size()), name.data());
+                }
+                std::fprintf(stderr, "\n\n%s", kUsage);
+                return false;
+            }
+            // Applied here rather than stored: this runs before the Application
+            // exists, so it takes effect for every line the engine emits,
+            // including the ones from bring-up.
+            Assisi::Core::GetLogger().SetMinLevel(*level);
+            continue;
         }
         if (arg == "-l" || arg == "--load-level")
         {
