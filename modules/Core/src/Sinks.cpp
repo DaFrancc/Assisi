@@ -6,6 +6,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
 #endif
 
 #include <Assisi/Core/Sinks.hpp>
@@ -43,7 +46,37 @@ static std::string_view LevelColor(LogLevel level)
 // ConsoleSink
 // -------------------------------------------------------------------------
 
-ConsoleSink::ConsoleSink()
+bool HasConsoleOutput()
+{
+#ifdef _WIN32
+    // A GUI-subsystem process launched without a console gets NULL here. That
+    // is the case worth catching: a shipped game would otherwise format every
+    // line and hand it to a handle that cannot take it.
+    const HANDLE handle = GetStdHandle(STD_OUTPUT_HANDLE);
+    return handle != nullptr && handle != INVALID_HANDLE_VALUE;
+#else
+    // fd 1 exists unless someone deliberately closed it. It may well be a
+    // redirect rather than a terminal, which is still somewhere worth writing.
+    return fcntl(STDOUT_FILENO, F_GETFD) != -1;
+#endif
+}
+
+// Color belongs to terminals. Piped or redirected output gets the escape
+// sequences embedded in it as literal bytes, which is how a log file ends up
+// full of \033[97m.
+static bool StdoutIsTerminal()
+{
+#ifdef _WIN32
+    // GetConsoleMode succeeds only for a real console handle — it fails when
+    // stdout is a file or a pipe, which is exactly the distinction we want.
+    DWORD mode = 0;
+    return GetConsoleMode(GetStdHandle(STD_OUTPUT_HANDLE), &mode) != FALSE;
+#else
+    return isatty(STDOUT_FILENO) != 0;
+#endif
+}
+
+ConsoleSink::ConsoleSink() : _color(StdoutIsTerminal())
 {
 #ifdef _WIN32
     auto enableAnsi = [](DWORD stdHandle)
@@ -64,7 +97,21 @@ void ConsoleSink::Write(LogLevel level, std::string_view message)
 {
     // Everything goes to stdout so output order is preserved.
     // Colors already differentiate severity clearly.
-    std::cout << std::format("{}{}{}\n", LevelColor(level), message, Reset);
+    //
+    // Streamed in pieces rather than std::format'd into one string: the
+    // formatted version allocated a whole decorated copy of every line just to
+    // write it once. These inserters write the parts straight through. The
+    // caller normally holds the logger lock, so the pieces cannot interleave —
+    // the exception is Fatal, which try-locks and may write unlocked, and which
+    // accepts an interleaved line by design.
+    if (_color)
+    {
+        std::cout << LevelColor(level) << message << Reset << '\n';
+    }
+    else
+    {
+        std::cout << message << '\n';
+    }
 }
 
 // -------------------------------------------------------------------------

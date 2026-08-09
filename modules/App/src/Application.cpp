@@ -138,7 +138,14 @@ Application::Application()
     // user root (defaults to the exe dir) so they don't depend on the CWD the
     // process was launched from. The user root initializes lazily here, before
     // AssetSystem::Initialize() discovers the read-only asset root.
-    Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
+    // Only when there is somewhere for it to go. A shipped GUI build has no
+    // console, and an unconditional ConsoleSink would format every line and
+    // write it to a handle nothing can read — the log's real destination in
+    // that build is the file sink below.
+    if (Core::HasConsoleOutput())
+    {
+        Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
+    }
     const std::filesystem::path logPath = Core::AssetSystem::ResolveUser("assisi.log").value_or("assisi.log");
     Core::GetLogger().AddSink(std::make_shared<Core::FileSink>(logPath));
 
