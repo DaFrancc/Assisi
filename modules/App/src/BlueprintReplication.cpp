@@ -7,7 +7,10 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/InstanceRecord.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 

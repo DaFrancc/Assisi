@@ -4,6 +4,7 @@
 
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 
 #include <algorithm>
 #include <cmath>
