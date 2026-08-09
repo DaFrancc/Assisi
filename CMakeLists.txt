@@ -249,6 +249,14 @@ target_compile_definitions(Assisi-Options INTERFACE
   $<$<NOT:$<CONFIG:Release>>:ASSISI_SOURCE_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets">
 )
 
+# ---- Shipping marker. Release is the ship preset; Debug and RelWithDebInfo are
+# the debug and dev ones. NDEBUG cannot stand in for this — dev defines it too,
+# and dev wants developer defaults. Currently read only by Logger.cpp, to pick
+# the default minimum log level, so it is not on any header's ABI.
+target_compile_definitions(Assisi-Options INTERFACE
+  $<$<CONFIG:Release>:ASSISI_SHIPPING_BUILD>
+)
+
 # ---- Sanitizers: enabled only when ASSISI_ENABLE_SANITIZERS=ON (via presets)
 if (ASSISI_ENABLE_SANITIZERS)
   if (MSVC)

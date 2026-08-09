@@ -25,7 +25,9 @@ namespace
 struct LevelGuard
 {
     LevelGuard() = default;
-    ~LevelGuard() { GetLogger().SetMinLevel(LogLevel::Trace); }
+    // Back to the build's default, not a hardcoded Trace — a shipping build
+    // starts at Info and this would otherwise leave it more verbose than it was.
+    ~LevelGuard() { GetLogger().SetMinLevel(DefaultMinLevel()); }
     LevelGuard(const LevelGuard &)            = delete;
     LevelGuard &operator=(const LevelGuard &) = delete;
 };
@@ -49,6 +51,20 @@ struct CapturingSink final : Sink
 };
 
 } // namespace
+
+TEST_CASE("The default level follows the build configuration")
+{
+    // Developer builds keep everything; a shipped log starts at the narrative
+    // and leaves out instrumentation aimed at whoever wrote the code.
+#ifdef ASSISI_SHIPPING_BUILD
+    CHECK(DefaultMinLevel() == LogLevel::Info);
+    CHECK_FALSE(GetLogger().IsEnabled(LogLevel::Debug));
+#else
+    CHECK(DefaultMinLevel() == LogLevel::Trace);
+    CHECK(GetLogger().IsEnabled(LogLevel::Trace));
+#endif
+    CHECK(GetLogger().IsEnabled(LogLevel::Info));
+}
 
 TEST_CASE("ParseLogLevel accepts every level name, in any case")
 {

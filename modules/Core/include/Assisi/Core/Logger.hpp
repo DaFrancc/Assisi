@@ -57,6 +57,17 @@ struct Sink
 // Logger
 // -------------------------------------------------------------------------
 
+/// @brief The level a fresh Logger starts at.
+///
+/// Trace in debug and dev builds; Info in a shipping build, where Trace and
+/// Debug are developer instrumentation a player's log has no use for. Either
+/// way `--verbosity` overrides it.
+///
+/// Resolved in Logger.cpp so the build-config macro never reaches a header. A
+/// header compiled with it in one target and without it in another is an ODR
+/// violation with a different default on each side.
+[[nodiscard]] LogLevel DefaultMinLevel() noexcept;
+
 /// @brief The global logging service.
 ///
 /// @note Thread-safe. One mutex serializes the Log() fan-out, so concurrent
@@ -75,6 +86,7 @@ struct Logger
     void AddSink(std::shared_ptr<Sink> sink);
 
     /// @brief Sets the minimum level — messages below this level are discarded.
+    /// Starts at DefaultMinLevel(); `--verbosity <name>` is what usually moves it.
     void SetMinLevel(LogLevel level);
 
     /// @brief Whether a message at this level would be emitted.
@@ -99,7 +111,7 @@ struct Logger
 
     std::mutex _mutex;
     std::vector<std::shared_ptr<Sink>> _sinks;
-    std::atomic<LogLevel> _minLevel = LogLevel::Trace;
+    std::atomic<LogLevel> _minLevel = DefaultMinLevel();
 };
 
 /// @brief Returns the global logger instance.
