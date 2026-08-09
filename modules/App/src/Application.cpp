@@ -152,17 +152,23 @@ bool Application::InitializeCore()
     _options = OptionsConfig::LoadFromJson();
 
     // Retention runs here rather than in the constructor because it is game.json
-    // that says how many to keep. The counts are totals including this run: the
-    // log open right now sorts newest and so is always among the survivors.
+    // that says how many to keep. The counts are totals including this run.
+    //
+    // Both calls name this run's own artifact as protected. Relying on it
+    // sorting newest is not enough: LaunchStamp() is local time, so a DST
+    // fall-back or an NTP step backwards makes it sort oldest and it is deleted
+    // first — the log while its descriptor is still open.
     //
     // Crash reports are pruned at startup, not at crash time — the crash handler
     // has no business enumerating a directory. This run's report does not exist
     // yet, so a run that does crash ends with keepDumps + 1 on disk until the
     // next launch trims it. Overshooting by one beats doing directory work with
     // a corrupt heap.
-    const std::filesystem::path &userRoot = Core::AssetSystem::GetUserRoot();
-    Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs);
-    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps);
+    const std::filesystem::path &userRoot   = Core::AssetSystem::GetUserRoot();
+    const std::string            logName    = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::string            crashName  = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
+    Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
+    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps, crashName);
 
     // Either source turns it on; a --server flag must not be undone by a config
     // file that says nothing about headless mode.

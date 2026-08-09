@@ -31,13 +31,19 @@ struct AppConfig
     /// Each launch writes its own timestamped file and the oldest are pruned,
     /// so a player who relaunches after a crash no longer overwrites the run
     /// that explains it. Five covers "it happened a few launches ago" without
-    /// letting the directory grow without bound. Zero keeps only the run in
-    /// progress; the current run's file is never pruned.
+    /// letting the directory grow without bound.
+    ///
+    /// A total including the run in progress, whose file is passed to the
+    /// pruner as protected and so is never a deletion candidate. 0 is valid and
+    /// means "keep no history"; this run's log still survives.
     uint32_t keepLogs = 5;
 
     /// @brief How many past crash reports to keep (`diagnostics.keepDumps`).
+    ///
     /// Same policy as keepLogs, and the names share a launch stamp so a report
-    /// and the log from the same run pair up.
+    /// and the log from the same run pair up. Counted slightly differently in
+    /// practice: pruning runs at startup, before this run's report exists, so a
+    /// run that crashes leaves keepDumps + 1 behind until the next launch.
     uint32_t keepDumps = 5;
 
     /// @brief Reads assets/game.json via the asset system.
