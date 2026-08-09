@@ -1,30 +1,18 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
-#include <Assisi/Core/Assert.hpp>
-#include <Assisi/Core/AssetSystem.hpp>
-#include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
-#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/EditorOnly.hpp>
-#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
 
 #include <cmath>
 #include <cstdint>
 #include <format>
-#include <fstream>
 #include <map>
-#include <memory>
-#include <optional>
-#include <span>
-#include <stdexcept>
 #include <string>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
