@@ -184,7 +184,14 @@ enum class RejectReason : std::uint8_t
 /// 8: the snapshot gained an instance-record section, ahead of despawns. A v7
 /// client reads that count as its despawn count and desyncs the whole stream, so
 /// this is a refuse-to-join change, not a tolerable one.
-inline constexpr std::uint32_t kNetProtocolVersion = 8;
+///  - 8 → 9: an instance record carries **which of its members exist** — one bit
+///    for "all of them", and one bit per member when they do not
+///    (docs/blueprint-review-round7-findings.md B8). Nothing on the wire said so
+///    before, so a member pruned on the host was expanded and bound by every
+///    later joiner and no despawn ever named it. Same section, one bit wider in
+///    the common case, and a v8 client would read the presence bit as the first
+///    byte of the placement.
+inline constexpr std::uint32_t kNetProtocolVersion = 9;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.
