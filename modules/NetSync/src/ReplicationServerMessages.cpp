@@ -64,16 +64,14 @@ void ReplicationServer::HandleMessage(Net::ConnectionId connection, std::span<co
     case MessageType::Ack:         HandleAck(it->second, reader); break;
     case MessageType::Input:       HandleInput(it->second, reader); break;
     case MessageType::Intent:
-        // Only from a client that has proved it speaks our protocol. Before the
-        // handshake completes we do not know that the bytes mean what they
-        // appear to, and dispatching them would be acting on a guess.
+        // Only from a client that has proved it speaks our protocol: before the
+        // handshake we do not know the bytes mean what they appear to.
         if (it->second.ready)
             HandleIntent(it->second, reader);
         break;
     case MessageType::RequestKeyframe:
         // No payload to validate, and nothing a hostile client gains: the worst
-        // it can do is ask for its own full state repeatedly, which costs it
-        // bandwidth it is already receiving.
+        // it can do is ask for its own full state, on its own bandwidth.
         if (it->second.ready)
         {
             Core::Log::Info("NetSync: connection {} asked for a full re-anchor.", connection);
@@ -81,8 +79,8 @@ void ReplicationServer::HandleMessage(Net::ConnectionId connection, std::span<co
         }
         break;
     default:
-        // Server-to-client messages arriving from a client are not a case to
-        // handle; they are a client that is confused or lying.
+        // A server-to-client message arriving from a client is a client that is
+        // confused or lying, not a case to handle.
         break;
     }
 }
@@ -104,10 +102,8 @@ void ReplicationServer::HandleClientHello(Connection &connection, Core::BitReade
 
     if (hello.contentSetHash != _contentSetHash)
     {
-        // With only a hash the server cannot name what differs, which the design
-        // accepts: the check exists so that after a successful join both machines
-        // are known to expand any blueprint identically, and a diagnosable-but-
-        // weaker check would not buy that.
+        // A hash cannot name what differs; accepted, because the point is only
+        // that after a join both machines expand every blueprint identically.
         Core::Log::Warn("NetSync: rejecting connection {} — content set mismatch (ours {:016x}, theirs "
                         "{:016x}).",
                         connection.id, _contentSetHash, hello.contentSetHash);
@@ -140,10 +136,9 @@ void ReplicationServer::HandleAck(Connection &connection, Core::BitReader &reade
     connection.ackedTick       = record->serverTick;
     ++connection.diagnostics.acksReceived;
 
-    // Fold in exactly the entities this snapshot *wrote*. One skipped for byte
-    // budget has no entry here and keeps whatever baseline it had, which is the
-    // whole point: "we mentioned it in the record" and "we delivered its state"
-    // are different facts.
+    // Fold in exactly the entities this snapshot *wrote*: one skipped for byte
+    // budget has no entry and keeps the baseline it had. Being named in the
+    // record and having its state delivered are different facts.
     for (const WrittenEntity &entity : record->written)
     {
         EntityBaseline &baseline = connection.baselines[entity.netId];
@@ -151,9 +146,9 @@ void ReplicationServer::HandleAck(Connection &connection, Core::BitReader &reade
         baseline.bodyTick        = std::max(baseline.bodyTick, entity.ticks.bodyTick);
     }
 
-    // A NetId that has left the acked set is gone for good — they are never
-    // reused, so a straggler ack cannot resurrect one. Without this the map
-    // grows with every entity that has ever replicated.
+    // A NetId that has left the acked set is gone for good — ids are never
+    // reused, so no straggler ack can resurrect one. Without this the map grows
+    // with every entity that has ever replicated.
     const auto retired = [&connection](const auto &entry)
     { return !std::binary_search(connection.acked.begin(), connection.acked.end(), entry.first); };
     std::erase_if(connection.baselines, retired);
@@ -199,8 +194,7 @@ void ReplicationServer::HandleInput(Connection &connection, Core::BitReader &rea
 
     for (InputCommand &command : commands)
     {
-        // Server authority is not enough on its own: the client picks these
-        // numbers. Clamp before the simulation ever sees them.
+        // The client picks these numbers; clamp before the simulation sees them.
         if (!ClampInputCommand(command, _config.inputLimits))
             ++connection.diagnostics.commandsClamped;
         connection.input.Accept(command);
@@ -227,17 +221,15 @@ struct IntentGate
 
 /// Steps 6 and 7 of the dispatch order, on the decoded value.
 ///
-/// Both live here rather than in each handler on purpose: hand-written
-/// validation spread across receive sites is the exact shape every documented
-/// exploit in the RPC survey came out of, and the single site is the feature.
+/// One site rather than one per handler: hand-written validation spread across
+/// receive sites is the shape most documented RPC exploits come out of.
 bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message, void *userData)
 {
     IntentGate &gate = *static_cast<IntentGate *>(userData);
 
-    // Step 6 — range. Reject, never clamp: the input path clamps because a
-    // stick can legitimately saturate, while an out-of-range intent field means
-    // the client is lying or the builds disagree, and clamping would convert a
-    // detectable attack into a silently accepted one.
+    // Step 6 — range. Reject, never clamp: unlike input, where a stick can
+    // legitimately saturate, an out-of-range intent field means a lying client
+    // or disagreeing builds, and clamping would accept the attack silently.
     std::string offending;
     if (!Core::Reflect::FieldsWithinBounds(meta.fields, message, &offending))
     {
@@ -247,7 +239,7 @@ bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message,
         return false;
     }
 
-    // Step 7 — control. Only fields the author marked as the intent's *subject*;
+    // Step 7 — control. Only fields the author marked as the intent's *subject*:
     // checking every entity reference would forbid a client from ever naming an
     // entity it does not own, which is most of them.
     for (const Core::Reflect::FieldMeta &field : meta.fields)
@@ -259,7 +251,7 @@ bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message,
             *reinterpret_cast<const std::uint64_t *>(static_cast<const std::byte *>(message) + field.offset);
         const ECS::Entity entity = UnpackEntity(packed);
         if (entity == ECS::NullEntity)
-            continue; // named nothing, which is a claim about nothing
+            continue; // names nothing, so it claims nothing
 
         if (gate.server->ControllerOf(entity) != gate.sender)
         {
@@ -277,8 +269,7 @@ bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message,
 
 void ReplicationServer::HandleIntent(Connection &connection, Core::BitReader &reader)
 {
-    // Step 1 — envelope. Fixed-size, bounded, and read before anything decides
-    // whether to care.
+    // Step 1 — envelope: bounded, and read before anything decides to care.
     const std::uint64_t             clientTick = reader.ReadVarUInt64();
     const Core::Reflect::MessageId  messageId  = Core::Reflect::ReadMessageId(reader);
     if (!reader.Ok() || messageId == Core::Reflect::kInvalidMessageId)
@@ -290,15 +281,14 @@ void ReplicationServer::HandleIntent(Connection &connection, Core::BitReader &re
     const Core::Reflect::MessageMeta *meta = Core::Reflect::MessageRegistry::Instance().ById(messageId);
     if (meta == nullptr)
     {
-        // An id this build does not know. The length prefix means we could step
-        // over it, but there is nothing after it in an intent packet, so the
-        // count is the whole response.
+        // An id this build does not know. Nothing follows it in an intent
+        // packet, so counting it is the whole response.
         ++connection.diagnostics.intentsMalformed;
         return;
     }
 
-    // Step 2 — direction. Free, and first among the semantic checks: the
-    // vocabulary itself says a client does not speak events.
+    // Step 2 — direction. Free, so it leads the semantic checks: clients do not
+    // speak events.
     if (meta->direction != Core::Reflect::MessageDirection::Intent)
     {
         ++connection.diagnostics.intentsWrongWay;
@@ -322,8 +312,8 @@ void ReplicationServer::HandleIntent(Connection &connection, Core::BitReader &re
     }
 
     // Step 4 — staleness. Load-bearing for unreliable intents, where
-    // out-of-order arrival is normal and a late map ping must not time-travel
-    // into a world that has moved past it.
+    // out-of-order arrival is normal: a late map ping must not land in a world
+    // that has moved past it.
     const std::uint64_t oldest = _simTick > _config.intentStaleWindowTicks
                                      ? _simTick - _config.intentStaleWindowTicks
                                      : 0;
@@ -347,8 +337,7 @@ void ReplicationServer::DispatchIntent(ClientId sender, ConnectionDiagnostics &d
     // a handler — or the control check — can do anything with them.
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
-    // The codec's entity-ref slot is a bare uint64_t; NetId{...} here is the
-    // wire boundary where that number becomes a NetId.
+    // The codec's entity-ref slot is a bare uint64_t; NetId{} is the wire boundary.
     { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
 
     const std::uint64_t before = diagnostics.intentsOutOfRange + diagnostics.intentsNotYours;
@@ -367,9 +356,8 @@ void ReplicationServer::DispatchIntent(ClientId sender, ConnectionDiagnostics &d
 
 std::size_t ReplicationServer::EventFloorBytes(const Connection &connection) const
 {
-    // Nothing waiting, nothing allowed. A game that sends no events must not pay
-    // for the feature — the same performance-first rule that makes relevancy
-    // cost nothing without a provider.
+    // Nothing waiting, nothing allowed: a game that sends no events pays no
+    // bytes for the feature.
     return connection.pendingEvents.empty() ? 0 : _config.reservedEventBytes;
 }
 
@@ -379,8 +367,8 @@ bool ReplicationServer::EventReaches(const Connection &connection, NetId subject
         return false;
     if (subject == InvalidNetId)
         return true; // independent: nothing to scope it by, so everyone ready
-    // The relevancy boundary, reused rather than re-derived. This is what makes
-    // the zero-bytes guarantee cover messages and not only state.
+    // The relevancy boundary reused rather than re-derived, so the zero-bytes
+    // guarantee covers messages and not only state.
     return IsRelevant(connection.id, subject);
 }
 
@@ -388,9 +376,9 @@ void ReplicationServer::QueueEvent(Connection &connection, NetId subject, std::v
 {
     while (connection.pendingEvents.size() >= _config.maxHeldEventsPerConnection)
     {
-        // Oldest first. A queue at its cap is a connection being told about
-        // entities it will never hold, and the newest event is the one most
-        // likely to still be about something.
+        // Oldest first: a queue at its cap means events about entities this
+        // connection will never hold, and the newest is likeliest to still be
+        // about something.
         connection.pendingEvents.pop_front();
         ++connection.diagnostics.eventsOverflowed;
     }
@@ -409,13 +397,13 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
         return;
     }
 
-    // Encoded once. Entity references translate to NetIds identically for every
-    // recipient, so there is nothing per-connection about the bytes.
+    // Encoded once: entity references translate to NetIds identically for every
+    // recipient, so nothing about the bytes is per-connection.
     //
-    // Assigned on demand rather than looked up: spawning something and
+    // Ids are assigned on demand, not looked up. Spawning something and
     // announcing it in the same frame is the common case, and NetIds are
-    // otherwise handed out at the next tick — so a lookup would silently encode
-    // "nothing" for exactly the entity the event is about.
+    // otherwise handed out at the next tick — a lookup would encode "nothing"
+    // for exactly the entity the event is about.
     Core::Reflect::CodecContext codec;
     codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
     // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
@@ -429,7 +417,7 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
 
     // What relevancy scopes this by: the first entity the message names. An
     // `independent` event names none by declaration, and reflectgen refuses an
-    // event that names none without saying so.
+    // event that names none without declaring it.
     NetId subject = InvalidNetId;
     if (!meta->independent)
     {
@@ -456,7 +444,7 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
             Core::BitWriter announcement;
             WriteMessageType(MessageType::Announcement, announcement);
             announcement.WriteVarUInt64(_simTick);
-            announcement.WriteVarUInt32(subject.value); // wire write
+            announcement.WriteVarUInt32(subject.value);
             announcement.WriteBytes(bytes);
             _transport.Send(connection.id, announcement.Data(), Net::SendMode::Reliable, Net::Lane::Control);
             ++connection.diagnostics.announcementsSent;
@@ -467,10 +455,10 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
 
     const auto deliverToHost = [&]()
     {
-        // No transport, no reliability distinction: the host's own delivery is a
-        // queue drained at the end of its tick, which gives it the same
-        // "the world is at least as new as the message" property packet ordering
-        // gives a remote client.
+        // No transport, so no reliability distinction: the host's delivery is a
+        // queue drained at the end of its tick, which gives it the same "the
+        // world is at least as new as the message" property that packet
+        // ordering gives a remote client.
         _hostEvents.emplace_back(id, bytes);
     };
 
@@ -488,9 +476,8 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
             if (EventReaches(connection, subject))
                 deliver(connection);
         }
-        // The authority sees everything, so the host is in the all-relevant
-        // class by definition — and can be the excluded instigator like anyone
-        // else.
+        // The authority sees everything, so the host is always in the
+        // all-relevant class — but can be the excluded instigator like anyone else.
         if (!exclude || who != HostClientId)
             deliverToHost();
         break;
@@ -500,9 +487,9 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
     {
         if (!who.IsValid())
         {
-            // Nobody to address. Reachable honestly — an uncontrolled entity has
-            // no controller — so it is counted rather than treated as an error,
-            // on the host's counters since no connection owns the failure.
+            // Nobody to address. Honestly reachable — an uncontrolled entity
+            // has no controller — so it is counted, not treated as an error,
+            // and on the host's counters since no connection owns the failure.
             ++_hostDiagnostics.eventsUndeliverable;
             return;
         }
@@ -523,9 +510,9 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
             ++_hostDiagnostics.eventsUndeliverable;
             return;
         }
-        // A directed event is addressed to a person, not to a viewpoint, so it
-        // deliberately does *not* consult relevancy: "you died" must reach you
-        // whether or not your corpse is in your own set.
+        // Addressed to a person, not to a viewpoint, so it deliberately does
+        // *not* consult relevancy: "you died" must reach you whether or not
+        // your corpse is in your own set.
         deliver(connection->second);
         break;
     }
@@ -535,20 +522,17 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
 void ReplicationServer::WriteEventSection(Connection &connection, Core::BitWriter &writer,
                                           const SentSnapshot &record)
 {
-    // The section is allowed to run *past* the snapshot's soft cap, by the
-    // configured floor, rather than having those bytes held back from the entity
-    // and body passes.
-    //
-    // Reserving up front does not work: those passes stop when they are already
-    // at the budget, and the last entity written can overshoot it by more than
-    // the reservation — so the "floor" would be gone exactly when the world is
-    // busiest, which is when events most need it. Overrunning a soft cap by a
-    // bounded amount, only when something is waiting, actually guarantees it.
+    // The section may run *past* the snapshot's soft cap by the configured
+    // floor, rather than those bytes being held back from the entity and body
+    // passes. Reserving up front does not work: those passes stop only once
+    // already at the budget, and the last entity written can overshoot by more
+    // than the reservation — the floor would be gone exactly when the world is
+    // busiest, which is when events most need it.
     const std::size_t limit = _config.maxSnapshotBytes + EventFloorBytes(connection);
 
-    // Bool-chained like the entity and body sections, for the same reason: a
-    // count would have to be known before the first record is written, which
-    // means predicting the budget cut instead of discovering it.
+    // Bool-chained like the entity and body sections: a count would have to be
+    // known before the first record is written, which means predicting the
+    // budget cut instead of discovering it.
     std::size_t index = 0;
     while (index < connection.pendingEvents.size())
     {
@@ -566,8 +550,8 @@ void ReplicationServer::WriteEventSection(Connection &connection, Core::BitWrite
         }
 
         // Acked, or written into this very packet — the same test the body-state
-        // gate uses, and what makes a message about an entity spawned in this
-        // snapshot arrive *after* the spawn without any ordering machinery.
+        // gate uses. It is what makes a message about an entity spawned in this
+        // snapshot arrive *after* the spawn, with no ordering machinery.
         const bool known = pending.subject == InvalidNetId ||
                            std::binary_search(connection.acked.begin(), connection.acked.end(), pending.subject) ||
                            std::binary_search(record.netIds.begin(), record.netIds.end(), pending.subject);
@@ -595,16 +579,15 @@ void ReplicationServer::DispatchHostEvents()
     if (_hostEvents.empty())
         return;
 
-    // Swapped out first: a handler may send further events, and appending to the
-    // vector being iterated would either reallocate under it or run this tick's
+    // Swapped out first: a handler may send further events, and appending to
+    // the vector being iterated would reallocate under it, or run this tick's
     // consequences inside this tick's drain.
     std::vector<std::pair<Core::Reflect::MessageId, std::vector<std::byte>>> events;
     events.swap(_hostEvents);
 
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
-    // The codec's entity-ref slot is a bare uint64_t; NetId{...} here is the
-    // wire boundary where that number becomes a NetId.
+    // The codec's entity-ref slot is a bare uint64_t; NetId{} is the wire boundary.
     { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
 
     NetContext context{HostClientId, _session, &_scene};
@@ -629,9 +612,8 @@ void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index 
     if (meta == nullptr)
         return;
 
-    // The host has no connection, so it has no ConnectionDiagnostics either.
-    // One kept here means its intents are counted like everyone else's rather
-    // than being invisible.
+    // The host has no connection, hence no ConnectionDiagnostics; _hostDiagnostics
+    // stands in so its intents are counted like everyone else's.
     Core::BitWriter writer;
     Core::Reflect::CodecContext codec;
     codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
@@ -643,11 +625,10 @@ void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index 
     Core::BitReader reader(writer.Data());
     (void)Core::Reflect::ReadMessageId(reader); // the id we already have
 
-    // Entering at step 5 rather than step 1: there is no envelope to read, no
-    // transport to rate-limit, and no clock skew to be stale against — the host
-    // *is* the clock. Everything from decoding onwards is identical, including
-    // the range and control checks, because the host being trusted is not the
-    // same as the host being correct.
+    // Entering at step 5: there is no envelope to read, no transport to
+    // rate-limit, and no clock skew to be stale against — the host *is* the
+    // clock. Decoding onwards is identical, range and control checks included:
+    // the host being trusted is not the same as the host being correct.
     DispatchIntent(HostClientId, _hostDiagnostics, *meta, reader);
 }
 

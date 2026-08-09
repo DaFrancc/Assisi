@@ -29,11 +29,9 @@ namespace Assisi::Runtime
 
 /// The name a saved entity is written under, before uniquing.
 ///
-/// Runtime::Name is the entity's name — there is no second, file-only identity —
-/// so an entity that has one keeps it and an entity that does not gets a
-/// placeholder. Placeholders are stable across a round trip because Load writes
-/// whatever it read back onto the entity, so the *next* save reads a real name
-/// here and nothing shifts underneath an override.
+/// Runtime::Name is the entity's only identity — there is no file-only one — so a
+/// nameless entity gets a placeholder. Load writes back whatever it read, so the
+/// *next* save finds a real name here and nothing shifts underneath an override.
 std::string AuthoredName(ECS::Scene &scene, ECS::Entity entity)
 {
     if (const Name *name = scene.Get<Name>(entity); name != nullptr && !name->value.View().empty())
@@ -44,16 +42,15 @@ std::string AuthoredName(ECS::Scene &scene, ECS::Entity entity)
 /// @p base if nothing has claimed it, else `base_1`, `base_2`, … until something
 /// is free. Claims the result in @p used.
 ///
-/// Two entities really can share a Name today (it is a free-form label and always
-/// has been), and a file where they do would be refused on load. Disambiguating
-/// on the way out is what makes the format's uniqueness rule enforceable without
-/// a migration step that could not have known which "Cube" was which. Deterministic
-/// because the caller walks entities in the same sorted order the array uses, so
-/// re-saving an unchanged scene produces byte-identical names.
+/// Two entities really can share a Name — it is a free-form label — and a file
+/// where they do is refused on load, so uniquing on the way out is what makes the
+/// format's rule enforceable. Deterministic: the caller walks entities in the same
+/// sorted order the array uses, so re-saving an unchanged scene produces
+/// byte-identical names.
 std::string UniqueName(std::string base, std::unordered_set<std::string> &used)
 {
-    // A name has to survive a round trip through Runtime::Name, which truncates.
-    // Truncating here instead means the file says exactly what the load will hold.
+    // Runtime::Name truncates, so truncate here too: the file then says exactly
+    // what the load will hold.
     if (base.size() > Core::kShortStringMax)
         base.resize(Core::kShortStringMax);
 
@@ -77,9 +74,6 @@ std::string UniqueName(std::string base, std::unordered_set<std::string> &used)
 
 /// The path name a live member is addressed by — `car_3/wheel_fl` — or empty if
 /// the tag names an instance or a member index that no longer exists.
-///
-/// This is the walk BlueprintMember exists to be small enough to need: instance
-/// table → source → the cached member list → `[memberIndex].name`.
 std::string MemberPathName(const InstanceTable &instances, const ECS::BlueprintMember &tag)
 {
     const BlueprintInstance *row = instances.Find(tag.instanceId);
@@ -100,12 +94,12 @@ namespace
 /// Takes every serializable component off @p entity, so it can be rebuilt from a
 /// definition with none of the previous version's leftovers.
 ///
-/// The handle survives, which is the entire point: a member the author neither
-/// deleted nor renamed keeps its exact (slot, generation), so every undo transaction
-/// and every EntityRef pointing at it stays true.
+/// The handle survives, which is the point: a member the author neither deleted nor
+/// renamed keeps its exact (slot, generation), so every undo transaction and every
+/// EntityRef pointing at it stays true.
 ///
 /// Non-serializable state — a Jolt body, a resolved asset pointer — is deliberately
-/// *not* touched here, because Runtime cannot see it. Removing it is the caller's
+/// *not* touched, because Runtime cannot see it. Removing it is the caller's
 /// precondition (see SceneSerializer::ReexpandInstance).
 void StripSerializable(ECS::Scene &scene, ECS::Entity entity)
 {
@@ -124,6 +118,8 @@ std::string_view LeafName(std::string_view path)
     return slash == std::string_view::npos ? path : path.substr(slash + 1);
 }
 
+} // namespace
+
 /// Creates one instance's member entities and claims their names, applying no
 /// components yet.
 ///
@@ -131,18 +127,15 @@ std::string_view LeafName(std::string_view path)
 /// `car_3/body`, and a member may name a level entity. Deserializing anything
 /// before every name exists resolves those to null and silently unwires the file.
 ///
-/// Fails on a name collision — with a level entity, with another instance, or
-/// with a member of one. Every one of them makes a reference ambiguous.
+/// Fails on a name collision — with a level entity, with another instance, or with
+/// a member of one. Every one of them makes a reference ambiguous.
 ///
-/// @param staged filled as the work happens, **including on failure**. A row is
-///        added to @p table and entities are created before the last thing that
-///        can fail, so the caller has to be able to unwind whatever got as far as
-///        existing; handing that back is what makes "all or nothing" the caller's
-///        to keep rather than a promise this function cannot make.
+/// @param staged filled as the work happens, **including on failure**: a row is
+///        added to @p table and entities are created before the last thing that can
+///        fail, so on error the caller must unwind whatever got as far as existing.
+///        "All or nothing" is the caller's to keep, not a promise made here.
 /// @param adopt when non-null, a re-expansion: the row already exists and members
-
-} // namespace
-
+///        are taken over from it by name instead of being created.
 std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &table,
                                               const LevelInstance &entry, int32_t levelInstanceIndex,
                                               StagedInstance &staged, AdoptionSet *adopt)
@@ -159,9 +152,8 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
     const BlueprintResult loaded = GetBlueprintDefinition(entry.source);
     if (!loaded)
     {
-        // The reason comes from the definition rather than being invented here: the
-        // file that actually failed may be several levels of nesting below
-        // `entry.source`, and this call site cannot know which.
+        // The reason comes from the definition, not from here: the file that
+        // actually failed may be nested several levels below `entry.source`.
         Core::Log::Error("Blueprint: instance '{}' cannot use '{}': {}.", entry.name, entry.source,
                          Describe(loaded.error()));
         return std::unexpected(LevelError::BlueprintUnusable);
@@ -171,17 +163,17 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
     staged.definition = definition;
     staged.placement  = entry.transform;
     staged.overrides  = entry.overrides;
-    // A re-expansion keeps its row exactly as it is: the placement, the overrides and
-    // the removals belong to the level that placed this instance, and the file being
-    // edited has nothing to say about any of them.
+    // A re-expansion keeps its row exactly as it is: placement, overrides and
+    // removals belong to the level that placed the instance, not to the file being
+    // edited.
     staged.id = adopt != nullptr
                     ? adopt->instanceId
                     : table.Add(BlueprintInstance{.name      = entry.name,
                                                   .source    = definition->source,
                                                   .transform = entry.transform,
                                                   // Anything the loader places came out of a file, so it is
-                                                  // authored by construction. A placement made outside a load
-                                                  // decides for itself — see PlaceInstance.
+                                                  // authored by construction; a placement made outside a
+                                                  // load decides for itself (see PlaceInstance).
                                                   .authored           = levelInstanceIndex >= 0,
                                                   .levelInstanceIndex = levelInstanceIndex,
                                                   .overrides          = entry.overrides,
@@ -196,9 +188,9 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
 
         if (IsMemberRemoved(desc.name, entry.removed))
         {
-            // The hole. Its name is still claimed, mapped at nothing: a reference
-            // to a removed member then resolves to null with a warning, rather than
-            // refusing the file as an unknown name would.
+            // The hole. Its name is still claimed, mapped at nothing, so a
+            // reference to a removed member resolves to null with a warning rather
+            // than refusing the file the way an unknown name would.
             staged.members.push_back(ECS::NullEntity);
             staged.resolved.emplace_back();
             if (!s_context->nameToEntity.emplace(path, ECS::NullEntity).second)
@@ -209,9 +201,9 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
             continue;
         }
 
-        // A member the edit left alone keeps its entity — see AdoptionSet. Stripped
-        // rather than patched, because the new definition may simply not declare a
-        // component the old one did, and a patch cannot express an absence.
+        // A member the edit left alone keeps its entity (see AdoptionSet). Stripped
+        // rather than patched: the new definition may not declare a component the
+        // old one did, and a patch cannot express an absence.
         ECS::Entity e = ECS::NullEntity;
         if (adopt != nullptr)
         {
@@ -235,15 +227,14 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
         }
 
         // The leaf, not the path: a Name is what the member's own file calls it,
-        // and a path would not fit anyway. The path is derived from the tag when
-        // something needs it.
+        // and a path would not fit. MemberPathName rebuilds the path from the tag.
         (void)scene.Add(e, Name{Core::ShortString{LeafName(desc.name)}});
         (void)scene.Add(e, ECS::BlueprintMember{.instanceId = staged.id, .memberIndex = i});
     }
 
     // This instance's own claims, on top of whatever the file already resolved.
-    // Outermost wins per field, which is what makes a lot's colour and a level's
-    // radius both apply to the same wheel.
+    // Outermost wins per field, so a lot's colour and a level's radius can both
+    // apply to the same wheel.
     for (const auto &[memberPath, componentOverrides] : entry.overrides.items())
     {
         const std::optional<uint32_t> index = definition->IndexOf(memberPath);
@@ -271,14 +262,14 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
     const auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
     // The definition's references are qualified for the nesting *inside* the file;
-    // the instance's own name is only known here. Without this second pass a wheel
-    // still says its parent is `body`, and with two cars placed, `body` names
-    // whichever one answered first.
+    // the instance's own name is only known here. Without this pass a wheel still
+    // says its parent is `body`, and with two cars placed `body` names whichever
+    // one answered first.
     const std::string prefix = instanceName.empty() ? std::string{} : std::string{instanceName} + "/";
 
     // A prepared block's EntityRefs are member *indices*; this turns them into this
-    // instance's handles. It is why nothing has to walk a decoded component looking
-    // for references afterwards — the codec's own hook does it during the read.
+    // instance's handles during the read, so nothing has to walk decoded components
+    // looking for references afterwards.
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [&staged](uint64_t packed) -> uint64_t
     {
@@ -296,10 +287,10 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
 
         const BlueprintMemberDesc &desc = staged.resolved[i];
 
-        // Which components this instance had something to say about. Those fall
-        // back to the JSON below, because an override is a patch and the codec has
-        // no patch: a block is full state, so decoding it would overwrite the very
-        // fields the override just set.
+        // Which components this instance had something to say about. Those skip the
+        // prepared blocks and take the JSON path below: an override is a patch, and
+        // a block is full state, so decoding it would overwrite what the override
+        // just set.
         std::unordered_set<std::string> claimed;
         if (const auto it = staged.overrides.find(desc.name); it != staged.overrides.end() && it->is_object())
         {
@@ -355,15 +346,13 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
                     continue;
                 }
 
-                // Qualified through a one-key wrapper because the qualifier takes a
-                // component *set* — it has to look the component up to know which of
-                // its fields are references.
+                // A one-key wrapper because the qualifier takes a component *set* —
+                // it looks each component up to know which fields are references.
                 nlohmann::json wrapper{{componentName, componentData}};
                 QualifyInstanceReferences(wrapper, prefix);
-                // The definition was read once and prepared, and PrepareBlueprint
-                // refuses a member whose values do not read — so a failure here is
-                // a claim the *instance* wrote, and the member simply does not get
-                // that component rather than the whole expansion collapsing.
+                // PrepareBlueprint already refused any member whose values do not
+                // read, so a failure here is the *instance*'s claim: the member goes
+                // without that component rather than the expansion collapsing.
                 if (!meta->addToScene(&scene, e.index, e.generation, wrapper.at(componentName)))
                 {
                     Core::Log::Error("Blueprint: instance '{}' member '{}' overrides '{}' with something "
@@ -373,11 +362,10 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
             }
         }
 
-        // An override this instance wrote may have flipped `parented` after the
-        // definition was flattened *and* prepared. The prepared block is the
-        // authority for a component the instance did not claim, so correcting the
-        // JSON is not enough — the nesting placement is baked into the bytes that
-        // were just decoded, and it comes off here or not at all.
+        // An override may have flipped `parented` after the definition was flattened
+        // *and* prepared. The nesting placement is baked into the prepared bytes
+        // that were just decoded, so fixing the JSON is not enough: it comes off
+        // here or not at all.
         if (const bool bakedIn = !staged.definition->members[i].parented; bakedIn != !desc.parented)
         {
             if (ECS::Transform *transform = scene.GetMut<ECS::Transform>(e))
@@ -387,10 +375,10 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
             }
         }
 
-        // The root is placement and only placement, and it does not exist after
-        // expansion (§3): a parentless member's Transform ends up in world space.
-        // A parented one is relative to a member that already absorbed the
-        // placement, so composing again would apply it twice.
+        // There is no root entity after expansion — the root is placement and only
+        // placement — so a parentless member's Transform ends up in world space. A
+        // parented one is relative to a member that already absorbed the placement;
+        // composing again would apply it twice.
         if (!desc.parented)
         {
             if (ECS::Transform *transform = scene.GetMut<ECS::Transform>(e))

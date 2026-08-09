@@ -4,8 +4,8 @@
 /// @file ReplicationServer.hpp
 /// @brief The sending half of the state-replication protocol.
 ///
-/// The two halves of this protocol are one design and must be read together:
-/// a change to either one's wire handling is a change to both.
+/// Sender and receiver are one design: a change to either one's wire handling
+/// is a change to both.
 
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
@@ -43,9 +43,8 @@ class ReplicationServer
 {
   public:
     /// @param physics The world whose bodies are the authority on motion. Null
-    ///   keeps the pre-body behaviour exactly — Transforms replicate as ordinary
-    ///   components and no body state is sent — which is what every test with no
-    ///   physics world in scope wants.
+    ///   means Transforms replicate as ordinary components and no body state is
+    ///   sent at all.
     ReplicationServer(Net::NetTransport &transport, ECS::Scene &scene, Physics::PhysicsWorld *physics = nullptr,
                       ReplicationConfig config = {});
 
@@ -54,51 +53,44 @@ class ReplicationServer
 
     /// @brief Declare which level this server is running.
     ///
-    /// Carried in every subsequent `ServerHello`, so set it before the first
-    /// connection arrives. A server that leaves it unset advertises
-    /// `LevelAddressing::None`, which a joining editor treats as a clean abort
-    /// — better than letting it join a world whose static half it cannot build.
+    /// Carried in every subsequent `ServerHello`, so **set it before the first
+    /// connection arrives**. Left unset, the server advertises
+    /// `LevelAddressing::None` and a joining editor aborts rather than join a
+    /// world whose static half it cannot build.
     void SetLevelIdentity(LevelIdentity level) { _level = std::move(level); }
 
     [[nodiscard]] const LevelIdentity &Level() const { return _level; }
 
-    /// @brief Register a connection the transport has reported as Connected.
-    /// Sends the handshake; the client is not eligible for snapshots until it
-    /// answers with a matching protocol hash.
+    /// @brief Register a connection the transport has reported as Connected,
+    /// allocate its `ClientId`, and send the handshake carrying it.
     ///
-    /// Allocates this connection's `ClientId` — monotonic from
-    /// kFirstRemoteClientId, never reused within the session — and carries it in
-    /// the hello. Allocation is at *assignment*; the id becomes meaningful when
-    /// the handshake completes, which is a distinction with no observable
-    /// consequence beyond a gap in the numbering if a joiner is rejected.
+    /// The client is not eligible for snapshots until it answers with a matching
+    /// protocol hash. ClientIds are monotonic from kFirstRemoteClientId and never
+    /// reused within a session, so a rejected joiner leaves a gap.
     void AddConnection(Net::ConnectionId connection);
 
     /// @brief Tell the server which content set it is running, so it can check a
-    /// joiner's against it.
+    /// joiner's against it. Flushes every hello that was waiting.
     ///
-    /// **Until this is called, no `ServerHello` goes out.** A connection is still
-    /// registered — it just waits. That is the literal reading of "the server
-    /// cannot be reached without one" (docs/blueprint-system-concept.md §9), and
-    /// the alternative is worse than it looks: `ClientHello` is sent exactly once
-    /// and never resent, so a server that received one while its own hash was
-    /// pending could neither verify it nor safely drop it.
-    ///
-    /// Hashing is a job, so this normally lands a frame or two after hosting
-    /// starts. Setting it flushes every hello that was waiting.
+    /// **Until this is called, no `ServerHello` goes out** — connections are
+    /// registered and simply wait. Holding them is required, not tidy:
+    /// `ClientHello` is sent exactly once and never resent, so a server that
+    /// received one while its own hash was pending could neither verify it nor
+    /// safely drop it. Hashing is a job, so this normally lands a frame or two
+    /// after hosting starts.
     void SetContentSetHash(std::uint64_t hash);
 
     /// @brief Whether SetContentSetHash has been called. Hosting is not reachable
     /// until it has.
     [[nodiscard]] bool HasContentSetHash() const { return _contentSetHashReady; }
 
-    /// @brief Forget a connection. Its NetIds stay allocated — they belong to
-    /// the entities, not to whoever was watching them.
+    /// @brief Forget a connection, and despawn or release everything it
+    /// controlled per each `ControlledBy`'s own `despawnOnDisconnect`.
     ///
-    /// What does *not* stay is whatever that client controlled: each entity in
-    /// its control set is despawned or loses its `ControlledBy`, per that
-    /// component's own `despawnOnDisconnect`. The sweep runs **before** the
-    /// connection's bookkeeping is erased, because it needs the leaving
-    /// client's id to know what to sweep.
+    /// NetIds stay allocated — they belong to the entities, not to whoever was
+    /// watching them. The control sweep must run **before** the connection's
+    /// bookkeeping is erased; it needs the leaving client's id to know what to
+    /// sweep.
     void RemoveConnection(Net::ConnectionId connection);
 
     /// @brief This connection's session identity, or InvalidClientId if it is
@@ -111,19 +103,16 @@ class ReplicationServer
 
     /// @brief Give @p client control of @p entity, replacing whatever held it.
     ///
-    /// The one way control is established: a component write on the server,
-    /// replicated to every client like any other component. Transfer is this
-    /// same call with a different id — one write, one propagation delay, rather
-    /// than the five simultaneous semantic changes a fused ownership pointer
-    /// makes of it.
+    /// The one way control is established: a `ControlledBy` write on the server,
+    /// replicated like any other component. Transfer is this same call with a
+    /// different id.
     ///
     /// @param despawnOnDisconnect What happens to @p entity when @p client
     ///   leaves. True — despawn — is right for a player-spawned pawn; false for
     ///   a world object someone is temporarily driving.
     ///
-    /// Passing InvalidClientId is the same as ClearControl(). An entity that
-    /// does not replicate can still be given control (nothing forbids it), but
-    /// no client will ever hear about it.
+    /// Passing InvalidClientId is the same as ClearControl(). A non-replicating
+    /// entity can be given control, but no client will ever hear about it.
     void SetControl(ECS::Entity entity, ClientId client, bool despawnOnDisconnect = true);
 
     /// @brief Remove @p entity's `ControlledBy`, if it has one. The entity
@@ -137,8 +126,8 @@ class ReplicationServer
     /// null to tell everyone about everything.
     ///
     /// Null is the default and is *not* a provider that returns everything: the
-    /// intersection is skipped outright, so relevancy costs nothing at all in
-    /// the games that do not use it. See RelevancyProvider.
+    /// intersection is skipped outright, so relevancy costs nothing in games
+    /// that do not use it. See RelevancyProvider.
     void SetRelevancyProvider(std::unique_ptr<RelevancyProvider> provider);
 
     [[nodiscard]] RelevancyProvider *Relevancy() const { return _relevancy.get(); }
@@ -147,24 +136,21 @@ class ReplicationServer
     /// to replicate every member as an ordinary entity.
     ///
     /// Null is the default. Installing one changes how NetIds are handed out —
-    /// an instance's members take a contiguous block — so install it before the
-    /// first entity replicates, not mid-session: ids already assigned are never
+    /// an instance's members take a contiguous block — so **install it before
+    /// the first entity replicates, never mid-session**: assigned ids are never
     /// reissued, and a half-blocked instance would have no base to send.
     void SetInstanceInfoProvider(std::unique_ptr<InstanceInfoProvider> provider);
 
-    /// Not named InstanceInfo(): that is the struct above, and a member function
-    /// of that name would shadow the type inside this class.
+    /// Not named InstanceInfo(): a member function of that name would shadow the
+    /// struct of that name inside this class.
     [[nodiscard]] InstanceInfoProvider *Instances() const { return _instanceInfo.get(); }
 
     /// @brief Set the entities @p connection views the world from.
     ///
     /// Session state, not a component, and deliberately *not* derived from
-    /// `ControlledBy` at the point of use. A v1 joiner is a spectator with no
-    /// controlled entity and still needs a viewpoint; Unreal's anchor is the
-    /// view target rather than the pawn, and spectator and camera actors are
-    /// exactly where owner-derived anchoring leaks. The pawn itself never
-    /// depends on anchors to stay visible to its controller — that is the
-    /// implicit grant's job.
+    /// `ControlledBy`: a spectator has no controlled entity and still needs a
+    /// viewpoint. A pawn never depends on anchors to stay visible to its own
+    /// controller — that is the implicit grant's job.
     ///
     /// Passing an empty list restores the default, which is the connection's
     /// controlled entities.
@@ -177,9 +163,9 @@ class ReplicationServer
     /// @brief Pin @p netId into @p connection's set regardless of what the
     /// provider says. Idempotent.
     ///
-    /// The escape hatch every surveyed system ships in some form: spectator
-    /// tooling, quest markers, an entity a game wants one particular player to
-    /// keep seeing. Merged *after* the provider, so a grant always wins.
+    /// The escape hatch for spectator tooling, quest markers, and anything one
+    /// player must keep seeing. Merged *after* the provider, so a grant always
+    /// wins.
     void GrantRelevance(Net::ConnectionId connection, NetId netId);
 
     /// @brief Undo a GrantRelevance. The entity may still be relevant for
@@ -197,11 +183,9 @@ class ReplicationServer
 
     /// @brief Every entity @p client controls, in NetId-agnostic scene order.
     ///
-    /// Served from an index rebuilt once per tick in ReconcileNetIds rather
-    /// than maintained incrementally: the editor's play/stop restore and
-    /// undo-revive both resurrect entities outside any incremental hook, and an
-    /// index that misses those is an index that is wrong exactly when someone
-    /// is debugging.
+    /// Served from an index rebuilt once per tick in ReconcileNetIds rather than
+    /// maintained incrementally: the editor's play/stop restore and undo-revive
+    /// both resurrect entities outside any incremental hook.
     [[nodiscard]] std::span<const ECS::Entity> ControlledEntities(ClientId client) const;
 
     /// @brief Handle one received message. Everything that arrives from a client
@@ -219,11 +203,10 @@ class ReplicationServer
     /// @brief Submit an intent from the *host's own* player.
     ///
     /// A listen server's player is not a connection — there is no loopback
-    /// client by design (NetSession.hpp) — so without this the person hosting
-    /// would be the one participant who cannot speak. It enters the same
-    /// dispatch site as a remote intent, with sender = HostClientId, and passes
-    /// the same checks minus the transport framing there is none of. One door
-    /// means one, including for the host.
+    /// client by design (NetSession.hpp) — so without this the host would be the
+    /// one participant that cannot speak. Enters the same dispatch site as a
+    /// remote intent with sender = HostClientId, and passes the same checks
+    /// minus the transport framing there is none of.
     template <typename T>
     void SubmitLocalIntent(const T &intent)
     {
@@ -234,11 +217,10 @@ class ReplicationServer
     }
 
     // ── Sending events ───────────────────────────────────────────────────────
-    // Three recipient classes, and no fourth. Membership of each is *computed*
-    // from relevancy and control, never enumerated by gameplay code: an
-    // arbitrary per-call connection list is the API through which an event leaks
-    // exactly what state filtering withholds, and it duplicates in every call
-    // site the recipient computation relevancy already owns in one place.
+    // Three recipient classes, and no fourth. Membership is *computed* from
+    // relevancy and control, never enumerated by gameplay code — an arbitrary
+    // per-call connection list is how an event leaks exactly what state
+    // filtering withholds.
     //
     // Delivery form comes from the type, not the call: an `AMSG(event,
     // unreliable)` rides the next snapshot, where its ordering against the
@@ -247,13 +229,9 @@ class ReplicationServer
 
     /// @brief To everyone who can see the entity this event is about.
     ///
-    /// The default, and structural: the section is built per connection
-    /// alongside that connection's entity blocks, so "who can see it" is
-    /// already computed. An `independent` event, naming no entity, goes to
-    /// every ready connection instead.
-    ///
-    /// The host is included — the authority sees everything — through a local
-    /// queue dispatched at the end of its own tick.
+    /// The default. An `independent` event, naming no entity, goes to every
+    /// ready connection instead. The host is included, through a local queue
+    /// dispatched at the end of its own tick.
     template <typename T>
     void Send(const T &event)
     {
@@ -287,9 +265,8 @@ class ReplicationServer
 
     /// @brief To everyone who can see it, except @p instigator.
     ///
-    /// For events the instigator has already shown itself locally — the
-    /// `COND_SkipOwner` pattern every system has. The host can be the excluded
-    /// instigator like anyone else.
+    /// For events the instigator has already shown itself locally. The host can
+    /// be the excluded instigator like anyone else.
     template <typename T>
     void SendExcept(ClientId instigator, const T &event)
     {
@@ -325,9 +302,9 @@ class ReplicationServer
 
     /// @brief Counters for the host's own submissions.
     ///
-    /// The host has no connection and therefore no ConnectionDiagnostics, which
-    /// would make its intents the one traffic nobody could see. Only the intent
-    /// counters are meaningful here — there is no snapshot to send itself.
+    /// The host has no connection and therefore no ConnectionDiagnostics of its
+    /// own. Only the intent counters are meaningful here — there is no snapshot
+    /// to send itself.
     [[nodiscard]] const ConnectionDiagnostics &HostDiagnostics() const { return _hostDiagnostics; }
 
     /// @brief True when @p simTick is one the config says to send state on.
@@ -338,17 +315,15 @@ class ReplicationServer
   private:
     /// How much of one entity a connection is known to have.
     ///
-    /// Per entity rather than one tick per connection, and that distinction is
-    /// the whole fix for a real bug in the shipped core: an entity skipped for
-    /// byte budget was still recorded in the in-flight snapshot, whose *global*
-    /// change tick became the baseline on ack — so the skipped entity's pending
-    /// changes were retroactively declared delivered and never sent again. Here,
-    /// "included in the record" and "delivered at tick X" are separate facts,
-    /// and an entity the budget skipped simply keeps its old baseline.
+    /// Per entity, never one tick per connection. With a single global tick, an
+    /// entity skipped for byte budget was still listed in the in-flight
+    /// snapshot, so on ack its pending changes were declared delivered and never
+    /// sent again. Here an entity the budget skipped simply keeps its old
+    /// baseline.
     struct EntityBaseline
     {
         std::uint64_t componentTick = 0; ///< Component state delivered up to here.
-        std::uint64_t bodyTick      = 0; ///< Body state delivered up to here (R5 fills this).
+        std::uint64_t bodyTick      = 0; ///< Body state delivered up to here.
     };
 
     /// What one entity was written at inside one snapshot. Only entities the
@@ -372,11 +347,10 @@ class ReplicationServer
         /// `(netId << 32) | componentId` pairs.
         ///
         /// Change detection stamps writes, not removals — nothing in the ECS
-        /// reports "this component is gone". So component removal is found the
-        /// same way entity despawn is: by comparing what the client is known to
-        /// have against what exists now. One packed integer per component per
-        /// entity, which is small and, unlike a fixed bitmask, has no ceiling on
-        /// how many component types the game may register.
+        /// reports "this component is gone" — so removal is found the same way
+        /// despawn is, by comparing what the client is known to have against
+        /// what exists now. Unlike a fixed bitmask this has no ceiling on how
+        /// many component types the game may register.
         std::vector<std::uint64_t> components;
 
         /// The instances this connection is known to have been told about as of
@@ -404,36 +378,32 @@ class ReplicationServer
         std::uint64_t              ackedTick = 0;
 
         /// Instances this connection has acked a record for, sorted. A record is
-        /// resent every snapshot until it lands here, the same discipline the
-        /// entity set runs under — and for the same reason, since a member block
-        /// the client cannot attribute to an instance is a corrupt mirror.
+        /// resent every snapshot until it lands here: a member block the client
+        /// cannot attribute to an instance is a corrupt mirror.
         std::vector<ECS::InstanceId> knownInstances;
 
-        /// One entry per entity this connection has acked. Erased when its
-        /// despawn acks: NetIds are never reused, so without that this grows
-        /// with every entity that has *ever* replicated — unbounded under
-        /// projectile-style churn. Two uint64s per live entity per connection
-        /// otherwise, which is noise at the target scale.
+        /// One entry per entity this connection has acked. **Erased when its
+        /// despawn acks** — NetIds are never reused, so without that this grows
+        /// with every entity that has *ever* replicated, unbounded under
+        /// projectile-style churn.
         std::unordered_map<NetId, EntityBaseline> baselines;
 
-        /// The Tribes-lineage send priority, per entity. Each snapshot tick every
-        /// entity with something to send gains `max(Replicated::priority, eps)`;
+        /// Send priority, per entity. Each snapshot tick every entity with
+        /// something to send gains `max(Replicated::priority, kMinPriorityGain)`;
         /// entities drain highest-first into the byte budget, and **only the
         /// drained reset**, so the ones that missed keep climbing and cannot
         /// starve.
         ///
         /// Inert when the budget is not binding: everything dirty goes every
         /// tick and every accumulator resets. Under pressure it degrades
-        /// correction *frequency* smoothly, per object, steered by an authored
-        /// number — the debris pile at priority 0.5 yields to the door at 10
-        /// precisely when bandwidth forces the choice.
+        /// correction *frequency* per object, steered by the authored number.
         std::unordered_map<NetId, float> priority;
 
         /// The effective set as of the last snapshot: `live ∩ R(c)`, sorted.
         ///
         /// Kept rather than recomputed because it is what "did this entity just
-        /// re-enter?" is asked against — the question whose wrong answer builds
-        /// a corrupt half-mirror (see the re-entry rule in SendSnapshot).
+        /// re-enter?" is asked against — see the re-entry rule in
+        /// ComputeEffective, whose wrong answer builds a corrupt half-mirror.
         /// Untouched, and unread, while no provider is installed.
         std::vector<NetId> relevant;
 
@@ -471,9 +441,9 @@ class ReplicationServer
             NetId subject = InvalidNetId;
 
             /// The encoded message block, id and length prefix included.
-            /// Encoded once server-side and copied per recipient — entity
-            /// references translate to NetIds identically for everyone, so
-            /// there is nothing per-connection about the bytes.
+            /// Encoded once and copied per recipient — entity references
+            /// translate to NetIds identically for everyone, so there is
+            /// nothing per-connection about the bytes.
             std::vector<std::byte> bytes;
         };
 
@@ -481,20 +451,17 @@ class ReplicationServer
         ///
         /// **Held, not dropped.** An event about an entity the connection does
         /// not hold yet — a spawn the byte budget cut, a mid-join page — waits
-        /// until that entity lands. That is the body-state gate's rule with the
-        /// opposite resolution, and deliberately so: a state can wait for the
-        /// next tick because the next tick restates it, while an event cannot
-        /// be regenerated.
+        /// until that entity lands. The body-state gate resolves the same
+        /// situation the opposite way, deliberately: a state can wait because
+        /// the next tick restates it, while an event cannot be regenerated.
         std::deque<PendingEvent> pendingEvents;
 
         /// The same window, per *message type*, for intents.
         ///
         /// Per type rather than one bucket for all of them: a client spamming
-        /// map pings must not be able to squeeze out its own weapon-fire
-        /// intents, and a game that adds a chatty message type must not
-        /// silently shrink the budget of every existing one. Unreal retrofitted
-        /// FRPCDoSDetection onto a design that had neither; the shape is known
-        /// in advance here.
+        /// map pings must not squeeze out its own weapon-fire intents, and
+        /// adding a chatty message type must not shrink every existing one's
+        /// budget.
         std::unordered_map<Core::Reflect::MessageId, std::uint32_t> intentsInWindow;
         std::uint64_t intentWindowTick = 0;
     };
@@ -507,65 +474,58 @@ class ReplicationServer
     /// every downstream pass.
     ///
     /// Returns `_liveNetIds` itself when no provider is installed — not a copy,
-    /// not an intersection, the same object today's code already walks. That
-    /// identity is the performance-first contract, and it is pinned by a test
-    /// that compares wire bytes against an identity-filter run.
+    /// not an intersection. A test pins that the wire bytes match an
+    /// identity-filter run, so keep the no-provider path allocation-free.
     const std::vector<NetId> &ComputeEffective(Connection &connection);
 
     /// Make @p netId's next appearance a full state rather than a delta, by
     /// forgetting that @p connection ever had it.
     ///
-    /// The revoke → re-grant-within-one-round-trip case. The server's acked set
-    /// still lists the entity, so the ordinary path would send a *delta*; but
-    /// the client destroyed its mirror when the despawn landed and would build a
-    /// fresh entity out of whatever partial block that delta happened to carry.
-    /// Forgetting is the fix, and it must reach the in-flight ring too — a late
-    /// ack for a pre-revoke snapshot would otherwise restore the entity to the
-    /// acked set and resurrect exactly the bug.
+    /// For revoke → re-grant within one round trip. The acked set still lists
+    /// the entity, so the ordinary path would send a *delta*, while the client
+    /// destroyed its mirror when the despawn landed and would rebuild it out of
+    /// whatever partial block that delta carried.
+    ///
+    /// **Must scrub the in-flight ring too**: `HandleAck` installs a record's
+    /// sets wholesale, so a late ack for a pre-revoke snapshot would put the
+    /// entity back into the acked set with its old baseline.
     static void ForgetAcked(Connection &connection, NetId netId);
 
-    /// The same forgetting, one level up: make @p instanceId's record go out
-    /// again by dropping it from everything that says @p connection has it.
+    /// The same forgetting one level up: make @p instanceId's record go out
+    /// again by dropping it from everything that says @p connection has it,
+    /// in-flight ring included.
     ///
-    /// Four cumulative sets travel with a connection — the acked entity set, its
-    /// components, the written baselines, and the instances — and the first
-    /// three are scrubbed by ForgetAcked while the fourth was not (B13).
-    /// `HandleAck` installs all four *wholesale*, so an ack for a snapshot sent
-    /// before the instance left reinstated `knownInstances` from back then, the
-    /// next snapshot computed no fresh instances, and the record was never
-    /// resent to a client that had already thrown its copy away. Its members
-    /// then land as bare mirrors, permanently — B7's tail reached by a different
-    /// road.
+    /// Four cumulative sets travel with a connection — acked entities, their
+    /// components, the written baselines, and the instances. ForgetAcked
+    /// scrubs the first three; leave the fourth alone and a late ack reinstates
+    /// `knownInstances`, no fresh instance is computed, and the members land as
+    /// bare mirrors permanently.
     static void ForgetAckedInstance(Connection &connection, ECS::InstanceId instanceId);
 
     /// Re-anchor @p connection from the empty baseline: forget every per-entity
     /// tick, and clear the in-flight ring with them.
     ///
-    /// The ring clear is not tidiness. An ack for a pre-sweep snapshot arriving
-    /// *after* the sweep would fold that record's per-entity ticks back into the
-    /// baselines and silently cancel the re-anchor for exactly the entities it
-    /// covered. With the ring cleared, a late ack finds no record and is ignored
-    /// — at the cost of one over-full resend, which is the correct direction to
-    /// be wrong in.
+    /// The ring clear is not tidiness: an ack for a pre-sweep snapshot arriving
+    /// after the sweep would fold that record's per-entity ticks back in and
+    /// silently cancel the re-anchor. Cleared, a late ack finds no record and is
+    /// ignored, at the cost of one over-full resend.
     ///
     /// The acked entity and component *sets* are deliberately untouched: this
-    /// resets what the client is known to have *seen*, not what it is known to
-    /// *hold*, and clearing the sets would turn every entity into a spawn and
-    /// break despawn detection.
+    /// resets what the client has *seen*, not what it *holds*, and clearing the
+    /// sets would turn every entity into a spawn and break despawn detection.
     static void ResetBaselines(Connection &connection);
     void HandleClientHello(Connection &connection, Core::BitReader &reader);
     void HandleAck(Connection &connection, Core::BitReader &reader);
     void HandleInput(Connection &connection, Core::BitReader &reader);
 
     /// The single validated door every intent comes through, in the order the
-    /// steps have to be in: envelope, direction, rate, staleness, decode, range,
-    /// control, dispatch.
+    /// steps **have to** be in: envelope, direction, rate, staleness, decode,
+    /// range, control, dispatch.
     ///
-    /// The ordering is not cosmetic. Rate limiting precedes decoding so a flood
-    /// costs a comparison instead of a parse; the direction check precedes
-    /// everything expensive because the vocabulary itself already says a client
-    /// cannot speak events; and range validation follows decoding because it is
-    /// the first step that needs a value.
+    /// Rate limiting precedes decoding so a flood costs a comparison instead of
+    /// a parse; the direction check precedes everything expensive; range
+    /// validation follows decoding because it is the first step that needs a
+    /// value.
     void HandleIntent(Connection &connection, Core::BitReader &reader);
 
     /// The tail shared by a remote and a host-local intent: decode, validate,
@@ -590,10 +550,10 @@ class ReplicationServer
 
     /// This entity's NetId, assigning one if it replicates and has none yet.
     ///
-    /// The lazy assignment in ReconcileNetIds happens once per tick, which
-    /// leaves a window every frame where a just-spawned entity has no wire
-    /// identity — and "spawn it and announce it" is the common case, not an
-    /// exotic one. Returns InvalidNetId for anything that does not replicate.
+    /// ReconcileNetIds assigns lazily once per tick, leaving a window every
+    /// frame where a just-spawned entity has no wire identity — and "spawn it
+    /// and announce it" is the common case. Returns InvalidNetId for anything
+    /// that does not replicate.
     NetId EnsureNetId(ECS::Entity entity);
 
     /// Whether @p connection should receive an event scoped to @p subject.
@@ -610,11 +570,9 @@ class ReplicationServer
     /// Encode and re-decode the host's own intent so it travels the identical
     /// path a remote one does.
     ///
-    /// A round trip through the codec for a message that never leaves the
-    /// process looks wasteful, and it is — deliberately. The alternative is a
-    /// second dispatch path that skips decoding, and a second path is exactly
-    /// what "one validated door" is a promise against: the host's intents would
-    /// be the ones no fuzz test ever covered.
+    /// The round trip is deliberate waste. The alternative is a second dispatch
+    /// path that skips decoding — and the host's intents would be the ones no
+    /// fuzz test ever covers.
     void DispatchLocalIntent(const void *intent, std::type_index type);
 
     /// Assign NetIds to newly-replicated entities and drop mappings for entities
@@ -625,9 +583,8 @@ class ReplicationServer
     /// Rebuild the client → controlled-entities index from the scene.
     ///
     /// Rebuilt rather than maintained, for the reason ControlledEntities()
-    /// gives: entities come back from the dead through paths no incremental
-    /// hook sees. Cheap by construction — the index is one entry per
-    /// *controlled* entity, which is roughly one per player.
+    /// gives. Cheap by construction: one entry per *controlled* entity, which is
+    /// roughly one per player.
     void RebuildControlIndex();
 
     /// Strip every `ControlledBy` the scene was loaded with. Control is
@@ -643,46 +600,43 @@ class ReplicationServer
     /// Whether this entity's motion travels as *body state* rather than as an
     /// ordinary replicated Transform.
     ///
-    /// One predicate, consulted by all four places that used to ask the question
-    /// separately (the capture, the body-state write, and the Transform
-    /// suppression in the component write). They must agree: an entity the
-    /// capture treats as bodied but the component pass does not would have its
-    /// Transform suppressed *and* no body state sent — a mirror frozen at its
-    /// load pose, which is the worst of both paths.
+    /// The one predicate for this question, shared by the capture, the
+    /// body-state write, and the Transform suppression in the component write.
+    /// **They must agree**: an entity the capture treats as bodied but the
+    /// component pass does not gets its Transform suppressed *and* no body state
+    /// sent — a mirror frozen at its load pose.
     ///
-    /// False in four cases, and the last two are policy:
+    /// False in four cases, the last two by policy:
     ///  - no physics world, or no RigidBody — nothing to observe;
     ///  - an authored-static descriptor, whose pose is authored data and travels
     ///    as a Transform (docs/replication-plan-v4.md);
     ///  - the descriptor is *excluded*, so the client will never build a body to
-    ///    correct — the visual-only mirror of D6;
+    ///    correct — a visual-only mirror;
     ///  - the Transform is excluded on a bodied entity, so the client could
     ///    never build a body even if it wanted to (both build paths need a
-    ///    Transform), and sending body state it must drop would be pure waste.
+    ///    Transform), and sending body state it must drop is pure waste.
     [[nodiscard]] bool ReplicatesAsBody(ECS::Entity entity, const Core::Reflect::ComponentMask &excluded) const;
 
     /// Refresh `_bodyStates` from the physics world. Once per tick, before any
     /// snapshot is built, for the same reason as ReconcileNetIds.
     ///
-    /// Three cases, and the second is the one worth naming: a body that just
-    /// *stopped* being active has to have its rest state recorded and its tick
-    /// bumped, because the sleep transition is itself a change and it is the one
-    /// whose loss used to be permanent. (The first is an awake body, recorded
-    /// every tick. The third is a NetId seen for the first time, recorded
-    /// whatever its state — so joining a world that settled before anyone
-    /// connected produces sleeping mirrors at the server's rest poses instead of
-    /// a client-side re-settle.)
+    /// Three cases:
+    ///  - an awake body — recorded every tick;
+    ///  - a body that just *stopped* being active — its rest state must be
+    ///    recorded and its tick bumped, because the sleep transition is itself a
+    ///    change and nothing later restates it;
+    ///  - a NetId seen for the first time — recorded whatever its state, so
+    ///    joining a world that settled before anyone connected gives sleeping
+    ///    mirrors at the server's rest poses instead of a client-side re-settle.
     void CaptureBodyStates();
 
-    /// Write the snapshot's body-state section for @p connection, returning the
-    /// per-entity ticks it wrote so the ack can fold them in.
+    /// Write the snapshot's body-state section for @p connection, recording the
+    /// per-entity ticks it wrote into @p record so the ack can fold them in.
     ///
-    /// @p effective is this connection's relevancy set, and it is not optional:
-    /// this pass is a *fourth* independent walk of the live set, and its own
-    /// gate is acked-based. Left to itself it would keep shipping body state for
-    /// an entity that has left the set, every tick, until the despawn acks —
-    /// which is the zero-bytes guarantee failing exactly during the window it
-    /// most needs to hold.
+    /// @p effective is this connection's relevancy set and is **not optional**:
+    /// this pass walks the live set independently and its own gate is
+    /// acked-based, so without it body state keeps going out every tick for an
+    /// entity that has left the set, until the despawn acks.
     void WriteBodyStates(Connection &connection, const std::vector<NetId> &effective, Core::BitWriter &writer,
                          SentSnapshot &record, std::size_t writtenFromComponents);
 
@@ -711,28 +665,27 @@ class ReplicationServer
 
     /// The priority bump a sleep transition earns.
     ///
-    /// Deliberately large. Every other update is superseded by the next one; the
-    /// final rest pose is the one whose delay is *permanently* visible, because
+    /// Deliberately large: every other update is superseded by the next one,
+    /// while the final rest pose is the one whose delay is permanently visible —
     /// after it the server has nothing more to say about that body.
     static constexpr float kSleepTransitionBoost = 100.f;
 
     /// Floor on the per-tick priority gain. `Replicated::priority` is authored
-    /// down to 0.0, and a raw gain of zero means a zero-priority entity never
-    /// climbs — silently starved forever under budget pressure. With the clamp,
-    /// 0 means "last in line", never "never".
+    /// down to 0.0, and an unclamped gain of zero means the entity never climbs
+    /// — silently starved forever under budget pressure. With the clamp, 0 means
+    /// "last in line", never "never".
     static constexpr float kMinPriorityGain = 1.f / 64.f;
 
     /// Per-NetId body state, refreshed once per tick by CaptureBodyStates.
     std::unordered_map<NetId, BodyRecord> _bodyStates;
 
     /// Monotonic, bumped once per capture. Its own counter rather than the
-    /// scene's change tick, because the scene's only advances when someone
-    /// touches a component — and the whole point of reading the physics world
-    /// directly is that a moving body no longer does.
+    /// scene's change tick, which only advances when someone touches a
+    /// component — and a moving body no longer does.
     std::uint64_t _bodyStateTick = 0;
 
-    /// Scratch for CaptureBodyStates, kept so a tick that captures a hundred
-    /// bodies does not allocate a hundred times a second.
+    /// Scratch for CaptureBodyStates, kept so capturing does not allocate per
+    /// tick.
     std::vector<Physics::PhysicsWorld::ActiveBodyState> _activeBodies;
 
     std::unordered_map<Net::ConnectionId, Connection> _connections;
@@ -745,8 +698,7 @@ class ReplicationServer
     std::unordered_map<std::uint32_t, std::vector<ECS::Entity>> _controlledByClient;
 
     /// The next id a joining connection gets. Starts past the reserved values
-    /// and only ever climbs — see ClientId on why reuse is not worth its
-    /// ambiguity.
+    /// and only ever climbs; see ClientId on why ids are never reused.
     std::uint32_t _nextClientId = kFirstRemoteClientId;
 
     /// This host's content set, and whether it is known yet. Until it is, a
@@ -769,21 +721,18 @@ class ReplicationServer
     /// Events addressed to the host's own player, waiting for the end of the
     /// tick.
     ///
-    /// The host has no connection, so nothing would otherwise deliver to it —
-    /// which would make chat, this design's own example, invisible to the
-    /// person hosting. Dispatched after every state mutation for the tick, so a
-    /// handler sees a world at least as new as the message, which is the
-    /// property a remote client gets free from packet ordering.
+    /// The host has no connection, so nothing would otherwise deliver to it.
+    /// Dispatched **after** every state mutation for the tick, so a handler sees
+    /// a world at least as new as the message — the property a remote client
+    /// gets free from packet ordering.
     std::vector<std::pair<Core::Reflect::MessageId, std::vector<std::byte>>> _hostEvents;
 
     /// Drain _hostEvents through the same handler path a client uses.
     void DispatchHostEvents();
 
-    /// The escape classes, resolved once per tick in ReconcileNetIds rather
-    /// than per connection: both lists are tiny (an entity opting out of the
-    /// provider is by definition unusual), and evaluating them per connection
-    /// would mean walking the whole live set for each one — which is the cost
-    /// relevancy exists to avoid.
+    /// The escape classes, resolved once per tick in ReconcileNetIds rather than
+    /// per connection: both lists are tiny, and evaluating them per connection
+    /// would mean walking the whole live set for each one.
     std::vector<NetId> _alwaysRelevant; ///< Relevance::Always, sorted.
 
     /// Relevance::ControllerOnly, sorted by NetId, paired with the client that
@@ -794,13 +743,13 @@ class ReplicationServer
     std::unordered_map<std::uint64_t, NetId>    _netIdByEntity; ///< Keyed by the entity's packed handle.
     std::vector<NetId>                          _liveNetIds;    ///< Sorted; rebuilt each ReconcileNetIds.
 
-    /// Raw counter, not a NetId — see ECS::InstanceTable::_nextId for why: the
-    /// type is opaque everywhere except the places that turn a count into an
-    /// identity: EnsureNetId, ReconcileNetIds, and EnsureInstanceBlock.
+    /// Raw counter, not a NetId — see ECS::InstanceTable::_nextId. Only
+    /// EnsureNetId, ReconcileNetIds and EnsureInstanceBlock turn a count into an
+    /// identity.
     ///
-    /// An instance reserves `memberCount` ids at once rather than one, which is
-    /// what makes a member's id derivable as `base + memberIndex` and lets one
-    /// spawn record stand in for every member.
+    /// An instance reserves `memberCount` ids at once, which is what makes a
+    /// member's id derivable as `base + memberIndex` and lets one spawn record
+    /// stand in for every member.
     std::uint32_t _nextNetId = 1;
 
     /// The contiguous NetId range one instance's members occupy.
@@ -811,31 +760,30 @@ class ReplicationServer
         InstanceInfo  info;              ///< Captured at allocation — see below.
 
         /// One entry per member, non-zero while a client's own expansion of this
-        /// blueprint could still stand in for it. Starts all-set and only ever
-        /// clears — a member that has been absent for one tick can never be
-        /// derived again, because a client that joined during that gap was told
-        /// it did not exist and a client that had it was sent a despawn.
+        /// blueprint could still stand in for it. Starts all-set and **only ever
+        /// clears**: a member absent for one tick can never be derived again,
+        /// since a client joining in that gap was told it did not exist and a
+        /// client that had it was sent a despawn.
         ///
-        /// This gates the authored-value elision, and only that. Eliding a
-        /// component "the client already has from the file" is sound exactly
-        /// while the file's copy is what the client holds; for a member that was
-        /// pruned and revived, or one that appeared after the block was
-        /// allocated, the client has nothing — and the elision's own gate
-        /// (`sinceChangeTick == 0 && !clientHasIt`) is true for precisely that
-        /// case, so without this the revived member arrives bare and stays bare.
+        /// Gates the authored-value elision, and only that. Eliding a component
+        /// "the client already has from the file" is sound only while the file's
+        /// copy is what the client holds; a member that was pruned and revived,
+        /// or that appeared after the block was allocated, holds nothing — and
+        /// the elision's own gate (`sinceChangeTick == 0 && !clientHasIt`) is
+        /// true for exactly that case, so without this it arrives bare and stays
+        /// bare.
         std::vector<std::uint8_t> derivable;
     };
 
-    /// Allocated blocks, by instance. The info is captured **once**, when the
-    /// block is allocated, rather than re-read per snapshot: the record a
-    /// connection has not acked yet must describe the instance as it was when
-    /// its ids were handed out, or a late joiner and an early one would compose
-    /// the same members from different placements.
+    /// Allocated blocks, by instance. The info is captured **once**, at
+    /// allocation, never re-read per snapshot: an unacked record must describe
+    /// the instance as it was when its ids were handed out, or a late joiner and
+    /// an early one compose the same members from different placements.
     std::unordered_map<ECS::InstanceId, InstanceBlock> _instanceBlocks;
 
-    /// The same blocks as `(base, memberCount)`, sorted by base, for answering
-    /// "which instance owns this NetId?" — which relevancy asks once per relevant
-    /// entity per connection per snapshot and the map above cannot answer.
+    /// The same blocks as `(base, memberCount)`, sorted by base, answering
+    /// "which instance owns this NetId?" — which relevancy asks once per
+    /// relevant entity per connection per snapshot and the map above cannot.
     ///
     /// Stays sorted by construction: `_nextNetId` only climbs, so each new block
     /// starts above every existing one and appending is enough.
@@ -852,27 +800,26 @@ class ReplicationServer
     ///
     /// Reached from both id-assignment paths, so an instance gets one block
     /// whether its first member is noticed by an event send or by the snapshot
-    /// walk. Returning InvalidNetId is the ordinary-entity fallback, not a
-    /// failure.
+    /// walk. InvalidNetId is the ordinary-entity fallback, not a failure.
     NetId EnsureInstanceBlock(ECS::Entity entity);
 
     std::uint64_t _simTick     = 0;
     std::uint64_t _snapshotDiv = 3; ///< tickRateHz / snapshotHz, at least 1.
 
-    /// Component ids this server *may* send: every ACOMP(replicable) type,
-    /// resolved once. Capability, not policy — what an individual entity
-    /// actually sends is this set minus its own `Replicated::excluded`.
-    /// Cached because it is walked per entity per snapshot.
+    /// Component ids this server *may* send: every ACOMP(replicable) type minus
+    /// the game's veto, resolved once. Capability, not policy — what an
+    /// individual entity actually sends is this set minus its own
+    /// `Replicated::excluded`. Cached because it is walked per entity per
+    /// snapshot.
     std::vector<Core::Reflect::ComponentId> _replicatedComponents;
 
     /// Replicable ordinal of each entry above, in the same order — the bit index
     /// to test in an entity's exclusion mask. Resolved alongside the ids rather
     /// than looked up per component per entity per snapshot.
     ///
-    /// Stored explicitly rather than assumed equal to the index: both sequences
-    /// happen to be in ascending id order today, so they coincide, but the game
-    /// filter removes entries from *this* list only — and a coincidence that
-    /// silently becomes false would misaim every exclusion at once.
+    /// **Never assume this equals the index.** The two happen to coincide today,
+    /// but the game's veto removes entries from this list only, and the moment
+    /// they diverge every exclusion is aimed at the wrong component.
     std::vector<std::size_t> _replicatedOrdinals;
 
     /// Resolved once, so the per-entity write loop can suppress the Transform of

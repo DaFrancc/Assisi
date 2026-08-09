@@ -25,17 +25,17 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     Core::Reflect::CodecContext context;
     context.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
     {
-        // Entity references cross the wire as NetIds. A reference to something
-        // that does not replicate resolves to zero rather than to a local handle
-        // the peer would misread as one of its own.
+        // Entity references cross the wire as NetIds. Something that does not
+        // replicate resolves to zero rather than to a local handle the peer
+        // would misread as one of its own.
         const NetId referenced = NetIdOf(UnpackEntity(packed));
         return referenced.value; // wire boundary
     };
 
-    // A BlueprintMember's instanceId is per-world and per-machine, so it is
-    // rewritten to the instance's base NetId on the way out and back to the
-    // peer's own id on the way in. Without this the tag replicates as a number
-    // that names nothing on the far side.
+    // A BlueprintMember's instanceId is per-world and per-machine, so it goes
+    // out as the instance's base NetId and is translated back on the way in.
+    // Without this the tag replicates as a number that names nothing on the far
+    // side.
     context.instanceToWire = [this](std::uint32_t instanceId) -> std::uint32_t
     {
         const auto block = _instanceBlocks.find(ECS::InstanceId{instanceId});
@@ -44,23 +44,23 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
 
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    // This entity's own policy, read live. There is deliberately no cache: the
-    // mask is a plain value on a component we already have to look up, so
-    // caching would buy a hash lookup and cost an invalidation problem — which
-    // is also why `Replicated` needs no change tracking.
+    // This entity's own policy, read live. No cache on purpose: the mask is a
+    // plain value on a component we already have to look up, so caching would
+    // buy a hash lookup and cost an invalidation problem — the same reason
+    // `Replicated` needs no change tracking.
     Core::Reflect::ComponentMask excluded;
     if (const Replicated *marker = _scene.Get<Replicated>(entity))
         excluded = marker->excluded;
 
     // What this entity has right now *and* is willing to send, in the same
-    // packed, sorted form as the acked baseline — _replicatedComponents is
+    // packed, sorted form as the acked baseline. _replicatedComponents is
     // registry order, which is ascending by id, so this comes out sorted without
     // a sort.
     //
-    // Excluded components are absent from this list, which is what makes the
-    // rest fall out for free: the removal diff below sees them disappear from
-    // the client's acked slice and sends removals, and D11 sees them reappear
-    // and force-sends. One filter, both directions.
+    // Excluded components are simply absent here, and that one filter drives
+    // both directions: the removal diff below sees them disappear from the
+    // client's acked slice and sends removals, and the force-send further down
+    // sees them reappear.
     const std::size_t componentsBegin = outComponents.size();
     for (std::size_t slot = 0; slot < _replicatedComponents.size(); ++slot)
     {
@@ -73,15 +73,15 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     }
 
     // Removals. Change detection stamps writes, not removals — there is no tick
-    // to consult for "this component is gone" — so it is found by diffing this
-    // entity's slice of the acked baseline against what it has now. Exactly the
-    // shape of the despawn comparison, one level down.
-    // ComponentId{0}: the packed key's lower bound, not "invalid" — 0 is the
-    // lowest possible ordinal, and component ids are dense from there.
+    // to consult for "this component is gone" — so they are found by diffing
+    // this entity's slice of the acked baseline against what it has now.
+    //
+    // ComponentId{0} is the packed key's lower bound, not "invalid": 0 is the
+    // lowest possible ordinal and component ids are dense from there. netId + 1
+    // is the exclusive upper bound of this netId's range, spelled out because
+    // NetId has no arithmetic of its own.
     const auto ackedLow  = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
                                             PackComponentRef(netId, Core::Reflect::ComponentId{0}));
-    // netId + 1: the exclusive upper bound of this netId's packed-ref range,
-    // spelled explicitly since NetId has no arithmetic of its own.
     const auto ackedHigh = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
                                             PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
 
@@ -99,25 +99,24 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         writer.WriteVarUInt32(id.value); // wire write
 
     // For an entity the *solver* owns, motion travels as body state, not as a
-    // Transform. Sending both would double the cost of every moving object and
-    // hand the client two disagreeing answers about where it is.
+    // Transform: sending both doubles the cost of every moving object and hands
+    // the client two disagreeing answers about where it is.
     //
-    // The same predicate the capture uses, and it must be: an entity one of them
-    // considers bodied and the other does not gets its Transform suppressed *and*
-    // no body state, leaving the mirror frozen at its load pose.
+    // Must stay the same predicate the capture uses. An entity one of them
+    // considers bodied and the other does not gets its Transform suppressed
+    // *and* no body state, leaving the mirror frozen at its load pose.
     const bool bodied = ReplicatesAsBody(entity, excluded);
 
     // Read once rather than per component: the blueprint baseline below needs it
     // for every component this entity has.
     const ECS::BlueprintMember *memberTag = _scene.Get<ECS::BlueprintMember>(entity);
 
-    // ...and so is the one question that decides whether the blueprint baseline
-    // may be used at all: did the client's own expansion of this instance
-    // produce this member? A member that was absent for even a tick was either
-    // never expanded there (the record's presence bits said so) or was destroyed
-    // there by a despawn, and in both cases the file's copy is not what the
-    // client holds. Resolved per entity rather than per component, since it is
-    // the same answer for all of them.
+    // Whether the blueprint baseline may be used at all: did the client's own
+    // expansion of this instance produce this member? A member that was absent
+    // for even a tick was either never expanded there (the record's presence
+    // bits said so) or destroyed there by a despawn, and either way the file's
+    // copy is not what the client holds. Same answer for every component, so it
+    // is resolved once per entity.
     bool derivedFromBlueprint = false;
     if (memberTag != nullptr && _instanceInfo != nullptr)
     {
@@ -142,23 +141,22 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         if (component == nullptr)
             continue;
 
-        // D11, the removal diff's dual: the client does not have this component,
-        // so send its full state regardless of what the change tick says.
+        // The removal diff's dual: the client does not have this component, so
+        // send full state regardless of what the change tick says.
         //
-        // The change tick answers "did this value change since the client last
-        // saw it", which is the wrong question whenever the *presence* changed
-        // instead. Re-including an excluded component is exactly that case —
-        // policy moved, the component did not, so its tick still predates the
-        // baseline and the gate below would skip it until the next keyframe
-        // sweep, up to several seconds of a mirror the server believes is whole.
-        // It also covers the general case of a component the client lost while
-        // the server has nothing new to stamp on it.
+        // The change tick answers "did this value change", which is the wrong
+        // question whenever the *presence* changed instead. Re-including an
+        // excluded component is exactly that — policy moved, the component did
+        // not, so its tick still predates the baseline and the gate below would
+        // skip it until the next keyframe sweep: seconds of a mirror the server
+        // believes is whole. Also covers a component the client lost while the
+        // server has nothing new to stamp on it.
         const bool clientHasIt =
             std::binary_search(ackedLow, ackedHigh, PackComponentRef(netId, id));
 
         // sinceChangeTick == 0 is the empty baseline: spawn, late join, and a
-        // client that has acked nothing all take this path, which is the whole
-        // point of not having a separate full-state message.
+        // client that has acked nothing all take this path, which is why there
+        // is no separate full-state message.
         if (sinceChangeTick != 0 && clientHasIt && !_scene.ChangedById(entity, id, sinceChangeTick))
             continue;
 
@@ -166,27 +164,26 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         // from nothing on the far side — the client expanded the same file — so
         // a component still holding its authored value is already correct there.
         //
-        // Deliberately not recorded as absent: `outComponents` above still lists
-        // it, because the client really does have it. Treating it as missing
-        // would make the removal diff announce a removal for a component nobody
-        // removed.
+        // `outComponents` above still lists it, deliberately: the client really
+        // does have it, and recording it as absent would make the removal diff
+        // announce a removal nobody made.
         if (sinceChangeTick == 0 && !clientHasIt && derivedFromBlueprint &&
             _instanceInfo->MatchesAuthored(memberTag->instanceId, memberTag->memberIndex, id, component))
         {
             continue;
         }
 
-        // ...and on that empty baseline a bodied entity's Transform still goes,
-        // because it carries scale and the initial placement the client builds
-        // its body at. Afterwards it is suppressed. The honest cost: a *non-pose*
-        // Transform edit on a live body — a runtime scale change — reaches
-        // clients only at the next keyframe sweep. Accepted for v1, because a
-        // scale change on a live body needs a collider reshape the engine does
-        // not do yet either (docs/replication-plan-v4.md §5).
+        // On that empty baseline a bodied entity's Transform still goes: it
+        // carries scale and the initial placement the client builds its body at.
+        // Afterwards it is suppressed, at a known cost — a *non-pose* Transform
+        // edit on a live body (a runtime scale change) reaches clients only at
+        // the next keyframe sweep. Accepted for v1, because a live scale change
+        // needs a collider reshape the engine does not do either
+        // (docs/replication-plan-v4.md §5).
         //
-        // Suppression yields to D11 for the same reason the change gate does: a
-        // client that has never received this Transform has nowhere to build its
-        // body from, so "the body owns motion" has nothing to be true about yet.
+        // Suppression yields to the force-send above for the same reason the
+        // change gate does: a client that has never received this Transform has
+        // nowhere to build its body from.
         if (bodied && sinceChangeTick != 0 && clientHasIt && id == _transformComponentId)
             continue;
 
@@ -200,11 +197,10 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
                                         Core::BitWriter &writer, SentSnapshot &record,
                                         std::size_t writtenFromComponents)
 {
-    // Bool-chained like the entity blocks above, rather than the count-prefixed
-    // form the design sketch shows. A count has to be known before the first
-    // record is written, which means predicting the budget cut instead of
-    // discovering it — and the bool chain is cheaper anyway (one bit per record
-    // plus a terminator, against a varint).
+    // Bool-chained like the entity blocks, not count-prefixed: a count has to be
+    // known before the first record is written, which means predicting the
+    // budget cut instead of discovering it. It is also cheaper — one bit per
+    // record plus a terminator, against a varint.
     if (_physics == nullptr)
     {
         writer.WriteBool(false);
@@ -213,11 +209,11 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
 
     const auto prefixEnd = record.written.begin() + static_cast<std::ptrdiff_t>(writtenFromComponents);
 
-    // The effective set, not the live one. This loop is an independent walk with
-    // its own acked-based gate, and that gate does *not* imply relevancy: an
-    // entity that has left the set is still acked until its despawn round-trips,
-    // so walking `_liveNetIds` here would ship body state for it every tick of
-    // that window. Zero bytes has to mean zero.
+    // The effective set, not the live one. This is an independent walk with its
+    // own acked-based gate, and acked does *not* imply relevant: an entity that
+    // has left the set stays acked until its despawn round-trips, so walking
+    // `_liveNetIds` here would ship body state for it every tick of that window.
+    // Zero bytes has to mean zero.
     for (const NetId netId : effective)
     {
         if (writer.BytesWritten() >= _config.maxSnapshotBytes)
@@ -231,15 +227,15 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
         if (baseline != connection.baselines.end() && found->second.tick <= baseline->second.bodyTick)
             continue; // already delivered
 
-        // The gate: a body state is only useful to a client that has something
-        // to apply it to. Without it, an entity whose spawn block was cut for
-        // budget would ship a body state the client has no mirror — and no
-        // descriptor to build a body from — to receive it.
+        // A body state is only useful to a client that has something to apply it
+        // to. Without this gate, an entity whose spawn block was cut for budget
+        // would ship body state to a client with no mirror and no descriptor to
+        // build a body from.
         //
-        // `record.netIds` is this snapshot's entity set in ascending order, and
-        // holds both the entities written here and the known ones the budget
-        // skipped; the skipped ones are acked by definition, so testing against
-        // it is exactly "acked, or written into this same snapshot".
+        // `record.netIds` is this snapshot's entity set, ascending, and holds
+        // both the entities written here and the known ones the budget skipped;
+        // the skipped ones are acked by definition, so this tests exactly
+        // "acked, or written into this same snapshot".
         if (!std::binary_search(connection.acked.begin(), connection.acked.end(), netId) &&
             !std::binary_search(record.netIds.begin(), record.netIds.end(), netId))
         {
@@ -249,9 +245,9 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
         writer.WriteBool(true);
         WriteBodyState(found->second.state, writer);
 
-        // Record the delivery against this entity. It may already have an entry
-        // from the component pass; if not, componentTick stays 0 and the ack's
-        // max() leaves whatever component baseline it had untouched.
+        // Record the delivery. This entity may already have an entry from the
+        // component pass; if not, componentTick stays 0 and the ack's max()
+        // leaves whatever component baseline it had untouched.
         const auto slot = std::lower_bound(record.written.begin(), prefixEnd, netId,
                                            [](const WrittenEntity &entry, NetId value)
                                            { return entry.netId < value; });
@@ -266,11 +262,10 @@ void ReplicationServer::WriteBodyStates(Connection &connection, const std::vecto
 
 void ReplicationServer::SendSnapshot(Connection &connection)
 {
-    // `live ∩ R(c)`, once, and every pass below uses it instead of the live set.
-    // Four passes, not three: the body-state section walks the set on its own
-    // (see WriteBodyStates). Filtering happens strictly here, before priority —
-    // the ordering every scaled system converged on, because a prioritizer that
-    // also filters is two axes fused into one number.
+    // `live ∩ R(c)`, computed once; every pass below uses it instead of the live
+    // set, including the body-state section, which walks it on its own (see
+    // WriteBodyStates). Filtering happens strictly here, before priority — a
+    // prioritizer that also filters is two axes fused into one number.
     const std::vector<NetId> &effective = ComputeEffective(connection);
 
     Core::BitWriter writer;
@@ -282,23 +277,22 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     header.inputBufferDepth = static_cast<std::uint32_t>(connection.input.Depth());
     header.starvedTicks     = static_cast<std::uint32_t>(connection.input.StarvedTicks());
     // Complete when the acked set already covers everything this connection is
-    // *told* about — which is what "am I done joining?" means for a filtered
-    // connection, and what it has always meant for an unfiltered one. Computed
+    // *told* about — "am I done joining?" for a filtered connection. Measured
     // against the previous ack rather than this snapshot, because that is the
-    // only thing the client has actually confirmed receiving.
+    // only thing the client has confirmed receiving.
     header.worldComplete =
         std::includes(connection.acked.begin(), connection.acked.end(), effective.begin(), effective.end());
     WriteSnapshotHeader(header, writer);
 
-    // Instance records, ahead of everything else in the packet. An instance has
-    // to be named before any block that belongs to it, because the client
-    // composes a member's baseline from the blueprint rather than from empty —
-    // a block arriving first would have nothing to delta against.
+    // Instance records go first in the packet, and must: an instance has to be
+    // named before any block that belongs to it, because the client composes a
+    // member's baseline from the blueprint rather than from empty, and a block
+    // arriving first would have nothing to delta against.
     //
     // Emitted for every instance with a relevant member, not only ones whose
-    // members won the priority budget this tick. A record for an instance whose
-    // members are all starved is exactly right: the client expands it from the
-    // blueprint immediately and the deltas catch up.
+    // members won the priority budget. A record for an instance whose members
+    // are all starved is right: the client expands it from the blueprint at once
+    // and the deltas catch up.
     std::vector<ECS::InstanceId> neededInstances;
     for (const NetId netId : effective)
     {
@@ -306,8 +300,8 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         if (tag == nullptr || !tag->instanceId.IsValid())
             continue;
         // Only instances that actually got a block: one the provider could not
-        // describe has members replicating as ordinary entities, and naming it
-        // would point the client at a blueprint index nothing agreed on.
+        // describe has its members replicating as ordinary entities, and naming
+        // it would point the client at a blueprint index nothing agreed on.
         if (!_instanceBlocks.contains(tag->instanceId))
             continue;
         neededInstances.push_back(tag->instanceId);
@@ -319,15 +313,15 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     std::set_difference(neededInstances.begin(), neededInstances.end(), connection.knownInstances.begin(),
                         connection.knownInstances.end(), std::back_inserter(freshInstances));
 
-    // How many of them this snapshot can afford (B11). The section used to be
-    // written whole, before either budget check, so a join carrying more fresh
-    // instances than `maxSnapshotBytes` allows produced one oversized packet per
-    // snapshot until it was acked, with the entity loop starved behind it.
+    // How many of them this snapshot can afford. Written whole once, before any
+    // budget check: a join carrying more fresh instances than `maxSnapshotBytes`
+    // allows then produced one oversized packet per snapshot until it was acked,
+    // with the entity loop starved behind it.
     //
-    // Sized from an upper bound rather than by writing and measuring: the count
-    // prefix has to be written before the records, so how many go has to be
-    // decided before any of them does. Three varints at their widest, the ten
-    // raw placement floats, and the presence bits.
+    // Sized from an upper bound rather than by writing and measuring, because
+    // the count prefix precedes the records and so the count must be decided
+    // first. Three varints at their widest, the ten raw placement floats, and
+    // the presence bits.
     std::size_t writableRecords = 0;
     {
         constexpr std::size_t kVarIntMaxBytes = 5;
@@ -337,10 +331,9 @@ void ReplicationServer::SendSnapshot(Connection &connection)
             const InstanceBlock  &block = _instanceBlocks.find(instanceId)->second;
             const std::size_t     cost  = 3 * kVarIntMaxBytes + 10 * sizeof(float) + 1 +
                                      (static_cast<std::size_t>(block.memberCount) + 7) / 8;
-            // Always at least one. A record wider than the whole budget must
+            // Always at least one: a record wider than the whole budget must
             // still make progress, or the instance is never named and its
-            // members never arrive — a stall traded for one oversized packet is
-            // not a trade.
+            // members never arrive.
             if (writableRecords != 0 && projected + cost > _config.maxSnapshotBytes)
                 break;
             projected += cost;
@@ -348,18 +341,17 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         }
     }
 
-    // The rest wait for the next snapshot, and so must their members: the
-    // section's whole reason for being first is that a member block arriving
-    // before its record has nothing to attribute itself to. Sorted, because the
-    // entity loop below binary-searches it.
+    // The rest wait for the next snapshot, and so must their members: a member
+    // block arriving before its record has nothing to attribute itself to.
+    // Sorted, because the entity loop below binary-searches it.
     const std::vector<ECS::InstanceId> deferredInstances(
         freshInstances.begin() + static_cast<std::ptrdiff_t>(writableRecords), freshInstances.end());
 
     // One bit, not a varint zero, when there is nothing to say. A game with no
-    // blueprint instances — or a steady state where every record is acked, which
-    // is nearly every snapshot — must not pay a byte per snapshot per connection
-    // for a feature it is not using. The empty-snapshot byte budget in
-    // TestRelevancy is what holds this honest.
+    // blueprint instances — or the steady state where every record is acked,
+    // which is nearly every snapshot — must not pay a byte per snapshot per
+    // connection for a feature it is not using. TestRelevancy's empty-snapshot
+    // byte budget holds this honest.
     writer.WriteBool(writableRecords != 0);
     if (writableRecords != 0)
         writer.WriteVarUInt32(static_cast<std::uint32_t>(writableRecords));
@@ -371,12 +363,12 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         writer.WriteVarUInt32(block.base.value); // wire write
         writer.WriteVarUInt32(block.memberCount);
 
-        // Which members actually exist (B8). The block's width is the
-        // definition's count and never shrinks — the surviving members' ids must
-        // not shift — so "how many ids this instance owns" and "which of them
-        // have an entity behind them" are two different facts and the wire has
-        // to carry both. One bit for the ordinary all-present case; a bit per
-        // member only when the host really has a hole.
+        // Which members actually exist. The block's width is the definition's
+        // count and never shrinks — surviving members' ids must not shift — so
+        // "how many ids this instance owns" and "which of them have an entity"
+        // are two different facts and the wire carries both. One bit for the
+        // ordinary all-present case; a bit per member only when the host really
+        // has a hole.
         presence.clear();
         presence.resize(block.memberCount, 0u);
         std::uint32_t presentCount = 0;
@@ -398,8 +390,8 @@ void ReplicationServer::SendSnapshot(Connection &connection)
 
         // Full precision, not quantized like BodyState: both sides compose every
         // member's transform from this one, so a rounding difference here is a
-        // difference in every member's pose, permanently, on a member that never
-        // changes and is therefore never corrected.
+        // permanent difference in every member's pose — on members that never
+        // change and are therefore never corrected.
         writer.WriteFloat(block.info.placement.position.x);
         writer.WriteFloat(block.info.placement.position.y);
         writer.WriteFloat(block.info.placement.position.z);
@@ -413,21 +405,21 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     }
 
     // Despawns: everything the client is known to have that it should no longer
-    // have. Falls straight out of the same set difference that already found
-    // destroyed entities — which is why leaving relevancy is not a second
-    // mechanism. A revoke is a despawn, resent until acked, with the baseline
-    // and priority entries erased when it lands.
+    // have. Falls out of the same set difference that finds destroyed entities,
+    // which is why leaving relevancy is not a second mechanism — a revoke is a
+    // despawn, resent until acked, with the baseline and priority entries erased
+    // when it lands.
     std::vector<NetId> despawns;
     std::set_difference(connection.acked.begin(), connection.acked.end(), effective.begin(), effective.end(),
                         std::back_inserter(despawns));
     // Run-length encoded, which is what the contiguous blocks buy: a destroyed
-    // car is one run rather than one varint per wheel, and a revoked instance
-    // leaving relevancy is the same shape. Ordinary entities rarely form runs
-    // and cost one extra byte each for the length — the trade is deliberate,
-    // since the case that matters is the one that scales with member count.
+    // car is one run rather than one varint per wheel, and a revoked instance is
+    // the same shape. Ordinary entities rarely form runs and pay one extra byte
+    // each for the length — a deliberate trade, since the case that matters is
+    // the one that scales with member count.
     //
-    // `despawns` comes out of set_difference already ascending, which is what
-    // makes a single pass enough.
+    // `despawns` comes out of set_difference already ascending, so one pass is
+    // enough.
     std::vector<std::pair<NetId, std::uint32_t>> despawnRuns;
     for (const NetId netId : despawns)
     {
@@ -450,19 +442,17 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         writer.WriteVarUInt32(length);
     }
 
-    // Collect, order, drain to a budget. The ordering is a Tribes-style priority
-    // accumulator: every live entity gains max(Replicated::priority, eps) each
-    // snapshot tick, entities go out highest-first, and only the ones that
-    // actually went reset. Under no budget pressure this is inert — everything
-    // dirty goes every tick and everything resets. Under pressure, correction
-    // *frequency* degrades smoothly and per object, steered by an authored
-    // number, instead of by whichever NetId happened to be lowest.
+    // Collect, order, drain to a budget. A Tribes-style priority accumulator:
+    // every live entity gains max(Replicated::priority, eps) each snapshot tick,
+    // entities go out highest-first, and only the ones that actually went reset.
+    // Inert with no budget pressure; under pressure, correction *frequency*
+    // degrades per object by an authored number instead of by lowest NetId.
     SentSnapshot record;
     record.serverTick = _simTick;
     // Cumulative, like netIds: what the client will know once this lands, not
-    // the records that went out in it. The ones the byte budget left behind are
-    // the exception — the client cannot know an instance whose record never
-    // went, and claiming otherwise would retire the resend that owes it.
+    // the records that went out in it. The ones the byte budget deferred are
+    // excluded — the client cannot know an instance whose record never went, and
+    // claiming otherwise would retire the resend that owes it.
     std::set_difference(neededInstances.begin(), neededInstances.end(), deferredInstances.begin(),
                         deferredInstances.end(), std::back_inserter(record.instances));
     record.netIds.reserve(effective.size());
@@ -470,7 +460,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
 
     // Sampled once, before anything is written, and stamped onto every entity
     // this snapshot writes. Nothing mutates the scene while a snapshot is being
-    // built, so one reading is honest for all of them — and taking it up front
+    // built, so one reading is honest for all of them, and taking it up front
     // means a change made after this point cannot be mistaken for delivered.
     const std::uint64_t captureTick = _scene.CurrentChangeTick();
 
@@ -504,10 +494,10 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         if (entity == ECS::NullEntity)
             continue;
 
-        // A member whose record the budget held back waits with it. Left out of
-        // the record entirely, exactly like an entity the byte budget skipped
-        // before the client ever knew it, so the next snapshot still treats it
-        // as a spawn — and by then its record has gone ahead of it.
+        // A member whose record the budget held back waits with it: left out of
+        // the record entirely, like an entity the byte budget skipped before the
+        // client ever knew it, so the next snapshot still treats it as a spawn —
+        // and by then its record has gone ahead of it.
         if (!deferredInstances.empty())
         {
             const ECS::BlueprintMember *tag = _scene.Get<ECS::BlueprintMember>(entity);
@@ -533,16 +523,11 @@ void ReplicationServer::SendSnapshot(Connection &connection)
                 record.netIds.push_back(netId);
                 // Carry its component baseline forward untouched: we told the
                 // client nothing about this entity, so nothing about it changed
-                // from the client's point of view.
-                //
-                // ComponentId{0}: the packed key's lower bound, not "invalid" —
-                // 0 is the lowest possible ordinal, and component ids are dense
-                // from there.
+                // from the client's point of view. ComponentId{0} and netId + 1
+                // bracket this netId's packed-ref range.
                 const auto low  = std::lower_bound(connection.ackedComponents.begin(),
                                                    connection.ackedComponents.end(),
                                                    PackComponentRef(netId, Core::Reflect::ComponentId{0}));
-                // netId + 1: the exclusive upper bound of this netId's packed-ref
-                // range, spelled explicitly since NetId has no arithmetic of its own.
                 const auto high = std::lower_bound(connection.ackedComponents.begin(),
                                                    connection.ackedComponents.end(),
                                                    PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
@@ -551,9 +536,9 @@ void ReplicationServer::SendSnapshot(Connection &connection)
             continue;
         }
 
-        // The delta baseline is this entity's own. A missing entry reads as 0,
-        // which is the empty baseline — spawn, late join, and a post-sweep
-        // re-anchor all arrive here, and all take the one full-state path.
+        // The delta baseline is this entity's own. A missing entry reads as 0 —
+        // the empty baseline that spawn, late join, and a post-sweep re-anchor
+        // all share, and all take the one full-state path.
         std::uint64_t sinceChangeTick = 0;
         if (known)
         {
@@ -570,7 +555,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         record.written.push_back(WrittenEntity{netId, EntityBaseline{captureTick, 0}});
 
         // It went out, so its turn is over. The ones that did not go keep what
-        // they accumulated — which is the whole anti-starvation property.
+        // they accumulated — the whole anti-starvation property.
         connection.priority[netId] = 0.f;
     }
     writer.WriteBool(false);
@@ -582,8 +567,8 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     std::sort(record.written.begin(), record.written.end(),
               [](const WrittenEntity &lhs, const WrittenEntity &rhs) { return lhs.netId < rhs.netId; });
 
-    // Motion, for everything the physics world owns. After the entity blocks so
-    // ordering with a spawn in the same packet is free: the entity and its
+    // Motion, for everything the physics world owns. After the entity blocks, so
+    // ordering against a spawn in the same packet is free: the entity and its
     // descriptor exist by the time the body state lands, and the client's body
     // starts at the authoritative state rather than re-settling from the level
     // file's pose.
@@ -592,15 +577,13 @@ void ReplicationServer::SendSnapshot(Connection &connection)
 
     // Last, after the entity blocks and the body states, so a message about an
     // entity established earlier *in this same packet* inherits its ordering
-    // from the framing itself. That is the one genuine improvement the survey
-    // found in replicon's tick-sync guarantee, and here it costs nothing: the
-    // snapshot already carries the tick and the wire order already puts entity
-    // blocks first.
+    // from the framing itself. Costs nothing: the snapshot already carries the
+    // tick and the wire order already puts entity blocks first.
     WriteEventSection(connection, writer, record);
 
-    // All three are built in ascending order — except `written`, which the body
-    // pass may have appended to — so keep the invariant explicit, since the ack
-    // path binary-searches them.
+    // The ack path binary-searches both. `components` was filled in priority
+    // order by the entity loop, and `written` was sorted before the body pass,
+    // which may then have appended to it.
     std::sort(record.components.begin(), record.components.end());
     std::sort(record.written.begin(), record.written.end(),
               [](const WrittenEntity &lhs, const WrittenEntity &rhs) { return lhs.netId < rhs.netId; });
@@ -609,13 +592,13 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     while (connection.inFlight.size() > _config.maxInFlightSnapshots)
     {
         // The client has stopped acking. Dropping the oldest bounds our memory;
-        // its ack, if it ever arrives, will simply find nothing and be ignored.
+        // a late ack for it finds nothing and is ignored.
         connection.inFlight.pop_front();
     }
 
     // Unreliable: a lost snapshot must not be retransmitted. It would arrive
-    // after the state it describes had already been superseded, costing latency
-    // to deliver data that is worse than the data behind it.
+    // after the state it describes had already been superseded, spending latency
+    // to deliver data worse than the data behind it.
     _transport.Send(connection.id, writer.Data(), Net::SendMode::Unreliable, Net::Lane::Snapshot);
 
     ++connection.diagnostics.snapshotsSent;
@@ -635,11 +618,11 @@ void ReplicationServer::Tick(std::uint64_t simTick)
     if (!IsSnapshotTick(simTick))
         return;
 
-    // The keyframe sweep, which is not a third mechanism: it is the delta path
-    // with its filter reset. Every entity's baseline goes back to zero, the
-    // existing empty-baseline code path sends full state, and the byte budget
-    // paginates it over as many snapshots as it needs — no new machinery, and
-    // nothing on the wire that spawn and late-join do not already exercise.
+    // The keyframe sweep is not a third mechanism: it is the delta path with its
+    // filter reset. Every baseline goes back to zero, the empty-baseline path
+    // sends full state, and the byte budget paginates it over as many snapshots
+    // as it needs — nothing on the wire that spawn and late-join do not already
+    // exercise.
     if (_config.keyframeIntervalTicks != 0 && simTick != 0 && simTick % _config.keyframeIntervalTicks == 0)
     {
         for (auto &[id, connection] : _connections)
@@ -655,9 +638,9 @@ void ReplicationServer::Tick(std::uint64_t simTick)
             SendSnapshot(connection);
     }
 
-    // End of tick: after every state mutation this tick produced, so a host-side
-    // handler sees a world at least as new as the message it is handling — the
-    // property a remote client gets free from packet ordering.
+    // End of tick, after every state mutation this tick produced, so a host-side
+    // handler sees a world at least as new as the message it is handling — what
+    // a remote client gets free from packet ordering.
     DispatchHostEvents();
 }
 

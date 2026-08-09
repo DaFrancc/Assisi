@@ -7,6 +7,7 @@
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
 
+#include <algorithm>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -26,14 +27,13 @@ namespace Assisi::Runtime
 namespace
 {
 
-/// Whether a component can be round-tripped through the codec without losing
-/// anything the level file holds.
+/// Whether a component survives a codec round-trip with everything the level file
+/// holds.
 ///
-/// `norep` fields are saved to disk and deliberately never sent over the network,
-/// so the codec skips them — which is right for replication and wrong for a
-/// blueprint, where the file *is* disk. Such a component keeps the JSON path.
-/// Nothing in the engine declares one today; the check is here so the day one
-/// appears it costs a little speed rather than a silently missing field.
+/// `norep` fields are saved to disk but never sent over the wire, so the codec
+/// skips them — right for replication, wrong for a blueprint, whose file *is*
+/// disk. Such a component keeps the slower JSON path instead of silently losing
+/// the field. Nothing in the engine declares one today.
 bool IsCodecLossless(const Core::Reflect::ComponentMeta &meta)
 {
     for (const Core::Reflect::FieldMeta &field : meta.fields)
@@ -58,10 +58,10 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
 
     ECS::Scene scratch;
 
-    // Saved and restored rather than refused: a definition is built lazily, and the
-    // first caller to want one is usually a level load that already has its own
-    // name context open. Nesting is safe here because this one resolves against a
-    // scratch scene that nothing else can see.
+    // Saved and restored rather than refused: definitions are built lazily, and the
+    // first caller to want one is usually a level load with its own name context
+    // already open. Nesting is safe because this one resolves against a scratch scene
+    // nothing else can see.
     std::optional<SerializationContext> outer = std::exchange(s_context, SerializationContext{});
     struct RestoreOuter
     {
@@ -94,9 +94,9 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
             if (!meta->addToScene(&scratch, scratchEntities[i].index, scratchEntities[i].generation,
                                   componentData))
             {
-                // Refused here rather than at every spawn: a blueprint whose member
-                // values the engine cannot read is broken about itself, and this is
-                // the one place that reads them.
+                // Refused here rather than at every spawn: this is the one place that
+                // reads member values, and one the engine cannot read means the file
+                // is broken about itself.
                 Core::Log::Error("Blueprint: '{}' member '{}' has an unreadable '{}'.", definition.source,
                                  member.name, componentName);
                 return false;
@@ -127,9 +127,8 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
             Core::BitWriter writer;
             if (!Core::Reflect::WriteComponent(*meta, component, writer))
             {
-                // A component the codec refuses is a reflection bug, but it is not
-                // this blueprint's fault and the JSON path still works — so the
-                // member simply keeps that component on the slow path.
+                // A codec refusal is a reflection bug, not this blueprint's fault:
+                // the member keeps that component on the JSON path.
                 continue;
             }
 
@@ -156,21 +155,15 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
         return std::unexpected(LevelError::ContextBusy);
     }
 
-    // A name is the prefix its members are addressed by, so two live instances of
-    // one name mean two entities answering to `car/body`. Load refuses that
-    // outright ("'car/body' is claimed twice"), which makes a level saved with
-    // both a level that never opens again — authored happily, lost on reopen.
-    //
-    // Here rather than at the two editor gestures, because this is the one door
-    // they both come through: "Place instance" checked and
-    // CreateBlueprintFromSelection did not, which is round-7 S17 and exactly what
-    // a per-caller rule produces. Before the context is engaged and before a
-    // single member exists, so a refusal leaves the scene untouched rather than
-    // relying on the unwind below.
+    // A name is the prefix its members are addressed by, so two live instances of one
+    // name mean two entities answering to `car/body`. Load refuses that outright, so a
+    // level saved with both is a level that never opens again. Checked here because
+    // this is the one door both editor gestures come through, and before the context
+    // is engaged so a refusal leaves the scene untouched.
     //
     // Unnamed instances are exempt and must stay that way: a runtime spawn and a
-    // replicated mirror both pass no name, nothing addresses their members by
-    // path, and refusing the second bullet would break replication.
+    // replicated mirror both pass no name, nothing addresses their members by path,
+    // and refusing the second would break replication.
     if (!entry.name.empty())
     {
         for (const auto &[id, row] : table.All())
@@ -185,10 +178,9 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
         }
     }
 
-    // Its own name context, holding only this instance's members. Placing one
-    // outside a level load has no file around it, so there is nothing else its
-    // references could name — and giving it the whole scene's names would let a
-    // blueprint silently wire itself to whatever happened to share a name.
+    // Its own name context, holding only this instance's members: a placement outside
+    // a level load has no file around it, and lending it the whole scene's names would
+    // let a blueprint silently wire itself to whatever happened to share one.
     ScopedContextReset guard;
     s_context = SerializationContext{};
 
@@ -204,11 +196,10 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
             table.Remove(instance.id);
     };
 
-    // Staging reports by value; the try is for CommitInstance, which runs the
-    // generated deserializers and so can still take an nlohmann throw on a member
-    // value the reflection layer chokes on. Either way it is all or nothing (§7):
-    // a missing nested file three members in must leave no partial instance behind,
-    // and `instance` now holds whatever got as far as existing.
+    // Staging reports by value; the try is for CommitInstance, which runs the generated
+    // deserializers and can still take an nlohmann throw. Either way it is all or
+    // nothing: a nested file missing three members in must leave no partial instance
+    // behind, and `instance` holds whatever got as far as existing.
     try
     {
         if (const std::expected<void, LevelError> ok =
@@ -237,8 +228,8 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
         return std::unexpected(LevelError::UnresolvedReference);
     }
 
-    // Authorship is decided here rather than inside StageInstance, because it is a
-    // property of *who asked* rather than of the file.
+    // Authorship is decided here rather than inside StageInstance: it is a property of
+    // *who asked*, not of the file.
     if (authored)
     {
         BlueprintInstance row = *table.Find(instance.id);
@@ -249,6 +240,10 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
     return ExpandedInstance{.instanceId = instance.id, .members = std::move(instance.members)};
 }
 
+// Members are matched by name and their entities *adopted* — stripped and rebuilt in
+// place — rather than destroyed and recreated. Undo history and every entity reference
+// in the level store exact `(slot, generation)` handles, so a rebuild would leave them
+// pointing at free or reused slots.
 std::expected<SceneSerializer::ReexpandedInstance, LevelError>
 SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::InstanceId instanceId,
                                   std::span<const std::string> previousMemberNames)
@@ -265,19 +260,16 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
         Core::Log::Error("Blueprint: cannot re-expand instance {} — no such instance is live.", instanceId);
         return std::unexpected(LevelError::InstanceNotLive);
     }
-    // A copy. Staging reads the row back out of the table, and the entry below has to
-    // outlive anything that touches it.
+    // A copy: staging reads the row back out of the table, and this has to outlive
+    // anything that touches it.
     const BlueprintInstance row = *found;
 
-    // Both failure checks happen here, before the first member is stripped, which is
-    // what lets the contract promise "changed nothing" on an error. Past this point a
-    // failure is structurally unreachable: the definition loaded, so its member names
-    // are unique, and the placement was accepted once already, so its scale is
-    // uniform.
-    //
-    // The check itself has to be non-throwing for that to hold, and it is —
-    // GetBlueprintDefinition reports every way a file can be bad as an error value,
-    // including a member value the reflection layer refuses.
+    // Both failure checks sit here, before the first member is stripped: that is what
+    // lets the contract promise "changed nothing" on an error. Past this point failure
+    // is structurally unreachable — the definition loaded, so its member names are
+    // unique, and the placement was accepted once already, so its scale is uniform.
+    // The check must stay non-throwing for that to hold; GetBlueprintDefinition reports
+    // every way a file can be bad as an error value.
     if (const BlueprintResult definition = GetBlueprintDefinition(row.source); !definition)
     {
         Core::Log::Error("Blueprint: '{}' no longer loads ({}); instance {} is left as it was.", row.source,
@@ -285,10 +277,10 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
         return std::unexpected(LevelError::BlueprintUnusable);
     }
 
-    // What is live now, under the names the *old* definition gave it. A tag whose
-    // index the old list does not cover is skipped rather than guessed at — it can
-    // only mean the caller passed the wrong list, and adopting the wrong entity for a
-    // name would silently rebuild one member on top of another.
+    // What is live now, under the names the *old* definition gave it. A tag whose index
+    // the old list does not cover is skipped rather than guessed at: it means the caller
+    // passed the wrong list, and adopting the wrong entity for a name would silently
+    // rebuild one member on top of another.
     AdoptionSet adopt;
     adopt.instanceId = instanceId;
     for (const ECS::Entity member : MembersOf(scene, instanceId))
@@ -315,10 +307,9 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
                 StageInstance(scene, table, entry, row.levelInstanceIndex, staged, &adopt);
             !ok)
         {
-            // Unreachable by the reasoning above, and reported rather than swallowed
-            // if that reasoning ever stops holding. There is no unwind: the adopted
-            // members have already been stripped, so the honest thing is to say so
-            // loudly.
+            // Unreachable by the reasoning above, reported rather than swallowed if it
+            // ever stops holding. No unwind is possible: the adopted members have
+            // already been stripped, so all that is left is to say so loudly.
             Core::Log::Error("Blueprint: re-expanding '{}' failed part-way ({}). Reload the level.",
                              row.source, Describe(ok.error()));
             return std::unexpected(ok.error());
@@ -327,8 +318,8 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
     }
     catch (const std::exception &ex)
     {
-        // Same position, for the throw CommitInstance can still take out of the
-        // generated deserializers.
+        // Same, for the throw CommitInstance can still take out of the generated
+        // deserializers.
         Core::Log::Error("Blueprint: re-expanding '{}' failed part-way: {}. Reload the level.", row.source,
                          ex.what());
         return std::unexpected(LevelError::BlueprintUnusable);

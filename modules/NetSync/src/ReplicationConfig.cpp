@@ -13,7 +13,9 @@
 #include "ReplicationInternal.hpp"
 
 // ===========================================================================
-// The relevancy config loader.
+// The game-config loaders: networking.neverReplicate and networking.relevancy.
+// Both fail towards the default and never towards an error — an absent key
+// silently, a malformed one with a warning.
 // ===========================================================================
 
 namespace Assisi::NetSync
@@ -57,8 +59,8 @@ std::vector<std::string> LoadNeverReplicateFromConfig(std::string_view configPat
     }
     catch (const std::exception &error)
     {
-        // A malformed config must not be able to silently *widen* what a game
-        // sends, so say so rather than falling through quietly.
+        // Warn: falling back here *widens* what the game sends, and doing that
+        // silently is how a veto goes missing.
         Core::Log::Warn("NetSync: cannot read 'networking.neverReplicate' from '{}' ({}) — replicating every "
                         "capable component.",
                         configPath, error.what());
@@ -103,9 +105,8 @@ RelevancyConfig LoadRelevancyFromConfig(std::string_view configPath)
             }
             else
             {
-                // A name nobody implements is a typo or a renamed provider, and
-                // quietly falling back to "everything" would leave the author
-                // believing a radius is in force when it is not.
+                // Warn loudly: falling back to "everything" quietly would leave
+                // the author believing a radius is in force when it is not.
                 Core::Log::Warn("NetSync: 'networking.relevancy.provider' is '{}', which is not a provider this "
                                 "build knows ('all' or 'distance') — telling every connection about everything.",
                                 name);
@@ -121,8 +122,8 @@ RelevancyConfig LoadRelevancyFromConfig(std::string_view configPath)
     }
     catch (const std::exception &error)
     {
-        // Same direction as every other loader here: a malformed config must not
-        // silently *narrow* what a game sends.
+        // Same direction as the loader above: fail wide, never narrow, and warn
+        // so the author is not left believing a radius is in force.
         Core::Log::Warn("NetSync: cannot read 'networking.relevancy' from '{}' ({}) — telling every connection "
                         "about everything.",
                         configPath, error.what());

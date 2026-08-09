@@ -43,9 +43,9 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
     {
         if (scene.Has<ECS::BlueprintMember>(entity))
         {
-            // Nesting is an `instances` entry, not copied entities. Copying them
-            // would bake the inner blueprint into the new file and stop a fix to it
-            // from reaching this one — the exact thing the format exists to avoid.
+            // Nesting is an `instances` entry, not copied entities: copying would
+            // bake the inner blueprint into the new file and stop a fix to it from
+            // reaching this one.
             Core::Log::Error("Blueprint: the selection contains a blueprint member. Prune it from its "
                              "instance first, or nest by adding an `instances` entry by hand.");
             return false;
@@ -58,7 +58,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
     s_context = SerializationContext{};
 
     // Names first, so a reference between two selected entities resolves whichever
-    // order they are serialized in.
+    // order they serialize in.
     std::unordered_set<std::string> usedNames;
     std::vector<std::string>        names;
     names.reserve(entities.size());
@@ -92,9 +92,9 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
             written["components"][meta->name] = meta->serialize(component);
         }
 
-        // Around the new file's own origin, so the result is placeable. A parented
-        // entity is already relative to its parent and reaches the origin through
-        // the chain; dividing it too would divide twice.
+        // Stored around the new file's own origin, so the result is placeable. A
+        // parented entity reaches the origin through its parent chain, so dividing
+        // it too would divide twice.
         if (!scene.Has<Parent>(entity))
         {
             if (const ECS::Transform *transform = scene.Get<ECS::Transform>(entity))
@@ -130,11 +130,10 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
 bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path &path, const LevelHeader &header,
                                  const InstanceTable *instances)
 {
-    // Binary, so the newlines written are the newlines that land on disk. A
-    // text-mode write expands every '\n' to "\r\n" on Windows and leaves it
-    // alone elsewhere, which makes the same level two different files depending
-    // on who saved it — noise in every diff, and a refused join for the network
-    // session's content-hash check.
+    // Binary, so the newlines written are the newlines that land on disk. Text mode
+    // expands '\n' to "\r\n" on Windows only, which makes the same level two
+    // different files depending on who saved it — noise in every diff, and a
+    // refused join for the network session's content-hash check.
     std::ofstream f(path, std::ios::binary);
     if (!f.is_open())
     {
@@ -173,10 +172,11 @@ LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesyst
     }
     catch (const std::exception &ex)
     {
-        // Same contract as LoadFromFile below: a failed load yields an empty
-        // scene rather than a half-populated one. Load itself no longer throws —
-        // this is for the component `addToScene` hooks it runs, which are
-        // generated code over nlohmann and can.
+        // Same contract as LoadFromFile below: a failed load yields an empty scene,
+        // never a half-populated one. Load reports its own failures by value, but is
+        // not throw-free — the component `addToScene` hooks it runs are generated
+        // code over nlohmann, and a file whose `version` or `entities` key is the
+        // wrong shape throws out of Load's own top-level reads.
         Core::Log::Error("SceneSerializer: failed to load '{}': {}", path.string(), ex.what());
         scene.Clear();
         return std::unexpected(LevelError::MalformedJson);
@@ -223,8 +223,7 @@ LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view as
         return std::unexpected(LevelError::FileUnreadable);
     }
 
-    // A parse failure leaves the scene untouched, so it is refused before Load is
-    // ever called rather than caught after.
+    // Parsed before Load is called, so a parse failure leaves the scene untouched.
     const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
     if (doc.is_discarded())
     {
@@ -238,16 +237,15 @@ LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view as
     }
     catch (const std::exception &ex)
     {
-        // Load reports its own failures by value and clears as it goes; what is
-        // left for this to catch is a throw out of a component's addToScene hook
-        // partway through, which leaves the scene half-populated. Clear it so a
-        // failed load yields an empty scene, never a corrupt one.
-        // (ScopedContextReset in Load already freed s_context.)
+        // Load reports its own failures by value and clears as it goes; what is left
+        // to catch is a throw partway through — out of a component's addToScene hook
+        // above all — which leaves the scene half-populated. Clear it, so a failed
+        // load yields an empty scene and never a corrupt one. (ScopedContextReset in
+        // Load already freed s_context.)
         //
-        // Catches std::exception, not just json::exception: Load runs arbitrary
-        // component addToScene hooks, and one throwing anything else (bad_alloc,
-        // out_of_range from a hook's own container) would otherwise escape and
-        // leave the half-populated scene behind.
+        // std::exception, not json::exception: those hooks are arbitrary code, and
+        // one throwing a bad_alloc or its own container's out_of_range would
+        // otherwise escape with the half-populated scene left behind.
         Core::Log::Error("SceneSerializer: failed to load '{}': {}", assetPath, ex.what());
         scene.Clear();
         return std::unexpected(LevelError::MalformedJson);

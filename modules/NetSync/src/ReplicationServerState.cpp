@@ -26,9 +26,9 @@ void ReplicationServer::ReconcileNetIds()
         NetId               netId;
         if (it == _netIdByEntity.end())
         {
-            // The other id-assignment path, and it has to reach the block too:
-            // an instance whose members are first noticed by the snapshot walk
-            // rather than by an event send must still get one contiguous range.
+            // The second id-assignment path, and it must consult the block too:
+            // an instance first noticed by the snapshot walk rather than by an
+            // event send still needs one contiguous range.
             netId = EnsureInstanceBlock(entity);
             if (netId == InvalidNetId)
                 netId = NetId{_nextNetId++};
@@ -45,8 +45,8 @@ void ReplicationServer::ReconcileNetIds()
     std::sort(_liveNetIds.begin(), _liveNetIds.end());
 
     // Drop mappings whose entity is gone or has stopped replicating. The NetId
-    // itself is retired with it and never reused — a stale reference must fail
-    // to resolve rather than quietly address whoever took the slot.
+    // retires with it and is never reused: a stale reference must fail to
+    // resolve rather than quietly address whoever took the slot.
     for (auto it = _entityByNetId.begin(); it != _entityByNetId.end();)
     {
         const ECS::Entity entity = it->second;
@@ -61,13 +61,13 @@ void ReplicationServer::ReconcileNetIds()
         }
     }
 
-    // Which members a client's own expansion could still stand in for. Monotonic
-    // and never re-set: a member that is missing for one tick may have been
-    // missing when a record went out, and the server has no per-connection
-    // memory of *which* record said what. Over-sending that member's components
-    // from then on is the cheap side of the trade; the expensive side is a
-    // revived member whose authored-equal components are elided against a client
-    // copy that does not exist.
+    // Which members a client's own expansion could still stand in for. Clears
+    // only, never re-set: a member missing for one tick may have been missing
+    // when a record went out, and the server keeps no per-connection memory of
+    // which record said what. Over-sending that member's components afterwards
+    // is the cheap side; the expensive side is a revived member whose
+    // authored-equal components are elided against a client copy that does not
+    // exist.
     for (auto &[instanceId, block] : _instanceBlocks)
     {
         (void)instanceId;
@@ -78,16 +78,13 @@ void ReplicationServer::ReconcileNetIds()
         }
     }
 
-    // Here rather than anywhere incremental: this is the one point per tick that
-    // has already accepted the scene as it is, including whatever came back from
-    // the dead since the last one.
+    // Here rather than incrementally: this is the one point per tick that has
+    // already accepted the scene as it is, revivals included.
     RebuildControlIndex();
 
     // The escape classes, resolved once per tick rather than per connection.
-    // Both lists are tiny by construction — an entity opting out of the provider
-    // is unusual by definition — and the alternative is walking the whole live
-    // set once per connection, which is exactly the cost relevancy exists to
-    // avoid paying.
+    // Both lists are tiny by construction, and the alternative is walking the
+    // whole live set once per connection — the cost relevancy exists to avoid.
     _alwaysRelevant.clear();
     _controllerOnly.clear();
     if (_relevancy != nullptr)
@@ -113,9 +110,8 @@ void ReplicationServer::ReconcileNetIds()
             }
         }
     }
-    // `_liveNetIds` is sorted, so both come out sorted without a sort — but the
-    // binary searches downstream depend on it, so it is stated rather than left
-    // to be rediscovered.
+    // Both lists come out sorted because `_liveNetIds` is, and the binary
+    // searches downstream depend on that.
 }
 
 Core::Reflect::ComponentMask ReplicationServer::ExclusionMaskOf(ECS::Entity entity) const
@@ -131,26 +127,24 @@ bool ReplicationServer::ReplicatesAsBody(ECS::Entity entity, const Core::Reflect
         return false;
 
     // Authored geometry is not simulated, whatever its live motion type says: a
-    // static body's pose is *authored data* and already has a replication path,
-    // the ordinary tracked-Transform delta. Keyed off the descriptor rather than
-    // the live motion type on purpose — the editor holds a *dynamic* body Static
-    // for the duration of a gizmo drag, and that body is still a simulated one
-    // being placed.
+    // static body's pose is authored data and already replicates as the ordinary
+    // tracked-Transform delta. **Keyed off the descriptor, not the live motion
+    // type** — the editor holds a *dynamic* body Static for the length of a
+    // gizmo drag, and that body is still a simulated one being placed.
     const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
     if (descriptor == nullptr || descriptor->isStatic)
         return false;
 
-    // Policy: the client will never build a body it was never sent a descriptor
-    // for, so correcting one would be talking to nobody. Its Transform replicates
-    // normally instead and the mirror becomes an interpolated visual — "show this
-    // moving, don't simulate it", which is a useful thing to be able to author.
+    // A client never builds a body it was sent no descriptor for, so correcting
+    // one would be talking to nobody. Its Transform replicates normally instead
+    // and the mirror becomes an interpolated visual: "show this moving, don't
+    // simulate it", which is a useful thing to author.
     if (excluded.Test(_descriptorOrdinal))
         return false;
 
-    // ...and both client-side body builders require a Transform, so a bodied
-    // entity withholding one can never have a body built either. Sending body
-    // state it must drop on arrival is pure waste; treat it as non-bodied and let
-    // the editor's warning explain that the mirror will sit at its load pose.
+    // ...and both client-side body builders require a Transform, so withholding
+    // one also means no body is ever built. Sending body state it must drop on
+    // arrival is waste; the editor warns that the mirror sits at its load pose.
     if (excluded.Test(_transformOrdinal))
         return false;
 
@@ -175,17 +169,15 @@ void ReplicationServer::CaptureBodyStates()
         if (body == nullptr)
             continue; // not a simulated entity; its Transform replicates normally
 
-        // One predicate for every "does motion travel as body state" question in
-        // this file — see ReplicatesAsBody for the four cases it rules out.
         if (!ReplicatesAsBody(entity, ExclusionMaskOf(entity)))
         {
-            // Erasing is not tidiness. The retirement sweep at the bottom only
-            // drops records for *retired* NetIds, so a record left behind by an
-            // entity that stopped being bodied would keep its nonzero tick — and
-            // that tick beats every post-sweep empty baseline, so the stale state
-            // would be resent to every client after every keyframe sweep, for the
-            // rest of the session. It would also suppress the first-sighting
-            // capture if the entity ever became bodied again.
+            // **Erasing is not tidiness.** The sweep at the bottom only drops
+            // records for *retired* NetIds, so a record left by an entity that
+            // stopped being bodied keeps its nonzero tick — which beats every
+            // post-sweep empty baseline, resending stale state to every client
+            // after every keyframe sweep for the rest of the session. It would
+            // also suppress the first-sighting capture if the entity became
+            // bodied again.
             _bodyStates.erase(netId);
             continue;
         }
@@ -203,40 +195,35 @@ void ReplicationServer::CaptureBodyStates()
             continue;
         }
 
-        // Not active. Three reasons to record it anyway, and none of them is
-        // "every tick":
+        // Not active. Three reasons to record it anyway, none of them "every
+        // tick":
         //
-        //  - first sighting, which is what makes joining an already-settled
-        //    world produce sleeping mirrors at the server's rest poses rather
-        //    than a client-side re-settle;
-        //  - it has just gone to sleep — the transition is the change, and the
-        //    one whose loss used to be permanent;
-        //  - it *moved while not simulating*. Nothing wakes a body for that, so
-        //    the active set says nothing about it: the editor's gizmo holds a
-        //    body Static for the duration of a drag precisely so the solver
-        //    stops fighting the teleport, an inspector Transform edit does the
-        //    same, gameplay can reposition a sleeping body, and a static body is
-        //    never active at all — so for a replicated wall, "record it when it
-        //    stops being active" fires once, at its load pose, and never again.
+        //  - first sighting, so joining an already-settled world gives sleeping
+        //    mirrors at the server's rest poses rather than a client re-settle;
+        //  - it has just gone to sleep — the transition is the change;
+        //  - it *moved while not simulating*, which nothing wakes a body for, so
+        //    the active set says nothing about it: the editor gizmo and the
+        //    inspector both hold a body Static while it is being moved, gameplay
+        //    can reposition a sleeping body, and a static body is never active
+        //    at all — for a replicated wall, "record it when it stops being
+        //    active" fires once, at its load pose, and never again.
         //
-        // Polling the pose rather than having every mutation site announce
-        // itself is deliberate, and it is the same argument this design already
-        // makes against Unreal's dormancy discipline: correctness that depends
-        // on every call site remembering to flush is correctness that will be
-        // forgotten. The cost is one transform read per resting replicated body
-        // per tick, which is what "the physics world is the truth" is worth.
+        // Hence polling the pose instead of trusting every mutation site to
+        // announce itself: correctness that depends on every call site
+        // remembering to flush is correctness that will be forgotten. The cost
+        // is one transform read per resting replicated body per tick.
         //
-        // A body that is asleep and has not moved records nothing, which is
-        // where the idle-bandwidth property comes from.
+        // A body asleep and unmoved records nothing, which is where the
+        // idle-bandwidth property comes from.
         {
             const auto [position, rotation] = _physics->GetBodyTransform(*body);
 
             const bool firstSighting = record.tick == 0;
             const bool justSlept     = !firstSighting && !record.state.asleep;
-            // Both poses are frozen while a body rests — nothing integrates them
-            // — so this compares against float noise, not against motion. The
-            // epsilons are well under one quantization step, so a move too small
-            // to survive the encoder cannot trigger a send either.
+            // Nothing integrates a resting pose, so this compares against float
+            // noise rather than motion. The epsilons sit well under one
+            // quantization step: a move too small to survive the encoder cannot
+            // trigger a send either.
             const bool movedAtRest =
                 !firstSighting && record.state.asleep &&
                 (glm::distance(record.state.position, position) > 1e-5f ||
@@ -249,9 +236,9 @@ void ReplicationServer::CaptureBodyStates()
             record.state = BodyState{netId, position, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/true};
             record.tick  = _bodyStateTick;
 
-            // Every other update is superseded by the next one; the final rest
-            // pose is the one whose delay is permanently visible, because after
-            // it the server has nothing more to say about this body.
+            // Every other update is superseded by the next one; a delayed final
+            // rest pose stays visible, because after it the server has nothing
+            // more to say about this body.
             if (transition)
             {
                 for (auto &[id, connection] : _connections)

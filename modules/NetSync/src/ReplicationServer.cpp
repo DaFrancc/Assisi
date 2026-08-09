@@ -28,10 +28,8 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     : _transport(transport), _scene(scene), _physics(physics), _config(config)
 {
     // Clamp the snapshot rate to a divisor of the tick rate. A rate that does
-    // not divide evenly makes the send interval alternate between two tick
-    // counts, which reaches the player as interpolation judder and reaches the
-    // developer as nothing at all — no error, no log. Better to quietly land on
-    // the nearest workable rate and say so.
+    // not divide makes the send interval alternate between two tick counts,
+    // which the player sees as interpolation judder and nothing reports.
     if (_config.tickRateHz == 0)
         _config.tickRateHz = 60;
     if (_config.snapshotHz == 0)
@@ -47,22 +45,17 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     }
 
     // Resolve the *capable* component set once: exactly the types annotated
-    // ACOMP(replicable). Opt-in, and the opt-in is the point — "everything
-    // serializable travels" shipped a `Camera` with every marked entity, whose
-    // isActive could take over the receiving client's view, and would have put
-    // every future gameplay-local component on the wire by default. The
-    // Replicated marker is not in the set for a different reason: it says only
-    // *that* an entity replicates, which the client learns from the spawn.
+    // ACOMP(replicable). Opt-in is the point — "everything serializable
+    // travels" put a `Camera` on the wire with every marked entity, whose
+    // isActive could take over the receiving client's view.
     //
-    // Capability, not policy: this is what *may* travel, not what does. Which of
-    // these a given entity actually sends is narrowed later — by the game's
-    // neverReplicate list and by each entity's own exclusion mask.
+    // Capability, not policy: what a given entity actually sends is narrowed
+    // later by the game's neverReplicate list and by its own exclusion mask.
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    // The game's veto, resolved once. A name nobody registered is a typo or a
-    // renamed type, and silently ignoring it would leave the author believing
-    // something is off the wire when it is not — the exact class of quiet
-    // wrongness this design exists to remove.
+    // The game's veto, resolved once. An unregistered name is a typo or a
+    // renamed type, and warns rather than being ignored: an author who believes
+    // something is off the wire when it is not has no way to notice.
     std::vector<Core::Reflect::ComponentId> vetoed;
     for (const std::string &name : _config.neverReplicate)
     {
@@ -90,18 +83,17 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
         if (!meta->replicable)
             continue;
         if (std::binary_search(vetoed.begin(), vetoed.end(), meta->id))
-            continue; // the game says never, so it is not even a candidate
+            continue; // vetoed by the game, so not even a candidate
         _replicatedComponents.push_back(meta->id);
-        // Ordinals stay the *registry's*, not this list's index: the exclusion
-        // masks authored in level files are indexed by the registry's numbering,
-        // and a game filter must not silently renumber them.
+        // Ordinals stay the *registry's*, never this list's index: exclusion
+        // masks authored in level files are indexed by the registry's
+        // numbering, and the game filter must not silently renumber them.
         _replicatedOrdinals.push_back(registry.ReplicableOrdinalOf(meta->id));
     }
 
-    // Say what this session can send, once, where someone will see it. The
-    // residual risk of default-send policy is that a future engine module marks
-    // a new type replicable and every marked entity quietly starts carrying it;
-    // a capability surface you are shown is the cheap fence against that.
+    // Say what this session can send, once, where someone will see it — so that
+    // a future module marking a new type replicable does not quietly put it on
+    // every marked entity's wire unnoticed.
     {
         std::string names;
         for (const Core::Reflect::ComponentId id : _replicatedComponents)
@@ -121,8 +113,8 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
     _transformOrdinal     = registry.ReplicableOrdinalOf(_transformComponentId);
     _descriptorOrdinal    = registry.ReplicableOrdinalOf(registry.IdOf(typeid(Physics::RigidBodyDescriptor)));
 
-    // Session start. Whatever claims this scene arrived carrying, they were made
-    // in a session that is over.
+    // Whatever control claims this scene arrived carrying were made in a session
+    // that is over.
     StripAuthoredControl();
 
     if (_config.relevancy.provider == RelevancyConfig::Provider::Distance)
@@ -136,9 +128,8 @@ ReplicationServer::ReplicationServer(Net::NetTransport &transport, ECS::Scene &s
 
 void ReplicationServer::StripAuthoredControl()
 {
-    // Collected first, then removed: mutating a component pool while a query
-    // over it is running is the documented hazard in Scene.hpp, and this is
-    // exactly the shape it warns about.
+    // Collected first, then removed. Mutating a component pool while a query
+    // over it runs is the hazard Scene.hpp warns about.
     std::vector<ECS::Entity> authored;
     for (auto [entity, controlled] : _scene.Query<ControlledBy>())
     {
@@ -164,16 +155,16 @@ void ReplicationServer::AddConnection(Net::ConnectionId connection)
     Connection &entry = _connections[connection];
     entry.id          = connection;
     entry.ready       = false;
-    // Only if this is genuinely a new connection. Re-registering a live one must
-    // not renumber it — every ControlledBy already on the wire names the old id.
+    // Only for a genuinely new connection. Re-registering a live one must not
+    // renumber it — every ControlledBy already on the wire names the old id.
     if (!entry.clientId.IsValid())
     {
         entry.clientId = ClientId{_nextClientId++};
         _connectionByClient.emplace(entry.clientId.value, connection);
     }
 
-    // Registered, but silent until this host knows its own content set. A client
-    // that gets a hello answers it exactly once and never again, so a hello sent
+    // Registered, but silent until this host knows its own content set. A
+    // client answers a hello exactly once and never again, so a hello sent
     // before the server can check the answer is a join with no correct outcome.
     if (_contentSetHashReady)
         SendHello(entry);
@@ -200,9 +191,9 @@ void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
 
     const ClientId client = it->second.clientId;
 
-    // Refreshed rather than trusted: control can be assigned between two ticks,
-    // and a disconnect is not obliged to wait for one. The index is one entry
-    // per controlled entity, so this costs nothing worth saving.
+    // Refreshed rather than trusted: control can be assigned between two ticks
+    // and a disconnect does not wait for one. One entry per controlled entity,
+    // so the rebuild costs nothing worth saving.
     RebuildControlIndex();
 
     if (const auto controlled = _controlledByClient.find(client.value); controlled != _controlledByClient.end())
@@ -215,9 +206,9 @@ void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
             if (claim == nullptr || claim->client != client.value)
                 continue; // control moved on since the index was built
 
-            // Both outcomes already have a wire path: a despawn rides NetId
-            // retirement through the acked-set diff, and a component removal
-            // rides the presence diff. Nothing new travels for either.
+            // Both outcomes already have a wire path — despawn rides the
+            // acked-set diff, removal rides the presence diff — so nothing new
+            // has to be sent for either.
             if (claim->despawnOnDisconnect)
                 _scene.Destroy(entity);
             else
@@ -226,9 +217,9 @@ void ReplicationServer::RemoveConnection(Net::ConnectionId connection)
         _controlledByClient.erase(controlled);
     }
 
-    // A provider keeping per-pair state (dwell counters, last-known distances)
-    // would otherwise hold it for the life of the session against an id that
-    // will never be handed out again.
+    // Otherwise a provider's per-client state (dwell counters, last-known
+    // distances) is held for the life of the session against an id that will
+    // never be handed out again.
     if (_relevancy != nullptr)
         _relevancy->ForgetClient(client);
 
@@ -259,9 +250,9 @@ void ReplicationServer::SetControl(ECS::Entity entity, ClientId client, bool des
         return;
     }
 
-    // Through GetMut so the write stamps a change tick. A transfer that does not
-    // stamp is a transfer the delta path never sends — the component would sit
-    // correct on the server and stale on every client until a keyframe sweep.
+    // **Through GetMut**, so the write stamps a change tick. An unstamped
+    // transfer is one the delta path never sends: correct on the server, stale
+    // on every client until the next keyframe sweep.
     if (ControlledBy *claim = _scene.GetMut<ControlledBy>(entity))
     {
         if (claim->client != client.value)
@@ -302,25 +293,24 @@ NetId ReplicationServer::EnsureNetId(ECS::Entity entity)
     if (const NetId existing = NetIdOf(entity); existing != InvalidNetId)
         return existing;
 
-    // Only for entities that actually replicate — handing an id to something the
-    // snapshot will never mention would make an event reference resolve to
-    // nothing on arrival, which is worse than resolving to nothing here.
+    // Only for entities that actually replicate. An id for something the
+    // snapshot never mentions makes an event reference resolve to nothing on
+    // arrival, which is worse than resolving to nothing here.
     if (!_scene.Has<Replicated>(entity))
         return InvalidNetId;
 
-    // A blueprint member takes its id from its instance's block, so that every
-    // member is derivable from one base and one record can stand in for all of
-    // them. Falls through to the counter when there is no instance to describe.
+    // A blueprint member takes its id from its instance's block, so every member
+    // is derivable from one base. Falls through to the counter when there is no
+    // instance to describe.
     NetId netId = EnsureInstanceBlock(entity);
     if (netId == InvalidNetId)
-        netId = NetId{_nextNetId++}; // turns a raw counter into an id — see _nextNetId
+        netId = NetId{_nextNetId++};
 
     _netIdByEntity.emplace(PackEntity(entity), netId);
     _entityByNetId.emplace(netId, entity);
 
-    // Sorted insert rather than an append. Ids no longer only climb: a block is
-    // reserved whole, so member 0 can be assigned after member 2 and take a
-    // lower id than one already in the list.
+    // Sorted insert, never an append: a block is reserved whole, so member 0 can
+    // be assigned after member 2 and take a lower id than one already listed.
     _liveNetIds.insert(std::lower_bound(_liveNetIds.begin(), _liveNetIds.end(), netId), netId);
     return netId;
 }
@@ -345,23 +335,22 @@ NetId ReplicationServer::EnsureInstanceBlock(ECS::Entity entity)
         block.base        = NetId{_nextNetId};
         block.memberCount = info.memberCount;
         block.info        = info;
-        // All of them, until a reconcile pass finds otherwise. Every member that
-        // exists is given its id in the same pass this block is allocated in, so
-        // the first pass over the live set is what actually seeds this — see
-        // ReconcileNetIds.
+        // All of them until a reconcile pass finds otherwise; ReconcileNetIds is
+        // what actually seeds this, in the same pass that gives every existing
+        // member its id.
         block.derivable.assign(info.memberCount, 1u);
 
         // The whole range at once. Reserving lazily per member would let an
-        // ordinary entity land in the middle of the block and break the one
-        // property the record depends on.
+        // ordinary entity land in the middle of the block and break the
+        // contiguity the record depends on.
         _nextNetId += info.memberCount;
         it = _instanceBlocks.emplace(tag->instanceId, block).first;
         _blockRanges.emplace_back(block.base, block.memberCount); // sorted by construction
     }
 
-    // A member index outside the block would alias whatever was allocated next.
-    // Refuse and let it replicate as an ordinary entity: the tag disagreeing
-    // with the definition is a bug, but a colliding NetId is a corrupt mirror.
+    // A member index outside the block would alias whatever was allocated next,
+    // so refuse and let it replicate as an ordinary entity. The tag disagreeing
+    // with the definition is a bug; a colliding NetId is a corrupt mirror.
     if (tag->memberIndex >= it->second.memberCount)
     {
         Core::Log::Error("Replication: instance {} member index {} is outside its block of {} — "
@@ -395,11 +384,10 @@ void ReplicationServer::SetRelevancyProvider(std::unique_ptr<RelevancyProvider> 
 {
     _relevancy = std::move(provider);
 
-    // Every connection's remembered set describes a world the old provider
-    // believed in. Clearing it makes the next snapshot treat whatever the new
-    // provider names as a re-entry, which resends full state — over-sending
-    // once, which is the correct direction to be wrong in when the policy
-    // deciding who sees what has just been replaced under everyone.
+    // Every remembered set describes a world the old provider believed in.
+    // Clearing them makes the next snapshot treat whatever the new provider
+    // names as a re-entry and resend full state — over-sending once, which is
+    // the safe direction when the policy has just changed under everyone.
     for (auto &[id, connection] : _connections)
     {
         (void)id;
@@ -472,18 +460,16 @@ std::span<const NetId> ReplicationServer::RelevantSet(Net::ConnectionId connecti
 
 const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connection)
 {
-    // The identity case, and it is deliberately not "a provider that returns
-    // everything": no call, no copy, no intersection — the same vector the
-    // pre-relevancy code walked. A test pins that the wire bytes are identical
-    // to an identity-filter run, which is what makes this claim checkable
-    // rather than asserted.
+    // The identity case, deliberately not "a provider that returns everything":
+    // no call, no copy, no intersection. A test pins that the wire bytes match
+    // an identity-filter run.
     if (_relevancy == nullptr)
         return _liveNetIds;
 
-    // The anchors this connection actually views from: whatever the session set,
-    // or — only as a default — the entities it controls. A provider handed an
-    // empty list is being told this connection has no viewpoint, and what to do
-    // about that is its decision, not the engine's.
+    // The anchors this connection views from: whatever the session set, or — as
+    // a default only — the entities it controls. A provider handed an empty list
+    // is being told this connection has no viewpoint; what to do about that is
+    // its decision.
     connection.anchorScratch.clear();
     if (!connection.anchors.empty())
     {
@@ -517,11 +503,9 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
     merged.insert(merged.end(), connection.grants.begin(), connection.grants.end());
 
     // The implicit grant: a connection is always told about the entities it
-    // controls. Every surveyed system pins this, and the failure without it is
-    // absurd on its face — a player's own pawn drifting out of its own radius
-    // because the view anchor was set somewhere else. It is also the precondition
-    // for any future prediction, which needs the controller to always hold its
-    // subject.
+    // controls. Without it a player's own pawn can drift out of its own radius
+    // when the view anchor is set elsewhere, and prediction — which needs the
+    // controller to always hold its subject — becomes impossible.
     if (const auto controlled = _controlledByClient.find(connection.clientId.value);
         controlled != _controlledByClient.end())
     {
@@ -534,17 +518,15 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
     }
 
     // Relevance::Always — the escape from whatever the provider decided. Every
-    // connection, unconditionally, because a radius is a bandwidth tool and an
-    // objective marker that vanishes at 60 metres is a bug the saving does not
-    // pay for.
+    // connection, unconditionally: a radius is a bandwidth tool, and an
+    // objective marker that vanishes at 60 metres is not worth the saving.
     merged.insert(merged.end(), _alwaysRelevant.begin(), _alwaysRelevant.end());
 
     std::sort(merged.begin(), merged.end());
     merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
 
-    // Relevance::ControllerOnly — the escape in the other direction, and the one
-    // class that reads ControlledBy, which is its whole job description. Applied
-    // last so it outranks the provider, a grant, and Always alike: "only this
+    // Relevance::ControllerOnly — the escape in the other direction. **Applied
+    // last**, so it outranks the provider, a grant, and Always alike: "only this
     // player may know about it" is not a preference to be outvoted.
     if (!_controllerOnly.empty())
     {
@@ -556,8 +538,7 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
                               [](const auto &pair, NetId value) { return pair.first < value; });
                           if (entry == _controllerOnly.end() || entry->first != netId)
                               return false; // not one of them
-                          // Uncontrolled means nobody, which is the honest
-                          // reading of "only the controller may see it".
+                          // Uncontrolled (client 0) means nobody may see it.
                           return entry->second != connection.clientId.value;
                       });
     }
@@ -570,17 +551,13 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
 
     // Instances are relevant whole or not at all. A provider naming one wheel
     // pulls the car: the client derives every member from one record, so a
-    // partial instance would leave it holding member ids it cannot attribute —
-    // and the record's memberCount would disagree with what actually arrived.
+    // partial instance leaves it holding member ids it cannot attribute, and the
+    // record's memberCount disagrees with what actually arrived.
     //
-    // After the policy filters deliberately. ControllerOnly removing a member
-    // must not be undone by escalation, which is why this reads the filtered set
-    // and adds to it rather than running before them... except that escalation
-    // then re-adds siblings a filter dropped. So it runs on what survived, and
-    // the filters are re-applied to nothing: a ControllerOnly member's siblings
-    // are pulled in, but the member itself stays out. That is the honest reading
-    // of "only this player may know about it" — the car is visible, that one
-    // part of it is not.
+    // Runs on what survived the policy filters, and re-adds **every** member of
+    // any block that kept one — including members the filters just removed. A
+    // ControllerOnly member is escalated back in whenever a sibling is relevant;
+    // no filter is re-applied afterwards.
     if (!_blockRanges.empty())
     {
         _escalateScratch.clear();
@@ -617,16 +594,14 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
         }
     }
 
-    // Re-entry inside one round trip. An entity that is in the set now, was not
-    // last snapshot, and is still in the acked set has an unacked despawn in
-    // flight: the ordinary path would send it a delta, and the client — which
-    // destroyed its mirror when that despawn landed — would build a fresh entity
-    // out of whichever components the delta happened to carry. Forgetting it
-    // sends full state instead.
+    // Re-entry inside one round trip. An entity in the set now, absent last
+    // snapshot, and still in the acked set has an unacked despawn in flight: the
+    // ordinary path would send a delta, and the client — which destroyed its
+    // mirror when that despawn landed — would rebuild the entity out of whatever
+    // components that delta carried. Forgetting it sends full state instead.
     //
     // Reachable through the grant API, through teleports, and through plain
-    // oscillation at a provider's boundary, so it is not a corner worth leaving
-    // to chance.
+    // oscillation at a provider's boundary.
     for (const NetId netId : effective)
     {
         if (std::binary_search(connection.relevant.begin(), connection.relevant.end(), netId))
@@ -635,12 +610,10 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
             continue; // already forgotten — the empty-baseline path has it covered
         ForgetAcked(connection, netId);
 
-        // Instance-granular, because forgetting a member is not enough. The
-        // client destroyed the whole instance when the despawn landed — the run
-        // covered the block and took the record with it — so re-entry has to
-        // resend the record too. Without this the member arrives as full state
-        // with nothing to attach it to, and the expander is never asked to
-        // rebuild what the client threw away.
+        // Forgetting the member is not enough: the client destroyed the whole
+        // instance when the despawn landed, so the record has to go out again
+        // too. Without this the member arrives as full state with nothing to
+        // attach it to and the expander is never asked to rebuild it.
         if (const ECS::BlueprintMember *tag = _scene.Get<ECS::BlueprintMember>(EntityOf(netId));
             tag != nullptr && tag->instanceId.IsValid())
         {
@@ -648,11 +621,10 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
         }
     }
 
-    // Boundary thrash is invisible otherwise — it looks exactly like ordinary
-    // bandwidth — and it is the one failure mode hysteresis exists to prevent.
-    // Enters climbing in lockstep with exits is the shape to watch for.
-    // One merge over two sorted sequences, counting both directions at once —
-    // cheaper than two set_differences and it needs no output to discard.
+    // Count enters and exits: boundary thrash otherwise looks exactly like
+    // ordinary bandwidth, and it is what hysteresis exists to prevent — enters
+    // climbing in lockstep with exits is the shape to watch for. One merge over
+    // two sorted sequences counts both directions with no output to discard.
     {
         std::size_t before = 0;
         std::size_t now    = 0;
@@ -691,12 +663,11 @@ void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
         connection.acked.erase(slot);
     }
 
-    // ComponentId{0}: the packed key's lower bound, not "invalid" — 0 is the
-    // lowest possible ordinal, and component ids are dense from there.
+    // This netId's packed-ref range. ComponentId{0} is the low bound rather
+    // than "invalid" — ids are dense from 0 — and netId + 1 is the exclusive
+    // upper bound, spelled out because NetId has no arithmetic of its own.
     const auto low  = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
                                        PackComponentRef(netId, Core::Reflect::ComponentId{0}));
-    // netId + 1: the exclusive upper bound of this netId's packed-ref range,
-    // spelled explicitly since NetId has no arithmetic of its own.
     const auto high = std::lower_bound(connection.ackedComponents.begin(), connection.ackedComponents.end(),
                                        PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
     connection.ackedComponents.erase(low, high);
@@ -705,10 +676,9 @@ void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
     connection.diagnostics.baselineEntries = static_cast<std::uint32_t>(connection.baselines.size());
 
     // ...and the ring, because HandleAck installs a record's entity set
-    // wholesale. A late ack for a snapshot sent before the revoke would
-    // otherwise put the entity straight back into the acked set, with its old
-    // baseline, and the next snapshot would send the delta this call exists to
-    // prevent.
+    // wholesale. A late ack for a pre-revoke snapshot would otherwise put the
+    // entity straight back into the acked set with its old baseline, and the
+    // next snapshot would send the delta this call exists to prevent.
     for (SentSnapshot &record : connection.inFlight)
     {
         if (const auto slot = std::lower_bound(record.netIds.begin(), record.netIds.end(), netId);
@@ -719,12 +689,9 @@ void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
 
         std::erase_if(record.written, [netId](const WrittenEntity &entry) { return entry.netId == netId; });
 
-        // ComponentId{0}: the packed key's lower bound, not "invalid" — 0 is the
-        // lowest possible ordinal, and component ids are dense from there.
+        // The same packed-ref range as above.
         const auto recordLow  = std::lower_bound(record.components.begin(), record.components.end(),
                                                  PackComponentRef(netId, Core::Reflect::ComponentId{0}));
-        // netId + 1: the exclusive upper bound of this netId's packed-ref range,
-        // spelled explicitly since NetId has no arithmetic of its own.
         const auto recordHigh = std::lower_bound(record.components.begin(), record.components.end(),
                                                  PackComponentRef(NetId{netId.value + 1}, Core::Reflect::ComponentId{0}));
         record.components.erase(recordLow, recordHigh);
@@ -740,8 +707,8 @@ void ReplicationServer::ForgetAckedInstance(Connection &connection, ECS::Instanc
         connection.knownInstances.erase(known);
     }
 
-    // ...and the ring, for the same reason ForgetAcked scrubs it: `instances` is
-    // installed wholesale by HandleAck, so a straggler ack for a snapshot sent
+    // ...and the ring, for the same reason ForgetAcked scrubs it: HandleAck
+    // installs `instances` wholesale, so a straggler ack for a snapshot sent
     // before the instance left would put it straight back and the resend this
     // call exists to cause would never happen.
     for (SentSnapshot &record : connection.inFlight)
