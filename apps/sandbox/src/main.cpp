@@ -53,7 +53,8 @@ constexpr const char *kUsage =
     "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
     "                          until interrupted, the default)\n"
     "  --verbosity <level>     lowest level to log: trace, debug, info, warn,\n"
-    "                          error, fatal (default trace)\n"
+    "                          error, fatal (default trace; info in a shipping\n"
+    "                          build)\n"
     "  -h, --help              show this help and exit\n";
 
 // Parses argv into the editor config inputs. Returns false with a message

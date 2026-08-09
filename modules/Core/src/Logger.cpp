@@ -28,6 +28,18 @@ static void WriteToStderr(std::string_view line) noexcept
     std::fflush(stderr);
 }
 
+LogLevel DefaultMinLevel() noexcept
+{
+#ifdef ASSISI_SHIPPING_BUILD
+    // A shipped log is for diagnosing a player's problem. Info up is the
+    // narrative — what loaded, what failed; Trace and Debug are instrumentation
+    // aimed at whoever was editing the code that emitted them.
+    return LogLevel::Info;
+#else
+    return LogLevel::Trace;
+#endif
+}
+
 static std::string_view LevelPrefix(LogLevel level)
 {
     switch (level)
