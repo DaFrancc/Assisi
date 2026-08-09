@@ -22,6 +22,7 @@ add_executable(Assisi-Core-Tests
   TestDiagnostics.cpp
   TestEventQueue.cpp
   TestJobSystem.cpp
+  TestLogger.cpp
   TestTrivialString.cpp
 )
 

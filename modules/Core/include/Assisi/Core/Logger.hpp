@@ -15,7 +15,9 @@
 #include <format>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <source_location>
+#include <span>
 #include <string_view>
 #include <type_traits>
 #include <vector>
@@ -102,6 +104,21 @@ struct Logger
 
 /// @brief Returns the global logger instance.
 Logger &GetLogger();
+
+/// @brief The canonical lowercase name of a level ("trace" … "fatal").
+[[nodiscard]] std::string_view LogLevelName(LogLevel level);
+
+/// @brief Parses a level name, case-insensitively. Empty if unrecognised.
+///
+/// Names only, deliberately — no numeric ordinals. LogLevel's enumerators are
+/// dense and unnamed in the ABI, so inserting a level renumbers every one after
+/// it, and a `--verbosity 2` sitting in someone's launch script or shortcut
+/// would quietly start meaning something else. A name either resolves or is
+/// rejected out loud.
+[[nodiscard]] std::optional<LogLevel> ParseLogLevel(std::string_view name);
+
+/// @brief All level names, lowest first — for help text and error messages.
+[[nodiscard]] std::span<const std::string_view> LogLevelNames();
 
 // -------------------------------------------------------------------------
 // LocFmtStr — source_location + format string helper
