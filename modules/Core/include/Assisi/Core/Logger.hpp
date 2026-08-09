@@ -65,6 +65,11 @@ struct Sink
 /// SetMinLevel() needs no lock because the level is atomic. The lock is held
 /// across formatting and writing — fine at the engine's current log volume;
 /// revisit only if logging shows up in a profile.
+///
+/// @note Fatal is the one exception: it try-locks and writes regardless, so a
+/// crash handler cannot hang on a lock held by the thread that just died. A
+/// Fatal racing another logging thread may interleave its line. See the
+/// comment on AcquireForWrite in Logger.cpp.
 struct Logger
 {
     /// @brief Adds an output sink. Multiple sinks can be active simultaneously.
