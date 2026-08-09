@@ -13,6 +13,7 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <fstream>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -31,6 +32,29 @@ namespace
 // own output file.
 std::array<char, 1024> gReportPath{};
 bool                   gReportPathSet = false;
+
+// A handler cannot report that it failed to open its own output file — it runs
+// in signal context, where warning is not an option, so the failure would be
+// indistinguishable from never having crashed. Find out now, while saying
+// something is still possible. Probes by creating a file rather than reading
+// directory permissions, which lie on network and container mounts.
+bool ProbeWritable(const std::filesystem::path &path) noexcept
+{
+    std::error_code ec;
+    const bool      existed = std::filesystem::exists(path, ec);
+
+    const bool writable = std::ofstream(path, std::ios::app).is_open();
+    if (!existed)
+    {
+        std::filesystem::remove(path, ec);
+    }
+
+    if (!writable)
+    {
+        Core::Log::Warn("Crash reports cannot be written to {} — this run will produce none.", path.string());
+    }
+    return writable;
+}
 
 } // namespace
 
@@ -140,7 +164,7 @@ void InstallCrashHandlers(const std::filesystem::path &path) noexcept
     if (text.size() < gReportPath.size())
     {
         std::memcpy(gReportPath.data(), text.c_str(), text.size() + 1);
-        gReportPathSet = true;
+        gReportPathSet = ProbeWritable(path);
     }
     else
     {
@@ -336,7 +360,7 @@ void InstallCrashHandlers(const std::filesystem::path &path) noexcept
     if (text.size() < gReportPath.size())
     {
         std::memcpy(gReportPath.data(), text.c_str(), text.size() + 1);
-        gReportPathSet = true;
+        gReportPathSet = ProbeWritable(path);
     }
     else
     {

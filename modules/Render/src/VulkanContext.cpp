@@ -457,7 +457,8 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
                               "Could not initialize Vulkan.\n\n"
                               "Assisi renders with Vulkan 1.3 and could not create a Vulkan instance. "
                               "This usually means the graphics drivers are missing or out of date.\n\n"
-                              "Please install or update your graphics drivers. See assisi.log for details.");
+                              "Please install or update your graphics drivers. For details, see the newest "
+                              "assisi-*.log file next to the game.");
         return nullptr;
     }
     VKD.init(vk::Instance(context->_instance));
@@ -478,7 +479,8 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
                               "Assisi requires a graphics device with Vulkan 1.3 support "
                               "(dynamic rendering, synchronization2, and timeline semaphores).\n\n"
                               "Please update your graphics drivers. If they are already up to date, "
-                              "your GPU is likely too old to run Assisi. See assisi.log for details.");
+                              "your GPU is likely too old to run Assisi. For details, see the newest "
+                              "assisi-*.log file next to the game.");
         return nullptr;
     }
     context->_physicalDevice = physicalDeviceChoice->physicalDevice;
