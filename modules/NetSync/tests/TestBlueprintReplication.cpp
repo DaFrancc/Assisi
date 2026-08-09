@@ -292,8 +292,13 @@ TEST_CASE("Blueprint replication: a member index outside the block is refused, n
 
     // A tag disagreeing with the definition is a bug either way, but the wrong
     // answer here is a NetId that collides with whatever was allocated next.
+    //
+    // Exactly the id after the block, not merely one past it: the aliased answer
+    // is `base + 5`, which is also "past the block", so a `>=` here would pass
+    // with the refusal deleted. The block is two wide, so the next ordinary
+    // counter id is `base + 2`.
     REQUIRE(beyond != InvalidNetId);
-    CHECK(beyond.value >= base.value + 2);
+    CHECK(beyond == NetId{base.value + 2});
 }
 
 TEST_CASE("Blueprint replication: the record survives a round trip and is idempotent")
