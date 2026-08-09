@@ -1,4 +1,5 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+#include <cstdio>
 #include <format>
 #include <mutex>
 
@@ -7,18 +8,23 @@
 namespace Assisi::Core
 {
 
-// Fatal must not block: it runs from the crash handler, where the lock may be
-// held by the thread that just died. Takes the lock if free, writes anyway if
-// not — an interleaved line beats a hung process and no diagnostic. That path
-// also reads _sinks unsynchronized, which holds because sinks are added once in
-// Application's constructor and never after. Every other level waits its turn.
-static std::unique_lock<std::mutex> AcquireForWrite(std::mutex &mutex, LogLevel level)
+// Where a Fatal goes when the logger lock is unavailable.
+//
+// The lock can be held by a thread that just died, and blocking there hangs the
+// process. But writing to the sinks anyway is not the answer: std::ofstream
+// carries no data-race guarantee, so an unlocked FileSink write races the put
+// area of a shared filebuf. Measured, that does not merely interleave one line
+// — it duplicates and byte-corrupts entries already in the file, which destroys
+// the log as evidence.
+//
+// stdio is thread-safe ([C11 7.21.2]/7), so stderr takes the line without
+// touching anything a sink owns. Unbuffered, so it survives the abort that
+// follows.
+static void WriteToStderr(std::string_view line) noexcept
 {
-    if (level == LogLevel::Fatal)
-    {
-        return std::unique_lock<std::mutex>(mutex, std::try_to_lock);
-    }
-    return std::unique_lock<std::mutex>(mutex);
+    std::fwrite(line.data(), 1, line.size(), stderr);
+    std::fputc('\n', stderr);
+    std::fflush(stderr);
 }
 
 static std::string_view LevelPrefix(LogLevel level)
@@ -53,21 +59,41 @@ void Logger::SetMinLevel(LogLevel level)
     _minLevel.store(level, std::memory_order_relaxed);
 }
 
+void Logger::Emit(LogLevel level, std::string_view line)
+{
+    if (level == LogLevel::Fatal)
+    {
+        std::unique_lock<std::mutex> lock(_mutex, std::try_to_lock);
+        if (!lock.owns_lock())
+        {
+            WriteToStderr(line);
+            return;
+        }
+        for (std::shared_ptr<Sink> &sink : _sinks)
+        {
+            sink->Write(level, line);
+        }
+        return;
+    }
+
+    const std::lock_guard<std::mutex> guard(_mutex);
+    for (std::shared_ptr<Sink> &sink : _sinks)
+    {
+        sink->Write(level, line);
+    }
+}
+
 // Backstop only. The Log:: free functions filter before formatting, which is
 // where it saves anything; this catches a direct Log() call.
+//
+// Formatting happens outside Emit, so the lock covers only the fan-out.
 void Logger::Log(LogLevel level, std::string_view message)
 {
     if (!IsEnabled(level))
     {
         return;
     }
-
-    const std::unique_lock<std::mutex> lock = AcquireForWrite(_mutex, level);
-    std::string line = std::format("{} {}", LevelPrefix(level), message);
-    for (std::shared_ptr<Sink> &sink : _sinks)
-    {
-        sink->Write(level, line);
-    }
+    Emit(level, std::format("{} {}", LevelPrefix(level), message));
 }
 
 void Logger::Log(LogLevel level, std::source_location loc, std::string_view message)
@@ -76,13 +102,7 @@ void Logger::Log(LogLevel level, std::source_location loc, std::string_view mess
     {
         return;
     }
-
-    const std::unique_lock<std::mutex> lock = AcquireForWrite(_mutex, level);
-    std::string line = std::format("{} {}({}): {}", LevelPrefix(level), loc.file_name(), loc.line(), message);
-    for (std::shared_ptr<Sink> &sink : _sinks)
-    {
-        sink->Write(level, line);
-    }
+    Emit(level, std::format("{} {}({}): {}", LevelPrefix(level), loc.file_name(), loc.line(), message));
 }
 
 Logger &GetLogger()
