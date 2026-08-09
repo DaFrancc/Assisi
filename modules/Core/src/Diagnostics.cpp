@@ -5,6 +5,12 @@
 #include <system_error>
 #include <vector>
 
+#ifdef _WIN32
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
+
 #include <Assisi/Core/Diagnostics.hpp>
 #include <Assisi/Core/Logger.hpp>
 
@@ -33,11 +39,16 @@ const std::string &LaunchStamp()
     {
         using namespace std::chrono;
         const sys_time<seconds> nowUtc = floor<seconds>(system_clock::now());
+#ifdef _WIN32
+        const int32_t pid = static_cast<int32_t>(_getpid());
+#else
+        const int32_t pid = static_cast<int32_t>(getpid());
+#endif
         if (const time_zone *zone = LocalZone())
         {
-            return std::format("{:%Y%m%d-%H%M%S}", zone->to_local(nowUtc));
+            return std::format("{:%Y%m%d-%H%M%S}-{}", zone->to_local(nowUtc), pid);
         }
-        return std::format("{:%Y%m%d-%H%M%S}", nowUtc);
+        return std::format("{:%Y%m%d-%H%M%S}-{}", nowUtc, pid);
     }();
     return stamp;
 }
