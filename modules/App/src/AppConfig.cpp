@@ -64,10 +64,31 @@ AppConfig AppConfig::LoadFromJson()
             const auto &t = json.at("timing");
             if (t.contains("physicsHz")) cfg.physicsHz = t.at("physicsHz").get<double>();
         }
+
+        if (json.contains("diagnostics"))
+        {
+            const auto &d = json.at("diagnostics");
+            if (d.contains("keepLogs"))  cfg.keepLogs  = d.at("keepLogs").get<uint32_t>();
+            if (d.contains("keepDumps")) cfg.keepDumps = d.at("keepDumps").get<uint32_t>();
+        }
     }
     catch (const nlohmann::json::exception &e)
     {
         Core::Log::Warn("Failed to parse game.json: {} — using defaults.", e.what());
+    }
+
+    // Both counts are totals *including* the run in progress, so zero would ask
+    // the pruner to delete the log currently being written and the report this
+    // run might be about to produce. One is the floor: keep at least yourself.
+    if (cfg.keepLogs == 0)
+    {
+        Core::Log::Warn("game.json diagnostics.keepLogs = 0 would delete this run's own log — using 1.");
+        cfg.keepLogs = 1;
+    }
+    if (cfg.keepDumps == 0)
+    {
+        Core::Log::Warn("game.json diagnostics.keepDumps = 0 would delete this run's own report — using 1.");
+        cfg.keepDumps = 1;
     }
 
     // A zero rate silently disables fixed update (step = inf) and a negative

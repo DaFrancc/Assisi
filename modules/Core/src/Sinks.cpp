@@ -11,6 +11,7 @@
 #include <unistd.h>
 #endif
 
+#include <Assisi/Core/Diagnostics.hpp>
 #include <Assisi/Core/Sinks.hpp>
 
 namespace Assisi::Core
@@ -120,29 +121,6 @@ void ConsoleSink::Write(LogLevel level, std::string_view message)
 
 namespace
 {
-// The local time zone, resolved once and cached. current_zone() (and the tz
-// database it reads) signals "no zone data" only by throwing — a genuinely
-// exceptional, one-time environment condition — so we pay that probe exactly
-// once. On failure the cache stays null and Timestamp() formats UTC forever
-// after, so no individual log call is ever on a throwing path. That matters:
-// the logger runs on any thread and inside the crash handler. The function-
-// local static's initialization is itself thread-safe.
-const std::chrono::time_zone *LocalZone()
-{
-    static const std::chrono::time_zone *zone = []() -> const std::chrono::time_zone *
-    {
-        try
-        {
-            return std::chrono::current_zone();
-        }
-        catch (const std::exception &)
-        {
-            return nullptr;
-        }
-    }();
-    return zone;
-}
-
 // Local wall-clock time of day, millisecond precision (e.g. "14:23:45.123"),
 // via the cached zone (UTC if no zone data was available). No date: the file is
 // truncated per run, so a single run is unlikely to span midnight, and the
