@@ -147,6 +147,48 @@ TEST_CASE("Verbs: destroy reaches only tagged members and spares the loose neigh
     CHECK_FALSE(App::DestroyInstance(world, *id));
 }
 
+TEST_CASE("Verbs: destroy takes the Jolt bodies with it, not just the components")
+{
+    // A Jolt body is a handle in the physics world, not the RigidBody component
+    // that names it. Destroying the entity drops the component and leaves the body
+    // simulating, so the car keeps colliding after every last trace of it has left
+    // the scene — invisible to any assertion about entities, which is why the
+    // existing destroy case stays green with the RemoveBody call deleted.
+    const std::filesystem::path root = FreshRoot("destroy_bodies");
+    Write(root, "car.abp", CarFile());
+
+    App::World world;
+
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
+    REQUIRE(id.has_value());
+
+    // The car's body is a static half-metre box at the origin, so a ball dropped
+    // down the y axis lands on top of it at about y = 0.75.
+    constexpr float                                     kStep = 1.f / 60.f;
+    constexpr Physics::PhysicsWorld::ColliderShapeDesc  kBall{.shape = Physics::ColliderShape::Sphere,
+                                                              .radius = 0.25f};
+    const Physics::RigidBody probe =
+        world.physics.AddBody({0.f, 3.f, 0.f}, glm::quat(1.f, 0.f, 0.f, 0.f), kBall, Physics::BodyMotion::Dynamic);
+
+    for (int32_t i = 0; i < 180; ++i)
+        world.physics.Update(kStep);
+
+    // The control. Without it the case below would pass on a world where the ball
+    // never had anything to land on in the first place.
+    REQUIRE(world.physics.GetBodyTransform(probe).first.y > 0.f);
+
+    REQUIRE(App::DestroyInstance(world, *id));
+    world.scene.FlushDestroyed();
+
+    // Same ball, same drop, nothing left to catch it.
+    world.physics.SetBodyTransform(probe, {0.f, 3.f, 0.f}, glm::quat(1.f, 0.f, 0.f, 0.f));
+    world.physics.SetBodyLinearVelocity(probe, {0.f, 0.f, 0.f});
+    for (int32_t i = 0; i < 180; ++i)
+        world.physics.Update(kStep);
+
+    CHECK(world.physics.GetBodyTransform(probe).first.y < -5.f);
+}
+
 TEST_CASE("Verbs: a pruned member lives on, and destroy no longer reaches it")
 {
     const std::filesystem::path root = FreshRoot("prune");
