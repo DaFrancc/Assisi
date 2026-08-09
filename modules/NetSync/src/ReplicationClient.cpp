@@ -219,15 +219,21 @@ void ReplicationClient::HandleAnnouncement(Core::BitReader &reader)
     if (!reader.Ok() || pending.messageId == Core::Reflect::kInvalidMessageId)
         return;
 
-    const std::size_t bodyStart = (reader.BitsRead() - 0) / 8;
-    (void)bodyStart;
-
     // The body is stored with its id and length prefix back in front of it, so
     // the deferred path decodes through the exact shape DispatchEvent sees in the
     // snapshot section rather than a second one that can disagree with it.
     Core::BitWriter body;
     body.WriteVarUInt32(pending.messageId.value); // wire write
+
+    // A body cannot be longer than what is left of the packet carrying it. The
+    // copy loop below already stops once the reader runs dry, so this refuses an
+    // impossible claim up front instead of discovering it chunk by chunk.
     const std::uint32_t bodyBits = reader.ReadVarUInt32();
+    if (!reader.Ok() || bodyBits > reader.BitsRemaining())
+    {
+        reader.Invalidate();
+        return;
+    }
     body.WriteVarUInt32(bodyBits);
     std::size_t remaining = bodyBits;
     while (remaining > 0 && reader.Ok())
