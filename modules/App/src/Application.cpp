@@ -69,6 +69,11 @@ struct TimerResolutionScope
 
 // ---------------------------------------------------------------------------
 
+// Ceiling applied before game.json is available. High enough that it can never
+// trim below a configured keepLogs/keepDumps, low enough to bound a directory
+// on a build that never reaches InitializeCore.
+constexpr uint32_t kRetentionBackstop = 50;
+
 Application::Application()
 {
     // Only infallible setup belongs in the constructor. Logging is wired up
@@ -91,11 +96,25 @@ Application::Application()
     // One file per launch, named for when the process started. The previous
     // scheme truncated a single assisi.log every run, which meant a player
     // relaunching after a crash destroyed the log that explained it before ever
-    // sending it. Pruning happens in Initialize(), once game.json has said how
-    // many to keep — the file itself has to exist before that so the lines
-    // emitted between here and there are captured.
+    // sending it.
     const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
     const std::filesystem::path logPath = Core::AssetSystem::ResolveUser(logName).value_or(logName);
+
+    // Backstop retention, deliberately *before* this run's log exists — the one
+    // file that must never be deleted cannot be, because there is nothing to
+    // delete yet. game.json has not been read (it needs the asset system), so
+    // this cannot use keepLogs; the cap is fixed and generous precisely so it
+    // can never cut below anyone's configured value. InitializeCore prunes to
+    // the real counts once they are known.
+    //
+    // The point of doing it here rather than only there: this runs on every
+    // launch whatever fails afterwards. Pruning only in InitializeCore meant an
+    // install that failed asset init created a log every launch and never
+    // pruned one, growing without bound.
+    const std::filesystem::path userRoot = logPath.parent_path();
+    Core::PruneOldFiles(userRoot, "assisi-", ".log", kRetentionBackstop);
+    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), kRetentionBackstop);
+
     Core::GetLogger().AddSink(std::make_shared<Core::FileSink>(logPath));
 
     // Named with the same launch stamp as the log, so a report and the log that
