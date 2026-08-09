@@ -99,28 +99,46 @@ struct Fixture
     bool                                holdAcks = false;
     std::vector<std::vector<std::byte>> heldAcks;
 
+    /// While set, snapshots are built and counted as sent but never delivered.
+    /// Packet loss, in other words — which is the only way to reach the states
+    /// that only exist because a snapshot the server believes in never landed.
+    bool          dropSnapshots    = false;
+    std::uint32_t snapshotsDropped = 0;
+
+    /// One delivery pass, no tick. Separate because a snapshot built on a tick is
+    /// only ever seen by the *next* poll: to lose the last snapshot of a lossy
+    /// window, the window has to end with a poll rather than with a Tick.
+    void Poll()
+    {
+        std::vector<Net::NetEvent> events;
+        transport.Poll(events);
+        for (const Net::NetEvent &event : events)
+        {
+            if (event.type != Net::NetEvent::Type::Message)
+                continue;
+            if (event.connection == pair.first)
+            {
+                if (holdAcks)
+                    heldAcks.emplace_back(event.payload.begin(), event.payload.end());
+                else
+                    server.HandleMessage(pair.first, event.payload);
+            }
+            else if (dropSnapshots)
+            {
+                ++snapshotsDropped;
+            }
+            else
+            {
+                client.HandleMessage(event.payload);
+            }
+        }
+    }
+
     void Step(int times)
     {
         for (int i = 0; i < times; ++i)
         {
-            std::vector<Net::NetEvent> events;
-            transport.Poll(events);
-            for (const Net::NetEvent &event : events)
-            {
-                if (event.type != Net::NetEvent::Type::Message)
-                    continue;
-                if (event.connection == pair.first)
-                {
-                    if (holdAcks)
-                        heldAcks.emplace_back(event.payload.begin(), event.payload.end());
-                    else
-                        server.HandleMessage(pair.first, event.payload);
-                }
-                else
-                {
-                    client.HandleMessage(event.payload);
-                }
-            }
+            Poll();
             server.Tick(++tick);
         }
     }
@@ -131,6 +149,16 @@ struct Fixture
         for (const std::vector<std::byte> &payload : heldAcks)
             server.HandleMessage(pair.first, payload);
         heldAcks.clear();
+    }
+
+    /// Deliver exactly one of the acks being held, leaving the rest held. The
+    /// acks are in arrival order, so index 0 is the oldest — which is what "an
+    /// ack for a snapshot sent before the revoke" means in practice.
+    void ReleaseHeldAck(std::size_t index)
+    {
+        REQUIRE(index < heldAcks.size());
+        server.HandleMessage(pair.first, heldAcks[index]);
+        heldAcks.erase(heldAcks.begin() + static_cast<std::ptrdiff_t>(index));
     }
 
     /// A replicated member of @p id at @p index.
@@ -799,4 +827,265 @@ TEST_CASE("Blueprint replication: a block is allocated once and outlives the tic
     CHECK(fixture.server.NetIdOf(body) == first);
     CHECK(fixture.server.NetIdOf(lid) == NetId{first.value + 1});
     CHECK(fixture.instances->describeCalls == 1);
+}
+
+// ── The instance-record lifecycle ─────────────────────────────────────────────
+// Round-7 findings B6, B7, B8 and B13 are all defects in what the record means
+// over time — who may see a member, when a record is thrown away, which members
+// a record implies exist, and which acks may reinstate one. Nothing covered any
+// of them, which is why the cases below land before the fixes (§9.2's "Tests"
+// paragraph). Each one is `should_fail` and names the finding it documents; the
+// decorator inverts the moment the fix lands.
+
+namespace
+{
+
+/// A replicated member with a relevance class other than Default. `Member` above
+/// deliberately builds the ordinary kind, and the escape classes are only read
+/// when a relevancy provider is installed.
+ECS::Entity ClassifiedMember(Fixture &fixture, ECS::InstanceId id, std::uint32_t index, Relevance relevance)
+{
+    const ECS::Entity entity = fixture.scene.Create();
+    (void)fixture.scene.Add(entity, ECS::Transform{});
+    Replicated marker;
+    marker.relevance = relevance;
+    (void)fixture.scene.Add(entity, marker);
+    (void)fixture.scene.Add(entity, ECS::BlueprintMember{.instanceId = id, .memberIndex = index});
+    return entity;
+}
+
+/// Give the fixture's client an expander, so a record actually becomes entities
+/// and "was this rebuilt or did a bare mirror appear" is answerable.
+FakeExpander *InstallExpander(Fixture &fixture)
+{
+    auto  owned = std::make_unique<FakeExpander>();
+    auto *raw   = owned.get();
+    raw->scene  = &fixture.clientScene;
+    fixture.client.SetInstanceExpander(std::move(owned));
+    return raw;
+}
+
+/// Does this client hold a live mirror for @p netId? Both halves matter: a
+/// binding to a destroyed entity is as wrong as no binding at all.
+bool HasLiveMirror(Fixture &fixture, NetId netId)
+{
+    const ECS::Entity mirror = fixture.client.EntityOf(netId);
+    return mirror != ECS::NullEntity && fixture.clientScene.IsAlive(mirror);
+}
+
+} // namespace
+
+TEST_CASE("Blueprint replication: escalation does not hand out a ControllerOnly member" *
+          doctest::should_fail())
+{
+    // B6. ControllerOnly is applied once, before block escalation, and escalation
+    // then re-adds every member of any block a surviving sibling belongs to,
+    // re-intersecting only against the live set. The filter is never re-applied,
+    // so naming any wheel of the car buys the private member too.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+
+    const ECS::Entity body = fixture.Member(ECS::InstanceId{1}, 0);
+    // Controlled by nobody, which is the honest reading of "only the controller
+    // may see it": no connection qualifies, so no connection is told.
+    (void)ClassifiedMember(fixture, ECS::InstanceId{1}, 1, Relevance::ControllerOnly);
+    (void)fixture.Member(ECS::InstanceId{1}, 2);
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(body);
+    REQUIRE(base != InvalidNetId);
+
+    auto  owned    = std::make_unique<PickyProvider>();
+    auto *provider = owned.get();
+    // One ordinary member, and nothing else. Everything else about this instance
+    // reaches the connection through escalation.
+    provider->named = {base};
+    fixture.server.SetRelevancyProvider(std::move(owned));
+
+    fixture.Connect();
+
+    // Escalation still works — the car is visible...
+    REQUIRE(fixture.server.IsRelevant(fixture.pair.first, base));
+    REQUIRE(fixture.server.IsRelevant(fixture.pair.first, NetId{base.value + 2}));
+
+    // ...and that one part of it is not. The comment at Replication.cpp:742-749
+    // claims exactly this; the code does not do it.
+    CHECK_FALSE(fixture.server.IsRelevant(fixture.pair.first, NetId{base.value + 1}));
+}
+
+TEST_CASE("Blueprint replication: two adjacent instances leaving together take both records" *
+          doctest::should_fail())
+{
+    // B7. Despawns are run-length encoded over the whole set and do not respect
+    // block boundaries, while the client erases a record only when a run starts
+    // exactly at its base *and* its length equals that record's memberCount. Two
+    // 3-member instances at adjacent bases leave as one run of 6: the first
+    // record's count disagrees, the second's base is never probed, and neither is
+    // erased. The entities are destroyed all the same.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+    fixture.instances->Add(ECS::InstanceId{2}, 3);
+
+    const ECS::Entity firstBody = fixture.Member(ECS::InstanceId{1}, 0);
+    (void)fixture.Member(ECS::InstanceId{1}, 1);
+    (void)fixture.Member(ECS::InstanceId{1}, 2);
+    const ECS::Entity secondBody = fixture.Member(ECS::InstanceId{2}, 0);
+    (void)fixture.Member(ECS::InstanceId{2}, 1);
+    (void)fixture.Member(ECS::InstanceId{2}, 2);
+
+    fixture.AssignIds();
+    const NetId firstBase  = fixture.server.NetIdOf(firstBody);
+    const NetId secondBase = fixture.server.NetIdOf(secondBody);
+    REQUIRE(firstBase != InvalidNetId);
+    // Adjacent is the ordinary case, not a contrivance: `_nextNetId` only climbs,
+    // so two instances placed one after the other always land back to back.
+    REQUIRE(secondBase == NetId{firstBase.value + 3});
+
+    FakeExpander *expander = InstallExpander(fixture);
+
+    auto  owned     = std::make_unique<PickyProvider>();
+    auto *provider  = owned.get();
+    provider->named = {firstBase, secondBase};
+    fixture.server.SetRelevancyProvider(std::move(owned));
+    fixture.Connect();
+
+    REQUIRE(fixture.client.InstanceRecords().size() == 2);
+    REQUIRE(fixture.client.ReplicatedEntityCount() == 6);
+    REQUIRE(expander->calls == 2);
+
+    // Both leave at once, which is one contiguous despawn run of six.
+    provider->named.clear();
+    fixture.Step(6);
+
+    // The entities go, as they should...
+    CHECK(fixture.client.ReplicatedEntityCount() == 0);
+    // ...and so must the records: a record whose members no longer exist is one
+    // the client will never re-expand, because the resend is idempotent on the
+    // record it still holds.
+    CHECK(fixture.client.InstanceRecords().empty());
+
+    // Back in. The server resends both records — they left `knownInstances` when
+    // the despawn was acked — so a client that kept them skips the expansion and
+    // the six members arrive as bare mirrors with no instance to attribute them
+    // to. A client that erased them rebuilds.
+    provider->named = {firstBase, secondBase};
+    fixture.Step(8);
+
+    CHECK(expander->calls == 4);
+    CHECK(fixture.client.ReplicatedEntityCount() == 6);
+    CHECK(HasLiveMirror(fixture, firstBase));
+    CHECK(HasLiveMirror(fixture, secondBase));
+}
+
+TEST_CASE("Blueprint replication: a member pruned before a client joins is not resurrected on it" *
+          doctest::should_fail())
+{
+    // B8. `InstanceInfo::memberCount` is the definition's count, captured once
+    // when the block is allocated, and nothing on the wire says which members
+    // still exist. The client expands all of them and binds `base + i` for every
+    // i, so a member destroyed on the host before this connection existed becomes
+    // a live phantom here that no despawn names and no delta ever touches.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+
+    const ECS::Entity body  = fixture.Member(ECS::InstanceId{1}, 0);
+    const ECS::Entity wheel = fixture.Member(ECS::InstanceId{1}, 1);
+    (void)fixture.Member(ECS::InstanceId{1}, 2);
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(body);
+    REQUIRE(base != InvalidNetId);
+
+    // Pruned on the host before anyone joins. The block keeps its width — the
+    // ids of the surviving members must not shift — but the instance is now two
+    // members, not three.
+    fixture.scene.Destroy(wheel);
+    fixture.scene.FlushDestroyed();
+    fixture.AssignIds();
+
+    FakeExpander *expander = InstallExpander(fixture);
+    fixture.Connect();
+    fixture.Step(6);
+
+    REQUIRE(expander->calls == 1);
+    CHECK(HasLiveMirror(fixture, base));
+    CHECK(HasLiveMirror(fixture, NetId{base.value + 2}));
+    // The phantom. Nothing the host has corresponds to it, and nothing will ever
+    // tell this client to remove it.
+    CHECK_FALSE(HasLiveMirror(fixture, NetId{base.value + 1}));
+}
+
+TEST_CASE("Blueprint replication: a stale ack cannot reinstate an instance the client dropped" *
+          doctest::should_fail())
+{
+    // B13. `ForgetAcked` scrubs three of the four cumulative sets in the in-flight
+    // ring — `netIds`, `written`, `components` — but not `SentSnapshot::instances`,
+    // which `HandleAck` installs into `knownInstances` wholesale. An ack for a
+    // snapshot sent before the instance left puts the instance back into
+    // `knownInstances`, so the record is never resent, while the client threw its
+    // copy away when the despawn landed.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+
+    const ECS::Entity body = fixture.Member(ECS::InstanceId{1}, 0);
+    (void)fixture.Member(ECS::InstanceId{1}, 1);
+    (void)fixture.Member(ECS::InstanceId{1}, 2);
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(body);
+    REQUIRE(base != InvalidNetId);
+
+    FakeExpander *expander = InstallExpander(fixture);
+
+    auto  owned     = std::make_unique<PickyProvider>();
+    auto *provider  = owned.get();
+    provider->named = {base};
+    fixture.server.SetRelevancyProvider(std::move(owned));
+    fixture.Connect();
+
+    REQUIRE(fixture.client.InstanceRecords().size() == 1);
+    REQUIRE(expander->calls == 1);
+
+    // From here the acks are held, so the server's view of what this client has
+    // stops advancing on its own — the state B13 needs is one where an *old* ack
+    // arrives after the world has moved on, and an ack stream that keeps up
+    // clears the set before it can do any damage.
+    fixture.holdAcks = true;
+    fixture.Step(3);
+    const std::size_t preLeaveAcks = fixture.heldAcks.size();
+    REQUIRE(preLeaveAcks >= 1); // at least one snapshot sent while the instance was known
+
+    // Out of relevancy: the run covers the whole block, so the client destroys
+    // its members and — this instance is alone, so B7 does not interfere — erases
+    // the record.
+    provider->named.clear();
+    fixture.Step(4);
+    REQUIRE(fixture.client.InstanceRecords().empty());
+    REQUIRE(fixture.client.ReplicatedEntityCount() == 0);
+
+    // Straight back in, still inside the round trip. The re-entry rule drops the
+    // instance from `knownInstances`, so the next snapshot carries the record
+    // again — and that snapshot is the one that goes missing.
+    provider->named = {base};
+    fixture.dropSnapshots = true;
+    fixture.Step(4);
+    fixture.Poll(); // and the one built on the last of those ticks
+    fixture.dropSnapshots = false;
+    REQUIRE(fixture.snapshotsDropped >= 1);
+    REQUIRE(fixture.client.InstanceRecords().empty()); // the resend really was lost
+
+    // Now the straggler: an ack for a snapshot sent before the instance ever
+    // left, carrying the cumulative set from back then.
+    fixture.ReleaseHeldAck(0);
+    fixture.holdAcks = false;
+    fixture.heldAcks.clear();
+
+    fixture.Step(12);
+
+    // The client has to end up holding the record again — by a resend, since it
+    // has nothing else to work from. Without it the members arrive as bare
+    // mirrors attached to no instance, permanently.
+    CHECK(fixture.client.InstanceRecords().size() == 1);
+    CHECK(expander->calls == 2);
+    CHECK(HasLiveMirror(fixture, base));
 }

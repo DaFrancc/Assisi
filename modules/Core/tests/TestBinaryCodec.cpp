@@ -753,6 +753,117 @@ TEST_CASE("BinaryCodec: random noise decoded as a component block stays in bound
     }
 }
 
+TEST_CASE("BinaryCodec: an instanceRef field survives the whole fuzz corpus with its hook installed")
+{
+    // The three cases above never decode a FieldType::InstanceRef: the hand-built
+    // AllTypes meta declares none, so the one field type whose decode hands an
+    // attacker-chosen integer to caller-supplied code was the one type never
+    // fuzzed — the gap the plan's risk 4 named.
+    ComponentMeta meta = MakeAllTypesMeta();
+    for (FieldMeta &field : meta.fields)
+    {
+        if (field.name == "uint32Value")
+            field.type = FieldType::InstanceRef;
+    }
+
+    // Deliberately not the identity: the field must end up holding what the hook
+    // returned and never the number off the wire, and a hook that mapped a value
+    // to itself could not tell those two outcomes apart.
+    const auto translate = [](std::uint32_t wire) { return wire ^ 0x5A5A5A5Au; };
+
+    std::uint32_t lastWire  = 0;
+    std::uint32_t hookCalls = 0;
+
+    Assisi::Core::Reflect::CodecContext context;
+    context.instanceFromWire = [&](std::uint32_t wire)
+    {
+        lastWire = wire;
+        ++hookCalls;
+        return translate(wire);
+    };
+
+    // One decode, plus everything that must hold no matter what the bytes were.
+    const auto decode = [&](std::span<const std::byte> bytes)
+    {
+        lastWire  = 0;
+        hookCalls = 0;
+
+        BitReader reader(bytes);
+        (void)ReadComponentId(reader);
+
+        AllTypes decoded;
+        (void)ReadComponent(meta, &decoded, reader, nullptr, &context);
+
+        CHECK(reader.BitsRead() <= bytes.size() * 8u);
+        CHECK(decoded.paths.size() <= Assisi::Core::Reflect::kMaxVectorElements);
+        CHECK(decoded.assetIds.size() <= Assisi::Core::Reflect::kMaxVectorElements);
+
+        // One instanceRef field means at most one call — a decoder that read it
+        // twice would be consuming bits it had already spent.
+        CHECK(hookCalls <= 1u);
+        if (hookCalls == 1u)
+        {
+            // Including when the block is truncated *at* this field: the read
+            // fails, the hook still sees whatever the reader produced, and the
+            // translated value is what lands. What must never happen is the raw
+            // wire number reaching the field.
+            CHECK(decoded.uint32Value == translate(lastWire));
+        }
+        else
+        {
+            CHECK(decoded.uint32Value == 0u); // never reached: left at its default
+        }
+    };
+
+    const AllTypes source = MakePopulated();
+    BitWriter      writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
+    const std::vector<std::byte> original(writer.Data().begin(), writer.Data().end());
+
+    SUBCASE("truncated at every length")
+    {
+        for (std::size_t length = 0; length < original.size(); ++length)
+        {
+            CAPTURE(length);
+            decode(std::span{original.data(), length});
+        }
+    }
+
+    SUBCASE("bit-flipped")
+    {
+        Rng rng(0x1257A9CE);
+        for (std::int32_t iteration = 0; iteration < 2000; ++iteration)
+        {
+            std::vector<std::byte> corrupt = original;
+
+            const std::uint32_t flips = 1u + rng.Below(4);
+            for (std::uint32_t f = 0; f < flips; ++f)
+            {
+                const std::size_t bitIndex = rng.Below(static_cast<std::uint32_t>(corrupt.size() * 8u));
+                corrupt[bitIndex / 8u] ^= static_cast<std::byte>(static_cast<std::uint8_t>(1u << (bitIndex % 8u)));
+            }
+
+            CAPTURE(iteration);
+            decode(corrupt);
+        }
+    }
+
+    SUBCASE("random noise")
+    {
+        Rng rng(0xC0FFEE);
+        for (std::int32_t iteration = 0; iteration < 1500; ++iteration)
+        {
+            const std::size_t      size = rng.Below(96);
+            std::vector<std::byte> noise(size);
+            for (std::byte &byte : noise)
+                byte = static_cast<std::byte>(static_cast<std::uint8_t>(rng.Next()));
+
+            CAPTURE(iteration);
+            decode(noise);
+        }
+    }
+}
+
 TEST_CASE("BinaryCodec: an instanceRef UInt32 translates through the instance hooks")
 {
     // A blueprint instance id is a per-world counter — a server's "instance 7"
