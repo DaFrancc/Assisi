@@ -155,6 +155,97 @@ TEST_CASE("Re-expand: a member the edit left alone is the same entity afterwards
     CHECK(lid->position.y == doctest::Approx(3.f));
 }
 
+TEST_CASE("Re-expand: reordering the file remaps every surviving member's index")
+{
+    const std::filesystem::path root = FreshRoot("reorder");
+    Write(root, "crate.abp", CrateFile()); // body is index 0, lid is index 1
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    const auto    placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 5.f),
+                                                          /*authored=*/true);
+    REQUIRE(placed.has_value());
+
+    const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
+    const ECS::Entity lidBefore  = MemberNamed(scene, table, placed->instanceId, "lid");
+    REQUIRE(bodyBefore != ECS::NullEntity);
+    REQUIRE(lidBefore != ECS::NullEntity);
+    REQUIRE(bodyBefore != lidBefore);
+
+    const std::vector<std::string> before = MemberNames("crate.abp");
+    REQUIRE(before.size() == 2);
+    REQUIRE(before[0] == "body");
+
+    // The edit no other case here makes: the same two members, in the other order.
+    // Member ordering is a pure function of the file's bytes, so this moves `body`
+    // from index 0 to index 1 and `lid` from 1 to 0 without adding, removing or
+    // otherwise touching either one. Every case above happens to leave `body` at 0,
+    // which is why none of them can tell a working remap from no remap at all.
+    Write(root, "crate.abp",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({Entity("lid", At(0.f, 1.f, 0.f)),
+                                               Entity("body", At(0.f, 0.f, 0.f))})}});
+    Runtime::InvalidateBlueprint("crate.abp");
+
+    const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
+    REQUIRE(result.has_value());
+    CHECK(result->destroyed.empty()); // a reorder deletes nothing
+
+    // Identity first: both members were adopted by name, so both handles survive
+    // the move. The member list is the new file's order.
+    REQUIRE(result->members.size() == 2);
+    CHECK(result->members[0] == lidBefore);
+    CHECK(result->members[1] == bodyBefore);
+    CHECK(scene.IsAlive(bodyBefore));
+    CHECK(scene.IsAlive(lidBefore));
+
+    // ...and the tags say so. This is the assertion the identity case cannot make:
+    // the tag is the only record of which member an entity is, so a re-expansion
+    // that adopts by name but leaves `memberIndex` where it was leaves `body`
+    // claiming to be member 0 — which the new definition calls `lid`.
+    const ECS::BlueprintMember *bodyTag = scene.Get<ECS::BlueprintMember>(bodyBefore);
+    const ECS::BlueprintMember *lidTag  = scene.Get<ECS::BlueprintMember>(lidBefore);
+    REQUIRE(bodyTag != nullptr);
+    REQUIRE(lidTag != nullptr);
+    CHECK(bodyTag->memberIndex == 1);
+    CHECK(lidTag->memberIndex == 0);
+    CHECK(bodyTag->instanceId == placed->instanceId);
+    CHECK(lidTag->instanceId == placed->instanceId);
+
+    // The consequence, stated as behaviour rather than as a field: a stale index
+    // makes every by-name lookup answer with the other member's entity, because
+    // FindMember resolves the name through the *current* definition and then scans
+    // for that index.
+    CHECK(MemberNamed(scene, table, placed->instanceId, "body") == bodyBefore);
+    CHECK(MemberNamed(scene, table, placed->instanceId, "lid") == lidBefore);
+
+    // ...and each carries its own value, composed onto the placement as ever —
+    // which a swapped adoption would get backwards.
+    const ECS::Transform *body = scene.Get<ECS::Transform>(bodyBefore);
+    const ECS::Transform *lid  = scene.Get<ECS::Transform>(lidBefore);
+    REQUIRE(body != nullptr);
+    REQUIRE(lid != nullptr);
+    CHECK(body->position.y == doctest::Approx(0.f));
+    CHECK(lid->position.y == doctest::Approx(1.f));
+    CHECK(body->position.x == doctest::Approx(5.f));
+
+    // A second re-expansion, against the names the reorder produced. This is what
+    // the remap is *for*: ReexpandInstance adopts through
+    // `previousMemberNames[tag->memberIndex]`, so a tag left stale by the first
+    // pass makes the second one adopt each entity under the other's name and
+    // rebuild one member on top of the other.
+    const std::vector<std::string> after = MemberNames("crate.abp");
+    REQUIRE(after.size() == 2);
+    REQUIRE(after[0] == "lid");
+
+    Runtime::InvalidateBlueprint("crate.abp");
+    const auto again = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, after);
+    REQUIRE(again.has_value());
+    CHECK(again->destroyed.empty());
+    CHECK(MemberNamed(scene, table, placed->instanceId, "body") == bodyBefore);
+    CHECK(MemberNamed(scene, table, placed->instanceId, "lid") == lidBefore);
+}
+
 TEST_CASE("Re-expand: a deleted member is reported and destroyed, an added one appears")
 {
     const std::filesystem::path root = FreshRoot("addremove");
