@@ -5,7 +5,7 @@
 /// @brief Built-in log sinks for the Assisi logging system.
 ///
 /// Available sinks:
-///   - ConsoleSink  — writes colored output to stdout/stderr
+///   - ConsoleSink  — writes colored output to stdout
 ///   - FileSink     — writes to a file, truncated at startup, timestamped
 ///
 /// Future sinks (not yet implemented):
@@ -19,10 +19,12 @@
 namespace Assisi::Core
 {
 
-/// @brief Writes colored log messages to stdout/stderr.
+/// @brief Writes colored log messages to stdout.
 ///
 /// Enables ANSI virtual terminal processing on Windows automatically.
-/// Error and Fatal go to stderr; all other levels go to stdout.
+/// Every level goes to stdout, including Error and Fatal: splitting them across
+/// two streams lets the console interleave them out of order, which costs more
+/// than it buys when the color already marks severity.
 struct ConsoleSink : Sink
 {
     /// @brief Enables ANSI color support on Windows.
