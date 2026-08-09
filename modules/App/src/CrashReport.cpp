@@ -11,6 +11,8 @@
 #endif
 
 #include <array>
+#include <atomic>
+#include <cerrno>
 #include <csignal>
 #include <cstddef>
 #include <cstdint>
@@ -177,14 +179,33 @@ alignas(16) std::array<char, 256 * 1024> gSignalStack{};
 constexpr size_t kFrameCapacity = 64;
 void            *gFrames[kFrameCapacity]{};
 
+// Only the first thread to take a fatal signal writes a report. Without this,
+// two threads faulting at once both O_TRUNC the same path and the second can
+// wipe a complete report the first had already written — turning two crashes
+// into zero diagnostics. First one wins; the loser falls straight through to
+// the re-raise.
+std::atomic_flag gReportClaimed = ATOMIC_FLAG_INIT;
+
 // write(2) is async-signal-safe; std::format, iostreams and malloc are not, so
 // nothing here uses them.
-void WriteAll(int fd, const char *data, size_t size) noexcept
+//
+// EINTR is retried rather than treated as failure. A short write or an
+// interrupted one is not an error, and returning on it silently truncates the
+// report at whatever byte the interruption landed on.
+void WriteAll(int fileDesc, const char *data, size_t size) noexcept
 {
     while (size > 0)
     {
-        const ssize_t written = write(fd, data, size);
-        if (written <= 0)
+        const ssize_t written = write(fileDesc, data, size);
+        if (written < 0)
+        {
+            if (errno == EINTR)
+            {
+                continue;
+            }
+            return;
+        }
+        if (written == 0)
         {
             return;
         }
@@ -193,44 +214,78 @@ void WriteAll(int fd, const char *data, size_t size) noexcept
     }
 }
 
-void WriteStr(int fd, const char *text) noexcept
+// The report is composed here first and written in one syscall, rather than
+// dribbled out across a dozen writes as it is built. Two reasons, and the
+// second is why this shape was chosen over the obvious one:
+//
+//   - Every write() is a chance for the process to die between calls, and a
+//     file opened but not yet written is a zero-byte report — which looks like
+//     the feature is broken rather than like the process died. One write means
+//     the file is either absent or complete.
+//   - It lets the unwind happen *before* the file is created, so the riskiest
+//     work in the handler is no longer sitting between open() and first write.
+//
+// Bounded and truncating: an overflowing report is clamped, never a buffer
+// overrun in the one piece of code that runs when memory is already suspect.
+struct Report
 {
-    WriteAll(fd, text, std::strlen(text));
-}
+    std::array<char, 8192> data{};
+    size_t                 used = 0;
 
-// Hand-rolled because snprintf is not async-signal-safe. Hex for addresses,
-// decimal for counts.
-void WriteHex(int fd, uintptr_t value) noexcept
-{
-    char        buffer[2 + (sizeof(uintptr_t) * 2)];
-    const char *digits = "0123456789abcdef";
-    buffer[0]          = '0';
-    buffer[1]          = 'x';
-    for (size_t i = 0; i < sizeof(uintptr_t) * 2; ++i)
+    void Str(const char *text) noexcept
     {
-        const size_t shift              = (sizeof(uintptr_t) * 2 - 1 - i) * 4;
-        buffer[2 + i]                   = digits[(value >> shift) & 0xF];
+        const size_t length = std::strlen(text);
+        const size_t room   = data.size() - used;
+        const size_t take   = length < room ? length : room;
+        std::memcpy(data.data() + used, text, take);
+        used += take;
     }
-    WriteAll(fd, buffer, sizeof(buffer));
-}
 
-void WriteDec(int fd, int64_t value) noexcept
-{
-    char   buffer[24];
-    size_t index = sizeof(buffer);
-    bool   negative = value < 0;
-    uint64_t magnitude = negative ? static_cast<uint64_t>(-(value + 1)) + 1 : static_cast<uint64_t>(value);
-    do
+    // Hand-rolled because snprintf is not async-signal-safe.
+    void Hex(uintptr_t value) noexcept
     {
-        buffer[--index] = static_cast<char>('0' + (magnitude % 10));
-        magnitude /= 10;
-    } while (magnitude != 0 && index > 0);
-    if (negative && index > 0)
-    {
-        buffer[--index] = '-';
+        char        buffer[2 + (sizeof(uintptr_t) * 2)];
+        const char *digits = "0123456789abcdef";
+        buffer[0]          = '0';
+        buffer[1]          = 'x';
+        for (size_t i = 0; i < sizeof(uintptr_t) * 2; ++i)
+        {
+            const size_t shift = ((sizeof(uintptr_t) * 2) - 1 - i) * 4;
+            buffer[2 + i]      = digits[(value >> shift) & 0xF];
+        }
+        Raw(buffer, sizeof(buffer));
     }
-    WriteAll(fd, buffer + index, sizeof(buffer) - index);
-}
+
+    void Dec(int64_t value) noexcept
+    {
+        char     buffer[24];
+        size_t   index     = sizeof(buffer);
+        bool     negative  = value < 0;
+        uint64_t magnitude = negative ? static_cast<uint64_t>(-(value + 1)) + 1 : static_cast<uint64_t>(value);
+        do
+        {
+            buffer[--index] = static_cast<char>('0' + (magnitude % 10));
+            magnitude /= 10;
+        } while (magnitude != 0 && index > 0);
+        if (negative && index > 0)
+        {
+            buffer[--index] = '-';
+        }
+        Raw(buffer + index, sizeof(buffer) - index);
+    }
+
+    void Raw(const char *bytes, size_t size) noexcept
+    {
+        const size_t room = data.size() - used;
+        const size_t take = size < room ? size : room;
+        std::memcpy(data.data() + used, bytes, take);
+        used += take;
+    }
+};
+
+// Static, not on the (possibly exhausted) stack. Trivially initialized, so it
+// costs no dynamic setup and is ready before main().
+Report gReport;
 
 const char *SignalName(int signal) noexcept
 {
@@ -247,29 +302,49 @@ const char *SignalName(int signal) noexcept
 
 void SignalHandler(int signal, siginfo_t *info, void *) noexcept
 {
-    if (gReportPathSet)
+    if (gReportPathSet && !gReportClaimed.test_and_set())
     {
-        const int fd = open(gReportPath.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        // Unwind first, while no file exists yet. backtrace() can allocate on
+        // its very first call (it lazily loads libgcc's unwinder), which is why
+        // InstallCrashHandlers warms it up while the heap is still healthy —
+        // and why anything that might not come back belongs before the open()
+        // rather than between the open and the first write.
+        const int frames = backtrace(gFrames, kFrameCapacity);
+
+        gReport.used = 0;
+        gReport.Str("Assisi crash report\n===================\n\nSignal: ");
+        gReport.Str(SignalName(signal));
+        gReport.Str(" (");
+        gReport.Dec(signal);
+        gReport.Str(")\nFault address: ");
+        gReport.Hex(reinterpret_cast<uintptr_t>(info != nullptr ? info->si_addr : nullptr));
+        gReport.Str("\nsi_code: ");
+        gReport.Dec(info != nullptr ? info->si_code : 0);
+        gReport.Str("\nFrames: ");
+        gReport.Dec(frames);
+        gReport.Str("\n\nBacktrace:\n");
+
+        int fd = -1;
+        do
+        {
+            fd = open(gReportPath.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        } while (fd < 0 && errno == EINTR);
+
         if (fd >= 0)
         {
-            WriteStr(fd, "Assisi crash report\n===================\n\nSignal: ");
-            WriteStr(fd, SignalName(signal));
-            WriteStr(fd, " (");
-            WriteDec(fd, signal);
-            WriteStr(fd, ")\nFault address: ");
-            WriteHex(fd, reinterpret_cast<uintptr_t>(info != nullptr ? info->si_addr : nullptr));
-            WriteStr(fd, "\nsi_code: ");
-            WriteDec(fd, info != nullptr ? info->si_code : 0);
-            WriteStr(fd, "\n\nBacktrace:\n");
+            // One write, so the file goes from absent to substantially complete
+            // with nothing observable in between.
+            WriteAll(fd, gReport.data.data(), gReport.used);
 
-            // backtrace() can allocate on its very first call (it lazily loads
-            // libgcc's unwinder), which is why InstallCrashHandlers warms it up
-            // while the heap is still healthy. backtrace_symbols_fd writes
-            // straight to the fd and, unlike backtrace_symbols, never mallocs.
-            const int frames = backtrace(gFrames, kFrameCapacity);
+            // Has to come after, because backtrace_symbols_fd only writes to a
+            // descriptor — resolving module+offset into a buffer would mean
+            // backtrace_symbols, which mallocs. By now the file already has its
+            // header, so a death here costs the frame list, not the report.
             backtrace_symbols_fd(gFrames, frames, fd);
 
-            WriteStr(fd, "\nSymbolize with: addr2line -e <binary> -f -C <address>\n");
+            gReport.used = 0;
+            gReport.Str("\nSymbolize with: addr2line -e <binary> -f -C <offset>\n");
+            WriteAll(fd, gReport.data.data(), gReport.used);
             close(fd);
         }
     }
