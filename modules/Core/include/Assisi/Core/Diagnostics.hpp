@@ -9,8 +9,8 @@
 /// meant to record, because the player relaunches before sending it.
 ///
 /// Usage:
-///   const std::filesystem::path log = dir / std::format("assisi-{}.log", LaunchStamp());
-///   PruneOldFiles(dir, "assisi-", ".log", 5);
+///   const std::string name = std::format("assisi-{}.log", LaunchStamp());
+///   PruneOldFiles(dir, "assisi-", ".log", 5, name);
 
 #include <chrono>
 #include <cstdint>
@@ -29,11 +29,16 @@ namespace Assisi::Core
 /// handler.
 const std::chrono::time_zone *LocalZone();
 
-/// @brief This process's launch time, as "YYYYMMDD-HHMMSS".
+/// @brief This process's launch time and pid, as "YYYYMMDD-HHMMSS-<pid>".
 ///
 /// Constant after the first call, so a run's log and crash report share a stamp
 /// and pair by name. No colons (illegal in Windows filenames); ordered fields so
 /// a lexicographic sort is chronological, which is what pruning relies on.
+///
+/// The pid is what makes the name unique. Seconds resolution alone collides
+/// whenever two processes start in the same second — a launcher opening a server
+/// and a client, a supervisor restarting a crashed server, a double-click — and
+/// both would then truncate and interleave into one file, losing a whole run.
 const std::string &LaunchStamp();
 
 /// @brief Deletes the oldest matching files in `dir`, keeping the newest `keep`.
