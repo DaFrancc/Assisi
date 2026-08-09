@@ -969,6 +969,20 @@ class ReplicationServer
     /// acked set and resurrect exactly the bug.
     static void ForgetAcked(Connection &connection, NetId netId);
 
+    /// The same forgetting, one level up: make @p instanceId's record go out
+    /// again by dropping it from everything that says @p connection has it.
+    ///
+    /// Four cumulative sets travel with a connection — the acked entity set, its
+    /// components, the written baselines, and the instances — and the first
+    /// three are scrubbed by ForgetAcked while the fourth was not (B13).
+    /// `HandleAck` installs all four *wholesale*, so an ack for a snapshot sent
+    /// before the instance left reinstated `knownInstances` from back then, the
+    /// next snapshot computed no fresh instances, and the record was never
+    /// resent to a client that had already thrown its copy away. Its members
+    /// then land as bare mirrors, permanently — B7's tail reached by a different
+    /// road.
+    static void ForgetAckedInstance(Connection &connection, ECS::InstanceId instanceId);
+
     /// Re-anchor @p connection from the empty baseline: forget every per-entity
     /// tick, and clear the in-flight ring with them.
     ///
@@ -1240,6 +1254,21 @@ class ReplicationServer
         NetId         base;              ///< Member 0's id. Member i is base + i.
         std::uint32_t memberCount = 0;
         InstanceInfo  info;              ///< Captured at allocation — see below.
+
+        /// One entry per member, non-zero while a client's own expansion of this
+        /// blueprint could still stand in for it. Starts all-set and only ever
+        /// clears — a member that has been absent for one tick can never be
+        /// derived again, because a client that joined during that gap was told
+        /// it did not exist and a client that had it was sent a despawn.
+        ///
+        /// This gates the authored-value elision, and only that. Eliding a
+        /// component "the client already has from the file" is sound exactly
+        /// while the file's copy is what the client holds; for a member that was
+        /// pruned and revived, or one that appeared after the block was
+        /// allocated, the client has nothing — and the elision's own gate
+        /// (`sinceChangeTick == 0 && !clientHasIt`) is true for precisely that
+        /// case, so without this the revived member arrives bare and stays bare.
+        std::vector<std::uint8_t> derivable;
     };
 
     /// Allocated blocks, by instance. The info is captured **once**, when the
@@ -1312,6 +1341,27 @@ struct InstanceRecord
     NetId          base;
     std::uint32_t  memberCount = 0;
     ECS::Transform placement;
+
+    /// One entry per member, non-zero where the host actually has an entity for
+    /// it. **Empty means "all of them"**, which is the ordinary case and costs a
+    /// single bit on the wire.
+    ///
+    /// The block's width and the instance's *contents* are two different facts,
+    /// and conflating them is B8: `memberCount` is the definition's count, fixed
+    /// when the ids were handed out so a member destroyed later cannot shift its
+    /// siblings' ids — while a member pruned on the host, or one the level
+    /// removed from this instance, has no entity behind it at all. Without this
+    /// nothing on the wire carried the difference, so every client expanded the
+    /// full definition and held a live phantom at `base + prunedIndex` that no
+    /// despawn named and no delta ever touched.
+    std::vector<std::uint8_t> memberPresent;
+
+    /// @brief Does the host have an entity for member @p index?
+    [[nodiscard]] bool HasMember(std::uint32_t index) const
+    {
+        return memberPresent.empty() ||
+               (index < memberPresent.size() && memberPresent[index] != 0u);
+    }
 };
 
 /// @brief Turns a record into local entities, client-side.
