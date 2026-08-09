@@ -5,6 +5,7 @@
 #    include <dbghelp.h>
 #    pragma comment(lib, "dbghelp.lib")
 #else
+#    include <dlfcn.h>
 #    include <execinfo.h>
 #    include <fcntl.h>
 #    include <unistd.h>
@@ -195,6 +196,16 @@ alignas(16) std::array<char, 256 * 1024> gSignalStack{};
 constexpr size_t kFrameCapacity = 64;
 void            *gFrames[kFrameCapacity]{};
 
+// Load address of this executable, resolved at install time while calling into
+// the loader is still safe. Frame address minus this is what addr2line wants;
+// without it the raw addresses are meaningless under ASLR.
+void *gModuleBase = nullptr;
+
+// Ceiling on the symbolization step. Long enough that an ordinary loader
+// contention resolves, short enough that a wedged one does not outlive the
+// crash it is describing.
+constexpr unsigned int kSymbolizeTimeoutSeconds = 5;
+
 // First thread to take a fatal signal wins. Otherwise two concurrent faults
 // both O_TRUNC the path and the second wipes the first's complete report.
 std::atomic_flag gReportClaimed = ATOMIC_FLAG_INIT;
@@ -315,13 +326,43 @@ void SignalHandler(int signal, siginfo_t *info, void *) noexcept
         gReport.Str(SignalName(signal));
         gReport.Str(" (");
         gReport.Dec(signal);
-        gReport.Str(")\nFault address: ");
-        gReport.Hex(reinterpret_cast<uintptr_t>(info != nullptr ? info->si_addr : nullptr));
-        gReport.Str("\nsi_code: ");
+        gReport.Str(")\n");
+
+        // si_addr only means a fault address for a hardware-raised signal. For
+        // a kill/abort (si_code <= 0) that union member carries si_pid/si_uid,
+        // and printing it produces a plausible-looking pointer that is really
+        // two spliced integers — worst on SIGABRT, which is where every failed
+        // ASSISI_ASSERT lands.
+        if (info != nullptr && info->si_code > 0)
+        {
+            gReport.Str("Fault address: ");
+            gReport.Hex(reinterpret_cast<uintptr_t>(info->si_addr));
+            gReport.Str("\n");
+        }
+        else
+        {
+            gReport.Str("Fault address: n/a (signal was raised, not a hardware fault)\n");
+        }
+
+        gReport.Str("si_code: ");
         gReport.Dec(info != nullptr ? info->si_code : 0);
         gReport.Str("\nFrames: ");
         gReport.Dec(frames);
-        gReport.Str("\n\nBacktrace:\n");
+        gReport.Str("\nModule base: ");
+        gReport.Hex(reinterpret_cast<uintptr_t>(gModuleBase));
+
+        // Raw addresses first, because producing them takes no lock. Everything
+        // needed to symbolize is here: subtract the module base, feed the result
+        // to addr2line. The pretty form below is a convenience that may not
+        // survive.
+        gReport.Str("\n\nFrame addresses (subtract module base for addr2line):\n");
+        for (int i = 0; i < frames; ++i)
+        {
+            gReport.Str("  ");
+            gReport.Hex(reinterpret_cast<uintptr_t>(gFrames[i]));
+            gReport.Str("\n");
+        }
+        gReport.Str("\nSymbolized (best effort):\n");
 
         int fd = -1;
         do
@@ -333,14 +374,21 @@ void SignalHandler(int signal, siginfo_t *info, void *) noexcept
         {
             WriteAll(fd, gReport.data.data(), gReport.used);
 
-            // After, because backtrace_symbols_fd only writes to a descriptor —
-            // resolving module+offset into a buffer would need
-            // backtrace_symbols, which mallocs. The header is already on disk,
-            // so a death here costs the frame list, not the report.
+            // backtrace_symbols_fd resolves module+offset through _dl_addr,
+            // which takes the dynamic-loader lock — it is not async-signal-safe,
+            // and a thread stuck mid-dlopen blocks it. Measured at 5s behind a
+            // slow library constructor; a wedged loader (a stalled network
+            // mount, a driver deadlock) blocks it forever, which in a Vulkan
+            // process that dlopens ICDs and layers lazily is reachable. A hung
+            // process with no exit status is worse than a report without pretty
+            // names, so bound it: SIGALRM's default action terminates, and by
+            // this point the addresses above are already on disk.
+            alarm(kSymbolizeTimeoutSeconds);
             backtrace_symbols_fd(gFrames, frames, fd);
+            alarm(0);
 
             gReport.used = 0;
-            gReport.Str("\nSymbolize with: addr2line -e <binary> -f -C <offset>\n");
+            gReport.Str("\nSymbolize with: addr2line -e <binary> -f -C <frame - module base>\n");
             WriteAll(fd, gReport.data.data(), gReport.used);
             close(fd);
         }
@@ -372,6 +420,14 @@ void InstallCrashHandlers(const std::filesystem::path &path) noexcept
     // avoiding.
     void *warmup[4];
     (void)backtrace(warmup, 4);
+
+    // Same reasoning for the load address: dladdr takes the loader lock, so ask
+    // now rather than from the handler.
+    Dl_info self{};
+    if (dladdr(reinterpret_cast<void *>(&SignalHandler), &self) != 0)
+    {
+        gModuleBase = self.dli_fbase;
+    }
 
     stack_t altStack{};
     altStack.ss_sp    = gSignalStack.data();

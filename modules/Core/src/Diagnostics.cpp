@@ -8,6 +8,8 @@
 #ifdef _WIN32
 #include <process.h>
 #else
+#include <array>
+#include <csignal>
 #include <unistd.h>
 #endif
 
@@ -51,6 +53,23 @@ const std::string &LaunchStamp()
         return std::format("{:%Y%m%d-%H%M%S}-{}", nowUtc, pid);
     }();
     return stamp;
+}
+
+void InstallSignalStackForThisThread() noexcept
+{
+#ifndef _WIN32
+    // thread_local so each thread gets its own; sharing one buffer between
+    // threads would have them scribble over each other mid-handler. 64 KB is
+    // ample — the crash handler composes into a static buffer and calls no
+    // deep library code before it has written the report.
+    static thread_local std::array<char, 64 * 1024> stackStorage;
+
+    stack_t altStack{};
+    altStack.ss_sp    = stackStorage.data();
+    altStack.ss_size  = stackStorage.size();
+    altStack.ss_flags = 0;
+    (void)sigaltstack(&altStack, nullptr);
+#endif
 }
 
 void PruneOldFiles(const std::filesystem::path &dir, std::string_view prefix, std::string_view extension,

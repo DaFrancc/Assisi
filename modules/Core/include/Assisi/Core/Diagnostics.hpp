@@ -41,6 +41,21 @@ const std::chrono::time_zone *LocalZone();
 /// both would then truncate and interleave into one file, losing a whole run.
 const std::string &LaunchStamp();
 
+/// @brief Gives the calling thread its own stack for signal handlers to run on.
+///
+/// Call once from the entry point of every thread the engine spawns. sigaltstack
+/// is per-thread, so installing it on the main thread — which is all a crash
+/// handler can do for itself — leaves every worker without one. A stack-overflow
+/// SIGSEGV arrives with no usable stack, so a worker that overflows faults again
+/// inside the handler and produces no report at all: the crash that most needs
+/// explaining is the one that explains nothing.
+///
+/// No-op on Windows, which has no equivalent concept (structured exception
+/// handling gets its own stack from the OS).
+///
+/// Threads created by third-party code — Jolt's own pool — are not covered.
+void InstallSignalStackForThisThread() noexcept;
+
 /// @brief Deletes the oldest matching files in `dir`, keeping the newest `keep`.
 ///
 /// Matches on `prefix` and `extension`, so only this engine's own artifacts are

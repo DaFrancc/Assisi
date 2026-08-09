@@ -19,6 +19,7 @@ add_executable(Assisi-Core-Tests
   TestBitStream.cpp
   TestComponentRegistry.cpp
   TestContentHash.cpp
+  TestDiagnostics.cpp
   TestEventQueue.cpp
   TestJobSystem.cpp
   TestTrivialString.cpp
