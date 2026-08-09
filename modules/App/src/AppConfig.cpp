@@ -77,19 +77,9 @@ AppConfig AppConfig::LoadFromJson()
         Core::Log::Warn("Failed to parse game.json: {} — using defaults.", e.what());
     }
 
-    // Both counts are totals *including* the run in progress, so zero would ask
-    // the pruner to delete the log currently being written and the report this
-    // run might be about to produce. One is the floor: keep at least yourself.
-    if (cfg.keepLogs == 0)
-    {
-        Core::Log::Warn("game.json diagnostics.keepLogs = 0 would delete this run's own log — using 1.");
-        cfg.keepLogs = 1;
-    }
-    if (cfg.keepDumps == 0)
-    {
-        Core::Log::Warn("game.json diagnostics.keepDumps = 0 would delete this run's own report — using 1.");
-        cfg.keepDumps = 1;
-    }
+    // Zero needs no clamp: the pruner is given this run's own artifact as
+    // protected, so 0 means "keep no history" rather than "delete the log you
+    // are writing".
 
     // A zero rate silently disables fixed update (step = inf) and a negative
     // one makes the accumulator loop in Application::Run non-terminating, so

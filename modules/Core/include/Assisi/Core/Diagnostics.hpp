@@ -39,12 +39,20 @@ const std::string &LaunchStamp();
 /// @brief Deletes the oldest matching files in `dir`, keeping the newest `keep`.
 ///
 /// Matches on `prefix` and `extension`, so only this engine's own artifacts are
-/// candidates. "Newest" is by filename, not mtime — LaunchStamp() names already
-/// sort chronologically, and a touched file cannot reorder them.
+/// candidates. "Newest" is by filename: LaunchStamp() names sort chronologically
+/// *provided the clock moves forward*, which is exactly what `protect` exists to
+/// cover.
+///
+/// `protect` is a filename that is never deleted and counts toward `keep`. Pass
+/// the current run's own artifact. Sorting alone cannot keep it: LaunchStamp()
+/// is local time, so a DST fall-back, a westward flight or an NTP step back
+/// makes this run's name sort *oldest* and it is pruned first — on POSIX while
+/// its descriptor is still open, so the run writes its whole log into an
+/// unlinked inode and loses it silently at exit.
 ///
 /// Best-effort: an unreadable directory or an undeletable file warns and is
 /// skipped. Failing to tidy up is not worth failing a launch over.
 void PruneOldFiles(const std::filesystem::path &dir, std::string_view prefix, std::string_view extension,
-                   uint32_t keep) noexcept;
+                   uint32_t keep, std::string_view protect = {}) noexcept;
 
 } // namespace Assisi::Core
