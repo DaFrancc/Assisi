@@ -301,6 +301,22 @@ TEST_CASE("Overrides: a claim on a member the blueprint no longer declares is dr
     InstanceTable table;
     REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
     CHECK(scene.AliveCount() == 2);
+
+    // "Two entities loaded" is true whether the claim was dropped or applied to
+    // some other member, so it cannot be the whole assertion. Dropped means the
+    // fov nobody declared appears nowhere: the body keeps the blueprint's own
+    // value, and the wheel — which declares no Camera at all — does not acquire
+    // one.
+    const Camera *body = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
+    REQUIRE(body != nullptr);
+    CHECK(body->fovDegrees == doctest::Approx(60.f));
+    CHECK(scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl")) == nullptr);
+
+    for (auto [entity, camera] : scene.Query<Camera>())
+    {
+        (void)entity;
+        CHECK_FALSE(camera.fovDegrees == doctest::Approx(1.f));
+    }
 }
 
 TEST_CASE("Overrides: a nested file's own claims are baked into its member list")
