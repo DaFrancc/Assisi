@@ -211,43 +211,72 @@ TEST_CASE("Blueprint over the wire: the guest's tag names the guest's instance")
     }
 }
 
+namespace
+{
+
+/// Bytes the server put on the wire for one spawn of `car.abp` at @p at.
+///
+/// The same world twice — once with the manifest, once without — is what turns
+/// "the client derives it" into a number rather than into an assertion about
+/// internals. @p moveOne edits a member away from the file's value first, so that
+/// member must still travel.
+std::uint64_t CarBytes(const std::vector<std::string> &manifest, const ECS::Transform &at, bool moveOne)
+{
+    Fixture fixture;
+    fixture.Connect(manifest);
+
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(fixture.host, "car.abp", at);
+    REQUIRE(id.has_value());
+
+    if (moveOne)
+    {
+        const ECS::Entity body = App::FindMember(fixture.host, *id, "body");
+        REQUIRE(body != ECS::NullEntity);
+        ECS::Transform *pose = fixture.host.scene.GetMut<ECS::Transform>(body);
+        REQUIRE(pose != nullptr);
+        pose->position.y = 42.f;
+        // GetMut already stamps the change tick.
+    }
+
+    fixture.Step(14);
+    CHECK(fixture.client.ReplicatedEntityCount() == 3);
+    const NetSync::ConnectionDiagnostics *stats = fixture.server.Diagnostics(fixture.pair.first);
+    REQUIRE(stats != nullptr);
+    return stats->bytesSent;
+}
+
+/// The placement the two cases below mean by "not the origin".
+///
+/// A translation, deliberately without a rotation. The claim being defended is
+/// that a placement does not stop the client deriving its own members, and a
+/// translation states it in full: the composition is real, the comparison operand
+/// has to account for it, and a fix is *measurably* enough — with the placement
+/// composed onto the comparison operand these two cases go to 153 bytes against
+/// 233, the same saving the origin case gets.
+///
+/// A rotated placement is a strictly harder case and does not belong here: the
+/// compose/inverse-compose pair is an exact inverse in arithmetic but not
+/// bit-for-bit in float, so whether a *byte* comparison can ever match under one
+/// is a question about B9's fix rather than about B9. Naming it here would assert
+/// something a correct fix might not be able to deliver.
+ECS::Transform MovedPlacement()
+{
+    ECS::Transform at;
+    at.position = {40.f, 0.f, 0.f};
+    return at;
+}
+
+} // namespace
+
 TEST_CASE("Blueprint over the wire: an untouched member costs no component bytes")
 {
     const std::filesystem::path root = FreshRoot();
     Write(root, "car.abp", CarFile());
     const App::ContentSet content = App::BuildContentSet();
 
-    // The same world, spawned the same way, twice — once with the manifest and
-    // once without. The difference is the whole point of the design, so it is
-    // measured rather than asserted.
-    const auto bytesFor = [&](const std::vector<std::string> &manifest, bool moveOne)
-    {
-        Fixture fixture;
-        fixture.Connect(manifest);
-
-        const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(fixture.host, "car.abp", {});
-        REQUIRE(id.has_value());
-
-        if (moveOne)
-        {
-            // One member differs from the file, so it must still travel.
-            const ECS::Entity body = App::FindMember(fixture.host, *id, "body");
-            REQUIRE(body != ECS::NullEntity);
-            ECS::Transform *pose = fixture.host.scene.GetMut<ECS::Transform>(body);
-            REQUIRE(pose != nullptr);
-            pose->position.y = 42.f;
-            // GetMut already stamps the change tick.
-        }
-
-        fixture.Step(14);
-        CHECK(fixture.client.ReplicatedEntityCount() == 3);
-        const NetSync::ConnectionDiagnostics *stats = fixture.server.Diagnostics(fixture.pair.first);
-        REQUIRE(stats != nullptr);
-        return stats->bytesSent;
-    };
-
-    const std::uint64_t derived = bytesFor(content.paths, /*moveOne=*/false);
-    const std::uint64_t sent    = bytesFor({}, /*moveOne=*/false);
+    const ECS::Transform origin;
+    const std::uint64_t  derived = CarBytes(content.paths, origin, /*moveOne=*/false);
+    const std::uint64_t  sent    = CarBytes({}, origin, /*moveOne=*/false);
 
     // The members are identical to the file, so with a manifest their components
     // are not on the wire at all — the client already has them.
@@ -255,8 +284,90 @@ TEST_CASE("Blueprint over the wire: an untouched member costs no component bytes
 
     // ...and a member that actually differs is not elided, or the mirror would
     // be quietly wrong.
-    const std::uint64_t withEdit = bytesFor(content.paths, /*moveOne=*/true);
+    const std::uint64_t withEdit = CarBytes(content.paths, origin, /*moveOne=*/true);
     CHECK(withEdit > derived);
+
+    // Spawned at the origin, which is the one placement where comparing a live
+    // component against the *authored local* value is sound — composing the
+    // origin onto a member changes nothing. So this case cannot see B9 at all,
+    // and it passes whether or not B9 is fixed. The two below are the ones that
+    // measure it.
+}
+
+TEST_CASE("Blueprint over the wire: the saving survives a placement that is not the origin" *
+          doctest::should_fail())
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+    const App::ContentSet content = App::BuildContentSet();
+
+    const ECS::Transform at      = MovedPlacement();
+    const std::uint64_t  derived = CarBytes(content.paths, at, /*moveOne=*/false);
+    const std::uint64_t  sent    = CarBytes({}, at, /*moveOne=*/false);
+
+    // Nothing about a placement changes what the client can derive: it receives
+    // the placement in the record and composes it onto the same file the host
+    // expanded, so every member is still exactly what it would have built anyway.
+    //
+    // **Expected to fail — B9** (docs/blueprint-review-round7-findings.md §2).
+    // MatchesAuthored compares the live component against
+    // `definition->members[i].prepared[…].block`, which holds the authored *local*
+    // value, while SceneSerializer composes the placement onto every parentless
+    // member at expansion. The live Transform is therefore Compose(P, T) and the
+    // operand is T: away from the origin no member's Transform ever matches, none
+    // is elided, and the record becomes pure overhead — 277 bytes here against 233
+    // with no manifest at all, so the design currently *costs* 44 bytes where it
+    // should save 80.
+    //
+    // Remove this decorator as part of B9's fix. It is the only assertion that
+    // proves the fix did anything, since the origin case above passes either way.
+    CHECK(derived < sent);
+}
+
+TEST_CASE("Blueprint over the wire: a member reset to its authored value away from the origin still arrives" *
+          doctest::should_fail())
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+    const App::ContentSet content = App::BuildContentSet();
+
+    Fixture fixture;
+    fixture.Connect(content.paths);
+
+    const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(fixture.host, "car.abp", MovedPlacement());
+    REQUIRE(id.has_value());
+
+    const ECS::Entity body = App::FindMember(fixture.host, *id, "body");
+    REQUIRE(body != ECS::NullEntity);
+    ECS::Transform *pose = fixture.host.scene.GetMut<ECS::Transform>(body);
+    REQUIRE(pose != nullptr);
+    REQUIRE(pose->position.x == doctest::Approx(40.f)); // the placement, composed in
+
+    // The body is dragged back to the origin before the first snapshot — a pose
+    // that now coincides with the file's authored local value while the placement
+    // does not. Nothing exotic: an edit, a spawn-time snap, a reset.
+    pose->position = {0.f, 0.f, 0.f};
+
+    fixture.Step(14);
+
+    const auto rows = fixture.guest.instances.All();
+    REQUIRE(rows.size() == 1);
+    const ECS::Entity mirror = App::FindMember(fixture.guest, rows[0].first, "body");
+    REQUIRE(mirror != ECS::NullEntity);
+    const ECS::Transform *mirrored = fixture.guest.scene.Get<ECS::Transform>(mirror);
+    REQUIRE(mirrored != nullptr);
+
+    // **Expected to fail — B9, the silent half.** The comparison operand is the
+    // authored local value, which the body now equals exactly, so the Transform is
+    // elided. The gate is `sinceChangeTick == 0 && !clientHasIt`
+    // (Replication.cpp:1951) — the empty baseline — so it is elided once and then
+    // never resent: the guest's body sits at the placement forever while the
+    // host's is at the origin. Measured: guest x = 40, host x = 0.
+    //
+    // This is the half that corrupts rather than merely wastes, and it is why the
+    // byte count above is not enough on its own — a fix could shrink the snapshot
+    // and still leave this mirror wrong. Remove this decorator as part of B9's fix.
+    CHECK(mirrored->position.x == doctest::Approx(0.f));
 }
 
 TEST_CASE("Blueprint over the wire: an edited member still arrives edited")
