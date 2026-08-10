@@ -1,5 +1,14 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
+/// @file EditorLevels.cpp
+/// @brief The Levels and Blueprints panels, and the save/load behind them: writing
+///        a level back to disk with a cancellable confirmation, opening one into
+///        the edited world, and authoring blueprint instances.
+///
+/// A load frees GPU state the frame's recorded draws still reference, so it is
+/// marshalled to a safe point and never run from a panel. And every failure path
+/// here says what state it leaves the editor in.
+
 #include <Assisi/Editor/EditorApp.hpp>
 
 #include <Assisi/App/ContentSet.hpp>
@@ -31,10 +40,10 @@ namespace Assisi::Editor
 namespace
 {
 
-// The whole file as bytes, or nullopt if it is not there (or cannot be read —
-// the two are the same answer to the only caller, which is a save asking what it
-// is about to overwrite). Binary, not text: a level is UTF-8 JSON today, and a
-// byte-for-byte restore must not depend on that staying true.
+// The whole file as bytes, or nullopt if it is missing or unreadable — one answer
+// for both, because the only caller is a save asking what it is about to
+// overwrite. Read binary so a byte-for-byte restore does not depend on levels
+// staying UTF-8 JSON.
 std::optional<std::string> ReadWholeFile(const std::filesystem::path &path)
 {
     std::ifstream file(path, std::ios::binary);
@@ -89,17 +98,16 @@ void EditorApp::DrawLevelsWindow()
 
         const float halfW =
             (ImGui::GetContentRegionAvail().x - ImGui::GetStyle().ItemSpacing.x) * 0.5f;
-        // Marshal the actual load to the next frame's main-thread drain via the job
-        // system — never load from OnImGui, which runs mid-frame after the scene
-        // draws that bind the asset cache's bindless table are already recorded
-        // (LoadLevel frees/rebuilds that table). _pendingLevelLoad marks the load
-        // in-flight so the button disables (reads as "loading") and a second click
-        // can't queue a duplicate; the marshalled task clears it once done.
-        // Open Level is an *editing* gesture — it changes which level you are
-        // working on — so it is dead during a session. (It used to silently force
-        // the session back to Editing, which was worse: a click meant to load
-        // something ended your play without saying so.) The play-time equivalent
-        // is the Game panel's Travel, which changes level without leaving Play.
+        // The load is marshalled to the next frame's main-thread drain, and must
+        // never run from here: OnImGui runs mid-frame, after the scene draws that
+        // bind the asset cache's bindless table have been recorded, and LoadLevel
+        // frees and rebuilds that table under them. _pendingLevelLoad marks it in
+        // flight, so the button disables (reads as "loading") and a second click
+        // cannot queue a duplicate; the marshalled task clears it when done.
+        //
+        // Dead during a session: opening a level changes which level you are
+        // *editing*, and doing that mid-play ends the session without saying so.
+        // The play-time equivalent is the Game panel's Travel.
         const bool canOpen = (_playState == PlayState::Editing) && !_pendingLevelLoad.has_value();
         ImGui::BeginDisabled(!canOpen);
         if (ImGui::Button("Load", ImVec2(halfW, 0.0f)) && canOpen)
@@ -115,18 +123,19 @@ void EditorApp::DrawLevelsWindow()
             ImGui::SetTooltip("Stop play mode to open another level for editing "
                               "(the Game panel's Travel changes level during play).");
         ImGui::SameLine();
-        // Save is only allowed while editing: during Play/Pause `*_scene` is the
-        // *simulated* scene (settled physics, spawned/deleted entities), so saving
-        // then would overwrite the level file with simulation state — and corrupt
-        // dirty tracking after Stop restores the pre-play scene.
-        // ...and only into the edited world: another resident world is someone
-        // else's level, and the dirty token tracks the edited history alone.
-        // ...and into the file the edited world actually came from, which is the
-        // world's own levelPath and never the combo box. The combo picks what Load
-        // would open next; it is not touched by startup (LoadLevelFromPath) or by
-        // travel, so reading it here wrote the open level's contents over whatever
-        // file happened to be selected — and SaveLevelToPath then retargets
-        // levelPath to it and marks the editor clean, so nothing warns you.
+        // Save writes the edited world back over the file it came from. Three
+        // conditions, each of which has to hold:
+        //  - Editing only. During Play/Pause `*_scene` is the *simulated* scene
+        //    (settled physics, spawned/deleted entities), so a save would write
+        //    simulation state into the level file, and corrupt dirty tracking once
+        //    Stop restores the pre-play scene.
+        //  - The edited world only. Another resident world is someone else's level,
+        //    and the dirty token tracks the edited history alone.
+        //  - The world's own levelPath, **never the combo box**. The combo picks
+        //    what Load would open next and is untouched by startup and by travel,
+        //    so reading it here writes the open level over whatever file happens to
+        //    be selected — and SaveLevelToPath then retargets levelPath to it and
+        //    marks the editor clean, so nothing warns.
         const bool named   = IsEditable() && !_world->levelPath.empty();
         const bool canSave = (_playState == PlayState::Editing) && named;
         ImGui::BeginDisabled(!canSave);
@@ -135,8 +144,8 @@ void EditorApp::DrawLevelsWindow()
         ImGui::EndDisabled();
         if (!canSave && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         {
-            // A world with no levelPath was never a file — there is nothing to save
-            // *back* to, and picking a name is exactly what Save As is.
+            // A world with no levelPath was never a file: there is nothing to save
+            // *back* to, and picking a name is what Save As is for.
             ImGui::SetTooltip(_playState != PlayState::Editing
                                   ? "Stop play mode to save (avoids overwriting the level with "
                                     "simulation state)."
@@ -176,8 +185,6 @@ void EditorApp::DrawBlueprintsWindow()
 {
     ImGui::Begin("Blueprints");
 
-    // The one sentence that makes the panel legible: a blueprint is not a second
-    // kind of thing, it is a file you place instead of copying.
     ImGui::TextWrapped("A blueprint is an ordinary level file you place copies of. Editing the file fixes "
                        "every copy on the next load.");
     ImGui::Separator();
@@ -221,8 +228,8 @@ void EditorApp::DrawBlueprintsWindow()
             ImGui::SetTooltip("Adds a copy in front of the camera. Undoable.");
 
         ImGui::SameLine();
-        // Deferred: opening loads assets and creates a world, and this runs
-        // mid-frame. The safe point in OnUpdate picks it up next frame.
+        // Deferred, not opened here: opening loads assets and creates a world, and
+        // this runs mid-frame. The safe point in OnUpdate picks it up next frame.
         if (ImGui::Button("Edit", ImVec2(-1.f, 0.f)))
             _pendingBlueprintOpen = _blueprintFiles[static_cast<std::size_t>(_selectedBlueprint)];
         if (ImGui::IsItemHovered())
@@ -239,8 +246,8 @@ void EditorApp::DrawBlueprintsWindow()
 
     const bool haveSelection = !_selection.empty() && _scene != nullptr &&
                                _scene->IsAlive(_selectedEntity) && IsEditable(_selectedEntity);
-    // Any member anywhere in the selection, not just the active one: the refusal
-    // is about what would be written into the file, and every selected entity is.
+    // Any member anywhere in the selection, not just the active one: the refusal is
+    // about what would be written into the file, and that is every selected entity.
     bool selectionIsMember = false;
     if (haveSelection)
     {
@@ -265,8 +272,8 @@ void EditorApp::DrawBlueprintsWindow()
     {
         if (selectionIsMember)
         {
-            // Nesting is an `instances` entry, not copied entities — copying them
-            // would bake the inner blueprint in and stop a fix to it propagating.
+            // Nesting is an `instances` entry, not copied entities: copying them
+            // bakes the inner blueprint in, so a fix to it stops propagating.
             ImGui::SetTooltip("The selection belongs to a blueprint instance. Prune it first, or nest by "
                               "adding an `instances` entry to the file by hand.");
         }
@@ -325,8 +332,8 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
     if (_scene == nullptr || _world == nullptr || !IsEditable())
         return;
 
-    // In front of the camera, like every other create gesture here — placing at
-    // the origin means hunting for it.
+    // In front of the camera, like every other create gesture here: placing at the
+    // origin means hunting for it.
     RefreshCameraMatrix();
     const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
 
@@ -352,12 +359,12 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
         return;
     }
 
-    // Transients the expansion does not build: the members arrived with asset ids
-    // and descriptors, and need the same resolve + physics build a level load runs.
+    // The expansion does not build transients: the members arrived with asset ids
+    // and descriptors, and need the same resolve + physics build a level load does.
     RebuildInstanceTransients(placed->members);
 
-    // One transaction: the record and every member. Undo takes the whole copy back
-    // rather than leaving a record with no entities or entities with no record.
+    // One transaction for the record and every member, so undo takes the whole copy
+    // back rather than leaving a record with no entities or entities with no record.
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
     {
         Assisi::Editor::Transaction txn;
@@ -384,9 +391,9 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     if (_scene == nullptr || _world == nullptr || _selection.empty())
         return;
 
-    // Every selected entity and everything under it, deduplicated: selecting a
-    // parent and one of its children is an ordinary thing to do with Ctrl, and
-    // writing that child twice would put two members with one name in the file.
+    // Every selected entity and everything under it, deduplicated. Ctrl-selecting a
+    // parent and one of its children is ordinary, and writing that child twice puts
+    // two members with the same name in the file.
     std::vector<Assisi::ECS::Entity> subtree;
     for (const Assisi::ECS::Entity root : _selection)
     {
@@ -399,17 +406,15 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     if (subtree.empty())
         return;
 
-    // The blueprint is authored around the first selected entity's pose, and the
-    // instance is placed back at it — so the swap is invisible on screen, which is
-    // what makes it feel like a refactor rather than an edit. The *first*, not the
-    // last: with several entities selected the anchor should not depend on the
-    // order they were clicked in.
+    // The blueprint is authored around the first selected entity's pose and the
+    // instance is placed back at it, so the swap is invisible on screen. The
+    // *first*, not the last: the anchor must not depend on click order.
     //
-    // Scale is deliberately not part of that pose. A cube scaled to 0.6 and saved
-    // as `small_crate` *is* a small crate — cancelling its scale into the
-    // placement would leave a unit cube in the file, so the copy standing in front
-    // of you looked right and every fresh one came back full size. Where a thing
-    // stands and which way it faces is placement; how big it is, is what it is.
+    // Scale is deliberately not part of that pose. Where a thing stands and which
+    // way it faces is placement; how big it is, is what it is. A cube scaled to 0.6
+    // and saved as `small_crate` *is* a small crate — cancelling its scale into the
+    // placement leaves a unit cube in the file, so the copy in front of you looks
+    // right and every fresh one comes back full size.
     Assisi::Runtime::Transform placement;
     if (const auto *transform = _scene->Get<Assisi::Runtime::Transform>(_selection.front()))
         placement = Assisi::Runtime::AuthoringOrigin(*transform);
@@ -425,14 +430,13 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     if (!Assisi::Runtime::SceneSerializer::SaveEntitiesToFile(*_scene, subtree, *resolved, placement))
         return;
 
-    // The file is new, so nothing can have cached a definition for it — but a
-    // *previous* file of the same name may be cached, and would be expanded
-    // instead of what was just written.
+    // The file is new, but a *previous* file of the same name may still be cached,
+    // and would be expanded instead of what was just written.
     Assisi::Runtime::InvalidateBlueprint(source);
     ScanBlueprints();
 
     // Capture the originals before tearing them down: undo has to revive them, and
-    // their components must still be alive to serialize.
+    // their components have to still be alive to serialize.
     Assisi::Editor::EditHistory *history = ActiveHistory();
     Assisi::Editor::Transaction  txn;
     txn.label           = "Create " + name;
@@ -454,17 +458,17 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
         }
         _scene->Destroy(entity);
     }
-    // Now, not at end of frame: the placement below creates entities, and a
-    // deferred destroy would let the new members take slots the undo needs back.
+    // Now, not at end of frame: the placement below creates entities, and a deferred
+    // destroy would let the new members take the slots undo needs back.
     _scene->FlushDestroyed();
 
     ClearSelection();
 
-    // The same uniqueness the Blueprints panel's "Place instance" applies. The
-    // typed name is the *file's*, and two selections saved as `turret.abp` in one
-    // level would otherwise place two instances called `turret` — both claiming
-    // `turret/…`, so the level would save and never reload (round-7 S17). The
-    // file keeps the name that was typed; only the instance is stepped on.
+    // The same uniqueness "Place instance" applies. The typed name is the *file's*:
+    // two selections saved as `turret.abp` in one level would otherwise place two
+    // instances called `turret`, both claiming `turret/…`, and the level would save
+    // and never reload. The file keeps the typed name; only the instance is stepped
+    // on.
     const std::string instanceName = Assisi::Runtime::UniqueInstanceName(_world->instances, name);
 
     const Assisi::Runtime::LevelInstance entry{.name      = instanceName,
@@ -477,8 +481,8 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
                                                                         /*authored=*/true);
     if (!placed)
     {
-        // The entities are already gone. Push what we have so Ctrl-Z brings them
-        // back rather than leaving the author with nothing and no way to recover.
+        // The originals are already destroyed. Push the transaction anyway, so
+        // Ctrl-Z brings them back instead of leaving the author with nothing.
         Assisi::Core::Log::Error("Editor: '{}' was written but could not be placed; undo to restore the "
                                  "original entities.",
                                  source);
@@ -523,8 +527,8 @@ void EditorApp::RebuildInstanceTransients(Assisi::App::World                  &w
             Assisi::Runtime::ResolveMeshRendererAssets(*mesh, _assetCache, _assetDatabase);
     }
 
-    // Propagate before building bodies, for the reason App::BuildSceneBodies
-    // exists: a parented member is placed from a parent matrix that does not exist
+    // Propagate before building bodies, for the same reason App::BuildSceneBodies
+    // does: a parented member is placed from a parent matrix that does not exist
     // until propagation has run over the entities just created.
     world.propagationTick  = Assisi::Runtime::PropagateTransforms(world.scene, world.propagationTick);
     const auto parentWorld = Assisi::App::ParentWorldResolver(world.scene);
@@ -590,10 +594,10 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
 
     const Assisi::Runtime::BlueprintMemberDesc &desc = (*definition)->members[tag->memberIndex];
 
-    // A copy, taken now: `row` points into the table, and RestoreAt below writes
-    // through it — so reading `*row` afterwards for the transaction's "before"
-    // would hand undo the value it was supposed to undo *to*, and the override
-    // would look reverted while the record still claimed it.
+    // A copy, taken now. `row` points into the table and RestoreAt below writes
+    // through it, so reading `*row` afterwards for the transaction's "before" hands
+    // undo the value it was supposed to undo *to* — the override then looks
+    // reverted while the record still claims it.
     const Assisi::Runtime::BlueprintInstance original = *row;
 
     Assisi::Runtime::BlueprintInstance updated = original;
@@ -611,14 +615,14 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
         if (!claim.is_object() || !claim.contains(field))
             return;
         claim.erase(field);
-        // An empty claim is the same as no claim, and leaving one behind would
-        // keep marking the component as overridden for a field nobody changed.
+        // An empty claim is the same as no claim, and leaving one behind keeps the
+        // component marked as overridden for a field nobody changed.
         if (claim.empty())
             member->erase(component);
     }
-    // What is left of this member's claim on this component, read out *before*
-    // the member entry can be erased — an iterator into an erased entry is not
-    // something to compare against end() later.
+    // What is left of this member's claim on this component, read out **before** the
+    // member entry can be erased below: `member` would be an iterator into an erased
+    // entry.
     const nlohmann::json survivingClaim =
         member->contains(component) ? member->at(component) : nlohmann::json{};
     const bool stillClaimed = !survivingClaim.is_null();
@@ -632,16 +636,15 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     if (meta == nullptr)
         return;
 
-    // Close out any capture gesture still open on this component first.
+    // Close out any capture gesture still open on this component, before the reset
+    // moves the value.
     //
     // The inspector opens one every frame the component's block is drawn, holding
-    // the value as it was *before* this frame. The reset then changes that value,
-    // so the end-of-frame sweep would commit a gesture whose "after" is the
-    // blueprint's own value — and record it as a fresh override. That is exactly
-    // the one-press lag it used to have: the value reset, the claim came straight
-    // back, and only a second press (which changed nothing, so the gesture was
-    // dropped) made the mark go away. Committing here also keeps a real edit made
-    // in the same frame as its own transaction, ahead of the reset that undoes it.
+    // the value as it was *before* this frame. Leave it open and the end-of-frame
+    // sweep commits a gesture whose "after" is the blueprint's own value, recording
+    // it as a fresh override: the value resets and the claim comes straight back, so
+    // the mark only clears on a second press. Committing here also keeps a real edit
+    // made in the same frame as its own transaction, ahead of the reset.
     if (history != nullptr)
         history->CommitGesture(entity, meta->id);
 
@@ -650,9 +653,8 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     if (history != nullptr)
         before = history->CaptureComponent(entity, meta->id);
 
-    // Re-apply from the blueprint, plus whatever claim survives. This is a
-    // one-member re-expansion: the value falls back exactly as a fresh load would
-    // produce it, which is the definition of "un-overridden means un-resolved".
+    // Re-apply from the blueprint, plus whatever claim survives — a one-member
+    // re-expansion, so the value lands exactly as a fresh load would produce it.
     nlohmann::json resolved = desc.components.contains(component) ? desc.components.at(component)
                                                                  : nlohmann::json::object();
     if (survivingClaim.is_object())
@@ -668,7 +670,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
         Assisi::Runtime::QualifyReferences(wrapper, original.name.empty() ? "" : original.name + "/");
         // `resolved` is either the blueprint's own value or an override the editor
         // wrote, so a refusal means one of those is malformed on disk. The reset
-        // leaves the component off rather than half-applied; the log names it.
+        // leaves the component off rather than half-applied, and says so.
         if (!meta->addToScene(_scene, entity.index, entity.generation, wrapper.at(component)))
         {
             Assisi::Core::Log::Error("Editor: resetting '{}' on '{}' failed — its stored value is not "
@@ -706,12 +708,11 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     if (_scene == nullptr || _world == nullptr)
         return false;
 
-    // A save still waiting on its confirmation owns the previous contents of its
-    // file, and Cancel's whole promise is that it can put them back. A second write
-    // would leave that backup describing bytes no longer anywhere, so the promise
-    // would quietly stop being true — refuse instead, and say which dialog is in the
-    // way. Round-7 S18: the old code let the second save through and dropped its
-    // re-expansion on the floor without a word.
+    // One unanswered save at a time. A save waiting on its confirmation holds the
+    // previous contents of its file, and Cancel's whole promise is to put them back;
+    // a second write would leave that backup describing bytes that are nowhere, so
+    // the promise would quietly stop being true. Refuse, and name the dialog that is
+    // in the way.
     if (_pendingSaveConfirm)
     {
         Assisi::Core::Log::Error("SaveLevel: refusing to write '{}' — the save of '{}' is still waiting on "
@@ -728,36 +729,35 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     }
 
     // Read before overwriting: this is the last moment the previous contents exist,
-    // and Cancel is a promise to put them back. One extra read of a file that is
-    // about to be rewritten in full, on an explicit gesture — cheap next to
-    // serializing the scene, and the only alternative is predicting the cost of a
-    // write without doing it.
+    // and Cancel is a promise to put them back. One extra read of a file about to be
+    // rewritten in full, on an explicit gesture, is cheap next to serializing the
+    // scene.
     std::optional<std::string> previousBytes = ReadWholeFile(*resolved);
 
-    // For the same reason and in the same breath: what the live copies of this file
-    // are made of *now*. Gathering it after the write reads the new contents as the
-    // old ones whenever the definition cache is cold — which a cancelled save
-    // guarantees, since cancelling has to drop what the write cached.
+    // Also before the write: what the live copies of this file are made of *now*.
+    // Gathering it afterwards reads the new contents as the old ones whenever the
+    // definition cache is cold — which a cancelled save guarantees, since cancelling
+    // has to drop what the write cached.
     std::vector<PendingReexpand> reexpandTargets = CollectReexpandTargets(virtualPath);
 
     const std::string   previousLevelPath = _world->levelPath;
     const bool          blueprint         = InBlueprintMode();
     const std::uint64_t previousSavedToken = blueprint ? _blueprintSavedToken : _savedStateToken;
 
-    // Carry the world's systems back into the file. A Scene does not know them —
-    // they are a property of the level — so a save that dropped them would silently
-    // strip the field from every level the editor touches.
+    // Carry the world's systems back into the file. A Scene does not know them; they
+    // are a property of the level, so a save that dropped them would silently strip
+    // the field from every level the editor touches.
     const Assisi::Runtime::LevelHeader header{.instances = {}, .systems = _world->systemNames};
     if (!Assisi::Runtime::SceneSerializer::SaveToFile(*_scene, *resolved, header, &_world->instances))
         return false;
 
-    // Save As renames what this world *is* — keep its level identity truthful,
-    // since travel and (later) the network level handshake read it.
+    // Save As renames what this world *is*. Keep its level identity truthful:
+    // travel and (later) the network level handshake read it.
     _world->levelPath = virtualPath;
 
-    // Record the history position that now matches disk — IsSceneDirty compares
-    // against this to drive the title's unsaved-changes marker. Which history that
-    // is depends on which world is being edited.
+    // Record the history position that now matches disk; IsSceneDirty compares
+    // against it to drive the title bar's unsaved-changes marker. Which history that
+    // is depends on whether a blueprint or a level is being edited.
     if (blueprint)
     {
         if (_blueprintHistory)
@@ -768,15 +768,15 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
         _savedStateToken = _history->CurrentStateToken();
     }
 
-    // Stage 5d: every live copy of what was just written catches up, wherever it is
-    // resident. A level save normally finds nothing — a file cannot instance itself —
-    // so the walk above came back empty and this drops the cache and stops.
+    // Every live copy of what was just written catches up, wherever it is resident.
+    // A level save normally finds nothing — a file cannot instance itself — so the
+    // collection above came back empty and this only drops the definition cache.
     ReexpandInstancesOf(virtualPath, std::move(reexpandTargets));
 
-    // ...unless catching them up would cost undo history, in which case the prompt
-    // is up and this save is not finished. Hold everything Cancel needs until it is
-    // answered; the copies need nothing held, because ApplyPendingReexpand is the
-    // only thing that destroys a member and it has not run.
+    // ...unless catching them up would cost undo history, in which case the prompt is
+    // up and this save is not finished. Hold everything Cancel needs until it is
+    // answered. The copies need nothing held: ApplyPendingReexpand is the only thing
+    // that destroys a member, and it has not run.
     if (_pendingReexpandUndoLoss > 0)
     {
         _pendingSaveConfirm = PendingSaveConfirm{.virtualPath           = virtualPath,
@@ -807,8 +807,8 @@ void EditorApp::CancelPendingSave()
         }
         else
         {
-            // Said loudly, because the author declined and the decline did not take:
-            // the file holds contents they refused, and nothing else will say so.
+            // Loud, because the decline did not take: the file holds contents the
+            // author refused, and nothing else will say so.
             Assisi::Core::Log::Error("Editor: save of '{}' was cancelled but the previous contents could "
                                      "not be written back — the file holds the NEW version.",
                                      save.virtualPath);
@@ -816,8 +816,8 @@ void EditorApp::CancelPendingSave()
     }
     else
     {
-        // There was no file before this save (Save As to a fresh name), so putting
-        // things back means there is no file after it either.
+        // No file existed before this save (Save As to a fresh name), so putting
+        // things back means no file after it either.
         std::error_code ec;
         std::filesystem::remove(save.resolved, ec);
         if (ec)
@@ -833,14 +833,14 @@ void EditorApp::CancelPendingSave()
         }
     }
 
-    // The cache was dropped against contents that are no longer on disk — drop it
-    // again so the next spawn reads what is actually there now.
+    // The save dropped the cache against contents that are no longer on disk. Drop
+    // it again, so the next spawn reads what is actually there now.
     Assisi::Runtime::InvalidateBlueprint(save.virtualPath);
 
-    // Only onto the world the save was for. A world that is no longer the edited one
-    // must not have its level path rewritten from under whoever holds it now; the
-    // modal makes that unreachable today, and this is what keeps it unreachable if
-    // the modal ever stops being one.
+    // Restore the editor's bookkeeping, but only onto the world the save was for: a
+    // world that is no longer the edited one must not have its level path rewritten
+    // from under whoever holds it now. The modal makes that unreachable today; this
+    // is what keeps it unreachable if the modal ever stops being one.
     if (save.world == _world && _world != nullptr)
     {
         _world->levelPath = save.previousLevelPath;
@@ -850,8 +850,8 @@ void EditorApp::CancelPendingSave()
             _savedStateToken = save.previousSavedToken;
     }
 
-    // The copies were never touched, so there is nothing to put back about them —
-    // and nothing stale either, since the file is once again what they expanded from.
+    // The copies were never touched, so there is nothing to put back about them, and
+    // nothing stale either: the file is once again what they expanded from.
     _pendingReexpand.clear();
     _pendingReexpandRemoved.clear();
     _pendingReexpandUndoLoss = 0;
@@ -861,78 +861,80 @@ void EditorApp::CancelPendingSave()
 
 void EditorApp::LoadLevel(const std::string &name)
 {
-    // The Levels UI works in bare stems (from ScanLevels); the on-disk layout is
-    // levels/<name>.alvl. LoadLevelFromPath does the real work by virtual path, so
-    // the command-line loader (which already has a vpath) shares it.
+    // The Levels UI works in bare stems (from ScanLevels); on disk the layout is
+    // levels/<name>.alvl. LoadLevelFromPath does the work by virtual path, so the
+    // command-line loader, which already has one, shares it.
     LoadLevelFromPath("levels/" + name + ".alvl");
 }
 
 bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
 {
-    // A networked session replicates *this* scene, and a load replaces every
-    // entity in it. Continuing to host across that would mean silently
-    // despawning the entire world on every connected client and respawning a
-    // different one; joining a host and then loading a level locally would mean
-    // fighting the host over the same scene. Both are the wrong outcome, and
-    // neither is something the protocol should have to express — so end the
-    // session first and let the player start a new one.
-    // **Before anything is torn down.** The load below replaces the scene in
-    // place, so a level whose systems cannot be installed has to be refused here
-    // or not at all: discovering it afterwards leaves the world holding the new
-    // content with none of its behaviour, and the level it replaced is already
-    // gone. Checked before ShutdownNetSession for the same reason — a refused
-    // load must not have ended the session on the way to refusing.
+    // **First, before anything is torn down.** The load below replaces the scene in
+    // place, so a level whose systems cannot be installed has to be refused here or
+    // not at all: discovering it afterwards leaves the world holding the new content
+    // with none of its behaviour, and the level it replaced is already gone. Ahead
+    // of ShutdownNetSession for the same reason — a refused load must not have ended
+    // the session on the way to refusing.
     if (!Assisi::App::LevelSystemsAreDeclared(virtualPath))
     {
         Assisi::Core::Log::Error("Editor: refusing to open '{}'.", virtualPath);
         return false;
     }
 
+    // A networked session replicates *this* scene, and a load replaces every entity
+    // in it. Hosting across that would silently despawn the whole world on every
+    // client and respawn a different one; loading locally as a client means fighting
+    // the host over the same scene. End the session and let the player start a new
+    // one.
 #if defined(ASSISI_NETWORKING)
     ShutdownNetSession();
 #endif
 
-    // The engine does the whole load: deserialize, drop the old asset set, evict
-    // the renderer's cached bindings, re-resolve assets and rebuild physics. What
-    // remains below is purely editor bookkeeping about the OLD scene. (We are at a
-    // safe point — level loads are marshalled to the main-thread drain, never run
-    // from OnImGui; see the Load button in DrawLevelsWindow.)
+    // The engine does the whole load: deserialize, drop the old asset set, evict the
+    // renderer's cached bindings, re-resolve assets and rebuild physics. Everything
+    // below is editor bookkeeping about the OLD scene.
+    //
+    // Reaching here means we are at a safe point: this frees GPU state the frame's
+    // recorded draws reference, so callers marshal it to the main-thread drain and
+    // never call it from OnImGui. See the Load button in DrawLevelsWindow.
     Assisi::Runtime::LevelHeader header;
     if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, *_physics, _sceneRenderer,
                                 Assisi::App::AssetCacheReset::ClearFirst, &header, &_world->instances))
-        return false;
+        return false; // the file did not resolve or deserialize; the scene is untouched
 
     // Open Level reuses the edited world, clearing its scene in place rather than
     // creating a second one. That is what keeps the undo history's Scene& binding
     // (and every panel's) valid for the whole session — see
-    // docs/multi-scene-design-notes.md §2. Only the world's level identity changes.
+    // docs/multi-scene-design-notes.md. Only the world's level identity changes.
     _world->levelPath = virtualPath;
 
-    // ...and its systems, which belong to the level that is now in it. This is the
-    // re-target case ApplyProfile's Clear exists for: the world already holds the
-    // previous level's profile.
+    // ...and its systems, which belong to the level now in it. This is the re-target
+    // case ApplyProfile's Clear exists for: the world still holds the previous
+    // level's profile.
     //
-    // A failed install fails the load. An unknown system name is a hard error by
-    // design, and this is the path a standalone build takes for its startup
-    // level — discarding it here is what let a misspelled name open a level that
-    // then ran none of its behaviour.
+    // A failed install fails the load: an unknown system name is a hard error by
+    // design, since a level that silently runs none of its behaviour is worse than
+    // one that refuses to open. The LevelSystemsAreDeclared check at the top of this
+    // function is what normally catches that, and has to — by here the scene has
+    // already been replaced, so returning leaves the new content in place with none
+    // of the bookkeeping below done.
     if (!_worlds.ApplySystems(*_world, header.systems, virtualPath))
     {
         Assisi::Core::Log::Error("Editor: '{}' names a system this build does not declare.", virtualPath);
         return false;
     }
 
-    // A load also ends any in-progress play session: the snapshot describes the
-    // old scene, so it must not survive into the new one.
+    // A load ends any in-progress play session: the snapshot describes the old
+    // scene, so it must not survive into the new one.
     SetPlayState(PlayState::Editing);
     _playSnapshot.clear();
     ClearSelection();
 
-    // Same aliasing hazard as the history below, and the same reason: an armed
-    // eyedropper or an open asset-browser dialog holds an entity handle from the
-    // OLD scene, which after the dense rebuild can resolve to a live but entirely
-    // different entity — and pass IsAlive — so the pick would silently write into
-    // the wrong entity's field. Disarm both.
+    // Disarm both, for the same aliasing hazard as the history below: an armed
+    // eyedropper or an open asset-browser dialog holds an entity handle from the OLD
+    // scene, and after the dense rebuild that handle can resolve to a live but
+    // entirely different entity — passing IsAlive — so the pick would silently write
+    // into the wrong entity's field.
     _eyedropperArmed  = false;
     _eyedropperEntity = Assisi::ECS::NullEntity;
     _eyedropperMeta   = nullptr;
@@ -940,25 +942,26 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     _assetBrowserEntity = Assisi::ECS::NullEntity;
     _assetBrowserMeta   = nullptr;
 
-    // A fresh scene rebuilds entity identity densely from {0,0}: every handle the
-    // undo stacks hold now dangles (and could alias a different entity), so wipe
-    // the history. (Load's Scene::Clear already reset the registry.)
+    // Wipe the history: a fresh scene rebuilds entity identity densely from {0,0}
+    // (Load's Scene::Clear reset the registry), so every handle the undo stacks hold
+    // now dangles, or worse, aliases a different entity.
     if (_history)
         _history->Clear();
-    // And the same for an instance drag caught mid-gesture by the load: its
-    // snapshot names entities in the scene that just went away, so committing it
-    // would write a transaction against handles that now mean something else.
+    // And the same for an instance drag the load caught mid-gesture: its snapshot
+    // names entities that just went away, so committing it would write a transaction
+    // against handles that now mean something else.
     _instanceGesture.Abandon();
     _pausedHistory.reset(); // a load ends any play session, scratch history included
     _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
 
     // A load expands every instance from the files as they are now, so nothing this
-    // world holds can still be behind one (stage 5e).
+    // world holds can still be behind one — the stale/pending re-expansion state
+    // below is cleared, not carried over.
     //
-    // An unanswered save is dropped rather than cancelled: its file stays as it was
-    // written, because a load is not a rejection of it and the world it was asked
-    // about is gone either way. Said out loud, since "the dialog vanished" would
-    // otherwise be indistinguishable from having answered it.
+    // An unanswered save is dropped rather than cancelled: its file keeps what was
+    // written, because a load is not a rejection of it and the scene it was asked
+    // about is gone either way. Logged, because "the dialog vanished" is otherwise
+    // indistinguishable from having answered it.
     if (_pendingSaveConfirm)
     {
         Assisi::Core::Log::Warn("Editor: the load of '{}' left the save of '{}' unanswered — the file "

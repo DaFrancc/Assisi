@@ -24,16 +24,16 @@ namespace Assisi::Editor
 void EditorApp::HandleEntityPicking()
 {
     auto &input = GetInput();
-    // Skip picking when the click is meant for the transform gizmo (hovered or being
-    // dragged) — otherwise clicking a handle would also reselect whatever's behind it.
+    // A click meant for the gizmo (hovered or dragging) is not a pick: it would
+    // reselect whatever is behind the handle.
     if (_actions.IsActionPressed("Select", input) &&
         !input.IsMouseCaptured() && !ImGuiWantsMouse() && !IsUsingGizmo())
     {
         float                     entityT = 0.f;
         const Assisi::ECS::Entity picked  = PickEntity(input.MousePosition(), entityT);
 
-        // An armed eyedropper consumes the click to fill its EntityRef field
-        // rather than moving the selection.
+        // An armed eyedropper consumes the click to fill its EntityRef field; the
+        // selection does not move.
         if (_eyedropperArmed)
         {
             ApplyEyedropperPick(picked);
@@ -42,26 +42,25 @@ void EditorApp::HandleEntityPicking()
             return;
         }
 
-        // An instance's root billboard is clickable too, and selecting an instance is
-        // a different gesture from selecting an entity — so it is resolved here
-        // rather than folded into PickEntity's return. Nearest wins: a root icon
-        // behind a wall should not beat the wall, and a member's mesh in front of the
-        // icon should not be unclickable because the icon is there.
+        // An instance's root billboard is clickable too. Selecting an instance is a
+        // different gesture from selecting an entity, so it is resolved here rather
+        // than folded into PickEntity's return, and the nearer hit wins: a root icon
+        // behind a wall must not beat the wall, and a member's mesh in front of the
+        // icon must not become unclickable because the icon is there.
         float               instanceT  = 0.f;
         const Assisi::ECS::InstanceId instanceId = PickInstance(input.MousePosition(), instanceT);
         if (instanceId.IsValid() && instanceT <= entityT)
         {
-            // Exclusive, like every other way of selecting an instance: it is the
-            // whole group, not one more thing in a list of entities.
+            // Exclusive, as every other route to an instance is: it is the whole
+            // group, not one more row in a list of entities.
             ClearSelection();
             _selectedInstance = instanceId;
             return;
         }
 
-        // Ctrl *and* Shift both mean "add this one too" out here. In a list a range
-        // is well defined — everything between two rows — but the viewport has no
-        // order to draw one through, so binding Shift to anything else would only be
-        // a second key that does nothing.
+        // Ctrl *and* Shift both mean "add this one too" out here. A range needs an
+        // order to run through, which a list has and the viewport does not, so giving
+        // Shift its list meaning would only add a key that does nothing.
         GetEvents().Push(EntitySelectionChangedEvent{picked, ImGuiAdditiveModifier()});
     }
 }
@@ -71,16 +70,15 @@ void EditorApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
     if (!_eyedropperMeta || !_scene || !_scene->IsAlive(_eyedropperEntity))
         return;
 
-    // The component pointer may have moved since the field was armed (the pool
-    // can reallocate), so re-resolve it now and write straight into the
-    // reflected offset.
+    // Re-resolve rather than caching: the pool can reallocate between arming the
+    // field and the click, so the component's address may have moved.
     const void *ptr =
         _eyedropperMeta->getByEntity(_scene, _eyedropperEntity.index, _eyedropperEntity.generation);
     if (!ptr)
         return;
 
-    // One-frame capture around this raw-offset EntityRef write (an off-inspector
-    // edit site that would otherwise slip past the inspector's record-before-write).
+    // Open and commit a one-frame gesture around the raw-offset write below. This is
+    // an edit site outside the inspector, so nothing else records it.
     Assisi::Editor::EditHistory *history = ActiveHistory();
     if (history != nullptr)
         history->RecordBefore(_eyedropperEntity, _eyedropperMeta->id,
@@ -103,11 +101,11 @@ void EditorApp::UpdateCamera(float dt)
     auto      &input          = GetInput();
     const bool imguiWantsMouse = ImGuiWantsMouse();
 
-    // A double-click focus animation owns the camera for its fixed duration.
-    // Entering look mode cancels it (the author is taking over); otherwise advance
-    // the eased blend and skip fly control this frame. The blend is a function of
-    // normalized time only, so it always lasts kCameraFocusDuration regardless of
-    // how far the camera travels.
+    // A running focus animation owns the camera transform: advance the eased blend and
+    // skip fly control entirely this frame. Manual look input cancels it — the author
+    // is taking over — and either exit re-derives yaw/pitch from the rotation so the
+    // fly controller resumes without snapping. The blend is a function of normalized
+    // time alone, so it always takes kCameraFocusDuration however far the camera goes.
     if (_cameraFocusActive)
     {
         if (_actions.IsActionPressed("LookMode", input) && !imguiWantsMouse)
@@ -183,8 +181,8 @@ void EditorApp::RefreshCameraMatrix()
 
 void EditorApp::SyncYawPitchFromRotation()
 {
-    // Invert the fly controller's forward-from-(yaw,pitch) mapping so it resumes
-    // from wherever a focus animation left the camera without snapping back.
+    // Inverts the fly controller's forward-from-(yaw, pitch) mapping, so the
+    // controller can pick up from a rotation it did not produce.
     const glm::vec3 forward = glm::normalize(_cameraTransform.rotation * glm::vec3(0.f, 0.f, -1.f));
     _pitch = glm::degrees(std::asin(glm::clamp(forward.y, -1.f, 1.f)));
     _yaw   = glm::degrees(std::atan2(forward.z, forward.x));
@@ -192,10 +190,11 @@ void EditorApp::SyncYawPitchFromRotation()
 
 namespace
 {
-// Builds an orientation that looks along @p forwardWanted, matching the fly
-// camera's basis convention (columns right, up, -forward). Returns identity for a
-// degenerate (near-zero) direction, and swaps the reference up when looking almost
-// straight up or down so the cross products stay well-conditioned.
+/// @brief An orientation looking along @p forwardWanted, in the fly camera's basis
+///        convention (columns right, up, -forward).
+///
+/// Identity for a near-zero direction. The reference up is swapped when looking
+/// almost straight up or down, where the cross products would be ill-conditioned.
 glm::quat LookRotation(glm::vec3 forwardWanted)
 {
     const float length = glm::length(forwardWanted);
@@ -227,8 +226,8 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
         return; // nothing to frame without a world placement
     }
 
-    // World bounding sphere: a mesh's local sphere mapped through the transform, or
-    // a small default around the entity's origin for an empty (mesh-less) object.
+    // What to frame: a mesh's local sphere through the world matrix, or a small
+    // sphere at the origin for a mesh-less entity.
     Assisi::Geometry::BoundingSphere world;
     const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
     if (mrc != nullptr && mrc->meshBuffer != nullptr && mrc->meshBuffer->LocalBounds().radius > 0.f)
@@ -253,17 +252,16 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     const glm::vec3 toCam  = camPos - world.center;
     const float     dist   = glm::length(toCam);
 
-    // Distance at which the sphere fills the vertical FOV, with a margin so it
-    // isn't edge-to-edge: r / sin(halfFov) puts the sphere tangent to the frame.
+    // r / sin(halfFovY) is the distance at which the sphere is exactly tangent to the
+    // vertical frame; the margin backs off from there so it does not fill the view.
     constexpr float kFrameMargin = 4.f;
     const float     halfFovY     = glm::radians(_camera.fovDegrees) * 0.5f;
     const float     sinHalf      = glm::sin(halfFovY);
     const float     framingDist  = sinHalf > 1e-4f ? (world.radius / sinHalf) * kFrameMargin : world.radius * 3.f;
 
-    // First attempt: dolly along the current line of sight to the framing distance,
-    // preserving the viewing angle. If the camera is already inside (or all but on
-    // top of) the object, that direction is unreliable — give up repositioning and
-    // keep the current position, only re-aiming at the centre.
+    // Dolly along the current line of sight, which keeps the viewing angle. If the
+    // camera is already inside the sphere, or all but on top of its centre, that
+    // direction means nothing — stay put and only re-aim.
     glm::vec3 targetPos = camPos;
     if (dist >= world.radius && dist > 1e-4f)
     {
@@ -286,6 +284,10 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
 namespace
 {
 
+/// @brief Ray vs. the unit cube (±0.5 on every axis) in @p model's space — the
+///        stand-in bounds every meshed entity is picked with.
+///
+/// @p tOut is the near hit, or the far one when the ray starts inside.
 bool RayOBBIntersect(glm::vec3 origin, glm::vec3 dir, const glm::mat4 &model, float &tOut)
 {
     const glm::mat4 inv   = glm::inverse(model);
@@ -322,14 +324,15 @@ bool RayOBBIntersect(glm::vec3 origin, glm::vec3 dir, const glm::mat4 &model, fl
     return true;
 }
 
-// Ray vs. a camera-facing billboard quad centred at `center`, spanning ±half
-// along the (unit) `right` and `up` axes. Matches how IconPass draws entity
-// icons, so a meshless entity is clickable only over its drawn billboard rather
-// than a whole unit cube.
+/// @brief Ray vs. a camera-facing quad centred at @p center, spanning ±@p half
+///        along the unit @p right and @p up axes.
+///
+/// The same quad IconPass draws, so a mesh-less entity is clickable over its icon
+/// and not over a whole unit cube.
 bool RayBillboardIntersect(glm::vec3 origin, glm::vec3 dir, glm::vec3 center, glm::vec3 right, glm::vec3 up,
                            float half, float &tOut)
 {
-    const glm::vec3 normal = glm::cross(right, up); // billboard plane faces the camera
+    const glm::vec3 normal = glm::cross(right, up); // the quad faces the camera
     const float     denom  = glm::dot(dir, normal);
     if (std::abs(denom) < 1e-8f)
         return false; // ray parallel to the quad
@@ -371,8 +374,9 @@ EditorApp::PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
 
     ray.direction = glm::normalize(glm::vec3(glm::inverse(view) * viewDir));
     ray.origin    = _cameraTransform.position;
-    // Camera world basis (view rows), matching how the billboards are oriented, so
-    // a meshless entity's clickable area is exactly its icon quad.
+    // The camera's world basis, read out of the view matrix's rows. The billboards
+    // are built from the same two axes, so a picked icon quad is exactly the drawn
+    // one.
     ray.cameraRight = glm::vec3(view[0][0], view[1][0], view[2][0]);
     ray.cameraUp    = glm::vec3(view[0][1], view[1][1], view[2][1]);
     ray.valid       = true;
@@ -392,8 +396,8 @@ Assisi::ECS::InstanceId EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
     const float             iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
     Assisi::ECS::InstanceId result;
 
-    // The same quad the renderer draws for the instance root, so what is clickable is
-    // exactly what is visible (see EditorApp::SubmitInstanceIcons).
+    // The same quad the renderer draws for an instance root — see
+    // EditorApp::SubmitInstanceIcons — so what is clickable is what is visible.
     for (const auto &[id, row] : _world->instances.All())
     {
         float t = 0.f;
@@ -435,8 +439,8 @@ Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos, float &tOut)
 
     for (auto [e, tc] : _scene->Query<Assisi::Runtime::Transform>())
     {
-        // An entity with a mesh is picked by its (unit-cube) bounds; a placement-
-        // only entity is picked by its billboard icon alone, not a big unit cube.
+        // Meshed entities are picked by their unit-cube bounds; a placement-only one
+        // by its icon quad alone, so it does not swallow clicks over a whole cube.
         float      t   = 0.f;
         const bool hit = _scene->Get<Assisi::Runtime::MeshRenderer>(e) != nullptr
                              ? RayOBBIntersect(rayOrigin, rayDir, tc.worldMatrix, t)

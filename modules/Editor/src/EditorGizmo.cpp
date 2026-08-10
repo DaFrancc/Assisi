@@ -23,22 +23,24 @@ namespace Assisi::Editor
 // Transform gizmo
 // ---------------------------------------------------------------------------
 //
-// An ImGuizmo manipulator drawn over the 3D viewport for the selected entity.
-// Translate / rotate / scale, switched with W / E / R; X toggles world vs. the
-// entity's local axes; hold Ctrl to snap. The gizmo edits a world-space matrix,
-// which we convert back to the entity's local TRS (so parented entities move
-// correctly) and write through GetMut (stamping the change so PropagateTransforms
-// re-runs), syncing any RigidBody so a moved physics object stays in step.
+// The ImGuizmo manipulator drawn over the viewport for the current selection.
+// W / E / R switch translate / rotate / scale, X cycles the reference frame,
+// Ctrl snaps.
 //
-// Draws into the background draw list so it sits over the scene but under the
-// ImGui panels. IsUsingGizmo() lets entity-picking ignore clicks meant for it.
+// The gizmo edits a world-space matrix. We convert it back to the entity's local
+// TRS (so parented entities move correctly), write it through GetMut so the change
+// is stamped and PropagateTransforms re-runs, then push the new pose to any
+// RigidBody — in that order, always.
+//
+// Drawn into the background draw list: over the scene, under the ImGui panels.
+// IsUsingGizmo() lets entity picking ignore clicks meant for it.
 
 namespace
 {
 namespace Rt = Assisi::Runtime;
 
-// Snap increments while Ctrl is held: metres for translate, degrees for rotate,
-// a unit fraction for scale. Uniform across axes.
+// Snap increments while Ctrl is held: metres, degrees, unit fraction. The same
+// increment on every axis.
 constexpr float kTranslateSnap = 0.5f;
 constexpr float kRotateSnap    = 15.f;
 constexpr float kScaleSnap     = 0.1f;
@@ -57,14 +59,14 @@ ImGuizmo::OPERATION ToOperation(EditorApp::GizmoOp op)
 
 bool EditorApp::IsUsingGizmo() const
 {
-    // ImGuizmo tracks the active drag (IsUsing) and hover (IsOver) globally; the
-    // picking code checks this to avoid re-selecting when a click lands on the gizmo.
+    // Hover counts as well as drag: a click landing on a handle must not also
+    // re-select whatever is behind it.
     return ImGuizmo::IsUsing() || ImGuizmo::IsOver();
 }
 
 namespace
 {
-/// A TRS as a matrix, in the order everything else in the engine composes it.
+/// @brief A TRS as a matrix, composed in the order everything else here uses.
 glm::mat4 TransformMatrix(const Rt::Transform &transform)
 {
     return glm::translate(glm::mat4(1.f), transform.position) * glm::mat4_cast(transform.rotation) *
@@ -81,7 +83,7 @@ void EditorApp::DrawInstanceGizmo()
     const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(_selectedInstance);
     if (row == nullptr)
     {
-        _selectedInstance = {}; // the instance went away while it was selected
+        _selectedInstance = {}; // it was deleted while selected
         return;
     }
 
@@ -146,11 +148,10 @@ void EditorApp::DrawInstanceGizmo()
         }
     }
 
-    // Deliberately no close here. This function runs before the Inspector every
-    // frame and cannot see that one of its Placement fields is mid-scrub, so a
-    // close conditioned on "the gizmo is not held" would fire straight through
-    // somebody else's drag — which is exactly what it used to do, once per frame
-    // (round-7 B19). SweepInstanceGesture, after every panel, is the only closer.
+    // Deliberately no close here. This runs before the Inspector every frame and
+    // cannot see that one of its Placement fields is mid-scrub, so closing on "the
+    // gizmo is not held" would cut through somebody else's drag, once per frame.
+    // SweepInstanceGesture, which runs after every panel, is the only closer.
 }
 
 void EditorApp::BeginInstanceGesture(Assisi::ECS::InstanceId instanceId)
@@ -163,8 +164,8 @@ void EditorApp::BeginInstanceGesture(Assisi::ECS::InstanceId instanceId)
 
 void EditorApp::SweepInstanceGesture()
 {
-    // No scene or no world: whatever the gesture snapshotted named entities in a
-    // scene that is no longer here, so there is nothing coherent to commit against.
+    // Without a scene or world, the gesture's snapshot names entities that are no
+    // longer here — nothing coherent to commit against.
     if (_scene == nullptr || _world == nullptr)
     {
         _instanceGesture.Abandon();
@@ -185,20 +186,18 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
 
     Rt::Transform placement = requested;
     placement.rotation      = glm::normalize(placement.rotation);
-    // One number, not three: an instance may only translate, rotate, or scale
-    // *uniformly*, and the editor is where that is enforced first so a violation
-    // cannot be authored at all (§3). The load hard-fails on one anyway; this is the
-    // half that keeps it from ever being written.
+    // One number, not three: an instance may only translate, rotate, and scale
+    // *uniformly*. Loading a non-uniform placement hard-fails; averaging here is the
+    // half that keeps one from ever being written.
     placement.scale = glm::vec3((placement.scale.x + placement.scale.y + placement.scale.z) / 3.f);
-    // A zero would divide out below and take every member's scale with it, and there
-    // is no way back from that — the members would all be zero-sized and the
-    // placement would have no record of what they were.
+    // Clamped off zero: a zero divides out in the ratio below and takes every
+    // member's scale with it, with no record left of what they were.
     if (placement.scale.x <= kMinTypedInstanceScale)
         placement.scale = glm::vec3(kMinTypedInstanceScale);
 
-    // Move the members by the delta rather than re-expanding: re-expansion would
-    // destroy and recreate handles behind undo's back, and this is the gesture that
-    // has to stay cheap.
+    // Move the members by the delta rather than re-expanding the instance:
+    // re-expansion destroys and recreates entity handles behind undo's back, and
+    // this runs every frame of a drag, so it has to stay cheap.
     const glm::mat4 delta = TransformMatrix(placement) * glm::inverse(TransformMatrix(row->transform));
     const glm::quat deltaRotation =
         glm::normalize(placement.rotation * glm::inverse(row->transform.rotation));
@@ -207,8 +206,8 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
 
     for (const Assisi::ECS::Entity member : Assisi::Runtime::MembersOf(*_scene, instanceId))
     {
-        // Only the members the placement reaches directly; a parented one rides along
-        // through its parent, and moving it too would apply the delta twice.
+        // Only the members the placement reaches directly. A parented one rides along
+        // through its parent, so moving it here would apply the delta twice.
         if (_scene->Has<Rt::Parent>(member))
             continue;
 
@@ -220,6 +219,8 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
         memberTransform->rotation = glm::normalize(deltaRotation * memberTransform->rotation);
         memberTransform->scale *= scaleRatio;
 
+        // Body last, after the transform is written: it is being kept in step, never
+        // consulted.
         if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(member))
             _physics->SetBodyTransform(*body, memberTransform->position, memberTransform->rotation);
     }
@@ -231,13 +232,14 @@ void EditorApp::ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const
 
 void EditorApp::DrawTransformGizmo()
 {
-    // Reset ImGuizmo's per-frame state every frame, even with nothing selected, so
-    // IsUsing/IsOver read false when the gizmo isn't shown.
+    // Every frame, even with nothing selected: otherwise IsUsing/IsOver keep
+    // reporting the last state after the gizmo stops being drawn.
     ImGuizmo::BeginFrame();
 
-    // Instance mode: the whole group moves as one and the *record* is what changes,
-    // recording no member overrides. Getting this wrong pins all five members the
-    // first time somebody nudges a car (docs/blueprint-system-concept.md §3).
+    // Instance mode: the group moves as one and it is the instance *record* that
+    // changes, so no member overrides are recorded. Writing overrides here would
+    // pin every member the first time somebody nudged an instance
+    // (docs/blueprint-system-concept.md).
     if (_selectedEntity == Assisi::ECS::NullEntity && _selectedInstance.IsValid())
     {
         DrawInstanceGizmo();
@@ -245,7 +247,7 @@ void EditorApp::DrawTransformGizmo()
     }
 
     // No handles over an inspect-only world: the drag would move an entity whose
-    // change could be neither undone nor saved.
+    // change can be neither undone nor saved.
     if (_scene == nullptr || _selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity) ||
         !IsEditable(_selectedEntity))
     {
@@ -257,8 +259,8 @@ void EditorApp::DrawTransformGizmo()
         return; // placement-less entity — nothing to manipulate
     }
 
-    // Mode switches, ignored while a text field is capturing keys so typing a name
-    // doesn't also retarget the gizmo.
+    // Mode switches, ignored while a text field has the keyboard so typing a name
+    // does not also retarget the gizmo.
     ImGuiIO &io = ImGui::GetIO();
     if (!io.WantTextInput)
     {
@@ -270,10 +272,10 @@ void EditorApp::DrawTransformGizmo()
             _gizmoOp = GizmoOp::Scale;
         if (ImGui::IsKeyPressed(ImGuiKey_X, false))
         {
-            // Three-way for a member of an instance: World → Local → Instance. The
-            // third frame is the blueprint root's, so the handles rotate with the
-            // car — a *view*, never a storage decision, since the override is
-            // recorded in file space either way.
+            // Three-way for a member of an instance: World → Local → Instance, the
+            // third being the blueprint root's frame, so the handles turn with the
+            // instance. A *view* only, never a storage decision — the override is
+            // recorded in file space whichever frame is showing.
             const bool isMember = _scene->Has<Assisi::ECS::BlueprintMember>(_selectedEntity);
             if (!isMember)
             {
@@ -297,14 +299,15 @@ void EditorApp::DrawTransformGizmo()
     ImGuizmo::SetDrawlist(ImGui::GetBackgroundDrawList());
     ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x, viewport->Size.y);
 
-    // Same view/projection the scene renders with (no manual Y-flip — NVRHI flips
-    // the viewport, so on-screen orientation matches ImGuizmo's screen convention).
+    // The same view/projection the scene renders with. Do not add a Y-flip: NVRHI
+    // already flips the viewport, so what is on screen matches ImGuizmo's
+    // convention as-is.
     const float     aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
     const glm::mat4 view   = Rt::ViewMatrix(_cameraTransform);
     const glm::mat4 proj   = Rt::ProjectionMatrix(_camera, aspect);
 
-    // The gizmo manipulates a world matrix; a parented entity converts it back to
-    // local against the parent's world (roots: identity, world == local).
+    // The frame the result is converted back through. Identity for a root, where
+    // world and local are the same matrix.
     glm::mat4 parentWorld(1.f);
     if (const Rt::Parent *parent = _scene->Get<Rt::Parent>(_selectedEntity))
     {
@@ -317,14 +320,14 @@ void EditorApp::DrawTransformGizmo()
     glm::mat4 world = transform->worldMatrix;
 
     const ImGuizmo::OPERATION operation = ToOperation(_gizmoOp);
-    // Scale is inherently along the object's own axes, so ImGuizmo forces LOCAL for
-    // it regardless; translate/rotate honour the world/local toggle.
+    // Translate and rotate honour the toggle; scale is along the object's own axes
+    // by nature, and ImGuizmo forces LOCAL for it whatever is passed here.
     const ImGuizmo::MODE mode = _gizmoLocalSpace ? ImGuizmo::LOCAL : ImGuizmo::WORLD;
 
-    // ImGuizmo only knows LOCAL and WORLD, so an arbitrary frame is had by folding
-    // the instance's placement into the *view* and handing it the member's matrix
-    // in instance space (§3). The result is drawn in the car's axes and decomposes
-    // back through the same fold, so nothing downstream has to know.
+    // ImGuizmo knows only LOCAL and WORLD, so an arbitrary frame is had by folding
+    // the instance's placement into the *view* and handing it the member's matrix in
+    // instance space. The handles then draw in the instance's axes, and the result
+    // is unfolded by the same matrix below, so nothing downstream has to know.
     glm::mat4 gizmoView = view;
     glm::mat4 instanceFrame(1.f);
     bool      inInstanceFrame = false;
@@ -347,20 +350,18 @@ void EditorApp::DrawTransformGizmo()
     const glm::vec3 snap(snapValue);
 
     // A gizmo drag is a Transform edit, so it rides the *same* record-before-write
-    // gesture and "Edit Transform" label the inspector uses — no duplicate
-    // transaction code. But it force-commits on release (below) so a gizmo drag is
-    // always its OWN undo entry, distinct from any inspector Transform edit before
-    // or after it.
+    // gesture and "Edit Transform" label as the inspector rather than duplicating the
+    // transaction code. It force-commits on release (at the end of this function) so
+    // that a drag is always its OWN undo entry, separate from any inspector Transform
+    // edit before or after it.
     //
-    // Call RecordBefore every frame the gizmo is drawn, INCLUDING mid-drag: it is
-    // idempotent for an already-open gesture (keeps the original pre-drag `before`,
-    // just refreshes liveness), so the pre-drag pose still freezes for the drag's
-    // duration. Refreshing every frame keeps the gesture alive on its own — the gizmo
-    // must not rely on the inspector's per-frame RecordBefore, which runs only while
-    // the Transform CollapsingHeader is expanded. Without this, collapsing that header
-    // let EndFrameSweep commit-and-drop the (still zero-delta) gesture a frame into the
-    // drag, and the `!IsUsing()` guard then blocked a new one — so the drag recorded
-    // nothing in the undo history.
+    // RecordBefore runs every frame the gizmo is drawn, INCLUDING mid-drag. It is
+    // idempotent for an open gesture — the pre-drag `before` is kept, only liveness is
+    // refreshed — and that refresh is what keeps the gesture alive here. The
+    // inspector's own RecordBefore runs only while its Transform header is expanded,
+    // so without this, collapsing that header lets the end-of-frame sweep commit and
+    // drop the still-empty gesture a frame into the drag, after which the `!IsUsing()`
+    // guard refuses to open a new one and the drag records no undo at all.
     const Assisi::Core::Reflect::ComponentId transformId =
         Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>();
     Assisi::Editor::EditHistory *history = ActiveHistory();
@@ -368,13 +369,13 @@ void EditorApp::DrawTransformGizmo()
         history->RecordBefore(_selectedEntity, transformId, EditLabel("Edit Transform", _selectedEntity),
                               _selectedEntity);
 
-    // The rest of a multi-selection rides the same drag. Each one gets its own
-    // gesture — the history is keyed by (entity, component), so five entities
-    // moving together are five ComponentDeltas — but they open and close on the
-    // same edges, so the drag is still one gesture to the person doing it.
+    // The rest of a multi-selection rides the same drag. Each gets its own gesture —
+    // the history is keyed by (entity, component), so five entities moving together
+    // are five ComponentDeltas — but they all open and close on the same edges, so it
+    // is still one gesture to the person dragging.
     //
     // An entity whose parent is also selected is left out: propagation already
-    // carries it, and applying the drag to it as well would move it twice.
+    // carries it, and dragging it too would move it twice.
     std::vector<Assisi::ECS::Entity> alsoDragged;
     if (_selection.size() > 1)
     {
@@ -391,9 +392,9 @@ void EditorApp::DrawTransformGizmo()
         }
     }
 
-    // The pose the handle started this frame at. The others follow by the *change*
-    // in it, so a rotate turns the group about the handle rather than spinning each
-    // one in place.
+    // The pose the handle started *this frame* at. The rest follow by the change in
+    // it, so a rotate turns the group about the handle instead of spinning each one
+    // in place.
     const glm::mat4 worldBefore = transform->worldMatrix;
 
     if (inInstanceFrame)
@@ -406,36 +407,35 @@ void EditorApp::DrawTransformGizmo()
         world = instanceFrame * world;
 
     const bool nowUsing = ImGuizmo::IsUsing();
-    // A held gizmo keeps the shared gesture open until release (mirrors the
-    // inspector's active-widget signal).
+    // A held gizmo keeps the shared gesture open until release, the same signal the
+    // inspector raises for an active widget.
     if (nowUsing)
     {
         _captureEditingActive = true;
 
-        // Take the body out of the solver's hands for the duration of the drag,
-        // exactly as the inspector does for its fields. Without this the body is
-        // still Dynamic while being teleported into whatever it overlaps, so the
-        // solver spends every step resolving that penetration — the object creeps
-        // and rotates on its own during a rotate, and stutters as it squeezes free
-        // during a translate. You are placing it, not throwing it at something.
+        // Take the body out of the solver's hands for the drag, as the inspector does
+        // for its fields. A body left Dynamic while it is teleported into whatever it
+        // overlaps makes the solver resolve that penetration every step: the object
+        // creeps and turns on its own under a rotate, and stutters free under a
+        // translate. You are placing it, not throwing it at something.
         //
-        // Raised *before* the pose is applied below, so the very first frame of the
-        // drag is already frozen. Released at the end of OnImGui, so ending the drag
-        // by any route (release, deselect, the gizmo vanishing because the world
-        // selector moved) still restores the body.
+        // Raised *before* the pose is applied below, so the drag's first frame is
+        // already frozen. The thaw is at the end of OnImGui, keyed on this request
+        // not being raised, so ending the drag by any route — release, deselect, the
+        // gizmo vanishing because the world selector moved — restores the body.
         RequestPhysicsFreeze();
     }
 
     if (manipulated)
     {
-        // The handle's own new pose, written straight from the matrix ImGuizmo
-        // produced — no delta, so the entity under the handle lands exactly where
-        // the handle is even after a long drag has accumulated rounding.
+        // The handle's own entity takes the matrix ImGuizmo produced, not a delta, so
+        // it lands exactly under the handle even after a long drag has accumulated
+        // rounding.
         ApplyGizmoWorldMatrix(_selectedEntity, parentWorld, world);
 
-        // Everyone else follows by the same world-space change. Applied to their
-        // current pose rather than to a snapshot: this runs every frame of the
-        // drag, and each frame's delta is measured from that frame's start.
+        // The rest follow by the same world-space change, applied to their current
+        // pose rather than to a start-of-drag snapshot: this runs every frame, and
+        // `worldBefore` is measured from the start of *this* frame.
         if (!alsoDragged.empty())
         {
             const glm::mat4 delta = world * glm::inverse(worldBefore);
@@ -456,10 +456,10 @@ void EditorApp::DrawTransformGizmo()
         }
     }
 
-    // On the drag-release edge, commit the gesture now (before == after drops a
-    // click without a drag). Committing here rather than leaving it to the sweep
-    // guarantees the gizmo drag is its own transaction — it closes the instant the
-    // drag ends, so a Transform edit that follows opens a fresh, separate one.
+    // Commit on the release edge. A click with no drag leaves before == after and is
+    // dropped. Committing here rather than leaving it to the end-of-frame sweep is
+    // what makes the drag its own transaction: it closes the instant the drag ends,
+    // so a Transform edit that follows opens a fresh one.
     if (history != nullptr && !nowUsing && _gizmoWasUsing)
     {
         history->CommitGesture(_selectedEntity, transformId);
@@ -472,8 +472,8 @@ void EditorApp::DrawTransformGizmo()
 void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
                                        const glm::mat4 &world)
 {
-    // A parented entity converts back to local against its parent's world (roots:
-    // identity, world == local).
+    // Back to local against the parent's world; `parentWorld` is identity for a
+    // root, where local and world are the same matrix.
     const glm::mat4 local = glm::inverse(parentWorld) * world;
 
     glm::vec3 scale;
@@ -491,8 +491,8 @@ void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat
     mutableTransform->rotation = glm::normalize(orientation);
     mutableTransform->scale    = scale;
 
-    // Keep a physics body in step with the edited pose (scale isn't a body
-    // property, so only position/rotation sync — matches the inspector).
+    // Body last, after the pose is written. Position and rotation only — scale is not
+    // a body property, and the inspector syncs the same two.
     if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
     {
         _physics->SetBodyTransform(*body, mutableTransform->position, mutableTransform->rotation);

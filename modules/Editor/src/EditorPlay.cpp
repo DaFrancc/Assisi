@@ -50,11 +50,10 @@ void EditorApp::StartPlay(NetIntent intent)
         return;
     }
 
-    // Not from inside a blueprint. The world in front of you holds one piece of
-    // content and an editor sun; playing it would simulate that, settle its bodies,
-    // and leave the file remembering a pose nobody authored. The hotkey reaches here
-    // even though the Game panel is hidden, which is exactly why the guard is here
-    // and not on the button.
+    // Never from inside the blueprint editor: that world holds one piece of content
+    // and an editor sun, so playing it would settle its bodies and leave the file
+    // remembering a pose nobody authored. Guarded here rather than on the button
+    // because F5 reaches this even while the Game panel is hidden.
     if (InBlueprintMode())
     {
         Assisi::Core::Log::Warn("Play: close the blueprint editor first — a blueprint world is content, "
@@ -63,20 +62,19 @@ void EditorApp::StartPlay(NetIntent intent)
     }
 
 #if defined(ASSISI_NETWORKING)
-    // Play-in-editor hosting sidesteps both gates below, structurally rather
-    // than by exception: its clients load a temp snapshot of the scene as it is
-    // *right now*, so "the level was never saved" and "the level on disk is not
-    // what you are looking at" both stop being true. That is the whole reason
-    // PIE needs no equivalent of the cross-machine save prompt.
+    // Play-in-editor hosting sidesteps both gates below structurally, not by
+    // exception: its clients load a temp snapshot of the scene as it is *right
+    // now*, so neither "never saved" nor "disk differs from what you see" can be
+    // true. That is why PIE needs no equivalent of the cross-machine save prompt.
     const bool playInEditor = intent == NetIntent::Host && _pieClientCount > 0;
 
     // Two host-side gates, checked before anything is snapshotted so a refusal
     // leaves the editor exactly where it was.
     if (intent == NetIntent::Host && !playInEditor)
     {
-        // Clients load the level from disk by path. A level that has never been
-        // saved has no path, and a host advertising `None` is a join that fails
-        // on the other machine for a reason nobody can act on from there.
+        // Clients load the level from disk by path, so a level that was never
+        // saved has nothing to advertise. Hosting `None` means the join fails on
+        // the other machine, for a reason nobody there can act on.
         if (HostLevelIdentity().addressing == Assisi::NetSync::LevelAddressing::None)
         {
             _netError = "save the level to host — clients load it from disk, so it has to be there.";
@@ -84,26 +82,25 @@ void EditorApp::StartPlay(NetIntent intent)
             return;
         }
 
-        // Unsaved edits are a modal rather than a warning, because the failure
-        // they cause is remote and delayed: the client's wall is somewhere else,
-        // replicated bodies get corrected against geometry it cannot see, and
-        // "objects bouncing off nothing" ten minutes later never gets traced
-        // back to an amber label glanced past at host time.
+        // Unsaved edits get a modal, not a warning: the failure is remote and
+        // delayed. The client's wall is somewhere else, replicated bodies are
+        // corrected against geometry it cannot see, and "objects bouncing off
+        // nothing" is never traced back to an amber label at host time.
         if (IsSceneDirty() && !_hostIgnoreDirty)
         {
             _hostPromptOpen = true;
             return;
         }
 
-        // Stage 5e, and the one failure 5d can create. Declining a blueprint's
-        // catch-up leaves this world's copies of it as they were while the file on
-        // disk moved on. A client expands that file, so the two machines would spawn
-        // different member sets under the same NetIds — a green handshake over two
-        // different worlds, which is exactly what the content-set hash cannot catch
-        // (it hashes the disk, and both machines' disks agree).
+        // Live blueprint copies that never took their file's update (the author
+        // declined the catch-up prompt) while the file on disk moved on. A client
+        // expands the file, so the two machines spawn different member sets under
+        // the same NetIds — a green handshake over two different worlds, and the
+        // one case the content-set hash cannot catch, since it hashes the disk and
+        // both disks agree.
         //
-        // A refusal rather than a prompt: unlike unsaved edits, there is no
-        // "host it anyway" that means anything. The copies are wrong either way.
+        // A refusal rather than a prompt: unlike unsaved edits, there is no "host
+        // it anyway" that means anything. The copies are wrong either way.
         if (!_staleInstanceSources.empty())
         {
             _netError = "some live blueprint copies are out of date with their file (" +
@@ -117,11 +114,11 @@ void EditorApp::StartPlay(NetIntent intent)
 #endif // ASSISI_NETWORKING
 
     // Snapshot the whole scene so Stop can restore it exactly, discarding whatever
-    // play mode changes (physics settling, spawns, etc.). Unlike a Save()/Load()
-    // round-trip, this records each entity's *exact* (index, generation) handle and
-    // component JSON, so Stop can revive entities in place (Scene::ReviveAt) rather
-    // than renumbering them — which is what keeps the editing undo history's stored
-    // handles valid across the play session (edit -> play -> stop -> undo works).
+    // play changed (physics settling, spawns, …). Records each entity's *exact*
+    // (index, generation) handle alongside its component JSON — not a Save()/Load()
+    // round-trip — so Stop revives entities in place (Scene::ReviveAt) instead of
+    // renumbering them. That is what keeps the editing undo history's stored handles
+    // valid across a play session: edit -> play -> stop -> undo works.
     _playSnapshot.clear();
     {
         Assisi::Runtime::SceneSerializer::ScopedRawEntityContext rawContext(*_scene);
@@ -139,11 +136,10 @@ void EditorApp::StartPlay(NetIntent intent)
             });
     }
 
-    // Everything else about the edited world a session can move, so Stop can put
-    // it back: a join replaces the play scene with the *host's* level and
-    // retargets its identity, its systems and its instance table. One capture
-    // rather than one per field — see PrePlayState.hpp for what that is guarding
-    // against.
+    // Everything else about the edited world a session can move, so Stop can put it
+    // back: a join replaces the play scene with the *host's* level, retargeting its
+    // identity, its systems and its instance table. One capture rather than one per
+    // field — PrePlayState.hpp says what that guards against.
     _prePlay = _world != nullptr ? CapturePrePlayState(_world->levelPath, _world->systemNames, _world->instances)
                                  : PrePlayState{};
 
@@ -156,8 +152,8 @@ void EditorApp::StartPlay(NetIntent intent)
     Assisi::Core::Log::Info("Play: started (scene snapshotted, {} entities).", _playSnapshot.size());
 
 #if !defined(ASSISI_NETWORKING)
-    // Standalone is the only intent this build can service — everything below
-    // needs a session, and there is no transport to make one from.
+    // Standalone is the only intent this build can service: everything below needs
+    // a session, and there is no transport to make one from.
     return;
 #else
     if (intent == NetIntent::Standalone)
@@ -178,9 +174,9 @@ void EditorApp::StartPlay(NetIntent intent)
             hostLevel = HostLevelIdentity();
     }
 
-    // The session binds the scene it replicates by reference at construction,
-    // and that scene is now the play scene — the one the editor already treats
-    // as disposable.
+    // The session binds the scene it replicates by reference at construction, and
+    // that scene is now the play scene — the one the editor already treats as
+    // disposable.
     _netSession = std::make_unique<Assisi::NetSync::NetSession>(*_scene, _physics);
 
     // Triggered by hosting or joining, never by a level load: pressing Play alone
@@ -232,9 +228,8 @@ void EditorApp::ResumePlay()
     {
         return;
     }
-    // Leaving Paused: the scratch pause-history is discarded (its edits stay in the
-    // scene and the simulation carries on, but they were never part of the editing
-    // history and their undo does not persist).
+    // Leaving Paused drops the scratch pause-history: its edits stay in the scene,
+    // but they were never part of the editing history, so they stop being undoable.
     _pausedHistory.reset();
     SetPlayState(PlayState::Playing);
 }
@@ -245,22 +240,21 @@ void EditorApp::PausePlay()
     {
         return;
     }
-    // Not while a session is up, either role: pausing a host stops the server
+    // Never while a session is up, either role: pausing a host stops the server
     // ticking under connected clients, and pausing a client stops correction
-    // application under a live stream. Neither is a state this design defines,
-    // and un-pausing semantics for a networked session are a deferred design
-    // rather than something to improvise here.
+    // application under a live stream. Un-pause semantics for a networked session
+    // are a deferred design, not something to improvise here.
 #if defined(ASSISI_NETWORKING)
     if (IsNetSessionActive())
     {
         return;
     }
 #endif
-    // Entering Paused: open a fresh scratch history so edits made while paused are
-    // undoable *within the pause*, without ever touching the persistent editing
-    // history. Bound to the EDITED world's scene, not whichever world is being
-    // shown: that is the only one edits may be captured against, and the only one
-    // guaranteed to outlive the pause (play-created worlds can be destroyed).
+    // Entering Paused opens a fresh scratch history, so edits made while paused are
+    // undoable *within the pause* and never touch the persistent editing history.
+    // Bound to the EDITED world's scene, not whichever world is shown: it is the
+    // only scene edits may be captured against, and the only one guaranteed to
+    // outlive the pause (play-created worlds can be destroyed).
     if (Assisi::App::World *edited = _worlds.Edited())
     {
         _pausedHistory.emplace(edited->scene, MakeEditRebindHook(), &edited->instances);
@@ -275,16 +269,16 @@ void EditorApp::StopPlay()
         return;
     }
 
-    // The session belongs to the play session — both roles, every reason for
-    // stopping. First, so a client's mirrors are dropped before the restore
-    // rebuilds the editing scene underneath them, and so a host stops
-    // replicating a scene that is about to be torn down and rebuilt.
+    // The session ends with play, both roles and whatever the reason. FIRST, so a
+    // client's mirrors are dropped before the restore rebuilds the editing scene
+    // underneath them, and a host stops replicating a scene that is about to be
+    // torn down.
 #if defined(ASSISI_NETWORKING)
     ShutdownNetSession();
-    // Every client this session launched goes with it, and so does the temp
-    // level they were loading — "connections do not outlive the level" is the
-    // price PIE pays for needing no level-transfer protocol, and a viewer left
-    // running against a dead server is the worst version of paying it.
+    // Every client this session launched goes with it, along with the temp level
+    // they loaded. "Connections do not outlive the level" is what PIE pays for
+    // needing no level-transfer protocol; a viewer left running against a dead
+    // server is the worst way to pay it.
     ShutdownPieClients();
     _pendingJoinBuild = false;
     _pendingStopPlay  = false;
@@ -292,16 +286,16 @@ void EditorApp::StopPlay()
     _netIntent        = NetIntent::Standalone;
     _joinPhase        = JoinPhase::None;
 
-    // Discard the scratch pause-history first (whatever the pause let you undo dies
-    // with the pause). The editing history is deliberately NOT cleared — the restore
-    // below rebuilds entities at their exact pre-play handles, so its stored handles
-    // stay valid and the pre-play edits remain undoable.
+    // Whatever the pause let you undo dies with the pause. The editing history is
+    // deliberately NOT cleared: the restore below rebuilds entities at their exact
+    // pre-play handles, so its stored handles stay valid and pre-play edits remain
+    // undoable.
     _pausedHistory.reset();
 
     // Everything the session created goes, and the edited world comes back into
-    // view — BEFORE the restore below, which works on `_scene` and must therefore
-    // already be pointed at the authored level rather than wherever play ended up.
-    // A queued "load as new world" from this frame is dropped with it.
+    // view. BEFORE the restore below, which works through `_scene` and so needs it
+    // already pointed at the authored level rather than wherever play ended up.
+    // Queued world requests from this frame are dropped with it.
     _pendingWorldLoad.reset();
     _pendingTravel.reset();
     _pendingMigrate.reset();
@@ -309,16 +303,16 @@ void EditorApp::StopPlay()
     _pendingPromote = false;
     DestroyPlayWorlds();
 
-    // Runs unconditionally, including for an empty snapshot: entering Play on an
-    // empty scene captures nothing, so gating the teardown on a non-empty snapshot
-    // used to let every entity spawned during Play survive into Editing. The revive
-    // loops below are already no-ops for an empty snapshot.
+    // Unconditional, empty snapshot included. Entering Play on an empty scene
+    // captures nothing, so gating this teardown on a non-empty snapshot would let
+    // every entity spawned during Play survive into Editing. The revive loops below
+    // are already no-ops when there is nothing to revive.
     {
         // Tear down the current (play-state) scene, then rebuild the snapshot at
-        // EXACT identity. Destroy+flush (not Scene::Clear) keeps the registry's slot
-        // table intact so ReviveAt can restore each entity's original handle; the
-        // physics world is wiped and rebuilt wholesale by the rebind below, so the
-        // play-state Jolt bodies need no per-entity teardown here.
+        // EXACT identity. Destroy+flush rather than Scene::Clear, because that keeps
+        // the registry's slot table intact and ReviveAt needs it to restore each
+        // entity's original handle. The play-state Jolt bodies need no per-entity
+        // teardown: the rebind below wipes and rebuilds the physics world wholesale.
         std::vector<Assisi::ECS::Entity> live;
         _scene->ForEachEntity([&](Assisi::ECS::Entity entity) { live.push_back(entity); });
         for (const Assisi::ECS::Entity entity : live)
@@ -339,9 +333,9 @@ void EditorApp::StopPlay()
             {
                 for (const Assisi::Editor::ComponentSnapshot &comp : snap.components)
                 {
-                    // Captured from the live scene when play started, so a refusal
-                    // is the codec failing to read its own output — and the editing
-                    // scene is mid-restore with no earlier state to fall back to.
+                    // The data was captured from the live scene when play started,
+                    // so a refusal is the codec failing to read its own output —
+                    // and the scene is mid-restore, with nothing to fall back to.
                     if (const auto *meta = registry.ById(comp.id); meta != nullptr && meta->addToScene)
                     {
                         if (!meta->addToScene(_scene, snap.handle.index, snap.handle.generation, comp.data))
@@ -362,15 +356,15 @@ void EditorApp::StopPlay()
 
     // A joined session loaded the *host's* level into this world, retargeting its
     // identity, its systems and its instance table; a spawn during play moved the
-    // table on its own. The entities are back; put the rest back too, or Save
-    // would write the editing scene out over the host's filename — and write the
-    // host's instances into the author's file (round-7 B4).
+    // table on its own. The entities are back — put the rest back too, or Save
+    // writes the editing scene out over the host's filename, and writes the host's
+    // instances into the author's file.
     if (_world != nullptr &&
         RestorePrePlayState(_prePlay, _world->levelPath, _world->systemNames, _world->instances))
     {
-        // Restoring a list that already installed once, so a failure here means
-        // the catalog changed under a running session — nothing to abort, but
-        // the editor is now short the systems it had before play.
+        // This list installed once already, so a failure means the catalog changed
+        // under a running session. Nothing to abort, but the editor is now short
+        // the systems it had before play.
         if (!_worlds.ApplySystems(*_world, _prePlay.systemNames, _prePlay.levelPath))
         {
             Assisi::Core::Log::Error("StopPlay: could not restore '{}'s systems.", _prePlay.levelPath);
@@ -379,8 +373,8 @@ void EditorApp::StopPlay()
 
     SetPlayState(PlayState::Editing);
     _playSnapshot.clear();
-    // Session state, dropped with the session — and it holds a copy of the whole
-    // instance table, which there is no reason to carry until the next Run.
+    // Session state, dropped with the session. It holds a copy of the whole
+    // instance table, and there is no reason to carry that until the next Run.
     _prePlay = PrePlayState{};
 
     Assisi::Core::Log::Info("Play: stopped (scene restored at exact identity).");
@@ -397,36 +391,31 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
         return Assisi::ECS::NullEntity;
     }
 
-    // A bare entity — no components, not even a Transform. Not every entity is
-    // spatial, so a Transform is opt-in: adding one (via Add Component) places the
-    // entity in front of the camera (see AddComponentToSelected). The author
-    // builds the entity up from here.
+    // A bare entity — no components, not even a Transform, because not every entity
+    // is spatial. Adding one later via Add Component is what places the entity in
+    // front of the camera (AddComponentToSelected).
     const Assisi::ECS::Entity previousSelection = _selectedEntity;
     const Assisi::ECS::Entity entity            = _scene->Create();
     SelectEntity(entity, SelectMode::Replace);
 
-    // Auto-named on create, so nobody has to think about naming until they care
-    // (docs/blueprint-system-concept.md §6). It matters more than it looks: an
-    // entity's name is what an override and every reference address it by, so an
-    // unnamed one gets a placeholder from the serializer at save time — which is
-    // stable, but says nothing. A unique-in-scene default keeps the file readable
-    // and keeps two entities from racing for the same one.
+    // Auto-named on create, so nobody has to think about naming until they care.
+    // It matters more than it looks: a name is what overrides and references
+    // address an entity by, and an unnamed one only gets a serializer placeholder
+    // at save time — stable, but saying nothing. A unique-in-scene default keeps
+    // the file readable and stops two entities racing for the same name.
     {
         // The same walk the Blueprints panel uses for instance names, over the
-        // entity namespace instead — one rule, two namespaces (Naming.hpp).
-        //
-        // The first one is now `Entity` rather than `Entity_1`: the walk only
-        // suffixes what is taken, which is what makes the first car `car` and not
-        // `car_1`. Being consistent about that across both namespaces is the point
-        // of sharing the walk at all.
+        // entity namespace instead — one rule, two namespaces (Naming.hpp). It
+        // suffixes only names already taken, so the first is `Entity`, not
+        // `Entity_1`, exactly as the first car is `car`.
         const std::string candidate = Assisi::Runtime::UniqueEntityName(*_scene, "Entity");
         (void)_scene->Add<Assisi::Runtime::Name>(entity,
                                                  {Assisi::Core::ShortString{candidate}});
     }
 
-    // Capture the creation as one undoable transaction: undo destroys the bare
-    // entity, redo revives it at this exact handle. Components added afterwards
-    // are their own transactions (so undo peels them off before removing the entity).
+    // One undoable transaction: undo destroys the bare entity, redo revives it at
+    // this exact handle. Components added afterwards are their own transactions, so
+    // undo peels them off before removing the entity.
     if (Assisi::Editor::EditHistory *history = ActiveHistory())
     {
         Assisi::Editor::Transaction txn;
@@ -443,18 +432,17 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
 // Selection
 // ---------------------------------------------------------------------------
 //
-// One list, `_selection`, in click order. `_selectedEntity` is its last element
-// — the *active* entity — and is what the inspector, the gizmo and every older
-// caller read. Keeping both is not redundancy: with two things selected, "which
-// one am I editing" and "what will Delete take" are different questions, and a
-// single member could only answer one of them.
+// One list, `_selection`, in click order. `_selectedEntity` is its last element —
+// the *active* entity — and is what the inspector, the gizmo and every older caller
+// read. Both are needed: with two things selected, "which one am I editing" and
+// "what will Delete take" are different questions.
 
 void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
 {
     if (entity == Assisi::ECS::NullEntity)
     {
-        // A click on empty space clears, whatever the modifier: a Ctrl-click on
-        // nothing toggling nothing is a click that appears to do nothing at all.
+        // A click on empty space clears whatever the modifier, because a Ctrl-click
+        // on nothing toggling nothing looks like a click that did nothing at all.
         ClearSelection();
         return;
     }
@@ -473,8 +461,7 @@ void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
         {
             _selection.erase(it);
             // Deselecting the active entity hands the role to whatever is still
-            // selected, rather than leaving the inspector on something no longer
-            // in the list.
+            // selected, so the inspector never sits on a row that left the list.
             _selectedEntity   = _selection.empty() ? Assisi::ECS::NullEntity : _selection.back();
             _selectedInstance = {};
             if (_selectedEntity != Assisi::ECS::NullEntity && _scene != nullptr)
@@ -493,8 +480,8 @@ void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
     case SelectMode::Range:
     {
         // Resolved against the row order the entity list recorded while drawing.
-        // With no anchor, or an anchor that is no longer on screen, there is no
-        // range to describe — fall back to a plain pick rather than guessing.
+        // With no anchor, or an anchor no longer on screen, there is no range to
+        // describe — fall back to a plain pick rather than guess one.
         const auto from = std::find(_entityRowOrder.begin(), _entityRowOrder.end(), _selectionAnchor);
         const auto to   = std::find(_entityRowOrder.begin(), _entityRowOrder.end(), entity);
         if (from == _entityRowOrder.end() || to == _entityRowOrder.end())
@@ -504,14 +491,13 @@ void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
             break;
         }
 
-        // The anchor stays put: shift-clicking further down replaces the range
-        // rather than adding a second one, which is what lets a range be grown
-        // and shrunk by clicking around.
+        // The anchor stays put, so shift-clicking further down replaces the range
+        // rather than adding a second one — that is what lets a range be grown and
+        // shrunk by clicking around.
         const auto first = from <= to ? from : to;
         const auto last  = from <= to ? to : from;
         _selection.assign(first, last + 1);
-        // …and the clicked row is the active one, whichever end of the range it
-        // is at.
+        // The clicked row is the active one, whichever end of the range it sits at.
         if (const auto it = std::find(_selection.begin(), _selection.end(), entity); it != _selection.end())
         {
             _selection.erase(it);
@@ -524,7 +510,7 @@ void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
     _selectedEntity = _selection.empty() ? Assisi::ECS::NullEntity : _selection.back();
 
     // Selecting a member keeps its instance in view for the inspector's header;
-    // selecting a loose entity clears it, so the two modes can never be half on.
+    // selecting a loose entity clears it, so the two modes are never half on.
     _selectedInstance = {};
     if (_selectedEntity != Assisi::ECS::NullEntity && _scene != nullptr)
     {
@@ -551,8 +537,8 @@ bool EditorApp::HasSelectedAncestor(Assisi::ECS::Entity entity) const
     if (_scene == nullptr)
         return false;
 
-    // Bounded by the selection size rather than by the chain: a cycle in Parent is
-    // a corrupt scene, not something to hang on.
+    // Bounded rather than walking to the root: a cycle in Parent is a corrupt
+    // scene, not something to hang on.
     for (std::size_t guard = 0; guard < _selection.size() + 64; ++guard)
     {
         const auto *parent = _scene->Get<Assisi::Runtime::Parent>(entity);
@@ -572,9 +558,9 @@ void EditorApp::PruneSelection()
 
     std::erase_if(_selection, [&](Assisi::ECS::Entity e) { return !_scene->IsAlive(e); });
 
-    // `_selectedEntity` is also written directly — by undo restoring a selection,
-    // by picking, by CreateEntity — so reconcile in both directions rather than
-    // assuming the list is ahead.
+    // `_selectedEntity` is also written directly — by undo restoring a selection, by
+    // picking, by CreateEntity — so reconcile both ways rather than assume the list
+    // is the one that moved.
     if (_selectedEntity != Assisi::ECS::NullEntity && !_scene->IsAlive(_selectedEntity))
         _selectedEntity = Assisi::ECS::NullEntity;
     if (_selectedEntity == Assisi::ECS::NullEntity)
@@ -598,8 +584,8 @@ std::vector<Assisi::ECS::Entity> EditorApp::GatherSubtree(Assisi::ECS::Entity ro
         return result;
 
     // Breadth-first: for each collected entity, sweep the scene for entities whose
-    // Parent points at it (no child index exists, so this scans — fine at editor
-    // scale). `result` grows as we go; the index walk visits each new entry.
+    // Parent points at it. There is no child index, so this scans — fine at editor
+    // scale. `result` grows as we go and the index walk picks up each new entry.
     for (std::size_t i = 0; i < result.size(); ++i)
     {
         const Assisi::ECS::Entity current = result[i];
@@ -635,18 +621,17 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
         return;
     }
 
-    // The union of every root's subtree, deduplicated. Two selected entities
-    // often stand in the same subtree — a parent and its child, both picked with
-    // Ctrl — and capturing that child twice would push two EntityDeltas naming
-    // one entity, so undo would revive it, then try to revive it again.
+    // The union of every root's subtree, deduplicated. Two selected entities often
+    // stand in the same subtree — a parent and its child, both Ctrl-picked — and
+    // capturing that child twice would push two EntityDeltas for one entity, so
+    // undo would revive it and then try to revive it again.
     std::vector<Assisi::ECS::Entity> doomed;
     for (const Assisi::ECS::Entity root : roots)
     {
-        // A mirror is not ours to delete: the server would simply send it again,
-        // and the round trip would show up as a mysterious flicker rather than as
-        // a refusal. (The client *can* destroy one — gameplay runs over the play
-        // world — and the apply path survives it; that is a different thing from
-        // the editor offering it as an authoring action.)
+        // A mirror is not ours to delete: the server sends it again, and the round
+        // trip reads as a mysterious flicker rather than as a refusal. Gameplay on
+        // the client may still destroy one and the apply path survives that; the
+        // editor offering it as an authoring action is a different thing.
         if (!_scene->IsAlive(root) || !IsEditable(root))
             continue;
 
@@ -657,11 +642,10 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
     if (doomed.empty())
         return;
 
-    // Capture everything as one transaction *before* tearing anything down
-    // (components must still be alive to serialize). Undo revives every entity at
-    // its exact handle and restores its components (two-phase, so Parent refs
-    // resolve); redo re-deletes. One transaction for the whole gesture, so
-    // deleting five entities is one Ctrl-Z rather than five.
+    // Capture everything *before* tearing anything down — components must still be
+    // alive to serialize. Undo revives every entity at its exact handle and restores
+    // its components (two-phase, so Parent refs resolve); redo re-deletes. One
+    // transaction for the whole gesture, so deleting five entities is one Ctrl-Z.
     Assisi::Editor::EditHistory *history = ActiveHistory();
     Assisi::Editor::Transaction  txn;
     if (history != nullptr)
@@ -676,10 +660,10 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
             txn.cmds.push_back(Assisi::Editor::EntityDelta{e, history->CaptureEntityComponents(e), std::nullopt});
     }
 
-    // Tear down each entity's Jolt body (RigidBody is transient — never in the
-    // snapshot; the undo rebuilds it from RigidBodyDescriptor via the rebind hook),
-    // then queue the entity for destruction. Destroy is deferred; the slots free at
-    // the frame's FlushDestroyed, ready for a later undo's ReviveAt.
+    // Tear down each entity's Jolt body, then queue the entity for destruction.
+    // RigidBody is transient — never captured; undo rebuilds it from
+    // RigidBodyDescriptor through the rebind hook. Destroy is deferred, so the slots
+    // free at the frame's FlushDestroyed, ready for a later undo's ReviveAt.
     for (const Assisi::ECS::Entity e : doomed)
     {
         if (const auto *rbc = _scene->Get<Assisi::Physics::RigidBody>(e))
@@ -693,9 +677,9 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
     if (history != nullptr)
         history->Push(std::move(txn));
 
-    // Drop from the selection anything that was deleted. Destroy is deferred, so
-    // IsAlive still says yes this frame — the doomed list is the only truthful
-    // answer until the flush.
+    // Drop the deleted entities from the selection. Destroy is deferred, so IsAlive
+    // still says yes this frame; the doomed list is the only truthful answer until
+    // the flush.
     std::erase_if(_selection,
                   [&](Assisi::ECS::Entity e)
                   { return std::find(doomed.begin(), doomed.end(), e) != doomed.end(); });
@@ -711,10 +695,10 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
 
 void EditorApp::DrawGameControlWindow()
 {
-    // What Run does on the network. Host and Join share this one surface
-    // deliberately: both halves of the same feature, so "where do I join from?"
-    // is answered "the same place you host from". The Network panel is the
-    // detail/stats view, not a second place sessions start.
+    // What Run does on the network. Host and Join share one surface on purpose —
+    // both halves of the same feature, so "where do I join from?" is answered "the
+    // same place you host from". The Network panel is the detail/stats view, not a
+    // second place sessions start.
     struct NetModeEntry
     {
         const char  *label;
@@ -754,10 +738,10 @@ void EditorApp::DrawGameControlWindow()
     };
 
     // F5 run/resume, F6 pause, F7 stop — handled here so the keys live with the
-    // window that owns them (same pattern as F11 in DrawOptionsWindow). Each
-    // transition method no-ops unless the current state allows it, so a keypress
-    // in the wrong state simply does nothing. Guard on ImGuiWantsKeyboard so the
-    // keys don't fire while a text field has focus.
+    // window that owns them (the pattern F11 follows in DrawOptionsWindow). Each
+    // transition no-ops unless the current state allows it, so a keypress in the
+    // wrong state does nothing. Gated on ImGuiWantsKeyboard so they do not fire
+    // while a text field has focus.
     if (!ImGuiWantsKeyboard())
     {
         Assisi::Window::InputContext &input = GetInput();
@@ -780,12 +764,11 @@ void EditorApp::DrawGameControlWindow()
     const bool editing = _playState == PlayState::Editing;
     const bool playing = _playState == PlayState::Playing;
     const bool paused  = _playState == PlayState::Paused;
-    // Every world-structure control below is dead while a session is up. The
-    // session binds its scene by reference at construction, so a host-side
-    // Travel would either dangle that reference or keep replicating a retired
-    // world, and a client-side one detonates the join contract outright. v1
-    // disables them; mid-session level change is a deferred renegotiation of
-    // the ServerHello level contract, not a v1 casualty.
+    // Every world-structure control below is dead while a session is up. The session
+    // binds its scene by reference at construction, so a host-side Travel would
+    // either dangle that reference or keep replicating a retired world, and a
+    // client-side one breaks the join contract outright. Changing level mid-session
+    // is a deferred renegotiation of the ServerHello level contract.
 #if defined(ASSISI_NETWORKING)
     const bool networked = IsNetSessionActive();
 #else
@@ -798,8 +781,8 @@ void EditorApp::DrawGameControlWindow()
     };
 
     // Run starts (from editing) or resumes (from paused); greyed while playing.
-    // Pause is live only while playing. Stop is live whenever a session is (playing
-    // or paused).
+    // Pause is live only while playing and never while networked. Stop is live
+    // whenever play is, playing or paused.
     ImGui::BeginDisabled(!(editing || paused));
     if (ImGui::Button("Run"))
     {
@@ -883,19 +866,19 @@ void EditorApp::DrawGameControlWindow()
     ImGui::Text("State: %s", stateText);
     ImGui::TextDisabled("F5 run  |  F6 pause  |  F7 stop");
 
-    // --- Resident worlds (multi-scene S2) -----------------------------------
+    // --- Resident worlds ----------------------------------------------------
     // A debug control, not a shipping feature: it stands in for the game calling
     // WorldManager, so several levels can be brought up and watched side by side
-    // from a stock editor. Loading is deferred to the main-thread drain for the
-    // same reason level loads are — it touches GPU resources this frame's draws
-    // may already reference.
+    // from a stock editor. Loading is deferred to the main-thread drain for the same
+    // reason level loads are — it touches GPU resources this frame's draws may
+    // already reference.
     ImGui::Separator();
     ImGui::Text("Worlds resident: %zu", _worlds.Count());
 
-    // Only during a session. While Editing there is exactly one world — the edited
-    // one — which is what keeps Play/Stop's snapshot-and-restore unambiguous, and
-    // a second resident level that nothing simulates would have no restore story
-    // anyway (docs/multi-scene-design-notes.md §4, S2).
+    // During play only. While Editing there is exactly one world — the edited one —
+    // which is what keeps Play/Stop's snapshot-and-restore unambiguous; a second
+    // resident level that nothing simulates would have no restore story anyway
+    // (docs/multi-scene-design-notes.md).
     const bool canAddWorld =
         (playing || paused) && !networked && !_levelFiles.empty() && !_pendingWorldLoad.has_value();
     ImGui::BeginDisabled(!canAddWorld);
@@ -913,10 +896,10 @@ void EditorApp::DrawGameControlWindow()
                           "picks which to look at. Stop destroys every world the session created.");
     }
 
-    // Travel: what the running game does when it changes level. Distinct from the
-    // Levels window's Load, which changes what you are *editing* — this replaces
-    // the world being played and never leaves Play. The edited world goes dormant
-    // so Stop still restores it.
+    // Travel: what the running game does when it changes level. Not the Levels
+    // window's Load, which changes what you are *editing* — this replaces the world
+    // being played and never leaves Play. The edited world goes dormant, so Stop
+    // still restores it.
     ImGui::SameLine();
     const bool canTravel =
         (playing || paused) && !networked && !_levelFiles.empty() && !_pendingTravel.has_value();
@@ -935,11 +918,10 @@ void EditorApp::DrawGameControlWindow()
                           "returns to the level you were editing, with its undo history.");
     }
 
-    // Seamless load (S5): background preload, then an instant swap with the assets
-    // already resident (no pop-in). Two steps: 1) "Prepare" starts the load on a
-    // worker while this world keeps simulating; 2) once it reads "READY", "Load
-    // now" swaps instantly. The selected level is the one chosen in the Levels
-    // window.
+    // Seamless load: background preload, then an instant swap with the assets
+    // already resident, so there is no pop-in. "Prepare" starts the load on a worker
+    // while this world keeps simulating; once the status reads READY, "Load now"
+    // swaps. The level is whichever is selected in the Levels window.
     ImGui::SeparatorText("Seamless load");
 
     const bool  loadingInFlight = _worlds.HasPendingLoad();
@@ -948,7 +930,7 @@ void EditorApp::DrawGameControlWindow()
                                       ? std::string{}
                                       : _levelFiles[static_cast<std::size_t>(_selectedLevel)];
 
-    // Step 1 — Prepare. Disabled once a load is already in flight.
+    // Step 1 — Prepare. Dead once a load is already in flight.
     const bool canPreload = (playing || paused) && !networked && !selectedLevel.empty() && !loadingInFlight &&
                             !_pendingPreload.has_value();
     ImGui::BeginDisabled(!canPreload);
@@ -969,8 +951,8 @@ void EditorApp::DrawGameControlWindow()
                               selectedLevel.c_str());
     }
 
-    // Step 2 — Load now. Prominent and enabled ONLY when the preload is fully
-    // ready (deserialized AND assets streamed in), so pressing it is a clean swap.
+    // Step 2 — Load now. Live only once the preload is fully ready (deserialized
+    // AND assets streamed in), so pressing it is always a clean swap.
     ImGui::SameLine();
     ImGui::BeginDisabled(!preloadReady || networked);
     if (ImGui::Button("Load now") && preloadReady && !networked)
@@ -985,7 +967,7 @@ void EditorApp::DrawGameControlWindow()
                                           : "Press \"Prepare\" first to start a background load.");
     }
 
-    // Cancel an in-flight/ready preload (throws the loaded world away).
+    // Cancelling an in-flight or ready preload throws the loaded world away.
     if (loadingInFlight)
     {
         ImGui::SameLine();
@@ -993,7 +975,7 @@ void EditorApp::DrawGameControlWindow()
             _worlds.CancelPendingLoad();
     }
 
-    // Status line under the buttons: idle / preparing NN% / READY.
+    // Status: idle / preparing NN% / READY.
     if (!loadingInFlight)
     {
         ImGui::TextDisabled("Status: idle — pick a level, then Prepare.");
@@ -1008,13 +990,12 @@ void EditorApp::DrawGameControlWindow()
         const int32_t pct = static_cast<int32_t>(_worlds.PendingLoadProgress() * 100.f + 0.5f);
         ImGui::Text("Status: preparing %.*s...  %d%%",
                     static_cast<int>(_worlds.PendingLoadPath().size()), _worlds.PendingLoadPath().data(), pct);
-        // A visual bar under the text for good measure.
         ImGui::ProgressBar(_worlds.PendingLoadProgress(), ImVec2(-1.f, 0.f));
     }
 
-    // Destroying the shown world needs a successor to show, and neither role may
-    // be dropped on the floor — so only a non-edited world that isn't the only
-    // one can go.
+    // Destroying the shown world needs a successor to show, and neither the shown
+    // nor the edited role may be left unfilled — so only a non-edited world that is
+    // not the last one can go.
     Assisi::App::World *const edited = _worlds.Edited();
     const bool canDestroy = _worlds.Count() > 1 && _world != edited && edited != nullptr && !networked;
     ImGui::SameLine();
@@ -1028,10 +1009,9 @@ void EditorApp::DrawGameControlWindow()
     ImGui::EndDisabled();
     netTooltip("Not while a network session is up — the session holds one of these worlds by reference.");
 
-    // Entity migration (S4): move the selected entity + its subtree into another
-    // resident world. This is a debug stand-in for what a game does in code
-    // (mark the player/inventory as travelling); it lets you watch a subtree move
-    // between two levels by hand.
+    // Move the selected entity and its subtree into another resident world. A debug
+    // stand-in for what a game does in code (marking the player/inventory as
+    // travelling), so a subtree can be moved between two levels by hand.
     const bool haveSelection = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity);
     if (_worlds.Count() > 1 && haveSelection && !networked)
     {
@@ -1059,8 +1039,8 @@ void EditorApp::DrawEntityListWindow()
 {
     ImGui::Begin("Entities");
 
-    // Which resident world the panels below describe. Only drawn once a second
-    // world exists.
+    // Which resident world the panels below describe. Only drawn once a second world
+    // exists.
     DrawWorldSelector();
 
     // Every control that mutates the scene is dead while a non-edited world is
@@ -1068,8 +1048,8 @@ void EditorApp::DrawEntityListWindow()
     // edited world alone.
     ImGui::BeginDisabled(!IsEditable());
 
-    // + adds a new (empty) entity in front of the camera and selects it, and asks
-    // the list to scroll to its row below so the new entity comes into view.
+    // + adds a bare entity (no components — see CreateEntity), selects it, and asks
+    // the row loop below to scroll it into view.
     if (ImGui::Button("+"))
     {
         _scrollToEntity = CreateEntity();
@@ -1079,8 +1059,8 @@ void EditorApp::DrawEntityListWindow()
         ImGui::SetTooltip("Add a new entity");
     }
 
-    // Delete removes every selected entity and its subtree (undoable). Disabled
-    // when nothing is selected. Also on the Delete key (see OnUpdate).
+    // Removes every selected entity and its subtree, undoably. Also on the Delete
+    // key (see OnUpdate).
     ImGui::SameLine();
     const bool canDelete = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
                            IsEditable(_selectedEntity);
@@ -1102,21 +1082,21 @@ void EditorApp::DrawEntityListWindow()
 
     // Every alive entity, one selectable row. A single click selects it (the
     // inspector follows _selectedEntity); a double click also flies the camera to
-    // frame it. AllowDoubleClick makes Selectable fire on both, so the double
-    // click is distinguished by IsMouseDoubleClicked.
+    // frame it. AllowDoubleClick fires Selectable on both, so the double click is
+    // told apart by IsMouseDoubleClicked.
     Assisi::ECS::Entity focusRequest = Assisi::ECS::NullEntity;
 
     // The rows this pass draws, in draw order — what a Shift-range walks through.
     // Rebuilt rather than cached: rows come and go with the scene and with which
-    // instances are expanded, and a range resolved against a stale order would
-    // select entities that are not between the two rows the user clicked.
+    // instances are expanded, and a range resolved against a stale order selects
+    // entities that are not between the two rows the user clicked.
     _entityRowOrder.clear();
     _pendingRangeTarget = Assisi::ECS::NullEntity;
 
-    // Members are gathered per instance and drawn under a collapsible row instead
-    // of loose in the list, because a level of forty cars is two hundred rows of
-    // "body", "wheel_fl", "wheel_fl", … otherwise. Built each frame: membership is
-    // a query, and a cached list is the stored member list this design refuses.
+    // Members are gathered per instance and drawn under a collapsible row rather
+    // than loose in the list: a level of forty cars is otherwise two hundred rows of
+    // "body", "wheel_fl", "wheel_fl", … Built each frame, because membership is a
+    // query — a cached list would be the stored member list this design refuses.
     std::map<Assisi::ECS::InstanceId, std::vector<Assisi::ECS::Entity>> members;
     for (auto [entity, tag] : _scene->Query<Assisi::ECS::BlueprintMember>())
         members[tag.instanceId].push_back(entity);
@@ -1125,9 +1105,9 @@ void EditorApp::DrawEntityListWindow()
     {
             _entityRowOrder.push_back(entity);
 
-            // Show the entity's Name if it has a non-empty one; otherwise fall back
-            // to its [index:generation] id. PushID(index) keeps rows distinct even
-            // when two entities share a name.
+            // The entity's Name if it has a non-empty one, its [index:generation] id
+            // otherwise. PushID(index) keeps rows distinct when two entities share a
+            // name.
             char        label[64];
             const auto *nameComp = _scene->Get<Assisi::Runtime::Name>(entity);
             if (nameComp != nullptr && !nameComp->value.Empty())
@@ -1136,8 +1116,8 @@ void EditorApp::DrawEntityListWindow()
                 std::snprintf(label, sizeof(label), "Entity [%u:%u]", entity.index, entity.generation);
 
             ImGui::PushID(static_cast<int32_t>(entity.index));
-            // Mirrors are tinted, because "why can't I move this one" should be
-            // answerable by looking rather than by clicking.
+            // Mirrors are tinted: "why can't I move this one" should be answerable
+            // by looking rather than by clicking.
 #if defined(ASSISI_NETWORKING)
             const bool mirrored = _scene->Has<Assisi::NetSync::Mirrored>(entity);
 #else
@@ -1149,10 +1129,10 @@ void EditorApp::DrawEntityListWindow()
             const bool selected = IsSelected(entity);
             if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowDoubleClick))
             {
-                // Ctrl picks one more (or drops one); Shift takes everything
-                // between the last plain pick and here. A range needs the whole
-                // row order, and half of it has not been drawn yet — so note the
-                // click and resolve it below.
+                // Ctrl picks one more (or drops one); Shift takes everything between
+                // the last plain pick and here. A range needs the whole row order
+                // and half of it is still undrawn, so note the click and resolve it
+                // after the loops.
                 if (ImGui::GetIO().KeyShift)
                     _pendingRangeTarget = entity;
                 else
@@ -1160,8 +1140,8 @@ void EditorApp::DrawEntityListWindow()
 
                 if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
                 {
-                    // Defer the focus: it reads the transform and starts an
-                    // animation, so keep it out of the scan.
+                    // Deferred: focusing reads the transform and starts an
+                    // animation, neither of which belongs inside the scan.
                     focusRequest = entity;
                 }
             }
@@ -1181,9 +1161,8 @@ void EditorApp::DrawEntityListWindow()
             ImGui::PopID();
     };
 
-    // Loose entities first: an instance is a group and reads better as one block
-    // than interleaved with whatever happens to sit between its members in the
-    // scan.
+    // Loose entities first: an instance is a group, and reads better as one block
+    // than interleaved with whatever the scan happens to sit between its members.
     _scene->ForEachEntity(
         [&](Assisi::ECS::Entity entity)
         {
@@ -1200,14 +1179,14 @@ void EditorApp::DrawEntityListWindow()
                       row != nullptr && !row->name.empty() ? row->name.c_str() : "instance",
                       row != nullptr ? row->source.c_str() : "?");
 
-        // `.value` on purpose: an ImGui id is a raw number, one of the few places
-        // the instance id genuinely leaves its own type (see ECS::InstanceId). The
-        // high bit keeps it out of the entity rows' id space.
+        // `.value` on purpose: an ImGui id is a raw number, one of the few places an
+        // instance id genuinely leaves its own type (ECS::InstanceId). The high bit
+        // keeps it out of the entity rows' id space.
         ImGui::PushID(static_cast<int32_t>(0x8000'0000u | instanceId.value));
 
-        // The row itself selects the *instance*: the gizmo then moves the whole
-        // group and writes its placement, recording no member overrides. Expanding
-        // it and clicking a member is the other mode.
+        // The row itself selects the *instance*: the gizmo then moves the whole group
+        // and writes its placement, recording no member overrides. Expanding it and
+        // clicking a member is the other mode.
         const bool instanceSelected = _selectedInstance == instanceId && _selectedEntity == Assisi::ECS::NullEntity;
         ImGuiTreeNodeFlags flags    = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow |
                                    ImGuiTreeNodeFlags_OpenOnDoubleClick;
@@ -1217,9 +1196,8 @@ void EditorApp::DrawEntityListWindow()
         const bool open = ImGui::TreeNodeEx(header, flags);
         if (ImGui::IsItemClicked() && !ImGui::IsItemToggledOpen())
         {
-            // Instance mode is exclusive: the gizmo moves the group and writes the
-            // placement, which is not a thing that composes with a handful of
-            // loose entities also being selected.
+            // Instance mode is exclusive: moving the group and writing its placement
+            // does not compose with a handful of loose entities also being selected.
             ClearSelection();
             _selectedInstance = instanceId;
         }
