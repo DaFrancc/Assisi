@@ -4,15 +4,23 @@
 /// @file EditorApp.hpp
 /// @brief The Assisi editor application, built on the Application layer.
 ///
-/// The one public class of the editor library (docs/editor-extraction-plan.md):
-/// an editor executable constructs an EditorApp with an EditorConfig carrying
-/// the game's hooks and calls Initialize()/Run(). The implementation is split
-/// across several translation units by concern (all private to the library):
-///   - EditorApp.cpp        lifecycle/setup + diagnostics + OnImGui dispatch
-///   - EditorCamera.cpp     fly camera, entity picking, eyedropper
-///   - EditorInspector.cpp  reflected component field editing
+/// The one public class of the editor library: an editor executable constructs
+/// an EditorApp with an EditorConfig carrying the game's hooks and calls
+/// Initialize()/Run(). The implementation is split across translation units by
+/// concern (all private to the library):
+///   - EditorApp.cpp           lifecycle/setup, diagnostics, OnImGui dispatch,
+///                             undo/redo plumbing, stale-asset prompt
 ///   - EditorAssetBrowser.cpp  asset browser + thumbnails
-///   - EditorLevels.cpp     level scan/save/load + the Levels window
+///   - EditorBlueprintMode.cpp blueprint editing mode + re-expansion on save
+///   - EditorCamera.cpp        fly camera, entity picking, eyedropper
+///   - EditorColliders.cpp     collider wireframes and silhouette outlines
+///   - EditorGizmo.cpp         transform and instance gizmos
+///   - EditorInspector.cpp     reflected component field editing
+///   - EditorLevels.cpp        level/blueprint scan, load, save, instancing
+///   - EditorNet.cpp           net session, join, play-in-editor clients
+///   - EditorPlay.cpp          play control, selection, entity create/delete
+///   - EditorWorlds.cpp        resident worlds, travel, migration
+/// (EditorOptions.cpp implements EditorOptionsPanel, not this class.)
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/ChildProcess.hpp>
@@ -84,26 +92,23 @@ struct EntitySelectionChangedEvent
 
 /// @brief The game side's hooks into the editor, supplied at construction.
 ///
-/// Seam contract (editor-extraction plan E2):
-///  - Systems the game registers tick ONLY while the editor is Playing (F5) —
-///    never while Editing or Paused. The editor runs the game registry's
-///    PreUpdate/Update/PostUpdate phases (in that order, after the editor's
-///    own systems) from OnUpdate, and its FixedUpdate phase from
-///    OnFixedUpdate just before the physics step.
-///  - Render systems (RegisterRender) do not run in-editor at this stage —
-///    the editor owns rendering. OnStart warns if any are registered.
-///  - After()/Before() ordering resolves within one registry only: game
-///    systems cannot order against editor systems (by design).
-///  - There is no play-start/stop notification yet; a game system holding
-///    entity handles across a play session has no reset hook (the Phase 2
-///    template work adds the game-side lifecycle surface).
+/// Seam contract:
+///  - Game systems tick ONLY while the editor is Playing (F5) — never while
+///    Editing or Paused. The editor runs their PreUpdate/Update/PostUpdate
+///    phases (in that order, after its own systems) from OnUpdate, and their
+///    FixedUpdate phase from OnFixedUpdate just before the physics step.
+///  - Render systems do not run in-editor — the editor owns rendering. OnStart
+///    warns once if any are declared.
+///  - After()/Before() ordering resolves within one registry only: game systems
+///    cannot order against editor systems, by design.
+///  - There is no play-start/stop notification, so a game system holding entity
+///    handles across a play session has no reset hook.
 struct EditorConfig
 {
-    // Systems are declared with ASYSTEM and reach the catalog by being linked,
-    // and a level names the ones it wants. There is nothing for a game to
-    // register here, which is the point: `registerGameSystems` and
-    // `registerProfiles` were two hooks a host had to remember to call, and a
-    // host that forgot got a world that physics-stepped and ran no game logic.
+    // Systems are declared with ASYSTEM, reach the catalog by being linked, and
+    // a level names the ones it wants — there is deliberately nothing to
+    // register here. The hooks this replaced had to be remembered, and a host
+    // that forgot got a world that physics-stepped and ran no game logic.
 
     /// Virtual path (under the asset root) of a level to open once at
     /// startup, e.g. "levels/Materials.alvl". Empty = none. Resolved through
@@ -113,11 +118,10 @@ struct EditorConfig
     /// Endpoint ("address" or "address:port") to join automatically once the
     /// editor has started. Empty = none.
     ///
-    /// What makes a play-in-editor client a client: the process is a full
-    /// editor, launched by another one, that enters Play as a joiner the moment
-    /// it is up. Nothing else about it is special — which is the point, since a
-    /// PIE client that ran a different code path would stop being a test of the
-    /// thing it is meant to test.
+    /// This is the whole of what makes a play-in-editor client a client: a full
+    /// editor, launched by another one, that enters Play as a joiner as soon as
+    /// it is up. Deliberately no special code path — one that differed would
+    /// stop being a test of the thing it is meant to test.
     std::string autoJoinEndpoint;
 
     /// Run as a restricted viewer: no writes to anything the editor that
@@ -126,11 +130,11 @@ struct EditorConfig
     bool restrictedViewer = false;
 
     /// Build the SceneRenderer's editor overlay passes (selection outline,
-    /// entity icons, collider wireframes). On by default — this exists so the
-    /// renderer's off-path (what a Game build runs: passes never built, no
-    /// assets/editor/** loads) can be exercised from a stock editor binary
-    /// via --no-editor-visuals, without a custom build. Distinct from the F11
-    /// "Editor overlays" checkbox, which only hides the overlays per frame.
+    /// entity icons, collider wireframes). On by default; `--no-editor-visuals`
+    /// clears it, so the renderer's off-path — what a Game build runs: passes
+    /// never built, no assets/editor/** loads — can be exercised from a stock
+    /// editor binary. Distinct from the F11 "Editor overlays" checkbox, which
+    /// only hides the overlays per frame.
     bool enableEditorVisuals = true;
 };
 
@@ -141,8 +145,8 @@ class EditorApp : public Assisi::App::Application
   public:
     explicit EditorApp(EditorConfig config = {});
 
-    /// Out of line because the panels this owns are only declared here — their
-    /// definitions live beside their implementations, in src/.
+    /// Out of line: `_options` is a unique_ptr to a type only forward-declared
+    /// here, so the deleter cannot be instantiated in this header.
     ~EditorApp();
 
     /// @brief Transform-gizmo handle set. Public so the free helpers in
@@ -156,10 +160,10 @@ class EditorApp : public Assisi::App::Application
 
     /// @brief How a click folds into the current selection.
     ///
-    /// Named after the gesture rather than the modifier key, because the two do
-    /// not map one-to-one: the viewport binds *both* Ctrl and Shift to Toggle
-    /// (there is no row order out there to draw a range through), while the
-    /// entity list binds Shift to Range.
+    /// Named after the gesture, not the modifier key: the two do not map
+    /// one-to-one. The viewport binds *both* Ctrl and Shift to Toggle (there is
+    /// no row order out there to draw a range through); the entity list binds
+    /// Shift to Range.
     enum class SelectMode : std::uint8_t
     {
         Replace, ///< Plain click: this entity becomes the whole selection.
@@ -183,30 +187,30 @@ class EditorApp : public Assisi::App::Application
     void SetupCamera();
     void SetupScene();
 
-    // --- Per-frame helpers ---
+    // --- Camera and picking (per frame) ---
     void HandleEntityPicking();
     void UpdateCamera(float dt);
     /// @brief Recomputes _cameraTransform.worldMatrix from its TRS. The camera is
     /// parentless, so world == local; call before reading the view matrix.
     void RefreshCameraMatrix();
     /// @brief Reseeds _yaw/_pitch from the camera's current rotation so the fly
-    /// controller resumes from the new orientation without snapping — called when
-    /// a focus animation ends (or is cancelled by manual look input).
+    /// controller resumes from the new orientation without snapping. Called when
+    /// a focus animation ends, or is cancelled by manual look input.
     void SyncYawPitchFromRotation();
 
     // --- ImGui panels ---
-    void DrawOptionsWindow(); // hands the frame to EditorOptionsPanel; see EditorOptions.cpp
+    void DrawOptionsWindow(); // hands the frame to EditorOptionsPanel and applies its result
     void DrawDiagnosticsWindow();
-    void DrawChiaraWindow();  // performance capture (F9); empty without -c builds
+    void DrawChiaraWindow();  // performance capture (F9); empty in builds without profiling
     void DrawLevelsWindow();
     void DrawBlueprintsWindow();
     void DrawInspector();
     void DrawHelloImageWindow(); // ImGui-texture-display smoke test
     void DrawAssetBrowser();
-    void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7); see EditorPlay.cpp
-    void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses; see EditorPlay.cpp
-    void DrawHistoryWindow();     // undo/redo stack view; click a row to jump. See EditorApp.cpp
-    void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity; see EditorGizmo.cpp
+    void DrawGameControlWindow(); // Run/Pause/Stop the simulation (F5/F6/F7)
+    void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses
+    void DrawHistoryWindow();     // undo/redo stack view; click a row to jump
+    void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity
     void DrawInstanceGizmo();     // …and over a selected blueprint instance, which moves as one
     /// @brief Writes @p world onto @p entity as a local TRS against @p parentWorld,
     /// and syncs any physics body to it. The tail of a gizmo drag, factored out
@@ -214,14 +218,13 @@ class EditorApp : public Assisi::App::Application
     void ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
                                const glm::mat4 &world);
     // --- Networking ---------------------------------------------------------
-    // Compiled out entirely without ASSISI_ENABLE_NETWORKING: the definitions
-    // live in EditorNet.cpp and EditorPlay.cpp, which the build drops or guards
-    // to match. The editor is fully usable without them — what disappears is the
-    // multiplayer panel, hosting, joining, and play-in-editor *clients*. Plain
-    // play-in-editor is not networking and stays.
+    // Compiled out entirely without networking. The editor is fully usable
+    // without it — what disappears is the multiplayer panel, hosting, joining,
+    // and play-in-editor *clients*. Plain play-in-editor is not networking and
+    // stays.
 #if defined(ASSISI_NETWORKING)
-    void DrawNetworkWindow();     // negotiated level + live net stats; see EditorNet.cpp
-    void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"; see EditorNet.cpp
+    void DrawNetworkWindow();     // negotiated level + live net stats
+    void DrawHostUnsavedModal();  // "save and host / host last-saved / cancel"
     /// @brief The two host-side authoring warnings: a level with nothing marked
     /// Replicated, and dynamic bodies that will run as cosmetic local physics.
     /// Both describe a gap between what was marked and what clients will see.
@@ -232,19 +235,19 @@ class EditorApp : public Assisi::App::Application
     void SmoothNetView();         // once per frame, AFTER the physics writeback: interpolation + correction smoothing
 #endif // ASSISI_NETWORKING
 
-    // --- Networked play (docs/replication-plan-v4.md §3.6) ------------------
-    // One rule the rest falls out of: **a network session exists only inside a
+    // --- Networked play -----------------------------------------------------
+    // The rule the rest falls out of: **a network session exists only inside a
     // play session.** Hosting starts by entering Play; a client joins by
     // entering Play with a join target; Stop — either side, any reason — tears
-    // the session down. That is what lets the join build its world inside the
+    // the session down. That is what lets a join build its world inside the
     // *play* scene, which the editor already treats as disposable, so nearly
     // every guard an "editing while joined" mode would need is machinery the
     // play snapshot/restore already provides.
 
     // NetIntent and JoinPhase stay outside the networking guard on purpose:
-    // `Standalone` is what *ordinary* Play is, so StartPlay takes one either way
-    // and the whole play path would need two spellings without them. Without
-    // networking the other enumerators are simply never reached.
+    // `Standalone` is what *ordinary* Play is, so StartPlay takes one either
+    // way and the whole play path would need two spellings without them.
+    // Without networking the other enumerators are never reached.
 
     /// @brief What the current (or next) play session does on the network.
     enum class NetIntent : std::uint8_t
@@ -271,7 +274,7 @@ class EditorApp : public Assisi::App::Application
 
     /// @brief What this editor would advertise as its level: the edited world's
     /// saved path plus a content hash of the file as it currently sits on disk.
-    /// Addressing is `None` when the level has never been saved — which is what
+    /// Addressing is `None` when the level has never been saved, which is what
     /// makes "save the level to host" a check rather than a suggestion.
     [[nodiscard]] Assisi::NetSync::LevelIdentity HostLevelIdentity() const;
 
@@ -292,12 +295,11 @@ class EditorApp : public Assisi::App::Application
     /// Stop as everything else.
     void FailJoin(std::string reason);
 
-    // --- Play in editor (§3.6) ---------------------------------------------
+    // --- Play in editor -----------------------------------------------------
     // "Host + N clients" launches N more copies of this executable, each of
-    // which joins the listen server this one just started. It exists because
-    // every later milestone is verified by *looking* at two worlds agreeing,
-    // and two-window choreography by hand is the difference between checking
-    // that ten times and checking it once.
+    // which joins the listen server this one just started — so that two worlds
+    // agreeing can be checked by looking, without choreographing two windows by
+    // hand every time.
 
     /// @brief Snapshot the live scene to a temp level file and describe it as
     /// an absolute-path LevelIdentity.
@@ -316,24 +318,28 @@ class EditorApp : public Assisi::App::Application
     void ShutdownPieClients();
 #endif // ASSISI_NETWORKING
 
-    /// @brief Diagnostic (end of OnImGui): warns with full ImGui internal state
+    // --- Diagnostics ---
+    /// @brief Runs at the end of OnImGui: warns, with full ImGui internal state,
     /// when a widget holds ActiveId for seconds with no mouse button down and no
     /// text edit — the "UI stops responding until a new window opens" wedge.
     void LogImGuiWedgeDiagnostics();
 
-    // Build collider wireframes AND silhouette outlines (collider volume + entity
-    // mesh) for every RigidBodyDescriptor and hand them to the renderer (green
+    // --- Collider visualisation ---
+    // Builds collider wireframes AND silhouette outlines (collider volume + entity
+    // mesh) for every RigidBodyDescriptor and hands them to the renderer (green
     // depth-tested, orange x-ray for the selection), plus the list of collider
-    // entities so their editor billboards are suppressed. Editor-only: a no-op while
-    // the game is playing. See EditorColliders.cpp.
+    // entities so their editor billboards are suppressed. Editor-only: a no-op
+    // while the game is playing.
     void SubmitColliderWireframes();
 
-    // Submit the collider volume's silhouette outline for one body (a box/sphere/
-    // cylinder unit mesh scaled to the descriptor; a capsule as a cylinder + two
-    // end spheres, whose union is the capsule). See EditorColliders.cpp.
+    // Submits the collider volume's silhouette outline for one body: a box/sphere/
+    // cylinder unit mesh scaled to the descriptor, a capsule as a cylinder + two
+    // end spheres whose union is the capsule.
     void SubmitColliderOutline(const glm::mat4 &bodyModel, const Assisi::Physics::RigidBodyDescriptor &desc,
                                const glm::vec3 &color);
-    /// @brief True while the transform gizmo is hovered or being dragged — entity
+
+    // --- Gizmo state ---
+    /// @brief True while the transform gizmo is hovered or being dragged. Entity
     /// picking checks this so a click on the gizmo doesn't reselect what's behind it.
     [[nodiscard]] bool IsUsingGizmo() const;
 
@@ -349,8 +355,8 @@ class EditorApp : public Assisi::App::Application
     void SelectAsset(std::string_view vpath);
     /// @brief Re-resolves a MeshRenderer entity's mesh/texture from its current
     /// paths, so an inspector/browser edit takes effect without a level reload.
-    /// (The resolve itself is engine code — Runtime::ResolveMeshRendererAssets;
-    /// this adds the alive/has-component checks over the selected entity.)
+    /// Wraps Runtime::ResolveMeshRendererAssets with the alive/has-component
+    /// checks over the selected entity.
     void ReresolveEntityAssets(Assisi::ECS::Entity entity);
     /// @brief Reads _assetBrowserDir into the cached dirs/images lists. Called
     /// only when the listing may have changed, not every frame.
@@ -358,14 +364,14 @@ class EditorApp : public Assisi::App::Application
 
     // --- Inspector helpers ---
     bool EditComponentFields(void *mut, const Assisi::Core::Reflect::ComponentMeta &meta);
-    // The inspector's replication surfaces. Every one of them reads or writes a
-    // NetSync::Replicated marker, so without networking there is no component for
-    // them to be about — the inspector simply has no replication block.
+    // The inspector's replication surfaces. Every one reads or writes a
+    // NetSync::Replicated marker, so without networking there is no component
+    // for them to be about and the inspector has no replication block.
 #if defined(ASSISI_NETWORKING)
-    /// @brief The inspector's replication block: the Replicated checkbox, the
-    /// session-scoped NetId, which of the two client timelines a mirror is on,
-    /// and the warnings that catch an entity that will not replicate the way its
-    /// author expects. Drawn under the entity id. See EditorInspector.cpp.
+    /// @brief The inspector's replication block, drawn under the entity id: the
+    /// Replicated checkbox, the session-scoped NetId, which of the two client
+    /// timelines a mirror is on, and the warnings that catch an entity that will
+    /// not replicate the way its author expects.
     void DrawReplicationSection(bool mirrored);
 
     /// Per-component send policy for the selected authoring entity: one checkbox
@@ -373,22 +379,20 @@ class EditorApp : public Assisi::App::Application
     /// Authoring entities only — a mirror's marker is client-fabricated, so
     /// showing its mask would display data the host never sent.
     ///
-    /// The list is rebuilt from the entity's live component set every frame, so
-    /// adding or removing a component changes it immediately; there is nothing
-    /// cached that could go stale.
+    /// Rebuilt from the entity's live component set every frame, so nothing here
+    /// can go stale when a component is added or removed.
     void DrawReplicationPolicy();
 
     /// The Relevance dropdown, drawn only for entities this machine authors.
     ///
-    /// Split out because it has a different honesty rule from the rest of the
-    /// policy block: a mirror's Replicated marker is client-fabricated, so
-    /// showing its relevance as authorable would dress a default up as the
-    /// host's decision.
+    /// Split out for a different honesty rule from the rest of the policy block:
+    /// a mirror's Replicated marker is client-fabricated, so showing its
+    /// relevance as authorable would dress a default up as the host's decision.
     void DrawRelevancePolicy();
 
     /// Does this entity currently send @p meta to clients?
     ///
-    /// The single *read* both policy surfaces use — the glyph button on each
+    /// The single *read* behind both policy surfaces — the glyph button on each
     /// component header and the Sends checklist. Neither keeps state of its own,
     /// so they cannot disagree: they are two renderings of one mask.
     [[nodiscard]] bool SelectedEntitySends(const Assisi::Core::Reflect::ComponentMeta &meta) const;
@@ -401,9 +405,9 @@ class EditorApp : public Assisi::App::Application
     /// per-entity control for it would be a switch that cannot matter.
     [[nodiscard]] bool IsComponentGameVetoed(const Assisi::Core::Reflect::ComponentMeta &meta) const;
 
-    /// Component names the game config vetoes, cached at session start so the
-    /// policy checkboxes can render a forbidden component as a disabled switch
-    /// with a reason rather than a live one that silently does nothing.
+    /// Component names the game config vetoes, cached at session start so a
+    /// forbidden component renders as a disabled switch with a reason rather
+    /// than a live one that silently does nothing.
     std::vector<std::string> _netVetoedComponentNames;
     /// @brief Draws one editable row per material slot of @p mrc's resolved mesh
     /// (labelled by the imported material name), each a `.amat` path + browse
@@ -422,37 +426,36 @@ class EditorApp : public Assisi::App::Application
     /// @brief Holds the selected entity's rigid body still for the duration of an
     /// edit gesture, and keeps the hold alive.
     ///
-    /// Call every frame a Transform-editing gesture is held — a gizmo drag, an
-    /// Inspector field. The body is made Static, which takes it out of the
-    /// solver's hands entirely: while you are placing it, it will not be pushed
-    /// out of anything it overlaps, will not rotate itself free of a contact, and
-    /// will not stutter against a surface. Everything it overlaps still gets
-    /// pushed by it, which is the half you do want.
+    /// **Call every frame** a Transform-editing gesture is held — a gizmo drag,
+    /// an Inspector field. The body is made Static, out of the solver's hands
+    /// entirely: while being placed it will not be pushed out of what it
+    /// overlaps, rotate free of a contact, or stutter against a surface. It still
+    /// pushes everything it overlaps, which is the half you do want.
     ///
     /// Idempotent while the same entity stays selected. If the selection moves
     /// mid-gesture the previous body is released first, so a hold can never be
     /// left behind on an entity nothing is editing any more.
     ///
-    /// The matching release is NOT here — it happens once per frame at the end of
+    /// The matching release is NOT here: it happens once per frame at the end of
     /// OnImGui, on the first frame nothing calls this. See ThawEditedBody.
     void RequestPhysicsFreeze();
 
     /// @brief Returns the body frozen by HandlePhysicsEditing to its authored
     /// motion type and clears the freeze.
     ///
-    /// Safe to call when nothing is frozen, when the world it belonged to is
-    /// gone, and when the entity or its body has since been destroyed — all of
-    /// which are reachable, and all of which must still clear the state rather
-    /// than leave a freeze recorded against something that no longer exists.
+    /// Safe when nothing is frozen, when the world it belonged to is gone, and
+    /// when the entity or its body has since been destroyed — all reachable, and
+    /// all of which must still clear the state rather than leave a freeze
+    /// recorded against something that no longer exists.
     void ThawEditedBody();
 
     /// @brief Writes an eyedropper-picked entity into the armed EntityRef field.
     void ApplyEyedropperPick(Assisi::ECS::Entity picked);
 
-    // --- Undo/redo (editor-only; see EditHistory.hpp + docs/editor-undo-redo-design-notes.md) ---
-    /// @brief Ctrl-Z / Ctrl-Y / Ctrl-Shift-Z, handled at the top of OnUpdate (a
-    /// safe point: after the prior frame's FlushDestroyed, before systems run).
-    /// Gated on the editor being idle-typed-into and a history being active.
+    // --- Undo/redo (editor-only; see EditHistory.hpp) ---
+    /// @brief Ctrl-Z / Ctrl-Y / Ctrl-Shift-Z, handled at the top of OnUpdate — a
+    /// safe point: after the prior frame's FlushDestroyed, before systems run.
+    /// Gated on nothing being typed into and a history being active.
     void HandleUndoRedoHotkeys();
     /// @brief The EditHistory rebind hook: rebuilds the transient state that
     /// serialization excludes after a component is restored/removed by an apply —
@@ -469,17 +472,16 @@ class EditorApp : public Assisi::App::Application
     [[nodiscard]] Assisi::Editor::EditHistory *ActiveHistory();
     /// @brief Every history that exists right now, active or not.
     ///
-    /// For the sites that ask what an edit *costs* rather than where to record it.
-    /// Those are not the same question, and answering the first with
-    /// @ref ActiveHistory was wrong: a blueprint save destroys members in the level
+    /// **Ask what an edit *costs* here, not @ref ActiveHistory.** Those are
+    /// different questions: a blueprint save destroys members in the *level*
     /// worlds while the active history is the blueprint world's, and EditHistory
-    /// refuses any scene it is not bound to — so the cost always came back 0, the
-    /// "this will drop N undo steps" prompt never opened, and the level's stack kept
+    /// refuses any scene it is not bound to — so the cost came back 0, the "this
+    /// will drop N undo steps" prompt never opened, and the level's stack kept
     /// transactions naming entities that no longer existed.
     ///
-    /// No world→history map is needed, and deliberately so: `CountForgettable` and
-    /// `ForgetEntities` both take the scene and return 0 for one they do not own, so
-    /// asking all of them and summing is correct however many there come to be.
+    /// No world→history map is needed: `CountForgettable` and `ForgetEntities`
+    /// both take the scene and return 0 for one they do not own, so asking all of
+    /// them and summing is correct however many there come to be.
     [[nodiscard]] std::vector<Assisi::Editor::EditHistory *> AllHistories();
     /// @brief True when the scene has edits not yet written to disk — the active
     /// history's position differs from the one recorded at the last successful
@@ -492,14 +494,14 @@ class EditorApp : public Assisi::App::Application
     /// the entity is named (e.g. "Edit Transform - Player"), else its id.
     [[nodiscard]] std::string EditLabel(std::string_view action, Assisi::ECS::Entity entity) const;
 
-    // --- Worlds (multi-scene S2; docs/multi-scene-design-notes.md) ---
+    // --- Worlds ---
     /// @brief Switches which world the editor renders and inspects, repointing
     /// `_scene`/`_physics` at it. One world is rendered per viewport, so "shown"
-    /// and "active" are the same thing — selecting another world moves the view
+    /// and "active" are the same thing: selecting another world moves the view
     /// there, and the panels follow.
     void SetActiveWorld(Assisi::App::World &world);
     /// @brief Loads @p virtualPath into a NEW resident world and shows it, leaving
-    /// the current world alive and simulating. The asset cache is not cleared —
+    /// the current world alive and simulating. The asset cache is **not** cleared —
     /// the other world's resolved pointers reference it. Returns false (nothing
     /// created) if the level didn't load. Reached from the Game panel's debug
     /// control; a game reaches the same capability through WorldManager.
@@ -532,32 +534,31 @@ class EditorApp : public Assisi::App::Application
     /// @brief True when @p entity may be edited: the world allows it *and* the
     /// entity is not a mirror of somebody else's.
     ///
-    /// One predicate, gating the inspector, the gizmo, the Delete key, and the
-    /// hierarchy actions together — because a guard applied to three of the four
-    /// is a guard nobody can reason about. The scope shrank when the
-    /// session-viewer mode was cut (it protects a disposable play scene now, not
-    /// the editing scene), but it stays for two reasons: a gizmo fighting the
-    /// correction stream is a confusing artifact even in a world about to be
-    /// thrown away, and the server only resends what *changes* — so an edit to a
-    /// static replicated field would sit visibly wrong until the next keyframe
-    /// sweep, which is exactly the class of quiet wrongness this design spends
-    /// machinery to avoid.
+    /// **One predicate**, gating the inspector, the gizmo, the Delete key and the
+    /// hierarchy actions together, because a guard applied to three of the four
+    /// is a guard nobody can reason about. It now protects only a disposable play
+    /// scene, and still earns its keep: a gizmo fighting the correction stream is
+    /// a confusing artifact even in a world about to be thrown away, and the
+    /// server only resends what *changes* — so an edit to a static replicated
+    /// field would sit visibly wrong until the next keyframe sweep.
     [[nodiscard]] bool IsEditable(Assisi::ECS::Entity entity) const;
 
+    // --- Entity identity ---
     /// @brief A human label for an entity in a picker or a header.
     ///
     /// `car_3 › wheel_fl` for a blueprint member, its Name if it has one, else
-    /// `[index:generation]`. The EntityRef field editor previewed everything as
-    /// `Entity [41:0]`, which is already hard to pick from and unusable the moment
-    /// a level holds forty cars (docs/blueprint-system-concept.md §10).
+    /// `[index:generation]`. Previewing everything as `Entity [41:0]` is already
+    /// hard to pick from and unusable once a level holds forty cars.
     [[nodiscard]] std::string DescribeEntity(Assisi::ECS::Entity entity) const;
 
     /// @brief Whether @p entity is a mirror the server owns.
     [[nodiscard]] bool IsMirrored(Assisi::ECS::Entity entity) const;
+
+    // --- Worlds panel ---
     /// @brief The resident-world dropdown drawn at the top of the Entities panel.
     void DrawWorldSelector();
 
-    // --- Level management ---
+    // --- Level and blueprint scanning ---
     void ScanLevels();
 
     /// @brief Refreshes @ref _blueprintFiles from the asset root.
@@ -567,15 +568,14 @@ class EditorApp : public Assisi::App::Application
     //
     // A blueprint is an ordinary level file, so editing one is opening it as a
     // level. What makes it a *mode* rather than another Open Level is that the
-    // level you came from stays resident and untouched behind it — which is the
-    // whole point, because saving the blueprint has to bring that level's copies
-    // of it up to date, and it cannot do that to a world it just unloaded.
+    // level you came from stays resident and untouched behind it: saving the
+    // blueprint has to bring that level's copies of it up to date, and it cannot
+    // do that to a world it just unloaded.
     //
     // The blueprint world takes over the **edited** role while it is open, with
-    // its own undo history and its own dirty marker, and hands the role back on
-    // close. Two live histories rather than one saved and restored: the level's
-    // must survive the round trip exactly, and EditHistory binds a Scene by
-    // reference, so stashing it is not something to be clever about.
+    // its own undo history and dirty marker, and hands the role back on close.
+    // Two live histories rather than one saved and restored: the level's must
+    // survive the round trip exactly, and EditHistory binds a Scene by reference.
 
     /// @brief True while the world being shown is the open blueprint.
     [[nodiscard]] bool InBlueprintMode() const;
@@ -583,9 +583,9 @@ class EditorApp : public Assisi::App::Application
     /// @brief Opens @p source (a `.abp`, or any level file) in its own world with
     /// the editor's lighting rig, and switches the editor into blueprint mode.
     ///
-    /// Loads assets and touches GPU state, so it must run at the frame's
-    /// main-thread drain like any other level load — reach it through
-    /// @ref _pendingBlueprintOpen rather than calling it from a panel.
+    /// **Never call this from a panel**: it loads assets and touches GPU state,
+    /// so like any other level load it must run at the frame's main-thread drain.
+    /// Reach it through @ref _pendingBlueprintOpen.
     void OpenBlueprintForEditing(const std::string &source);
 
     /// @brief Leaves blueprint mode: hands the edited role back, destroys the
@@ -606,7 +606,7 @@ class EditorApp : public Assisi::App::Application
     /// author is free to delete it — it is an ordinary entity).
     [[nodiscard]] Assisi::ECS::Entity BlueprintSunEntity() const;
 
-    // --- Re-expansion on save (stage 5d) ------------------------------------
+    // --- Re-expansion on save -----------------------------------------------
 
     /// @brief One live instance a save would bring up to date, and what it takes.
     struct PendingReexpand
@@ -616,18 +616,15 @@ class EditorApp : public Assisi::App::Application
         /// The member names the live tags were written against. Captured before the
         /// definition cache is dropped, because nothing can reconstruct them after.
         std::vector<std::string> previousMemberNames;
-        /// The entity behind each of those names, in the same order, and captured in
-        /// the same breath and for a sharper version of the same reason.
+        /// The entity behind each of those names, in the same order, captured in the
+        /// same breath and for a sharper version of the same reason.
         ///
         /// A `BlueprintMember` tag carries an *index*, and only the definition those
         /// tags were written against can say which name that index means. Once the
-        /// cache is dropped, `Runtime::FindMember` resolves names through the **new**
-        /// file — and the members this diff is looking for are precisely the ones the
-        /// new file no longer declares, so it returned NullEntity for every one of
-        /// them. The doomed set was structurally always empty: nothing was ever
-        /// reported as removed, the prompt never opened, and the save destroyed
-        /// members and truncated history without asking. Resolve while the old
-        /// mapping is still the live one, and the question is answerable.
+        /// cache is dropped, `Runtime::FindMember` resolves through the **new** file
+        /// — which no longer declares precisely the members this diff is looking for,
+        /// so it returns NullEntity for every one. That made `doomed` structurally
+        /// always empty, and the save destroyed members without ever asking.
         std::vector<Assisi::ECS::Entity> previousMemberEntities;
         /// Members this instance loses, resolved from the name diff. Empty for the
         /// common edit, which changes values and adds nothing and removes nothing.
@@ -644,15 +641,15 @@ class EditorApp : public Assisi::App::Application
     /// If the edit deletes members and that would cost undo history, this stops and
     /// asks (@ref _pendingReexpand) rather than doing it — see DrawSaveConfirmModal.
     /// The save is not finished until that is answered: Cancel puts the file back
-    /// (@ref CancelPendingSave), so unlike every earlier version of this, the write
-    /// is not a fait accompli by the time the author is told what it costs.
+    /// (@ref CancelPendingSave), so the write is not a fait accompli by the time the
+    /// author is told what it costs.
     ///
     /// **The cache is dropped unconditionally**, before any of that: it is a statement
     /// about the file, not about the copies, and a save that skipped it would leave
     /// `GetBlueprintDefinition` handing out the contents from before the write. A save
     /// arriving while an earlier prompt is still up cannot ask a second question, so it
     /// takes the declining answer (@ref MarkInstancesStale) rather than returning
-    /// quietly — round-7 S18.
+    /// quietly.
     ///
     /// @param collected must come from @ref CollectReexpandTargets, called **before**
     ///        the file was written. It cannot be gathered here: by this point the new
@@ -672,9 +669,10 @@ class EditorApp : public Assisi::App::Application
 
     /// @brief Records @p source as a file whose live copies are behind it, and says so.
     ///
-    /// Idempotent. The single place stage 5e's stale set is added to, so the two ways
-    /// of declining a catch-up — the prompt's "Leave them" and a save that could not be
-    /// asked about — leave the editor in the same state and log the same sentence.
+    /// Idempotent. The single place @ref _staleInstanceSources is added to, so the two
+    /// ways of declining a catch-up — the prompt's "Leave them" and a save that could
+    /// not be asked about — leave the editor in the same state and log the same
+    /// sentence.
     void MarkInstancesStale(const std::string &source);
 
     /// @brief Performs the work @ref ReexpandInstancesOf collected. Truncates the
@@ -699,11 +697,9 @@ class EditorApp : public Assisi::App::Application
     /// needed to put the world back exactly as it was.
     ///
     /// The write happens first and is undone on Cancel, rather than the cost being
-    /// predicted before writing. Predicting it would mean deriving the new member
-    /// names from the blueprint world's scene — a second implementation of the rule
-    /// `Runtime/Naming.hpp` exists to be the only copy of, and the diff has to come
-    /// from the file anyway, because the file is what every live copy re-expands
-    /// from. So the file is the question, and this is the answer key.
+    /// predicted beforehand: predicting it would mean re-deriving member names from
+    /// the scene, a second copy of the rule `Runtime/Naming.hpp` owns, and the diff
+    /// has to come from the file anyway — the file is what live copies re-expand from.
     struct PendingSaveConfirm
     {
         /// The virtual path written, which is also what the definition cache keys on.
@@ -729,12 +725,11 @@ class EditorApp : public Assisi::App::Application
 
     // --- Moving an instance -------------------------------------------------
     //
-    // An instance has no root entity to grab — the root evaporates at expansion
-    // (docs/blueprint-system-concept.md §3), so "the instance's transform" is a
-    // field on a table row and moving it means moving every member the placement
-    // reaches. Two callers do that: the gizmo and the inspector. They share these
-    // three so a typed number and a dragged handle produce the same edit, the same
-    // undo entry, and the same rounding.
+    // An instance has no root entity to grab — the root evaporates at expansion —
+    // so "the instance's transform" is a field on a table row, and moving it means
+    // moving every member the placement reaches. Two callers do that: the gizmo
+    // and the inspector. They share these three so a typed number and a dragged
+    // handle produce the same edit, the same undo entry, and the same rounding.
 
     /// @brief Opens a placement gesture on @p instanceId against the viewed world
     /// and its history: snapshots the record and every member's pose, because the
@@ -749,12 +744,11 @@ class EditorApp : public Assisi::App::Application
     /// @brief Moves @p instanceId to @p placement, carrying its members by the
     /// delta.
     ///
-    /// By delta rather than by re-expansion, deliberately: re-expanding would
-    /// destroy and recreate handles behind undo's back, and this is the gesture that
-    /// has to stay cheap. A non-uniform scale is averaged to one number here, which
-    /// is where the "an instance may only scale uniformly" rule is enforced first —
-    /// the load hard-fails on one, and this is the half that keeps it from ever being
-    /// authored.
+    /// **By delta, never by re-expansion**: re-expanding would destroy and recreate
+    /// handles behind undo's back, and this gesture has to stay cheap. A non-uniform
+    /// scale is averaged to one number here — the first half of "an instance may only
+    /// scale uniformly", which keeps one from ever being authored; the load hard-fails
+    /// on one.
     void ApplyInstancePlacement(Assisi::ECS::InstanceId instanceId, const Assisi::Runtime::Transform &placement);
 
     /// @brief Closes the open placement gesture into one transaction, carrying the
@@ -762,9 +756,9 @@ class EditorApp : public Assisi::App::Application
     /// frame. No-op if nothing moved — a click without a drag is not an edit.
     ///
     /// Called once from OnImGui after every panel has drawn, and from nowhere else.
-    /// Neither edit site may close the gesture on its own: the gizmo draws first and
-    /// cannot see that the Inspector is mid-scrub, which is how one dragged field
-    /// used to record a transaction per frame (round-7 B19).
+    /// **Neither edit site may close the gesture on its own**: the gizmo draws first
+    /// and cannot see that the Inspector is mid-scrub, which is how one dragged field
+    /// once recorded a transaction per frame.
     void SweepInstanceGesture();
 
     /// @brief The Inspector, when what is selected is an *instance* rather than an
@@ -775,14 +769,15 @@ class EditorApp : public Assisi::App::Application
     /// away with no record of what it was; see ApplyInstancePlacement.
     static constexpr float kMinTypedInstanceScale = 1e-4f;
 
+    // --- Finding and selecting an instance ----------------------------------
+
     /// @brief Draws a billboard at every live instance's placement, and outlines the
     /// selected one.
     ///
     /// An instance's root evaporates at expansion, so nothing in the scene marks
-    /// where a copy was put. That left the group's origin invisible and, worse,
-    /// unclickable: the only way to select an instance was to find a member in the
-    /// outliner and press "Select instance". A billboard gives it the same handle
-    /// every placement-only entity already has.
+    /// where a copy was put — leaving the group's origin invisible and, worse,
+    /// unclickable. A billboard gives it the same handle every placement-only entity
+    /// already has.
     void SubmitInstanceIcons();
 
     /// @brief The instance whose root billboard @p mousePos is over, or 0.
@@ -790,6 +785,8 @@ class EditorApp : public Assisi::App::Application
     /// @param tOut distance along the pick ray, so the caller can decide between
     ///        this and an entity hit by which is actually in front.
     [[nodiscard]] Assisi::ECS::InstanceId PickInstance(glm::vec2 mousePos, float &tOut);
+
+    // --- Creating instances and blueprints ----------------------------------
 
     /// @brief Places an instance of @p source in front of the camera, as one
     /// undoable transaction: the record and every member it created.
@@ -801,11 +798,10 @@ class EditorApp : public Assisi::App::Application
     /// @brief Saves the selected entity and its subtree as a blueprint, then
     /// replaces them with an instance of it.
     ///
-    /// This is what "authoring a blueprint" *is*: the file is the same format a
-    /// level is, and creating one is saving a selection and instancing it back.
-    /// One transaction, so a mistake is one Ctrl-Z — the entities come back and
-    /// the instance goes away. The file stays on disk, which is the same thing
-    /// undo does to any other save.
+    /// A blueprint file is the same format a level is, so authoring one is saving
+    /// a selection and instancing it back. One transaction, so a mistake is one
+    /// Ctrl-Z: the entities come back and the instance goes away. The file stays
+    /// on disk, as it does for any other save that is undone.
     void CreateBlueprintFromSelection(const std::string &name);
 
     /// @brief Rebuilds what expansion deliberately leaves out: resolved GPU asset
@@ -816,22 +812,25 @@ class EditorApp : public Assisi::App::Application
     /// save brings instances up to date wherever they are resident.
     void RebuildInstanceTransients(Assisi::App::World &world, std::span<const Assisi::ECS::Entity> members);
 
+    // --- Instance overrides -------------------------------------------------
+
     /// @brief What @p entity's instance claims about @p component, or null if it
-    /// claims nothing — which is the common case and the one worth keeping cheap.
+    /// claims nothing — the common case, and the one worth keeping cheap.
     ///
-    /// A `null` claim means the instance removed the component. The pointer is
-    /// into the instance table's row and lives until the next edit.
+    /// A `null` claim means the instance removed the component. The returned
+    /// pointer is into the instance table's row and lives until the next edit.
     [[nodiscard]] const nlohmann::json *OverrideClaimFor(Assisi::ECS::Entity entity,
                                                          const std::string  &component) const;
 
     /// @brief Drops an override claim and lets the value fall back to the
     /// blueprint's.
     ///
-    /// Reset is first-class at every scope (§5): pass a field name to drop one
-    /// field, or nothing to drop the whole component's claim. One transaction per
-    /// gesture, carrying the record *and* the restored value — the same pairing an
-    /// edit uses, for the same reason.
+    /// Pass a field name to drop one field, or an empty one to drop the whole
+    /// component's claim. One transaction per gesture, carrying the record *and*
+    /// the restored value — the same pairing an edit uses, for the same reason.
     void ResetOverride(Assisi::ECS::Entity entity, const std::string &component, const std::string &field);
+
+    // --- Opening a level ---
     void LoadLevel(const std::string &name);
 
     // --- Selection ---------------------------------------------------------
@@ -866,6 +865,7 @@ class EditorApp : public Assisi::App::Application
     /// the list would outline a slot something else now occupies.
     void PruneSelection();
 
+    // --- Level paths: load and save ---
     /// @brief Loads a level by virtual path (e.g. "levels/Materials.alvl"), doing
     /// the cache-clear + rebind LoadLevel wraps. Returns false if the file didn't
     /// deserialize. The shared core of LoadLevel and the command-line loader.
@@ -906,6 +906,7 @@ class EditorApp : public Assisi::App::Application
     /// stay live regardless, so the scene is always navigable.
     [[nodiscard]] bool IsSimulating() const { return _playState == PlayState::Playing; }
 
+    // --- Creating, deleting and composing entities ---
     /// @brief Creates a fresh entity with a Transform a few units in front of the
     /// editor camera (an empty object to build up via Add Component), selects it,
     /// and returns it. Used by the entity list's + button.
@@ -936,25 +937,29 @@ class EditorApp : public Assisi::App::Application
     /// associated runtime state (e.g. a RigidBodyDescriptor's Jolt body). Used by
     /// the inspector's per-component delete button.
     void RemoveComponentFromSelected(const Assisi::Core::Reflect::ComponentMeta &meta);
-    /// @brief Starts the 0.5 s eased camera move that reframes @p entity, choosing
-    /// a framing distance from its bounds. Used by an entity-list double-click.
+
+    // --- Camera framing ---
+    /// @brief Starts the eased camera move (kCameraFocusDuration) that reframes
+    /// @p entity, choosing a framing distance from its bounds. Used by an
+    /// entity-list double-click.
     void FocusCameraOn(Assisi::ECS::Entity entity);
 
+    // --- Asset reimport and staleness ---
     /// @brief Runs the editor-only reconcile pass: scans the asset root,
     /// generating a `.aast` sidecar (with a minted GUID) for any asset that
     /// lacks one and rebuilding the GUID→path database. Auto-run once at
-    /// startup and re-run by the asset browser's Reimport button. Refs are
-    /// still path-based this stage, so nothing rebinds — the database is built
-    /// but not yet the resolution key (asset-database S1).
+    /// startup and re-run by the asset browser's Reimport button. References
+    /// still resolve by path, so nothing rebinds — the database is built but is
+    /// not yet the resolution key.
     void ReimportAssets();
 
-    /// @brief Brings every indexed glTF's materials up to date (asset-database
-    /// S3/S4). A glTF with no manifest is exploded into `.amat` children; one
-    /// that already has a manifest is reconciled against its current source —
-    /// auto-refreshing provably-safe changes (geometry-only, additive slots) and
-    /// badging anything ambiguous stale (see _staleMeshes) without clobbering it.
-    /// Editor-only; runs inside ReimportAssets between the two database scans.
-    /// Returns whether any file was written, so the caller only rescans then.
+    /// @brief Brings every indexed glTF's materials up to date. A glTF with no
+    /// manifest is exploded into `.amat` children; one that already has a
+    /// manifest is reconciled against its current source — auto-refreshing
+    /// provably-safe changes (geometry-only, additive slots) and badging anything
+    /// ambiguous stale (see _staleMeshes) without clobbering it. Editor-only;
+    /// runs inside ReimportAssets between the two database scans. Returns whether
+    /// any file was written, so the caller only rescans then.
     bool ReconcileMeshMaterials();
 
     /// @brief Whether a mesh asset (by virtual path) was left stale by the last
@@ -962,7 +967,7 @@ class EditorApp : public Assisi::App::Application
     /// Drives the asset-browser stale badge.
     [[nodiscard]] bool IsAssetStale(std::string_view vpath) const;
 
-    // --- Stale-material resolution prompt (asset-database S4 / D5) ---
+    // --- Stale-material resolution prompt ---
     /// @brief Arms the resolution modal for a stale glTF: computes its per-slot
     /// diff and requests the popup open next frame. Reached by clicking a stale
     /// mesh tile, or auto-opened for a stale mesh live in the open scene.
@@ -980,6 +985,7 @@ class EditorApp : public Assisi::App::Application
     /// clears the modal target when the queue is empty. Called after each choice.
     void AdvanceStaleQueue();
 
+    // --- Picking ---
     /// @brief A camera ray through a screen point, plus the camera basis the
     /// billboards are oriented by — so what is clickable is exactly what is drawn.
     struct PickRay
@@ -998,36 +1004,38 @@ class EditorApp : public Assisi::App::Application
     /// a non-entity hit (an instance root's billboard) and take whichever is nearer.
     Assisi::ECS::Entity PickEntity(glm::vec2 mousePos, float &tOut);
 
-    // --- Systems ---
+    // --- Systems and input ---
+    // _systems holds the *editor's* systems (picking, camera, selection): they run
+    // in every play state and belong to the editor viewing a world, not to any
+    // world. Game systems live in each WORLD's own registry — installed by the
+    // default profile at world creation, run only while Playing — and are never
+    // mixed in here.
     Assisi::App::SystemRegistry _systems;
     Assisi::Window::ActionMap   _actions;
 
-    // The game's hooks (see EditorConfig). Game systems live in each WORLD's own
-    // registry — installed by the default profile at world creation, run only
-    // while Playing — never mixed into _systems, whose editor systems (picking,
-    // camera, selection) run in every state and belong to the editor viewing a
-    // world rather than to any world.
+    // --- Game hooks ---
     EditorConfig                _editorConfig;
 
-    // The game's render systems earn one warning per session, not one per world:
-    // the default profile's installer runs for every world it builds.
+    // Latches the once-per-process warning OnStart logs for a game's Render
+    // systems, which the editor never runs.
     bool                        _warnedGameRenderSystems = false;
 
-    // --- State ---
-    // Every resident level lives in the manager (docs/multi-scene-design-notes.md).
-    // The editor drives exactly one world at this stage, which is both the active
-    // world (rendered, input-driven) and the *edited* world (saved, dirtied, undone
-    // into) — the two roles only diverge once the game can travel to another level
-    // mid-play. `_scene`/`_physics` are the active world's, cached here so the
-    // panels read exactly as before.
+    // --- Worlds ---
+    // Every resident level lives in the manager. The *active* world is the one
+    // rendered and input-driven; the *edited* world is the one saved, dirtied and
+    // undone into. They are usually the same, and diverge while a play session has
+    // travelled elsewhere, or while a blueprint holds the edited role.
+    // `_scene`/`_physics` are the active world's, cached so panels can reach them
+    // directly.
     Assisi::App::WorldManager          _worlds;
     Assisi::App::World                *_world   = nullptr; ///< The active world.
     Assisi::ECS::Scene                *_scene   = nullptr; ///< == &_world->scene.
     Assisi::Physics::PhysicsWorld     *_physics = nullptr; ///< == &_world->physics.
 
-    // Networked play. `_netIntent` is the role this play session was entered
-    // for; `_joinPhase` tracks a client through connect -> build -> live.
-    // Unguarded for the same reason the enums are: Standalone is ordinary Play.
+    // --- Networked play ---
+    // `_netIntent` is the role this play session was entered for; `_joinPhase`
+    // tracks a client through connect -> build -> live. Unguarded for the same
+    // reason the enums are: Standalone is ordinary Play.
     NetIntent _netIntent = NetIntent::Standalone;
     JoinPhase _joinPhase = JoinPhase::None;
 
@@ -1061,8 +1069,8 @@ class EditorApp : public Assisi::App::Application
     /// Marshalled likewise: a host that vanished, or a failed join, ends the
     /// play session at the frame's safe point rather than under the pump.
     bool _pendingStopPlay = false;
-    /// The unsaved-edits host prompt (§3.6): a modal, not a warning, because
-    /// the consequence surfaces minutes later on someone else's screen.
+    /// The unsaved-edits host prompt: a modal, not a warning, because the
+    /// consequence surfaces minutes later on someone else's screen.
     bool _hostPromptOpen  = false;
     bool _hostIgnoreDirty = false; ///< Set by "Host last-saved" for one attempt.
     // Correction-rate sampling for the Network panel. Rates rather than totals:
@@ -1081,6 +1089,7 @@ class EditorApp : public Assisi::App::Application
     std::uint64_t _netStructureRevision = 0;
 #endif // ASSISI_NETWORKING
 
+    // --- Play session state ---
     /// The edited world as Run found it, minus its entities (those are
     /// `_playSnapshot` below, which needs exact-identity handling this does not).
     /// A join replaces the play scene with the *host's* level — its identity, its
@@ -1089,9 +1098,9 @@ class EditorApp : public Assisi::App::Application
 
 #if defined(ASSISI_NETWORKING)
     /// The Play control's net mode, as an index into the dropdown. Sticky for
-    /// the process and reset at launch: it is a per-session testing choice
-    /// ("this time, host with two viewers"), not a preference worth persisting
-    /// into options.json and then being surprised by tomorrow.
+    /// the process and reset at launch: a per-session testing choice ("this time,
+    /// host with two viewers"), not a preference worth persisting into
+    /// options.json and being surprised by tomorrow.
     std::int32_t _playNetSelection = 0;
     /// How many play-in-editor clients the next Host launches. 0 = none, which
     /// is also what a plain "Host" (the cross-machine case) means.
@@ -1114,28 +1123,29 @@ class EditorApp : public Assisi::App::Application
 
     // Persistent arena + unit meshes for editor collider silhouette outlines (box,
     // sphere, cylinder; a capsule reuses the cylinder + sphere). Uploaded once at
-    // init and never reset (unlike the asset cache's arena, which a level load
-    // clears), so the MeshBuffers stay valid across level changes.
+    // init and never reset — unlike the asset cache's arena, which a level load
+    // clears — so the MeshBuffers stay valid across level changes.
     Assisi::Render::GeometryArena _colliderArena;
     Assisi::Render::MeshBuffer    _colliderBoxMesh;
     Assisi::Render::MeshBuffer    _colliderSphereMesh;
     Assisi::Render::MeshBuffer    _colliderCylinderMesh;
 
-    // Editor-only GUID identity index (asset-database S1). ReimportAssets()
-    // populates it by scanning the asset root and generating `.aast` sidecars.
-    // Built but not yet the resolution key — references still resolve by path.
+    // --- Asset database and staleness ---
+    // Editor-only GUID identity index, populated by ReimportAssets() scanning the
+    // asset root and generating `.aast` sidecars. Built but not yet the resolution
+    // key — references still resolve by path.
     Assisi::Core::AssetDatabase _assetDatabase;
 
     // Mesh assets (by virtual path) the last reconcile left stale: their glTF
-    // source changed in a way the conservative classifier couldn't auto-resolve
-    // (S4/D5). Surfaced as a badge in the asset browser. Rebuilt each reconcile.
+    // source changed in a way the conservative classifier couldn't auto-resolve.
+    // Surfaced as a badge in the asset browser. Rebuilt each reconcile.
     std::unordered_set<std::string> _staleMeshes;
 
-    // Stale-material resolution modal (S4 second half / D5 prompt). The target is
-    // the glTF being resolved ("" = closed); the diff is its per-slot conflict
-    // detail, computed once on open. _staleResolveRequestOpen latches an
-    // ImGui::OpenPopup on the next frame. The queue holds still-stale meshes that
-    // are live in the open scene, prompted one after another (D5 liveness).
+    // Stale-material resolution modal. The target is the glTF being resolved
+    // ("" = closed); the diff is its per-slot conflict detail, computed once on
+    // open. _staleResolveRequestOpen latches an ImGui::OpenPopup on the next
+    // frame. The queue holds still-stale meshes that are live in the open scene,
+    // prompted one after another.
     std::string                     _staleResolveTarget;
     Assisi::Geometry::MaterialDiff  _staleResolveDiff;
     bool                            _staleResolveRequestOpen = false;
@@ -1145,11 +1155,11 @@ class EditorApp : public Assisi::App::Application
     // texture (not routed through _assetCache, which LoadLevel Clears).
     Assisi::Render::Texture _helloTexture;
 
-    // The editor fly-camera is not level data, so it is plain state here rather
-    // than an entity in a whole ECS scene of its own (which existed only so
-    // LoadLevel's clear-and-load wouldn't wipe it). As plain members the camera
-    // pose also survives level loads for free. RefreshCameraMatrix() recomputes
-    // worldMatrix from the TRS (parentless, so world == local) before it is read.
+    // --- Editor camera ---
+    // The fly camera is not level data, so it is plain state here rather than an
+    // entity: as members the pose survives a level load for free.
+    // RefreshCameraMatrix() recomputes worldMatrix from the TRS (parentless, so
+    // world == local) before it is read.
     Assisi::Runtime::Transform _cameraTransform;
     Assisi::Runtime::Camera    _camera{60.f, 0.1f, 200.f, true};
 
@@ -1160,6 +1170,7 @@ class EditorApp : public Assisi::App::Application
     static constexpr float kMoveSpeed        = 8.f;
     static constexpr float kMouseSensitivity = 0.1f;
 
+    // --- Selection ---
     /// The *active* entity: the one the inspector shows and the gizmo drives.
     /// Always `_selection.back()`, or NullEntity when the selection is empty.
     /// Kept as its own member because nearly every panel reads it, and because
@@ -1187,11 +1198,12 @@ class EditorApp : public Assisi::App::Application
     /// `_entityRowOrder` — mid-draw, everything below the click is still missing.
     Assisi::ECS::Entity _pendingRangeTarget = Assisi::ECS::NullEntity;
 
-    /// A reset requested by the inspector, applied once its component loop has
-    /// finished. Deferred because the reset removes and re-adds the component:
-    /// doing that mid-loop leaves the loop reading a pointer into a pool that has
-    /// since moved, and leaves the frame's open capture gesture straddling a value
-    /// that changed underneath it.
+    // --- Blueprint instances ---
+    /// An override reset requested by the inspector, applied once its component
+    /// loop has finished. **Must stay deferred**: the reset removes and re-adds
+    /// the component, so doing it mid-loop leaves the loop reading a pointer into
+    /// a pool that has since moved, and leaves the frame's open capture gesture
+    /// straddling a value that changed underneath it.
     struct PendingOverrideReset
     {
         Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
@@ -1202,12 +1214,11 @@ class EditorApp : public Assisi::App::Application
 
     /// The blueprint instance the selection is *about*, or 0 for none.
     ///
-    /// Selection has two modes (docs/blueprint-system-concept.md §10). Clicking an
-    /// instance's row selects the instance — the gizmo then moves the whole group
-    /// and writes its placement, recording no member overrides, which is what keeps
-    /// nudging a car from pinning all five of its members. Expanding the row and
-    /// clicking a member selects that member, and this stays set so the inspector
-    /// can say which instance it belongs to.
+    /// Selection has two modes. Clicking an instance's row selects the instance —
+    /// the gizmo then moves the whole group and writes its placement, recording no
+    /// member overrides, which is what keeps nudging a car from pinning all five of
+    /// its members. Expanding the row and clicking a member selects that member,
+    /// and this stays set so the inspector can say which instance it belongs to.
     ///
     /// So `_selectedInstance.IsValid() && _selectedEntity == NullEntity` is
     /// instance mode; both set is member mode.
@@ -1221,24 +1232,20 @@ class EditorApp : public Assisi::App::Application
     // An instance drag in progress. Snapshotted at the press edge rather than
     // captured through EditHistory's gesture machinery, which is keyed by
     // (entity, component) — this gesture moves several entities *and* a record,
-    // so it has no single key.
-    //
-    // Its own type, because it is shared by two edit sites that must not each
-    // decide when it is over: see InstanceGesture.hpp for what that cost.
+    // so it has no single key. Its own type because two edit sites share it and
+    // neither may decide on its own when it is over; see InstanceGesture.hpp.
     Assisi::Editor::InstanceGesture _instanceGesture;
 
-    // Physics freeze while an Inspector field is being held (see
-    // HandlePhysicsEditing / ThawEditedBody). Dragging a Transform field on a
-    // dynamic body would otherwise fight the solver, so the body is made Static
-    // for the duration and restored on release.
+    // --- Physics freeze while editing ---
+    // Dragging a Transform field on a dynamic body would fight the solver, so the
+    // body is made Static for the duration of the gesture and restored on release
+    // (RequestPhysicsFreeze / ThawEditedBody).
     //
-    // This is deliberately shaped like _captureEditingActive: the request is a
-    // per-frame flag raised by the panel, and the *release* is decided at the end
-    // of OnImGui, where it runs whether or not the Inspector drew anything. A
-    // release keyed off the panel's own edge could be skipped entirely — the
-    // Inspector early-returns when nothing is selected — which stranded the body
-    // Static forever while its descriptor still said dynamic: an object frozen in
-    // mid-air that the inspector insisted was falling.
+    // Shaped like _captureEditingActive: the request is a per-frame flag raised by
+    // the panel, but the *release* is decided at the end of OnImGui, where it runs
+    // whether or not the Inspector drew. Keying the release off the panel's own
+    // edge skips it whenever the Inspector early-returns on an empty selection,
+    // stranding the body Static while its descriptor still says dynamic.
     bool                _physicsFreezeRequested = false;
     Assisi::ECS::Entity _frozenBodyEntity       = Assisi::ECS::NullEntity;
     /// World that owns _frozenBodyEntity, by name rather than pointer: the viewed
@@ -1246,41 +1253,42 @@ class EditorApp : public Assisi::App::Application
     /// thaw must reach the body it actually froze, not whatever is on screen now.
     std::string         _frozenBodyWorld;
 
-    // Reused per-frame scratch for collider wireframes (see SubmitColliderWireframes):
-    // the depth-tested (unselected) and on-top (selected) line batches, and the list
-    // of collider entities whose editor billboards are suppressed. Members so drawing
-    // colliders doesn't allocate every frame.
+    // --- Collider wireframe scratch ---
+    // Reused per frame by SubmitColliderWireframes: the depth-tested (unselected)
+    // and on-top (selected) line batches, and the collider entities whose editor
+    // billboards are suppressed. Members so drawing colliders doesn't allocate
+    // every frame.
     std::vector<Assisi::Render::LineVertex> _colliderLinesDepthTested;
     std::vector<Assisi::Render::LineVertex> _colliderLinesOnTop;
     std::vector<Assisi::ECS::Entity>        _colliderEntities;
+
+    // --- Entity list ---
     // Requests the Entities list scroll to this entity's row next time it draws
     // (set when a new entity is created, so it comes into view). NullEntity = none.
     Assisi::ECS::Entity _scrollToEntity = Assisi::ECS::NullEntity;
 
-    // Transform-gizmo state (see EditorGizmo.cpp): which handle set is shown, and
-    // whether it manipulates in world or the entity's local axes.
+    // --- Transform gizmo ---
     GizmoOp _gizmoOp        = GizmoOp::Translate;
     bool    _gizmoLocalSpace = false; // false = world axes
     // Whether the gizmo was being dragged last frame, so its release edge can be
-    // detected — the gizmo force-commits its (shared) Transform gesture there, so a
-    // gizmo drag is always its own undo entry, never merged with a later edit.
+    // detected: the gizmo force-commits its (shared) Transform gesture there, which
+    // is what keeps a drag its own undo entry rather than merged with a later edit.
     bool    _gizmoWasUsing = false;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-
     // write) and applies undo/redo in the Editing state. See EditHistory.hpp.
     // std::optional because it binds a Scene& not available until the Main scene is
-    // created; it persists across play sessions (Stop restores exact identity so its
-    // entity handles stay valid — see StopPlay).
+    // created; it persists across play sessions (Stop restores exact identity, so
+    // its entity handles stay valid — see StopPlay).
     std::optional<Assisi::Editor::EditHistory> _history;
     // A throwaway history active only while Paused: edits made during a pause are
     // undoable there, but the whole container is discarded when play resumes or
     // stops, so paused undo never leaks into the persistent editing history.
     std::optional<Assisi::Editor::EditHistory> _pausedHistory;
     // The open blueprint world's own history, live only while blueprint mode is.
-    // Separate from _history rather than swapped with it: the level's undo stack has
-    // to come back untouched, and EditHistory binds a Scene by reference — a stash
-    // that moved it would be a stack pointing at a scene that had moved on.
+    // Separate from _history rather than swapped with it: the level's undo stack
+    // has to come back untouched, and EditHistory binds a Scene by reference.
     std::optional<Assisi::Editor::EditHistory> _blueprintHistory;
     // Accumulated across a frame's ImGui panels: true if an edit widget (inspector
     // drag/type, or the gizmo) is still being manipulated. The end-of-OnImGui sweep
@@ -1312,6 +1320,7 @@ class EditorApp : public Assisi::App::Application
     // destroys a world, which must never happen from inside a panel.
     bool _pendingBlueprintClose = false;
 
+    // --- Blueprint save: pending re-expansion ---
     // A collected re-expansion waiting on the author's answer, plus what it costs.
     // Empty the rest of the time; the modal is only raised when history is at stake.
     std::vector<PendingReexpand> _pendingReexpand;
@@ -1320,48 +1329,51 @@ class EditorApp : public Assisi::App::Application
     // The member names the edit removes, for the prompt. Names rather than entities:
     // "lid, hinge" is what the author recognises, and one name may cover four copies.
     std::vector<std::string> _pendingReexpandRemoved;
-    // Blueprints whose live copies the author chose to leave stale. Hosting is
-    // refused while this is non-empty (stage 5e): a client expands the file, so the
-    // two machines would build different member sets and the content-set hash would
-    // agree that they match — it hashes the disk, and the disks *do* match. Cleared
-    // by a level load, and by a catch-up that is accepted.
+    // Blueprints whose live copies the author chose to leave stale. **Hosting is
+    // refused while this is non-empty**: a client expands the file, so the two
+    // machines would build different member sets while the content-set hash agreed
+    // they match — it hashes the disk, and the disks *do* match. Cleared by a level
+    // load, and by a catch-up that is accepted.
     std::vector<std::string> _staleInstanceSources;
 
+    // --- Window title, and requests deferred out of ImGui ---
     // Last dirty state pushed to the OS window title, so the title is only re-set
-    // when it actually flips (not every frame).
+    // when it actually flips, not every frame.
     bool _titleDirtyShown = false;
     // A history jump requested by clicking a History-panel row: negative = undo N
-    // steps, positive = redo N. Applied at the top of the next OnUpdate (never
-    // mid-ImGui, which would invalidate cached component pointers).
+    // steps, positive = redo N. Applied at the top of the next OnUpdate — never
+    // mid-ImGui, which would invalidate cached component pointers.
     int32_t _pendingHistorySteps = 0;
 
-    // ImGui input watchdog (LogImGuiWedgeDiagnostics): seconds a widget has held
-    // ActiveId with no mouse button down and no text edit, and the next elapsed
-    // time at which to (re-)log the wedge. Diagnostic for the reported
-    // "UI stops responding until a new window opens" freeze.
+    // --- ImGui wedge watchdog ---
+    // Seconds a widget has held ActiveId with no mouse button down and no text
+    // edit, and the next elapsed time at which to (re-)log it. Diagnostic for the
+    // reported "UI stops responding until a new window opens" freeze.
     static constexpr float kImGuiWedgeThreshold = 3.f;
     float _imguiWedgeSeconds    = 0.f;
     float _imguiWedgeNextReport = kImGuiWedgeThreshold;
 
-    // Per-component delete confirmation: the inspector's X button arms a two-step
-    // confirm for one component at a time. Scoped to an entity so switching
-    // selection cancels a pending confirm rather than deleting from the new one.
+    // --- Inspector: component delete confirmation ---
+    // The inspector's X button arms a two-step confirm for one component at a
+    // time. Scoped to an entity so switching selection cancels a pending confirm
+    // rather than deleting from the new one.
     Assisi::Core::Reflect::ComponentId _pendingDeleteComponent =
         Assisi::Core::Reflect::kInvalidComponentId;
     Assisi::ECS::Entity _pendingDeleteEntity = Assisi::ECS::NullEntity;
 
+    // --- Overlays and debug panels ---
     /// The F11 options overlay. Held by pointer so its telemetry buffers and the
     /// GpuTelemetry header stay out of this one.
     std::unique_ptr<EditorOptionsPanel> _options;
-    bool _showChiara  = false;
+    bool _showChiara  = false; ///< F9 performance-capture panel.
 
     // F11 "Editor overlays" checkbox: per-frame visibility of the selection
-    // outline, entity icons, and collider wireframes — for decluttering the
-    // view / screenshots. Purely editor-side (skips the submissions); the
-    // passes themselves exist per EditorConfig::enableEditorVisuals.
+    // outline, entity icons, and collider wireframes, for decluttering the view
+    // or a screenshot. Purely editor-side (it skips the submissions); whether the
+    // passes exist at all is EditorConfig::enableEditorVisuals.
     bool _showEditorOverlays = true;
 
-    // --- Play control (game-control window, F5/F6/F7; see EditorPlay.cpp) ---
+    // --- Play control (game-control window, F5/F6/F7) ---
     // Physics and any game-logic systems tick only while Playing; the editor
     // camera and picking stay live in every state so the scene is always
     // navigable. Run snapshots the scene so Stop can restore it, Pause freezes
@@ -1376,12 +1388,12 @@ class EditorApp : public Assisi::App::Application
 
     /// @brief The one place the play state changes.
     ///
-    /// The state itself is the flat freeze: while it is not Playing the fixed
-    /// loop steps nothing, in any world. This also sets the viewed world's
-    /// `simulate` flag, which selects among the worlds of a *running* session —
-    /// but only when that world is Active, since a Dormant world is by definition
-    /// not stepped and must not be marked otherwise (resuming while inspecting
-    /// the dormant edited world would else hand it a live flag).
+    /// The state itself is the flat freeze: while it is not Playing the fixed loop
+    /// steps nothing, in any world. This also sets the viewed world's `simulate`
+    /// flag, which selects among the worlds of a *running* session — but **only
+    /// when that world is Active**, since a Dormant world is by definition not
+    /// stepped: resuming while inspecting the dormant edited world would otherwise
+    /// hand it a live flag.
     void SetPlayState(PlayState state)
     {
         _playState = state;
@@ -1392,10 +1404,10 @@ class EditorApp : public Assisi::App::Application
     }
 
     // One entity's exact-identity snapshot for the play/stop restore. Unlike a
-    // Save() (which renumbers entities to dense serial indices), this keeps the
+    // Save(), which renumbers entities to dense serial indices, this keeps the
     // exact (index, generation) handle so Stop can restore entities *in place* via
     // Scene::ReviveAt — which is what lets the editing undo history survive a play
-    // session: its stored handles still resolve after Stop. Components are the
+    // session, its stored handles still resolving after Stop. Components are the
     // reflected JSON of each serializable component, captured under a raw-entity
     // context (EntityRef fields as raw handles), same as the undo capture path.
     struct PlayEntitySnapshot
@@ -1405,10 +1417,10 @@ class EditorApp : public Assisi::App::Application
     };
     std::vector<PlayEntitySnapshot> _playSnapshot; ///< Captured at Run; restored on Stop.
 
-    // Camera focus animation (entity-list double-click). A fixed-duration eased
-    // move that reframes the camera on an object; while active it owns the camera
-    // transform (UpdateCamera advances it and skips fly control). Manual look
-    // input cancels it. Always kCameraFocusDuration regardless of travel distance.
+    // --- Camera focus animation (entity-list double-click) ---
+    // An eased move that reframes the camera on an object. While active it owns the
+    // camera transform: UpdateCamera advances it and skips fly control. Manual look
+    // input cancels it. Always kCameraFocusDuration, whatever the travel distance.
     bool                   _cameraFocusActive  = false;
     float                  _cameraFocusElapsed = 0.f;
     glm::vec3              _cameraFocusStartPos{0.f};
@@ -1417,27 +1429,29 @@ class EditorApp : public Assisi::App::Application
     glm::quat              _cameraFocusEndRot{1.f, 0.f, 0.f, 0.f};
     static constexpr float kCameraFocusDuration = 0.25f;
 
-    // Inspector "Add Component" search field: the in-progress substring the user
-    // is typing; matched case-insensitively against addable component names.
+    // --- Inspector: Add Component ---
+    // The in-progress substring being typed, matched case-insensitively against
+    // addable component names.
     char _addComponentBuf[64] = {};
     // Keyboard highlight into the suggestion list: Tab/Down advance it, Up retreats,
     // editing the text resets it to the first row, Enter adds the highlighted one.
     int32_t _addComponentSelected = 0;
 
-
-    // Eyedropper: while armed, the next scene entity-pick is written into the
-    // captured EntityRef field instead of changing the selection. The target is
-    // pinned by (entity, component meta, field offset) rather than a raw pointer,
-    // so a pool reallocation between arming and picking can't dangle it.
+    // --- Eyedropper ---
+    // While armed, the next scene entity-pick is written into the captured
+    // EntityRef field instead of changing the selection. The target is pinned by
+    // (entity, component meta, field offset) rather than a raw pointer, so a pool
+    // reallocation between arming and picking can't dangle it.
     bool                                        _eyedropperArmed       = false;
     Assisi::ECS::Entity                         _eyedropperEntity      = Assisi::ECS::NullEntity;
     const Assisi::Core::Reflect::ComponentMeta *_eyedropperMeta        = nullptr;
     std::size_t                                 _eyedropperFieldOffset = 0;
 
-    // Asset browser: opened from an AssetPath field's browse button, it navigates
-    // the asset directory and writes the picked path back into the field. The
-    // target is pinned by (entity, component meta, field offset) and re-resolved
-    // at write time — same anti-dangling scheme as the eyedropper above.
+    // --- Asset browser ---
+    // Opened from an AssetPath field's browse button, it navigates the asset
+    // directory and writes the picked path back into the field. The target is
+    // pinned by (entity, component meta, field offset) and re-resolved at write
+    // time — same anti-dangling scheme as the eyedropper above.
     bool                                        _assetBrowserOpen        = false;
     Assisi::ECS::Entity                         _assetBrowserEntity      = Assisi::ECS::NullEntity;
     const Assisi::Core::Reflect::ComponentMeta *_assetBrowserMeta        = nullptr;
@@ -1462,10 +1476,12 @@ class EditorApp : public Assisi::App::Application
     // _assetCache so a level load (which Clears that) doesn't drop thumbnails.
     Assisi::Render::AssetCache _thumbnailCache;
 
+    // --- Levels panel ---
     std::vector<std::string> _levelFiles;
     int32_t                  _selectedLevel = 0;
     char                     _saveAsName[128] = {};
 
+    // --- Blueprints panel ---
     /// Every `.abp` and `.alvl` under the asset root, as virtual paths — what the
     /// Blueprints panel offers to place. Both extensions, because they are one
     /// format and the extension never gates behaviour: instancing a level into a
@@ -1473,24 +1489,27 @@ class EditorApp : public Assisi::App::Application
     std::vector<std::string> _blueprintFiles;
     int32_t                  _selectedBlueprint = 0;
     char                     _newBlueprintName[128] = {};
-    // A level load requested from the UI (OnImGui), applied at the next OnUpdate —
-    // never mid-frame: LoadLevel frees GPU assets (incl. the bindless table) that
-    // this frame's already-recorded draws still reference, which faults the GPU.
+
+    // --- World and level operations deferred out of ImGui ---
+    // **None of these may run mid-frame.** A level load requested from a panel,
+    // applied at the next OnUpdate: LoadLevel frees GPU assets (including the
+    // bindless table) that this frame's already-recorded draws still reference,
+    // which faults the GPU.
     std::optional<std::string> _pendingLevelLoad;
 
-    // Same marshalling, for the Game panel's "Load as new world" debug control:
-    // it creates a second resident world, which resolves assets and builds Jolt
-    // bodies — main-thread-drain work, never mid-ImGui.
+    // The Game panel's "Load as new world" debug control: it creates a second
+    // resident world, which resolves assets and builds Jolt bodies — main-thread-
+    // drain work.
     std::optional<std::string> _pendingWorldLoad;
-    // ...and for "Travel here", which additionally frees the outgoing world's
-    // GPU assets — the strongest reason of the three not to run mid-frame.
+    // ...and "Travel here", which additionally frees the outgoing world's GPU
+    // assets — the strongest reason of the three.
     std::optional<std::string> _pendingTravel;
-    // Same marshalling for "Migrate selection": migration rebuilds physics
-    // bodies and resolves meshes, so it runs at the pre-update safe point.
+    // "Migrate selection": migration rebuilds physics bodies and resolves meshes,
+    // so it runs at the pre-update safe point.
     std::optional<std::string> _pendingMigrate;
-    // Async travel (S5): "Preload" starts a background load; "Swap" promotes it.
-    // Both marshalled — BeginLoadLevel mutates the world store, and promotion
-    // resolves/frees GPU assets, so neither may run mid-ImGui.
+    // Async travel: "Preload" starts a background load, "Swap" promotes it.
+    // BeginLoadLevel mutates the world store and promotion resolves/frees GPU
+    // assets.
     std::optional<std::string> _pendingPreload;
     bool                       _pendingPromote = false;
 };

@@ -6,9 +6,9 @@
 
 #include <imgui.h>
 
-// The ImGui context may not exist yet (before DebugUI initializes, or when the
-// debug UI is disabled) — calling ImGui::GetIO() without a context asserts, so
-// gate every query on GetCurrentContext() first.
+// Every query below null-checks the context first. It may not exist yet (before
+// DebugUI initializes, or when the debug UI is disabled), and ImGui::GetIO()
+// asserts without one.
 inline bool ImGuiWantsMouse()
 {
     return ImGui::GetCurrentContext() != nullptr && ImGui::GetIO().WantCaptureMouse;
@@ -20,7 +20,7 @@ inline bool ImGuiWantsKeyboard()
 }
 
 /// Ctrl or Shift held — the "add to the selection" modifier. One query for both
-/// because the viewport treats them the same (see HandleEntityPicking).
+/// because HandleEntityPicking treats them the same.
 inline bool ImGuiAdditiveModifier()
 {
     return ImGui::GetCurrentContext() != nullptr && (ImGui::GetIO().KeyCtrl || ImGui::GetIO().KeyShift);

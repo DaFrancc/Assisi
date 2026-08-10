@@ -36,9 +36,8 @@ void InstanceGesture::Begin(Assisi::ECS::Scene &scene, const Rt::InstanceTable &
                             EditHistory *history, Assisi::ECS::InstanceId instanceId)
 {
     // Already open on this instance: keep the snapshot taken when the drag started.
-    // Re-capturing here would make `before` the previous frame's value, which is
-    // the per-frame history bug wearing a different hat — one entry, but one that
-    // only undoes the last frame of the drag.
+    // Re-capturing would make `before` the previous frame's value, leaving one undo
+    // entry that only rewinds the last frame of the drag.
     if (!instanceId.IsValid() || _instanceId == instanceId)
         return;
 
@@ -64,7 +63,7 @@ void InstanceGesture::Begin(Assisi::ECS::Scene &scene, const Rt::InstanceTable &
 void InstanceGesture::EndFrame(Assisi::ECS::Scene &scene, const Rt::InstanceTable &instances,
                                EditHistory *history, const char *label)
 {
-    // Read and clear first, so the flag always describes the frame that just ran
+    // Read and clear first, so the flag describes only the frame that just ran,
     // whichever branch below is taken.
     const bool held = std::exchange(_held, false);
 
@@ -92,18 +91,15 @@ void InstanceGesture::EndFrame(Assisi::ECS::Scene &scene, const Rt::InstanceTabl
             // Only if something actually moved — a click without a drag is not an
             // edit, the same rule the capture gestures apply.
             //
-            // The placement is asked about directly, because it is what a save
-            // writes. Counting member deltas instead was asking a proxy question:
-            // "did anything the placement carries move?" agrees with "did the
-            // placement move?" only while an instance has a member the placement
-            // reaches. It has none when every member is parented elsewhere — those
-            // ride along through their parent, so ApplyInstancePlacement skips them
-            // — or when the members have been deleted out from under the row. Then
-            // the move was written to the file, absent from the history, and never
-            // dirtied the title bar: the three disagreeing, with the one that
-            // touches disk winning (round-7 S15).
+            // **The placement is asked about directly, because it is what a save
+            // writes.** Counting member deltas alone is a proxy that agrees only
+            // while the instance has a member the placement reaches. It has none
+            // when every member is parented elsewhere (those ride along through
+            // their parent, so ApplyInstancePlacement skips them) or when the
+            // members have been deleted out from under the row — and then the move
+            // reached the file but not the history and not the dirty marker.
             //
-            // Both halves are needed. A member can move without the placement
+            // Both halves are needed: a member can move without the placement
             // moving, which is an override on that member, and that still records.
             if (PlacementChanged(_row.transform, now->transform) || txn.cmds.size() > 1)
                 history->Push(std::move(txn));

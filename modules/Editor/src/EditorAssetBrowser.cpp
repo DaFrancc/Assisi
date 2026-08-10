@@ -24,8 +24,8 @@ namespace Assisi::Editor
 
 namespace
 {
-// Defined below in this file's anonymous namespace; forward-declared so the hello
-// window (above that block) can play the spinner too.
+// Defined in the anonymous namespace below; declared here so the hello window,
+// which precedes that block, can play the spinner too.
 void DrawLoadingFrame(const ImVec2 &origin, float size);
 bool LoadingSpinnerAvailable();
 } // namespace
@@ -39,13 +39,12 @@ void EditorApp::DrawHelloImageWindow()
             const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(_helloTexture.NativeTexture());
             ImGui::Image(id, ImVec2(256.f, 256.f));
 
-            // Play the loading spinner below the image, centred to its width.
             if (LoadingSpinnerAvailable())
             {
                 constexpr float kSpin  = 224.f; // nearly fills the 256-wide image column
                 const ImVec2    cursor = ImGui::GetCursorScreenPos();
                 const ImVec2    origin(cursor.x + (256.f - kSpin) * 0.5f, cursor.y);
-                ImGui::Dummy(ImVec2(256.f, kSpin)); // reserve the row
+                ImGui::Dummy(ImVec2(256.f, kSpin)); // advance the cursor past the hand-drawn row
                 DrawLoadingFrame(origin, kSpin);
             }
         }
@@ -75,7 +74,6 @@ bool IsThumbnailableImage(const std::filesystem::path &path)
     return ext == ".png" || ext == ".jpg" || ext == ".jpeg" || ext == ".bmp" || ext == ".tga";
 }
 
-/// @brief True for .amat material files.
 bool IsMaterialFile(const std::filesystem::path &path)
 {
     return LowerExtension(path) == ".amat";
@@ -88,9 +86,9 @@ bool IsMeshFile(const std::filesystem::path &path)
     return ext == ".glb" || ext == ".gltf";
 }
 
-/// @brief Paints a classic folder glyph (a tabbed body) filling a @p size square
-/// at screen-space @p origin, so a folder tile reads at a glance without needing
-/// an emoji font or an image asset.
+/// @brief Paints a tabbed folder glyph filling a @p size square at screen-space
+/// @p origin. Every tile icon here is drawn, so the browser needs no icon font
+/// and no image assets of its own.
 void DrawFolderIcon(const ImVec2 &origin, float size)
 {
     ImDrawList *drawList = ImGui::GetWindowDrawList();
@@ -109,9 +107,8 @@ void DrawFolderIcon(const ImVec2 &origin, float size)
     drawList->AddRectFilled(ImVec2(left, bodyTop), ImVec2(right, bottom), body, rounding);
 }
 
-/// @brief Paints a simple isometric cube filling a @p size square at @p origin,
-/// so a mesh-file tile reads as "3D model" without an image asset — the mesh
-/// counterpart to DrawFolderIcon, in cool tones to distinguish it from a folder.
+/// @brief Paints an isometric cube filling a @p size square at @p origin — the
+/// mesh-file tile. Cool tones, against the folder's amber.
 void DrawMeshIcon(const ImVec2 &origin, float size)
 {
     ImDrawList *drawList = ImGui::GetWindowDrawList();
@@ -121,7 +118,7 @@ void DrawMeshIcon(const ImVec2 &origin, float size)
     const float  halfW   = size * 0.26f;
     const float  halfH   = size * 0.30f;
 
-    // Hexagonal silhouette of a cube plus its centre, yielding three visible faces.
+    // A hexagonal silhouette plus its centre: three quads, three visible faces.
     const ImVec2 top(centerX, centerY - halfH);
     const ImVec2 upperRight(centerX + halfW, centerY - halfH * 0.5f);
     const ImVec2 lowerRight(centerX + halfW, centerY + halfH * 0.5f);
@@ -140,8 +137,8 @@ void DrawMeshIcon(const ImVec2 &origin, float size)
 }
 
 /// @brief Paints a shaded sphere filling a @p size square at @p origin — the
-/// material-preview convention — so a .amat tile reads as "material" without an
-/// image asset. Warm tones distinguish it from the cool mesh cube.
+/// .amat tile, following the usual material-preview convention. Warm tones,
+/// against the mesh cube's cool ones.
 void DrawMaterialIcon(const ImVec2 &origin, float size)
 {
     ImDrawList *drawList = ImGui::GetWindowDrawList();
@@ -155,35 +152,34 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
                               IM_COL32(214, 188, 150, 255), 32);
 }
 
-// Thumbnail loading spinner. Two interchangeable backends, chosen at compile time by
-// DebugUI::kUseWebpSpinner (flip that one bool and rebuild):
+// Thumbnail loading spinner. Two interchangeable backends, chosen at compile time
+// by DebugUI::kUseWebpSpinner (flip that one bool and rebuild):
 //   * WebP — an animated .webp decoded to one texture per frame (DebugUI::LoadingWebpFrame).
-//   * TTF  — a font whose consecutive glyphs are the frames (DebugUI::LoadingFont),
-//            advanced one glyph per tick and looped.
-// Either path advances a time-driven counter at kLoadingFps and loops; the frame
-// count comes from the active backend (the WebP's decoded frames, or the TTF glyph
-// range below). To match a re-authored TTF, set kTtfFrameCount to the number of
-// frames and kTtfFirstFrame to the first frame's codepoint ('a' for an a..z
-// sequence, or a Private-Use codepoint like 0xE000).
+//   * TTF  — a font whose consecutive glyphs are the frames (DebugUI::LoadingFont).
+// Both drive a time-based counter at kLoadingFps and loop; the frame count comes
+// from the active backend — the WebP's decoded frames, or the TTF range below.
+// Re-authoring the TTF means updating both constants below: the frame count, and
+// the first frame's codepoint ('a' for an a..z sequence, or a Private-Use one).
 constexpr uint32_t     kTtfFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F12B
-constexpr int32_t      kTtfFrameCount = 300;    // one full v4-30 atom-spin loop (must match the font)
-constexpr double       kLoadingFps    = 30.0;   // 300 frames / 30fps = 10 s per loop (matches the design).
+constexpr int32_t      kTtfFrameCount = 300;    // one full spin loop; must match the font
+constexpr double       kLoadingFps    = 30.0;   // 300 frames / 30fps = 10 s per loop.
+                                                // Drives BOTH backends -- the WebP path ignores the
+                                                // durations baked into the file -- so it must match
+                                                // whichever spinner asset is shipped.
                                                 // double: its only use multiplies ImGui::GetTime(), which is double.
-                                                // NOTE: this drives BOTH backends -- the WebP path ignores
-                                                // the durations baked into the file -- so it must match
-                                                // whichever v4 variant is shipped as the asset.
 
-/// @brief True when a loading spinner (in whichever backend kUseWebpSpinner selects)
-/// is loaded and can be drawn. Callers gate on this before reserving a spinner row.
+/// @brief Is the active backend's spinner loaded and drawable? Gate on this
+/// before reserving a spinner row, and before calling DrawLoadingFrame.
 bool LoadingSpinnerAvailable()
 {
     return Assisi::Debug::DebugUI::kUseWebpSpinner ? Assisi::Debug::DebugUI::LoadingWebpFrameCount() > 0
                                                    : Assisi::Debug::DebugUI::LoadingFont() != nullptr;
 }
 
-/// @brief Draws the current WebP spinner frame as a textured quad, centred and inset
-/// (to 85%, matching the TTF glyph) in a @p size square at @p origin. Assumes frames
-/// are loaded (LoadingSpinnerAvailable() was true).
+/// @brief Draws the current WebP spinner frame as a textured quad, centred and
+/// inset to 85% of a @p size square at @p origin (matching the TTF glyph).
+///
+/// **Requires LoadingSpinnerAvailable()** — it divides by the frame count.
 void DrawWebpLoadingFrame(const ImVec2 &origin, float size)
 {
     const std::size_t frameCount = Assisi::Debug::DebugUI::LoadingWebpFrameCount();
@@ -198,8 +194,7 @@ void DrawWebpLoadingFrame(const ImVec2 &origin, float size)
 }
 
 /// @brief Draws the current TTF spinner glyph centred in a @p size square at
-/// @p origin. Cheap: one glyph (a single textured quad) picked by a time-driven
-/// counter. Assumes the spinner font is loaded.
+/// @p origin — one glyph, so one textured quad, picked by a time-based counter.
 void DrawTtfLoadingFrame(const ImVec2 &origin, float size)
 {
     ImFont *font = Assisi::Debug::DebugUI::LoadingFont();
@@ -209,8 +204,8 @@ void DrawTtfLoadingFrame(const ImVec2 &origin, float size)
     const int32_t  frame = static_cast<int32_t>(ImGui::GetTime() * kLoadingFps) % kTtfFrameCount;
     const uint32_t cp    = kTtfFirstFrame + static_cast<uint32_t>(frame);
 
-    // Encode the frame codepoint as UTF-8 (covers ASCII 'a'.. and BMP Private-Use
-    // up to U+FFFF — the two mappings a spinner font is likely to use).
+    // Encode the frame codepoint as UTF-8, up to U+FFFF — enough for both mappings
+    // a spinner font is likely to use, ASCII and BMP Private-Use.
     char utf8[4] = {0, 0, 0, 0};
     if (cp < 0x80)
     {
@@ -232,16 +227,17 @@ void DrawTtfLoadingFrame(const ImVec2 &origin, float size)
     const float glyphSize = size * 0.85f;
     const ImU32 color     = IM_COL32(226, 222, 210, 255);
 
-    // Centre the glyph in the tile using its measured extent at the scaled size.
+    // Frames differ in extent, so measure at the scaled size rather than assuming.
     const ImVec2 extent = font->CalcTextSizeA(glyphSize, FLT_MAX, 0.0f, utf8);
     const ImVec2 pos(origin.x + (size - extent.x) * 0.5f, origin.y + (size - extent.y) * 0.5f);
     drawList->AddText(font, glyphSize, pos, color, utf8);
 }
 
-/// @brief Draws the current loading-spinner frame centred in a @p size square at
-/// @p origin, over a thumbnail tile still decoding on a worker thread. Dispatches to
-/// whichever backend kUseWebpSpinner selects. No-op if no spinner is loaded (the
-/// caller then leaves a plain placeholder).
+/// @brief Draws the current spinner frame centred in a @p size square at
+/// @p origin, via whichever backend kUseWebpSpinner selects.
+///
+/// **Call only when LoadingSpinnerAvailable()** — the WebP path does not check.
+/// Callers that cannot draw a spinner leave a plain placeholder instead.
 void DrawLoadingFrame(const ImVec2 &origin, float size)
 {
     if (Assisi::Debug::DebugUI::kUseWebpSpinner)
@@ -250,9 +246,9 @@ void DrawLoadingFrame(const ImVec2 &origin, float size)
         DrawTtfLoadingFrame(origin, size);
 }
 
-/// @brief Paints a small amber "!" badge in the top-right corner of a @p size
-/// tile at @p origin, marking an asset whose source changed but couldn't be
-/// auto-reconciled (S4). Drawn over the tile icon, so it reads at a glance.
+/// @brief Paints a small amber "!" badge over the top-right corner of a @p size
+/// tile at @p origin, marking an asset whose source changed since import and
+/// could not be auto-reconciled.
 void DrawStaleBadge(const ImVec2 &origin, float size)
 {
     ImDrawList *drawList = ImGui::GetWindowDrawList();
@@ -271,44 +267,50 @@ void DrawStaleBadge(const ImVec2 &origin, float size)
 }
 } // namespace
 
+// The write target is pinned as (entity, component meta, field offset), never as a
+// pointer to the field. The browser stays open across frames, and a component pool
+// can reallocate in between, which would leave a raw pointer dangling by the time
+// the user picks a file. SelectAsset re-resolves the address at write time.
 void EditorApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
 {
     _assetBrowserOpen        = true;
     _assetBrowserEntity      = _selectedEntity;
     _assetBrowserMeta        = &meta;
     _assetBrowserFieldOffset = fieldOffset;
-    _assetBrowserVectorSlot  = -1; // plain AssetPath field
-    _assetBrowserDir.clear(); // always start at the asset root
-    _assetBrowserDirty = true; // re-read on open
+    _assetBrowserVectorSlot  = -1; // a scalar AssetId field, not an element of a vector
+    _assetBrowserDir.clear(); // every open starts at the asset root
+    _assetBrowserDirty = true;
 }
 
 void EditorApp::OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
                                          int32_t slot)
 {
     OpenAssetBrowserFor(meta, fieldOffset);
-    _assetBrowserVectorSlot = slot; // element [slot] of an AssetPathVector
+    // A non-negative slot also narrows the listing to materials: see DrawAssetBrowser.
+    _assetBrowserVectorSlot = slot;
 }
 
 void EditorApp::SelectAsset(std::string_view vpath)
 {
-    // Re-resolve the target from (entity, meta, offset) at write time — the
-    // component pool may have moved since the browser was opened (see eyedropper).
+    // Re-resolve the target from (entity, meta, offset): the component pool may have
+    // moved since the browser was opened. The inspector's eyedropper pins its target
+    // the same way, for the same reason.
     if (_assetBrowserMeta != nullptr && _scene != nullptr && _scene->IsAlive(_assetBrowserEntity))
     {
         const void *ptr =
             _assetBrowserMeta->getByEntity(_scene, _assetBrowserEntity.index, _assetBrowserEntity.generation);
         if (ptr != nullptr)
         {
-            // One-frame capture around this raw-offset asset write (another
-            // off-inspector edit site the inspector's record-before-write misses).
+            // A one-frame undo capture around the write. This edit site goes through a
+            // raw offset, so the inspector's own record-before-write never sees it.
             Assisi::Editor::EditHistory *history = ActiveHistory();
             if (history != nullptr)
                 history->RecordBefore(_assetBrowserEntity, _assetBrowserMeta->id,
                                       EditLabel("Assign asset", _assetBrowserEntity), _assetBrowserEntity);
 
             char *fieldPtr = const_cast<char *>(static_cast<const char *>(ptr)) + _assetBrowserFieldOffset;
-            // The browser picks a file path; the stored reference is a GUID, so
-            // translate through the database (nil if the path has no sidecar).
+            // The browser picks a file path, but the field stores an AssetId, so
+            // translate through the database — nil when the path has no sidecar.
             const Assisi::Core::AssetId id = _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{});
             if (_assetBrowserVectorSlot < 0)
             {
@@ -316,8 +318,8 @@ void EditorApp::SelectAsset(std::string_view vpath)
             }
             else
             {
-                // Element [slot] of an AssetIdVector: grow the sparse override
-                // list with nil entries up to the slot, then assign.
+                // The override list is sparse: pad with nil ids up to the slot,
+                // then assign. A short list means "the rest use the mesh defaults".
                 auto              &overrides = *reinterpret_cast<std::vector<Assisi::Core::AssetId> *>(fieldPtr);
                 const std::size_t  slot      = static_cast<std::size_t>(_assetBrowserVectorSlot);
                 if (overrides.size() <= slot)
@@ -346,9 +348,9 @@ void EditorApp::ReresolveEntityAssets(Assisi::ECS::Entity entity)
 
 void EditorApp::RescanAssetBrowser()
 {
-    // Leaving this directory: drop its thumbnails so browsing many folders doesn't
-    // grow VRAM without bound. ClearThumbnails waits for the GPU to idle, so it's
-    // safe to release each texture's ImGui binding here before it's freed.
+    // Drop the previous directory's thumbnails, so browsing many folders does not
+    // grow VRAM without bound. ClearThumbnails waits for the GPU to idle before
+    // freeing, which is what makes releasing the ImGui binding here safe.
     _thumbnailCache.ClearThumbnails(
         [](nvrhi::ITexture *texture) { Assisi::Debug::DebugUI::ReleaseTexture(texture); });
 
@@ -392,7 +394,7 @@ void EditorApp::DrawAssetBrowser()
     if (!_assetBrowserOpen)
         return;
 
-    // Thumbnail tile size, clamped and stepped by the zoom buttons below.
+    // Bounds and step for the tile size the zoom buttons below drive.
     static constexpr float kMinThumb  = 64.f;
     static constexpr float kMaxThumb  = 512.f;
     static constexpr float kThumbStep = 32.f;
@@ -422,13 +424,12 @@ void EditorApp::DrawAssetBrowser()
     if (ImGui::Button("Refresh"))
         _assetBrowserDirty = true;
 
-    // Re-run the editor reconcile pass: generate `.aast` sidecars for any newly
-    // added assets and rebuild the GUID database. Also marks the browser dirty.
+    // Reimport runs the editor reconcile pass: `.aast` sidecars for newly added
+    // assets, then a rebuild of the id database. It marks the browser dirty itself.
     ImGui::SameLine();
     if (ImGui::Button("Reimport"))
         ReimportAssets();
 
-    // Zoom controls for the icon size.
     ImGui::SameLine();
     ImGui::TextUnformatted("Size");
     ImGui::SameLine();
@@ -443,8 +444,7 @@ void EditorApp::DrawAssetBrowser()
     ImGui::EndDisabled();
     ImGui::Separator();
 
-    // Re-read the directory only when it changed (navigation / open / Refresh),
-    // never per frame.
+    // Only on navigation / open / Refresh / Reimport. Never per frame.
     if (_assetBrowserDirty)
     {
         RescanAssetBrowser();
@@ -466,8 +466,7 @@ void EditorApp::DrawAssetBrowser()
     const int32_t cols = std::max(1, static_cast<int32_t>(ImGui::GetContentRegionAvail().x / cell));
     int32_t       col  = 0;
 
-    // Folders first, as icon tiles in the same grid as the assets. Clicking one
-    // navigates into it (marks the listing dirty so it re-reads next frame).
+    // Folders first. Every tile loop below shares this grid flow and `col` with it.
     for (const std::string &dir : _assetBrowserDirs)
     {
         ImGui::PushID(dir.c_str());
@@ -493,9 +492,8 @@ void EditorApp::DrawAssetBrowser()
             ImGui::SameLine();
     }
 
-    // Then the thumbnailable assets and mesh files, continuing the same grid
-    // flow — but hidden while picking a material for a slot, where only a .amat
-    // is a valid choice.
+    // Images and meshes, hidden entirely while picking for a material slot, where
+    // a .amat is the only valid choice.
     if (_assetBrowserVectorSlot < 0)
     {
     for (const std::string &img : _assetBrowserImages)
@@ -505,11 +503,10 @@ void EditorApp::DrawAssetBrowser()
         ImGui::PushID(img.c_str());
         ImGui::BeginGroup();
         bool clicked = false;
-        // Only resolve tiles actually on screen: an off-screen row draws a plain
-        // placeholder button, so a folder of hundreds of images neither kicks
-        // hundreds of decodes nor exhausts the 256-set ImGui descriptor pool in one
-        // frame. Visible tiles decode asynchronously (ResolveThumbnail returns null
-        // while loading), so entering a texture-heavy folder no longer hitches.
+        // Resolve on-screen tiles only; off-screen rows get a plain placeholder
+        // button. A folder of hundreds of images must not kick hundreds of decodes,
+        // nor exhaust ImGui's 256-set descriptor pool in one frame. Visible tiles
+        // decode on a worker — ResolveThumbnail returns null until one lands.
         const bool visible = ImGui::IsRectVisible(ImVec2(thumb, thumb));
         const Assisi::Render::Texture *tex =
             visible ? _thumbnailCache.ResolveThumbnail(Assisi::Core::AssetPath{std::string_view{vpath}}) : nullptr;
@@ -522,9 +519,8 @@ void EditorApp::DrawAssetBrowser()
                  _thumbnailCache.IsThumbnailLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
                  LoadingSpinnerAvailable())
         {
-            // Still decoding on a worker: a blank tile with the animated loading
-            // spinner over it (the filename still shows below). Reads as "loading"
-            // rather than a dead text button.
+            // Still decoding: a blank tile under the spinner, so it reads as
+            // "loading" rather than as the dead text button of the branch below.
             const ImVec2 tile = ImGui::GetCursorScreenPos();
             clicked           = ImGui::Button("##loading", ImVec2(thumb, thumb));
             DrawLoadingFrame(tile, thumb);
@@ -546,8 +542,7 @@ void EditorApp::DrawAssetBrowser()
             ImGui::SameLine();
     }
 
-    // Finally the mesh files (.glb/.gltf). They have no thumbnail, so each shows a
-    // cube icon over a click target, continuing the same grid flow as folders.
+    // Mesh files have no thumbnail: a cube icon drawn over a full-tile click target.
     for (const std::string &mesh : _assetBrowserMeshes)
     {
         const std::string vpath = _assetBrowserDir.empty() ? mesh : _assetBrowserDir + "/" + mesh;
@@ -573,8 +568,8 @@ void EditorApp::DrawAssetBrowser()
 
         if (clicked)
         {
-            // A stale mesh can't be picked into a field until it is resolved:
-            // clicking one opens the resolution prompt instead of selecting it.
+            // A stale mesh cannot be assigned until it is resolved, so a click opens
+            // the resolution prompt rather than selecting it.
             if (stale)
                 OpenStaleResolution(vpath);
             else
@@ -586,8 +581,8 @@ void EditorApp::DrawAssetBrowser()
     }
     } // end (_assetBrowserVectorSlot < 0)
 
-    // Material files (.amat), always listed, shown as a shaded-sphere tile over a
-    // click target — the only pickable asset while browsing for a material slot.
+    // Materials are listed in both modes, and are the only tiles left when the
+    // browser was opened for a material slot.
     for (const std::string &material : _assetBrowserMaterials)
     {
         const std::string vpath = _assetBrowserDir.empty() ? material : _assetBrowserDir + "/" + material;
