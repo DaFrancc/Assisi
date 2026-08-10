@@ -51,6 +51,13 @@ class EditorOptionsPanel
 
         /// The rolling history behind the graphs: ring buffers of `sampleCount`
         /// samples, `offset` being the oldest and the next slot to overwrite.
+        ///
+        /// **Fill all five from one source.** The panel indexes the three spans
+        /// by each other's length and walks `frameDeltaMs` to `sampleCount`
+        /// without re-checking, so spans of differing lengths — or a
+        /// `sampleCount` past their end — read out of bounds silently. The only
+        /// caller builds them from a single `Application::FrameStatsView`, which
+        /// is what keeps that true.
         std::span<const float> cpuMs;
         std::span<const float> gpuMs;
         std::span<const float> frameDeltaMs;

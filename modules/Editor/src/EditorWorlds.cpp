@@ -27,9 +27,9 @@ void EditorApp::SetActiveWorld(Assisi::App::World &world)
     _scene   = &world.scene;
     _physics = &world.physics;
 
-    // Entity handles are scene-local: index 3 in this world is a different entity
-    // from index 3 in the last one, and it would pass IsAlive. Anything holding a
-    // handle has to be released rather than carried across.
+    // Release everything holding an entity handle. Handles are scene-local: index 3
+    // in this world is a different entity from index 3 in the last one, and it
+    // passes IsAlive — so a carried-over handle writes into the wrong entity.
     _selectedEntity   = Assisi::ECS::NullEntity;
     _scrollToEntity   = Assisi::ECS::NullEntity;
     _eyedropperArmed  = false;
@@ -54,21 +54,20 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
 
     // Keep the cache: the worlds already resident hold resolved pointers into it,
     // and assets this level shares with them are reused instead of re-uploaded.
-    // (The Clear that used to live in the load path becomes a post-travel sweep —
-    // docs/multi-scene-design-notes.md §0.)
+    // Reclaiming memory is SweepAssetCache's job, after travel, not this load's.
     Assisi::Runtime::LevelHeader header;
     if (!Assisi::App::LoadLevel(world.scene, virtualPath, _assetCache, _assetDatabase, world.physics,
                                 _sceneRenderer, Assisi::App::AssetCacheReset::Keep, &header, &world.instances))
     {
-        // Destroy the half-created world rather than leaving an empty resident:
-        // it holds no role yet, so this always succeeds.
+        // Destroy the half-created world rather than leave an empty resident. It
+        // holds no role yet, so this always succeeds.
         Assisi::Core::Log::Error("Load as new world: '{}' failed to load.", virtualPath);
         _worlds.Destroy(world.name);
         return false;
     }
 
     world.levelPath = virtualPath;
-    // Same hard error as every other load: a world that cannot have the systems
+    // A hard error, as on every other load: a world that cannot install the systems
     // its level names must not go Active running none of them.
     if (!_worlds.ApplySystems(world, header.systems, virtualPath))
     {
@@ -96,9 +95,9 @@ void EditorApp::MigrateSelectionTo(const std::string &targetWorld)
     if (_selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity))
         return;
 
-    // The selection is a handle into the source world; it is about to be destroyed
-    // there, so drop it. (The migrated copy in the destination has a different
-    // handle; re-selecting it is the game's/inspector's job, not done here.)
+    // Drop the selection: it is a handle into the source world, and migrating
+    // destroys the entity there. The copy in the destination has a different
+    // handle, and re-selecting it is deliberately not done here.
     const Assisi::ECS::Entity moved = _worlds.MigrateEntity(*_world, *dst, _selectedEntity);
     ClearSelection();
     (void)moved;
@@ -121,8 +120,8 @@ void EditorApp::PromotePreloadedWorld()
     if (!_worlds.HasPendingLoad())
         return;
 
-    // As with travel, discard the pause scratch history first: promotion can
-    // retire the world it binds. Then swap (instant) and show the arrival.
+    // Discard the pause scratch history first, as travel does: it binds a scene by
+    // reference and promotion can retire the world holding it.
     _pausedHistory.reset();
 
     Assisi::App::World *const arrived = _worlds.PromotePendingLoad();
@@ -131,13 +130,11 @@ void EditorApp::PromotePreloadedWorld()
 
     SetActiveWorld(*arrived);
 
-    // Deliberately NO SweepAssetCache() here. The sweep does a full cache Clear +
-    // re-import of the survivor from disk — which is exactly the streaming pop-in
-    // the preload spent frames avoiding. Seamless travel keeps its pre-loaded
-    // assets resident; reclaiming the retired level's GPU memory is the deferred
-    // refcounted-eviction job, not something to pay for with a visible re-load
-    // right after a swap that was supposed to be instant. (Synchronous "Travel
-    // here" still sweeps — it has a loading-screen moment anyway.)
+    // No SweepAssetCache() here, on purpose: the sweep Clears the cache and
+    // re-imports the survivor from disk, which is exactly the streaming pop-in the
+    // preload spent frames avoiding. Seamless travel keeps its pre-loaded assets
+    // resident and leaves the retired level's GPU memory to refcounted eviction.
+    // (Synchronous "Travel here" still sweeps; it has a loading pause anyway.)
 }
 
 bool EditorApp::TravelToLevel(const std::string &virtualPath)
@@ -148,9 +145,9 @@ bool EditorApp::TravelToLevel(const std::string &virtualPath)
         return false;
     }
 
-    // The pause scratch history binds a scene by reference and travel can destroy
-    // the world holding it — discard it first, exactly as resuming does. Without
-    // this, pause-then-travel is a use-after-free two clicks deep.
+    // Discard the pause scratch history first, exactly as resuming does: it binds a
+    // scene by reference and travel can destroy the world holding it. Without this,
+    // pause-then-travel is a use-after-free.
     _pausedHistory.reset();
 
     Assisi::App::World *const arrived = _worlds.LoadLevel(virtualPath);
@@ -187,15 +184,14 @@ void EditorApp::DestroyPlayWorlds()
 
 void EditorApp::DrawWorldSelector()
 {
-    // One row, and only once there is a choice to make — a single-world session
-    // should look exactly as it did before multi-scene existed.
+    // Only once there is a choice to make: a single-world session looks exactly as
+    // it did before multi-scene existed.
     if (_worlds.Count() < 2)
         return;
 
-    // Blueprint mode is a mode, not a world you happen to be looking at. Letting the
-    // selector step out of it would leave the edited role behind on the blueprint —
-    // so the level you switched to would be view-only and the reason would be
-    // invisible. Close the blueprint to get back.
+    // Blueprint mode is a mode, not a world you happen to be looking at. Stepping
+    // out of it through the selector would leave the edited role behind on the
+    // blueprint, making the level you switched to view-only for no visible reason.
     if (InBlueprintMode())
     {
         ImGui::TextDisabled("editing %s", _world->levelPath.c_str());
@@ -231,8 +227,7 @@ void EditorApp::DrawWorldSelector()
     }
     else
     {
-        // Say why the panels below are greyed out, rather than letting it look
-        // like a bug.
+        // Say why the panels below are greyed out, so it does not read as a bug.
         ImGui::TextDisabled("view only");
         if (ImGui::IsItemHovered())
         {

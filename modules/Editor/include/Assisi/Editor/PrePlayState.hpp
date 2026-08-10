@@ -14,16 +14,14 @@
 /// the editing undo history's stored handles valid across a session. This holds
 /// everything else a session can move.
 ///
-/// **One struct, one capture, one restore — rather than a member per field.**
-/// The bug this exists to prevent (round-7 B4) was a forgotten field: Run
-/// captured the level path and the system list, Stop put those two back, and
-/// nobody captured the instance table. So after Join → Stop you were editing
-/// your own level with the host's instance rows in it, every one of them flagged
-/// `authored`, with no dirty marker and nothing on screen to say so — and the
-/// next Save wrote the host's instances into your file and dropped yours. The
-/// fix is not only "capture the table" but "make the next field impossible to
-/// forget": adding something a session can move means adding it here, where the
-/// capture and the restore sit next to each other and cannot drift apart.
+/// **One struct, one capture, one restore — rather than a member per field.** The
+/// bug this shape exists to prevent was a forgotten field: the level path and the
+/// system list were captured and restored, the instance table was not. After
+/// Join → Stop you were editing your own level with the host's instance rows in
+/// it, every one flagged `authored`, with no dirty marker and nothing on screen to
+/// say so — and the next Save wrote the host's instances into your file and
+/// dropped yours. So: anything a session can move goes here, where the capture and
+/// the restore sit next to each other and cannot drift apart.
 
 #include <string>
 #include <vector>
@@ -60,9 +58,9 @@ struct PrePlayState
 
 /// @brief Puts @p captured back into the world the session has been using.
 ///
-/// Unconditional, both fields: a spawn during play moves the table without
-/// touching the level path, and a join moves both, so testing before assigning
-/// would only be a way to miss one.
+/// Both the path and the table are assigned unconditionally: a spawn during play
+/// moves the table without touching the level path, and a join moves both, so
+/// testing before assigning would only be a way to miss one.
 ///
 /// @param liveSystemNames what the world's system list is *now*, which is the
 ///        only way to tell whether the session retargeted it.

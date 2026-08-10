@@ -3,16 +3,15 @@
 /// @file EditorBlueprintMode.cpp
 /// @brief Editing a blueprint in its own world, with its own light.
 ///
-/// A blueprint is an ordinary level file (docs/blueprint-system-concept.md §1), so
-/// editing one is opening it as a level — there is no second format and no second
-/// loader. What this file adds is the *mode*: the level you came from stays
-/// resident behind it, the blueprint world takes the edited role and its own undo
-/// stack, and the panels that have nothing to do with authoring a piece of content
-/// go away while you are in there.
+/// A blueprint is an ordinary level file (docs/blueprint-system-concept.md), so
+/// editing one is opening it as a level — no second format, no second loader. What
+/// this file adds is the *mode*: the level you came from stays resident behind it,
+/// the blueprint world takes the edited role and its own undo stack, and the panels
+/// that have nothing to do with authoring one piece of content go away.
 ///
-/// The level staying resident is not a convenience. Saving a blueprint has to bring
-/// that level's copies of it up to date in place (stage 5d), and it cannot do that
-/// to a world it just unloaded.
+/// The level staying resident is load-bearing. Saving a blueprint brings that
+/// level's live copies of it up to date in place (see "Re-expansion on save"
+/// below), and it cannot do that to a world it just unloaded.
 
 #include <Assisi/Editor/EditorApp.hpp>
 
@@ -29,6 +28,7 @@
 
 #include <imgui.h>
 
+#include <algorithm>
 #include <cmath>
 #include <filesystem>
 
@@ -37,11 +37,10 @@ namespace Assisi::Editor
 namespace
 {
 
-/// What the editor's sun starts at: a touch warm, coming over the author's left
-/// shoulder and well above the horizon. Bright enough to read a surface, angled
-/// enough that a shape still has a lit side and a dark one — a light straight down
-/// the camera makes every model look flat, which is the failure this rig exists to
-/// avoid.
+/// Where the editor's sun starts: a touch warm, over the author's left shoulder,
+/// well above the horizon. Angled rather than straight down the camera so a shape
+/// keeps a lit side and a dark one — a head-on light makes every model look flat,
+/// which is the failure this rig exists to avoid.
 constexpr float kSunIntensity = 1.5f;
 constexpr float kSunAzimuth   = -35.f; ///< Degrees, 0 = along +Z.
 constexpr float kSunElevation = 45.f;  ///< Degrees above the horizon.
@@ -52,15 +51,13 @@ glm::vec3 SunDirection(float azimuthDegrees, float elevationDegrees)
 {
     const float az = glm::radians(azimuthDegrees);
     const float el = glm::radians(elevationDegrees);
-    // Position on the unit sphere, then negated: the light is up there, the light
-    // *travels* down here.
     const glm::vec3 toLight{std::cos(el) * std::sin(az), std::sin(el), std::cos(el) * std::cos(az)};
     return -glm::normalize(toLight);
 }
 
-/// The (azimuth, elevation) a direction came from, so the sliders can show where
-/// the sun actually is after somebody dragged its Transform or typed into the
-/// inspector. The inverse of SunDirection.
+/// The (azimuth, elevation) a direction came from — the inverse of SunDirection, so
+/// the sliders show where the sun actually is after somebody dragged its Transform
+/// or typed into the inspector.
 std::pair<float, float> SunAngles(const glm::vec3 &direction)
 {
     const glm::vec3 toLight = glm::normalize(-direction);
@@ -81,7 +78,7 @@ Assisi::ECS::Entity EditorApp::BlueprintSunEntity() const
         return Assisi::ECS::NullEntity;
 
     // A query rather than a stored handle, for the same reason instance membership
-    // is one: the sun is an ordinary entity and the author may delete it. A handle
+    // is: the sun is an ordinary entity and the author may delete it. A handle
     // would go stale silently and the panel would edit a slot something else owns.
     for (auto [entity, light, tag] :
          _blueprintWorld->scene.Query<Assisi::Runtime::DirectionalLight, Assisi::Runtime::EditorOnly>())
@@ -97,9 +94,9 @@ void EditorApp::AddBlueprintEditorRig(Assisi::App::World &world)
 {
     const Assisi::ECS::Entity sun = world.scene.Create();
 
-    // EditorOnly is what keeps this out of the file. Without it the first save of
-    // crate.abp writes a sun into the crate, and every instance of that crate placed
-    // in a level then brings its own along — see Runtime::EditorOnly.
+    // EditorOnly is what keeps this sun out of the file. Without it the first save
+    // of crate.abp writes a sun into the crate, and every instance of that crate
+    // placed in a level brings its own along — see Runtime::EditorOnly.
     (void)world.scene.Add(sun, Assisi::Runtime::EditorOnly{});
     (void)world.scene.Add(sun, Assisi::Runtime::Name{Assisi::Core::ShortString{"Editor Sun"}});
     (void)world.scene.Add(sun, Assisi::Runtime::DirectionalLight{
@@ -111,7 +108,7 @@ void EditorApp::AddBlueprintEditorRig(Assisi::App::World &world)
 void EditorApp::OpenBlueprintForEditing(const std::string &source)
 {
     // Play owns the scene, and blueprint mode is an editing gesture. The panel
-    // disables its button too; this is the guard that means it.
+    // greys its button out too; this is the guard that means it.
     if (_playState != PlayState::Editing)
         return;
 
@@ -155,8 +152,8 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
     if (!_worlds.ApplySystems(world, header.systems, source))
         Assisi::Core::Log::Error("Blueprint mode: '{}' names a system this build does not declare.", source);
     world.state = Assisi::App::WorldState::Active;
-    // Never: a blueprint world is for looking at and editing a piece of content, and
-    // a simulating one would settle its bodies into a pose the file then remembers.
+    // Never simulate: a running world settles its bodies into a pose the file would
+    // then remember.
     world.simulate = false;
 
     AddBlueprintEditorRig(world);
@@ -276,8 +273,8 @@ void EditorApp::DrawBlueprintEditorWindow()
 
     ImGui::Spacing();
     ImGui::ColorEdit3("Ambient colour", &_blueprintAmbientColor.x, ImGuiColorEditFlags_Float);
-    // Held short of "flat": ambient is unshadowed by construction, so turning it all
-    // the way up removes every cue the sun is there to give.
+    // Defaults low, and worth leaving low: ambient is unshadowed by construction, so
+    // near 1 it washes out every cue the sun is here to give.
     ImGui::SliderFloat("Ambient", &_blueprintAmbient, 0.f, 1.f, "%.2f");
 
     if (ImGui::SmallButton("Reset lighting"))
@@ -306,10 +303,10 @@ void EditorApp::SubmitInstanceIcons()
     if (_scene == nullptr || _world == nullptr)
         return;
 
-    // Placements come from the table, because that is the only place they exist —
-    // the root is a row, not an entity (§3). One vector per frame rather than a
-    // cached one: instances are placed and deleted by the same gestures that would
-    // have to invalidate the cache, and there are tens of them, not thousands.
+    // Placements come from the table, the only place they exist: an instance root is
+    // a row, not an entity. Rebuilt per frame rather than cached — instances are
+    // placed and deleted by the same gestures that would have to invalidate a cache,
+    // and there are tens of them, not thousands.
     std::vector<glm::vec3> positions;
     const auto             rows = _world->instances.All();
     positions.reserve(rows.size());
@@ -328,7 +325,7 @@ void EditorApp::SubmitInstanceIcons()
 }
 
 // ---------------------------------------------------------------------------
-// Re-expansion on save (stage 5d)
+// Re-expansion on save
 // ---------------------------------------------------------------------------
 
 void EditorApp::MarkInstancesStale(const std::string &source)
@@ -345,17 +342,15 @@ void EditorApp::MarkInstancesStale(const std::string &source)
 
 std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const std::string &source)
 {
-    // Everything the edit reaches, gathered **before the file is written**: the
+    // Everything the edit reaches, gathered **before the file is written** — the
     // answer lives in the definition as it stands now, and a member's name is the
-    // only thing that connects a live tag to its replacement.
+    // only thing connecting a live tag to its replacement.
     //
-    // Before the write, not merely before the invalidation. `GetBlueprintDefinition`
-    // parses from disk whenever the cache is cold, so running this after `SaveToFile`
-    // only worked while the cache happened to be warm — and a cancelled save leaves
-    // it cold, because Cancel has to drop the entry it wrote. So the retry read the
-    // *new* file as the "previous" definition, found nothing removed, and saved
-    // without asking. The one ordering that does not depend on cache state is this
-    // one: ask while the old contents are still the contents.
+    // Before the *write*, not merely before the invalidation. `GetBlueprintDefinition`
+    // re-parses from disk whenever the cache is cold, and a cancelled save leaves it
+    // cold (Cancel drops the entry it wrote), so running this afterwards can read the
+    // **new** file as the "previous" definition, find nothing removed, and save
+    // without asking. Ask while the old contents are still the contents.
     std::vector<PendingReexpand> collected;
     std::vector<std::string>     skipped;
 
@@ -363,8 +358,8 @@ std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const 
         [&](Assisi::App::World &world)
         {
             // A simulating world is stepping bodies right now; replacing them
-            // under the step is a visible pop at best, and it has no undo to fall
-            // back on. Named in the log rather than silently passed over.
+            // under the step is a visible pop at best, with no undo to fall back
+            // on. Named in the log rather than silently passed over.
             if (world.simulate)
             {
                 for (const auto &[id, row] : world.instances.All())
@@ -408,12 +403,12 @@ std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const 
                 for (const auto &member : (*definition)->members)
                     pending.previousMemberNames.push_back(member.name);
 
-                // The entities behind those names, resolved here and not later. A
+                // The entities behind those names, resolved here and not later: a
                 // member tag holds an index into *this* definition, so this is the
                 // last moment an index can be turned into the right entity — see
                 // PendingReexpand::previousMemberEntities. Walked by tag rather than
-                // through Runtime::FindMember per name: one query for the whole
-                // instance instead of one per member, and no name lookup at all.
+                // by Runtime::FindMember per name — one query for the whole instance
+                // instead of one per member, and no name lookup at all.
                 pending.previousMemberEntities.assign((*definition)->members.size(),
                                                       Assisi::ECS::NullEntity);
                 for (auto [entity, tag] : world.scene.Query<Assisi::ECS::BlueprintMember>())
@@ -443,30 +438,26 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
     if (collected.empty())
         return;
 
-    // One collection at a time: the prompt has one set of buttons, and answering it
-    // must mean what it said. So this save does not get to ask — but it does not get
-    // to pass in silence either, which is what the guard used to do from the top of
-    // the function. Sitting above the collection, it returned before the cache was
-    // dropped: the file was on disk, `GetBlueprintDefinition` still handed out the
-    // contents from before it, and every later spawn built the old thing while the
-    // author was told nothing. Editing the file and losing the edit are not supposed
-    // to look identical.
+    // One collection at a time: the prompt has one set of buttons, so a second save
+    // cannot ask. **This guard must stay below the invalidation above.** From the top
+    // of the function it returned before the cache was dropped — the file on disk,
+    // `GetBlueprintDefinition` still handing out the contents from before it, every
+    // later spawn building the old thing and the author told nothing.
     //
-    // Below the invalidation, the only thing left to skip is the live copies' catch-up
-    // — and there is already a name for a file whose copies are behind it. This is the
-    // "Leave them" answer, given on the author's behalf because there was no way to
-    // ask: the write stands, the cache is honest, the copies are recorded as stale,
-    // and hosting stays refused until they catch up or the level is reloaded.
+    // Below it, the only thing left to skip is the live copies' catch-up: the "Leave
+    // them" answer, given on the author's behalf because there was no way to ask. The
+    // write stands, the cache is honest, the copies are recorded as stale, and hosting
+    // stays refused until they catch up or the level is reloaded.
     if (!_pendingReexpand.empty())
     {
         MarkInstancesStale(source);
         return;
     }
 
-    // What each instance loses, from the name diff. Only reachable now — the new
+    // What each instance loses, from the name diff. Only answerable here: the new
     // definitions exist and nothing has been touched yet.
     //
-    // Grouped by world and never flattened. A handle is (slot, generation) with no
+    // **Grouped by world, never flattened.** A handle is (slot, generation) with no
     // scene identity in it and every Scene numbers from {0,0}, so a doomed handle
     // from one resident world compares equal to a live, unrelated entity in
     // another — and this loop deliberately spans every resident world.
@@ -497,9 +488,9 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
             if ((*definition)->IndexOf(name).has_value())
                 continue;
 
-            // From the capture, never from a fresh lookup: `definition` here is the
-            // file as it now is, and `name` is by construction something it does not
-            // declare — so any name-based resolution can only fail.
+            // From the capture, never from a fresh lookup: `definition` is the file
+            // as it now is and `name` is by construction something it no longer
+            // declares, so any name-based resolution can only fail.
             const Assisi::ECS::Entity member = pending.previousMemberEntities[i];
             if (member == Assisi::ECS::NullEntity)
                 continue;
@@ -517,16 +508,15 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
     _pendingReexpand       = std::move(collected);
     _pendingReexpandSource = source;
 
-    // How much history the truncation costs — every stack, not the active one.
-    // Asking `ActiveHistory()` was the bug that made this prompt unreachable: a
-    // blueprint-mode save destroys members in the *level* worlds while the active
+    // How much history the truncation costs. **Every stack, not `ActiveHistory()`:**
+    // a blueprint-mode save destroys members in the *level* worlds while the active
     // history is the blueprint world's, and `CountForgettable` returns 0 for a scene
-    // it is not bound to. So the count was always 0, the prompt never opened, and
-    // `ForgetEntities` then declined on the same test — leaving the level's stack
-    // holding transactions that named entities which had just been destroyed.
+    // it is not bound to — so asking only the active one makes the count always 0,
+    // the prompt below unreachable, and `ForgetEntities` decline on the same test,
+    // leaving the level's stack naming entities that have just been destroyed.
     //
     // Each history self-filters by scene, so the pairing below is a full cross
-    // product on purpose: only the terms that match contribute.
+    // product on purpose: only the matching terms contribute.
     _pendingReexpandUndoLoss = 0;
     for (Assisi::Editor::EditHistory *history : AllHistories())
     {
@@ -534,11 +524,9 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
             _pendingReexpandUndoLoss += history->CountForgettable(world->scene, doomed);
     }
 
-    // Nothing at stake — the overwhelmingly common edit, which changes values, and
-    // the only outcome at all when no history names the members that are going. Say
-    // which it was: "no dialog appeared" and "the dialog is broken" look identical
-    // from the outside, and this function spent a review round in the second state
-    // being read as the first.
+    // Logged even when nothing is at stake — the common case, since most edits only
+    // change values. "No dialog appeared" and "the dialog is broken" look identical
+    // from the outside otherwise.
     Assisi::Core::Log::Info("Blueprint '{}': {} member(s) removed from {} live cop(y/ies), {} undo step(s) "
                             "at stake.",
                             source, _pendingReexpandRemoved.size(), _pendingReexpand.size(),
@@ -547,8 +535,9 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
     if (_pendingReexpandUndoLoss == 0)
         ApplyPendingReexpand();
 
-    // Otherwise the save is left waiting: DrawSaveConfirmModal raises the gate on
-    // this frame, and SaveLevelToPath holds what Cancel needs until it is answered.
+    // Otherwise the save is left waiting: SaveLevelToPath sees the nonzero loss,
+    // raises `_pendingSaveConfirm` and holds everything Cancel needs, and
+    // DrawSaveConfirmModal keeps the prompt up until it is answered.
 }
 
 void EditorApp::ApplyPendingReexpand()
@@ -575,9 +564,9 @@ void EditorApp::ApplyPendingReexpand()
     {
         Assisi::App::World &world = *pending.world;
 
-        // The precondition ReexpandInstance states: engine-side state it cannot see
-        // has to come off first, or the strip leaves a Jolt body wired to a component
-        // that is about to be rewritten from a file.
+        // ReexpandInstance's precondition: engine-side state it cannot see has to
+        // come off first, or the strip leaves a Jolt body wired to a component about
+        // to be rewritten from a file.
         for (const Assisi::ECS::Entity member :
              Assisi::Runtime::MembersOf(world.scene, pending.instanceId))
         {
@@ -611,8 +600,8 @@ void EditorApp::ApplyPendingReexpand()
     {
         // Every stack, for the reason ReexpandInstancesOf spells out: the members
         // that went are not necessarily in the world whose history is active, and a
-        // stack that keeps a transaction naming a destroyed entity is holding a
-        // handle that the next dense rebuild can hand to something else entirely.
+        // transaction still naming a destroyed entity holds a handle the next dense
+        // rebuild can hand to something else entirely.
         {
             std::size_t dropped = 0;
             for (Assisi::Editor::EditHistory *history : AllHistories())
@@ -634,7 +623,7 @@ void EditorApp::ApplyPendingReexpand()
     Assisi::Core::Log::Info("Blueprint '{}': {} instance(s) brought up to date.", _pendingReexpandSource,
                             instancesUpdated);
 
-    // Whatever was stale about this file is not stale any more (stage 5e).
+    // The copies have caught up, so this file is no longer stale.
     std::erase(_staleInstanceSources, _pendingReexpandSource);
 
     _pendingReexpand.clear();
@@ -648,9 +637,9 @@ void EditorApp::DrawSaveConfirmModal()
     if (!_pendingSaveConfirm)
         return;
 
-    // Titled for what it costs, not for what happened. "Blueprint saved" read as a
-    // receipt, and a receipt is the one thing an author dismisses without reading —
-    // which for this dialog meant throwing away undo history by reflex.
+    // Titled for what it costs, not for what happened. A title like "Blueprint saved"
+    // reads as a receipt, and a receipt gets dismissed unread — here that means
+    // throwing away undo history by reflex.
     constexpr const char *kTitle = "Saving will discard undo history";
     if (!ImGui::IsPopupOpen(kTitle))
         ImGui::OpenPopup(kTitle);
@@ -658,8 +647,8 @@ void EditorApp::DrawSaveConfirmModal()
     if (!ImGui::BeginPopupModal(kTitle, nullptr, ImGuiWindowFlags_AlwaysAutoResize))
         return;
 
-    // The cost first and in the warning colour: it is the only part of this that
-    // cannot be taken back, and the rest of the dialog is context for it.
+    // The cost first, in the warning colour: it is the only part of this that cannot
+    // be taken back, and the rest of the dialog is context for it.
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.75f, 0.2f, 1.f));
     ImGui::TextWrapped("%zu undo step%s will be discarded and cannot be recovered.",
                        _pendingReexpandUndoLoss, _pendingReexpandUndoLoss == 1 ? "" : "s");
@@ -688,10 +677,10 @@ void EditorApp::DrawSaveConfirmModal()
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
-    // The middle answer, kept because stage 5e is built on it: the write stands and
-    // the copies stay behind it, which is legal, recorded, and refuses hosting until
-    // it is resolved. Worth keeping distinct from Cancel — one is "save it, I will
-    // deal with the copies later", the other is "I did not want any of this".
+    // The middle answer, and what the stale-instance record exists for: the write
+    // stands and the copies stay behind it, which is legal, recorded, and refuses
+    // hosting until resolved. Distinct from Cancel on purpose — one is "save it, I
+    // will deal with the copies later", the other "I did not want any of this".
     if (ImGui::Button("Save, leave copies", ImVec2(160.f, 0.f)))
     {
         MarkInstancesStale(_pendingReexpandSource);
@@ -709,9 +698,9 @@ void EditorApp::DrawSaveConfirmModal()
         CancelPendingSave();
         ImGui::CloseCurrentPopup();
     }
-    // Enter lands on the answer that loses nothing. The first button is the one this
-    // dialog exists to slow down, so it must not also be the one a keypress aimed at
-    // whatever was on screen a moment ago happens to hit.
+    // Default focus stays on Cancel, so Enter lands on the answer that loses nothing.
+    // The first button is the one this dialog exists to slow down; it must not also
+    // be the one a keypress aimed at the previous screen happens to hit.
     ImGui::SetItemDefaultFocus();
 
     ImGui::EndPopup();

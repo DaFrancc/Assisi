@@ -6,28 +6,25 @@
 /// frame an edit site grabs it to the frame every site has let go.
 ///
 /// An instance has no root entity to grab — the root evaporates at expansion
-/// (docs/blueprint-system-concept.md §3) — so "moving an instance" means moving a
+/// (docs/blueprint-system-concept.md) — so "moving an instance" means moving a
 /// field on a table row and carrying every member the placement reaches. Two
 /// sites do that: the gizmo handles and the Inspector's Placement fields. They
-/// have to share one gesture, because they are one edit as far as the author is
-/// concerned, and because an undo entry needs the record *and* every pose from
-/// before the drag started, neither of which is reconstructible afterwards.
+/// share one gesture, because they are one edit as far as the author is concerned,
+/// and because an undo entry needs the record *and* every pose from before the
+/// drag started, neither of which is reconstructible afterwards.
 ///
-/// Sharing it is where this went wrong once, and the shape of this class is the
-/// answer. Each site used to decide for itself when the gesture was over. The
-/// gizmo draws first in the frame and closed on "the gizmo is not being held",
-/// which is true throughout an Inspector scrub — so a scrub opened a gesture on
-/// frame N that the gizmo committed at the top of frame N+1, sixty times a
-/// second, until the real history had been evicted by its own noise (round-7
-/// B19). No site can answer "is this gesture over" from what it alone can see.
+/// **No site decides when the gesture is over.** A site holding the placement
+/// raises Hold() and nothing else; committing belongs to EndFrame(), called once
+/// after every panel has drawn. When each site judged for itself, the gizmo — which
+/// draws first and sees "the gizmo is not being held" throughout an Inspector
+/// scrub — committed a fresh entry every frame of that scrub, sixty times a second,
+/// until the real history had been evicted by its own noise.
 ///
-/// So no site is asked. A site that has the placement raises Hold() and nothing
-/// else; the decision to commit belongs to EndFrame(), called once after every
-/// panel has drawn. That is the same accumulate-then-sweep shape the capture
-/// gestures use (EditHistory::EndFrameSweep) and the physics freeze after it, and
-/// for the same reason: a release keyed off any one panel's own edge is a release
-/// that panel can miss — by not drawing, by drawing in the wrong order, or by
-/// early-returning when the selection goes away mid-drag.
+/// Same accumulate-then-sweep shape as the capture gestures
+/// (EditHistory::EndFrameSweep) and the physics freeze after it, for the same
+/// reason: a release keyed off one panel's own edge is a release that panel can
+/// miss — by not drawing, by drawing in the wrong order, or by early-returning when
+/// the selection goes away mid-drag.
 
 #include <utility>
 #include <vector>
@@ -58,9 +55,9 @@ class InstanceGesture
     ///
     /// Raised by the gizmo while its handles are held and by the Inspector while
     /// one of its Placement fields is active. Cleared by EndFrame, so it says
-    /// nothing about any frame but this one — and says nothing about *which* site
-    /// holds it, deliberately: two sites cannot hold it at once, and if they
-    /// could, the gesture they share would still be one gesture.
+    /// nothing about any frame but this one — and deliberately nothing about
+    /// *which* site holds it: two sites cannot hold it at once, and if they could,
+    /// the gesture they share would still be one gesture.
     void Hold() { _held = true; }
 
     /// @brief Opens a gesture on @p instanceId, snapshotting the record and every
@@ -82,7 +79,7 @@ class InstanceGesture
     /// "Moved nothing" means the *placement* is where it was, not that no member
     /// shifted. The two part company on an instance the placement reaches no member
     /// of — every member parented elsewhere, or no members left — where taking the
-    /// members as the evidence left the move saved but not undoable (round-7 S15).
+    /// members as the evidence left the move saved but not undoable.
     void EndFrame(Assisi::ECS::Scene &scene, const Assisi::Runtime::InstanceTable &instances,
                   EditHistory *history, const char *label);
 

@@ -22,9 +22,9 @@ using Assisi::ECS::Entity;
 
 namespace
 {
-// Visit each command exactly once in apply order — reverse for undo, forward for
-// redo. The two-phase entity handling walks the transaction three times, so the
-// direction logic is centralised here instead of duplicated at each pass.
+// Visit each command once in apply order: reverse for undo, forward for redo.
+// ApplyTransaction makes four passes over the same transaction, so the direction
+// logic lives here rather than being repeated in each of them.
 template <typename Fn> void ForEachCommand(const Transaction &txn, bool reverse, Fn &&fn)
 {
     if (reverse)
@@ -41,9 +41,9 @@ template <typename Fn> void ForEachCommand(const Transaction &txn, bool reverse,
 
 const std::string kEmptyLabel;
 
-// RAII set/reset for the re-entrancy flag, so a throw mid-apply (e.g. a
-// malformed payload reaching addToScene) still clears it and the history isn't
-// wedged into a permanent "applying" state.
+// RAII set/reset for the re-entrancy flag. A throw mid-apply (a malformed
+// payload reaching addToScene) still clears it, so the history cannot wedge into
+// a permanent "applying" state that swallows every later edit.
 struct ApplyingGuard
 {
     bool &flag;
@@ -62,8 +62,8 @@ EditHistory::EditHistory(Assisi::ECS::Scene &scene, RebindHook rebind,
                          Assisi::Runtime::InstanceTable *instances)
     : _scene(scene), _instances(instances), _rebind(std::move(rebind))
 {
-    // A missing hook becomes a no-op so the engine never has to null-check it;
-    // tests and the pre-wiring stages pass none.
+    // A missing hook becomes a no-op so the apply engine never has to null-check
+    // it; tests pass none.
     if (!_rebind)
         _rebind = [](Entity, Reflect::ComponentId, bool) {};
 }
@@ -73,8 +73,8 @@ void EditHistory::Push(Transaction txn)
     if (txn.cmds.empty())
         return; // nothing reversible — a coalesced no-op gesture
 
-    // A fresh edit invalidates the redo future: this is the linear-history
-    // invariant that ReviveAt's exact-identity safety rests on (design doc §7.1).
+    // A fresh edit invalidates the redo future. This is the linear-history
+    // invariant ReviveAt's exact-identity safety rests on — keep it.
     _redo.clear();
     txn.seq = _nextSeq++; // unique, monotonic — the dirty-tracking state token
     _undo.push_back(std::move(txn));
@@ -125,9 +125,9 @@ namespace
 
 /// Whether @p txn acts on any entity in @p destroyed.
 ///
-/// An InstanceDelta names an instance rather than an entity, and an instance
-/// survives its members being re-expanded — the row is exactly what a blueprint edit
-/// does not touch. So only the two entity-shaped commands are asked.
+/// Only the two entity-shaped commands are asked: an InstanceDelta names an
+/// instance, and the row survives its members being re-expanded — it is exactly
+/// what a blueprint edit does not touch.
 bool NamesAny(const Transaction &txn, std::span<const Assisi::ECS::Entity> destroyed)
 {
     const auto hit = [destroyed](Assisi::ECS::Entity entity)
@@ -143,9 +143,9 @@ bool NamesAny(const Transaction &txn, std::span<const Assisi::ECS::Entity> destr
     return false;
 }
 
-/// One past the newest transaction in @p undo that names a destroyed entity, or 0 if
-/// none does — which is exactly how many steps have to go. See ForgetEntities for
-/// why the answer is a suffix rather than a set.
+/// One past the newest transaction in @p undo that names a destroyed entity, or 0
+/// if none does — exactly how many steps have to go. ForgetEntities' doc comment
+/// says why the answer is a suffix rather than a set.
 std::size_t ForgettableCount(const std::vector<Transaction>       &undo,
                              std::span<const Assisi::ECS::Entity> destroyed)
 {
@@ -173,8 +173,8 @@ std::size_t EditHistory::CountForgettable(const Assisi::ECS::Scene             &
 std::size_t EditHistory::ForgetEntities(const Assisi::ECS::Scene             &scene,
                                         std::span<const Assisi::ECS::Entity> destroyed)
 {
-    // Refused before anything is compared, not filtered afterwards: the handles
-    // themselves carry nothing that distinguishes them from this scene's.
+    // Refused before anything is compared, never filtered afterwards: the handles
+    // carry nothing that distinguishes them from this scene's.
     if (&scene != &_scene)
         return 0;
 
@@ -184,10 +184,10 @@ std::size_t EditHistory::ForgetEntities(const Assisi::ECS::Scene             &sc
 
     _undo.erase(_undo.begin(), _undo.begin() + static_cast<std::ptrdiff_t>(drop));
     // Whole, not filtered: a redo replays forward from where undo left off, so a
-    // surviving redo below a dropped one has the same broken-chain problem.
+    // survivor below a dropped one has the same broken-chain problem.
     _redo.clear();
-    // An open gesture on a destroyed entity would commit a transaction naming it the
-    // moment the sweep runs — putting back exactly what was just removed.
+    // An open gesture on a destroyed entity would commit a transaction naming it
+    // the moment the sweep runs, putting back exactly what was just removed.
     std::erase_if(_open, [destroyed](const OpenGesture &gesture) {
         return std::find(destroyed.begin(), destroyed.end(), gesture.entity) != destroyed.end();
     });
@@ -239,7 +239,7 @@ std::vector<ComponentSnapshot> EditHistory::CaptureEntityComponents(Entity entit
 }
 
 // ---------------------------------------------------------------------------
-// Capture (record-before-write, design doc §5)
+// Capture: record before write
 // ---------------------------------------------------------------------------
 
 std::optional<nlohmann::json> EditHistory::SnapshotComponent(Entity entity, Reflect::ComponentId id) const
@@ -271,10 +271,10 @@ void EditHistory::RecordBefore(Entity entity, Reflect::ComponentId id, std::stri
 
     if (OpenGesture *existing = FindOpen(entity, id))
     {
-        existing->touchedThisFrame = true;    // keep the original `before`; just refresh liveness
-        existing->label            = std::move(label); // last writer wins the label: a later
-                                                       // "Remove X" overrides the inspector's
-                                                       // per-frame "Edit X" on the same gesture
+        existing->touchedThisFrame = true;    // refresh liveness, keep the original `before`
+        existing->label            = std::move(label); // last writer wins: a later "Remove X"
+                                                       // beats the inspector's per-frame
+                                                       // "Edit X" on the same gesture
         return;
     }
     _open.push_back(OpenGesture{.entity           = entity,
@@ -297,9 +297,9 @@ bool EditHistory::CommitOpenGesture(const OpenGesture &gesture)
     txn.selectionAfter  = gesture.selection;
     txn.cmds.push_back(ComponentDelta{gesture.entity, gesture.id, gesture.before, after});
 
-    // Transacted with the edit, not recorded separately: undo has to take the
-    // override back with the value, or it leaves a note claiming this instance
-    // changed a field it no longer does.
+    // In the same transaction as the edit, never recorded separately: undo must
+    // take the override back with the value, or it leaves a note claiming this
+    // instance changed a field it no longer does.
     if (std::optional<InstanceDelta> record = RecordOverride(gesture.entity, gesture.id, gesture.before, after))
         txn.cmds.push_back(std::move(*record));
 
@@ -325,8 +325,8 @@ std::optional<std::string> EditHistory::NameForOverrideTarget(Entity target, ECS
         const std::string &memberPath = (*definition)->members[tag->memberIndex].name;
 
         // Same instance: relative, because expansion prefixes an override's
-        // references with the instance's own name — so `wheel_fl` here becomes
-        // `car_3/wheel_fl` when it is applied.
+        // references with the instance's own name — `wheel_fl` here becomes
+        // `car_3/wheel_fl` when applied.
         if (tag->instanceId == instanceId)
             return memberPath;
 
@@ -356,7 +356,7 @@ nlohmann::json EditHistory::ReferenceSafeOverride(const nlohmann::json &componen
 
         const auto it = out.find(field.name);
         if (it == out.end() || it->is_null())
-            continue; // no target is the same thing in both spellings
+            continue; // null means "no target" in both spellings — nothing to rewrite
         if (!it->is_number_unsigned())
             continue; // not a raw-context capture; leave whatever it is alone
 
@@ -458,7 +458,8 @@ void EditHistory::CommitGesture(Entity entity, Reflect::ComponentId id)
     if (gesture == nullptr)
         return;
     CommitOpenGesture(*gesture);
-    // Erase by key (CommitOpenGesture may have pushed, but never mutates _open).
+    // Erase by key: CommitOpenGesture may push a transaction, but never mutates
+    // _open.
     std::erase_if(_open, [&](const OpenGesture &g) { return g.id == id && g.entity == entity; });
 }
 
@@ -471,25 +472,25 @@ void EditHistory::EndFrameSweep(bool editingActive)
     {
         OpenGesture &gesture = *it;
 
-        // The entity died mid-gesture (a delete elsewhere): nothing coherent to
-        // commit against — abandon.
+        // The entity died mid-gesture (a delete elsewhere): nothing coherent left
+        // to commit against.
         if (!_scene.IsAlive(gesture.entity))
         {
             it = _open.erase(it);
             continue;
         }
 
-        // Still being manipulated this frame (a drag/type in progress, or the gizmo
-        // held) and its block was drawn — leave it open to coalesce.
+        // Still manipulated this frame (drag/type in progress, or the gizmo held)
+        // and its block was drawn: leave it open to coalesce.
         if (editingActive && gesture.touchedThisFrame)
         {
-            gesture.touchedThisFrame = false; // reset for next frame's RecordBefore
+            gesture.touchedThisFrame = false; // next frame's RecordBefore sets it again
             ++it;
             continue;
         }
 
-        // The gesture ended — either the widget released (!editingActive) or its
-        // block is no longer drawn (!touched). Commit if it changed, else drop.
+        // The gesture ended: the widget released (!editingActive) or its block is
+        // no longer drawn (!touched). Commit if it changed, else drop.
         CommitOpenGesture(gesture);
         it = _open.erase(it);
     }
@@ -506,9 +507,8 @@ void EditHistory::RestoreComponent(Entity entity, Reflect::ComponentId id,
 
     if (!target.has_value())
     {
-        // The component should be absent on this side. Only act (and rebind) if
-        // it is actually present, so a no-op restore doesn't tear down state that
-        // was never built.
+        // Absent on this side. Act (and rebind) only if it is actually present,
+        // so a no-op restore does not tear down state that was never built.
         if (meta && meta->getByEntity && meta->getByEntity(&_scene, entity.index, entity.generation))
         {
             _scene.RemoveById(entity, id);
@@ -517,8 +517,8 @@ void EditHistory::RestoreComponent(Entity entity, Reflect::ComponentId id,
         return;
     }
 
-    // The component should be present with `target`. Add it, then rebind (a single
-    // component edit has no sibling ordering concern).
+    // Present with `target`. Add, then rebind: a single-component edit has no
+    // sibling ordering concern.
     if (AddComponentForRestore(entity, id, *target))
         _rebind(entity, id, /*present=*/true);
 }
@@ -528,19 +528,18 @@ bool EditHistory::AddComponentForRestore(Entity entity, Reflect::ComponentId id,
     const Reflect::ComponentMeta *meta = Reflect::ComponentRegistry::Instance().ById(id);
 
     // A transient (non-serializable) component has no addToScene hook and was never
-    // in the payload — skip it; its state is rebuilt by the rebind hook off a
-    // sibling durable component instead.
+    // in the payload. Skip it: the rebind hook rebuilds its state off a durable
+    // sibling instead.
     if (!meta || !meta->serializable || !meta->addToScene)
         return false;
 
-    // Remove-first-then-add: Scene::Add (which addToScene bottoms out in) silently
-    // rejects an already-present component, so a value edit must clear the old one
-    // first (design doc §6/§8.8).
+    // Remove-first-then-add. Scene::Add, which addToScene bottoms out in, silently
+    // rejects an already-present component, so a value edit must clear the old one.
     _scene.RemoveById(entity, id);
-    // The payload is what this history captured from a live component, so a
-    // refusal means the codec cannot read back what it just wrote. The old value
-    // is already gone by then, so there is nothing to restore — say so instead of
-    // reporting an undo that quietly dropped a component.
+    // The payload came from this history capturing a live component, so a refusal
+    // means the codec cannot read back what it just wrote. The old value is gone
+    // by now and there is nothing to restore, so say so loudly rather than report
+    // an undo that quietly dropped a component.
     if (!meta->addToScene(&_scene, entity.index, entity.generation, data))
     {
         Assisi::Core::Log::Error("EditHistory: '{}' could not be restored from its own snapshot — this is "
@@ -555,18 +554,19 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
 {
     const bool undo = (dir == Direction::Undo);
 
-    // Guard capture against the edits this apply itself makes (re-entrancy).
+    // Stops the capture layer recording the edits this apply itself makes.
     const ApplyingGuard applyingGuard(_applying);
 
-    // Restore EntityRef fields against raw handles, not save/load serial indices;
-    // exact because entities come back at their original slot via ReviveAt.
+    // EntityRef fields restore against raw handles rather than save/load serial
+    // indices, which is exact because ReviveAt brings entities back at their
+    // original slot.
     {
         Rt::SceneSerializer::ScopedRawEntityContext rawContext(_scene);
 
-        // Phase 1 — entity existence: revive every entity that must exist on this
-        // side, before any component is added. A component may reference another
-        // subtree member (Parent), which must already be alive for the raw context
-        // to resolve it — so all revives precede all component work.
+        // Phase 1 — existence: revive every entity that must exist on this side
+        // before any component is added. A component may reference another subtree
+        // member (Parent), which has to be alive already for the raw context to
+        // resolve it, so all revives precede all component work.
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
             if (const auto *ed = std::get_if<EntityDelta>(&cmd))
             {
@@ -577,8 +577,8 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
         });
 
         // Phase 1b — instance records. Before the components, because a member's
-        // component restore may want the row it belongs to; and it is pure
-        // bookkeeping either way, with no scene state to order against.
+        // component restore may want the row it belongs to; pure bookkeeping
+        // either way, with no scene state to order against.
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
             const auto *idl = std::get_if<InstanceDelta>(&cmd);
             if (idl == nullptr || _instances == nullptr)
@@ -605,18 +605,16 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
             const auto &state  = undo ? ed.before : ed.after;
             if (state.has_value())
             {
-                // Add the whole component set first, THEN rebind each — so a
-                // component's rebind hook (e.g. the physics-body rebuild keyed off
-                // RigidBodyDescriptor) sees every sibling already restored, not just
-                // the ones that happen to sort before it. Firing the hook per
-                // component mid-restore dropped the Jolt body on undo-of-delete.
+                // Add the whole set first, THEN rebind each, so every hook sees all
+                // its siblings restored rather than only those that sort before it.
+                // Rebinding per component mid-restore dropped the Jolt body on
+                // undo-of-delete.
                 for (const ComponentSnapshot &snap : *state)
                     AddComponentForRestore(ed.handle, snap.id, snap.data);
                 for (const ComponentSnapshot &snap : *state)
                 {
-                    // Rebind exactly the components that were added (serializable
-                    // with an addToScene hook) — the same set AddComponentForRestore
-                    // acted on — now that every sibling is present.
+                    // Rebind exactly the set AddComponentForRestore acted on:
+                    // serializable, with an addToScene hook.
                     const auto *meta = Reflect::ComponentRegistry::Instance().ById(snap.id);
                     if (meta && meta->serializable && meta->addToScene)
                         _rebind(ed.handle, snap.id, /*present=*/true);
@@ -624,9 +622,9 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
             }
         });
 
-        // Phase 3 — destroy entities that must NOT exist on this side. Tear down
-        // each one's transient state first (the populated, non-target side lists
-        // the components it currently has), then queue the destroy.
+        // Phase 3 — destroy the entities that must NOT exist on this side. Tear
+        // down each one's transient state first: the populated, non-target side
+        // lists the components it currently has.
         bool anyDestroyed = false;
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
             const auto *ed = std::get_if<EntityDelta>(&cmd);
@@ -645,8 +643,8 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
             anyDestroyed = true;
         });
 
-        // Apply the destroys now so a freed slot is available for a later exact
-        // ReviveAt, and so a re-killed entity can't linger in the queue.
+        // Flush now, so a freed slot is available to a later exact ReviveAt and no
+        // re-killed entity lingers in the queue.
         if (anyDestroyed)
             _scene.FlushDestroyed();
     }
