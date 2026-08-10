@@ -525,23 +525,12 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
     std::sort(merged.begin(), merged.end());
     merged.erase(std::unique(merged.begin(), merged.end()), merged.end());
 
-    // Relevance::ControllerOnly — the escape in the other direction. **Applied
-    // last**, so it outranks the provider, a grant, and Always alike: "only this
-    // player may know about it" is not a preference to be outvoted.
-    if (!_controllerOnly.empty())
-    {
-        std::erase_if(merged,
-                      [this, &connection](NetId netId)
-                      {
-                          const auto entry = std::lower_bound(
-                              _controllerOnly.begin(), _controllerOnly.end(), netId,
-                              [](const auto &pair, NetId value) { return pair.first < value; });
-                          if (entry == _controllerOnly.end() || entry->first != netId)
-                              return false; // not one of them
-                          // Uncontrolled (client 0) means nobody may see it.
-                          return entry->second != connection.clientId.value;
-                      });
-    }
+    // Relevance::ControllerOnly — the escape in the other direction. After every
+    // widening so far, so it outranks the provider, a grant, and Always alike:
+    // "only this player may know about it" is not a preference to be outvoted.
+    // Block escalation is the one widening still ahead of it, and it runs again
+    // on the far side of that.
+    ApplyControllerOnly(connection, merged);
 
     // A provider may name whatever it likes; only live entities exist.
     std::vector<NetId> &effective = connection.effectiveScratch;
@@ -554,10 +543,12 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
     // partial instance leaves it holding member ids it cannot attribute, and the
     // record's memberCount disagrees with what actually arrived.
     //
-    // Runs on what survived the policy filters, and re-adds **every** member of
-    // any block that kept one — including members the filters just removed. A
-    // ControllerOnly member is escalated back in whenever a sibling is relevant;
-    // no filter is re-applied afterwards.
+    // Runs on the filtered set, so a member ControllerOnly withheld cannot pull
+    // its own block into someone else's view. That is not enough on its own:
+    // escalation widens a surviving sibling back out to the whole block, which
+    // re-adds the withheld member. ControllerOnly is therefore applied again
+    // below, over what escalation produced — the car is visible, that one part of
+    // it is not.
     if (!_blockRanges.empty())
     {
         _escalateScratch.clear();
@@ -591,6 +582,12 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
             effective.clear();
             std::set_intersection(merged.begin(), merged.end(), _liveNetIds.begin(), _liveNetIds.end(),
                                   std::back_inserter(effective));
+
+            // ...and back through ControllerOnly, for the same reason one step up
+            // (B6): escalation just re-added every member of every escalated
+            // block, the withheld ones included. This is the only gate between
+            // that widening and the snapshot, so without it the class is advisory.
+            ApplyControllerOnly(connection, effective);
         }
     }
 
@@ -653,6 +650,24 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
 
     connection.relevant = effective;
     return effective;
+}
+
+void ReplicationServer::ApplyControllerOnly(const Connection &connection, std::vector<NetId> &ids) const
+{
+    if (_controllerOnly.empty())
+        return;
+
+    std::erase_if(ids,
+                  [this, &connection](NetId netId)
+                  {
+                      const auto entry =
+                          std::lower_bound(_controllerOnly.begin(), _controllerOnly.end(), netId,
+                                           [](const auto &pair, NetId value) { return pair.first < value; });
+                      if (entry == _controllerOnly.end() || entry->first != netId)
+                          return false; // not one of them
+                      // Uncontrolled (client 0) means nobody may see it.
+                      return entry->second != connection.clientId.value;
+                  });
 }
 
 void ReplicationServer::ForgetAcked(Connection &connection, NetId netId)
