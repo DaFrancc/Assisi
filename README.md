@@ -38,7 +38,7 @@ C++** workload (which brings MSVC, CMake, and Ninja), plus [Python 3](https://ww
 do not already have it on `PATH`. Build from a *Developer Command Prompt* so the MSVC environment is
 set up.
 
-#### Linux — Arch / Manjaro
+#### Linux — Arch
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja python \
                         openssl \
@@ -126,7 +126,7 @@ illegal-instruction fault on older CPUs.
 ```bash
 make configure-msvc
 ```
-#### Linux (identical on every distribution — only step 2 differs):
+#### Linux (identical on every distribution):
 ```bash
 make configure-gcc    # GCC
 make configure-clang  # Clang
