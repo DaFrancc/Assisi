@@ -31,7 +31,10 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
