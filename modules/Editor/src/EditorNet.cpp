@@ -4,22 +4,19 @@
 /// @brief The editor's half of a networked play session: the join sequence, the
 /// host-time guards, and the panel that shows what is going on.
 ///
-/// **A network session exists only inside a play session** (docs/
-/// replication-plan-v4.md §3.6). Hosting starts by entering Play; a client joins
-/// by entering Play with a join target; Stop — either side, any reason — tears
-/// the session down. Hosting from here is the listen server: the scene the
-/// editor is already simulating and rendering is the one being replicated, with
-/// no second scene and no self-interpolation for the host player (see
-/// NetSession.hpp for why the design's loopback-pair framing is not what this
-/// does).
+/// **A network session exists only inside a play session.** Hosting starts by
+/// entering Play; a client joins by entering Play with a join target; Stop —
+/// either side, any reason — tears the session down. Hosting from here is a
+/// listen server: the scene the editor is already simulating and rendering is
+/// the one being replicated, with no second scene and no self-interpolation for
+/// the host player (NetSession.hpp says why that is not a loopback pair).
 ///
-/// The reason the rule is worth having is what it deletes. A joined client is in
-/// Play, so its world is the *play* scene, which the editor already treats as
-/// disposable: Save is already gated on Editing, the play snapshot already
-/// preserves the editing scene exactly, and Stop already restores it with its
-/// undo history intact. What is left here is only what is genuinely new —
-/// negotiating which level to load, proving both sides have the same bytes, and
-/// stripping the entities the host owns.
+/// That rule is what keeps this file small. A joined client is in Play, so its
+/// world is the *play* scene, which the editor already treats as disposable:
+/// Save is gated on Editing, the play snapshot preserves the editing scene
+/// exactly, and Stop restores it with its undo history intact. What is left here
+/// is only what is genuinely new — negotiating which level to load, proving both
+/// sides have the same bytes, and stripping the entities the host owns.
 
 #include <Assisi/Editor/EditorApp.hpp>
 
@@ -39,6 +36,8 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <algorithm>
+#include <format>
 #include <optional>
 #include <string>
 #include <vector>
@@ -48,8 +47,8 @@ namespace Assisi::Editor
 namespace
 {
 
-/// Colour a rate green/amber/red against thresholds a human can act on. Ping in
-/// milliseconds: under 60 is fine, under 150 is playable, above that is not.
+/// Green/amber/red for a ping in milliseconds: under 60 is fine, under 150 is
+/// playable, above that is not. A negative ping is "unknown" and greys out.
 ImVec4 PingColor(std::int32_t pingMs)
 {
     if (pingMs < 0)
@@ -71,12 +70,11 @@ void LabelledValue(const char *label, const std::string &value)
     ImGui::TextUnformatted(value.c_str());
 }
 
-/// A counter whose *normal* value is zero, coloured only when it is not.
+/// A counter whose *normal* value is zero: grey at zero, amber above it.
 ///
-/// The whole point of the messaging counters is that each one names a different
-/// problem, so a row that is merely nonzero should draw the eye — and a row that
-/// is zero should not. The tooltip carries what the number means, because a
-/// count without a diagnosis is a count nobody acts on.
+/// Each of these names a different problem, so only a row that is actually
+/// nonzero should draw the eye. The tooltip carries the diagnosis — a count
+/// nobody can interpret is a count nobody acts on.
 template <typename T>
 void NetCounterRow(const char *label, T value, const char *tooltip)
 {
@@ -129,9 +127,8 @@ void EditorApp::FailJoin(std::string reason)
     if (_netSession)
         _netSession->AbortJoin(std::move(reason));
     _joinPhase = JoinPhase::None;
-    // Out through the same door as everything else. "How do I get out of a bad
-    // join" should have exactly one answer, and it is the button that was
-    // already there.
+    // Out through the same door as everything else: leaving a bad join is Stop,
+    // not a second mechanism.
     _pendingStopPlay = true;
 }
 
@@ -140,9 +137,9 @@ void EditorApp::StripReplicatedEntities()
     if (_scene == nullptr)
         return;
 
-    // The host owns these; they arrive as mirrors. The level file's copies are
-    // the host's authored originals, so keeping both would double every
-    // replicated object in the world.
+    // The host owns these and they arrive as mirrors. The level file's copies are
+    // the host's authored originals, so keeping both doubles every replicated
+    // object in the world.
     std::vector<Assisi::ECS::Entity> doomed;
     _scene->ForEachEntity(
         [&](Assisi::ECS::Entity entity)
@@ -162,10 +159,9 @@ void EditorApp::StripReplicatedEntities()
     }
     _scene->FlushDestroyed();
 
-    // Anything that was parented to a stripped entity now points at a dead
-    // handle. Left alone it dangles into the transform propagation, which reads
-    // the child as a root and draws it at its *local* pose — a decoration
-    // detached from the thing it decorated, in a world that otherwise looks
+    // A child of a stripped entity now holds a dead parent handle. Left alone,
+    // transform propagation reads it as a root and draws it at its *local* pose —
+    // a decoration adrift from what it decorated, in a world that otherwise looks
     // right. Dropping the link says the same thing honestly.
     std::vector<Assisi::ECS::Entity> orphans;
     _scene->ForEachEntity(
@@ -226,8 +222,8 @@ void EditorApp::BuildJoinedWorld()
     if (*localHash != level.contentHash)
     {
         // The two numbers only answer "are they different", which the failure
-        // already announced — so they go to the log, and the message says the
-        // thing the player can act on.
+        // already announced — so they go to the log and the message stays
+        // something the player can act on.
         Assisi::Core::Log::Error("Editor: level content hash mismatch for '{}' — host {}, local {}.", level.path,
                                  Assisi::Core::ToHex64(level.contentHash), Assisi::Core::ToHex64(*localHash));
         FailJoin("your copy of '" + level.path + "' differs from the host's; sync the file from the host and retry.");
@@ -235,10 +231,8 @@ void EditorApp::BuildJoinedWorld()
     }
 
     // --- Build it -----------------------------------------------------------
-    // Straight into the play scene. The pre-play snapshot already holds the
-    // editing scene, so there is nothing here to preserve and no confirmation to
-    // ask for — the thing v3.5 spent a rule on is simply not a hazard once the
-    // join happens inside Play.
+    // Straight into the play scene: the pre-play snapshot already holds the
+    // editing scene, so there is nothing here to preserve and nothing to confirm.
     Assisi::Runtime::LevelHeader header;
     const auto                   reset = _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep
                                                              : Assisi::App::AssetCacheReset::ClearFirst;
@@ -254,12 +248,12 @@ void EditorApp::BuildJoinedWorld()
     }
 
     // The world is the host's level for the duration; StopPlay puts the edited
-    // world's identity and profile back.
+    // world's path, systems and instance table back.
     _world->levelPath = level.addressing == Assisi::NetSync::LevelAddressing::Virtual ? level.path : std::string{};
-    // Loud rather than fatal here: tearing a join down mid-way needs an unwind
-    // this function has no path for. A client that cannot install the host's
-    // systems will mirror state and run none of the behaviour, which is worth
-    // shouting about even when it cannot be refused outright.
+    // Loud rather than fatal: unwinding a half-built join is not something this
+    // function can do. A client missing the host's systems mirrors state and runs
+    // none of the behaviour, which is worth shouting about even when it cannot be
+    // refused outright.
     if (!_worlds.ApplySystems(*_world, header.systems, level.path))
     {
         Assisi::Core::Log::Error("Join: the host's level '{}' names a system this build does not declare. "
@@ -269,8 +263,8 @@ void EditorApp::BuildJoinedWorld()
 
     StripReplicatedEntities();
 
-    // A load rebuilds entity identity from scratch, so anything holding a handle
-    // from the pre-join scene now aliases a live but unrelated entity.
+    // The load rebuilt entity identity from scratch, so every handle kept from the
+    // pre-join scene now aliases a live but unrelated entity. Clear them all.
     _selectedEntity     = Assisi::ECS::NullEntity;
     _eyedropperArmed    = false;
     _eyedropperEntity   = Assisi::ECS::NullEntity;
@@ -279,7 +273,7 @@ void EditorApp::BuildJoinedWorld()
     _assetBrowserEntity = Assisi::ECS::NullEntity;
     _assetBrowserMeta   = nullptr;
 
-    // Only now: from here a NetId has somewhere to land.
+    // Only now, because from here a NetId has somewhere to land.
     _netSession->ConfirmLevelReady();
     _joinPhase = JoinPhase::Live;
     _netError.clear();
@@ -295,10 +289,10 @@ bool EditorApp::WritePieTempLevel(Assisi::NetSync::LevelIdentity &outLevel)
     if (_scene == nullptr)
         return false;
 
-    // Under the user root rather than the asset root: this is a transient of one
-    // play session, not content, and it must not appear in the asset browser or
-    // pick up a GUID sidecar. The clients address it absolutely, so where it
-    // lives is nobody else's business.
+    // Under the user root rather than the asset root: a transient of one play
+    // session, not content, so it must not appear in the asset browser or pick up
+    // a GUID sidecar. Clients address it absolutely, so where it lives is nobody
+    // else's business.
     const auto resolved = Assisi::Core::AssetSystem::ResolveUser("pie-host-level.alvl");
     if (!resolved)
     {
@@ -345,11 +339,9 @@ void EditorApp::SpawnPieClients(std::int32_t count)
 
     for (std::int32_t i = 0; i < count; ++i)
     {
-        // Each child gets its own user root. That is the whole of the
-        // "no shared-file writes" rule for per-user state: options.json, the
-        // log, and any capture land in the child's own directory instead of
-        // over the parent's. The asset root stays shared and is opened
-        // read-only on the child's side.
+        // One user root per child, so options.json, the log and any capture land
+        // in the child's own directory instead of over the parent's. The asset
+        // root stays shared, opened read-only on the child's side.
         std::filesystem::path userRoot = std::filesystem::temp_directory_path() /
                                          ("assisi-pie-client-" + std::to_string(i));
         std::error_code ec;
@@ -384,21 +376,15 @@ void EditorApp::ShutdownPieClients()
     }
 }
 
-// Joining deliberately leaves the camera exactly where the author left it.
+// Joining leaves the camera exactly where the author pointed it, deliberately.
 //
-// Nothing here has to preserve it: the fly camera is plain EditorApp state
-// (_cameraTransform), not an entity, so the level load below rebuilds the scene
-// without the camera noticing. What had to go was code that moved it on purpose.
-//
-// That code focused the first mirrored entity, on the theory that a viewer window
-// opening onto nothing undermines the one-click demo. But "first mirrored entity"
-// means whichever one happened to arrive first, and in a level of falling crates
-// that is a crate, mid-fall — so the camera was flung somewhere that depended on
-// how long the join took, and the later you joined the further underground you
-// ended up. Framing on join is a guess about what the author wants to look at,
-// and the author already told us by pointing the camera before they joined.
-// Someone who does want to go somewhere specific can double-click an entity in
-// the list, which is the deliberate version of the same thing.
+// Nothing has to preserve it: the fly camera is plain EditorApp state
+// (_cameraTransform), not an entity, so a level load cannot disturb it. What must
+// not come back is auto-framing. Focusing "the first mirrored entity" frames
+// whichever one happened to arrive first — in a level of falling crates, a crate
+// mid-fall — so the camera landed somewhere that depended on how long the join
+// took, further underground the later you joined. Double-clicking an entity in
+// the list is the deliberate version of the same thing.
 
 void EditorApp::ShutdownNetSession()
 {
@@ -433,9 +419,9 @@ void EditorApp::PollNetSession(float dt)
         return;
 
     // A host that went away, a rejected handshake, a transport fault: Poll turns
-    // all of them into an Offline session. The play session goes with it — the
-    // client's world *was* the host's world, and there is nothing left to look
-    // at once the stream stops.
+    // all of them into an Offline session, and the play session goes with it. The
+    // client's world *was* the host's world — there is nothing left to look at
+    // once the stream stops.
     if (!_netSession->IsActive())
     {
         if (_netError.empty())
@@ -455,9 +441,8 @@ void EditorApp::PollNetSession(float dt)
             return;
         }
 
-        // Phase-aware: a first scan of a large asset tree is not a dead host, and
-        // timing out on it would read as one. The clock only runs once both sides
-        // have everything they need to answer.
+        // The timeout clock only runs once both sides can answer: a first scan of
+        // a large asset tree is not a dead host, but timing out on it reads as one.
         if (!_netSession->HasContentSetHash())
             return;
 
@@ -475,11 +460,11 @@ void EditorApp::TickNetSession()
 
 void EditorApp::SmoothNetView()
 {
-    // Called from OnRender, immediately after the physics writeback: it decays a
-    // bodied mirror's visual offset onto the pose the writeback just wrote, so
-    // running before the writeback would mean writing an offset the writeback
-    // then erases. (It used to run in OnUpdate for exactly that reason —
-    // interpolated mirrors have no writeback to lose to.)
+    // Must run from OnRender, after the physics writeback: it decays a bodied
+    // mirror's visual offset onto the pose the writeback just wrote, so running
+    // first means writing an offset the writeback then erases. (It used to live in
+    // OnUpdate, which is safe only for interpolated mirrors — they have no
+    // writeback to lose to.)
     if (_netSession)
         _netSession->SmoothView(ImGui::GetIO().DeltaTime);
 }
@@ -493,9 +478,9 @@ void EditorApp::DrawHostAuthoringWarnings()
     if (_scene == nullptr)
         return;
 
-    // Both of these are about a mismatch between what the author marked and what
-    // the clients will actually see, and both are otherwise discovered by
-    // watching a second window and wondering.
+    // Both counts are a mismatch between what the author marked and what clients
+    // will actually see — otherwise found by watching a second window and
+    // wondering.
     std::size_t marked          = 0;
     std::size_t unmarkedDynamic = 0;
     _scene->ForEachEntity(
@@ -520,10 +505,9 @@ void EditorApp::DrawHostAuthoringWarnings()
     {
         ImGui::TextColored(kWarnColor, "%zu unmarked dynamic bod%s", unmarkedDynamic,
                            unmarkedDynamic == 1 ? "y" : "ies");
-        // The drift is the obvious half and the contacts are the half that
-        // actually bites: a cosmetic crate rolling against a *sleeping mirror*
-        // fights the client's sleep enforcement, and can jitter or come to rest
-        // at a pose the host never saw.
+        // Drift is the obvious half; contacts are the half that bites. A cosmetic
+        // crate rolling against a *sleeping mirror* fights the client's sleep
+        // enforcement, and can jitter or settle at a pose the host never saw.
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("These simulate locally as cosmetic physics — they will settle differently on "
@@ -533,6 +517,13 @@ void EditorApp::DrawHostAuthoringWarnings()
     }
 }
 
+/// The prompt StartPlay raises instead of hosting a level with unsaved edits.
+///
+/// Clients load the level from disk, so they see the last *saved* version. Host
+/// past that and replicated bodies are corrected against geometry no client has —
+/// which surfaces much later, and far from here, as objects bouncing off nothing.
+/// A modal rather than a warning label because the failure is remote and delayed:
+/// nobody traces it back to an amber line they glanced past at host time.
 void EditorApp::DrawHostUnsavedModal()
 {
     static constexpr const char *kTitle = "Host with unsaved edits?";
@@ -583,10 +574,10 @@ void EditorApp::DrawNetworkWindow()
         return;
     }
 
-    // Re-read the session's liveness at every point that depends on it, never
-    // once at the top. The buttons below can destroy it *during this frame*,
-    // and a cached "is it active" flag then describes a session that no longer
-    // exists — which is precisely how the Disconnect button used to segfault.
+    // Re-read liveness at every point that depends on it, never once at the top:
+    // the buttons below can destroy the session *during this frame*, and a cached
+    // flag then describes a session that no longer exists. That is how the
+    // Disconnect button used to segfault.
     const auto active = [this] { return IsNetSessionActive(); };
 
     // ---- status line -------------------------------------------------------
@@ -594,10 +585,9 @@ void EditorApp::DrawNetworkWindow()
     ImGui::Separator();
 
     // ---- controls ----------------------------------------------------------
-    // Host and Join enter Play. They are the same gesture as pressing Run, with
-    // a role attached — which is the whole of §3.6 in two buttons. (R3 moves
-    // both into the Play control's dropdown so one surface answers "where do I
-    // host?" and "where do I join?"; this panel then keeps the detail view.)
+    // Host and Join enter Play: the same gesture as pressing Run, with a role
+    // attached. The Play control's dropdown (DrawGameControlWindow) starts
+    // sessions too and is the primary surface; this panel is the detail view.
     ImGui::SetNextItemWidth(140.f);
     ImGui::InputText("Address", _netAddress.data(), _netAddress.size(),
                      active() ? ImGuiInputTextFlags_ReadOnly : ImGuiInputTextFlags_None);
@@ -647,8 +637,8 @@ void EditorApp::DrawNetworkWindow()
     ImGui::Separator();
 
     // Which level the two ends agreed on. Worth a line of its own: everything
-    // that goes wrong with a join goes wrong here first, and "which level do
-    // they think we are on" is otherwise unanswerable from inside the editor.
+    // that goes wrong with a join goes wrong here first, and it is otherwise
+    // unanswerable from inside the editor.
     if (const Assisi::NetSync::ServerHello *hello = _netSession->Handshake();
         hello != nullptr && _netSession->IsClient())
     {
@@ -660,8 +650,8 @@ void EditorApp::DrawNetworkWindow()
     }
 
     // Where this session actually is. "It says Hosting" and "a client can reach
-    // it at this address" are different claims, and only the second one is what
-    // someone on the other machine needs typed into their Join field.
+    // it at this address" are different claims, and only the second is what
+    // someone on the other machine types into their Join field.
     LabelledValue("Endpoint", _netSession->IsHost()
                                   ? std::format("listening on :{}", _netPort)
                                   : std::format("{}:{}", _netAddress.data(), _netPort));
@@ -679,9 +669,9 @@ void EditorApp::DrawNetworkWindow()
     if (_netSession->IsHost())
     {
         // A minimal authoritative disturbance, so "does the correction stream
-        // actually work" is one click rather than a level built for the purpose.
-        // Host-side by construction: there is no client→server state channel in
-        // this design, and this is the server acting on its own world.
+        // work" is one click rather than a level built for the purpose. Host-side
+        // by construction: there is no client→server state channel, and this is
+        // the server acting on its own world.
         const bool canNudge = _selectedEntity != Assisi::ECS::NullEntity && _scene->IsAlive(_selectedEntity) &&
                               _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity) != nullptr &&
                               _scene->Has<Assisi::NetSync::Replicated>(_selectedEntity);
@@ -703,10 +693,10 @@ void EditorApp::DrawNetworkWindow()
         LabelledValue("Replicated entities", std::format("{}", stats.replicatedEntities));
 
         // What this session is *capable* of sending, shown rather than inferred.
-        // Default-send polarity means a future engine module marking a new type
-        // replicable would quietly add it to every marked entity; a capability
-        // surface you can read is the cheap fence against noticing that months
-        // later on a bandwidth graph.
+        // Sending is opt-out, so a future engine module marking a new type
+        // replicable would quietly add it to every marked entity; a readable
+        // capability list is the cheap fence against finding that months later on
+        // a bandwidth graph.
         if (ImGui::TreeNode("Replicable components"))
         {
             for (const Assisi::Core::Reflect::ComponentMeta *meta :
@@ -728,7 +718,7 @@ void EditorApp::DrawNetworkWindow()
             LabelledValue("Avg snapshot", std::format("{} B", stats.bytesSent / stats.snapshotsSent));
 
         // Zero is the normal state. A number that stays high means the byte
-        // budget is binding, and correction *frequency* is degrading — which the
+        // budget is binding and correction *frequency* is degrading — which the
         // priority accumulator makes fair, not free.
         ImGui::TextUnformatted("Dirty backlog");
         ImGui::SameLine(180.f);
@@ -737,10 +727,9 @@ void EditorApp::DrawNetworkWindow()
         LabelledValue("Keyframe sweeps", std::format("{}", stats.keyframeSweeps));
 
         // --- relevancy ------------------------------------------------------
-        // Worth its own group because boundary thrash is invisible otherwise:
-        // it looks exactly like ordinary bandwidth, and it is the one failure
-        // mode hysteresis exists to prevent. Enters climbing in lockstep with
-        // exits is the shape to watch for.
+        // Its own group because boundary thrash is invisible otherwise: it looks
+        // exactly like ordinary bandwidth, and it is the failure mode hysteresis
+        // exists to prevent. Watch for enters climbing in lockstep with exits.
         if (ImGui::TreeNodeEx("Relevancy", ImGuiTreeNodeFlags_DefaultOpen))
         {
             LabelledValue("Largest set", std::format("{} of {}", stats.relevantEntities,
@@ -762,10 +751,10 @@ void EditorApp::DrawNetworkWindow()
         }
 
         // --- messages -------------------------------------------------------
-        // Split by *why* rather than by count. "Intents dropped" is not a
-        // diagnosis: a rate-limited client is misbehaving, a stale one has a
-        // clock problem, a rejected one is lying or mismatched, and an
-        // unhandled one means somebody forgot to write a handler.
+        // Split by *why*, not by count: "intents dropped" is not a diagnosis. A
+        // rate-limited client is misbehaving, a stale one has a clock problem, a
+        // rejected one is lying or mismatched, an unhandled one means a handler
+        // was never written.
         if (ImGui::TreeNodeEx("Messages", ImGuiTreeNodeFlags_DefaultOpen))
         {
             LabelledValue("Intents accepted", std::format("{}", stats.intentsAccepted));
@@ -804,9 +793,9 @@ void EditorApp::DrawNetworkWindow()
                       "tick catches up.");
 
         // --- the correction stream ------------------------------------------
-        // Rates, not totals: a total that keeps climbing tells you the session is
-        // still running, which you could already see. Sampled over a second so a
-        // frame-rate stutter does not read as a bandwidth spike.
+        // Rates, not totals: a climbing total only says the session is running,
+        // which you could already see. Sampled over a second so a frame-rate
+        // stutter does not read as a bandwidth spike.
         _netSampleSeconds += ImGui::GetIO().DeltaTime;
         if (_netSampleSeconds >= 1.f)
         {
@@ -823,11 +812,10 @@ void EditorApp::DrawNetworkWindow()
         LabelledValue("Corrections/s", std::format("{:.1f}", _correctionsPerSecond));
         LabelledValue("Correction bytes/s", std::format("{:.0f} B/s", _correctionBytesPerSecond));
 
-        // Divergence is the measurement the correction cadence has to be
-        // justified by. There is no determinism argument available to justify it
-        // instead: the client starts from state that crossed a wire, applies
-        // corrections the server never applies, and adds bodies on a different
-        // schedule, so "same binary" buys nothing here.
+        // The measurement that has to justify the correction cadence, since no
+        // determinism argument can: the client starts from state that crossed a
+        // wire, applies corrections the server never applies, and adds bodies on a
+        // different schedule, so "same binary" buys nothing here.
         LabelledValue("Divergence (mean)", std::format("{:.1f} mm", stats.divergenceMean * 1000.f));
         ImGui::TextUnformatted("Divergence (max)");
         ImGui::SameLine(180.f);
@@ -848,8 +836,8 @@ void EditorApp::DrawNetworkWindow()
         }
 
         // Two debug affordances that only make sense together: one to break the
-        // mirror, one to heal it. A resync button with nothing to heal proves
-        // nothing about whether it works.
+        // mirror, one to heal it. A resync button with nothing broken to heal
+        // proves nothing about whether it works.
         if (ImGui::Button("Force full resync"))
             _netSession->RequestKeyframe();
         if (ImGui::IsItemHovered())
@@ -879,8 +867,8 @@ void EditorApp::DrawNetworkWindow()
         }
         ImGui::SeparatorText("Clock");
 
-        // A nonzero rejection count is never normal: it means either corruption
-        // the transport did not catch or a protocol bug. Make it loud.
+        // Nonzero is never normal: either corruption the transport did not catch,
+        // or a protocol bug. Red, not amber.
         ImGui::TextUnformatted("Snapshots rejected");
         ImGui::SameLine(180.f);
         ImGui::TextColored(stats.snapshotsRejected > 0 ? kErrorColor : ImVec4{0.6f, 0.6f, 0.6f, 1.f}, "%llu",
@@ -897,9 +885,8 @@ void EditorApp::DrawNetworkWindow()
         LabelledValue("Clock corrections", std::format("{}", stats.clockCorrections));
 
         if (_joinPhase == JoinPhase::Connecting)
-            // Explicit widening: %f consumes a double through varargs, so the
-            // float would promote anyway — saying so silences -Wdouble-promotion
-            // without changing a byte of behaviour.
+            // %f takes a double through varargs, so the float promotes either
+            // way; saying so silences -Wdouble-promotion.
             ImGui::TextColored(kWarnColor, "Joining — waiting for the host (%.0f s)...",
                                static_cast<double>(_joinElapsed));
         else if (!stats.worldComplete)
