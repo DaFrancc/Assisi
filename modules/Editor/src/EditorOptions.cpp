@@ -10,7 +10,10 @@
 /// drop the overlay without editing the engine (see the round-3 review item
 /// "Application is a framework and a debug tool at once").
 
-#include <Assisi/Editor/EditorApp.hpp>
+#include "EditorOptionsPanel.hpp"
+
+#include <Assisi/App/Application.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/App/OptionsConfig.hpp>
 #include <Assisi/Render/PostProcess.hpp>
@@ -32,31 +35,32 @@ using Assisi::App::Application;
 using Assisi::App::FrameSyncMode;
 using Assisi::App::OptionsConfig;
 
-void EditorApp::DrawOptionsWindow()
+bool EditorOptionsPanel::Draw(const Frame &frame)
 {
+    bool applyDisplay = false;
+
     // F11 toggles the overlay. Handled here, in the app, so the engine no longer
     // reserves the key — a game can rebind or remove this freely.
-    if (GetInput().IsKeyPressed(Assisi::Window::Key::F11))
+    if (frame.input.IsKeyPressed(Assisi::Window::Key::F11))
     {
         _showOptions = !_showOptions;
     }
 
     if (!_showOptions)
     {
-        return;
+        return false;
     }
 
     ImGui::SetNextWindowSize(ImVec2(320, 420), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Options", &_showOptions))
     {
-        const Application::FrameStatsView stats = GetFrameStats();
-        const int32_t                     frameHistory = static_cast<int32_t>(stats.cpuMs.size());
+        const int32_t                     frameHistory = static_cast<int32_t>(frame.cpuMs.size());
 
         // CPU vs GPU frame time: if CPU >> GPU we're CPU-bound, and vice versa.
         // The numbers are averaged over the same ~0.5s window as the FPS counter;
         // the plots below show raw per-frame samples so spikes stay visible.
-        const int32_t fps = GetFps();
-        ImGui::Text("CPU: %5.2f ms    GPU: %5.2f ms", GetCpuFrameMs(), GetGpuFrameMs());
+        const int32_t fps = frame.fps;
+        ImGui::Text("CPU: %5.2f ms    GPU: %5.2f ms", frame.cpuFrameMs, frame.gpuFrameMs);
         ImGui::Text("Frame: %5.2f ms (%d FPS)", fps > 0 ? 1000.0 / fps : 0.0, fps);
 
         // GPU hardware telemetry (NVIDIA/NVML). Shown next to the GPU frame time
@@ -202,8 +206,8 @@ void EditorApp::DrawOptionsWindow()
         float plotMax = 4.0f;
         for (int32_t i = 0; i < frameHistory; ++i)
         {
-            plotMax = std::max({plotMax, stats.cpuMs[static_cast<std::size_t>(i)],
-                                 stats.gpuMs[static_cast<std::size_t>(i)]});
+            plotMax = std::max({plotMax, frame.cpuMs[static_cast<std::size_t>(i)],
+                                 frame.gpuMs[static_cast<std::size_t>(i)]});
         }
         plotMax *= 1.1f; // headroom so the peak isn't pinned to the top edge
 
@@ -215,14 +219,14 @@ void EditorApp::DrawOptionsWindow()
         cpuSpec.FillColor  = cpuSpec.LineColor;
         cpuSpec.FillAlpha  = 0.25f;
         cpuSpec.LineWeight = 1.5f;
-        cpuSpec.Offset     = stats.offset;
+        cpuSpec.Offset     = frame.offset;
 
         ImPlotSpec gpuSpec;
         gpuSpec.LineColor  = ImVec4(0.30f, 0.75f, 0.40f, 1.0f); // green
         gpuSpec.FillColor  = gpuSpec.LineColor;
         gpuSpec.FillAlpha  = 0.25f;
         gpuSpec.LineWeight = 1.5f;
-        gpuSpec.Offset     = stats.offset;
+        gpuSpec.Offset     = frame.offset;
 
         if (ImPlot::BeginPlot("Frame Time (ms)###frameGraph", ImVec2(-1.0f, 120.0f),
                               ImPlotFlags_NoMenus | ImPlotFlags_NoInputs))
@@ -233,10 +237,10 @@ void EditorApp::DrawOptionsWindow()
             ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, static_cast<double>(plotMax), ImPlotCond_Always);
             ImPlot::SetupLegend(ImPlotLocation_NorthWest, ImPlotLegendFlags_Horizontal);
 
-            ImPlot::PlotShaded("CPU", stats.cpuMs.data(), frameHistory, 0.0, 1.0, 0.0, cpuSpec);
-            ImPlot::PlotLine("CPU", stats.cpuMs.data(), frameHistory, 1.0, 0.0, cpuSpec);
-            ImPlot::PlotShaded("GPU", stats.gpuMs.data(), frameHistory, 0.0, 1.0, 0.0, gpuSpec);
-            ImPlot::PlotLine("GPU", stats.gpuMs.data(), frameHistory, 1.0, 0.0, gpuSpec);
+            ImPlot::PlotShaded("CPU", frame.cpuMs.data(), frameHistory, 0.0, 1.0, 0.0, cpuSpec);
+            ImPlot::PlotLine("CPU", frame.cpuMs.data(), frameHistory, 1.0, 0.0, cpuSpec);
+            ImPlot::PlotShaded("GPU", frame.gpuMs.data(), frameHistory, 0.0, 1.0, 0.0, gpuSpec);
+            ImPlot::PlotLine("GPU", frame.gpuMs.data(), frameHistory, 1.0, 0.0, gpuSpec);
 
             ImPlot::EndPlot();
         }
@@ -244,9 +248,9 @@ void EditorApp::DrawOptionsWindow()
         // Percentile stats over the frame-delta history. "1% low" is the average
         // of the slowest 1% of frames (GamersNexus-style) — the stutter the
         // averages hide. Sorting a copy each frame is cheap at this sample count.
-        if (stats.sampleCount > 0)
+        if (frame.sampleCount > 0)
         {
-            std::vector<float> sorted(stats.frameDeltaMs.begin(), stats.frameDeltaMs.begin() + stats.sampleCount);
+            std::vector<float> sorted(frame.frameDeltaMs.begin(), frame.frameDeltaMs.begin() + frame.sampleCount);
             std::sort(sorted.begin(), sorted.end());
 
             double sum = 0.0;
@@ -281,10 +285,10 @@ void EditorApp::DrawOptionsWindow()
         // cull is inert here and can't explain a clock/util change (it only ever
         // removes draws). Fly the camera until geometry leaves the view and the
         // culled count should climb. Runtime-only — not persisted to options.json.
-        bool frustumCulling = _sceneRenderer.FrustumCulling();
+        bool frustumCulling = frame.renderer.FrustumCulling();
         if (ImGui::Checkbox("Frustum Culling", &frustumCulling))
         {
-            _sceneRenderer.SetFrustumCulling(frustumCulling);
+            frame.renderer.SetFrustumCulling(frustumCulling);
         }
 
         // A/B toggle for draw-list sorting. The image is identical either way; the
@@ -292,10 +296,10 @@ void EditorApp::DrawOptionsWindow()
         // adjacent so they coalesce into one instanced indirect draw, dropping the
         // batch count toward the number of distinct meshes. Turn it off and it climbs
         // toward the drawn-item count (every item its own batch).
-        bool sortDraws = _sceneRenderer.SortDraws();
+        bool sortDraws = frame.renderer.SortDraws();
         if (ImGui::Checkbox("Sort Draws", &sortDraws))
         {
-            _sceneRenderer.SetSortDraws(sortDraws);
+            frame.renderer.SetSortDraws(sortDraws);
         }
 
         // A/B toggle for the GPU-driven cull path (stages F1/F2a): a compute pass
@@ -306,10 +310,10 @@ void EditorApp::DrawOptionsWindow()
         // path — this is the verification hook. The item/batch tallies below are
         // read back from the GPU (a few frames stale); "Sort Draws" has no effect
         // on this path. Runtime-only — not persisted to options.json.
-        bool gpuCulling = _sceneRenderer.GpuCulling();
+        bool gpuCulling = frame.renderer.GpuCulling();
         if (ImGui::Checkbox("GPU Cull", &gpuCulling))
         {
-            _sceneRenderer.SetGpuCulling(gpuCulling);
+            frame.renderer.SetGpuCulling(gpuCulling);
         }
 
         // Show/hide the editor overlays (selection outline, entity icons,
@@ -318,9 +322,9 @@ void EditorApp::DrawOptionsWindow()
         // OnRender skips the submissions; the scene itself is untouched.
         // (Whether the overlay passes were even BUILT is the Initialize-time
         // EditorConfig::enableEditorVisuals / --no-editor-visuals decision.)
-        ImGui::Checkbox("Editor Overlays", &_showEditorOverlays);
+        ImGui::Checkbox("Editor Overlays", &frame.showEditorOverlays);
 
-        const Assisi::Runtime::DrawStats draw = _sceneRenderer.LastDrawStats();
+        const Assisi::Runtime::DrawStats draw = frame.renderer.LastDrawStats();
         ImGui::Text("Items: %u drawn / %u meshes culled", draw.drawnItems, draw.culledMeshes);
         ImGui::Text("Draws: %u batches / %u indirect calls", draw.batches, draw.drawCalls);
 
@@ -329,22 +333,22 @@ void EditorApp::DrawOptionsWindow()
         // Render::MaterialDebugView.
         static const char *kDebugViewNames[] = {"Off",       "Base Color", "Metallic", "Roughness",
                                                 "Normal",    "Occlusion",  "Emissive"};
-        int32_t            debugViewIndex     = static_cast<int32_t>(_sceneRenderer.DebugView());
+        int32_t            debugViewIndex     = static_cast<int32_t>(frame.renderer.DebugView());
         if (ImGui::Combo("Debug View", &debugViewIndex, kDebugViewNames, IM_ARRAYSIZE(kDebugViewNames)))
         {
-            _sceneRenderer.SetDebugView(static_cast<Assisi::Render::MaterialDebugView>(debugViewIndex));
+            frame.renderer.SetDebugView(static_cast<Assisi::Render::MaterialDebugView>(debugViewIndex));
         }
 
         ImGui::Separator();
 
-        OptionsConfig &options = GetOptions();
+        OptionsConfig &options = frame.options;
 
         static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
         int                modeIndex    = static_cast<int>(options.aaMode);
         if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))
         {
             options.aaMode = static_cast<Assisi::Render::AaMode>(modeIndex);
-            ApplyDisplayOptions();
+            applyDisplay = true;
             options.SaveToJson();
         }
 
@@ -372,7 +376,7 @@ void EditorApp::DrawOptionsWindow()
             options.msaaSamples = kSampleValues[sampleIndex];
             if (msaaActive)
             {
-                ApplyDisplayOptions();
+                applyDisplay = true;
             }
             options.SaveToJson();
         }
@@ -445,6 +449,7 @@ void EditorApp::DrawOptionsWindow()
         }
     }
     ImGui::End();
+    return applyDisplay;
 }
 
 } // namespace Assisi::Editor

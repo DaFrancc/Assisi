@@ -1,6 +1,8 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 #include <Assisi/Editor/EditorApp.hpp>
+
+#include "EditorOptionsPanel.hpp"
 #include "ImGuiQueries.hpp"
 
 #include <Assisi/App/LevelRuntime.hpp>
@@ -45,6 +47,41 @@
 
 namespace Assisi::Editor
 {
+
+EditorApp::EditorApp(EditorConfig config)
+    : _editorConfig(std::move(config)), _options(std::make_unique<EditorOptionsPanel>())
+{
+    // Application reads this during Initialize(), which runs before OnStart, so
+    // it cannot wait for a hook — hence the constructor body.
+    SetRestrictedViewer(_editorConfig.restrictedViewer);
+}
+
+EditorApp::~EditorApp() = default;
+
+// The panel cannot reach Application's timing history — it is protected, and
+// only a derived class may read it. So this hands the frame over, and applies
+// the one result the panel can report but not perform.
+void EditorApp::DrawOptionsWindow()
+{
+    const FrameStatsView stats = GetFrameStats();
+    const bool           applyDisplay =
+        _options->Draw({.input              = GetInput(),
+                        .renderer           = _sceneRenderer,
+                        .options            = GetOptions(),
+                        .showEditorOverlays = _showEditorOverlays,
+                        .fps                = GetFps(),
+                        .cpuFrameMs         = GetCpuFrameMs(),
+                        .gpuFrameMs         = GetGpuFrameMs(),
+                        .cpuMs              = stats.cpuMs,
+                        .gpuMs              = stats.gpuMs,
+                        .frameDeltaMs       = stats.frameDeltaMs,
+                        .offset             = stats.offset,
+                        .sampleCount        = stats.sampleCount});
+    if (applyDisplay)
+    {
+        ApplyDisplayOptions();
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Setup helpers

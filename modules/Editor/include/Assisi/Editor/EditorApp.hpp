@@ -35,7 +35,6 @@
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Render/GeometryArena.hpp>
-#include <Assisi/Render/GpuTelemetry.hpp>
 #include <Assisi/Render/MeshBuffer.hpp>
 #include <Assisi/Render/RenderFrame.hpp>
 #include <Assisi/Render/Texture.hpp>
@@ -48,6 +47,7 @@
 #include <nvrhi/nvrhi.h>
 
 #include <array>
+#include <memory>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -134,15 +134,16 @@ struct EditorConfig
     bool enableEditorVisuals = true;
 };
 
+class EditorOptionsPanel;
+
 class EditorApp : public Assisi::App::Application
 {
   public:
-    explicit EditorApp(EditorConfig config = {}) : _editorConfig(std::move(config))
-    {
-        // Application reads this during Initialize(), which runs before OnStart,
-        // so it cannot wait for a hook — hence the constructor body.
-        SetRestrictedViewer(_editorConfig.restrictedViewer);
-    }
+    explicit EditorApp(EditorConfig config = {});
+
+    /// Out of line because the panels this owns are only declared here — their
+    /// definitions live beside their implementations, in src/.
+    ~EditorApp();
 
     /// @brief Transform-gizmo handle set. Public so the free helpers in
     /// EditorGizmo.cpp can map it to ImGuizmo's operation enum.
@@ -194,7 +195,7 @@ class EditorApp : public Assisi::App::Application
     void SyncYawPitchFromRotation();
 
     // --- ImGui panels ---
-    void DrawOptionsWindow(); // frame graph + AA/VSync/FPS controls (F11); see EditorOptions.cpp
+    void DrawOptionsWindow(); // hands the frame to EditorOptionsPanel; see EditorOptions.cpp
     void DrawDiagnosticsWindow();
     void DrawChiaraWindow();  // performance capture (F9); empty without -c builds
     void DrawLevelsWindow();
@@ -1349,9 +1350,9 @@ class EditorApp : public Assisi::App::Application
         Assisi::Core::Reflect::kInvalidComponentId;
     Assisi::ECS::Entity _pendingDeleteEntity = Assisi::ECS::NullEntity;
 
-    // Options overlay (frame graph + display/pacing settings), toggled with F11.
-    // Owned by the app, not the engine — see DrawOptionsWindow in EditorOptions.cpp.
-    bool _showOptions = false;
+    /// The F11 options overlay. Held by pointer so its telemetry buffers and the
+    /// GpuTelemetry header stay out of this one.
+    std::unique_ptr<EditorOptionsPanel> _options;
     bool _showChiara  = false;
 
     // F11 "Editor overlays" checkbox: per-frame visibility of the selection
@@ -1423,23 +1424,6 @@ class EditorApp : public Assisi::App::Application
     // editing the text resets it to the first row, Enter adds the highlighted one.
     int32_t _addComponentSelected = 0;
 
-    // NVIDIA GPU telemetry (clocks/power/util/temp) for the options overlay.
-    // Lazily initialises NVML on first poll, so it costs nothing until the
-    // overlay is opened; reports an invalid sample on non-NVIDIA systems.
-    Assisi::Render::GpuTelemetry _gpuTelemetry;
-
-    // Ring-buffer history for the telemetry graphs, advanced once per fresh NVML
-    // sample (~5Hz, gated on GpuTelemetrySample::sequence) rather than per frame,
-    // so the buffers span ~30s regardless of frame rate. _gpuTelemetryOffset is
-    // the next write slot / chronological start (ImPlot Offset), _gpuTelemetryCount
-    // saturates at the capacity. Only advance while the overlay is open.
-    static constexpr int32_t                    kGpuHistory = 150; // ~30s at 5Hz
-    std::array<float, kGpuHistory>              _gpuClockHistory{};
-    std::array<float, kGpuHistory>              _gpuUtilHistory{};
-    std::array<float, kGpuHistory>              _gpuPowerHistory{};
-    int32_t                                     _gpuTelemetryOffset = 0;
-    int32_t                                     _gpuTelemetryCount  = 0;
-    uint64_t                                    _lastGpuSequence    = 0;
 
     // Eyedropper: while armed, the next scene entity-pick is written into the
     // captured EntityRef field instead of changing the selection. The target is

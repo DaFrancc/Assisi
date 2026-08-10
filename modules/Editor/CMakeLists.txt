@@ -23,6 +23,7 @@ target_sources(Assisi-Editor
     "src/EditorInspector.cpp"
     "src/EditorLevels.cpp"
     "src/EditorOptions.cpp"
+    "src/EditorOptionsPanel.hpp"
     "src/EditorPlay.cpp"
     "src/EditorWorlds.cpp"
     "src/InstanceGesture.cpp"
