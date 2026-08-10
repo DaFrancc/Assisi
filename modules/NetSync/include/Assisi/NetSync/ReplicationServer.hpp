@@ -478,6 +478,16 @@ class ReplicationServer
     /// identity-filter run, so keep the no-provider path allocation-free.
     const std::vector<NetId> &ComputeEffective(Connection &connection);
 
+    /// Drop from @p ids every Relevance::ControllerOnly entity @p connection does
+    /// not control. Order-preserving, so a sorted set stays sorted.
+    ///
+    /// Called twice per computation, and the second call is the point (B6): the
+    /// first pass runs before block escalation so a withheld member cannot pull
+    /// its own block, and escalation then re-adds every member of any block a
+    /// surviving sibling belongs to — including the ones this had just removed.
+    /// A privacy class that a sibling's relevance can undo is not one.
+    void ApplyControllerOnly(const Connection &connection, std::vector<NetId> &ids) const;
+
     /// Make @p netId's next appearance a full state rather than a delta, by
     /// forgetting that @p connection ever had it.
     ///
