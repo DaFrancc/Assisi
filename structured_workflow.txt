@@ -29,7 +29,9 @@ branch:
     number comes from. Read it off the issue; never compute it from the ENG
     number. Because of that sync, anything done on the GitHub side shows up in
     Linear on its own. Do not hand-write Linear comments or hand-set issue
-    states to report something GitHub already knows.
+    states to report something GitHub already knows. The one exception is "In
+    Progress" at pickup: nothing on the GitHub side says the work has started,
+    so the worker sets that one by hand.
 
   - Tests are doctest. Build with `make gd`; run everything with `ctest` from
     out/build/gcc-debug, or run one module's binary directly, e.g.
@@ -78,11 +80,13 @@ PART 1 — SETUP (worker)
 
  1. Assign the issue to Francisco Vivas (DaFrancc) in Linear. The user is
     already in the workspace.
- 2. Set the estimate in Linear.
- 3. Read the issue description in full.
- 4. Get the branch name from the issue (Linear supplies it, e.g. feature/eng-98),
+ 2. Move the issue to "In Progress" in Linear. Do this at pickup, before any of
+    the work — it is what tells the programmer which issue is live right now.
+ 3. Set the estimate in Linear.
+ 4. Read the issue description in full.
+ 5. Get the branch name from the issue (Linear supplies it, e.g. feature/eng-98),
     and the GitHub issue number from the issue's attachments.
- 5. Fetch first, and make sure local 'blueprints' is level with the remote. The
+ 6. Fetch first, and make sure local 'blueprints' is level with the remote. The
     branch is cut from it, and a stale 'blueprints' cuts from the wrong tip.
     Then create the branch as a linked branch on that GitHub issue:
 
@@ -93,9 +97,10 @@ PART 1 — SETUP (worker)
     and checks it out. Do not create the branch with git and push it by hand:
     that produces a branch GitHub does not associate with the issue, so the
     association never reaches Linear.
- 6. Confirm the link took, with `gh issue develop --list <github-issue-number>`.
+ 7. Confirm the link took, with `gh issue develop --list <github-issue-number>`.
     The link is the announcement — GitHub carries it to Linear on its own. Do
-    not post a Linear comment or move the issue state to say the branch exists.
+    not post a Linear comment or move the issue state to say the branch exists;
+    the only state you set by hand is the "In Progress" of step 2.
 
     This is the one remote action allowed before approval; it publishes an empty
     branch, nothing else. `gh issue develop` cannot adopt a branch that is
@@ -107,46 +112,46 @@ PART 1 — SETUP (worker)
 PART 2 — THE WORK (worker)
 --------------------------
 
- 7. Make a plan. The programmer does NOT need to approve it; it exists so the
+ 8. Make a plan. The programmer does NOT need to approve it; it exists so the
     worker goes in with one.
- 8. If the plan needs a decision only the programmer can make, stop and ask
+ 9. If the plan needs a decision only the programmer can make, stop and ask
     before continuing.
- 9. Write the test cases first, where a test would prove the bug exists or is
+10. Write the test cases first, where a test would prove the bug exists or is
     genuinely needed for correctness. Do not write vacuous tests — a test that
     passes whether or not the behaviour works is worse than no test. Confirm
     each new test fails when the behaviour it names is broken.
-10. Do the work.
-11. Verify it. Building is not verifying: run the tests.
-12. Commit. The final commit title must contain "Fixes ENG-#", which closes the
+11. Do the work.
+12. Verify it. Building is not verifying: run the tests.
+13. Commit. The final commit title must contain "Fixes ENG-#", which closes the
     Linear issue on merge.
 
 
 PART 3 — THE GATE
 -----------------
 
-13. WORKER: stop here and report to the orchestrator. Say what was done, what
+14. WORKER: stop here and report to the orchestrator. Say what was done, what
     the commit is, and any setback or surprise worth knowing. Do not push.
-14. ORCHESTRATOR: send a push notification with a short, plain summary and any
+15. ORCHESTRATOR: send a push notification with a short, plain summary and any
     setbacks. Keep it brief — no essays. Then wait.
-15. PROGRAMMER: may ask questions. Approval is what releases the rest.
+16. PROGRAMMER: may ask questions. Approval is what releases the rest.
 
 
 PART 4 — LANDING IT (worker, resumed by SendMessage after approval)
 -------------------------------------------------------------------
 
-16. Push the commits.
-17. Open a PR with gh, merging into 'blueprints'.
-18. Title the PR "Fixes ENG-#". Same reason as the commit title — belt and
+17. Push the commits.
+18. Open a PR with gh, merging into 'blueprints'.
+19. Title the PR "Fixes ENG-#". Same reason as the commit title — belt and
     braces on closing the Linear issue.
-19. The PR has no description.
-20. Set the PR assignee in gh to DaFrancc. If that is not possible, skip it.
-21. Merge the PR.
-22. Delete the feature branch, locally and on the remote.
-23. Pull the merge into local 'blueprints': check it out, fast-forward it from
+20. The PR has no description.
+21. Set the PR assignee in gh to DaFrancc. If that is not possible, skip it.
+22. Merge the PR.
+23. Delete the feature branch, locally and on the remote.
+24. Pull the merge into local 'blueprints': check it out, fast-forward it from
     origin, and confirm the work is actually in it — not just merged on GitHub.
     Leave the repo sitting on an up-to-date 'blueprints', which is what the next
     issue branches from.
-24. ORCHESTRATOR: retire the worker and move to the next issue without asking.
+25. ORCHESTRATOR: retire the worker and move to the next issue without asking.
 
 
 WHEN TO INTERRUPT THE PROGRAMMER
@@ -155,7 +160,7 @@ WHEN TO INTERRUPT THE PROGRAMMER
 Only three times:
   - A problem in the plan.
   - A problem in the implementation.
-  - The approval gate at step 13.
+  - The approval gate at step 14.
 
 Nothing else. Assume the programmer is away from the terminal, and send the
 notification even if they appear to be present.
