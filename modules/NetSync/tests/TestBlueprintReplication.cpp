@@ -859,8 +859,9 @@ TEST_CASE("Blueprint replication: a block is allocated once and outlives the tic
 // B7, B8 and B13 were one design change and their decorators are gone with it —
 // the record now carries which members exist, a record dies with its last
 // member, the record section pays the byte budget, and forgetting an instance
-// reaches the in-flight ring. **B6 is still open**: its case stays `should_fail`
-// until the ControllerOnly filter is re-applied after block escalation.
+// reaches the in-flight ring. B6's decorator is gone too: the ControllerOnly
+// filter is re-applied after block escalation, and the pair of cases below pins
+// both directions of it.
 
 namespace
 {
@@ -900,13 +901,13 @@ bool HasLiveMirror(Fixture &fixture, NetId netId)
 
 } // namespace
 
-TEST_CASE("Blueprint replication: escalation does not hand out a ControllerOnly member" *
-          doctest::should_fail())
+TEST_CASE("Blueprint replication: escalation does not hand out a ControllerOnly member")
 {
-    // B6. ControllerOnly is applied once, before block escalation, and escalation
-    // then re-adds every member of any block a surviving sibling belongs to,
-    // re-intersecting only against the live set. The filter is never re-applied,
-    // so naming any wheel of the car buys the private member too.
+    // B6, fixed. ControllerOnly used to be applied once, before block escalation,
+    // and escalation then re-added every member of any block a surviving sibling
+    // belongs to, re-intersecting only against the live set. The filter was never
+    // re-applied, so naming any wheel of the car bought the private member too.
+    // It now runs again over what escalation produced.
     Fixture fixture;
     fixture.instances->Add(ECS::InstanceId{1}, 3);
 
@@ -933,9 +934,49 @@ TEST_CASE("Blueprint replication: escalation does not hand out a ControllerOnly 
     REQUIRE(fixture.server.IsRelevant(fixture.pair.first, base));
     REQUIRE(fixture.server.IsRelevant(fixture.pair.first, NetId{base.value + 2}));
 
-    // ...and that one part of it is not. The comment at Replication.cpp:742-749
-    // claims exactly this; the code does not do it.
+    // ...and that one part of it is not.
     CHECK_FALSE(fixture.server.IsRelevant(fixture.pair.first, NetId{base.value + 1}));
+
+    // The relevant set is what the snapshot is built from, so the withheld member
+    // has no mirror on the other side either. Checked on the wire as well as at
+    // the policy, because a set that says no while the bytes go out anyway is the
+    // failure this finding is about.
+    CHECK(fixture.client.EntityOf(NetId{base.value + 1}) == ECS::NullEntity);
+    CHECK(fixture.client.ReplicatedEntityCount() == 2);
+}
+
+TEST_CASE("Blueprint replication: escalation still delivers a ControllerOnly member to its controller")
+{
+    // The other half of B6, and the one that makes the fix a filter rather than a
+    // ban: re-applying ControllerOnly after escalation must not cost the
+    // controlling connection its own private member. Reversing the comparison in
+    // the re-applied filter, or dropping every ControllerOnly member outright,
+    // passes the case above and dies here.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+
+    const ECS::Entity body    = fixture.Member(ECS::InstanceId{1}, 0);
+    const ECS::Entity private_ = ClassifiedMember(fixture, ECS::InstanceId{1}, 1, Relevance::ControllerOnly);
+    (void)fixture.Member(ECS::InstanceId{1}, 2);
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(body);
+    REQUIRE(base != InvalidNetId);
+
+    auto  owned    = std::make_unique<PickyProvider>();
+    auto *provider = owned.get();
+    // Again only the ordinary member: the private one arrives, if it arrives at
+    // all, through escalation.
+    provider->named = {base};
+    fixture.server.SetRelevancyProvider(std::move(owned));
+
+    fixture.Connect();
+    fixture.server.SetControl(private_, fixture.server.ClientIdOf(fixture.pair.first));
+    fixture.Step(6);
+
+    CHECK(fixture.server.IsRelevant(fixture.pair.first, NetId{base.value + 1}));
+    CHECK(fixture.client.EntityOf(NetId{base.value + 1}) != ECS::NullEntity);
+    CHECK(fixture.client.ReplicatedEntityCount() == 3);
 }
 
 TEST_CASE("Blueprint replication: two adjacent instances leaving together take both records")
