@@ -1,8 +1,13 @@
 ISSUE WORKFLOW
 ==============
 
-Two roles. The orchestrator is the main session; it never does the engineering
-work itself. The worker is a subagent that does all of it.
+One agent, one issue, one conversation. The agent reading this does all of it —
+setup, the work, the gate, and landing it — in the main session, where the
+programmer can watch it happen. There is no orchestrator and no worker. Do NOT
+spawn a subagent for any part of this; the visible progress is the point.
+
+When the issue is landed, the conversation is over. The programmer opens a new
+one for the next issue.
 
 
 CONTEXT YOU WILL NOT HAVE
@@ -31,7 +36,7 @@ branch:
     Linear on its own. Do not hand-write Linear comments or hand-set issue
     states to report something GitHub already knows. The one exception is "In
     Progress" at pickup: nothing on the GitHub side says the work has started,
-    so the worker sets that one by hand.
+    so you set that one by hand.
 
   - Tests are doctest. Build with `make gd`; run everything with `ctest` from
     out/build/gcc-debug, or run one module's binary directly, e.g.
@@ -46,37 +51,31 @@ branch:
     something a correct fix could not deliver; check first that the assertion
     is satisfiable.
 
-  - The orchestrator's notification tool is PushNotification. It is a deferred
-    tool: load it with ToolSearch("select:PushNotification") before calling it.
+  - Your notification tool is PushNotification. It is a deferred tool: load it
+    with ToolSearch("select:PushNotification") before calling it.
 
 
-ROLES
------
+HARD LIMITS
+-----------
 
-ORCHESTRATOR
-  - Picks the issue and hands it to a worker.
-  - Spawns exactly one worker per issue, on Opus, with fresh context.
-  - Talks to that worker with SendMessage for the whole life of the issue.
-    Never spawns a second worker for the same issue.
-  - Retires the worker once the issue is closed. The next issue gets a new one.
-  - Sends the push notification and holds the approval gate.
-
-WORKER
-  - Does every step below.
-  - May NOT spawn subagents of its own.
-  - May NOT push, open a PR, or merge anything before the programmer approves.
-    Nothing reaches the remote before that.
+  - Do NOT spawn subagents. Do the work yourself, in this conversation.
+  - Do NOT push, open a PR, or merge anything before the programmer approves at
+    the gate. Nothing reaches the remote before that, with the single exception
+    of the branch creation in step 6.
 
 
-ORDER OF ISSUES
----------------
+WHICH ISSUE
+-----------
+
+If the programmer named one, that is the issue. If they did not, pick the next
+one and say which you picked before you start.
 
 Roughly by issue number, but it is not a rule. Dependencies win: if an issue is
 blocked, or another has to land first, do whatever order actually works.
 
 
-PART 1 — SETUP (worker)
------------------------
+PART 1 — SETUP
+--------------
 
  1. Assign the issue to Francisco Vivas (DaFrancc) in Linear. The user is
     already in the workspace.
@@ -88,6 +87,11 @@ PART 1 — SETUP (worker)
     and the GitHub issue number from the issue's attachments.
  6. Fetch first, and make sure local 'blueprints' is level with the remote. The
     branch is cut from it, and a stale 'blueprints' cuts from the wrong tip.
+    Verify it — `git rev-list --left-right --count origin/blueprints...blueprints`
+    must be 0 0 before you cut. Do not take "already up to date" on faith; this
+    has silently cut a branch eight commits behind before now, and the work had
+    to be rebased across a refactor that had landed in between.
+
     Then create the branch as a linked branch on that GitHub issue:
 
       gh issue develop <github-issue-number> --base blueprints \
@@ -109,11 +113,12 @@ PART 1 — SETUP (worker)
     and then run the command above.
 
 
-PART 2 — THE WORK (worker)
---------------------------
+PART 2 — THE WORK
+-----------------
 
- 8. Make a plan. The programmer does NOT need to approve it; it exists so the
-    worker goes in with one.
+ 8. Make a plan. The programmer does NOT need to approve it; it exists so you go
+    in with one. Say it out loud in the conversation — being watchable is the
+    reason this runs in the main session.
  9. If the plan needs a decision only the programmer can make, stop and ask
     before continuing.
 10. Write the test cases first, where a test would prove the bug exists or is
@@ -129,29 +134,31 @@ PART 2 — THE WORK (worker)
 PART 3 — THE GATE
 -----------------
 
-14. WORKER: stop here and report to the orchestrator. Say what was done, what
-    the commit is, and any setback or surprise worth knowing. Do not push.
-15. ORCHESTRATOR: send a push notification with a short, plain summary and any
-    setbacks. Keep it brief — no essays. Then wait.
-16. PROGRAMMER: may ask questions. Approval is what releases the rest.
+14. Stop. Report in the conversation: what was done, what the commit is, the
+    test results, and any setback or surprise worth knowing. Then send a push
+    notification with a short, plain summary and any setbacks — brief, no
+    essays. Send it even if the programmer appears to be present.
+15. Wait. The programmer may ask questions. Approval is what releases the rest;
+    nothing below happens without it.
 
 
-PART 4 — LANDING IT (worker, resumed by SendMessage after approval)
--------------------------------------------------------------------
+PART 4 — LANDING IT (only after approval)
+-----------------------------------------
 
-17. Push the commits.
-18. Open a PR with gh, merging into 'blueprints'.
-19. Title the PR "Fixes ENG-#". Same reason as the commit title — belt and
+16. Push the commits.
+17. Open a PR with gh, merging into 'blueprints'.
+18. Title the PR "Fixes ENG-#". Same reason as the commit title — belt and
     braces on closing the Linear issue.
-20. The PR has no description.
-21. Set the PR assignee in gh to DaFrancc. If that is not possible, skip it.
-22. Merge the PR.
-23. Delete the feature branch, locally and on the remote.
-24. Pull the merge into local 'blueprints': check it out, fast-forward it from
+19. The PR has no description.
+20. Set the PR assignee in gh to DaFrancc. If that is not possible, skip it.
+21. Merge the PR.
+22. Delete the feature branch, locally and on the remote.
+23. Pull the merge into local 'blueprints': check it out, fast-forward it from
     origin, and confirm the work is actually in it — not just merged on GitHub.
     Leave the repo sitting on an up-to-date 'blueprints', which is what the next
     issue branches from.
-25. ORCHESTRATOR: retire the worker and move to the next issue without asking.
+24. Say the issue is landed and stop. Do not start the next one — the programmer
+    opens a new conversation for that.
 
 
 WHEN TO INTERRUPT THE PROGRAMMER
