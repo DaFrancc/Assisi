@@ -945,6 +945,36 @@ TEST_CASE("Blueprint replication: escalation does not hand out a ControllerOnly 
     CHECK(fixture.client.ReplicatedEntityCount() == 2);
 }
 
+TEST_CASE("Blueprint replication: ControllerOnly is ignored when no relevancy provider is installed" *
+          doctest::should_fail())
+{
+    // ENG-129, open. Every other ControllerOnly case installs a provider, which
+    // is what hid this: RelevancyConfig::Provider defaults to All, that leaves
+    // _relevancy null, and ComputeEffective returns the live set outright before
+    // either ApplyControllerOnly call is reached. The class is inert in the
+    // default configuration, and the entity goes out on the wire — the client
+    // below really does build a mirror of a member it must not know about.
+    //
+    // should_fail until ENG-129 lands; the fix removes this decorator. Setup is
+    // deliberately identical to the escalation case above except for the one
+    // missing SetRelevancyProvider call, so the diff between them is the finding.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+
+    const ECS::Entity body = fixture.Member(ECS::InstanceId{1}, 0);
+    (void)ClassifiedMember(fixture, ECS::InstanceId{1}, 1, Relevance::ControllerOnly);
+    (void)fixture.Member(ECS::InstanceId{1}, 2);
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(body);
+    REQUIRE(base != InvalidNetId);
+
+    fixture.Connect();
+
+    CHECK_FALSE(fixture.server.IsRelevant(fixture.pair.first, NetId{base.value + 1}));
+    CHECK(fixture.client.EntityOf(NetId{base.value + 1}) == ECS::NullEntity);
+}
+
 TEST_CASE("Blueprint replication: escalation still delivers a ControllerOnly member to its controller")
 {
     // The other half of B6, and the one that makes the fix a filter rather than a
