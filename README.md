@@ -21,13 +21,72 @@ git clone https://github.com/DaFrancc/Assisi.git
 - [Make](https://www.gnu.org/software/make/)
 - [CMake](https://cmake.org/) 3.28+
 - [Ninja](https://ninja-build.org/)
+- [Python 3](https://www.python.org/) — runs `reflectgen` during the build (standard library only)
 
 The following compilers have been tested:
 - Windows — [MSVC](https://visualstudio.microsoft.com/) (Visual Studio 2022+)
 - Linux — [GCC](https://gcc.gnu.org/), [Clang](https://clang.llvm.org/)
 
-**Everything below is fetched and built automatically by CMake on first configure** — there is no
-separate package manager step, and nothing to install by hand:
+Every third-party C++ library in the table further down is fetched and built by CMake on first
+configure — none of them is a package you install. What your package manager *does* have to provide is
+the toolchain above plus a short list of system development packages: OpenSSL, and the Wayland/X11
+headers GLFW builds its two backends against.
+
+#### Windows
+Install [Visual Studio 2022+](https://visualstudio.microsoft.com/) with the **Desktop development with
+C++** workload (which brings MSVC, CMake, and Ninja), plus [Python 3](https://www.python.org/) if you
+do not already have it on `PATH`. Build from a *Developer Command Prompt* so the MSVC environment is
+set up.
+
+#### Linux — Arch / Manjaro
+```bash
+sudo pacman -S --needed base-devel git cmake ninja python \
+                        openssl \
+                        wayland libxkbcommon \
+                        libxcursor libxi libxinerama libxrandr \
+                        vulkan-icd-loader
+
+# A Vulkan driver for your GPU (pick one):
+sudo pacman -S vulkan-radeon    # AMD
+sudo pacman -S vulkan-intel     # Intel
+sudo pacman -S nvidia-utils     # NVIDIA (proprietary; ships its own ICD)
+
+# Optional — only if you want to build with Clang as well as GCC:
+sudo pacman -S clang
+```
+
+#### Linux — Fedora
+```bash
+sudo dnf install gcc-c++ make git cmake ninja-build python3 pkgconf-pkg-config \
+                 openssl-devel \
+                 wayland-devel libxkbcommon-devel \
+                 libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
+                 vulkan-loader mesa-vulkan-drivers
+
+# NVIDIA users: the proprietary driver supplies its own Vulkan ICD, so
+# mesa-vulkan-drivers is not the package you want.
+
+# Optional — only if you want to build with Clang as well as GCC:
+sudo dnf install clang
+```
+
+On other distributions, install the equivalents of those four groups — they are the whole list:
+
+| System packages | Why they are needed |
+|---|---|
+| OpenSSL headers | GameNetworkingSockets' crypto backend on Linux. This is a deliberate, documented exception to the tree's self-contained rule. Not needed at all with `ASSISI_ENABLE_NETWORKING=OFF`. |
+| Wayland + libxkbcommon | GLFW builds its Wayland backend by default and requires `wayland-client`, `wayland-cursor`, `wayland-egl`, and `xkbcommon` at configure time. GLFW vendors the protocol XML files, so `wayland-protocols` is *not* required — only `wayland-scanner`, which ships with the Wayland dev package. |
+| Xcursor, Xi, Xinerama, Xrandr | GLFW also builds its X11 backend by default; these pull in `libX11` and the Xorg protocol headers. Both backends are selected at runtime, so build both even if you only ever run one. |
+| Vulkan loader + GPU driver | **Runtime only.** The engine loads Vulkan dynamically, so no Vulkan SDK is needed to build — but nothing will render without a loader and an ICD. |
+
+Optionally, installing `simdjson` (Arch) or `simdjson-devel` (Fedora) makes fastgltf link the system
+copy instead of compiling its own bundled amalgamation. Both work. The system copy trims a little off
+the first build but leaves the resulting binary with a runtime dependency on that shared library; pass
+`-DCMAKE_DISABLE_FIND_PACKAGE_simdjson=TRUE` to force the self-contained build regardless of what is
+installed.
+
+**Everything below is fetched and built automatically by CMake on first configure** — nothing in this
+table is a package to install, pin, or vendor, on any platform:
 
 | Dependency | What it does |
 |---|---|
@@ -67,7 +126,7 @@ illegal-instruction fault on older CPUs.
 ```bash
 make configure-msvc
 ```
-#### Linux:
+#### Linux (identical on every distribution — only step 2 differs):
 ```bash
 make configure-gcc    # GCC
 make configure-clang  # Clang
