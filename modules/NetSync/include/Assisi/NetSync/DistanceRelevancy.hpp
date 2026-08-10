@@ -5,7 +5,8 @@
 /// @brief The relevancy provider almost every game wants: a radius around what
 /// you are looking at, with hysteresis so the boundary is not a bug.
 
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
 
 #include <cstdint>
 #include <unordered_map>
