@@ -103,6 +103,17 @@ endfunction()
 function(Assisi_apply_test_defaults target_name)
   Assisi_apply_defaults("${target_name}")
 
+  # By default doctest forward-declares std::basic_ostream instead of including
+  # <ostream>, so stringifying a failed CHECK only compiles if something else in
+  # the TU already dragged the real definition in. Under MSVC that is a coin
+  # flip: <string_view>'s operator<< is a template, so an assertion comparing two
+  # string_views instantiates it against the incomplete forward declaration and
+  # the error lands inside <__msvc_string_view.hpp>. libc++ turns this option on
+  # for itself and libstdc++ happens to include <ostream> anyway, which is why
+  # only msvc-ship ever saw it. Asking doctest for the real headers is the
+  # supported fix and costs one already-included header per test TU.
+  target_compile_definitions("${target_name}" PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+
   # Clang-only: gcc does not diagnose either case, so it needs no opt-out and
   # would only warn about an unrecognized option.
   if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
