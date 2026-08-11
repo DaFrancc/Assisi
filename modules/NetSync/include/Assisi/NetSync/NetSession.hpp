@@ -164,7 +164,7 @@ class NetSession
     /// withheld until then — and a **client** cannot answer one. Both are
     /// deliberate: the two hellos are each sent exactly once, so one sent with a
     /// placeholder is a join with no correct outcome. Computing the hash is a job
-    /// (App::BuildContentSetHash), so this normally lands a frame or two after
+    /// (App::ContentSetHashJob), so this normally lands a frame or two after
     /// hosting or joining starts, and whichever side was waiting completes then.
     void SetContentSetHash(std::uint64_t hash);
 

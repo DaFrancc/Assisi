@@ -151,4 +151,28 @@ bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::Phys
 void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
                             bool &wereLoading);
 
+/// @brief How many entities a join stripped, and how many parent links it had to
+/// drop with them.
+struct StrippedEntities
+{
+    std::size_t entities = 0;
+    std::size_t orphans  = 0;
+};
+
+/// @brief Drop the level's own copies of everything the host owns, after a join
+/// has loaded that level locally.
+///
+/// A joined client loads the same file the host did, so every replicated object
+/// exists twice: once as the file's authored copy, once as the mirror arriving on
+/// the wire. These are the authored ones.
+///
+/// Three steps, and the last two are why this is shared rather than written twice.
+/// A stripped entity's rigid body has to leave the physics world *before* the
+/// entity does, or the body outlives every handle to it. And a child of a stripped
+/// entity is left holding a dead parent, which transform propagation reads as a
+/// root and places at its local pose — visibly adrift in a windowed client,
+/// silently mis-simulated in a headless one. Both halves of that were previously
+/// copied per app and only one copy had them.
+StrippedEntities StripReplicatedEntities(ECS::Scene &scene, Physics::PhysicsWorld &physics);
+
 } // namespace Assisi::App

@@ -4,12 +4,18 @@
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetIdJson.hpp>
 #include <Assisi/Core/AssetPath.hpp>
+#include <Assisi/Core/Logger.hpp>
+#include <Assisi/NetSync/NetComponents.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+#include <cstddef>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace Assisi::App
 {
@@ -118,6 +124,51 @@ void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const 
         Runtime::ResolveSceneAssets(scene, cache, database);
         wereLoading = loadsPending;
     }
+}
+
+StrippedEntities StripReplicatedEntities(ECS::Scene &scene, Physics::PhysicsWorld &physics)
+{
+    StrippedEntities stripped;
+
+    std::vector<ECS::Entity> doomed;
+    scene.ForEachEntity(
+        [&](ECS::Entity entity)
+        {
+            if (scene.Has<NetSync::Replicated>(entity))
+                doomed.push_back(entity);
+        });
+
+    for (const ECS::Entity entity : doomed)
+    {
+        // Out of the physics world first: Destroy only ends the entity, and a body
+        // left behind is one nothing holds a handle to any more.
+        if (const auto *body = scene.Get<Physics::RigidBody>(entity))
+        {
+            physics.RemoveBody(*body);
+            scene.Remove<Physics::RigidBody>(entity);
+        }
+        scene.Destroy(entity);
+    }
+    scene.FlushDestroyed();
+
+    // A child of a stripped entity now holds a dead parent handle. Left alone,
+    // transform propagation reads it as a root and places it at its *local* pose —
+    // a decoration adrift from what it decorated, in a world that otherwise looks
+    // right. Dropping the link says the same thing honestly.
+    std::vector<ECS::Entity> orphans;
+    scene.ForEachEntity(
+        [&](ECS::Entity entity)
+        {
+            const auto *parent = scene.Get<Runtime::Parent>(entity);
+            if (parent != nullptr && !scene.IsAlive(parent->parent))
+                orphans.push_back(entity);
+        });
+    for (const ECS::Entity entity : orphans)
+        scene.Remove<Runtime::Parent>(entity);
+
+    stripped.entities = doomed.size();
+    stripped.orphans  = orphans.size();
+    return stripped;
 }
 
 } // namespace Assisi::App

@@ -17,6 +17,7 @@
 /// handshake hashed — not a rebuilt one, which could differ if a file changed in
 /// between.
 
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/World.hpp>
 
 #include <string>
@@ -24,6 +25,7 @@
 
 namespace Assisi::NetSync
 {
+class NetSession;
 class ReplicationServer;
 class ReplicationClient;
 } // namespace Assisi::NetSync
@@ -35,6 +37,11 @@ namespace Assisi::App
 ///
 /// Without it every member of every instance replicates as an ordinary entity —
 /// correct, and larger.
+///
+/// @p manifest must be sorted, which is what makes an index name the same file on
+/// both machines. An unsorted one installs nothing and says so, leaving exactly
+/// that member-by-member behaviour: a binary search over an unsorted list would
+/// instead name the wrong file, and the far side would expand it.
 void InstallInstanceInfoProvider(NetSync::ReplicationServer &server, World &world,
                                  std::vector<std::string> manifest);
 
@@ -43,7 +50,25 @@ void InstallInstanceInfoProvider(NetSync::ReplicationServer &server, World &worl
 /// The expansion is the ordinary one — same loader, same composition, same
 /// prepared form — which is what makes the two sides agree without the server
 /// sending what the file already says.
+///
+/// Same sortedness contract as InstallInstanceInfoProvider, and for the same
+/// reason: this is the side that turns an index back into a file.
 void InstallInstanceExpander(NetSync::ReplicationClient &client, World &world,
                              std::vector<std::string> manifest);
+
+/// @brief Hand a finished content-set scan to @p session: its hash, and its paths
+/// as the manifest for whichever replication half the session has.
+///
+/// **The one call a session makes when the scan lands**, and one call rather than
+/// two on purpose. The hash and the manifest are the same fact — "this is the
+/// content both machines agreed on" — and a caller that set the hash without
+/// installing the manifest is how blueprint replication came to have no
+/// production caller at all (B15). Every session path runs this, windowed or
+/// headless; only the drawing differs.
+///
+/// The hash goes across unconditionally — it is what releases a withheld hello,
+/// and refusing a join is not this function's call. The manifest is then subject
+/// to the installers' own sortedness contract above.
+void ApplyContentSet(NetSync::NetSession &session, World &world, ContentSet content);
 
 } // namespace Assisi::App

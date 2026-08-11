@@ -20,7 +20,9 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/ChildProcess.hpp>
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
@@ -134,51 +136,19 @@ void EditorApp::FailJoin(std::string reason)
 
 void EditorApp::StripReplicatedEntities()
 {
-    if (_scene == nullptr)
+    if (_scene == nullptr || _physics == nullptr)
         return;
 
-    // The host owns these and they arrive as mirrors. The level file's copies are
-    // the host's authored originals, so keeping both doubles every replicated
-    // object in the world.
-    std::vector<Assisi::ECS::Entity> doomed;
-    _scene->ForEachEntity(
-        [&](Assisi::ECS::Entity entity)
-        {
-            if (_scene->Has<Assisi::NetSync::Replicated>(entity))
-                doomed.push_back(entity);
-        });
+    // Shared with the headless client, which used to carry its own copy of this
+    // and had drifted: it ended the entities without taking their bodies out of
+    // the physics world, and never dropped the orphaned parent links.
+    const Assisi::App::StrippedEntities stripped = Assisi::App::StripReplicatedEntities(*_scene, *_physics);
 
-    for (const Assisi::ECS::Entity entity : doomed)
-    {
-        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
-        {
-            _physics->RemoveBody(*body);
-            _scene->Remove<Assisi::Physics::RigidBody>(entity);
-        }
-        _scene->Destroy(entity);
-    }
-    _scene->FlushDestroyed();
-
-    // A child of a stripped entity now holds a dead parent handle. Left alone,
-    // transform propagation reads it as a root and draws it at its *local* pose —
-    // a decoration adrift from what it decorated, in a world that otherwise looks
-    // right. Dropping the link says the same thing honestly.
-    std::vector<Assisi::ECS::Entity> orphans;
-    _scene->ForEachEntity(
-        [&](Assisi::ECS::Entity entity)
-        {
-            const auto *parent = _scene->Get<Assisi::Runtime::Parent>(entity);
-            if (parent != nullptr && !_scene->IsAlive(parent->parent))
-                orphans.push_back(entity);
-        });
-    for (const Assisi::ECS::Entity entity : orphans)
-        _scene->Remove<Assisi::Runtime::Parent>(entity);
-
-    if (!doomed.empty() || !orphans.empty())
+    if (stripped.entities != 0 || stripped.orphans != 0)
     {
         Assisi::Core::Log::Info("Editor: join stripped {} replicated entit{} from the level ({} orphan link{}).",
-                                doomed.size(), doomed.size() == 1 ? "y" : "ies", orphans.size(),
-                                orphans.size() == 1 ? "" : "s");
+                                stripped.entities, stripped.entities == 1 ? "y" : "ies", stripped.orphans,
+                                stripped.orphans == 1 ? "" : "s");
     }
 }
 
@@ -407,10 +377,14 @@ void EditorApp::PollNetSession(float dt)
 
     // Before Poll, so a hello that has been waiting on the scan goes out on the
     // same frame it landed.
-    if (std::uint64_t hash = 0; _contentSetHash.Poll(hash))
+    if (Assisi::App::ContentSet content; _contentSetHash.Poll(content))
     {
-        Assisi::Core::Log::Info("Editor: content set hashed ({}).", Assisi::Core::ToHex64(hash));
-        _netSession->SetContentSetHash(hash);
+        Assisi::Core::Log::Info("Editor: content set hashed ({}, {} files).", Assisi::Core::ToHex64(content.hash),
+                                content.paths.size());
+        // Here rather than at Host/Join, because this is where the list the
+        // handshake hashed exists. The same call the headless path makes.
+        if (_world != nullptr)
+            Assisi::App::ApplyContentSet(*_netSession, *_world, std::move(content));
     }
 
     _netSession->Poll();
