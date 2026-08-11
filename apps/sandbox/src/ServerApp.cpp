@@ -47,25 +47,6 @@ double NowSeconds()
 /// How often a headless process prints a "still alive, here is the rate" line.
 constexpr double kReportIntervalSeconds = 5.0;
 
-/// Resolves @p virtualPath and hashes it the way every peer must, or nullopt if
-/// it cannot be resolved or read.
-///
-/// The normalisation lives in Core, not here. This function used to hash raw
-/// bytes while the editor's copy folded CRLF, so an editor host and this server
-/// refused each other over the same CRLF-checked-out level — on the same
-/// machine. Two spellings of a hash that peers compare is the bug, not the
-/// duplication.
-#if defined(ASSISI_NETWORKING)
-std::optional<std::uint64_t> HashLevelFile(const std::string &virtualPath)
-{
-    const auto resolved = Assisi::Core::AssetSystem::Resolve(virtualPath);
-    if (!resolved)
-        return std::nullopt;
-
-    return Assisi::Core::HashTextFileNormalized(*resolved);
-}
-#endif // ASSISI_NETWORKING
-
 } // namespace
 
 ServerApp::ServerApp(ServerOptions options) : _options(std::move(options))
@@ -154,7 +135,7 @@ void ServerApp::OnStart()
         NetSync::LevelIdentity level;
         if (!_options.level.empty())
         {
-            if (const std::optional<std::uint64_t> hash = HashLevelFile(_options.level))
+            if (const std::optional<std::uint64_t> hash = Assisi::App::HashLevelFile(_options.level))
             {
                 level.addressing  = NetSync::LevelAddressing::Virtual;
                 level.path        = _options.level;
@@ -206,40 +187,13 @@ void ServerApp::BuildJoinedWorld()
         RequestClose();
     };
 
-    if (hello->level.addressing == NetSync::LevelAddressing::None)
+    // Every question a join has to answer before touching the scene, asked in the
+    // one place every target asks it.
+    const std::expected<std::filesystem::path, Assisi::App::JoinLevelError> file =
+        Assisi::App::ResolveJoinLevel(hello->level);
+    if (!file)
     {
-        fail("the host is not running a level file, so there is no world to build here.");
-        return;
-    }
-    // The headless client only speaks virtual paths: an absolute one is a
-    // play-in-editor temp snapshot, which belongs to the process that wrote it.
-    if (hello->level.addressing != NetSync::LevelAddressing::Virtual)
-    {
-        fail("the host advertised a path this process cannot resolve.");
-        return;
-    }
-
-    const std::optional<std::uint64_t> localHash = HashLevelFile(hello->level.path);
-    if (!localHash)
-    {
-        fail("this build has no '" + hello->level.path + "'.");
-        return;
-    }
-    if (*localHash != hello->level.contentHash)
-    {
-        Log::Error("Client: level content hash mismatch for '{}' — host {}, local {}.", hello->level.path,
-                   Assisi::Core::ToHex64(hello->level.contentHash), Assisi::Core::ToHex64(*localHash));
-        fail("your copy of '" + hello->level.path + "' differs from the host's; sync it and retry.");
-        return;
-    }
-
-    // Same refusal joining as hosting. The content hash above proves the file is
-    // byte-identical to the host's, which says nothing about whether *this*
-    // build declares the systems it names — an older client can match the file
-    // exactly and still be unable to run it.
-    if (!Assisi::App::LevelSystemsAreDeclared(hello->level.path))
-    {
-        fail("'" + hello->level.path + "' names a system this build does not declare.");
+        fail(Assisi::App::JoinLevelErrorMessage(file.error(), hello->level.path));
         return;
     }
 

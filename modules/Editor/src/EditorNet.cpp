@@ -108,11 +108,9 @@ Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
     if (_world == nullptr || _world->levelPath.empty())
         return identity; // never saved: addressing stays None, and hosting refuses
 
-    const auto resolved = Assisi::Core::AssetSystem::Resolve(_world->levelPath);
-    if (!resolved)
-        return identity;
-
-    const std::optional<std::uint64_t> hash = Assisi::Core::HashTextFileNormalized(*resolved);
+    // The engine's spelling of this hash, not the editor's: it is compared
+    // against a peer's, and a second implementation is a second answer.
+    const std::optional<std::uint64_t> hash = Assisi::App::HashLevelFile(_world->levelPath);
     if (!hash)
         return identity;
 
@@ -161,44 +159,17 @@ void EditorApp::BuildJoinedWorld()
     const Assisi::NetSync::LevelIdentity level = hello->level;
 
     // --- Which file, and is it the same file? -------------------------------
-    std::filesystem::path file;
-    switch (level.addressing)
+    // The engine's join check, not the editor's: a dedicated server and a shipped
+    // client have to refuse exactly what this refuses, or the same session is
+    // playable in one target and not another.
+    const std::expected<std::filesystem::path, Assisi::App::JoinLevelError> resolved =
+        Assisi::App::ResolveJoinLevel(level);
+    if (!resolved)
     {
-    case Assisi::NetSync::LevelAddressing::None:
-        FailJoin("the host is not running a level file, so there is no world to build here.");
-        return;
-    case Assisi::NetSync::LevelAddressing::Virtual:
-    {
-        const auto resolved = Assisi::Core::AssetSystem::Resolve(level.path);
-        if (!resolved)
-        {
-            FailJoin("this build has no '" + level.path + "'; get the level from the host and retry.");
-            return;
-        }
-        file = *resolved;
-        break;
-    }
-    case Assisi::NetSync::LevelAddressing::AbsolutePath:
-        file = level.path;
-        break;
-    }
-
-    const std::optional<std::uint64_t> localHash = Assisi::Core::HashTextFileNormalized(file);
-    if (!localHash)
-    {
-        FailJoin("cannot read '" + file.string() + "'.");
+        FailJoin(Assisi::App::JoinLevelErrorMessage(resolved.error(), level.path));
         return;
     }
-    if (*localHash != level.contentHash)
-    {
-        // The two numbers only answer "are they different", which the failure
-        // already announced — so they go to the log and the message stays
-        // something the player can act on.
-        Assisi::Core::Log::Error("Editor: level content hash mismatch for '{}' — host {}, local {}.", level.path,
-                                 Assisi::Core::ToHex64(level.contentHash), Assisi::Core::ToHex64(*localHash));
-        FailJoin("your copy of '" + level.path + "' differs from the host's; sync the file from the host and retry.");
-        return;
-    }
+    const std::filesystem::path file = *resolved;
 
     // --- Build it -----------------------------------------------------------
     // Straight into the play scene: the pre-play snapshot already holds the
@@ -220,10 +191,11 @@ void EditorApp::BuildJoinedWorld()
     // The world is the host's level for the duration; StopPlay puts the edited
     // world's path, systems and instance table back.
     _world->levelPath = level.addressing == Assisi::NetSync::LevelAddressing::Virtual ? level.path : std::string{};
-    // Loud rather than fatal: unwinding a half-built join is not something this
-    // function can do. A client missing the host's systems mirrors state and runs
-    // none of the behaviour, which is worth shouting about even when it cannot be
-    // refused outright.
+    // ResolveJoinLevel already refused a level naming a system this build does not
+    // declare, so this is the belt to that braces rather than the check itself.
+    // Kept loud and not fatal: unwinding a half-built join is not something this
+    // function can do, and a mismatch here means the two disagree about what the
+    // file names — worth shouting about even when it cannot be refused by now.
     if (!_worlds.ApplySystems(*_world, header.systems, level.path))
     {
         Assisi::Core::Log::Error("Join: the host's level '{}' names a system this build does not declare. "
