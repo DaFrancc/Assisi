@@ -20,7 +20,11 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # ------------------------------------------------------------
 # Project-wide knobs (driven by presets/CI, not hand-edited cache)
 # ------------------------------------------------------------
-option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors (recommended for CI)" OFF)
+# ON by default, not just in the presets: a warning that only breaks CI is a
+# warning that gets committed. Turning it off is a deliberate, local act
+# (-DASSISI_WARNINGS_AS_ERRORS=OFF) for the rare case of bisecting through an
+# old commit or building with a compiler whose new diagnostics we haven't met.
+option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 
 # Sanitizers: primarily valuable on Linux; MSVC support is limited.
 option(ASSISI_ENABLE_SANITIZERS "Enable sanitizers for this build" OFF)
@@ -385,6 +389,13 @@ FetchContent_Declare(glfw3
     SYSTEM
 )
 FetchContent_MakeAvailable(glfw3)
+# glfw3.h includes <GL/gl.h> unless told not to. We are a Vulkan renderer and
+# never touch GL, but the include still has to resolve, so a machine without
+# the GL development headers installed fails to compile — a dependency on
+# something we don't use. Set on the target rather than per-file: it was
+# per-file before, three of the five includers forgot it, and which ones
+# forgot is invisible until you build on such a machine.
+target_compile_definitions(glfw INTERFACE GLFW_INCLUDE_NONE)
 
 # --- GLM (header-only)
 set(GLM_BUILD_TESTS   OFF CACHE BOOL "" FORCE)
@@ -772,6 +783,27 @@ if (ASSISI_ENABLE_NETWORKING)
         OVERRIDE_FIND_PACKAGE
     )
     FetchContent_MakeAvailable(protobuf)
+
+    # protobuf v35 deprecates its own FieldOptions::weak() and ParseInfoTree
+    # accessors and then keeps calling them from ~30 places in its own sources,
+    # so building it emits ~30 -Wdeprecated-declarations. SYSTEM only demotes
+    # diagnostics attributed to protobuf's *headers* when we include them; these
+    # come from compiling protobuf's own .cc files, which SYSTEM does not touch.
+    # Nothing here is actionable short of patching a vendored tree — the same
+    # situation as assimp's -Werror above — and the noise buries first-party
+    # warnings, which is the whole point of the warning flags.
+    foreach(_pb_target IN ITEMS libprotobuf libprotobuf-lite libprotoc protoc)
+        if (TARGET "${_pb_target}")
+            if (MSVC)
+                target_compile_options("${_pb_target}" PRIVATE /wd4996)
+            else()
+                target_compile_options("${_pb_target}" PRIVATE
+                    -Wno-deprecated-declarations
+                    -Wno-deprecated
+                )
+            endif()
+        endif()
+    endforeach()
 
     # protobuf_generate_cpp() lives in protobuf's *installed* config package
     # (cmake/protobuf-module.cmake.in), which a FetchContent/add_subdirectory
