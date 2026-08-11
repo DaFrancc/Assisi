@@ -17,18 +17,25 @@
 
 #include <ostream>
 
+#include <algorithm>
+#include <chrono>
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/BlueprintVerbs.hpp>
 #include <Assisi/App/ContentSet.hpp>
+#include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
+#include <Assisi/Core/JobSystem.hpp>
+#include <Assisi/Physics/PhysicsComponents.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
@@ -441,4 +448,155 @@ TEST_CASE("Blueprint over the wire: a blueprint outside the content set still re
     CHECK(fixture.client.ReplicatedEntityCount() == 3);
     CHECK(fixture.client.InstanceRecords().empty());
     CHECK(fixture.guest.instances.Size() == 0);
+}
+
+TEST_CASE("Blueprint over the wire: an unsorted manifest is declined rather than misread")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+
+    Fixture fixture;
+    // Out of order, and specifically an order where the binary search still
+    // *finds* car.abp — at index 1, where a sorted list would have put a_other.
+    // That is the dangerous shape: not a lookup that misses and falls back to
+    // member-by-member, but one that succeeds and names the wrong file, which
+    // NetSync cannot catch because it only checks the member count. An order
+    // where the search simply misses would pass this test either way.
+    fixture.Connect({"b_other.abp", "car.abp", "a_other.abp"});
+
+    REQUIRE(App::SpawnBlueprint(fixture.host, "car.abp", {}).has_value());
+    fixture.Step(12);
+
+    // Declined, so this behaves exactly like a blueprint outside the content set:
+    // whole and unnamed, rather than named wrongly.
+    CHECK(fixture.client.ReplicatedEntityCount() == 3);
+    CHECK(fixture.client.InstanceRecords().empty());
+    CHECK(fixture.guest.instances.Size() == 0);
+}
+
+TEST_CASE("Content set: the scan job delivers the paths it hashed")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+    Write(root, "b_second.abp", CarFile());
+
+    Core::JobSystem        jobs;
+    App::ContentSetHashJob job;
+    job.Start(jobs);
+
+    // Poll until it lands; the scan is a worker job with no completion callback.
+    App::ContentSet delivered;
+    for (int i = 0; i < 2000 && !job.Poll(delivered); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+
+    // The manifest and the hash have to come from one scan. Rebuilt separately,
+    // a file that changed in between would leave the index naming a file the far
+    // side never agreed to — which is why the job carries both rather than the
+    // caller rescanning for the paths.
+    const App::ContentSet direct = App::BuildContentSet();
+    CHECK(delivered.hash == direct.hash);
+    CHECK(delivered.paths == direct.paths);
+    REQUIRE(delivered.paths.size() == 2);
+    CHECK(std::is_sorted(delivered.paths.begin(), delivered.paths.end()));
+
+    // Delivered exactly once.
+    App::ContentSet again;
+    CHECK_FALSE(job.Poll(again));
+}
+
+TEST_CASE("Join: every target answers the host's level the same way")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+
+    // Asked once, in the engine, so a dedicated server and a windowed client
+    // cannot disagree about whether a session is joinable.
+    SUBCASE("a host running no level")
+    {
+        NetSync::LevelIdentity level;
+        const auto             resolved = App::ResolveJoinLevel(level);
+        REQUIRE_FALSE(resolved.has_value());
+        CHECK(resolved.error() == App::JoinLevelError::NoLevel);
+    }
+
+    SUBCASE("a level this build does not have")
+    {
+        NetSync::LevelIdentity level;
+        level.addressing = NetSync::LevelAddressing::Virtual;
+        level.path       = "levels/NotHere.alvl";
+
+        const auto resolved = App::ResolveJoinLevel(level);
+        REQUIRE_FALSE(resolved.has_value());
+        CHECK(resolved.error() == App::JoinLevelError::Unresolvable);
+    }
+
+    SUBCASE("a level whose bytes differ from the host's")
+    {
+        NetSync::LevelIdentity level;
+        level.addressing = NetSync::LevelAddressing::Virtual;
+        level.path       = "car.abp";
+        // Whatever this file hashes to, it is not this.
+        level.contentHash = 0xDEADBEEFu;
+
+        const auto resolved = App::ResolveJoinLevel(level);
+        REQUIRE_FALSE(resolved.has_value());
+        CHECK(resolved.error() == App::JoinLevelError::ContentMismatch);
+    }
+
+    SUBCASE("a level that matches resolves to the file to load")
+    {
+        const std::optional<std::uint64_t> hash = App::HashLevelFile("car.abp");
+        REQUIRE(hash.has_value());
+
+        NetSync::LevelIdentity level;
+        level.addressing  = NetSync::LevelAddressing::Virtual;
+        level.path        = "car.abp";
+        level.contentHash = *hash;
+
+        const auto resolved = App::ResolveJoinLevel(level);
+        REQUIRE(resolved.has_value());
+        CHECK(std::filesystem::exists(*resolved));
+    }
+}
+
+TEST_CASE("Join: stripping the host's copies takes their bodies out of the physics world")
+{
+    App::World world;
+
+    // The level's own copy of something the host owns, with a body — which is
+    // what a joined client has after loading the same file the host did.
+    const ECS::Entity replicated = world.scene.Create();
+    ECS::Transform    pose;
+    pose.position = {0.f, 10.f, 0.f};
+    (void)world.scene.Add<ECS::Transform>(replicated, pose);
+    (void)world.scene.Add<NetSync::Replicated>(replicated, NetSync::Replicated{});
+    (void)world.scene.Add<Physics::RigidBodyDescriptor>(replicated, Physics::RigidBodyDescriptor{});
+
+    // A child of it — a decoration, a light, anything parented to a replicated
+    // object in the file.
+    const ECS::Entity child = world.scene.Create();
+    (void)world.scene.Add<ECS::Transform>(child, ECS::Transform{});
+    (void)world.scene.Add<Runtime::Parent>(child, Runtime::Parent{replicated});
+
+    (void)App::BuildSceneBodies(world.scene, world.physics);
+
+    std::vector<Physics::PhysicsWorld::ActiveBodyState> before;
+    world.physics.GetActiveBodyStates(before);
+    REQUIRE(before.size() == 1);
+
+    const App::StrippedEntities stripped = App::StripReplicatedEntities(world.scene, world.physics);
+    CHECK(stripped.entities == 1);
+    CHECK(stripped.orphans == 1);
+
+    // The body goes with the entity. Destroying the entity alone leaves a body in
+    // the simulation that nothing holds a handle to — which is what the headless
+    // join did while the windowed one did not, the two having been written twice.
+    std::vector<Physics::PhysicsWorld::ActiveBodyState> after;
+    world.physics.GetActiveBodyStates(after);
+    CHECK(after.empty());
+
+    // ...and the child is not left pointing at a dead parent, which propagation
+    // would read as a root and place at its local pose.
+    CHECK(world.scene.IsAlive(child));
+    CHECK(world.scene.Get<Runtime::Parent>(child) == nullptr);
 }
