@@ -20,7 +20,9 @@
 
 #include <Assisi/Editor/EditorApp.hpp>
 
+#include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/ChildProcess.hpp>
+#include <Assisi/App/ContentSet.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
@@ -106,11 +108,9 @@ Assisi::NetSync::LevelIdentity EditorApp::HostLevelIdentity() const
     if (_world == nullptr || _world->levelPath.empty())
         return identity; // never saved: addressing stays None, and hosting refuses
 
-    const auto resolved = Assisi::Core::AssetSystem::Resolve(_world->levelPath);
-    if (!resolved)
-        return identity;
-
-    const std::optional<std::uint64_t> hash = Assisi::Core::HashTextFileNormalized(*resolved);
+    // The engine's spelling of this hash, not the editor's: it is compared
+    // against a peer's, and a second implementation is a second answer.
+    const std::optional<std::uint64_t> hash = Assisi::App::HashLevelFile(_world->levelPath);
     if (!hash)
         return identity;
 
@@ -134,51 +134,19 @@ void EditorApp::FailJoin(std::string reason)
 
 void EditorApp::StripReplicatedEntities()
 {
-    if (_scene == nullptr)
+    if (_scene == nullptr || _physics == nullptr)
         return;
 
-    // The host owns these and they arrive as mirrors. The level file's copies are
-    // the host's authored originals, so keeping both doubles every replicated
-    // object in the world.
-    std::vector<Assisi::ECS::Entity> doomed;
-    _scene->ForEachEntity(
-        [&](Assisi::ECS::Entity entity)
-        {
-            if (_scene->Has<Assisi::NetSync::Replicated>(entity))
-                doomed.push_back(entity);
-        });
+    // Shared with the headless client, which used to carry its own copy of this
+    // and had drifted: it ended the entities without taking their bodies out of
+    // the physics world, and never dropped the orphaned parent links.
+    const Assisi::App::StrippedEntities stripped = Assisi::App::StripReplicatedEntities(*_scene, *_physics);
 
-    for (const Assisi::ECS::Entity entity : doomed)
-    {
-        if (const auto *body = _scene->Get<Assisi::Physics::RigidBody>(entity))
-        {
-            _physics->RemoveBody(*body);
-            _scene->Remove<Assisi::Physics::RigidBody>(entity);
-        }
-        _scene->Destroy(entity);
-    }
-    _scene->FlushDestroyed();
-
-    // A child of a stripped entity now holds a dead parent handle. Left alone,
-    // transform propagation reads it as a root and draws it at its *local* pose —
-    // a decoration adrift from what it decorated, in a world that otherwise looks
-    // right. Dropping the link says the same thing honestly.
-    std::vector<Assisi::ECS::Entity> orphans;
-    _scene->ForEachEntity(
-        [&](Assisi::ECS::Entity entity)
-        {
-            const auto *parent = _scene->Get<Assisi::Runtime::Parent>(entity);
-            if (parent != nullptr && !_scene->IsAlive(parent->parent))
-                orphans.push_back(entity);
-        });
-    for (const Assisi::ECS::Entity entity : orphans)
-        _scene->Remove<Assisi::Runtime::Parent>(entity);
-
-    if (!doomed.empty() || !orphans.empty())
+    if (stripped.entities != 0 || stripped.orphans != 0)
     {
         Assisi::Core::Log::Info("Editor: join stripped {} replicated entit{} from the level ({} orphan link{}).",
-                                doomed.size(), doomed.size() == 1 ? "y" : "ies", orphans.size(),
-                                orphans.size() == 1 ? "" : "s");
+                                stripped.entities, stripped.entities == 1 ? "y" : "ies", stripped.orphans,
+                                stripped.orphans == 1 ? "" : "s");
     }
 }
 
@@ -191,44 +159,17 @@ void EditorApp::BuildJoinedWorld()
     const Assisi::NetSync::LevelIdentity level = hello->level;
 
     // --- Which file, and is it the same file? -------------------------------
-    std::filesystem::path file;
-    switch (level.addressing)
+    // The engine's join check, not the editor's: a dedicated server and a shipped
+    // client have to refuse exactly what this refuses, or the same session is
+    // playable in one target and not another.
+    const std::expected<std::filesystem::path, Assisi::App::JoinLevelError> resolved =
+        Assisi::App::ResolveJoinLevel(level);
+    if (!resolved)
     {
-    case Assisi::NetSync::LevelAddressing::None:
-        FailJoin("the host is not running a level file, so there is no world to build here.");
-        return;
-    case Assisi::NetSync::LevelAddressing::Virtual:
-    {
-        const auto resolved = Assisi::Core::AssetSystem::Resolve(level.path);
-        if (!resolved)
-        {
-            FailJoin("this build has no '" + level.path + "'; get the level from the host and retry.");
-            return;
-        }
-        file = *resolved;
-        break;
-    }
-    case Assisi::NetSync::LevelAddressing::AbsolutePath:
-        file = level.path;
-        break;
-    }
-
-    const std::optional<std::uint64_t> localHash = Assisi::Core::HashTextFileNormalized(file);
-    if (!localHash)
-    {
-        FailJoin("cannot read '" + file.string() + "'.");
+        FailJoin(Assisi::App::JoinLevelErrorMessage(resolved.error(), level.path));
         return;
     }
-    if (*localHash != level.contentHash)
-    {
-        // The two numbers only answer "are they different", which the failure
-        // already announced — so they go to the log and the message stays
-        // something the player can act on.
-        Assisi::Core::Log::Error("Editor: level content hash mismatch for '{}' — host {}, local {}.", level.path,
-                                 Assisi::Core::ToHex64(level.contentHash), Assisi::Core::ToHex64(*localHash));
-        FailJoin("your copy of '" + level.path + "' differs from the host's; sync the file from the host and retry.");
-        return;
-    }
+    const std::filesystem::path file = *resolved;
 
     // --- Build it -----------------------------------------------------------
     // Straight into the play scene: the pre-play snapshot already holds the
@@ -250,10 +191,11 @@ void EditorApp::BuildJoinedWorld()
     // The world is the host's level for the duration; StopPlay puts the edited
     // world's path, systems and instance table back.
     _world->levelPath = level.addressing == Assisi::NetSync::LevelAddressing::Virtual ? level.path : std::string{};
-    // Loud rather than fatal: unwinding a half-built join is not something this
-    // function can do. A client missing the host's systems mirrors state and runs
-    // none of the behaviour, which is worth shouting about even when it cannot be
-    // refused outright.
+    // ResolveJoinLevel already refused a level naming a system this build does not
+    // declare, so this is the belt to that braces rather than the check itself.
+    // Kept loud and not fatal: unwinding a half-built join is not something this
+    // function can do, and a mismatch here means the two disagree about what the
+    // file names — worth shouting about even when it cannot be refused by now.
     if (!_worlds.ApplySystems(*_world, header.systems, level.path))
     {
         Assisi::Core::Log::Error("Join: the host's level '{}' names a system this build does not declare. "
@@ -407,10 +349,14 @@ void EditorApp::PollNetSession(float dt)
 
     // Before Poll, so a hello that has been waiting on the scan goes out on the
     // same frame it landed.
-    if (std::uint64_t hash = 0; _contentSetHash.Poll(hash))
+    if (Assisi::App::ContentSet content; _contentSetHash.Poll(content))
     {
-        Assisi::Core::Log::Info("Editor: content set hashed ({}).", Assisi::Core::ToHex64(hash));
-        _netSession->SetContentSetHash(hash);
+        Assisi::Core::Log::Info("Editor: content set hashed ({}, {} files).", Assisi::Core::ToHex64(content.hash),
+                                content.paths.size());
+        // Here rather than at Host/Join, because this is where the list the
+        // handshake hashed exists. The same call the headless path makes.
+        if (_world != nullptr)
+            Assisi::App::ApplyContentSet(*_netSession, *_world, std::move(content));
     }
 
     _netSession->Poll();

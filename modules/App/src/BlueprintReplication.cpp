@@ -10,6 +10,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/InstanceRecord.hpp>
+#include <Assisi/NetSync/NetSession.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
@@ -37,6 +38,23 @@ std::size_t IndexOf(const std::vector<std::string> &manifest, const std::string 
     if (it == manifest.end() || *it != source)
         return static_cast<std::size_t>(-1);
     return static_cast<std::size_t>(it - manifest.begin());
+}
+
+/// Whether @p manifest can be used as the wire naming, complaining if not.
+///
+/// IndexOf binary-searches it, and the far side reads back an index into its own
+/// copy. Unsorted, both halves of that are wrong — silently, because a blueprint
+/// of the same member count passes NetSync's only structural check and the client
+/// expands the wrong file. Declining is the loud version of what an unlisted
+/// blueprint already does: the members replicate one by one, larger and correct.
+bool ManifestIsUsable(const std::vector<std::string> &manifest)
+{
+    if (std::is_sorted(manifest.begin(), manifest.end()))
+        return true;
+
+    Core::Log::Error("BlueprintReplication: the content manifest is not sorted; blueprint instances will "
+                     "replicate member by member.");
+    return false;
 }
 
 bool SameBytes(std::span<const std::byte> left, std::span<const std::byte> right)
@@ -248,13 +266,30 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
 void InstallInstanceInfoProvider(NetSync::ReplicationServer &server, World &world,
                                  std::vector<std::string> manifest)
 {
+    if (!ManifestIsUsable(manifest))
+        return;
     server.SetInstanceInfoProvider(std::make_unique<WorldInstanceInfo>(world, std::move(manifest)));
 }
 
 void InstallInstanceExpander(NetSync::ReplicationClient &client, World &world,
                              std::vector<std::string> manifest)
 {
+    if (!ManifestIsUsable(manifest))
+        return;
     client.SetInstanceExpander(std::make_unique<WorldInstanceExpander>(world, std::move(manifest)));
+}
+
+void ApplyContentSet(NetSync::NetSession &session, World &world, ContentSet content)
+{
+    // The hash first and unconditionally: it is what releases a withheld hello,
+    // and a session that never receives it never joins at all. Whatever the
+    // manifest turns out to be, refusing the join is not this function's call.
+    session.SetContentSetHash(content.hash);
+
+    if (NetSync::ReplicationServer *server = session.Server())
+        InstallInstanceInfoProvider(*server, world, content.paths);
+    if (NetSync::ReplicationClient *client = session.Client())
+        InstallInstanceExpander(*client, world, std::move(content.paths));
 }
 
 } // namespace Assisi::App
