@@ -296,8 +296,7 @@ TEST_CASE("Blueprint over the wire: an untouched member costs no component bytes
     // measure it.
 }
 
-TEST_CASE("Blueprint over the wire: the saving survives a placement that is not the origin" *
-          doctest::should_fail())
+TEST_CASE("Blueprint over the wire: the saving survives a placement that is not the origin")
 {
     const std::filesystem::path root = FreshRoot();
     Write(root, "car.abp", CarFile());
@@ -311,23 +310,14 @@ TEST_CASE("Blueprint over the wire: the saving survives a placement that is not 
     // the placement in the record and composes it onto the same file the host
     // expanded, so every member is still exactly what it would have built anyway.
     //
-    // **Expected to fail — B9** (docs/blueprint-review-round7-findings.md §2).
-    // MatchesAuthored compares the live component against
-    // `definition->members[i].prepared[…].block`, which holds the authored *local*
-    // value, while SceneSerializer composes the placement onto every parentless
-    // member at expansion. The live Transform is therefore Compose(P, T) and the
-    // operand is T: away from the origin no member's Transform ever matches, none
-    // is elided, and the record becomes pure overhead — 277 bytes here against 233
-    // with no manifest at all, so the design currently *costs* 44 bytes where it
-    // should save 80.
-    //
-    // Remove this decorator as part of B9's fix. It is the only assertion that
-    // proves the fix did anything, since the origin case above passes either way.
+    // The assertion that proves B9's fix did anything, since the origin case above
+    // passes either way: before it, the comparison operand was the authored *local*
+    // value against a live Compose(P, T), nothing matched, and the record was pure
+    // overhead — 277 bytes against 233 with no manifest at all.
     CHECK(derived < sent);
 }
 
-TEST_CASE("Blueprint over the wire: a member reset to its authored value away from the origin still arrives" *
-          doctest::should_fail())
+TEST_CASE("Blueprint over the wire: a member reset to its authored value away from the origin still arrives")
 {
     const std::filesystem::path root = FreshRoot();
     Write(root, "car.abp", CarFile());
@@ -359,16 +349,12 @@ TEST_CASE("Blueprint over the wire: a member reset to its authored value away fr
     const ECS::Transform *mirrored = fixture.guest.scene.Get<ECS::Transform>(mirror);
     REQUIRE(mirrored != nullptr);
 
-    // **Expected to fail — B9, the silent half.** The comparison operand is the
-    // authored local value, which the body now equals exactly, so the Transform is
-    // elided. The gate is `sinceChangeTick == 0 && !clientHasIt`
-    // (Replication.cpp:1951) — the empty baseline — so it is elided once and then
-    // never resent: the guest's body sits at the placement forever while the
-    // host's is at the origin. Measured: guest x = 40, host x = 0.
-    //
-    // This is the half that corrupts rather than merely wastes, and it is why the
-    // byte count above is not enough on its own — a fix could shrink the snapshot
-    // and still leave this mirror wrong. Remove this decorator as part of B9's fix.
+    // B9's silent half, and why the byte count above is not enough on its own: a
+    // fix could shrink the snapshot and still leave this mirror wrong. With the
+    // authored local as the operand the body now equals it exactly, so the
+    // Transform was elided — and the gate is `sinceChangeTick == 0 && !clientHasIt`
+    // (Replication.cpp:1951), the empty baseline, so elided once meant never
+    // resent: guest x = 40 forever against a host at 0.
     CHECK(mirrored->position.x == doctest::Approx(0.f));
 }
 
