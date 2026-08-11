@@ -6,7 +6,9 @@
 #include <Assisi/Core/BitStream.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
+#include <Assisi/Core/Reflect/ComponentId.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/NetSync/InstanceRecord.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
@@ -15,8 +17,11 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <memory>
+#include <span>
 #include <utility>
+#include <vector>
 
 namespace Assisi::App
 {
@@ -32,6 +37,30 @@ std::size_t IndexOf(const std::vector<std::string> &manifest, const std::string 
     if (it == manifest.end() || *it != source)
         return static_cast<std::size_t>(-1);
     return static_cast<std::size_t>(it - manifest.begin());
+}
+
+bool SameBytes(std::span<const std::byte> left, std::span<const std::byte> right)
+{
+    return left.size() == right.size() && std::equal(left.begin(), left.end(), right.begin());
+}
+
+/// Encodes a member's prepared Transform block with @p placement composed onto it.
+///
+/// Forward, not inverse-composing the live component: the pair is an exact inverse
+/// in arithmetic but not in float, and this ends in a byte comparison. Repeating
+/// the client's operation on the client's operands is what makes it exact.
+bool WritePlacedTransform(const Core::Reflect::ComponentMeta &meta,
+                          const std::vector<std::byte> &authored, const ECS::Transform &placement,
+                          Core::BitWriter &out)
+{
+    Core::BitReader reader{authored};
+    (void)Core::Reflect::ReadComponentId(reader); // the block leads with it
+    ECS::Transform local;
+    if (!Core::Reflect::ReadComponent(meta, &local, reader, /*appliedMask=*/nullptr, nullptr))
+        return false;
+
+    const ECS::Transform placed = Runtime::ComposeTransform(placement, local);
+    return Core::Reflect::WriteComponent(meta, &placed, out, Core::Reflect::kAllFields, nullptr);
 }
 
 class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
@@ -92,9 +121,10 @@ class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
         if (row->overrides.contains((*definition)->members[memberIndex].name))
             return false;
 
-        // The prepared block is exactly what the client decoded when it expanded,
-        // so comparing against it compares against what the far side actually
-        // holds — not against a re-derivation that could drift from it.
+        // The prepared block is what the client decoded when it expanded, so it is
+        // the right operand to compare against rather than a re-derivation that
+        // could drift from it. It is not always the *whole* operand: see the
+        // placement composition below, which the expansion applies afterwards.
         const std::vector<std::byte> *authored = nullptr;
         for (const Runtime::PreparedComponent &prepared : (*definition)->members[memberIndex].prepared)
         {
@@ -119,8 +149,25 @@ class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
         if (!Core::Reflect::WriteComponent(*meta, component, live, Core::Reflect::kAllFields, nullptr))
             return false;
 
-        return live.Data().size() == authored->size() &&
-               std::equal(authored->begin(), authored->end(), live.Data().begin());
+        // Expansion composes the placement onto every *parentless* member's
+        // Transform (SceneSerializerInstances.cpp:378-386), so the block alone is
+        // only the authored local. Away from the origin it matches nothing — and
+        // matches exactly when the member has been moved *to* that local, eliding
+        // the one value the far side did not already have.
+        //
+        // A parented member is relative to one that already absorbed the placement,
+        // so composing would apply it twice. No other component is rewritten after
+        // it is decoded.
+        if (id == Core::Reflect::ComponentIdOf<ECS::Transform>() &&
+            !(*definition)->members[memberIndex].parented)
+        {
+            Core::BitWriter placed;
+            if (!WritePlacedTransform(*meta, *authored, row->transform, placed))
+                return false;
+            return SameBytes(placed.Data(), live.Data());
+        }
+
+        return SameBytes(*authored, live.Data());
     }
 
   private:
