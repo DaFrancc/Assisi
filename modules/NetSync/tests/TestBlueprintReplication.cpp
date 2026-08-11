@@ -19,17 +19,21 @@
 #include <ostream>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
+#include <Assisi/Core/BitStream.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
 #include <Assisi/NetSync/InstanceRecord.hpp>
+#include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/NetSync/ReplicationClient.hpp>
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
@@ -1455,4 +1459,168 @@ TEST_CASE("Blueprint replication: a member the client never expanded is not elid
     const ECS::Transform *const seen  = fixture.clientScene.Get<ECS::Transform>(mirror);
     REQUIRE(seen != nullptr); // elided, and the mirror has no Transform at all
     CHECK(seen->position.x == doctest::Approx(12.f));
+}
+
+namespace
+{
+
+/// One instance record as the record section carries it — only the three fields
+/// a sender chooses. The placement is fixed below; none of these cases is about
+/// the pose.
+struct ForgedRecord
+{
+    std::uint32_t blueprintIndex = 0;
+    NetId         base           = InvalidNetId;
+    std::uint32_t memberCount    = 0;
+};
+
+/// A snapshot packet written by hand, for delivery straight to a client.
+///
+/// The server allocates ids from a counter that only climbs, so no sequence of
+/// calls to it produces a block sitting at the top of the 32-bit space — the
+/// encoder cannot be talked into emitting one. But `base` and a despawn run's
+/// `start` are just varints on the wire, and a peer picks them. Forging the
+/// packet is the only way to put one on this client's wire, which is also
+/// precisely what a hostile peer does.
+///
+/// Same layout as WriteSnapshot: the record section, the despawn runs, then the
+/// entity, body and event sections, each of which ends on a `false` bit and so
+/// is written here as nothing but its terminator.
+std::vector<std::byte> ForgeSnapshot(std::uint64_t serverTick, const std::vector<ForgedRecord> &records,
+                                     const std::vector<std::pair<NetId, std::uint32_t>> &despawnRuns)
+{
+    Core::BitWriter writer;
+    WriteMessageType(MessageType::Snapshot, writer);
+
+    SnapshotHeader header;
+    header.serverTick = serverTick;
+    WriteSnapshotHeader(header, writer);
+
+    writer.WriteBool(!records.empty());
+    if (!records.empty())
+        writer.WriteVarUInt32(static_cast<std::uint32_t>(records.size()));
+    for (const ForgedRecord &record : records)
+    {
+        writer.WriteVarUInt32(record.blueprintIndex);
+        writer.WriteVarUInt32(record.base.value); // wire write
+        writer.WriteVarUInt32(record.memberCount);
+        writer.WriteBool(true); // every member present, the ordinary case
+
+        const float placement[10] = {0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f, 1.f, 1.f}; // identity
+        for (const float value : placement)
+            writer.WriteFloat(value);
+    }
+
+    writer.WriteVarUInt32(static_cast<std::uint32_t>(despawnRuns.size()));
+    for (const auto &[start, length] : despawnRuns)
+    {
+        writer.WriteVarUInt32(start.value); // wire write
+        writer.WriteVarUInt32(length);
+    }
+
+    writer.WriteBool(false); // no entity blocks
+    writer.WriteBool(false); // no body states
+    writer.WriteBool(false); // no events
+
+    return std::vector<std::byte>(writer.Data().begin(), writer.Data().end());
+}
+
+/// A client holding one ordinary mirror at `NetId{1}` — the id both wraps below
+/// land on, and the lowest one the server ever hands out, so it belongs to
+/// whatever entity was replicated first.
+ECS::Entity VictimAtNetIdOne(Fixture &fixture)
+{
+    const ECS::Entity victim = fixture.Loose();
+    fixture.AssignIds();
+    REQUIRE(fixture.server.NetIdOf(victim) == NetId{1});
+
+    fixture.Connect();
+    fixture.Step(4);
+    REQUIRE(HasLiveMirror(fixture, NetId{1}));
+    return fixture.client.EntityOf(NetId{1});
+}
+
+} // namespace
+
+TEST_CASE("Blueprint replication: a record whose block wraps the id space is refused")
+{
+    // B10. `base` comes off the wire and was only checked for `IsValid()`, then
+    // added to once per member — so `base = 0xFFFFFFFF` with three members bound
+    // 0xFFFFFFFF, then 0, then **1**, and that last one is a real entity's
+    // mapping overwritten by an instance member. Silent: every later delta for
+    // NetId 1 then lands on the wrong entity, and nothing on either side says so.
+    //
+    // 0xFFFFFFFF, not the 0xFFFFFFFE of the finding as written (§9.1): that one
+    // stops at NetId{0}, which the entity path already refuses, so it would pass
+    // with the guard deleted.
+    Fixture fixture;
+    const ECS::Entity mirror   = VictimAtNetIdOne(fixture);
+    FakeExpander     *expander = InstallExpander(fixture);
+
+    const std::uint64_t rejectedBefore = fixture.client.SnapshotsRejected();
+    fixture.client.HandleMessage(ForgeSnapshot(
+        /*serverTick=*/10'000, {ForgedRecord{.blueprintIndex = 0, .base = NetId{0xFFFFFFFFu}, .memberCount = 3}},
+        {}));
+
+    CHECK(fixture.client.SnapshotsRejected() == rejectedBefore + 1);
+    // Refused before the expansion, not after it: a record that cannot be bound
+    // must not build entities either, or the members are leaked into the scene
+    // with nothing naming them.
+    CHECK(expander->calls == 0);
+    CHECK(fixture.client.InstanceRecords().empty());
+
+    // The point of the whole thing: somebody else's entity is still somebody
+    // else's.
+    CHECK(fixture.client.EntityOf(NetId{1}) == mirror);
+    CHECK(HasLiveMirror(fixture, NetId{1}));
+}
+
+TEST_CASE("Blueprint replication: a despawn run that wraps the id space is refused")
+{
+    // The same wrap on the run's `start + offset` — lesser than the record's,
+    // since it destroys mirrors the server would heal rather than rebinding them,
+    // but it is the same unchecked addition on the same attacker-chosen input,
+    // and a peer that can delete another entity's mirror at will is a peer that
+    // can blank the world.
+    Fixture fixture;
+    const ECS::Entity mirror = VictimAtNetIdOne(fixture);
+
+    const std::uint64_t rejectedBefore = fixture.client.SnapshotsRejected();
+    fixture.client.HandleMessage(ForgeSnapshot(/*serverTick=*/10'000, {}, {{NetId{0xFFFFFFFFu}, 3}}));
+
+    CHECK(fixture.client.SnapshotsRejected() == rejectedBefore + 1);
+    CHECK(fixture.client.EntityOf(NetId{1}) == mirror);
+    CHECK(HasLiveMirror(fixture, NetId{1}));
+}
+
+TEST_CASE("Blueprint replication: a block and a run ending at the last id are still honoured")
+{
+    // The other side of both guards, and the reason they are bounds rather than
+    // bans: a block occupying 0xFFFFFFFD..0xFFFFFFFF fits the id space exactly and
+    // is legitimate. An off-by-one guard — `>=` where `>` belongs, or comparing
+    // `base + memberCount` against the last id rather than one past it — refuses
+    // this and passes both cases above.
+    Fixture       fixture;
+    FakeExpander *expander = InstallExpander(fixture);
+    fixture.Connect();
+    fixture.Step(4);
+
+    constexpr NetId kTopBase{0xFFFFFFFDu};
+    const std::uint64_t rejectedBefore = fixture.client.SnapshotsRejected();
+    fixture.client.HandleMessage(ForgeSnapshot(
+        /*serverTick=*/10'000, {ForgedRecord{.blueprintIndex = 0, .base = kTopBase, .memberCount = 3}}, {}));
+
+    CHECK(fixture.client.SnapshotsRejected() == rejectedBefore);
+    CHECK(expander->calls == 1);
+    CHECK(fixture.client.InstanceRecords().size() == 1);
+    for (std::uint32_t member = 0; member < 3; ++member)
+        CHECK(HasLiveMirror(fixture, NetId{kTopBase.value + member}));
+
+    // ...and the run that takes it away again ends on the last id too.
+    fixture.client.HandleMessage(ForgeSnapshot(/*serverTick=*/10'001, {}, {{kTopBase, 3}}));
+
+    CHECK(fixture.client.SnapshotsRejected() == rejectedBefore);
+    for (std::uint32_t member = 0; member < 3; ++member)
+        CHECK_FALSE(HasLiveMirror(fixture, NetId{kTopBase.value + member}));
+    CHECK(fixture.client.InstanceRecords().empty());
 }
