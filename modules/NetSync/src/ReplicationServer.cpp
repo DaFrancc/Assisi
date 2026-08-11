@@ -285,6 +285,53 @@ void ReplicationServer::ClearControl(ECS::Entity entity)
     }
 }
 
+Core::Reflect::CodecContext ReplicationServer::EncodeContext(IdAssignment assignment)
+{
+    Core::Reflect::CodecContext context;
+
+    // Entity references cross the wire as NetIds. Something that does not
+    // replicate resolves to zero rather than to a local handle the peer would
+    // misread as one of its own.
+    context.entityToWire = [this, assignment](std::uint64_t packed) -> std::uint64_t
+    {
+        const ECS::Entity entity     = UnpackEntity(packed);
+        const NetId       referenced = assignment == IdAssignment::OnDemand ? EnsureNetId(entity) : NetIdOf(entity);
+        return referenced.value; // wire boundary
+    };
+
+    // An instance id is per-world and per-machine, so it goes out as the
+    // instance's base NetId and is translated back on the way in. Without this a
+    // BlueprintMember tag — or any AFIELD(ECS::InstanceId) — replicates as a
+    // number that names nothing on the far side.
+    context.instanceToWire = [this](std::uint32_t instanceId) -> std::uint32_t
+    {
+        const auto block = _instanceBlocks.find(ECS::InstanceId{instanceId});
+        return block == _instanceBlocks.end() ? 0u : block->second.base.value;
+    };
+
+    return context;
+}
+
+Core::Reflect::CodecContext ReplicationServer::DecodeContext()
+{
+    Core::Reflect::CodecContext context;
+
+    context.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
+    // The codec's entity-ref slot is a bare uint64_t; NetId{} is the wire boundary.
+    { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
+
+    // Base NetId in, this machine's own instance id out. Zero when no block was
+    // ever allocated at that base, which leaves the field invalid rather than
+    // pointing at an unrelated local instance.
+    context.instanceFromWire = [this](std::uint32_t base) -> std::uint32_t
+    {
+        const auto instance = _instanceByBase.find(NetId{base});
+        return instance == _instanceByBase.end() ? 0u : instance->second.value;
+    };
+
+    return context;
+}
+
 NetId ReplicationServer::EnsureNetId(ECS::Entity entity)
 {
     if (entity == ECS::NullEntity || !_scene.IsAlive(entity))
@@ -346,6 +393,7 @@ NetId ReplicationServer::EnsureInstanceBlock(ECS::Entity entity)
         _nextNetId += info.memberCount;
         it = _instanceBlocks.emplace(tag->instanceId, block).first;
         _blockRanges.emplace_back(block.base, block.memberCount); // sorted by construction
+        _instanceByBase.emplace(block.base, tag->instanceId);     // the decode side's half
     }
 
     // A member index outside the block would alias whatever was allocated next,

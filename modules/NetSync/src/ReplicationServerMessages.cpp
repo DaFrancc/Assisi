@@ -333,12 +333,10 @@ void ReplicationServer::DispatchIntent(ClientId sender, ConnectionDiagnostics &d
     IntentGate gate{this, &_scene, sender, &diagnostics};
     NetContext context{sender, _session, &_scene};
 
-    // Entity references arrive as NetIds and have to become local handles before
-    // a handler — or the control check — can do anything with them.
-    Core::Reflect::CodecContext codec;
-    codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
-    // The codec's entity-ref slot is a bare uint64_t; NetId{} is the wire boundary.
-    { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
+    // References arrive naming the sender's world — entity handles as NetIds,
+    // instance ids as their block's base — and have to become local before a
+    // handler, or the control check, can do anything with them.
+    const Core::Reflect::CodecContext codec = DecodeContext();
 
     const std::uint64_t before = diagnostics.intentsOutOfRange + diagnostics.intentsNotYours;
 
@@ -397,17 +395,14 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
         return;
     }
 
-    // Encoded once: entity references translate to NetIds identically for every
-    // recipient, so nothing about the bytes is per-connection.
+    // Encoded once: references translate identically for every recipient, so
+    // nothing about the bytes is per-connection.
     //
     // Ids are assigned on demand, not looked up. Spawning something and
     // announcing it in the same frame is the common case, and NetIds are
     // otherwise handed out at the next tick — a lookup would encode "nothing"
     // for exactly the entity the event is about.
-    Core::Reflect::CodecContext codec;
-    codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
-    // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
-    { return EnsureNetId(UnpackEntity(packed)).value; };
+    const Core::Reflect::CodecContext codec = EncodeContext(IdAssignment::OnDemand);
 
     Core::BitWriter writer;
     if (!Core::Reflect::WriteMessage(*meta, event, writer, &codec))
@@ -585,10 +580,10 @@ void ReplicationServer::DispatchHostEvents()
     std::vector<std::pair<Core::Reflect::MessageId, std::vector<std::byte>>> events;
     events.swap(_hostEvents);
 
-    Core::Reflect::CodecContext codec;
-    codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
-    // The codec's entity-ref slot is a bare uint64_t; NetId{} is the wire boundary.
-    { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
+    // The same decode a remote event gets: the host reads its own copy back
+    // through the wire's translation rather than around it, so a handler cannot
+    // come to depend on ids only the host would ever see.
+    const Core::Reflect::CodecContext codec = DecodeContext();
 
     NetContext context{HostClientId, _session, &_scene};
 
@@ -614,11 +609,8 @@ void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index 
 
     // The host has no connection, hence no ConnectionDiagnostics; _hostDiagnostics
     // stands in so its intents are counted like everyone else's.
-    Core::BitWriter writer;
-    Core::Reflect::CodecContext codec;
-    codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
-    // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
-    { return NetIdOf(UnpackEntity(packed)).value; };
+    Core::BitWriter                   writer;
+    const Core::Reflect::CodecContext codec = EncodeContext(IdAssignment::Existing);
     if (!Core::Reflect::WriteMessage(*meta, intent, writer, &codec))
         return;
 

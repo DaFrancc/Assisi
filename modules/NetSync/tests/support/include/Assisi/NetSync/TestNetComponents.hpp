@@ -16,6 +16,7 @@
 /// about).
 
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/Prelude.hpp>
 
 #include <cstdint>
@@ -103,6 +104,30 @@ struct TestBurst
 {
     AFIELD() Assisi::ECS::Entity source;
     AFIELD() int32_t             intensity = 1;
+};
+
+/// @brief An intent that names a blueprint instance rather than an entity.
+///
+/// The instance-id counterpart to TestMovePawn's entity ref, and the shape
+/// reflectgen actively recommends: an `InstanceView` may not be stored, so
+/// "which instance" is spelled as an `ECS::InstanceId` field that outlives the
+/// view. The number is a per-world counter, so the codec has to translate it the
+/// way it translates an entity ref — otherwise following that recommendation
+/// hands the server the *sender's* instance id and the recommendation is a trap.
+AMSG(intent, reliable)
+struct TestTagInstance
+{
+    AFIELD() Assisi::ECS::InstanceId instance;
+    AFIELD() int32_t                 note = 0;
+};
+
+/// @brief The same question in the other direction, naming no entity — so
+/// relevancy has nothing to scope it by and the instance id is the only thing
+/// the test can be wrong about.
+AMSG(event, reliable, independent)
+struct TestInstanceNamed
+{
+    AFIELD() Assisi::ECS::InstanceId instance;
 };
 
 /// @brief A registered intent that nothing handles.

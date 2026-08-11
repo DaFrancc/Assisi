@@ -13,6 +13,7 @@
 #include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Math/GLM.hpp>
+#include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/BodyState.hpp>
@@ -351,6 +352,22 @@ class ReplicationClient
 
     void ResolvePendingRefs();
 
+    /// @brief The hooks every client-side *encode* installs, in one place.
+    ///
+    /// Both reference kinds or neither — see ReplicationServer::EncodeContext,
+    /// which is the same rule from the other end. A mirror's NetId and the base
+    /// its instance was expanded from are the only two numbers the server can
+    /// read; the local handle and the local instance id are this machine's alone.
+    [[nodiscard]] Core::Reflect::CodecContext EncodeContext() const;
+
+    /// @brief The hooks every client-side *decode* installs — the inverse.
+    ///
+    /// A NetId with no mirror yet decodes to the null entity, and a base this
+    /// client never expanded to InstanceId{0}. The entity-block path replaces
+    /// `entityFromWire` with a variant that also records the unresolved ones for
+    /// patching, and keeps the instance hook this installs.
+    [[nodiscard]] Core::Reflect::CodecContext DecodeContext() const;
+
     /// The type-erased half of SendIntent, so the template stays a static_assert
     /// and everything needing a .cpp lives in one.
     bool SendIntentBytes(const void *intent, std::type_index type, std::uint64_t clientTick, bool reliable);
@@ -471,6 +488,13 @@ class ReplicationClient
     /// `instanceFromWire`, so a replicated BlueprintMember tag names this
     /// machine's instance rather than the server's.
     std::unordered_map<NetId, ECS::InstanceId>           _instanceIdByBase;
+
+    /// The same pairs the other way round, for `instanceToWire`: an instance id
+    /// this client holds is only sayable to the server as the base it was
+    /// expanded from. An instance of purely local making has no entry, and
+    /// encodes as zero — it names nothing over there, because it is nothing over
+    /// there. Written only alongside the map above.
+    std::unordered_map<ECS::InstanceId, NetId>           _baseByInstanceId;
     std::unordered_map<NetId, MirrorBody>                _bodies;
     std::unordered_map<NetId, std::deque<TransformSample>> _transformHistory;
     std::vector<PendingRef>                              _pendingRefs;
