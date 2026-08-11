@@ -41,11 +41,23 @@ struct HandlerLog
     /// through dispatch rather than only through the codec.
     std::uint32_t movePawnCalls = 0;
 
-    TestPlaceMarker lastPlaceMarker;
-    TestPing        lastPing;
-    TestBurst       lastBurst;
-    TestAnnounce    lastAnnounce;
-    TestMovePawn    lastMovePawn;
+    std::uint32_t tagInstanceCalls   = 0;
+    std::uint32_t instanceNamedCalls = 0;
+
+    TestPlaceMarker   lastPlaceMarker;
+    TestPing          lastPing;
+    TestBurst         lastBurst;
+    TestAnnounce      lastAnnounce;
+    TestMovePawn      lastMovePawn;
+    TestTagInstance   lastTagInstance;
+    TestInstanceNamed lastInstanceNamed;
+
+    /// The server dispatches its own copy of every event it sends, through the
+    /// same codec pair the wire uses. The two copies are kept apart so a test can
+    /// say which side it is asking about — they translate through different id
+    /// spaces and are not expected to agree.
+    TestInstanceNamed lastInstanceNamedOnHost;
+    TestInstanceNamed lastInstanceNamedOnClient;
 
     /// Who the dispatch site said sent the last intent.
     ClientId lastSender;
@@ -63,6 +75,8 @@ AMSG_HANDLER() void HandlePlaceMarker(NetContext &ctx, const TestPlaceMarker &ms
 AMSG_HANDLER() void HandleTestBurst(NetContext &ctx, const TestBurst &msg);
 AMSG_HANDLER() void HandleTestAnnounce(NetContext &ctx, const TestAnnounce &msg);
 AMSG_HANDLER() void HandleMovePawn(NetContext &ctx, const TestMovePawn &msg);
+AMSG_HANDLER() void HandleTagInstance(NetContext &ctx, const TestTagInstance &msg);
+AMSG_HANDLER() void HandleInstanceNamed(NetContext &ctx, const TestInstanceNamed &msg);
 
 inline void HandlePlaceMarker(NetContext &ctx, const TestPlaceMarker &msg)
 {
@@ -94,6 +108,25 @@ inline void HandleMovePawn(NetContext &ctx, const TestMovePawn &msg)
     ++log.movePawnCalls;
     log.lastMovePawn = msg;
     log.lastSender   = ctx.sender;
+}
+
+inline void HandleTagInstance(NetContext &ctx, const TestTagInstance &msg)
+{
+    HandlerLog &log = HandlerLog::Instance();
+    ++log.tagInstanceCalls;
+    log.lastTagInstance = msg;
+    log.lastSender      = ctx.sender;
+}
+
+inline void HandleInstanceNamed(NetContext &ctx, const TestInstanceNamed &msg)
+{
+    HandlerLog &log = HandlerLog::Instance();
+    ++log.instanceNamedCalls;
+    log.lastInstanceNamed = msg;
+    if (ctx.sender == HostClientId)
+        log.lastInstanceNamedOnHost = msg;
+    else
+        log.lastInstanceNamedOnClient = msg;
 }
 
 /// A second namespace declaring a *same-named* handler for a different message.

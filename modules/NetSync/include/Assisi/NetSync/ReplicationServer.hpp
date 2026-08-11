@@ -12,6 +12,7 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Net/NetTransport.hpp>
@@ -543,6 +544,35 @@ class ReplicationServer
     void DispatchIntent(ClientId sender, ConnectionDiagnostics &diagnostics,
                         const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
 
+    /// Whether an entity with no NetId yet gets one while it is being encoded.
+    enum class IdAssignment : std::uint8_t
+    {
+        Existing, ///< Look up only; something unidentified encodes as zero.
+        OnDemand, ///< Assign one — for "spawn it and announce it in one frame".
+    };
+
+    /// @brief The hooks every server-side *encode* installs, in one place.
+    ///
+    /// Both reference kinds or neither: an entity handle and a blueprint instance
+    /// id are equally per-machine, and a codec site that remembers one and
+    /// forgets the other writes a number naming the sender's world. Six sites
+    /// each remembering two lines is how that happened once already (round-7
+    /// B12), so the lines live here and the sites ask for a context.
+    ///
+    /// @param assignment Whether an unidentified entity is given a NetId. Events
+    ///                   want OnDemand — announcing something spawned this frame
+    ///                   would otherwise encode "nothing" for the very entity the
+    ///                   message is about. Everything else looks up.
+    [[nodiscard]] Core::Reflect::CodecContext EncodeContext(IdAssignment assignment);
+
+    /// @brief The hooks every server-side *decode* installs — the inverse of
+    /// EncodeContext, and installed for the same reason.
+    ///
+    /// An id that names nothing here resolves to the null entity or to
+    /// InstanceId{0} rather than to whatever local object happens to wear that
+    /// number.
+    [[nodiscard]] Core::Reflect::CodecContext DecodeContext();
+
     /// Who an event goes to. Three classes, computed rather than enumerated.
     enum class Recipients : std::uint8_t
     {
@@ -790,6 +820,13 @@ class ReplicationServer
     /// the instance as it was when its ids were handed out, or a late joiner and
     /// an early one compose the same members from different placements.
     std::unordered_map<ECS::InstanceId, InstanceBlock> _instanceBlocks;
+
+    /// The same blocks the other way round: base NetId → the instance that owns
+    /// it. Read by `instanceFromWire`, so an instance id arriving in an intent
+    /// names this machine's instance rather than the sender's. Written only
+    /// beside the map above, which is never erased from — a NetId is never
+    /// reused, so neither is a base.
+    std::unordered_map<NetId, ECS::InstanceId> _instanceByBase;
 
     /// The same blocks as `(base, memberCount)`, sorted by base, answering
     /// "which instance owns this NetId?" — which relevancy asks once per
