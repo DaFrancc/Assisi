@@ -20,12 +20,17 @@
 
 #include <Assisi/Core/AssetDatabase.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
+#include <cstddef>
 #include <cstdint>
+#include <expected>
 #include <filesystem>
+#include <optional>
+#include <string>
 #include <string_view>
 
 namespace Assisi::Runtime
@@ -150,6 +155,51 @@ bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::Phys
 /// per update tick.
 void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
                             bool &wereLoading);
+
+/// @brief Resolve @p virtualPath and hash it the way every peer must, or nullopt
+/// if it cannot be resolved or read.
+///
+/// One spelling, in the engine, because this number is *compared between
+/// machines*: a host and a client that hash the same file differently refuse each
+/// other, and the difference need only be as subtle as whether CRLF is folded.
+/// That has happened here — a server hashing raw bytes against an editor folding
+/// newlines, refusing each other over the same file on the same machine. It was
+/// fixed by making two copies agree, which leaves the next copy free to disagree
+/// again.
+///
+/// Lives here rather than in any app because every target needs it: the editor
+/// hosting, a dedicated server hosting, and whatever renders a shipped build.
+[[nodiscard]] std::optional<std::uint64_t> HashLevelFile(std::string_view virtualPath);
+
+/// @brief Why a joining peer cannot build the level the host named.
+enum class JoinLevelError
+{
+    NoLevel,         ///< the host is not running a level file at all
+    Unresolvable,    ///< this build has no such file
+    Unreadable,      ///< resolved, and could not be read
+    ContentMismatch, ///< the local copy differs from the host's
+    SystemsMissing,  ///< the file names a system this build does not declare
+};
+
+/// @brief A sentence naming @p error for @p path, to show or log.
+///
+/// Shared so the two do not diverge into "differs from the host's" and "does not
+/// match", which is the sort of difference that makes a bug report unsearchable.
+[[nodiscard]] std::string JoinLevelErrorMessage(JoinLevelError error, std::string_view path);
+
+/// @brief The file a joining peer should load for @p level, or why it cannot.
+///
+/// Everything a join must be sure of before it touches the scene: that the host
+/// named a level, that this build has it, that the bytes match the host's, and
+/// that this build declares the systems the file asks for. Whichever target is
+/// joining — editor, dedicated server, or a shipped client — is asking the same
+/// question, so it is asked once here.
+///
+/// Both addressings are handled. A virtual path resolves through the asset
+/// system; an absolute one is a play-in-editor snapshot on this machine and is
+/// read where it lies.
+[[nodiscard]] std::expected<std::filesystem::path, JoinLevelError>
+ResolveJoinLevel(const NetSync::LevelIdentity &level);
 
 /// @brief How many entities a join stripped, and how many parent links it had to
 /// drop with them.

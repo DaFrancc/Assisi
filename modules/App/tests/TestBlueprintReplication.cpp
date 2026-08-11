@@ -504,6 +504,61 @@ TEST_CASE("Content set: the scan job delivers the paths it hashed")
     CHECK_FALSE(job.Poll(again));
 }
 
+TEST_CASE("Join: every target answers the host's level the same way")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+
+    // Asked once, in the engine, so a dedicated server and a windowed client
+    // cannot disagree about whether a session is joinable.
+    SUBCASE("a host running no level")
+    {
+        NetSync::LevelIdentity level;
+        const auto             resolved = App::ResolveJoinLevel(level);
+        REQUIRE_FALSE(resolved.has_value());
+        CHECK(resolved.error() == App::JoinLevelError::NoLevel);
+    }
+
+    SUBCASE("a level this build does not have")
+    {
+        NetSync::LevelIdentity level;
+        level.addressing = NetSync::LevelAddressing::Virtual;
+        level.path       = "levels/NotHere.alvl";
+
+        const auto resolved = App::ResolveJoinLevel(level);
+        REQUIRE_FALSE(resolved.has_value());
+        CHECK(resolved.error() == App::JoinLevelError::Unresolvable);
+    }
+
+    SUBCASE("a level whose bytes differ from the host's")
+    {
+        NetSync::LevelIdentity level;
+        level.addressing = NetSync::LevelAddressing::Virtual;
+        level.path       = "car.abp";
+        // Whatever this file hashes to, it is not this.
+        level.contentHash = 0xDEADBEEFu;
+
+        const auto resolved = App::ResolveJoinLevel(level);
+        REQUIRE_FALSE(resolved.has_value());
+        CHECK(resolved.error() == App::JoinLevelError::ContentMismatch);
+    }
+
+    SUBCASE("a level that matches resolves to the file to load")
+    {
+        const std::optional<std::uint64_t> hash = App::HashLevelFile("car.abp");
+        REQUIRE(hash.has_value());
+
+        NetSync::LevelIdentity level;
+        level.addressing  = NetSync::LevelAddressing::Virtual;
+        level.path        = "car.abp";
+        level.contentHash = *hash;
+
+        const auto resolved = App::ResolveJoinLevel(level);
+        REQUIRE(resolved.has_value());
+        CHECK(std::filesystem::exists(*resolved));
+    }
+}
+
 TEST_CASE("Join: stripping the host's copies takes their bodies out of the physics world")
 {
     App::World world;
