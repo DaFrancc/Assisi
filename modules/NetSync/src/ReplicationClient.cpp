@@ -9,6 +9,7 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <utility>
 
@@ -22,6 +23,12 @@ namespace Assisi::NetSync
 {
 namespace
 {
+
+/// One past the last NetId — the exclusive end of the id space, which is what a
+/// `base + count` or `start + length` read off the wire is compared against.
+/// Held in 64 bits on purpose: the whole point is to compute a sum that a NetId
+/// cannot hold without wrapping into somebody else's id.
+constexpr std::uint64_t kNetIdSpaceEnd = static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()) + 1u;
 
 /// Ensure @p entity has the component @p meta describes, and hand back a
 /// writable pointer to it.
@@ -433,6 +440,23 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             return false;
         }
 
+        // The block owns `base .. base + memberCount - 1`, and `base` is a 32-bit
+        // number the sender picks. One that runs off the top of the id space
+        // wraps, and the members past the end land on low ids belonging to
+        // somebody else: `base = 0xFFFFFFFF` with three members binds
+        // 0xFFFFFFFF, 0, then **1** — a real entity's mapping replaced by an
+        // instance member, after which every delta for NetId 1 is applied to the
+        // wrong entity. Silent both ways, and the input is peer-controlled.
+        //
+        // Checked in 64-bit, so the check cannot wrap the way the thing it is
+        // checking would, and against one *past* the last id: a block ending
+        // exactly at 0xFFFFFFFF fits and is nobody's business to refuse.
+        if (static_cast<std::uint64_t>(entry.base.value) + entry.memberCount > kNetIdSpaceEnd)
+        {
+            reader.Invalidate();
+            return false;
+        }
+
         // Which members exist over there. All of them, unless the host says
         // otherwise — see InstanceRecord::memberPresent.
         if (!reader.ReadBool())
@@ -532,7 +556,15 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         const std::uint32_t length = reader.ReadVarUInt32();
         // Bounded like every other count on this path: the length is attacker-
         // controlled, and unchecked it is a loop the packet sizes.
-        if (!reader.Ok() || length == 0 || length > 65536u)
+        //
+        // ...and bounded against the top of the id space for the same reason the
+        // record's block is, since `start + offset` is the same unchecked
+        // addition on the same peer-chosen input. Lesser only in what it costs:
+        // a wrapped run destroys mirrors the server heals rather than rebinding
+        // them — but a peer that can delete any mirror it names can blank the
+        // world one snapshot at a time.
+        if (!reader.Ok() || length == 0 || length > 65536u ||
+            static_cast<std::uint64_t>(start.value) + length > kNetIdSpaceEnd)
         {
             reader.Invalidate();
             return false;
