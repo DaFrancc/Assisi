@@ -22,25 +22,11 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
                                               const Connection &connection, Core::BitWriter &writer,
                                               std::vector<std::uint64_t> &outComponents)
 {
-    Core::Reflect::CodecContext context;
-    context.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
-    {
-        // Entity references cross the wire as NetIds. Something that does not
-        // replicate resolves to zero rather than to a local handle the peer
-        // would misread as one of its own.
-        const NetId referenced = NetIdOf(UnpackEntity(packed));
-        return referenced.value; // wire boundary
-    };
-
-    // A BlueprintMember's instanceId is per-world and per-machine, so it goes
-    // out as the instance's base NetId and is translated back on the way in.
-    // Without this the tag replicates as a number that names nothing on the far
-    // side.
-    context.instanceToWire = [this](std::uint32_t instanceId) -> std::uint32_t
-    {
-        const auto block = _instanceBlocks.find(ECS::InstanceId{instanceId});
-        return block == _instanceBlocks.end() ? 0u : block->second.base.value;
-    };
+    // Existing ids only. The snapshot is built from a set ReconcileNetIds fixed
+    // at the top of the tick, so everything replicating already has an id;
+    // handing out a new one *while* writing the packet would add an identity
+    // relevancy never considered, halfway through a walk that assumes it did.
+    const Core::Reflect::CodecContext context = EncodeContext(IdAssignment::Existing);
 
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();
 

@@ -122,6 +122,46 @@ void ReplicationClient::SendInput(const InputCommandBuffer &buffer)
     _transport.Send(_connection, writer.Data(), Net::SendMode::Unreliable, Net::Lane::Snapshot);
 }
 
+Core::Reflect::CodecContext ReplicationClient::EncodeContext() const
+{
+    Core::Reflect::CodecContext codec;
+
+    codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
+    // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
+    { return NetIdOf(UnpackEntity(packed)).value; };
+
+    // Local instance id in, the base NetId the server named it by out. Zero for
+    // an instance this client made on its own: the server has no name for it, and
+    // sending the local counter would name one of *its* instances at random.
+    codec.instanceToWire = [this](std::uint32_t instanceId) -> std::uint32_t
+    {
+        const auto base = _baseByInstanceId.find(ECS::InstanceId{instanceId});
+        return base == _baseByInstanceId.end() ? 0u : base->second.value;
+    };
+
+    return codec;
+}
+
+Core::Reflect::CodecContext ReplicationClient::DecodeContext() const
+{
+    Core::Reflect::CodecContext codec;
+
+    codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
+    // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
+    { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
+
+    // Base NetId in, this machine's own instance id out. Zero when the instance
+    // was never expanded here, which leaves the tag invalid rather than pointing
+    // at an unrelated local instance.
+    codec.instanceFromWire = [this](std::uint32_t base) -> std::uint32_t
+    {
+        const auto local = _instanceIdByBase.find(NetId{base});
+        return local == _instanceIdByBase.end() ? 0u : local->second.value;
+    };
+
+    return codec;
+}
+
 bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type, std::uint64_t clientTick,
                                         bool reliable)
 {
@@ -143,12 +183,9 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
     WriteMessageType(MessageType::Intent, writer);
     writer.WriteVarUInt64(clientTick);
 
-    // Local entity handles mean nothing on the server; references travel as
-    // NetIds, exactly as they do inside a component block.
-    Core::Reflect::CodecContext codec;
-    codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
-    // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
-    { return NetIdOf(UnpackEntity(packed)).value; };
+    // Local handles and local instance ids mean nothing on the server; both
+    // travel translated, exactly as they do inside a component block.
+    const Core::Reflect::CodecContext codec = EncodeContext();
 
     if (!Core::Reflect::WriteMessage(*meta, intent, writer, &codec))
         return false;
@@ -163,13 +200,7 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
 
 void ReplicationClient::DispatchEvent(const Core::Reflect::MessageMeta &meta, Core::BitReader &reader)
 {
-    Core::Reflect::CodecContext codec;
-    codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
-    {
-        // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
-        const ECS::Entity mirror = EntityOf(NetId{static_cast<std::uint32_t>(wire)});
-        return (static_cast<std::uint64_t>(mirror.index)) | (static_cast<std::uint64_t>(mirror.generation) << 32);
-    };
+    const Core::Reflect::CodecContext codec = DecodeContext();
 
     NetContext context{InvalidClientId, _session, &_scene};
     if (!MessageDispatch::Instance().Dispatch(meta, context, reader, &codec))
@@ -476,7 +507,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             _entityByNetId.insert_or_assign(NetId{entry.base.value + member}, members[member]);
         }
         if (localInstance.IsValid())
+        {
             _instanceIdByBase.insert_or_assign(entry.base, localInstance);
+            _baseByInstanceId.insert_or_assign(localInstance, entry.base);
+        }
         ++_structureRevision;
     }
 
@@ -564,10 +598,16 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
                                   return false;
                           }
 
-                          // The local instance goes with it: `instanceFromWire`
-                          // would otherwise keep resolving this base to an
-                          // instance whose members are all destroyed.
-                          _instanceIdByBase.erase(base);
+                          // The local instance goes with it, both ways round:
+                          // `instanceFromWire` would otherwise keep resolving
+                          // this base to an instance whose members are all
+                          // destroyed, and `instanceToWire` would keep naming a
+                          // base the server has retired.
+                          if (const auto local = _instanceIdByBase.find(base); local != _instanceIdByBase.end())
+                          {
+                              _baseByInstanceId.erase(local->second);
+                              _instanceIdByBase.erase(local);
+                          }
                           return true;
                       });
     }
@@ -584,8 +624,12 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     };
     std::vector<RefSite> refSites;
 
-    Core::Reflect::CodecContext context;
-    context.entityFromWire = [this, &refSites](std::uint64_t wire) -> std::uint64_t
+    // The shared decode, with one hook swapped: only this path can patch a
+    // reference later, so only this path records where the unresolved ones were.
+    // The instance hook is the shared one — taking the context rather than
+    // building a fresh one is what keeps that true when a hook is added.
+    Core::Reflect::CodecContext context = DecodeContext();
+    context.entityFromWire              = [this, &refSites](std::uint64_t wire) -> std::uint64_t
     {
         // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
         const NetId netId = NetId{static_cast<std::uint32_t>(wire)};
@@ -602,15 +646,6 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         }
         refSites.push_back(RefSite{netId, true});
         return PackEntity(it->second);
-    };
-
-    // Base NetId in, this machine's own instance id out. Zero when the instance
-    // was never expanded here, which leaves the tag invalid rather than pointing
-    // at an unrelated local instance.
-    context.instanceFromWire = [this](std::uint32_t base) -> std::uint32_t
-    {
-        const auto local = _instanceIdByBase.find(NetId{base});
-        return local == _instanceIdByBase.end() ? 0u : local->second.value;
     };
 
     while (reader.Ok() && reader.ReadBool())

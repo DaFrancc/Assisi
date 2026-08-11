@@ -34,6 +34,8 @@
 #include <Assisi/NetSync/ReplicationConfig.hpp>
 #include <Assisi/NetSync/ReplicationProviders.hpp>
 #include <Assisi/NetSync/ReplicationServer.hpp>
+#include <Assisi/NetSync/TestMessageHandlers.hpp>
+#include <Assisi/NetSync/TestNetComponents.hpp>
 
 using namespace Assisi;
 using namespace Assisi::NetSync;
@@ -633,6 +635,137 @@ TEST_CASE("Blueprint replication: an expansion that comes up short is refused")
     // The record is not kept, so a retry is a clean retry rather than a partial
     // instance nothing will ever finish.
     CHECK(client.InstanceRecords().empty());
+}
+
+namespace
+{
+
+/// A live session holding one replicated instance, named by two different
+/// numbers: the server's own id and the different one the client's expander
+/// made for it. Both message tests below need exactly that and nothing else.
+struct InstanceSession
+{
+    /// Deliberately nothing FakeExpander would produce — it counts from 101 — so
+    /// an id that crossed untranslated is visible rather than coincidentally
+    /// right.
+    static constexpr ECS::InstanceId kServerInstance{7};
+
+    Net::NetTransport                               transport;
+    ECS::Scene                                      serverScene;
+    ECS::Scene                                      clientScene;
+    std::pair<Net::ConnectionId, Net::ConnectionId> pair;
+    ReplicationServer                               server;
+    ReplicationClient                               client;
+    std::uint64_t                                   tick = 1;
+
+    InstanceSession()
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene),
+          client(transport, clientScene, pair.second)
+    {
+        auto ownedInfo = std::make_unique<FakeInstances>();
+        ownedInfo->Add(kServerInstance, 2);
+        server.SetInstanceInfoProvider(std::move(ownedInfo));
+
+        auto ownedExpander   = std::make_unique<FakeExpander>();
+        ownedExpander->scene = &clientScene;
+        client.SetInstanceExpander(std::move(ownedExpander));
+
+        for (std::uint32_t index = 0; index < 2; ++index)
+        {
+            const ECS::Entity entity = serverScene.Create();
+            (void)serverScene.Add(entity, ECS::Transform{});
+            (void)serverScene.Add(entity, Replicated{});
+            (void)serverScene.Add(entity,
+                                  ECS::BlueprintMember{.instanceId = kServerInstance, .memberIndex = index});
+        }
+
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
+        server.AddConnection(pair.first);
+        NetSync::Test::HandlerLog::Instance().Clear();
+        Step(12);
+    }
+
+    void Step(std::uint32_t times)
+    {
+        for (std::uint32_t i = 0; i < times; ++i)
+        {
+            std::vector<Net::NetEvent> events;
+            transport.Poll(events);
+            for (const Net::NetEvent &event : events)
+            {
+                if (event.type != Net::NetEvent::Type::Message)
+                    continue;
+                if (event.connection == pair.first)
+                    server.HandleMessage(pair.first, event.payload);
+                else
+                    client.HandleMessage(event.payload);
+            }
+            server.Tick(tick++);
+        }
+    }
+
+    /// The id the client's own expansion took — what a client-side system reads
+    /// off a mirror and would naturally put in a message.
+    [[nodiscard]] ECS::InstanceId ClientInstance()
+    {
+        const auto &records = client.InstanceRecords();
+        if (records.empty())
+            return ECS::NullInstance;
+        const ECS::Entity mirror = client.EntityOf(records.begin()->second.base);
+        if (mirror == ECS::NullEntity)
+            return ECS::NullInstance;
+        const ECS::BlueprintMember *tag = clientScene.Get<ECS::BlueprintMember>(mirror);
+        return tag != nullptr ? tag->instanceId : ECS::NullInstance;
+    }
+};
+
+} // namespace
+
+TEST_CASE("Blueprint replication: an intent naming an instance arrives as the server's instance id")
+{
+    InstanceSession session;
+    REQUIRE(session.client.IsSynchronized());
+
+    const ECS::InstanceId local = session.ClientInstance();
+    REQUIRE(local.IsValid());
+    REQUIRE(local != InstanceSession::kServerInstance); // otherwise the test proves nothing
+
+    REQUIRE(session.client.SendIntent(NetSync::Test::TestTagInstance{.instance = local, .note = 3}, session.tick));
+    session.Step(2);
+
+    const NetSync::Test::HandlerLog &log = NetSync::Test::HandlerLog::Instance();
+    REQUIRE(log.tagInstanceCalls == 1);
+    CHECK(log.lastTagInstance.note == 3); // the ordinary field, to place the failure
+
+    // The hole this closes: with no hooks on the intent path the server's handler
+    // is handed the client's own per-world counter, which names an unrelated
+    // instance here — or nothing — and does it silently.
+    CHECK(log.lastTagInstance.instance == InstanceSession::kServerInstance);
+}
+
+TEST_CASE("Blueprint replication: an event naming an instance arrives as the client's instance id")
+{
+    InstanceSession session;
+    REQUIRE(session.client.IsSynchronized());
+
+    const ECS::InstanceId local = session.ClientInstance();
+    REQUIRE(local.IsValid());
+    REQUIRE(local != InstanceSession::kServerInstance);
+
+    session.server.Send(NetSync::Test::TestInstanceNamed{.instance = InstanceSession::kServerInstance});
+    session.Step(3);
+
+    const NetSync::Test::HandlerLog &log = NetSync::Test::HandlerLog::Instance();
+    REQUIRE(log.instanceNamedCalls >= 1);
+
+    // The mirror of the intent case: the client's handler must be told which
+    // instance *here* the event is about, not which one there.
+    CHECK(log.lastInstanceNamedOnClient.instance == local);
+
+    // The host's own copy of the same event travels the same codec pair in
+    // process, so it comes back naming the instance it started as.
+    CHECK(log.lastInstanceNamedOnHost.instance == InstanceSession::kServerInstance);
 }
 
 namespace
