@@ -113,21 +113,16 @@ ContentSet BuildContentSet()
     return set;
 }
 
-std::uint64_t BuildContentSetHash()
-{
-    return BuildContentSet().hash;
-}
-
 void ContentSetHashJob::Start(Core::JobSystem &jobs)
 {
     if (_running || _task.IsValid())
         return;
 
     _running = true;
-    _task    = jobs.Run(Core::Pool::Worker, []() -> std::uint64_t { return BuildContentSetHash(); });
+    _task    = jobs.Run(Core::Pool::Worker, []() -> ContentSet { return BuildContentSet(); });
 }
 
-bool ContentSetHashJob::Poll(std::uint64_t &out)
+bool ContentSetHashJob::Poll(ContentSet &out)
 {
     if (!_running || !_task.IsValid() || !_task.IsComplete())
         return false;

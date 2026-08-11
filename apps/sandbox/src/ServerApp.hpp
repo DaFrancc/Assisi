@@ -11,6 +11,13 @@
 /// otherwise would mean making every editor panel, gizmo, and selection overlay
 /// tolerate a null renderer for no benefit.
 ///
+/// A different *program*, not different behaviour. Everything below the drawing
+/// is shared code rather than a headless retelling of it: the world is an
+/// App::World, the frame hooks are Application's, and joining goes through the
+/// same App:: calls the windowed path uses. The two were written twice once, and
+/// the copies had already drifted — the headless join destroyed the host's
+/// entities without taking their bodies out of the physics world.
+///
 /// The client mode here is headless too, which makes it a *test* client rather
 /// than a playable one: it proves the protocol works between two processes and
 /// logs what it received. The windowed client that renders what it receives is
@@ -18,12 +25,11 @@
 
 #include <Assisi/App/Application.hpp>
 #include <Assisi/App/ContentSet.hpp>
-#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/App/World.hpp>
+#include <Assisi/ECS/Entity.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetSession.hpp>
 #endif
-#include <Assisi/Physics/PhysicsWorld.hpp>
-#include <Assisi/Runtime/Blueprint.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -78,6 +84,7 @@ class ServerApp final : public Assisi::App::Application
     void OnUpdate(float dt) override;
     void OnShutdown() override;
     void FlushDeferred() override;
+    void InstallQueuedSystems() override;
 
   private:
     bool _startupFailed = false;
@@ -93,14 +100,15 @@ class ServerApp final : public Assisi::App::Application
 
     ServerOptions _options;
 
-    Assisi::ECS::Scene            _scene;
-    Assisi::Physics::PhysicsWorld _physics;
-
-    /// This process's blueprint instances. A headless server has no App::World, so
-    /// it holds the table itself — and it needs one for the same reason a windowed
-    /// host does: a level that places instances refuses to load without somewhere
-    /// to record them.
-    Assisi::Runtime::InstanceTable _instances;
+    /// Scene, physics, instance table and system registry, in the one aggregate
+    /// the rest of App is written against.
+    ///
+    /// It held those loose for a while, on the grounds that a headless process has
+    /// no use for the rest of a World. Blueprint replication is the use: its
+    /// provider and expander need the instance table, the scene and the pending
+    /// system installs *together*, and a dedicated server is exactly the case
+    /// where instances should arrive as instances rather than as loose entities.
+    Assisi::App::World _world;
 
     /// The content-set scan, kicked when this process starts hosting or joining.
     /// Until it lands a host sends no ServerHello and a client sends no

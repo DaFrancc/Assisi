@@ -2,6 +2,7 @@
 
 #include "ServerApp.hpp"
 
+#include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
 #include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/App/World.hpp>
@@ -110,7 +111,7 @@ void ServerApp::OnStart()
             return;
         }
 
-        if (!Assisi::App::LoadLevelSim(_scene, _options.level, _physics, &_instances))
+        if (!Assisi::App::LoadLevelSim(_world.scene, _options.level, _world.physics, &_world.instances))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
             _startupFailed = true; // same reason as above: exiting 0 here hid a failed start
@@ -139,7 +140,7 @@ void ServerApp::OnStart()
 #else
     NetSync::ReplicationConfig config;
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
-    _session          = std::make_unique<NetSync::NetSession>(_scene, &_physics, config);
+    _session          = std::make_unique<NetSync::NetSession>(_world.scene, &_world.physics, config);
 
     // Triggered by hosting or joining, never by the level load above: a process
     // that only simulates has nothing to compare with anybody.
@@ -172,11 +173,11 @@ void ServerApp::OnStart()
         // proves nothing for the rest of the run.
         for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
         {
-            const ECS::Entity entity = _scene.Create();
+            const ECS::Entity entity = _world.scene.Create();
             ECS::Transform    transform;
             transform.position = {static_cast<float>(i) * 2.f, 0.f, 0.f};
-            (void)_scene.Add<ECS::Transform>(entity, transform);
-            (void)_scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
+            (void)_world.scene.Add<ECS::Transform>(entity, transform);
+            (void)_world.scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
             _moving.push_back(entity);
         }
 
@@ -242,7 +243,7 @@ void ServerApp::BuildJoinedWorld()
         return;
     }
 
-    if (!Assisi::App::LoadLevelSim(_scene, hello->level.path, _physics, &_instances))
+    if (!Assisi::App::LoadLevelSim(_world.scene, hello->level.path, _world.physics, &_world.instances))
     {
         fail("'" + hello->level.path + "' failed to load.");
         return;
@@ -250,21 +251,15 @@ void ServerApp::BuildJoinedWorld()
 
     // The host owns these; they arrive as mirrors. The file's copies are the
     // host's authored originals, and keeping both would double the world.
-    std::vector<ECS::Entity> doomed;
-    _scene.ForEachEntity(
-        [&](ECS::Entity entity)
-        {
-            if (_scene.Has<NetSync::Replicated>(entity))
-                doomed.push_back(entity);
-        });
-    for (const ECS::Entity entity : doomed)
-        _scene.Destroy(entity);
-    _scene.FlushDestroyed();
-    (void)Assisi::App::BuildSceneBodies(_scene, _physics);
+    // LoadLevelSim already built their bodies, which is why the shared strip has
+    // to take them out of the physics world rather than only ending the entities.
+    const Assisi::App::StrippedEntities stripped =
+        Assisi::App::StripReplicatedEntities(_world.scene, _world.physics);
 
     _session->ConfirmLevelReady();
-    Log::Info("Client: built '{}' ({} replicated entities stripped) and answered the handshake.",
-              hello->level.path, doomed.size());
+    Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped) and answered the "
+              "handshake.",
+              hello->level.path, stripped.entities, stripped.orphans);
 #endif // ASSISI_NETWORKING
 }
 
@@ -277,10 +272,14 @@ void ServerApp::OnFixedUpdate(float dt)
     {
         // Before Poll, so a hello that has been waiting on the scan goes out on
         // the same tick the scan finished rather than the next one.
-        if (std::uint64_t hash = 0; _contentSetHash.Poll(hash))
+        if (Assisi::App::ContentSet content; _contentSetHash.Poll(content))
         {
-            Assisi::Core::Log::Info("Content set hashed: {}.", Assisi::Core::ToHex64(hash));
-            _session->SetContentSetHash(hash);
+            Assisi::Core::Log::Info("Content set hashed: {} ({} files).", Assisi::Core::ToHex64(content.hash),
+                                    content.paths.size());
+            // The same call the windowed path makes, for the same reason: a
+            // dedicated server is where instances most want to arrive as
+            // instances. Nothing here is presentation.
+            Assisi::App::ApplyContentSet(*_session, _world, std::move(content));
         }
 
         _session->Poll();
@@ -302,7 +301,7 @@ void ServerApp::OnFixedUpdate(float dt)
     }
 #endif // ASSISI_NETWORKING
 
-    _physics.Update(dt);
+    _world.physics.Update(dt);
 
     // Immediately after the step, before the snapshot below: a mirror woken by a
     // contact the server never had has to be put back before anything reads it.
@@ -317,7 +316,7 @@ void ServerApp::OnFixedUpdate(float dt)
     const auto phase = static_cast<float>(GetSimTick()) * 0.02f;
     for (std::size_t i = 0; i < _moving.size(); ++i)
     {
-        if (ECS::Transform *transform = _scene.GetMut<ECS::Transform>(_moving[i]))
+        if (ECS::Transform *transform = _world.scene.GetMut<ECS::Transform>(_moving[i]))
             transform->position.y = std::sin(phase + static_cast<float>(i));
     }
 
@@ -395,7 +394,16 @@ void ServerApp::FlushDeferred()
     // End of frame: apply entities queued by Scene::Destroy() this tick. The
     // windowed path does this too — deferred destruction is a scene invariant,
     // not a rendering one.
-    _scene.FlushDestroyed();
+    _world.scene.FlushDestroyed();
+}
+
+void ServerApp::InstallQueuedSystems()
+{
+    // Same reason, same frame position as the windowed path: a blueprint arriving
+    // from the wire asks for the systems its file names, and they have to be
+    // registered at the safe point rather than mid-walk. A headless process runs
+    // that behaviour — it just does not draw it.
+    Assisi::App::DrainSystemInstalls(_world);
 }
 
 void ServerApp::OnShutdown()

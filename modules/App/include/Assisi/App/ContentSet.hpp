@@ -68,9 +68,6 @@ struct ContentSet
 /// skipping it would let two machines with different unreadable files agree.
 [[nodiscard]] ContentSet BuildContentSet();
 
-/// @brief BuildContentSet().hash, for callers that only need the number.
-[[nodiscard]] std::uint64_t BuildContentSetHash();
-
 /// @brief A content-set hash being computed off the main thread, and the poll
 /// that delivers it once.
 ///
@@ -85,9 +82,18 @@ class ContentSetHashJob
     /// @brief Kicks the scan, unless one is already running or has landed.
     void Start(Core::JobSystem &jobs);
 
-    /// @brief Delivers the hash exactly once, the first poll after it lands.
+    /// @brief Delivers the scanned set exactly once, the first poll after it
+    /// lands.
+    ///
+    /// The whole set, not just the hash. `paths` is the manifest blueprint
+    /// replication is named by, and it has to be *this* vector rather than one
+    /// rebuilt at install time: a file that changed in between would produce a
+    /// different list, and the index the far side reads would name a different
+    /// file (BlueprintReplication.hpp). Carrying it here is what lets the caller
+    /// hand both halves the list the handshake actually hashed.
+    ///
     /// @return true (with @p out written) on that one call; false otherwise.
-    bool Poll(std::uint64_t &out);
+    bool Poll(ContentSet &out);
 
     /// @brief Whether a scan has been kicked and not yet delivered.
     [[nodiscard]] bool IsRunning() const { return _running; }
@@ -97,8 +103,8 @@ class ContentSetHashJob
     void Reset();
 
   private:
-    Core::Task<std::uint64_t> _task;
-    bool                      _running = false;
+    Core::Task<ContentSet> _task;
+    bool                   _running = false;
 };
 
 } // namespace Assisi::App
