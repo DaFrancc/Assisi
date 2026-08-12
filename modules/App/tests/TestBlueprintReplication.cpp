@@ -131,6 +131,12 @@ struct Fixture
                 else
                     client.HandleMessage(event.payload);
             }
+            // Where a frame flushes: Scene::Destroy is deferred, and until this
+            // runs a destroyed entity is still alive to Query and to Get<T>. The
+            // server's despawn detection is a set difference over live entities,
+            // so without it a destroyed member is never noticed as gone.
+            host.scene.FlushDestroyed();
+            guest.scene.FlushDestroyed();
             server.Tick(++tick);
         }
     }
@@ -218,6 +224,41 @@ TEST_CASE("Blueprint over the wire: the guest's tag names the guest's instance")
         CAPTURE(tag.instanceId.value);
         CHECK(fixture.guest.instances.Find(tag.instanceId) != nullptr);
     }
+}
+
+TEST_CASE("Blueprint over the wire: destroying the instance on the host takes the guest's row with it")
+{
+    const std::filesystem::path root = FreshRoot();
+    Write(root, "car.abp", CarFile());
+
+    const App::ContentSet content = App::BuildContentSet();
+
+    Fixture fixture;
+    fixture.Connect(content.paths);
+
+    const std::optional<ECS::InstanceId> spawned = App::SpawnBlueprint(fixture.host, "car.abp", {});
+    REQUIRE(spawned.has_value());
+
+    fixture.Step(12);
+    REQUIRE(fixture.guest.instances.Size() == 1);
+    REQUIRE(fixture.client.InstanceRecords().size() == 1);
+
+    REQUIRE(App::DestroyInstance(fixture.host, *spawned));
+    fixture.Step(12);
+
+    // The members are gone from the mirror, and so is the record NetSync kept
+    // for them...
+    CHECK(fixture.client.ReplicatedEntityCount() == 0);
+    CHECK(fixture.client.InstanceRecords().empty());
+
+    // ...and so is the row the expansion put in the guest's own table, which
+    // NetSync does not own and had no way to reach. Without a despawn
+    // counterpart to Expand this outlives every one of its members for the rest
+    // of the session: nothing in the entity list, which is member-driven, but a
+    // row is what the viewport draws an instance icon from and what
+    // PickInstance ray-tests — a ghost you can still click on (round-7 S5,
+    // corrected in §9.5).
+    CHECK(fixture.guest.instances.Size() == 0);
 }
 
 namespace

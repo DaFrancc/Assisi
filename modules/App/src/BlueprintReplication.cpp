@@ -256,6 +256,22 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
         return true;
     }
 
+    void Collapse(ECS::InstanceId localInstance) override
+    {
+        // The row, and only the row. `PlaceInstance` added it and nothing else
+        // here can: NetSync destroyed the members and took their mirror bodies
+        // out of the simulation before calling this, and App::DestroyInstance
+        // over the same members would find them still alive — Scene::Destroy is
+        // deferred — and hand each one's Jolt body to RemoveBody a second time.
+        //
+        // Which is the division InstanceTable::Remove already draws: the members
+        // are the caller's business, and a row outliving them is the leak this
+        // exists to close. It is what the viewport draws an instance icon from
+        // and what PickInstance ray-tests, so one left behind is a ghost that is
+        // still clickable (round-7 S5, corrected in §9.5).
+        _world.instances.Remove(localInstance);
+    }
+
   private:
     World                   &_world;
     std::vector<std::string> _manifest;
