@@ -95,3 +95,18 @@ TEST_CASE("HashTextFileNormalized folds CRLF, so peers on different checkouts ag
 
     std::filesystem::remove_all(dir);
 }
+
+TEST_CASE("HashTextFileNormalized reports a read that failed after the file opened")
+{
+    // A directory stands in for any read error the open cannot predict: it
+    // opens, and then every read off it fails. The missing-file path does not
+    // cover this, and the answer must be nullopt rather than a hash of however
+    // much was read — a caller comparing content sets treats a hash as an
+    // answer about the file, and "nothing was read" is not one.
+    const std::filesystem::path dir = std::filesystem::temp_directory_path() / "assisi-contenthash-unreadable";
+    std::filesystem::create_directories(dir);
+
+    CHECK_FALSE(HashTextFileNormalized(dir).has_value());
+
+    std::filesystem::remove_all(dir);
+}
