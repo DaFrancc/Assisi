@@ -1238,3 +1238,28 @@ TEST_CASE("Reset drops the mirrored world, which is how v1 reconnects")
     CHECK_FALSE(harness.client.IsSynchronized());
     CHECK(harness.client.LastAppliedTick() == 0);
 }
+
+TEST_CASE("Reset clears the level-ready gate, so a hash does not join on its own")
+{
+    // A join needs both halves — the content-set hash and the application's word
+    // that its world is built — and completes on whichever lands second. Reset
+    // puts the second half back to "not said", so the next attempt waits for the
+    // application again. The case is the editor's join, where the world takes
+    // frames to load and the hash lands whenever the content scan finishes.
+    Harness harness{{}, /*deferHandshake=*/true};
+    harness.client.ConfirmLevelReady();
+    harness.Step(6);
+    REQUIRE(harness.client.IsSynchronized());
+
+    harness.client.Reset();
+    harness.clientScene.FlushDestroyed();
+    REQUIRE_FALSE(harness.client.IsSynchronized());
+
+    // A hash arriving before the world is built must not be enough on its own.
+    harness.client.SetContentSetHash(0);
+    CHECK_FALSE(harness.client.IsSynchronized());
+
+    // The application saying so still is.
+    harness.client.ConfirmLevelReady();
+    CHECK(harness.client.IsSynchronized());
+}
