@@ -80,6 +80,13 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
         s_context->nameToEntity.emplace(member.name, e);
     }
 
+    // Declared, mapped at nothing: a member an in-file `removed` took out. A sibling
+    // still naming it resolves to null with a warning rather than making the whole
+    // file unusable — the same treatment a per-instance removal gets, and the reason
+    // the two removal paths no longer disagree about how bad a removal is (§6).
+    for (const std::string &removed : definition.removedMembers)
+        s_context->nameToEntity.emplace(removed, ECS::NullEntity);
+
     for (std::size_t i = 0; i < definition.members.size(); ++i)
     {
         const BlueprintMemberDesc &member = definition.members[i];
