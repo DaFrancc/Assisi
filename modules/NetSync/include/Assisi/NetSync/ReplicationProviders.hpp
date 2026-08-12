@@ -191,6 +191,14 @@ struct ConnectionDiagnostics
     /// when nothing filters; otherwise, what a radius is actually buying.
     std::uint32_t relevantEntities   = 0;
 
+    /// Ids block escalation pushed while composing the set above, last snapshot.
+    /// The cost of "an instance is relevant whole or not at all", and the one
+    /// number that says whether it still scales with what is *placed*: it is the
+    /// summed size of the escalated blocks, so a relevant car costs its member
+    /// count once, no matter how many of its members the provider named. Growing
+    /// with the square of that is the shape this counter exists to catch (S10).
+    std::uint32_t escalationPushes   = 0;
+
     /// Entities that have entered and left this connection's set, session
     /// totals. Enters climbing in lockstep with exits is boundary thrash — the
     /// failure mode hysteresis exists to prevent, and invisible otherwise
