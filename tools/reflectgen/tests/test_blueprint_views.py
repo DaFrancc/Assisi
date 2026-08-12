@@ -411,5 +411,52 @@ class TestRendering(ViewTestCase):
         self.assertIn("(void)view;", text)  # or the fill would warn on unused args
 
 
+class TestSourcePathEscaping(ViewTestCase):
+    r"""A source path is input, and it lands in a C++ string literal.
+
+    Nothing upstream constrains it the way member names are constrained to
+    identifiers: it is whatever `--blueprint Car=blueprints\car.abp` was given.
+    On Windows every path has backslashes, so the generated header is a string
+    of unknown escapes before anyone has typed an unusual name.
+
+    Rendered rather than generated end to end on purpose: a file named with a
+    quote or a newline cannot exist on Windows, so a fixture on disk would skip
+    itself on the one platform this is about.
+    """
+
+    def render(self, source):
+        return blueprint_views.render_instance_views([("Car", source, {"body": None}, ["body"])])
+
+    def test_a_backslash_is_escaped_everywhere_the_source_is_emitted(self):
+        text = self.render("blueprints\\car.abp")
+        self.assertIn('static constexpr std::string_view kSource = "blueprints\\\\car.abp";', text)
+        self.assertIn('{"blueprints\\\\car.abp", kMembersOfCar},', text)
+        # `\c` is not an escape C++ knows, and `\t` would have been a tab.
+        self.assertNotIn('"blueprints\\car.abp"', text)
+
+    def test_a_quote_cannot_end_the_literal(self):
+        text = self.render('od"d.abp')
+        self.assertIn('kSource = "od\\"d.abp";', text)
+
+    def test_a_newline_cannot_break_the_line_it_is_on(self):
+        text = self.render("two\nlines.abp")
+        self.assertIn('kSource = "two\\nlines.abp";', text)
+        # Including in the comments, where a real newline would end the `//` and
+        # leave the rest of the path standing where code goes.
+        self.assertNotIn("\nlines.abp", text)
+        self.assertIn("struct Car; // two\\nlines.abp", text)
+
+    def test_a_control_character_uses_an_escape_that_ends(self):
+        # Octal, not hex: `\x1` has no length limit and would swallow the `1`
+        # that follows it, changing the path rather than spelling it.
+        text = self.render("a\x011.abp")
+        self.assertIn('kSource = "a\\0011.abp";', text)
+
+    def test_an_ordinary_path_is_emitted_as_written(self):
+        text = self.render("blueprints/car.abp")
+        self.assertIn('kSource = "blueprints/car.abp";', text)
+        self.assertIn("struct Car; // blueprints/car.abp", text)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
