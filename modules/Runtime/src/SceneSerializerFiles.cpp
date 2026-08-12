@@ -69,6 +69,22 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
         names.push_back(std::move(name));
     }
 
+    // Every wire leaving the selection, named before it is cut. The file cannot
+    // name what it does not contain, so these become null — and "create blueprint
+    // from selection" is a gesture made on a subset of a wired-up level, which
+    // makes cutting wires the normal case rather than the exceptional one. Named
+    // down to the field and by the names the file is being written under, because
+    // "some reference was dropped" tells nobody what to re-wire.
+    ForEachRefLeavingSet(scene, entities,
+                         [&](const Core::Reflect::ComponentMeta &meta, const Core::Reflect::FieldMeta &field,
+                             std::size_t owner, ECS::Entity target)
+                         {
+                             Core::Log::Warn("Blueprint: {}::{} on '{}' references '{}', which is not in the "
+                                             "selection — it is null in '{}'.",
+                                             meta.name, field.name, names[owner],
+                                             AuthoredName(scene, target), path.string());
+                         });
+
     nlohmann::json doc;
     doc["version"]  = 2;
     doc["entities"] = nlohmann::json::array();

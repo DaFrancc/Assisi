@@ -641,6 +641,11 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
     // every instance of it has the same member list, and the list *is* the index
     // NetIds are assigned from. A per-instance removal (from a level placing this
     // one) is different and leaves a hole — see StageInstance.
+    //
+    // The name outlives the member in `removedMembers` even so. Erasing it outright
+    // makes it indistinguishable from a name nobody ever declared, and the two are
+    // treated oppositely on purpose: a deletion nulls the references to it with a
+    // warning, an unknown name refuses the file (§6).
     for (std::size_t i = state.out->members.size(); i-- > first;)
     {
         const std::string_view path = state.out->members[i].name;
@@ -649,6 +654,7 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
         if (IsMemberRemoved(path.substr(childPrefix.size()), claims.removed))
         {
             state.declared.erase(state.out->members[i].name);
+            state.out->removedMembers.emplace_back(path);
             state.out->members.erase(state.out->members.begin() + static_cast<std::ptrdiff_t>(i));
         }
     }

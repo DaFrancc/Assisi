@@ -232,6 +232,22 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
         (void)scene.Add(e, ECS::BlueprintMember{.instanceId = staged.id, .memberIndex = i});
     }
 
+    // The other half of the same rule, for the removals baked into the file rather
+    // than written on this placement: their names are claimed here too, mapped at
+    // nothing. A level that still names one — in an entity's reference or in an
+    // override's — is a level that has not caught up with a file it does not own,
+    // which nulls with a warning. Refusing it would mean deleting a member of a
+    // blueprint can break levels the author never opened.
+    for (const std::string &removed : definition->removedMembers)
+    {
+        const std::string path = entry.name.empty() ? removed : entry.name + "/" + removed;
+        if (!s_context->nameToEntity.emplace(path, ECS::NullEntity).second)
+        {
+            Core::Log::Error("SceneSerializer: '{}' is claimed twice.", path);
+            return std::unexpected(LevelError::DuplicateName);
+        }
+    }
+
     // This instance's own claims, on top of whatever the file already resolved.
     // Outermost wins per field, so a lot's colour and a level's radius can both
     // apply to the same wheel.

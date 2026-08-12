@@ -146,11 +146,13 @@ ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
         return ECS::NullEntity;
     }
 
-    // Declared but mapped at nothing: a member its instance removed. A legitimate
-    // thing for a file to say, so the ref nulls with a warning instead of refusing
-    // the file the way an unknown name does.
+    // Declared but mapped at nothing: a member a removal took out, either on the
+    // placement or in a file it instances. A legitimate thing for a file to say, so
+    // the ref nulls with a warning instead of refusing the file the way an unknown
+    // name does — and it says the same thing either way, because which of the two
+    // removals it was is not something the reference can see (§6).
     if (it->second == ECS::NullEntity)
-        Core::Log::Warn("SceneSerializer: a reference names '{}', which its instance removed — left null.", name);
+        Core::Log::Warn("SceneSerializer: a reference names '{}', which was removed — left null.", name);
 
     return it->second;
 }
@@ -186,32 +188,19 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
     const auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
     // Name the refs about to be dropped, before serialize loses them silently: a
-    // non-null EntityRef pointing outside the migrated set becomes null.
-    for (const ECS::Entity e : entities)
-    {
-        for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
-        {
-            const void *comp = meta->getByEntity(&src, e.index, e.generation);
-            if (comp == nullptr)
-                continue;
-            for (const Core::Reflect::FieldMeta &field : meta->fields)
-            {
-                if (field.type != Core::Reflect::FieldType::EntityRef || field.transient)
-                    continue;
-                const auto ref = *reinterpret_cast<const ECS::Entity *>(static_cast<const char *>(comp) +
-                                                                        field.offset);
-                if (ref == ECS::NullEntity)
-                    continue;
-                if (!s_context->entityToIndex.contains(EntityKey(ref.index, ref.generation)))
-                {
-                    Core::Log::Warn("Migrate: {}::{} on entity (index {}, gen {}) references entity "
-                                    "(index {}, gen {}) outside the migrated set — it will be null in "
-                                    "the destination.",
-                                    meta->name, field.name, e.index, e.generation, ref.index, ref.generation);
-                }
-            }
-        }
-    }
+    // non-null EntityRef pointing outside the migrated set becomes null. Entities
+    // here have no names to give, so the message spells the handles out.
+    ForEachRefLeavingSet(src, entities,
+                         [entities](const Core::Reflect::ComponentMeta &meta,
+                                    const Core::Reflect::FieldMeta &field, std::size_t owner,
+                                    ECS::Entity target)
+                         {
+                             Core::Log::Warn("Migrate: {}::{} on entity (index {}, gen {}) references entity "
+                                             "(index {}, gen {}) outside the migrated set — it will be null "
+                                             "in the destination.",
+                                             meta.name, field.name, entities[owner].index,
+                                             entities[owner].generation, target.index, target.generation);
+                         });
 
     // Pass 1: serialize every migrated component while the source map is live, so
     // in-set EntityRefs capture their set index. Held per entity until pass 3.

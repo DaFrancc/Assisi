@@ -31,6 +31,8 @@
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+#include "LogCapture.hpp"
+
 using namespace Assisi;
 using Assisi::Runtime::BlueprintDefinition;
 using Assisi::Runtime::BlueprintResult;
@@ -257,6 +259,83 @@ TEST_CASE("Overrides: a reference to a removed member nulls, rather than refusin
     const Runtime::Parent *parent = scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl"));
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == ECS::NullEntity);
+}
+
+TEST_CASE("Overrides: a reference orphaned by an in-file removal nulls, exactly as a per-instance one does")
+{
+    const std::filesystem::path root = FreshRoot("dangling_infile");
+    Write(root, "car.abp", CarFile());
+    // The same removal as the case above, authored in a file instead of on a
+    // placement. It is baked into the member list rather than left as a hole — so
+    // the reference car.abp wrote from wheel_fl to body now names nothing at all,
+    // where the per-instance removal leaves the name claimed and mapped at nothing.
+    Write(root, "bodyless_car.abp", {{"version", 2},
+                                     {"entities", nlohmann::json::array()},
+                                     {"instances", nlohmann::json::array({{{"name", "car"},
+                                                                           {"source", "car.abp"},
+                                                                           {"removed", {"body"}}}})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "b"}, {"source", "bodyless_car.abp"}}})}});
+
+    const Tests::LogCapture log;
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    // Which path removed the member is not something a reference can see, so it
+    // cannot be what decides between "null it" and "this file is unusable". Refusing
+    // here takes down every instance of bodyless_car.abp and the level with them.
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    const Runtime::Parent *parent =
+        scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "car/wheel_fl"));
+    REQUIRE(parent != nullptr);
+    CHECK(parent->parent == ECS::NullEntity);
+
+    // Null *with a warning*: a silent null and a warned one leave identical worlds,
+    // and the whole value of the decision is that whoever removed the member finds
+    // out they broke a wire.
+    CHECK(log.Mentions("'car/body', which was removed"));
+}
+
+TEST_CASE("Overrides: a level's reference into a member an inner file removed nulls, not refuses")
+{
+    const std::filesystem::path root = FreshRoot("dangling_level");
+    Write(root, "car.abp", CarFile());
+    // wheel_fl is the member nothing inside car.abp references, so the definition
+    // itself is intact and this is only about the name the *level* asks for.
+    Write(root, "wheelless_car.abp", {{"version", 2},
+                                      {"entities", nlohmann::json::array()},
+                                      {"instances", nlohmann::json::array({{{"name", "car"},
+                                                                            {"source", "car.abp"},
+                                                                            {"removed", {"wheel_fl"}}}})}});
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({{{"name", "watcher"},
+                                                {"components", {{"Parent", {{"parent", "w/car/wheel_fl"}}}}}}})},
+           {"instances", nlohmann::json::array({{{"name", "w"}, {"source", "wheelless_car.abp"}}})}});
+
+    const Tests::LogCapture log;
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    // The level names a member that a file it does not own decided to remove. That
+    // is the level being out of date, not the level being corrupt.
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+
+    ECS::Entity watcher = ECS::NullEntity;
+    for (auto [entity, name] : scene.Query<Runtime::Name>())
+    {
+        if (name.value.View() == "watcher")
+            watcher = entity;
+    }
+    REQUIRE(watcher != ECS::NullEntity);
+
+    const Runtime::Parent *parent = scene.Get<Runtime::Parent>(watcher);
+    REQUIRE(parent != nullptr);
+    CHECK(parent->parent == ECS::NullEntity);
+    CHECK(log.Mentions("'w/car/wheel_fl', which was removed"));
 }
 
 TEST_CASE("Overrides: removing a nested instance's name removes everything under it")
