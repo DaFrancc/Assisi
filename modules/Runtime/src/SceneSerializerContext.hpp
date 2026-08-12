@@ -19,11 +19,14 @@
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
+#include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 
 #include <cstdint>
 #include <optional>
+#include <span>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace Assisi::Runtime
@@ -77,6 +80,58 @@ inline uint64_t EntityKey(uint32_t idx, uint32_t gen)
 constexpr uint64_t PackEntity(ECS::Entity entity)
 {
     return (static_cast<uint64_t>(entity.generation) << 32) | entity.index;
+}
+
+/// Calls @p report for every non-null EntityRef on @p entities whose target is not
+/// itself in @p entities.
+///
+/// Both writers that take a *subset* of a scene — migration and "create blueprint
+/// from selection" — null those references, because neither destination can name
+/// something it does not contain. Silently is the one thing they must not do it:
+/// the gesture is made on a subset of a wired-up level, so cutting wires is the
+/// normal case rather than the exceptional one, and nothing about the result shows
+/// which ones were cut. Found here rather than in the reference hook, which runs
+/// inside a generated serialize and knows neither the field nor the entity it
+/// speaks for.
+///
+/// @p report takes (component, field, owner's index within @p entities, target).
+/// The index rather than the handle because each site has already built something
+/// per-entity — a name, a set index — that the message wants and the handle alone
+/// would have to look back up. Each site words its own message: the two say the
+/// same thing but not about the same destination.
+template <typename Fn>
+void ForEachRefLeavingSet(ECS::Scene &scene, std::span<const ECS::Entity> entities, Fn &&report)
+{
+    std::unordered_set<uint64_t> inSet;
+    inSet.reserve(entities.size());
+    for (const ECS::Entity entity : entities)
+        inSet.insert(EntityKey(entity.index, entity.generation));
+
+    const auto &registry = Core::Reflect::ComponentRegistry::Instance();
+    for (std::size_t i = 0; i < entities.size(); ++i)
+    {
+        const ECS::Entity entity = entities[i];
+        for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
+        {
+            const void *component = meta->getByEntity(&scene, entity.index, entity.generation);
+            if (component == nullptr)
+                continue;
+
+            for (const Core::Reflect::FieldMeta &field : meta->fields)
+            {
+                // A transient field is not written at all, so it loses nothing here.
+                if (field.type != Core::Reflect::FieldType::EntityRef || field.transient)
+                    continue;
+
+                const auto target = *reinterpret_cast<const ECS::Entity *>(
+                    static_cast<const char *>(component) + field.offset);
+                if (target == ECS::NullEntity || inSet.contains(EntityKey(target.index, target.generation)))
+                    continue;
+
+                report(*meta, field, i, target);
+            }
+        }
+    }
 }
 
 // Clears s_context on every exit path, including a component
