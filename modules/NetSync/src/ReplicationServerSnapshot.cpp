@@ -346,7 +346,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     {
         const InstanceBlock &block = _instanceBlocks.find(freshInstances[i])->second;
         writer.WriteVarUInt32(block.info.blueprintIndex);
-        writer.WriteVarUInt32(block.base.value); // wire write
+        writer.WriteVarId(block.base); // wire write
         writer.WriteVarUInt32(block.memberCount);
 
         // Which members actually exist. The block's width is the definition's
@@ -424,7 +424,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
     writer.WriteVarUInt32(static_cast<std::uint32_t>(despawnRuns.size()));
     for (const auto &[start, length] : despawnRuns)
     {
-        writer.WriteVarUInt32(start.value); // wire write
+        writer.WriteVarId(start); // wire write
         writer.WriteVarUInt32(length);
     }
 
@@ -533,7 +533,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         }
 
         writer.WriteBool(true);
-        writer.WriteVarUInt32(netId.value); // wire write
+        writer.WriteVarId(netId); // wire write
         writer.WriteBool(!known); // isSpawn
 
         WriteEntityComponents(netId, entity, sinceChangeTick, connection, writer, record.components);

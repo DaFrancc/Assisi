@@ -790,7 +790,7 @@ class ReplicationServer
     /// An instance reserves `memberCount` ids at once, which is what makes a
     /// member's id derivable as `base + memberIndex` and lets one spawn record
     /// stand in for every member.
-    std::uint32_t _nextNetId = 1;
+    NetIdValue _nextNetId = 1;
 
     /// The contiguous NetId range one instance's members occupy.
     struct InstanceBlock

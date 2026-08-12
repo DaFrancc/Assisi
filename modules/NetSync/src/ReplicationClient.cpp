@@ -9,7 +9,6 @@
 #include <Assisi/NetSync/NetComponents.hpp>
 
 #include <algorithm>
-#include <limits>
 #include <string>
 #include <utility>
 
@@ -23,12 +22,6 @@ namespace Assisi::NetSync
 {
 namespace
 {
-
-/// One past the last NetId — the exclusive end of the id space, which is what a
-/// `base + count` or `start + length` read off the wire is compared against.
-/// Held in 64 bits on purpose: the whole point is to compute a sum that a NetId
-/// cannot hold without wrapping into somebody else's id.
-constexpr std::uint64_t kNetIdSpaceEnd = static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max()) + 1u;
 
 /// Ensure @p entity has the component @p meta describes, and hand back a
 /// writable pointer to it.
@@ -155,7 +148,7 @@ Core::Reflect::CodecContext ReplicationClient::DecodeContext() const
 
     codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
     // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
-    { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
+    { return PackEntity(EntityOf(NetId{static_cast<NetIdValue>(wire)})); };
 
     // Base NetId in, this machine's own instance id out. Zero when the instance
     // was never expanded here, which leaves the tag invalid rather than pointing
@@ -252,7 +245,7 @@ void ReplicationClient::HandleAnnouncement(Core::BitReader &reader)
 {
     DeferredAnnouncement pending;
     pending.serverTick = reader.ReadVarUInt64();
-    pending.subject    = NetId{reader.ReadVarUInt32()}; // wire read
+    pending.subject    = reader.ReadVarId<NetId>(); // wire read
     pending.messageId  = Core::Reflect::ReadMessageId(reader);
     if (!reader.Ok() || pending.messageId == Core::Reflect::kInvalidMessageId)
         return;
@@ -427,7 +420,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     {
         InstanceRecord entry;
         entry.blueprintIndex = reader.ReadVarUInt32();
-        entry.base           = NetId{reader.ReadVarUInt32()}; // wire read
+        entry.base           = reader.ReadVarId<NetId>(); // wire read
         entry.memberCount    = reader.ReadVarUInt32();
 
         // Bounded before it is used as a loop count, not as a sanity check: the
@@ -448,10 +441,10 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         // instance member, after which every delta for NetId 1 is applied to the
         // wrong entity. Silent both ways, and the input is peer-controlled.
         //
-        // Checked in 64-bit, so the check cannot wrap the way the thing it is
-        // checking would, and against one *past* the last id: a block ending
-        // exactly at 0xFFFFFFFF fits and is nobody's business to refuse.
-        if (static_cast<std::uint64_t>(entry.base.value) + entry.memberCount > kNetIdSpaceEnd)
+        // A block ending exactly on the last id fits and is nobody's business to
+        // refuse, which is why the bound lives in NetIdRangeFits rather than
+        // being open-coded here — see it for why the test is a subtraction.
+        if (!NetIdRangeFits(entry.base, entry.memberCount))
         {
             reader.Invalidate();
             return false;
@@ -552,7 +545,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     despawnRuns.reserve(despawnCount);
     for (std::uint32_t i = 0; i < despawnCount; ++i)
     {
-        const NetId         start  = NetId{reader.ReadVarUInt32()}; // wire read
+        const NetId         start  = reader.ReadVarId<NetId>(); // wire read
         const std::uint32_t length = reader.ReadVarUInt32();
         // Bounded like every other count on this path: the length is attacker-
         // controlled, and unchecked it is a loop the packet sizes.
@@ -563,8 +556,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         // a wrapped run destroys mirrors the server heals rather than rebinding
         // them — but a peer that can delete any mirror it names can blank the
         // world one snapshot at a time.
-        if (!reader.Ok() || length == 0 || length > 65536u ||
-            static_cast<std::uint64_t>(start.value) + length > kNetIdSpaceEnd)
+        if (!reader.Ok() || length == 0 || length > 65536u || !NetIdRangeFits(start, length))
         {
             reader.Invalidate();
             return false;
@@ -664,7 +656,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     context.entityFromWire              = [this, &refSites](std::uint64_t wire) -> std::uint64_t
     {
         // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
-        const NetId netId = NetId{static_cast<std::uint32_t>(wire)};
+        const NetId netId = NetId{static_cast<NetIdValue>(wire)};
         if (netId == InvalidNetId)
         {
             refSites.push_back(RefSite{InvalidNetId, true}); // a genuine null reference
@@ -682,7 +674,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
     while (reader.Ok() && reader.ReadBool())
     {
-        const NetId netId   = NetId{reader.ReadVarUInt32()}; // wire read
+        const NetId netId   = reader.ReadVarId<NetId>(); // wire read
         const bool  isSpawn = reader.ReadBool();
         if (!reader.Ok() || netId == InvalidNetId)
         {
