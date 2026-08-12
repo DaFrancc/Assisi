@@ -597,30 +597,45 @@ const std::vector<NetId> &ReplicationServer::ComputeEffective(Connection &connec
     // re-adds the withheld member. ControllerOnly is therefore applied again
     // below, over what escalation produced — the car is visible, that one part of
     // it is not.
+    connection.diagnostics.escalationPushes = 0;
     if (!_blockRanges.empty())
     {
         _escalateScratch.clear();
-        for (const NetId netId : effective)
+        for (std::size_t i = 0; i < effective.size(); ++i)
         {
+            const NetId netId = effective[i];
+
             // The last block whose base is at or below this id.
             auto range = std::upper_bound(_blockRanges.begin(), _blockRanges.end(), netId,
                                           [](NetId value, const auto &entry) { return value < entry.first; });
             if (range == _blockRanges.begin())
                 continue;
             --range;
-            if (netId.value >= range->first.value + range->second)
+            const NetIdValue blockEnd = range->first.value + range->second;
+            if (netId.value >= blockEnd)
                 continue; // past the end of that block: an ordinary entity
 
             for (std::uint32_t member = 0; member < range->second; ++member)
                 _escalateScratch.push_back(NetId{range->first.value + member});
+            connection.diagnostics.escalationPushes += range->second;
+
+            // Then skip the rest of the block. `effective` is ascending and a
+            // block is contiguous, so every further id below `blockEnd` is a
+            // member of the block just pushed, and pushing it again would be the
+            // whole block a second time. Without this the cost is the block's
+            // member count *squared* per instance — 40k pushes and a 40k sort for
+            // 100 cars of 20 members, per connection, per snapshot (S10).
+            while (i + 1 < effective.size() && effective[i + 1].value < blockEnd)
+                ++i;
         }
 
         if (!_escalateScratch.empty())
         {
-            std::sort(_escalateScratch.begin(), _escalateScratch.end());
-            _escalateScratch.erase(std::unique(_escalateScratch.begin(), _escalateScratch.end()),
-                                   _escalateScratch.end());
-
+            // No sort and no unique: blocks are disjoint and `_blockRanges` is
+            // ascending, and the skip above means each block is pushed at most
+            // once — the id after a skip is at or past `blockEnd`, so it belongs
+            // to a later block or to none. What comes out is therefore already
+            // sorted and already unique, which is what set_union needs.
             merged.clear();
             std::set_union(effective.begin(), effective.end(), _escalateScratch.begin(),
                            _escalateScratch.end(), std::back_inserter(merged));
