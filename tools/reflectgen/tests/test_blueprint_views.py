@@ -111,6 +111,20 @@ class TestFlattening(ViewTestCase):
         self.assertEqual(self.members("lot.abp"),
                          ["car/body", "car/wheel_fl", "car/wheel_fr"])
 
+    def test_a_removal_does_not_reach_an_earlier_instance_of_the_same_name(self):
+        # Blueprint.cpp FlattenInstance walks down to `first` exclusive, so an
+        # entry's removals apply to what its own recursion produced and to
+        # nothing before it. Nothing makes instance *names* unique — only full
+        # member paths — so two siblings can both be 'car', and dropping the
+        # scoping would let the second one's removal eat the first one's member.
+        self.write("a.abp", {"version": 2, "entities": [_entity("x")]})
+        self.write("b.abp", {"version": 2, "entities": [_entity("y")]})
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "a.abp"},
+                                             {"name": "car", "source": "b.abp",
+                                              "removed": ["x"]}]})
+        self.assertEqual(self.members("lot.abp"), ["car/x", "car/y"])
+
     def test_two_instances_of_one_file_are_separate_members(self):
         self.car()
         self.write("lot.abp", {"version": 2,
@@ -138,6 +152,50 @@ class TestRefusals(ViewTestCase):
     def test_cxx_keyword_as_member_name(self):
         self.write("bad.abp", {"version": 2, "entities": [_entity("operator")]})
         self.assertRefused("bad.abp", "C++ keyword")
+
+    def test_no_entry_in_the_table_is_unreachable(self):
+        # A hand-maintained list of 93 strings goes wrong by typo, and a typo'd
+        # entry is a hole of exactly B21's kind: it can never match a member
+        # name, so the word it was meant to ban walks straight through. Anything
+        # that is not an identifier could not have reached the keyword check.
+        for name in sorted(blueprint_views._CXX_KEYWORDS):
+            with self.subTest(keyword=name):
+                self.assertTrue(name.isidentifier(), f"'{name}' can never match a member name")
+
+    def test_reserved_words_python_does_not_share(self):
+        # The B21 list. None of these is a Python keyword — 'case' is soft,
+        # 'true'/'false' are spelled capitalised there, and the alternative
+        # tokens and coroutine keywords have no Python counterpart at all — so
+        # every one of them fell through when `keyword.iskeyword` was the
+        # backstop.
+        for name in ('case', 'true', 'false', 'xor', 'xor_eq', 'and_eq', 'or_eq',
+                     'not_eq', 'bitand', 'bitor', 'compl',
+                     'co_await', 'co_return', 'co_yield'):
+            with self.subTest(keyword=name):
+                self.write("bad.abp", {"version": 2, "entities": [_entity(name)]})
+                self.assertRefused("bad.abp", "C++ keyword")
+
+    def test_reserved_words_python_happens_to_share(self):
+        # These were caught only because Python reserves them too, and reported
+        # as "not a valid C++ identifier" — true of Python, not of C++, where
+        # they are identifiers that happen to be taken. Pinned by the message
+        # they now get: drop them from the table and this goes red.
+        for name in ('class', 'while', 'for', 'if', 'else', 'return', 'break',
+                     'continue', 'try', 'and', 'or', 'not'):
+            with self.subTest(keyword=name):
+                self.write("bad.abp", {"version": 2, "entities": [_entity(name)]})
+                self.assertRefused("bad.abp", "C++ keyword")
+
+    def test_a_python_keyword_that_is_a_legal_cxx_identifier_is_accepted(self):
+        # The mirror argument the module docstring makes, applied to the ban
+        # list: `ECS::Entity lambda;` compiles and the loader takes the file, so
+        # refusing it fails a build over a legal blueprint. Python's reserved
+        # words are not this generator's business.
+        for name in ('lambda', 'pass', 'yield', 'None', 'def', 'import'):
+            with self.subTest(name=name):
+                self.write("ok.abp", {"version": 2, "entities": [_entity(name)]})
+                self.assertEqual(self.members("ok.abp"), [name])
+                self.assertIn(f'ECS::Entity {name};', self.generate(("T", "ok.abp")))
 
     def test_member_named_like_the_id_field(self):
         self.write("bad.abp", {"version": 2, "entities": [_entity("instanceId")]})
@@ -167,6 +225,16 @@ class TestRefusals(ViewTestCase):
     def test_unreadable_json(self):
         (self.root / "bad.abp").write_text("{ not json", encoding="utf-8")
         self.assertRefused("bad.abp", "not readable JSON")
+
+    def test_the_opted_in_type_name_may_not_be_a_reserved_word(self):
+        # `--blueprint class=car.abp` emitted `struct class;`. The type name is
+        # checked by the same table as the member names, or the two drift again.
+        self.car()
+        for name in ('class', 'case', 'true', 'co_await'):
+            with self.subTest(type_name=name):
+                with self.assertRaises(ViewError) as caught:
+                    blueprint_views.generate(self.root, [(name, "car.abp")])
+                self.assertIn("not a valid C++ type name", str(caught.exception))
 
     def test_two_blueprints_opted_in_under_one_type_name(self):
         self.car()

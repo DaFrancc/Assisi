@@ -33,22 +33,42 @@ other way.
 """
 
 import json
-import keyword
 from pathlib import Path
 
-# Reserved words that are not in Python's `keyword` module but would still
-# collide in the generated C++.
+# Every word C++ reserves, and the only authority here on what is reserved.
+#
+# This used to be "the ones Python's `keyword` module misses", with
+# `keyword.iskeyword` asked alongside it. That split the table between two
+# authorities and got both halves wrong. It was too lax, because Python's list
+# is not a subset of C++'s and was never going to cover the difference: `case`
+# is a soft keyword there, `true` and `false` are spelled capitalised, and the
+# alternative tokens (`bitand`, `xor_eq`) and the coroutine keywords have no
+# Python counterpart at all — so all fourteen walked through and became
+# `ECS::Entity case;` in a file marked "Do not edit", failing the build at the
+# generated line instead of naming the .abp and the member. It was also too
+# strict, because Python reserves words C++ does not: `lambda`, `pass` and
+# `yield` are ordinary identifiers in the generated header, and the loader takes
+# a file that uses them, so refusing one failed a build over a legal blueprint —
+# the same divergence the module docstring argues against, pointing the other
+# way.
+#
+# So: [lex.key] Table 5 in full, plus the [lex.digraph] alternative tokens,
+# which are spelled like identifiers and behave as keywords. Nothing is left out
+# on the grounds that another language happens to reserve it too.
 _CXX_KEYWORDS = {
-    'alignas', 'alignof', 'asm', 'auto', 'bool', 'catch', 'char', 'char8_t',
-    'char16_t', 'char32_t', 'concept', 'const', 'consteval', 'constexpr',
-    'constinit', 'const_cast', 'decltype', 'default', 'delete', 'do', 'double',
-    'dynamic_cast', 'enum', 'explicit', 'export', 'extern', 'float', 'friend',
-    'goto', 'inline', 'int', 'long', 'mutable', 'namespace', 'new', 'noexcept',
-    'nullptr', 'operator', 'private', 'protected', 'public', 'register',
-    'reinterpret_cast', 'requires', 'short', 'signed', 'sizeof', 'static',
-    'static_assert', 'static_cast', 'struct', 'switch', 'template', 'this',
-    'thread_local', 'throw', 'typedef', 'typeid', 'typename', 'union',
-    'unsigned', 'using', 'virtual', 'void', 'volatile', 'wchar_t',
+    'alignas', 'alignof', 'and', 'and_eq', 'asm', 'auto', 'bitand', 'bitor',
+    'bool', 'break', 'case', 'catch', 'char', 'char8_t', 'char16_t', 'char32_t',
+    'class', 'compl', 'concept', 'const', 'consteval', 'constexpr', 'constinit',
+    'const_cast', 'continue', 'co_await', 'co_return', 'co_yield', 'decltype',
+    'default', 'delete', 'do', 'double', 'dynamic_cast', 'else', 'enum',
+    'explicit', 'export', 'extern', 'false', 'float', 'for', 'friend', 'goto',
+    'if', 'inline', 'int', 'long', 'mutable', 'namespace', 'new', 'noexcept',
+    'not', 'not_eq', 'nullptr', 'operator', 'or', 'or_eq', 'private',
+    'protected', 'public', 'register', 'reinterpret_cast', 'requires', 'return',
+    'short', 'signed', 'sizeof', 'static', 'static_assert', 'static_cast',
+    'struct', 'switch', 'template', 'this', 'thread_local', 'throw', 'true',
+    'try', 'typedef', 'typeid', 'typename', 'union', 'unsigned', 'using',
+    'virtual', 'void', 'volatile', 'wchar_t', 'while', 'xor', 'xor_eq',
 }
 
 # The one field every view has, so a member may not take the name.
@@ -256,15 +276,26 @@ def flatten_member_names(root, source):
     return state.members, state.sources
 
 
+def _is_usable_name(name):
+    """A name the generator can emit into C++ as written.
+
+    The single decision behind both the member-name check and the type-name
+    check, so a word banned as one is banned as the other. Those drifted once:
+    the type name was tested against `_CXX_KEYWORDS` alone while member names
+    were also asked of Python's `keyword` module, and `--blueprint
+    class=car.abp` emitted `struct class;`. The two differ only in what they say
+    when they refuse, which is why that is all `_check_identifier` decides for
+    itself.
+    """
+    return name.isidentifier() and name not in _CXX_KEYWORDS
+
+
 def _check_identifier(name, source, path):
-    if not name.isidentifier() or keyword.iskeyword(name):
+    if not _is_usable_name(name):
+        reason = ('is a C++ keyword' if name in _CXX_KEYWORDS
+                  else 'is not a valid C++ identifier')
         raise ViewError(
-            f"'{source}' member '{path}' cannot be a field name: '{name}' is not "
-            'a valid C++ identifier')
-    if name in _CXX_KEYWORDS:
-        raise ViewError(
-            f"'{source}' member '{path}' cannot be a field name: '{name}' is a "
-            'C++ keyword')
+            f"'{source}' member '{path}' cannot be a field name: '{name}' {reason}")
     if name in _RESERVED_FIELDS:
         raise ViewError(
             f"'{source}' member '{path}' cannot be a field name: every view "
@@ -451,7 +482,7 @@ def generate(root, specs):
     dependencies = []
 
     for type_name, source in specs:
-        if not type_name.isidentifier() or type_name in _CXX_KEYWORDS:
+        if not _is_usable_name(type_name):
             raise ViewError(f"'{type_name}' is not a valid C++ type name")
         if type_name in seen_types:
             raise ViewError(
