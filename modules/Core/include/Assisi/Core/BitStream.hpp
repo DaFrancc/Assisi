@@ -30,8 +30,11 @@
 /// asserts, or touches memory outside the span. A truncated or bit-flipped packet
 /// must be a clean rejection, never UB — see TestBitStream.cpp's fuzz cases.
 
+#include <Assisi/Core/StrongId.hpp>
+
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -49,6 +52,17 @@ namespace Assisi::Core
 /// widest), so this bound is generous by an order of magnitude and still refuses
 /// the attack.
 inline constexpr std::size_t kMaxStringBytes = 4096;
+
+// The varint id encoding below is available to any type that opts in via
+// Core::IsStrongId — see StrongId.hpp. Core never names those types: NetId and
+// ClientId live in NetSync, InstanceId in ECS, and Core sits below both, so
+// naming one would invert the dependency.
+//
+// The point of routing them through here rather than open-coding
+// `WriteVarUInt32(id.value)`: the width comes from the id's own declaration, so
+// widening one is an edit to that declaration and nothing else. An open-coded
+// call silently keeps the old width, and a too-narrow *read* truncates — which
+// does not fail, it just yields a valid id naming something else.
 
 /// @brief Bit-granular writer over a growable byte buffer.
 ///
@@ -93,6 +107,13 @@ class BitWriter
     /// prefix nearly free while still admitting a registry of any size.
     void WriteVarUInt32(std::uint32_t value) { WriteVarUInt64(value); }
     void WriteVarUInt64(std::uint64_t value);
+
+    /// @brief A strong id as a varint, at whatever width its `value` is.
+    ///
+    /// Always the 64-bit writer: the encoding of any value a narrower id can
+    /// hold is byte-identical, so the write side is width-independent already
+    /// and only `BitReader::ReadVarId` has to track the type. See `StrongId`.
+    void WriteVarId(StrongId auto id) { WriteVarUInt64(id.value); }
 
     /// @brief Raw bytes, 8 bits each in order. Not byte-aligned — the bytes land
     /// wherever the cursor is, so no padding is spent.
@@ -172,6 +193,28 @@ class BitReader
     /// stream would otherwise spin the decode loop.
     std::uint32_t ReadVarUInt32();
     std::uint64_t ReadVarUInt64();
+
+    /// @brief Reads a strong id, refusing a value its `value` type cannot hold.
+    ///
+    /// This is the side that carries the width, and the reason `StrongId` exists:
+    /// the range check comes from the id's own declaration, so widening the type
+    /// widens what the wire accepts with no edit here and none at the call sites.
+    ///
+    /// Refused rather than truncated, on the same principle as ReadStringInto
+    /// above — a truncated id is not a detectably broken id, it is a valid one
+    /// naming a different object, and it propagates silently from there.
+    template <StrongId T> T ReadVarId()
+    {
+        const std::uint64_t raw = ReadVarUInt64();
+        if (_failed)
+            return T{};
+        if (raw > std::numeric_limits<decltype(T::value)>::max())
+        {
+            Fail();
+            return T{};
+        }
+        return T{static_cast<decltype(T::value)>(raw)};
+    }
 
     /// @brief Reads exactly `out.size()` bytes into @p out. On overrun, fails and
     /// zero-fills @p out.
