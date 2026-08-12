@@ -195,8 +195,17 @@ class ReplicationClient
 
     /// @brief Install what turns an instance record into local entities.
     ///
-    /// Absent, records are remembered and nothing is built — the members still
-    /// arrive as ordinary entities, which is correct and merely larger.
+    /// **Required for any client that mirrors a world containing instances.**
+    /// Without one the records are remembered, nothing is built, and the members
+    /// arrive as ordinary entities *missing* every component that still equals
+    /// its authored value: the server elides those, taking the client's own
+    /// expansion to hold them, and nothing re-stamps a value that does not
+    /// change. A member whose components all match the file arrives with none at
+    /// all, and stays that way.
+    ///
+    /// The server cannot detect the omission. Its gate is the block's
+    /// `derivable` bits, which describe the file; whether the peer opened that
+    /// file is not on the wire in either direction.
     void SetInstanceExpander(std::unique_ptr<InstanceExpander> expander)
     {
         _instanceExpander = std::move(expander);
@@ -204,7 +213,9 @@ class ReplicationClient
 
     /// @brief The instances the server has named, keyed by base NetId. Each is
     /// expanded into local entities the first time it arrives, if an expander is
-    /// installed; without one the record is kept and nothing is built.
+    /// installed; without one the record is kept, nothing is built, and the
+    /// members arrive stripped of their authored components — see
+    /// SetInstanceExpander.
     [[nodiscard]] const std::unordered_map<NetId, InstanceRecord> &InstanceRecords() const
     {
         return _instanceRecords;
@@ -320,6 +331,15 @@ class ReplicationClient
 
     /// @brief Drop every replicated entity and forget the session. v1's
     /// reconnect is a full rejoin, which starts here.
+    ///
+    /// The session is the mirrors and their bodies, the instance records, the
+    /// id translations either way round, the handshake, and the join gates.
+    /// Expanded instances are collapsed on the way out, so an expander is told
+    /// its rows are finished.
+    ///
+    /// What this machine supplied survives: the expander, the deferred-handshake
+    /// setting, the content-set hash, and `_structureRevision`. The object is
+    /// ready to join again with no further setup.
     void Reset();
 
   private:
