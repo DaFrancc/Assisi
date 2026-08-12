@@ -13,6 +13,12 @@ Three of these mirror rules that live in C++ and could drift:
 `duplicate declarations are checked on the full path`. If Blueprint.cpp's
 FlattenInto changes, these are what should fail.
 
+TestLoaderRefusals is the other half of the same agreement, and it cuts both
+ways. The generator must refuse what the loader refuses — a file it accepts and
+the loader rejects builds, links, and then spawns nothing at all — but it must
+also *accept* everything the loader accepts, or a legal blueprint fails the
+build instead. Both directions are pinned there.
+
 Run directly (`python test_blueprint_views.py`) or via ctest.
 """
 
@@ -51,6 +57,11 @@ class ViewTestCase(unittest.TestCase):
 
     def generate(self, *specs):
         return blueprint_views.generate(self.root, list(specs))[0]
+
+    def assertRefused(self, source, fragment):
+        with self.assertRaises(ViewError) as caught:
+            blueprint_views.generate(self.root, [("T", source)])
+        self.assertIn(fragment, str(caught.exception))
 
 
 class TestFlattening(ViewTestCase):
@@ -117,11 +128,6 @@ class TestFlattening(ViewTestCase):
 
 
 class TestRefusals(ViewTestCase):
-    def assertRefused(self, source, fragment):
-        with self.assertRaises(ViewError) as caught:
-            blueprint_views.generate(self.root, [("T", source)])
-        self.assertIn(fragment, str(caught.exception))
-
     def test_entity_and_nested_instance_of_one_name(self):
         # The collision grouping exists to make visible: both would be `.car`.
         self.car()
@@ -168,6 +174,122 @@ class TestRefusals(ViewTestCase):
         with self.assertRaises(ViewError) as caught:
             blueprint_views.generate(self.root, [("Car", "car.abp"), ("Car", "lot.abp")])
         self.assertIn("both opted in as", str(caught.exception))
+
+
+class TestLoaderRefusals(ViewTestCase):
+    """Files Blueprint.cpp will not load, and files it will.
+
+    A file the generator accepts and the loader rejects is the worst failure
+    this system has: the build succeeds, the call sites compile, and then
+    GetBlueprintDefinition returns nothing, so every SpawnBlueprint of it is
+    empty forever with no diagnostic naming the file. So the refusals below
+    mirror ReadFile's version check and FlattenInstance's uniform-scale check.
+
+    The acceptances below are the same agreement read the other way: each is a
+    file the loader takes, so refusing it would fail a build over a legal
+    blueprint. They pin the leniency the mirror has to reproduce —
+    TransformFromJson dropping a malformed slot to the default, and
+    HasUniformScale's relative tolerance — rather than the strictest reading of
+    the field names.
+    """
+
+    def test_a_version_the_loader_will_not_read(self):
+        self.write("old.abp", {"version": 1, "entities": [_entity("body")]})
+        self.assertRefused("old.abp", "is version 1")
+
+    def test_a_file_that_declares_no_version(self):
+        # The loader's `doc.value("version", 0)` reads a missing key as 0.
+        self.write("bare.abp", {"entities": [_entity("body")]})
+        self.assertRefused("bare.abp", "declares no version")
+
+    def test_a_version_that_is_not_a_number(self):
+        self.write("odd.abp", {"version": "2", "entities": [_entity("body")]})
+        self.assertRefused("odd.abp", 'is version "2"')
+
+    def test_the_version_of_a_nested_file_is_checked_too(self):
+        # ReadFile runs on every source reached, not only the one opted in, so
+        # a current file instancing a stale one still spawns nothing.
+        self.write("car.abp", {"version": 1, "entities": [_entity("body")]})
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp"}]})
+        self.assertRefused("lot.abp", "'car.abp' is version 1")
+
+    def test_a_non_uniform_scale_on_a_nested_instance(self):
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp",
+                                              "transform": {"scale": [1, 2, 1]}}]})
+        self.assertRefused("lot.abp", "non-uniform scale")
+
+    def test_a_non_uniform_scale_at_the_second_level(self):
+        # FlattenInstance checks at every depth, not only the outermost entry.
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp",
+                                              "transform": {"scale": [1, 2, 1]}}]})
+        self.write("city.abp", {"version": 2,
+                                "instances": [{"name": "lot", "source": "lot.abp"}]})
+        self.assertRefused("city.abp", "non-uniform scale")
+
+    def test_a_scale_uniform_on_two_axes_only(self):
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp",
+                                              "transform": {"scale": [0, 0, 1]}}]})
+        self.assertRefused("lot.abp", "non-uniform scale")
+
+    def test_a_uniform_scale_is_accepted(self):
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp",
+                                              "transform": {"position": [1, 0, 0],
+                                                            "scale": [2, 2, 2]}}]})
+        self.assertEqual(self.members("lot.abp"),
+                         ["car/body", "car/wheel_fl", "car/wheel_fr"])
+
+    def test_a_hand_typed_near_uniform_scale_is_accepted(self):
+        # HasUniformScale's tolerance is relative, and exists for exactly this.
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp",
+                                              "transform": {"scale": [1.0000001, 1, 1]}}]})
+        self.assertEqual(self.members("lot.abp"),
+                         ["car/body", "car/wheel_fl", "car/wheel_fr"])
+
+    def test_an_all_zero_scale_is_accepted(self):
+        # The mean <= 0 branch: degenerate, but uniformly so, and the loader
+        # takes it.
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp",
+                                              "transform": {"scale": [0, 0, 0]}}]})
+        self.assertEqual(self.members("lot.abp"),
+                         ["car/body", "car/wheel_fl", "car/wheel_fr"])
+
+    def test_a_malformed_scale_slot_leaves_the_field_at_its_default(self):
+        # TransformFromJson checks every slot and drops the whole field to
+        # {1,1,1} if one is not a number — it does not read the two that are.
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp",
+                                              "transform": {"scale": [1, "wide", 1]}}]})
+        self.assertEqual(self.members("lot.abp"),
+                         ["car/body", "car/wheel_fl", "car/wheel_fr"])
+
+    def test_a_scale_of_the_wrong_length_leaves_the_field_at_its_default(self):
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp",
+                                              "transform": {"scale": [3, 3]}}]})
+        self.assertEqual(self.members("lot.abp"),
+                         ["car/body", "car/wheel_fl", "car/wheel_fr"])
+
+    def test_an_instance_with_no_transform_is_accepted(self):
+        self.car()
+        self.write("lot.abp", {"version": 2,
+                               "instances": [{"name": "car", "source": "car.abp"}]})
+        self.assertEqual(self.members("lot.abp"),
+                         ["car/body", "car/wheel_fl", "car/wheel_fr"])
 
 
 class TestRendering(ViewTestCase):
