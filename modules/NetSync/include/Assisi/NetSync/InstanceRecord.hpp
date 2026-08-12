@@ -75,6 +75,25 @@ class InstanceExpander
     /// default; the tag then stays unresolved.
     [[nodiscard]] virtual bool Expand(const InstanceRecord &record, std::vector<ECS::Entity> &out,
                                       ECS::InstanceId &outInstance) = 0;
+
+    /// @brief The instance @p localInstance named is finished: drop whatever the
+    ///        expansion created **beside** the entities.
+    ///
+    /// Called once, with the id that Expand reported in `outInstance`, when the
+    /// record is retired — every member despawned, or an expansion refused. Never
+    /// called for an expander that left the id default, which named nothing.
+    ///
+    /// **The member entities are not yours to destroy here.** This side owns the
+    /// bindings and the mirror bodies and has already torn both down by the time
+    /// this runs; a second pass over the members would hand the same Jolt body to
+    /// RemoveBody twice. What is left is the bookkeeping only the expander knows
+    /// about — the instance table row App writes, which nothing else can reach.
+    ///
+    /// Not optional, and deliberately not defaulted to a no-op: an expander that
+    /// records nothing writes an empty body, but it has to say so. The version of
+    /// this interface without it leaked a row per instance for the length of a
+    /// session (round-7 S5) precisely because the question was never asked.
+    virtual void Collapse(ECS::InstanceId localInstance) = 0;
 };
 
 } // namespace Assisi::NetSync
