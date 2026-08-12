@@ -341,6 +341,51 @@ def build_tree(members, source):
     return tree
 
 
+# Every character C++ reads as syntax inside a string literal, and how to spell
+# it as itself.
+_CXX_STRING_ESCAPES = {'\\': r'\\', '"': r'\"', '\n': r'\n', '\r': r'\r', '\t': r'\t'}
+
+
+def _cxx_escaped(text):
+    r"""`text` with everything a C++ literal would read as syntax spelled out.
+
+    The one authority on this, because the alternative is escaping at some emit
+    sites and not others, which is the same file's B21 lesson about splitting a
+    rule between two places.
+
+    Source paths need it. They are input — whatever `--blueprint
+    Car=blueprints\car.abp` was given — with none of the constraints member
+    names have, and every Windows path is full of backslashes: emitted as
+    written, `blueprints\car.abp` carries `\c`, which no C++ escape names, and
+    `assets\test.abp` carries a tab in the middle of a path the runtime then
+    fails to find. A quote ends the literal outright and takes the rest of the
+    header with it.
+
+    Control characters go out in octal rather than hex because a hex escape has
+    no length limit: `\x1` followed by a digit of the path swallows it and
+    changes the value, while `\001` is three digits and stops.
+
+    Comments get the same treatment. The hazard there is only a newline, which
+    ends the `//` and leaves the rest of the path standing where code goes, but
+    one function answering for both is the point.
+    """
+    out = []
+    for character in text:
+        escape = _CXX_STRING_ESCAPES.get(character)
+        if escape is not None:
+            out.append(escape)
+        elif character < ' ' or character == '\x7f':
+            out.append(f'\\{ord(character):03o}')
+        else:
+            out.append(character)
+    return ''.join(out)
+
+
+def _cxx_literal(text):
+    """`text` as a C++ string literal whose value is `text` exactly."""
+    return f'"{_cxx_escaped(text)}"'
+
+
 def _render_fields(node, indent):
     pad = ' ' * indent
     lines = []
@@ -383,7 +428,7 @@ def render_instance_views(views):
         lines.append('// Tag types. Incomplete on purpose: they name a blueprint and are')
         lines.append('// never instantiated, so there is nothing to construct by mistake.')
     for type_name, source, _, _ in views:
-        lines.append(f'struct {type_name}; // {source}')
+        lines.append(f'struct {type_name}; // {_cxx_escaped(source)}')
 
     lines.append('')
     lines.append('} // namespace Assisi::Blueprints')
@@ -394,7 +439,7 @@ def render_instance_views(views):
     for type_name, source, tree, members in views:
         qualified = f'Blueprints::{type_name}'
         lines.append('')
-        lines.append(f'/// @brief The members of `{source}`, nested as the file nests them.')
+        lines.append(f'/// @brief The members of `{_cxx_escaped(source)}`, nested as the file nests them.')
         lines.append('///')
         lines.append('/// Only `instanceId` may outlive the call that produced this; the handles')
         lines.append('/// are for right now.')
@@ -419,7 +464,7 @@ def render_instance_views(views):
         lines.append('')
         lines.append(f'template <> struct InstanceViewTraits<{qualified}>')
         lines.append('{')
-        lines.append(f'    static constexpr std::string_view kSource = "{source}";')
+        lines.append(f'    static constexpr std::string_view kSource = {_cxx_literal(source)};')
         lines.append('};')
 
         lines.append('')
@@ -434,7 +479,7 @@ def render_instance_views(views):
             lines.append('    (void)table;')
         for path in members:
             field = path.replace('/', '.')
-            lines.append(f'    view.{field} = FindMember(scene, table, view.instanceId, "{path}");')
+            lines.append(f'    view.{field} = FindMember(scene, table, view.instanceId, {_cxx_literal(path)});')
         lines.append('}')
 
     # The manifest: the member names this generator believes each blueprint has,
@@ -457,7 +502,7 @@ def render_instance_views(views):
     lines.append('')
 
     for type_name, source, _, members in views:
-        joined = ', '.join(f'"{path}"' for path in members)
+        joined = ', '.join(_cxx_literal(path) for path in members)
         lines.append(f'inline constexpr std::string_view kMembersOf{type_name}[] = {{{joined}}};'
                      if members else
                      f'inline constexpr std::span<const std::string_view> kMembersOf{type_name}{{}};')
@@ -466,7 +511,7 @@ def render_instance_views(views):
     lines.append('/// Every view this build generated, for the cross-check against the loader.')
     lines.append('inline constexpr GeneratedInstanceView kGeneratedInstanceViews[] = {')
     for type_name, source, _, _ in views:
-        lines.append(f'    {{"{source}", kMembersOf{type_name}}},')
+        lines.append(f'    {{{_cxx_literal(source)}, kMembersOf{type_name}}},')
     lines.append('};')
 
     lines.append('')
