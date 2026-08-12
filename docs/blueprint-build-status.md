@@ -78,10 +78,25 @@ it as "a plain aggregate of handles": in C++20 a deleted copy constructor costs
 the type its aggregate-ness. Move-only won, because the doc reasons explicitly
 about `optional` holding a move-only view.
 
-Storing a view in a reflected type is a build error with **no `transient`
-escape hatch**, unlike the ordinary unserializable-field check. The objection is
-not that it cannot serialize — it is that its handles go stale, so a stored view
-is a member list by another name.
+Storing a view in a reflected type is a build error, and **neither
+`AFIELD(transient)` nor `ACOMP(transient)` is a way through** it, unlike the
+ordinary unserializable-field check. The objection is not that it cannot
+serialize — it is that its handles go stale, so a stored view is a member list by
+another name.
+
+The ban is on the type, not on its spelling, and two layers enforce it:
+
+- **reflectgen**, which resolves the spellings visible in the header it is
+  reading: an alias, an alias of an alias, a `typedef`, or a struct declared
+  there that holds a view, all to a fixpoint. It reports the chain it followed.
+- **the generated file**, which `static_assert`s every reflected field — the
+  transient ones too — against `decltype`. This is what covers an alias declared
+  in *another* header, which reaches a regex parser as an ordinary word.
+
+**The edge that remains:** a view buried in a struct that some *other* header
+declares. The generator does not read that header, and `decltype` sees the
+wrapper, not what it holds. Closing that needs a compiler front end, not a
+sharper regex — so if a member list ever turns up in disguise, look there first.
 
 ---
 

@@ -384,6 +384,151 @@ class ParserEdgeCaseTest(unittest.TestCase):
         self.assertIn("instance", cpp)
 
 
+class InstanceViewStorageBanTest(unittest.TestCase):
+    """The ban is on *storing a view*, not on spelling one.
+
+    Every spelling of the same type is refused — an alias, an alias of an alias,
+    a struct that holds one — and neither `AFIELD(transient)` nor
+    `ACOMP(transient)` is a way through, though both excuse an unknown type at
+    the serialization check.
+
+    Two layers enforce it. The generator resolves the spellings it can see, in
+    the header it is reading; and the generated file asserts the ban to the
+    compiler, which is the only party that can see through a spelling declared
+    somewhere else.
+    """
+
+    def _reject(self, source: str, *expected: str) -> None:
+        components = _parse_source(source)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(components, "N/C.hpp")
+        message = str(caught.exception)
+        self.assertIn("may not hold an InstanceView", message)
+        for fragment in expected:
+            self.assertIn(fragment, message)
+
+    def test_an_alias_to_a_view_is_a_hard_error(self):
+        # An alias is the shortest way to store a view without naming one.
+        self._reject(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Assisi::Blueprints::Car>;\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) CarView car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "CarView",
+        )
+
+    def test_an_alias_chain_to_a_view_is_a_hard_error(self):
+        # One level of indirection is not the rule; the rule is that no spelling
+        # the generator can resolve reaches a view.
+        self._reject(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
+            "using CarHandle = CarView;\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) CarHandle car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "CarHandle",
+        )
+
+    def test_a_typedef_to_a_view_is_a_hard_error(self):
+        self._reject(
+            "namespace N {\n"
+            "typedef Assisi::Runtime::InstanceView<Car> CarView;\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) CarView car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "CarView",
+        )
+
+    def test_a_transient_component_may_not_hold_a_view_either(self):
+        # ACOMP(transient) skips _check_unsupported for the whole struct, so it
+        # is the widest annotation the ban has to hold against.
+        self._reject(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
+            "ACOMP(transient)\n"
+            "struct C { AFIELD() CarView car = {}; };\n}\n",
+            "CarView",
+        )
+
+    def test_a_struct_that_holds_a_view_may_not_be_a_field(self):
+        # A member of a member is still a stored member list; the wrapper only
+        # moves it one struct further from the annotation.
+        self._reject(
+            "namespace N {\n"
+            "struct Holder { Assisi::Runtime::InstanceView<Car> v; };\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) Holder held = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "Holder",
+        )
+
+    def test_a_holder_declared_before_what_it_holds_is_still_caught(self):
+        # Declaration order does not decide it: `Outer` is refused for holding
+        # `Inner`, which is only known to hold a view after `Outer` is read.
+        self._reject(
+            "namespace N {\n"
+            "struct Inner;\n"
+            "struct Outer { Inner i; };\n"
+            "struct Inner { Assisi::Runtime::InstanceView<Car> v; };\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) Outer o = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "Outer",
+            "Inner",
+        )
+
+    def test_a_container_of_aliased_views_is_a_hard_error(self):
+        # The ban reads the whole spelling, so a view reached through a template
+        # argument is refused in that position too.
+        self._reject(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) std::vector<CarView> cars = {}; "
+            "AFIELD() int32_t a = 0; };\n}\n",
+            "CarView",
+        )
+
+    def test_a_message_may_not_hold_a_view_by_alias(self):
+        # Messages run the same check, and a view on the wire is the same
+        # stale-handle problem with a network in the middle.
+        _, messages, _ = _parse_full(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
+            "AMSG(event, reliable)\n"
+            "struct Boom { AFIELD(transient) CarView car = {}; AFIELD() uint32_t t = 0; };\n}\n"
+        )
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("may not hold an InstanceView", str(caught.exception))
+
+    def test_a_lookalike_name_is_not_banned(self):
+        # The ban must not become a substring superstition: a type whose name
+        # merely starts the same way is an ordinary transient field, and an
+        # unrelated alias stays an unrelated alias.
+        components = _parse_source(
+            "namespace N {\n"
+            "using Meters = float;\n"
+            "struct InstanceViewport { int32_t w = 0; };\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) InstanceViewport vp = {}; "
+            "AFIELD(transient) Meters depth = 0.f; AFIELD() int32_t a = 0; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")  # must not raise
+        self.assertIn("vp", cpp)
+
+    def test_generated_code_asserts_the_ban_at_compile_time(self):
+        # The layer that closes the spellings a regex cannot see. An alias
+        # declared in another header reaches the generator as an ordinary word,
+        # so the generated file hands the question to the compiler — for
+        # transient fields too, because the objection is to storing it at all.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD() int32_t a = 0; AFIELD(transient) Opaque cache = {}; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn("struct InstanceView;", cpp)  # declared, never defined
+        self.assertIn("decltype(N::C::a)", cpp)
+        self.assertIn("decltype(N::C::cache)", cpp)
+
+
 class UnsupportedTypeTest(unittest.TestCase):
     """The UNSUPPORTED_TYPES guard must hard-fail rather than silently skip."""
 

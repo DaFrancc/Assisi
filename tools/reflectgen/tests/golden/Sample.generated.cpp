@@ -8,8 +8,47 @@
 #include <cstdint>
 #include <Assisi/Testing/Sample.hpp>
 
+// Declared, never defined — the real one lives in <Assisi/Runtime/InstanceView.hpp>.
+namespace Assisi::Runtime { template <typename T> struct InstanceView; }
+
 namespace
 {
+// ── The InstanceView storage ban ─────────────────────────────────────────────
+// Also checked by reflectgen, which matches spellings — and a spelling can lie:
+// an alias declared in another header reaches the generator as an ordinary word,
+// where decltype sees the type itself. A stored view is a member list that goes
+// stale; keep the ECS::InstanceId and re-resolve with FindInstance<T>. Transient
+// fields are asserted too: the objection is to storing one at all.
+template <typename T> inline constexpr bool _reflectgen_is_instance_view = false;
+template <typename T>
+inline constexpr bool _reflectgen_is_instance_view<Assisi::Runtime::InstanceView<T>> = true;
+
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::f)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::d)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::i32)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::u32)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::i64)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::u64)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::flag)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::shape)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::v2)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::v3)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::v4)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::q)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::m)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::assetPath)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::label)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::paths)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleAllTypes::runtimeCache)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRef::target)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleTransient::ignored)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadio::mode)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadio::intensity)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadio::sub)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleRadio::level)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleReplicated::shared)>);
+static_assert(!_reflectgen_is_instance_view<decltype(Assisi::Runtime::SampleReplicated::serverOnly)>);
+
 // ── SampleAllTypes ────────────────────────────────────────────────────────────
 static const bool _reflectgen_SampleAllTypes = []() -> bool
 {
