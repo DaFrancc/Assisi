@@ -20,6 +20,16 @@ all three are mirrored from FlattenInto/FlattenInstance:
 The runtime typed-spawn test is the guard on that agreement: it spawns a real
 nested blueprint and resolves every generated field, so a divergence fails a
 test rather than returning a null handle to a game.
+
+The same argument makes this file refuse what Blueprint.cpp refuses — today the
+file version and a nested instance's non-uniform scale. A file this accepts and
+the loader rejects is the silent failure in its worst form: the build succeeds,
+the call sites compile, and every spawn of that blueprint is empty forever with
+nothing pointing at the file. The manifest cross-check cannot cover it, because
+it only compares blueprints that already loaded. Where a refusal is mirrored,
+its leniency is mirrored with it: refusing a file the loader would have taken
+fails a build over a legal blueprint, which is the same divergence pointing the
+other way.
 """
 
 import json
@@ -62,11 +72,80 @@ def _read(root, source):
     path = Path(root) / source
     try:
         with open(path, 'r', encoding='utf-8') as handle:
-            return json.load(handle)
+            doc = json.load(handle)
     except FileNotFoundError:
         raise ViewError(f"'{source}' does not exist under {root}")
     except json.JSONDecodeError as error:
         raise ViewError(f"'{source}' is not readable JSON: {error}")
+
+    _check_version(doc, source)
+    return doc
+
+
+def _check_version(doc, source):
+    """Blueprint.cpp ReadFile: version 2 or the loader refuses the file.
+
+    Here rather than at the runtime, because the alternative is the worst
+    failure this system has. A version the loader will not read still generates
+    a full view, so the build succeeds, every call site compiles, and then
+    GetBlueprintDefinition hands back nothing and every spawn of the blueprint
+    is empty forever — with nothing naming the file that caused it. The manifest
+    cross-check cannot catch it either: it only compares files that already
+    loaded.
+    """
+    if not isinstance(doc, dict):
+        return  # Not an object at all; _flatten_into says so with more context.
+
+    if 'version' not in doc:
+        raise ViewError(
+            f"'{source}' declares no version; the runtime loader reads version 2 only, "
+            'and would refuse to spawn it')
+
+    # A number, and equal to 2. The loader's `value("version", 0)` truncates, so
+    # a 2.0 lands on 2 there and is taken here for the same reason; a bool is not
+    # a JSON number to nlohmann's is_number, and `True == 2` is false anyway.
+    version = doc['version']
+    if isinstance(version, bool) or not isinstance(version, (int, float)) or version != 2:
+        raise ViewError(
+            f"'{source}' is version {json.dumps(version)}; the runtime loader reads version 2 "
+            'only, and would refuse to spawn it')
+
+
+def _instance_scale(entry):
+    """Blueprint.cpp TransformFromJson, for the one field the loader judges.
+
+    Deliberately as lenient as the C++: the slots are checked before any of them
+    is read, and one that is not a number leaves the *whole* field at the
+    Transform default rather than half-read. Being stricter here would fail the
+    build on a file that loads.
+    """
+    transform = entry.get('transform')
+    if not isinstance(transform, dict):
+        return (1.0, 1.0, 1.0)
+
+    scale = transform.get('scale')
+    if not isinstance(scale, list) or len(scale) != 3:
+        return (1.0, 1.0, 1.0)
+    for slot in scale:
+        # bool is an int in Python; it is not a number to nlohmann's is_number.
+        if isinstance(slot, bool) or not isinstance(slot, (int, float)):
+            return (1.0, 1.0, 1.0)
+    return tuple(float(slot) for slot in scale)
+
+
+def _has_uniform_scale(scale):
+    """Blueprint.cpp HasUniformScale: relative, so scale-independent.
+
+    The tolerance is for a hand-typed 1.0000001, not to let a real
+    non-uniformity through. Computed in double here and in float there, which
+    only parts them on a value already sitting on the tolerance itself.
+    """
+    tolerance = 1e-5
+    x, y, z = scale
+    mean = (abs(x) + abs(y) + abs(z)) / 3.0
+    if mean <= 0.0:
+        return x == y and y == z
+    return abs(x - y) / mean < tolerance and abs(y - z) / mean < tolerance
 
 
 def _is_removed(member_name, removed):
@@ -95,6 +174,16 @@ def _flatten_instance(state, entry, source, prefix):
     if child_source in state.stack:
         chain = ' -> '.join(state.stack + [child_source])
         raise ViewError(f'instance cycle: {chain}')
+
+    # The loader's refusal, at the point the loader makes it — at every depth,
+    # because that is where FlattenInstance checks. The view it would otherwise
+    # generate is a full one for a blueprint that never spawns.
+    scale = _instance_scale(entry)
+    if not _has_uniform_scale(scale):
+        raise ViewError(
+            f"'{source}' instance '{name}' has a non-uniform scale "
+            f'({scale[0]}, {scale[1]}, {scale[2]}); an instance may only translate, rotate, '
+            'or scale uniformly, and the runtime loader would refuse to spawn it')
 
     child_prefix = prefix + name + '/'
     first = len(state.members)
