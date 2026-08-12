@@ -439,7 +439,7 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
             Core::BitWriter announcement;
             WriteMessageType(MessageType::Announcement, announcement);
             announcement.WriteVarUInt64(_simTick);
-            announcement.WriteVarUInt32(subject.value);
+            announcement.WriteVarId(subject); // wire write
             announcement.WriteBytes(bytes);
             _transport.Send(connection.id, announcement.Data(), Net::SendMode::Reliable, Net::Lane::Control);
             ++connection.diagnostics.announcementsSent;

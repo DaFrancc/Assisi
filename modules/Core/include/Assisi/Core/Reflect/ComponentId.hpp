@@ -8,6 +8,8 @@
 /// which indexes its component pools by id) can resolve an id without pulling in
 /// ComponentMeta and its nlohmann/json dependency.
 
+#include <Assisi/Core/StrongId.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -79,6 +81,16 @@ template <typename T> ComponentId ComponentIdOf()
 }
 
 } // namespace Assisi::Core::Reflect
+
+namespace Assisi::Core
+{
+/// Encodes as a varint on the wire — the per-block prefix every component
+/// payload carries.
+template <> struct IsStrongId<Reflect::ComponentId> : std::true_type
+{
+};
+static_assert(StrongId<Reflect::ComponentId>);
+} // namespace Assisi::Core
 
 /// Prints as the bare number, so a log line reads "component 7" rather than
 /// making every call site spell `.value`. Without this the type would be

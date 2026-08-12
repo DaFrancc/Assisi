@@ -201,7 +201,7 @@ void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
 {
     const BodyQuantization &q = gQuantization;
 
-    writer.WriteVarUInt32(state.netId.value); // wire write
+    writer.WriteVarId(state.netId); // wire write
     writer.WriteBool(state.asleep);
 
     writer.WriteFloatQuantized(state.position.x, -q.positionExtent, q.positionExtent, q.positionBits);
@@ -235,7 +235,7 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
     const BodyQuantization &q = gQuantization;
 
     BodyState state;
-    state.netId  = NetId{reader.ReadVarUInt32()}; // wire read
+    state.netId  = reader.ReadVarId<NetId>(); // wire read
     state.asleep = reader.ReadBool();
 
     state.position.x = reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits);
