@@ -295,6 +295,13 @@ class ReplicationServer
 
     [[nodiscard]] std::size_t ConnectionCount() const { return _connections.size(); }
 
+    /// @brief Instances currently holding a NetId block.
+    ///
+    /// A gauge, not a total: a block is retired with its last member, so this
+    /// counts the live instances rather than every one the session has seen. It
+    /// tracks the world; climbing while the world does not is a leak.
+    [[nodiscard]] std::size_t InstanceBlockCount() const { return _instanceBlocks.size(); }
+
     /// @brief Whether the connection completed its handshake and is receiving
     /// snapshots.
     [[nodiscard]] bool IsReady(Net::ConnectionId connection) const;
@@ -819,13 +826,19 @@ class ReplicationServer
     /// allocation, never re-read per snapshot: an unacked record must describe
     /// the instance as it was when its ids were handed out, or a late joiner and
     /// an early one compose the same members from different placements.
+    ///
+    /// Retired by `ReconcileNetIds` when the last member of an instance is gone,
+    /// along with the two views below and the instance's slot in every
+    /// connection. Ids are still never reused: an instance appearing again after
+    /// that allocates a *new* block at a new base, which is what makes it a new
+    /// instance to the client as well.
     std::unordered_map<ECS::InstanceId, InstanceBlock> _instanceBlocks;
 
     /// The same blocks the other way round: base NetId → the instance that owns
     /// it. Read by `instanceFromWire`, so an instance id arriving in an intent
-    /// names this machine's instance rather than the sender's. Written only
-    /// beside the map above, which is never erased from — a NetId is never
-    /// reused, so neither is a base.
+    /// names this machine's instance rather than the sender's. Written and erased
+    /// only beside the map above, so a base whose instance is gone resolves to
+    /// nothing rather than to whatever holds that id next.
     std::unordered_map<NetId, ECS::InstanceId> _instanceByBase;
 
     /// The same blocks as `(base, memberCount)`, sorted by base, answering
@@ -833,7 +846,8 @@ class ReplicationServer
     /// relevant entity per connection per snapshot and the map above cannot.
     ///
     /// Stays sorted by construction: `_nextNetId` only climbs, so each new block
-    /// starts above every existing one and appending is enough.
+    /// starts above every existing one and appending is enough. A retirement
+    /// erases in place, which leaves the order it found.
     std::vector<std::pair<NetId, std::uint32_t>> _blockRanges;
 
     /// Scratch for relevancy's block escalation. A member, not a local, so a

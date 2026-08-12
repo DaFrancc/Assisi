@@ -1674,6 +1674,143 @@ TEST_CASE("Blueprint replication: a member the client never expanded is not elid
     CHECK(seen->position.x == doctest::Approx(12.f));
 }
 
+TEST_CASE("Blueprint replication: an instance's block is dropped when its last member dies")
+{
+    // The server's block bookkeeping tracks the live world rather than
+    // everything the session has seen: a block, its reverse entry and its range
+    // are keyed by an instance, and retire with that instance's last member. The
+    // bound this holds is on a session that spawns and destroys instances, where
+    // the ranges are binary-searched per relevant entity per connection per
+    // snapshot.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+    fixture.instances->Add(ECS::InstanceId{2}, 3);
+
+    std::vector<ECS::Entity> first;
+    std::vector<ECS::Entity> second;
+    for (std::uint32_t index = 0; index < 3; ++index)
+    {
+        first.push_back(fixture.Member(ECS::InstanceId{1}, index));
+        second.push_back(fixture.Member(ECS::InstanceId{2}, index));
+    }
+
+    (void)InstallExpander(fixture);
+    fixture.Connect();
+    fixture.Step(6);
+    REQUIRE(fixture.server.InstanceBlockCount() == 2);
+
+    const NetId firstBase = fixture.server.NetIdOf(first[0]);
+    REQUIRE(firstBase != InvalidNetId);
+
+    // Two of three gone is not gone: the block's width is the definition's, and
+    // the survivor's id is derived from a base that must not move under it.
+    fixture.scene.Destroy(second[0]);
+    fixture.scene.Destroy(second[1]);
+    fixture.scene.FlushDestroyed();
+    fixture.Step(6);
+    CHECK(fixture.server.InstanceBlockCount() == 2);
+
+    fixture.scene.Destroy(second[2]);
+    fixture.scene.FlushDestroyed();
+    fixture.Step(6);
+
+    // Exactly one, not zero: with two instances in play, a sweep that clears the
+    // map wholesale fails here rather than passing for the wrong reason.
+    CHECK(fixture.server.InstanceBlockCount() == 1);
+
+    // ...and the survivor is untouched — same base, same block, same ids.
+    CHECK(fixture.server.NetIdOf(first[0]) == firstBase);
+    CHECK(fixture.server.NetIdOf(first[2]) == NetId{firstBase.value + 2});
+
+    // A retired instance is a stranger, not a hole. One appearing again under a
+    // forgotten id allocates a fresh block above everything live, which is what
+    // the client — which retired its record on the same event — expands against.
+    const ECS::Entity revived = fixture.Member(ECS::InstanceId{2}, 0);
+    fixture.Step(6);
+    CHECK(fixture.server.InstanceBlockCount() == 2);
+    const NetId revivedBase = fixture.server.NetIdOf(revived);
+    REQUIRE(revivedBase != InvalidNetId);
+    CHECK(revivedBase.value > firstBase.value + 2);
+}
+
+TEST_CASE("Blueprint replication: without an expander a member arrives missing its authored components")
+{
+    // What an expander costs to leave out, which is more than assembly. The
+    // authored-value elision is gated on the block's `derivable` bits — what the
+    // *file* holds — and the server has no signal for whether the peer expanded
+    // that file, so the components the expansion would have supplied are exactly
+    // the ones never sent, and nothing re-stamps an unchanging value.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+    // Every component matches the file, which is the strongest form of the case.
+    fixture.instances->matchEverything = true;
+
+    std::vector<ECS::Entity> members;
+    for (std::uint32_t index = 0; index < 3; ++index)
+    {
+        const ECS::Entity member = fixture.Member(ECS::InstanceId{1}, index);
+        if (ECS::Transform *pose = fixture.scene.Get<ECS::Transform>(member))
+            pose->position = {static_cast<float>(index), 0.f, 0.f};
+        members.push_back(member);
+    }
+
+    fixture.AssignIds();
+    const NetId base = fixture.server.NetIdOf(members[0]);
+    REQUIRE(base != InvalidNetId);
+
+    // No expander installed. That is the whole case.
+    fixture.Connect();
+    fixture.Step(8);
+
+    // The record lands and the members arrive as ordinary entities...
+    REQUIRE(fixture.client.InstanceRecords().size() == 1);
+    REQUIRE(HasLiveMirror(fixture, NetId{base.value + 1}));
+
+    // ...bare, not merely unassembled: a mirror with no Transform is one the
+    // renderer cannot place and the inspector shows as an empty row.
+    const ECS::Entity mirror = fixture.client.EntityOf(NetId{base.value + 1});
+    CHECK(fixture.clientScene.Get<ECS::Transform>(mirror) == nullptr);
+}
+
+TEST_CASE("Blueprint replication: Reset forgets the session, not just the mirrors")
+{
+    // Reset drops the whole session, not only the entities it built: the
+    // instance records and both halves of the base/instance translation go with
+    // the mirrors. What makes this reachable is a rejoin on the same object,
+    // which is the case Reset exists for — NetSession::Disconnect destroys the
+    // client instead, and asks nothing of any of it.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 3);
+    std::vector<ECS::Entity> members;
+    for (std::uint32_t index = 0; index < 3; ++index)
+        members.push_back(fixture.Member(ECS::InstanceId{1}, index));
+
+    FakeExpander *expander = InstallExpander(fixture);
+    fixture.Connect();
+    fixture.Step(8);
+    const NetId base = fixture.server.NetIdOf(members[0]);
+    REQUIRE(base != InvalidNetId);
+    REQUIRE(fixture.client.InstanceRecords().size() == 1);
+    REQUIRE(expander->calls == 1);
+    REQUIRE(expander->expandedByBase.contains(base));
+    REQUIRE(expander->collapsed.empty());
+
+    fixture.client.Reset();
+    fixture.clientScene.FlushDestroyed();
+
+    // The records go with the mirrors. A record left behind is a base that still
+    // resolves to an instance whose members are destroyed, and — because a record
+    // is expanded only the first time it arrives — an instance the next join
+    // never rebuilds.
+    CHECK(fixture.client.InstanceRecords().empty());
+    CHECK(fixture.client.ReplicatedEntityCount() == 0);
+
+    // And the expander is told, naming the id it chose, so whatever it recorded
+    // beside the entities goes too. It is the only thing that can reach those.
+    REQUIRE(expander->collapsed.size() == 1);
+    CHECK(expander->collapsed[0].value == expander->expandedByBase[base].value);
+}
+
 namespace
 {
 

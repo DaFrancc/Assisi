@@ -9,6 +9,7 @@
 #include <glm/gtc/quaternion.hpp>
 
 #include <algorithm>
+#include <vector>
 
 #include "ReplicationInternal.hpp"
 
@@ -412,19 +413,58 @@ void ReplicationClient::Reset()
     _bodies.clear();
     _transformHistory.clear();
     _pendingRefs.clear();
+
+    // Every instance retires at once — the wholesale form of what the despawn
+    // path does one record at a time. The members are already destroyed above,
+    // which is the order Collapse requires; what it drops is whatever the
+    // expansion put somewhere only the expander can reach.
+    //
+    // Ids first, maps cleared, expander called last: Collapse is App code
+    // reaching into a world this class knows nothing about, so it runs with no
+    // container of ours being iterated.
+    std::vector<ECS::InstanceId> collapsed;
+    collapsed.reserve(_instanceIdByBase.size());
+    for (const auto &[base, localInstance] : _instanceIdByBase)
+    {
+        (void)base;
+        collapsed.push_back(localInstance);
+    }
+    _instanceRecords.clear();
+    _instanceIdByBase.clear();
+    _baseByInstanceId.clear();
+    _deferredAnnouncements.clear();
+    if (_instanceExpander != nullptr)
+    {
+        for (const ECS::InstanceId localInstance : collapsed)
+            _instanceExpander->Collapse(localInstance);
+    }
+
     _feedback          = ClockFeedback{};
     _handshake         = ServerHello{};
     _corrections       = CorrectionStats{};
     _lastAppliedTick   = 0;
     _snapshotsApplied  = 0;
     _snapshotsRejected = 0;
+    _eventsDispatched  = 0;
+    _eventsUnhandled   = 0;
     _synchronized      = false;
     _worldComplete     = false;
     _awaitingLevel     = false;
+    // The join gate, and load-bearing: SetContentSetHash completes a join the
+    // moment both halves are in, so this must go back to "the application has
+    // not said its world is built" or a hash arriving first would send the next
+    // hello on its own.
+    _levelReady = false;
     _rejectMessage.clear();
     // _structureRevision deliberately survives: consumers compare it against
     // their own last-acted-on value, so resetting it to 0 would make a rejoin
     // look like no change at all.
+    //
+    // So does everything the *application* installed rather than the session: the
+    // expander, `_deferHandshake`, and the content-set hash. Those describe this
+    // build and this machine, not the connection that just ended, and the next
+    // join needs them already in place — its hello goes out exactly once, with
+    // nothing to retry if a half is missing.
 }
 
 } // namespace Assisi::NetSync

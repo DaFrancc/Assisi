@@ -68,14 +68,57 @@ void ReplicationServer::ReconcileNetIds()
     // is the cheap side; the expensive side is a revived member whose
     // authored-equal components are elided against a client copy that does not
     // exist.
-    for (auto &[instanceId, block] : _instanceBlocks)
+    //
+    // The same walk retires the block itself, on the last member's departure.
+    // This is the only place any of the three structures below is erased from,
+    // and it has to happen: they are keyed by instance and by base, neither of
+    // which a dead instance stops occupying, and `_blockRanges` is
+    // binary-searched per relevant entity per connection per snapshot.
+    //
+    // "No member left" is the client's predicate for retiring a record too, so
+    // both ends forget the same instance on the same event. An instance that
+    // reappears afterwards is a new one to both: it allocates a fresh block
+    // above everything live, and the client expands the record it is named by
+    // rather than binding members to an expansion it has already collapsed.
+    for (auto it = _instanceBlocks.begin(); it != _instanceBlocks.end();)
     {
-        (void)instanceId;
+        InstanceBlock &block   = it->second;
+        std::uint32_t  present = 0;
         for (std::uint32_t member = 0; member < block.memberCount; ++member)
         {
-            if (block.derivable[member] != 0u && !_entityByNetId.contains(NetId{block.base.value + member}))
+            if (_entityByNetId.contains(NetId{block.base.value + member}))
+                ++present;
+            else
                 block.derivable[member] = 0u;
         }
+
+        if (present != 0)
+        {
+            ++it;
+            continue;
+        }
+
+        // The connections too: an instance holds a slot in the acked set and the
+        // in-flight ring of every connection it reached, which are per-connection
+        // copies of the same key. ForgetAckedInstance drops both, and leaves each
+        // connection in the state that resends a record — the right one, since
+        // anything named at this base later is an instance the client has not
+        // been told about.
+        for (auto &[connectionId, connection] : _connections)
+        {
+            (void)connectionId;
+            ForgetAckedInstance(connection, it->first);
+        }
+
+        _instanceByBase.erase(block.base);
+        if (const auto range =
+                std::lower_bound(_blockRanges.begin(), _blockRanges.end(), block.base,
+                                 [](const auto &entry, NetId value) { return entry.first < value; });
+            range != _blockRanges.end() && range->first == block.base)
+        {
+            _blockRanges.erase(range); // erasing keeps what a sort established
+        }
+        it = _instanceBlocks.erase(it);
     }
 
     // Here rather than incrementally: this is the one point per tick that has
