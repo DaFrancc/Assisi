@@ -33,6 +33,8 @@
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+#include "LogCapture.hpp"
+
 using namespace Assisi;
 using Assisi::Runtime::InstanceTable;
 using Assisi::Runtime::SceneSerializer;
@@ -291,6 +293,8 @@ TEST_CASE("Authoring: a reference leaving the selection is nulled, not dangled")
     // The body now points at something the blueprint will not contain.
     scene.GetMut<Runtime::Parent>(selection.lid)->parent = outsider;
 
+    const Tests::LogCapture log;
+
     REQUIRE(SceneSerializer::SaveEntitiesToFile(scene, selection.all, root / "crate.abp",
                                                 *scene.Get<ECS::Transform>(selection.body)));
 
@@ -299,4 +303,11 @@ TEST_CASE("Authoring: a reference leaving the selection is nulled, not dangled")
     const Runtime::BlueprintResult loaded = Runtime::GetBlueprintDefinition("crate.abp");
     REQUIRE(loaded.has_value());
     CHECK((*loaded)->members[1].components.at("Parent").at("parent").is_null());
+
+    // And the author is told, which is the half the null cannot carry: "create
+    // blueprint from selection" is a gesture people make on a subset of a wired-up
+    // level, and every wire leaving that subset is cut by it. Named down to the
+    // field, because "some reference was dropped" does not tell anyone what to
+    // re-wire.
+    CHECK(log.Mentions("Parent::parent on 'lid'"));
 }

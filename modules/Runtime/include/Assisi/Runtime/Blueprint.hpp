@@ -133,6 +133,21 @@ struct BlueprintDefinition
     /// rather than by the level having remembered to ask (§8, §9).
     std::vector<std::string> systems;
 
+    /// Members an in-file `removed` took out, by the same flattened path they had
+    /// before the erase.
+    ///
+    /// Kept because a removal must not orphan a reference *fatally*. The name stays
+    /// **declared and mapped at nothing** — at preparation, and again under the
+    /// instance's own prefix at expansion — so a reference to it nulls with a
+    /// warning, the way a per-instance removal's does and the way §6 says. Without
+    /// it the name simply ceases to exist, becomes indistinguishable from one the
+    /// file never declared, and takes the whole definition down with it.
+    ///
+    /// A *list*, not holes in `members`: these removals are authored in a file, so
+    /// every instance of it has the same member list, and that list is the index
+    /// NetIds are assigned from.
+    std::vector<std::string> removedMembers;
+
     /// @p source plus every file reachable from it by instancing, sorted and
     /// deduplicated. Warms the cache (loading `car_with_antenna.abp` warms
     /// `car.abp`, since the closure is walked anyway) and is what a content hash
