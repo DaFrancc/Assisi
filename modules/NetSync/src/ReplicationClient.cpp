@@ -493,6 +493,20 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             Core::Log::Error("NetSync: could not expand instance blueprint {} ({} members expected, {} "
                              "produced) — refusing the snapshot",
                              entry.blueprintIndex, entry.memberCount, members.size());
+
+            // A short expansion still built something: those entities were never
+            // bound to a NetId, so no despawn run will ever name them and nothing
+            // else knows they are there. They and the instance the expander
+            // recorded go back the way they came, rather than being left in the
+            // world as an instance nobody can account for.
+            for (const ECS::Entity member : members)
+            {
+                if (member != ECS::NullEntity && _scene.IsAlive(member))
+                    _scene.Destroy(member);
+            }
+            if (localInstance.IsValid())
+                _instanceExpander->Collapse(localInstance);
+
             _instanceRecords.erase(entry.base);
             reader.Invalidate();
             return false;
@@ -593,10 +607,16 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     // Only records a run actually touched are considered: one whose members have
     // not arrived yet — held back by the byte budget, or waiting on an expander —
     // has no bindings either, and must not be mistaken for one that lost them all.
+    //
+    // The expander is told afterwards rather than from inside the predicate: it
+    // is App code reaching into a world this class knows nothing about, and
+    // calling out of a container mid-erase is how that becomes a re-entrancy bug
+    // the day an expander does something less simple than dropping a row.
+    std::vector<ECS::InstanceId> collapsed;
     if (!despawnRuns.empty())
     {
         std::erase_if(_instanceRecords,
-                      [this, &despawnRuns](const std::pair<const NetId, InstanceRecord> &row)
+                      [this, &despawnRuns, &collapsed](const std::pair<const NetId, InstanceRecord> &row)
                       {
                           const NetId base = row.second.base;
                           // 64-bit, so a block or a run running off the top of
@@ -629,11 +649,23 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
                           // base the server has retired.
                           if (const auto local = _instanceIdByBase.find(base); local != _instanceIdByBase.end())
                           {
+                              collapsed.push_back(local->second);
                               _baseByInstanceId.erase(local->second);
                               _instanceIdByBase.erase(local);
                           }
                           return true;
                       });
+    }
+
+    // Everything this class owns for those instances is gone; what the expansion
+    // put somewhere else is not, and only the expander can reach it. Without
+    // this the client destroys every member of an instance and leaves the
+    // instance itself behind — a row with nothing in it, for the rest of the
+    // session (round-7 S5).
+    if (_instanceExpander != nullptr)
+    {
+        for (const ECS::InstanceId instanceId : collapsed)
+            _instanceExpander->Collapse(instanceId);
     }
 
     const Core::Reflect::ComponentRegistry &registry = Core::Reflect::ComponentRegistry::Instance();

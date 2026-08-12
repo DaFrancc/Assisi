@@ -436,7 +436,8 @@ class FakeExpander final : public InstanceExpander
         // A local id of this machine's own choosing — deliberately not the
         // server's, which is the whole point of the translation.
         outInstance = ECS::InstanceId{100u + static_cast<std::uint32_t>(calls)};
-        const std::uint32_t count = _produce != 0 ? _produce : record.memberCount;
+        expandedByBase[record.base] = outInstance;
+        const std::uint32_t count   = _produce != 0 ? _produce : record.memberCount;
         for (std::uint32_t i = 0; i < count; ++i)
         {
             const ECS::Entity entity = scene->Create();
@@ -446,9 +447,15 @@ class FakeExpander final : public InstanceExpander
         return true;
     }
 
-    ECS::Scene *scene = nullptr;
-    bool        fail  = false;
-    int         calls = 0;
+    void Collapse(ECS::InstanceId localInstance) override { collapsed.push_back(localInstance); }
+
+    ECS::Scene                  *scene = nullptr;
+    bool                         fail  = false;
+    int                          calls = 0;
+    std::vector<ECS::InstanceId> collapsed;
+    /// What this expander answered for each record, so a test can name the id it
+    /// chose rather than the server's — which is the whole point of the pair.
+    std::unordered_map<NetId, ECS::InstanceId> expandedByBase;
 
   private:
     std::uint32_t _produce = 0;
@@ -963,6 +970,98 @@ TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
     // against a placement nobody is maintaining.
     CHECK(client.ReplicatedEntityCount() == 0);
     CHECK(client.InstanceRecords().empty());
+}
+
+TEST_CASE("Blueprint replication: a retired record collapses the instance the expander built")
+{
+    Net::NetTransport transport;
+    ECS::Scene        serverScene;
+    ECS::Scene        clientScene;
+    const auto        pair = transport.CreateLoopbackPair();
+
+    ReplicationServer server{transport, serverScene};
+    ReplicationClient client{transport, clientScene, pair.second};
+
+    auto  owned     = std::make_unique<FakeInstances>();
+    auto *instances = owned.get();
+    instances->Add(ECS::InstanceId{1}, 3);
+    instances->Add(ECS::InstanceId{2}, 3);
+    server.SetInstanceInfoProvider(std::move(owned));
+
+    auto  ownedExpander = std::make_unique<FakeExpander>();
+    auto *expander      = ownedExpander.get();
+    expander->scene     = &clientScene;
+    client.SetInstanceExpander(std::move(ownedExpander));
+
+    // Two instances, so this measures *which* one was collapsed rather than just
+    // that something was. One alone passes against a fix that collapses every
+    // instance it has whenever any record retires.
+    const auto build = [&](ECS::InstanceId instanceId)
+    {
+        std::vector<ECS::Entity> members;
+        for (std::uint32_t index = 0; index < 3; ++index)
+        {
+            const ECS::Entity entity = serverScene.Create();
+            (void)serverScene.Add(entity, ECS::Transform{});
+            (void)serverScene.Add(entity, Replicated{});
+            (void)serverScene.Add(entity, ECS::BlueprintMember{.instanceId = instanceId, .memberIndex = index});
+            members.push_back(entity);
+        }
+        return members;
+    };
+    const std::vector<ECS::Entity> first  = build(ECS::InstanceId{1});
+    const std::vector<ECS::Entity> second = build(ECS::InstanceId{2});
+
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
+    server.AddConnection(pair.first);
+
+    std::uint64_t tick = 1;
+    const auto    step = [&](int times)
+    {
+        for (int i = 0; i < times; ++i)
+        {
+            std::vector<Net::NetEvent> events;
+            transport.Poll(events);
+            for (const Net::NetEvent &event : events)
+            {
+                if (event.type != Net::NetEvent::Type::Message)
+                    continue;
+                if (event.connection == pair.first)
+                    server.HandleMessage(pair.first, event.payload);
+                else
+                    client.HandleMessage(event.payload);
+            }
+            server.Tick(tick++);
+        }
+    };
+
+    step(10);
+    REQUIRE(client.InstanceRecords().size() == 2);
+    const NetId firstBase  = server.NetIdOf(first[0]);
+    const NetId secondBase = server.NetIdOf(second[0]);
+    REQUIRE(expander->expandedByBase.contains(firstBase));
+    REQUIRE(expander->expandedByBase.contains(secondBase));
+
+    // Expanded is not retired: a live instance must not be collapsed out from
+    // under itself just because a snapshot arrived.
+    CHECK(expander->collapsed.empty());
+
+    for (const ECS::Entity member : second)
+        serverScene.Destroy(member);
+    serverScene.FlushDestroyed();
+    step(10);
+
+    REQUIRE(client.InstanceRecords().size() == 1);
+
+    // Once, and naming the id the *expander* chose — 100-and-up here, deliberately
+    // nothing like the server's InstanceId{2}, because the server's id means
+    // nothing on this machine. Without this call the expander is never told, and
+    // whatever it recorded when it expanded outlives every member of the instance
+    // (round-7 S5).
+    REQUIRE(expander->collapsed.size() == 1);
+    CHECK(expander->collapsed[0].value == expander->expandedByBase[secondBase].value);
+    CHECK(expander->collapsed[0].value != expander->expandedByBase[firstBase].value);
 }
 
 TEST_CASE("Blueprint replication: a block is allocated once and outlives the tick")
