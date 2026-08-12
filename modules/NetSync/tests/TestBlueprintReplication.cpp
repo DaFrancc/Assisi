@@ -1245,6 +1245,120 @@ TEST_CASE("Blueprint replication: escalation still delivers a ControllerOnly mem
     CHECK(fixture.client.ReplicatedEntityCount() == 3);
 }
 
+TEST_CASE("Blueprint replication: escalation costs each relevant block its member count, once")
+{
+    // S10. Escalation used to push the whole block once per already-relevant
+    // member of it, so a car every one of whose members the provider named cost
+    // memberCount² pushes and a sort over the result. The shape is invisible at
+    // three members and ruinous at the scale the finding quotes — 100 cars × 20
+    // members is 40k pushes and a 40k sort, per connection, per snapshot.
+    //
+    // Pinned on the counter rather than on a clock: what the finding is about is
+    // the work done, and a timing assertion at test scale measures the machine.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 4);
+    fixture.instances->Add(ECS::InstanceId{2}, 4);
+    fixture.instances->Add(ECS::InstanceId{3}, 4);
+
+    std::vector<ECS::Entity> first;
+    std::vector<ECS::Entity> second;
+    for (std::uint32_t index = 0; index < 4; ++index)
+        first.push_back(fixture.Member(ECS::InstanceId{1}, index));
+    for (std::uint32_t index = 0; index < 4; ++index)
+        second.push_back(fixture.Member(ECS::InstanceId{2}, index));
+    for (std::uint32_t index = 0; index < 4; ++index)
+        (void)fixture.Member(ECS::InstanceId{3}, index);
+
+    fixture.AssignIds();
+    const NetId firstBase  = fixture.server.NetIdOf(first[0]);
+    const NetId secondBase = fixture.server.NetIdOf(second[0]);
+    REQUIRE(firstBase != InvalidNetId);
+    REQUIRE(secondBase != InvalidNetId);
+
+    auto  owned    = std::make_unique<PickyProvider>();
+    auto *provider = owned.get();
+    // The worst case for the old loop and the ordinary case in a real session:
+    // every member of two instances is independently relevant. The third is named
+    // by nothing, and must cost nothing.
+    for (std::uint32_t index = 0; index < 4; ++index)
+    {
+        provider->named.push_back(NetId{firstBase.value + index});
+        provider->named.push_back(NetId{secondBase.value + index});
+    }
+    std::sort(provider->named.begin(), provider->named.end());
+    fixture.server.SetRelevancyProvider(std::move(owned));
+
+    fixture.Connect();
+
+    const ConnectionDiagnostics *diagnostics = fixture.server.Diagnostics(fixture.pair.first);
+    REQUIRE(diagnostics != nullptr);
+
+    // Two blocks of four, each escalated once: eight. The old loop pushed each
+    // block once per member of it already in the set — 4² + 4² = 32.
+    CHECK(diagnostics->escalationPushes == 8);
+
+    // ...and the saving is in the work, not in the answer: both cars are still
+    // whole, which is the only reason escalation exists.
+    for (std::uint32_t index = 0; index < 4; ++index)
+    {
+        CHECK(fixture.server.IsRelevant(fixture.pair.first, NetId{firstBase.value + index}));
+        CHECK(fixture.server.IsRelevant(fixture.pair.first, NetId{secondBase.value + index}));
+    }
+}
+
+TEST_CASE("Blueprint replication: skipping over an escalated block still sees the next one")
+{
+    // The hazard the skip-ahead introduces, and the reason this case sits beside
+    // the one above: having pushed a block, the walk advances past the rest of
+    // that block's ids in `effective`. Advancing one id too far, or by the block's
+    // member count from the current position, both still pass the counter case
+    // above and lose an instance here.
+    //
+    // Two *adjacent* blocks is what makes it bite. The second block's base is the
+    // first block's end, so a skip that stops one id late consumes it, and the
+    // only member of the second instance anything named goes with it — leaving
+    // three of its four members with no way into the set. A loose entity between
+    // the blocks would open a gap and hide exactly that.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 4);
+    fixture.instances->Add(ECS::InstanceId{2}, 4);
+
+    std::vector<ECS::Entity> first;
+    for (std::uint32_t index = 0; index < 4; ++index)
+        first.push_back(fixture.Member(ECS::InstanceId{1}, index));
+    std::vector<ECS::Entity> second;
+    for (std::uint32_t index = 0; index < 4; ++index)
+        second.push_back(fixture.Member(ECS::InstanceId{2}, index));
+
+    fixture.AssignIds();
+    const NetId firstBase  = fixture.server.NetIdOf(first[0]);
+    const NetId secondBase = fixture.server.NetIdOf(second[0]);
+    REQUIRE(firstBase != InvalidNetId);
+    REQUIRE(secondBase != InvalidNetId);
+    // The boundary the case is about: nothing sits between the two blocks.
+    REQUIRE(secondBase.value == firstBase.value + 4);
+
+    auto  owned    = std::make_unique<PickyProvider>();
+    auto *provider = owned.get();
+    // The last member of the first block and the first of the second — the two
+    // ids either side of the seam, and nothing else.
+    provider->named = {NetId{firstBase.value + 3}, secondBase};
+    fixture.server.SetRelevancyProvider(std::move(owned));
+
+    fixture.Connect();
+
+    for (std::uint32_t index = 0; index < 4; ++index)
+    {
+        CHECK(fixture.server.IsRelevant(fixture.pair.first, NetId{firstBase.value + index}));
+        CHECK(fixture.server.IsRelevant(fixture.pair.first, NetId{secondBase.value + index}));
+    }
+
+    const ConnectionDiagnostics *diagnostics = fixture.server.Diagnostics(fixture.pair.first);
+    REQUIRE(diagnostics != nullptr);
+    // Both blocks, each once, from one named member apiece.
+    CHECK(diagnostics->escalationPushes == 8);
+}
+
 TEST_CASE("Blueprint replication: two adjacent instances leaving together take both records")
 {
     // B7, fixed. Despawns are run-length encoded over the whole set and do not
