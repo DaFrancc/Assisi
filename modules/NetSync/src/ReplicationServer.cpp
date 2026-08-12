@@ -318,7 +318,7 @@ Core::Reflect::CodecContext ReplicationServer::DecodeContext()
 
     context.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
     // The codec's entity-ref slot is a bare uint64_t; NetId{} is the wire boundary.
-    { return PackEntity(EntityOf(NetId{static_cast<std::uint32_t>(wire)})); };
+    { return PackEntity(EntityOf(NetId{static_cast<NetIdValue>(wire)})); };
 
     // Base NetId in, this machine's own instance id out. Zero when no block was
     // ever allocated at that base, which leaves the field invalid rather than

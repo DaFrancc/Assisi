@@ -28,6 +28,7 @@
 #include <nlohmann/json.hpp>
 
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
+#include <Assisi/Core/StrongId.hpp>
 
 namespace Assisi::Core::Reflect
 {
@@ -138,6 +139,15 @@ template <typename T>
 struct MessageTraits;
 
 } // namespace Assisi::Core::Reflect
+
+namespace Assisi::Core
+{
+/// Encodes as a varint — the id prefix on every intent and event packet.
+template <> struct IsStrongId<Reflect::MessageId> : std::true_type
+{
+};
+static_assert(StrongId<Reflect::MessageId>);
+} // namespace Assisi::Core
 
 /// Prints as the bare number, so a log line reads "message 7" without every
 /// call site spelling `.value`. Without it the type would be strictly worse to

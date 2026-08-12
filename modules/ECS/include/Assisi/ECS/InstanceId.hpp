@@ -5,6 +5,8 @@
 /// @brief Which blueprint instance something belongs to — a number that means
 /// nothing outside the world that issued it.
 
+#include <Assisi/Core/StrongId.hpp>
+
 #include <cstddef>
 #include <cstdint>
 #include <format>
@@ -59,6 +61,17 @@ struct InstanceId
 inline constexpr InstanceId NullInstance{};
 
 } // namespace Assisi::ECS
+
+namespace Assisi::Core
+{
+/// Encodes as a varint. Note what crosses is never this number itself — the
+/// codec's instanceToWire hook substitutes the instance's base NetId — but the
+/// field it occupies is an id slot all the same.
+template <> struct IsStrongId<ECS::InstanceId> : std::true_type
+{
+};
+static_assert(StrongId<ECS::InstanceId>);
+} // namespace Assisi::Core
 
 /// Prints as the bare number, so a log line reads "instance 7" rather than making
 /// every call site spell `.value`. Without this the type would be strictly worse to
