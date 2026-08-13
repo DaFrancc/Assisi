@@ -571,11 +571,11 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
         const Physics::RigidBodyDescriptor *desc      = dst.scene.Get<Physics::RigidBodyDescriptor>(e);
         if (transform != nullptr && desc != nullptr && dst.scene.Get<Physics::RigidBody>(e) == nullptr)
             dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc, parentWorld);
-
-        if (Runtime::MeshRenderer *mesh = dst.scene.Get<Runtime::MeshRenderer>(e);
-            mesh != nullptr && _services.cache != nullptr && _services.database != nullptr)
-            Runtime::ResolveMeshRendererAssets(*mesh, *_services.cache, *_services.database);
     }
+
+    // The other transient, through the shared path: dst is one of this manager's
+    // worlds (checked above), so its back-pointer reaches these same services.
+    ResolveEntityAssets(dst, arrived);
 
     // arrived is parallel to subtree, and subtree[0] is the root (GatherSubtree is
     // root-first), so arrived[0] is the destination handle of the root.
@@ -658,6 +658,26 @@ void WorldManager::SetActive(World &world)
 void WorldManager::SetEdited(World &world)
 {
     _edited = &world;
+}
+
+void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities)
+{
+    // Both halves are needed and neither is guaranteed: a world built standalone
+    // has no manager at all, and a manager in a headless process has services
+    // whose render members are null. Either way there is nothing to resolve onto,
+    // which is why this is a quiet return rather than a complaint.
+    if (world.manager == nullptr)
+        return;
+
+    const WorldManager::Services &services = world.manager->GetServices();
+    if (services.cache == nullptr || services.database == nullptr)
+        return;
+
+    for (const ECS::Entity entity : entities)
+    {
+        if (Runtime::MeshRenderer *mesh = world.scene.Get<Runtime::MeshRenderer>(entity))
+            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache, *services.database);
+    }
 }
 
 void SyncUnrenderedWorld(World &world)

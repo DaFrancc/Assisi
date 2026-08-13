@@ -252,6 +252,18 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
         // `base + i` indexes — the two orderings being the same one is the whole
         // reason the server never sends a member list.
         out.assign(placed->members.begin(), placed->members.end());
+
+        // Drawable, not merely present — the same resolve SpawnBlueprint runs, for
+        // the same reason: expansion produces the members from the prepared form,
+        // which holds asset *ids*, and the draw path reads the transient pointers
+        // those resolve to. An expansion that skips it mirrors the world correctly
+        // and renders none of it. The editor happens to re-resolve the whole scene
+        // when the client's structure revision moves (EditorApp.cpp), so this was
+        // invisible there and total in a build with no editor in it (round-7 S14).
+        //
+        // A no-op on a headless client, which is the same answer SpawnBlueprint
+        // gives: no cache, nothing to resolve onto, and no entity left worse off.
+        ResolveEntityAssets(_world, placed->members);
         outInstance = placed->instanceId;
         return true;
     }

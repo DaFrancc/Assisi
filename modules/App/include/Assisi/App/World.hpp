@@ -30,6 +30,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -542,6 +543,23 @@ class WorldManager
     // capture only after any worker touching it has finished.
     void EraseWorld(World &world);
 };
+
+/// @brief Resolves the MeshRenderer of every entity in @p entities from @p
+/// world's render services — the step that makes freshly created entities
+/// *drawable* rather than merely present.
+///
+/// Serialized and prepared component data holds durable asset **ids**; the draw
+/// path reads the transient GPU pointers Runtime::ResolveMeshRendererAssets
+/// derives from them. A level load resolves its whole scene at once
+/// (RebindSceneAssetsAndPhysics); entities that appear afterwards — a spawn, a
+/// migration, a blueprint instance arriving over the wire — have to be resolved
+/// as they are created, or they draw nothing at all.
+///
+/// **A no-op when the world has no manager, or its manager has no cache and
+/// database.** That is the headless case and it is correct rather than merely
+/// tolerated: a dedicated server holds the same entities and has no GPU to
+/// resolve them onto.
+void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities);
 
 /// @brief Brings a simulated-but-unrendered world's Transforms up to date, in the
 /// order that actually works: **poses first, matrices second**.

@@ -994,6 +994,11 @@ void EditorApp::OnUpdate(float dt)
     // the world replicates correctly and draws nothing. The client's structure
     // revision is the signal; resolving is idempotent, so acting on it late costs
     // a frame of billboard and never correctness.
+    //
+    // Ordinary mirrored entities are what this is now *for*. A blueprint
+    // instance's members resolve as the expander places them (round-7 S14) —
+    // they have to, because that path has to work in a build with no editor in
+    // it, and this loop is one.
 #if defined(ASSISI_NETWORKING)
     if (_netSession != nullptr && _netSession->Client() != nullptr)
     {
