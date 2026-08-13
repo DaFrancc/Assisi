@@ -21,6 +21,7 @@
 #include <vector>
 
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Editor/ColliderPose.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Render/LinePass.hpp>
@@ -198,13 +199,11 @@ void EditorApp::SubmitColliderWireframes()
                                     : selected ? kSelectedColor
                                                : kUnselectedColor;
 
-        // Position+rotation only, no scale: that is how the Jolt body was built
-        // (PhysicsWorld::AddBodyFromDescriptor), and the descriptor's dimensions
-        // are absolute world units, so the wireframe traces the body rather than
-        // the mesh. Note this is the *local* pose; a parented body is placed at
-        // its resolved world pose, which this does not reproduce.
-        glm::mat4 bodyModel = glm::mat4_cast(tc.rotation);
-        bodyModel[3]        = glm::vec4(tc.position, 1.f);
+        // The world pose the Jolt body was built at, position and rotation only —
+        // see ColliderBodyModel. A parented body lives at its resolved world pose,
+        // so tracing its local offset would put the wireframe somewhere the body
+        // is not, and disagree with the mesh silhouette drawn below.
+        const glm::mat4 bodyModel = ColliderBodyModel(*_scene, entity, tc);
 
         // The traced edges go out for EVERY collider.
         std::vector<Assisi::Render::LineVertex> &lineOut =

@@ -9,10 +9,12 @@ Assisi_apply_defaults(Assisi-Editor)
 
 target_sources(Assisi-Editor
   PUBLIC
+    "include/Assisi/Editor/ColliderPose.hpp"
     "include/Assisi/Editor/EditHistory.hpp"
     "include/Assisi/Editor/EditorApp.hpp"
     "include/Assisi/Editor/PrePlayState.hpp"
   PRIVATE
+    "src/ColliderPose.cpp"
     "src/EditHistory.cpp"
     "src/EditorApp.cpp"
     "src/EditorAssetBrowser.cpp"

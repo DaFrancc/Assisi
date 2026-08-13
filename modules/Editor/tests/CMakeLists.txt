@@ -5,10 +5,12 @@
 # free of windowing/physics baggage.
 add_executable(Assisi-Editor-Tests
   main.cpp
+  TestColliderPose.cpp
   TestEditHistory.cpp
   TestInstanceGesture.cpp
   TestInstanceHistory.cpp
   TestPrePlayState.cpp
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
