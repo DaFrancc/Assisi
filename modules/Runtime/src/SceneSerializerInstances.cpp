@@ -15,6 +15,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 
 #include "SceneSerializerContext.hpp"
@@ -26,6 +27,29 @@
 
 namespace Assisi::Runtime
 {
+namespace
+{
+
+/// Spelled once so the two loops that skip it cannot drift apart.
+constexpr std::string_view kNameComponent = "Name";
+
+/// Says a member's declared Name was not honoured, and why.
+///
+/// The level path refuses the same thing for the same reason
+/// (SceneSerializerLevel.cpp): the `name` key is the address, not a suggestion.
+/// A member's address is its path — `car_3/body` is what an override, a
+/// reference and the Inspector all spell — so a Name that displaced the leaf
+/// would leave the member answering to something nothing in the level can reach
+/// it by. Warned rather than dropped in silence, because the author wrote a
+/// declaration that is not going to happen (round-7 S23).
+void WarnNameIgnored(std::string_view source, std::string_view memberName)
+{
+    Core::Log::Warn("Blueprint: '{}' member '{}' declares a Name component; the member's own name is "
+                    "authoritative and this one is ignored.",
+                    source, memberName);
+}
+
+} // namespace
 
 /// The name a saved entity is written under, before uniquing.
 ///
@@ -323,6 +347,15 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
             if (!desc.components.contains(prepared.name))
                 continue;
 
+            // Checked after the removal above, so a Name something already took
+            // off the member is dropped in silence — there is nothing left to
+            // warn about — while one the file still declares is refused out loud.
+            if (prepared.name == kNameComponent)
+            {
+                WarnNameIgnored(staged.definition->source, desc.name);
+                continue;
+            }
+
             const Core::Reflect::ComponentMeta *meta = registry.Find(prepared.name);
             if (meta == nullptr)
                 continue;
@@ -352,6 +385,16 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
                                 [&](const PreparedComponent &p) { return p.name == componentName; });
                 if (wasPrepared)
                     continue;
+
+                // Reached by an override claiming a Name, which skips the prepared
+                // block above and lands here. Scene::Add refuses an occupied slot,
+                // so this one is a no-op rather than a rename — but a claim that
+                // silently does nothing is what the author needs telling about.
+                if (componentName == kNameComponent)
+                {
+                    WarnNameIgnored(staged.definition->source, desc.name);
+                    continue;
+                }
 
                 const Core::Reflect::ComponentMeta *meta = registry.Find(componentName);
                 if (meta == nullptr || !meta->serializable)

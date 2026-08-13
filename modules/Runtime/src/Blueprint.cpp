@@ -6,6 +6,7 @@
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -16,6 +17,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <unordered_set>
 #include <utility>
 
@@ -104,6 +106,18 @@ ECS::Transform AuthoringOrigin(const ECS::Transform &root)
     out.rotation = root.rotation;
     // …and scale stays at 1. See the header for why this one field is dropped.
     return out;
+}
+
+ECS::Transform AuthoringOriginFor(const ECS::Scene &scene, std::span<const ECS::Entity> entities)
+{
+    if (entities.empty())
+        return {};
+
+    // The world pose, not the local one: the anchor may itself be parented to
+    // something the selection does not include, and the origin has to be where it
+    // actually stands or the instance is placed into a space that is not coming
+    // with it. For an unparented anchor the two are the same.
+    return AuthoringOrigin(WorldTransformOf(scene, entities.front()));
 }
 
 ECS::Transform InverseComposeTransform(const ECS::Transform &placement, const ECS::Transform &world)

@@ -52,6 +52,22 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
         }
     }
 
+    // Which entities the file will hold, so "is this entity's parent coming with
+    // it" has an answer below. Selecting a child without its parent is an ordinary
+    // thing to want — the parts of a rig are worth saving as a blueprint without
+    // the rig — so it is supported rather than refused.
+    std::unordered_set<uint64_t> inSet;
+    inSet.reserve(entities.size());
+    for (const ECS::Entity entity : entities)
+        inSet.insert(EntityKey(entity.index, entity.generation));
+
+    const auto parentComesAlong = [&](ECS::Entity entity)
+    {
+        const Parent *parent = scene.Get<Parent>(entity);
+        return parent != nullptr && parent->parent != ECS::NullEntity &&
+               inSet.contains(EntityKey(parent->parent.index, parent->parent.generation));
+    };
+
     const auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
     ScopedContextReset guard;
@@ -108,13 +124,22 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
             written["components"][meta->name] = meta->serialize(component);
         }
 
-        // Stored around the new file's own origin, so the result is placeable. A
-        // parented entity reaches the origin through its parent chain, so dividing
-        // it too would divide twice.
-        if (!scene.Has<Parent>(entity))
+        // Stored around the new file's own origin, so the result is placeable. An
+        // entity whose parent comes along reaches that origin through the chain, so
+        // dividing it too would divide twice — its local offset is already right.
+        //
+        // Every other entity is a root of this file, including one whose parent was
+        // left behind. That parent is nulled just above, so what the file holds must
+        // be a pose measured from the origin rather than from a parent that is not
+        // coming: its own Transform is an offset in a space this file does not have,
+        // and writing it raw is what put the copy somewhere the original never stood
+        // (round-7 S16). WorldTransformOf resolves the chain that is being cut, so a
+        // selection of children saved without their parent lands where it was.
+        if (!parentComesAlong(entity))
         {
-            if (const ECS::Transform *transform = scene.Get<ECS::Transform>(entity))
-                written["components"]["Transform"] = TransformToJson(InverseComposeTransform(origin, *transform));
+            if (scene.Has<ECS::Transform>(entity))
+                written["components"]["Transform"] =
+                    TransformToJson(InverseComposeTransform(origin, WorldTransformOf(scene, entity)));
         }
 
         doc["entities"].push_back(std::move(written));

@@ -407,18 +407,15 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     if (subtree.empty())
         return;
 
-    // The blueprint is authored around the first selected entity's pose and the
-    // instance is placed back at it, so the swap is invisible on screen. The
-    // *first*, not the last: the anchor must not depend on click order.
+    // The blueprint is authored around the first *captured* entity's pose and the
+    // instance is placed back at it, so the swap is invisible on screen. The set,
+    // not `_selection`: the loop above drops selected entities that are dead or
+    // not editable, and anchoring on a dropped one authored every member around a
+    // pose no member had.
     //
-    // Scale is deliberately not part of that pose. Where a thing stands and which
-    // way it faces is placement; how big it is, is what it is. A cube scaled to 0.6
-    // and saved as `small_crate` *is* a small crate — cancelling its scale into the
-    // placement leaves a unit cube in the file, so the copy in front of you looks
-    // right and every fresh one comes back full size.
-    Assisi::Runtime::Transform placement;
-    if (const auto *transform = _scene->Get<Assisi::Runtime::Transform>(_selection.front()))
-        placement = Assisi::Runtime::AuthoringOrigin(*transform);
+    // Scale is deliberately not part of that pose — see AuthoringOrigin for why
+    // that one field is dropped.
+    const Assisi::Runtime::Transform placement = Assisi::Runtime::AuthoringOriginFor(*_scene, subtree);
 
     const std::string source   = "blueprints/" + name + ".abp";
     const auto        resolved = Assisi::Core::AssetSystem::Resolve(source);

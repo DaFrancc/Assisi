@@ -688,3 +688,39 @@ TEST_CASE("Overrides: a save writes back what was read, and reloading gives the 
     REQUIRE(camera != nullptr);
     CHECK(camera->fovDegrees == doctest::Approx(44.f));
 }
+
+TEST_CASE("Overrides: an override may not rename the member it applies to")
+{
+    // The other half of round-7 S23. A file declaring a Name renames the member
+    // outright; an override claiming one arrives through the JSON path instead,
+    // where Scene::Add refuses an occupied slot — so today it is not a rename but
+    // a silent no-op, which is its own defect. The author wrote something that
+    // will never happen and is told nothing. Both halves are the same rule: the
+    // member path is the address the override was itself routed by, so the claim
+    // is refused, and said out loud.
+    //
+    // The name assertion holds before the fix and is a pin, not the proof: it is
+    // what catches a future add-or-replace path quietly turning the no-op into
+    // the rename. The warning is what this case actually moves.
+    const std::filesystem::path root = FreshRoot("rename");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array()},
+           {"instances", nlohmann::json::array({{{"name", "car_3"},
+                                                 {"source", "car.abp"},
+                                                 {"overrides", {{"body", {{"Name", {{"value", "chassis"}}}}}}}}})}});
+
+    const Tests::LogCapture log;
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
+
+    const Runtime::Name *name =
+        scene.Get<Runtime::Name>(MemberOf(scene, table, ECS::InstanceId{1}, "body"));
+    REQUIRE(name != nullptr);
+    CHECK(name->value.View() == "body");
+
+    CHECK(log.Mentions("Name component"));
+}
