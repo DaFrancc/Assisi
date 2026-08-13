@@ -353,12 +353,44 @@ NetId ReplicationServer::EnsureNetId(ECS::Entity entity)
     if (netId == InvalidNetId)
         netId = NetId{_nextNetId++};
 
-    _netIdByEntity.emplace(PackEntity(entity), netId);
-    _entityByNetId.emplace(netId, entity);
+    netId = BindNetId(entity, netId);
+    if (netId == InvalidNetId)
+        return InvalidNetId; // contended this frame; the reference resolves to nothing
 
     // Sorted insert, never an append: a block is reserved whole, so member 0 can
     // be assigned after member 2 and take a lower id than one already listed.
     _liveNetIds.insert(std::lower_bound(_liveNetIds.begin(), _liveNetIds.end(), netId), netId);
+    return netId;
+}
+
+NetId ReplicationServer::BindNetId(ECS::Entity entity, NetId netId)
+{
+    if (netId == InvalidNetId)
+        return InvalidNetId;
+
+    // Refused, never stolen. Taking an id from whoever holds it would leave that
+    // entity mapped in one direction only — and a stale row keyed by a dead
+    // handle is a trap besides, because ReviveAt restores an entity's *exact*
+    // prior (index, generation) and would inherit it.
+    const auto bound = _netIds.Insert(entity, netId);
+    if (!bound)
+    {
+        if (bound.error() == Core::BiMapError::RightTaken)
+        {
+            Core::Log::Error("Replication: NetId {} is already held by a live entity, so entity {}:{} goes "
+                             "without a wire identity this tick",
+                             netId, entity.index, entity.generation);
+        }
+        else
+        {
+            // Unreachable from either id path — both look the entity up first —
+            // so this is a caller that skipped its own precondition.
+            Core::Log::Error("Replication: entity {}:{} already holds a NetId, so it cannot also take {}",
+                             entity.index, entity.generation, netId);
+        }
+        return InvalidNetId;
+    }
+
     return netId;
 }
 
@@ -829,14 +861,14 @@ const ConnectionDiagnostics *ReplicationServer::Diagnostics(Net::ConnectionId co
 
 NetId ReplicationServer::NetIdOf(ECS::Entity entity) const
 {
-    const auto it = _netIdByEntity.find(PackEntity(entity));
-    return it == _netIdByEntity.end() ? InvalidNetId : it->second;
+    const NetId *netId = _netIds.FindRight(entity);
+    return netId == nullptr ? InvalidNetId : *netId;
 }
 
 ECS::Entity ReplicationServer::EntityOf(NetId netId) const
 {
-    const auto it = _entityByNetId.find(netId);
-    return it == _entityByNetId.end() ? ECS::NullEntity : it->second;
+    const ECS::Entity *entity = _netIds.FindLeft(netId);
+    return entity == nullptr ? ECS::NullEntity : *entity;
 }
 
 } // namespace Assisi::NetSync

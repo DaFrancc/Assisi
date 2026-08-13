@@ -18,13 +18,35 @@ void ReplicationServer::ReconcileNetIds()
 {
     _liveNetIds.clear();
 
+    // Drop mappings whose entity is gone or has stopped replicating. The NetId
+    // retires with it and is never reused: a stale reference must fail to
+    // resolve rather than quietly address whoever took the slot.
+    //
+    // **Before the assign pass, not after.** A blueprint member's id is
+    // `base + memberIndex` off a block that outlives the member, so a member
+    // destroyed and respawned is the one case where a live entity legitimately
+    // asks for an id a dead one still holds. Assigning first meant the newcomer
+    // met an id this pass had not retired yet, and was refused it for a tick it
+    // did not need to wait — and, before `_netIds` was one container, refused it
+    // in one direction only, which cost the entity its replication for good.
+    for (auto it = _netIds.begin(); it != _netIds.end();)
+    {
+        const ECS::Entity entity = it->first;
+        if (!_scene.IsAlive(entity) || !_scene.Has<Replicated>(entity))
+            it = _netIds.Erase(it);
+        else
+            ++it;
+    }
+
     for (auto [entity, replicated] : _scene.Query<Replicated>())
     {
         (void)replicated;
-        const std::uint64_t key = PackEntity(entity);
-        const auto          it  = _netIdByEntity.find(key);
-        NetId               netId;
-        if (it == _netIdByEntity.end())
+        NetId netId;
+        if (const NetId *existing = _netIds.FindRight(entity); existing != nullptr)
+        {
+            netId = *existing;
+        }
+        else
         {
             // The second id-assignment path, and it must consult the block too:
             // an instance first noticed by the snapshot walk rather than by an
@@ -32,34 +54,15 @@ void ReplicationServer::ReconcileNetIds()
             netId = EnsureInstanceBlock(entity);
             if (netId == InvalidNetId)
                 netId = NetId{_nextNetId++};
-            _netIdByEntity.emplace(key, netId);
-            _entityByNetId.emplace(netId, entity);
-        }
-        else
-        {
-            netId = it->second;
+
+            netId = BindNetId(entity, netId);
+            if (netId == InvalidNetId)
+                continue; // still contended: it takes the id on a later tick
         }
         _liveNetIds.push_back(netId);
     }
 
     std::sort(_liveNetIds.begin(), _liveNetIds.end());
-
-    // Drop mappings whose entity is gone or has stopped replicating. The NetId
-    // retires with it and is never reused: a stale reference must fail to
-    // resolve rather than quietly address whoever took the slot.
-    for (auto it = _entityByNetId.begin(); it != _entityByNetId.end();)
-    {
-        const ECS::Entity entity = it->second;
-        if (!_scene.IsAlive(entity) || !_scene.Has<Replicated>(entity))
-        {
-            _netIdByEntity.erase(PackEntity(entity));
-            it = _entityByNetId.erase(it);
-        }
-        else
-        {
-            ++it;
-        }
-    }
 
     // Which members a client's own expansion could still stand in for. Clears
     // only, never re-set: a member missing for one tick may have been missing
@@ -86,7 +89,7 @@ void ReplicationServer::ReconcileNetIds()
         std::uint32_t  present = 0;
         for (std::uint32_t member = 0; member < block.memberCount; ++member)
         {
-            if (_entityByNetId.contains(NetId{block.base.value + member}))
+            if (_netIds.ContainsRight(NetId{block.base.value + member}))
                 ++present;
             else
                 block.derivable[member] = 0u;

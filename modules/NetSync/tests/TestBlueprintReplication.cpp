@@ -1733,6 +1733,136 @@ TEST_CASE("Blueprint replication: an instance's block is dropped when its last m
     CHECK(revivedBase.value > firstBase.value + 2);
 }
 
+TEST_CASE("Blueprint replication: a member destroyed and respawned inside one tick keeps both directions of its id")
+{
+    // The case above is the *cross-tick* one, where the block had already retired
+    // and the instance came back a stranger. This is the same-tick one, and it is
+    // the only shape in which a live entity can legitimately ask for an id a dead
+    // entity still holds: `PackEntity` carries the generation, so an ordinary
+    // replicated entity that comes back is a new key and takes a fresh counter
+    // id, colliding with nothing. A blueprint member derives `base + memberIndex`
+    // from a block that outlives it, so the id it comes back to is the same one.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 2);
+
+    const ECS::Entity body = fixture.Member(ECS::InstanceId{1}, 0);
+    const ECS::Entity lid  = fixture.Member(ECS::InstanceId{1}, 1);
+    fixture.AssignIds();
+
+    const NetId base = fixture.server.NetIdOf(body);
+    REQUIRE(base != InvalidNetId);
+    REQUIRE(fixture.server.EntityOf(base) == body);
+
+    // Destroyed and rebuilt with no tick in between, so one reconcile pass sees a
+    // dead member holding the id and a live one asking for it.
+    fixture.scene.Destroy(body);
+    fixture.scene.FlushDestroyed();
+    const ECS::Entity respawned = fixture.Member(ECS::InstanceId{1}, 0);
+    REQUIRE(respawned != body);
+    fixture.AssignIds();
+
+    // Both directions, and the reverse is the one that was lost. Checking only
+    // `NetIdOf` passes against the defect: the forward row is exactly what
+    // survived, and it survived *without* its counterpart.
+    CHECK(fixture.server.NetIdOf(respawned) == base);
+    CHECK(fixture.server.EntityOf(base) == respawned);
+
+    // The sibling is the control. A repair that rebuilt the maps from scratch
+    // would be free to move an id a record already sent describes.
+    CHECK(fixture.server.NetIdOf(lid) == NetId{base.value + 1});
+
+    // The instance never stopped existing, so nothing here may retire its block —
+    // the retirement pass counts members through the reverse map, and a member
+    // missing from it reads as a member that is gone.
+    CHECK(fixture.server.InstanceBlockCount() == 1);
+
+    // Later ticks do not repair it, which is the half of the report that was
+    // still open. The assign pass writes the reverse map only where the forward
+    // map has no row, and the respawned member has one; the cleanup pass walks
+    // the reverse map, where it no longer appears. Neither pass can see it.
+    fixture.AssignIds();
+    fixture.AssignIds();
+    CHECK(fixture.server.EntityOf(base) == respawned);
+}
+
+TEST_CASE("Blueprint replication: a member respawned before the destroy is flushed takes its id a tick later")
+{
+    // The same case as it actually reaches a running server. `Scene::Destroy` is
+    // deferred to the end of the frame and ReconcileNetIds runs inside the fixed
+    // update, so a member destroyed and respawned in one frame is reconciled
+    // while *both* claimants of `base + memberIndex` are still alive. Neither can
+    // be told from the other — the server cannot see the destroy queue — so the
+    // newcomer waits rather than taking an id that is still held.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 2);
+
+    const ECS::Entity body = fixture.Member(ECS::InstanceId{1}, 0);
+    (void)fixture.Member(ECS::InstanceId{1}, 1);
+    fixture.AssignIds();
+
+    const NetId base = fixture.server.NetIdOf(body);
+    REQUIRE(base != InvalidNetId);
+
+    // Queued, not flushed: `body` is still alive, still replicating, and still
+    // the honest answer for `base` on this tick.
+    fixture.scene.Destroy(body);
+    const ECS::Entity respawned = fixture.Member(ECS::InstanceId{1}, 0);
+    fixture.AssignIds();
+
+    CHECK(fixture.server.EntityOf(base) == body);
+    CHECK(fixture.server.NetIdOf(respawned) == InvalidNetId);
+
+    // End of frame, and the tick after it. The contention is over, and the id the
+    // block reserved for member 0 goes to the member that holds that slot —
+    // rather than to a loose id outside the block a record already describes.
+    fixture.scene.FlushDestroyed();
+    fixture.AssignIds();
+
+    CHECK(fixture.server.NetIdOf(respawned) == base);
+    CHECK(fixture.server.EntityOf(base) == respawned);
+    CHECK(fixture.server.InstanceBlockCount() == 1);
+}
+
+TEST_CASE("Blueprint replication: a member respawned inside one tick goes on replicating")
+{
+    // What the lost reverse row costs on the wire. Every snapshot resolves the
+    // ids it is about through `EntityOf`, so a member with a forward row and no
+    // reverse one is in `_liveNetIds`, is never despawned, and is skipped by the
+    // entity walk of every snapshot from then on: the client keeps a mirror that
+    // no longer receives anything.
+    Fixture fixture;
+    fixture.instances->Add(ECS::InstanceId{1}, 2);
+
+    const ECS::Entity body = fixture.Member(ECS::InstanceId{1}, 0);
+    (void)fixture.Member(ECS::InstanceId{1}, 1);
+
+    (void)InstallExpander(fixture);
+    fixture.Connect();
+    fixture.Step(6);
+
+    const NetId base = fixture.server.NetIdOf(body);
+    REQUIRE(base != InvalidNetId);
+    REQUIRE(fixture.client.ReplicatedEntityCount() == 2);
+    REQUIRE(HasLiveMirror(fixture, base));
+
+    fixture.scene.Destroy(body);
+    fixture.scene.FlushDestroyed();
+    const ECS::Entity respawned = fixture.Member(ECS::InstanceId{1}, 0);
+
+    // A position nothing else in this case would produce, so "the mirror caught
+    // up" cannot be satisfied by the state the dead member left behind.
+    ECS::Transform *moved = fixture.scene.GetMut<ECS::Transform>(respawned);
+    REQUIRE(moved != nullptr);
+    moved->position = {17.f, 0.f, 0.f};
+
+    fixture.Step(10);
+
+    REQUIRE(HasLiveMirror(fixture, base));
+    const ECS::Transform *mirrored = fixture.clientScene.Get<ECS::Transform>(fixture.client.EntityOf(base));
+    REQUIRE(mirrored != nullptr);
+    CHECK(mirrored->position.x == doctest::Approx(17.f));
+}
+
 TEST_CASE("Blueprint replication: without an expander a member arrives missing its authored components")
 {
     // What an expander costs to leave out, which is more than assembly. The

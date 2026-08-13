@@ -360,7 +360,7 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         std::uint32_t presentCount = 0;
         for (std::uint32_t member = 0; member < block.memberCount; ++member)
         {
-            if (!_entityByNetId.contains(NetId{block.base.value + member}))
+            if (!_netIds.ContainsRight(NetId{block.base.value + member}))
                 continue;
             presence[member] = 1u;
             ++presentCount;
