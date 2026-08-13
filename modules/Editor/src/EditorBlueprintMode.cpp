@@ -24,6 +24,7 @@
 #include <Assisi/Runtime/EditorOnly.hpp>
 #include <Assisi/Runtime/LightComponents.hpp>
 #include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
 #include <imgui.h>
@@ -98,7 +99,7 @@ void EditorApp::AddBlueprintEditorRig(Assisi::App::World &world)
     // of crate.abp writes a sun into the crate, and every instance of that crate
     // placed in a level brings its own along — see Runtime::EditorOnly.
     (void)world.scene.Add(sun, Assisi::Runtime::EditorOnly{});
-    (void)world.scene.Add(sun, Assisi::Runtime::Name{Assisi::Core::ShortString{"Editor Sun"}});
+    (void)Assisi::Runtime::GiveEntityName(world.scene, sun, "Editor Sun");
     (void)world.scene.Add(sun, Assisi::Runtime::DirectionalLight{
                                    .direction = SunDirection(kSunAzimuth, kSunElevation),
                                    .color     = {1.f, 0.98f, 0.94f},

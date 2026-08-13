@@ -74,11 +74,11 @@ Selection BuildSelection(ECS::Scene &scene)
     Selection out;
     out.body = scene.Create();
     REQUIRE(scene.Add(out.body, At(10.f, 0.f, 0.f)) != nullptr);
-    REQUIRE(scene.Add(out.body, Runtime::Name{Core::ShortString{"body"}}) != nullptr);
+    REQUIRE(scene.Add(out.body, Runtime::Name{Core::EntityName{"body"}}) != nullptr);
 
     out.lid = scene.Create();
     REQUIRE(scene.Add(out.lid, At(0.f, 1.f, 0.f)) != nullptr);
-    REQUIRE(scene.Add(out.lid, Runtime::Name{Core::ShortString{"lid"}}) != nullptr);
+    REQUIRE(scene.Add(out.lid, Runtime::Name{Core::EntityName{"lid"}}) != nullptr);
     REQUIRE(scene.Add(out.lid, Runtime::Parent{.parent = out.body}) != nullptr);
 
     out.all = {out.body, out.lid};
@@ -228,7 +228,7 @@ TEST_CASE("Authoring: children saved without their parent stand where they stood
     ECS::Scene        scene;
     const ECS::Entity rig = scene.Create();
     REQUIRE(scene.Add(rig, At(100.f, 0.f, 0.f)) != nullptr);
-    REQUIRE(scene.Add(rig, Runtime::Name{Core::ShortString{"rig"}}) != nullptr);
+    REQUIRE(scene.Add(rig, Runtime::Name{Core::EntityName{"rig"}}) != nullptr);
 
     // The crate hangs off the rig, and the rig is not being captured — saving the
     // parts of a rig without the rig is a thing an author means to do, so it is
@@ -322,7 +322,7 @@ TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
     ECS::Transform pose = At(10.f, 0.f, 0.f);
     pose.scale          = {0.6f, 0.6f, 0.6f};
     REQUIRE(scene.Add(cube, pose) != nullptr);
-    REQUIRE(scene.Add(cube, Runtime::Name{Core::ShortString{"cube"}}) != nullptr);
+    REQUIRE(scene.Add(cube, Runtime::Name{Core::EntityName{"cube"}}) != nullptr);
 
     // The origin an author's selection is written around carries no scale, so the
     // file records the cube at the size it was drawn at. Divide the scale out into
@@ -380,7 +380,7 @@ TEST_CASE("Authoring: a reference leaving the selection is nulled, not dangled")
     const Selection   selection = BuildSelection(scene);
     const ECS::Entity outsider  = scene.Create();
     REQUIRE(scene.Add(outsider, At(0.f, 0.f, 0.f)) != nullptr);
-    REQUIRE(scene.Add(outsider, Runtime::Name{Core::ShortString{"marker"}}) != nullptr);
+    REQUIRE(scene.Add(outsider, Runtime::Name{Core::EntityName{"marker"}}) != nullptr);
 
     // The body now points at something the blueprint will not contain.
     scene.GetMut<Runtime::Parent>(selection.lid)->parent = outsider;

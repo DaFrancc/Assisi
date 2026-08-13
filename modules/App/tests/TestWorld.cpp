@@ -34,6 +34,8 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 
 using namespace Assisi::App;
 
@@ -472,6 +474,34 @@ TEST_CASE("Migrating an entity out from under a ref nulls that ref")
     const auto *parent = dst.scene.Get<Assisi::Runtime::Parent>(moved);
     REQUIRE(parent != nullptr);
     CHECK(parent->parent == Assisi::ECS::NullEntity); // the out-of-set ref nulled
+}
+
+TEST_CASE("A migrated entity does not land on a name the destination already uses")
+{
+    // The other way one scene ends up with two entities of one name: migration
+    // copies the Name across with every other component. The arriving
+    // entity is what steps aside; the resident is what that world already
+    // addresses by name.
+    WorldManager worlds;
+    World       &src = worlds.Create("Src");
+    World       &dst = worlds.Create("Dst");
+
+    const Assisi::ECS::Entity resident = dst.scene.Create();
+    (void)dst.scene.Add<Assisi::ECS::Transform>(resident);
+    (void)dst.scene.Add<Assisi::Runtime::Name>(resident,
+                                               Assisi::Runtime::Name{Assisi::Core::EntityName{"crate"}});
+
+    const Assisi::ECS::Entity traveller = src.scene.Create();
+    (void)src.scene.Add<Assisi::ECS::Transform>(traveller);
+    (void)src.scene.Add<Assisi::Runtime::Name>(traveller,
+                                               Assisi::Runtime::Name{Assisi::Core::EntityName{"crate"}});
+
+    const Assisi::ECS::Entity moved = worlds.MigrateEntity(src, dst, traveller);
+    REQUIRE(moved != Assisi::ECS::NullEntity);
+
+    REQUIRE(dst.scene.Get<Assisi::Runtime::Name>(moved) != nullptr);
+    CHECK(dst.scene.Get<Assisi::Runtime::Name>(moved)->value.View() == "crate_1");
+    CHECK(dst.scene.Get<Assisi::Runtime::Name>(resident)->value.View() == "crate");
 }
 
 TEST_CASE("Async travel loads in the background then swaps instantly")

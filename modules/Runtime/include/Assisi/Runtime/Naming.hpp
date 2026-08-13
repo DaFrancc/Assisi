@@ -25,16 +25,31 @@
 /// fine, and why round-7 S17's suggestion to forbid that would have rejected
 /// levels that were never in danger.
 ///
-/// This file is the polite half: it hands out names that satisfy the rules. The
-/// refusals are elsewhere and stay there, because a rule that only holds when
-/// callers remember it is the bug S17 actually was — see
-/// `SceneSerializer::PlaceInstance` and load's pass 1.
+/// **Every write of a Name goes through a door here.** Rule 2 holds only if it
+/// holds for every path that creates an entity, so no call site spells the write
+/// itself. Which door depends on who is asking:
+///
+///  - **Give** (`GiveEntityName`, `NameBatch::Give`) — the caller is creating an
+///    entity and the name is a starting point: an expanded member's leaf, a
+///    migrated entity's old name, `Entity` for a fresh one. Steps to `body_1`
+///    rather than failing a spawn over a label.
+///  - **Rename** (`RenameEntity`, `CheckEntityName`) — a human typed this exact
+///    string. Refused with a reason, since storing `crate_1` for a typed `crate`
+///    is an edit nobody made.
+///
+/// A *file* naming two entities the same is refused outright instead — every
+/// reference and override in it would be ambiguous. That check stays with the
+/// loader: `SceneSerializer::Load` pass 1, and `PlaceInstance` for instances.
 
+#include <algorithm>
 #include <cstdint>
 #include <expected>
+#include <span>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
+#include <Assisi/Core/TrivialString.hpp>
 #include <Assisi/ECS/Entity.hpp>
 
 namespace Assisi::ECS
@@ -52,8 +67,9 @@ inline constexpr char kNameSeparator = '/';
 enum class NameError
 {
     Empty,             ///< Nothing to address it by.
-    TooLong,           ///< Past `Core::kShortStringMax`; refused, never truncated.
+    TooLong,           ///< Past `Core::kEntityNameMax`; refused, never truncated.
     ContainsSeparator, ///< Holds a `/`, which belongs to the addressing scheme.
+    Taken,             ///< Another entity already answers to it.
 };
 
 /// @brief One line saying what is wrong, for a log or a field hint.
@@ -80,17 +96,31 @@ enum class NameError
 /// moment a name is handed out and not used, or the object is deleted, or an
 /// undo puts the world back: it would offer `car_5` in a level with no cars.
 /// The world cannot drift from itself.
+///
+/// The result always fits `Core::kEntityNameMax`, suffix included: a name
+/// truncated on the way into storage is one that was checked in a spelling it
+/// does not keep, and a truncated duplicate is still a duplicate.
 template <typename TakenFn>
 [[nodiscard]] std::string UniqueName(std::string_view stem, TakenFn &&taken)
 {
+    std::string base{stem.substr(0, std::min(stem.size(), Core::kEntityNameMax))};
+    if (!taken(std::string_view{base}))
+        return base;
+
     // Walks until it finds a free one rather than counting what exists: `car_2`
     // may be free while three cars are live, and naming the fourth `car_3`
     // because there are three of them would collide with the one already called
     // that.
-    std::string candidate{stem};
-    for (std::uint32_t suffix = 1; taken(std::string_view{candidate}); ++suffix)
-        candidate = std::string{stem} + "_" + std::to_string(suffix);
-    return candidate;
+    for (std::uint32_t suffix = 1;; ++suffix)
+    {
+        // The suffix is what must survive, so the stem is what gives way: at most
+        // 11 bytes of `_4294967295`, which leaves 21 of any stem.
+        const std::string tail = "_" + std::to_string(suffix);
+        const std::string candidate =
+            base.substr(0, std::min(base.size(), Core::kEntityNameMax - tail.size())) + tail;
+        if (!taken(std::string_view{candidate}))
+            return candidate;
+    }
 }
 
 /// @brief Whether an entity other than @p except already answers to @p name.
@@ -100,7 +130,50 @@ template <typename TakenFn>
 [[nodiscard]] bool EntityNameTaken(ECS::Scene &scene, std::string_view name,
                                    ECS::Entity except = ECS::NullEntity);
 
-/// @brief @p stem, or the first `stem_N` no entity in @p scene is using.
-[[nodiscard]] std::string UniqueEntityName(ECS::Scene &scene, std::string_view stem);
+/// @brief The Give door for many entities at once: one pass over the scene, then
+///        a name each.
+///
+/// For callers naming entities by the dozen — an expansion names every member of
+/// an instance, a migration every entity of a subtree — where `GiveEntityName`
+/// would walk the whole scene per name.
+///
+/// **Goes stale.** It holds the scene's names as they were plus what it has
+/// handed out, so it is valid only while nothing else creates or renames
+/// entities. Build it, use it, drop it.
+class NameBatch
+{
+  public:
+    /// @param rebuilding entities whose current names do not count as taken,
+    ///        because this same batch is about to rename them. A re-expansion
+    ///        passes its adopted members: without it each one is suffixed against
+    ///        its own previous name and `body_1` drifts to `body_2`.
+    explicit NameBatch(ECS::Scene &scene, std::span<const ECS::Entity> rebuilding = {});
+
+    /// @brief Names @p entity @p stem, or the first free `stem_N`, and says which.
+    std::string Give(ECS::Entity entity, std::string_view stem);
+
+  private:
+    ECS::Scene                     &_scene;
+    std::unordered_set<std::string> _taken;
+};
+
+/// @brief Names @p entity @p stem, or the first `stem_N` no entity is using.
+/// @return the name it was actually given.
+std::string GiveEntityName(ECS::Scene &scene, ECS::Entity entity, std::string_view stem);
+
+/// @brief Whether @p entity may be renamed to exactly @p name.
+///
+/// Separate from RenameEntity for the rename box, which asks every frame and
+/// writes only on a keystroke.
+///
+/// Empty is accepted and means "no name": an entity without one is ordinary.
+/// ValidateName refuses it, because it answers for a *file*, where a nameless
+/// entity is one no reference can reach.
+[[nodiscard]] std::expected<void, NameError> CheckEntityName(ECS::Scene &scene, ECS::Entity entity,
+                                                             std::string_view name);
+
+/// @brief Renames @p entity to exactly @p name, or refuses and changes nothing.
+[[nodiscard]] std::expected<void, NameError> RenameEntity(ECS::Scene &scene, ECS::Entity entity,
+                                                          std::string_view name);
 
 } // namespace Assisi::Runtime

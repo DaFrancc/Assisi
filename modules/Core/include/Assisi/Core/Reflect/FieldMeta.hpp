@@ -44,6 +44,11 @@ enum class FieldType
     /// to translate it (CodecContext::instanceToWire) exactly as it translates an
     /// EntityRef. Appended rather than inserted, so no existing value shifts.
     InstanceRef,
+    /// Core::EntityName — a wider inline string than String's, and its own type
+    /// because the codec reads into the buffer by capacity: decoding one as a
+    /// String would truncate it. Appended rather than inserted, so no existing
+    /// value shifts.
+    EntityName,
     Unknown,
 };
 
