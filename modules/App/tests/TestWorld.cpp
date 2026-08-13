@@ -878,7 +878,7 @@ TEST_CASE("A level's system list survives a save/load round trip")
 
     Assisi::ECS::Scene          scene;
     Assisi::Runtime::LevelHeader header;
-    REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(scene, "levels/L.alvl", {}, &header));
+    REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(scene, "levels/L.alvl", {.header = &header}));
     CHECK(header.systems == names);
 
     // ...and a level that needs none stays free of the key.
@@ -888,7 +888,7 @@ TEST_CASE("A level's system list survives a save/load round trip")
     }
     Assisi::ECS::Scene          bare;
     Assisi::Runtime::LevelHeader none;
-    REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(bare, "levels/N.alvl", {}, &none));
+    REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(bare, "levels/N.alvl", {.header = &none}));
     CHECK(none.systems.empty());
 
     std::filesystem::remove_all(root);

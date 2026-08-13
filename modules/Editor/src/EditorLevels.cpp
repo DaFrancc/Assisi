@@ -34,6 +34,7 @@
 #include <iterator>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace Assisi::Editor
 {
@@ -867,63 +868,8 @@ void EditorApp::LoadLevel(const std::string &name)
     LoadLevelFromPath("levels/" + name + ".alvl");
 }
 
-bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
+void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
 {
-    // **First, before anything is torn down.** The load below replaces the scene in
-    // place, so a level whose systems cannot be installed has to be refused here or
-    // not at all: discovering it afterwards leaves the world holding the new content
-    // with none of its behaviour, and the level it replaced is already gone. Ahead
-    // of ShutdownNetSession for the same reason — a refused load must not have ended
-    // the session on the way to refusing.
-    if (!Assisi::App::LevelSystemsAreDeclared(virtualPath))
-    {
-        Assisi::Core::Log::Error("Editor: refusing to open '{}'.", virtualPath);
-        return false;
-    }
-
-    // A networked session replicates *this* scene, and a load replaces every entity
-    // in it. Hosting across that would silently despawn the whole world on every
-    // client and respawn a different one; loading locally as a client means fighting
-    // the host over the same scene. End the session and let the player start a new
-    // one.
-#if defined(ASSISI_NETWORKING)
-    ShutdownNetSession();
-#endif
-
-    // The engine does the whole load: deserialize, drop the old asset set, evict the
-    // renderer's cached bindings, re-resolve assets and rebuild physics. Everything
-    // below is editor bookkeeping about the OLD scene.
-    //
-    // Reaching here means we are at a safe point: this frees GPU state the frame's
-    // recorded draws reference, so callers marshal it to the main-thread drain and
-    // never call it from OnImGui. See the Load button in DrawLevelsWindow.
-    Assisi::Runtime::LevelHeader header;
-    if (!Assisi::App::LoadLevel(*_scene, virtualPath, _assetCache, _assetDatabase, *_physics, _sceneRenderer,
-                                Assisi::App::AssetCacheReset::ClearFirst, &header, &_world->instances))
-        return false; // the file did not resolve or deserialize; the scene is untouched
-
-    // Open Level reuses the edited world, clearing its scene in place rather than
-    // creating a second one. That is what keeps the undo history's Scene& binding
-    // (and every panel's) valid for the whole session — see
-    // docs/multi-scene-design-notes.md. Only the world's level identity changes.
-    _world->levelPath = virtualPath;
-
-    // ...and its systems, which belong to the level now in it. This is the re-target
-    // case ApplyProfile's Clear exists for: the world still holds the previous
-    // level's profile.
-    //
-    // A failed install fails the load: an unknown system name is a hard error by
-    // design, since a level that silently runs none of its behaviour is worse than
-    // one that refuses to open. The LevelSystemsAreDeclared check at the top of this
-    // function is what normally catches that, and has to — by here the scene has
-    // already been replaced, so returning leaves the new content in place with none
-    // of the bookkeeping below done.
-    if (!_worlds.ApplySystems(*_world, header.systems, virtualPath))
-    {
-        Assisi::Core::Log::Error("Editor: '{}' names a system this build does not declare.", virtualPath);
-        return false;
-    }
-
     // A load ends any in-progress play session: the snapshot describes the old
     // scene, so it must not survive into the new one.
     SetPlayState(PlayState::Editing);
@@ -974,6 +920,117 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     _pendingReexpandRemoved.clear();
     _pendingReexpandUndoLoss = 0;
     _pendingReexpandSource.clear();
+}
+
+void EditorApp::AbandonReplacedScene(std::string_view virtualPath)
+{
+    Assisi::Core::Log::Error("Editor: the load of '{}' failed after it had already replaced the scene — "
+                             "closing the level rather than leaving a half-loaded one open.",
+                             virtualPath);
+
+    _scene->Clear();
+    _world->instances.Clear();
+    // The rebind never ran, so the physics world is still holding the *previous*
+    // level's bodies — over a scene that no longer has the entities they belong to.
+    // Rebuilding against the empty scene is what takes them out.
+    (void)Assisi::App::BuildSceneBodies(*_scene, *_physics);
+    // An empty list cannot fail to resolve, and clears the registry, the queued
+    // installs and the contact-reporting switch in the one call that owns all three.
+    (void)_worlds.ApplySystems(*_world, {}, virtualPath);
+    // Nothing is open, so nothing is named. Left pointing at the previous level this
+    // is a loaded gun: Save writes that file, and would write it from this scene.
+    _world->levelPath.clear();
+
+    ReleaseSceneBookkeeping(virtualPath);
+}
+
+bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
+{
+    // **First, before anything is torn down.** The load below replaces the scene in
+    // place, so a level whose systems cannot be installed has to be refused here or
+    // not at all: discovering it afterwards leaves the world holding the new content
+    // with none of its behaviour, and the level it replaced is already gone. Ahead
+    // of ShutdownNetSession for the same reason — a refused load must not have ended
+    // the session on the way to refusing.
+    if (!Assisi::App::LevelSystemsAreDeclared(virtualPath))
+    {
+        Assisi::Core::Log::Error("Editor: refusing to open '{}'.", virtualPath);
+        return false;
+    }
+
+    // A networked session replicates *this* scene, and a load replaces every entity
+    // in it. Hosting across that would silently despawn the whole world on every
+    // client and respawn a different one; loading locally as a client means fighting
+    // the host over the same scene. End the session and let the player start a new
+    // one.
+#if defined(ASSISI_NETWORKING)
+    ShutdownNetSession();
+#endif
+
+    // The engine does the whole load: deserialize, drop the old asset set, evict the
+    // renderer's cached bindings, re-resolve assets and rebuild physics. Everything
+    // below is editor bookkeeping about the OLD scene.
+    //
+    // Reaching here means we are at a safe point: this frees GPU state the frame's
+    // recorded draws reference, so callers marshal it to the main-thread drain and
+    // never call it from OnImGui. See the Load button in DrawLevelsWindow.
+    Assisi::Runtime::LevelHeader       header;
+    const Assisi::Runtime::LevelResult loaded =
+        Assisi::App::LoadLevel(*_world, virtualPath, {_assetCache, _assetDatabase, _sceneRenderer},
+                               {.reset = Assisi::App::AssetCacheReset::ClearFirst, .header = &header});
+    if (!loaded)
+    {
+        Assisi::Core::Log::Error("Editor: could not open '{}' — {}.", virtualPath,
+                                 Assisi::Runtime::Describe(loaded.error()));
+
+        // Two very different situations, and only `sceneReplaced` separates them. A
+        // file that did not resolve, or whose version this build does not read, was
+        // refused before anything was touched: the level on screen is still the one
+        // that was there, and wiping the session's undo history over it would be its
+        // own bug. A file the deserializer got *into* and then refused — two
+        // entities under one name, an unreadable component, a reference to an entity
+        // the file never declares — was refused with the scene already emptied, and
+        // that is the more reachable half of B20.
+        if (loaded.error().sceneReplaced)
+            AbandonReplacedScene(virtualPath);
+        return false;
+    }
+
+    // Open Level reuses the edited world, clearing its scene in place rather than
+    // creating a second one. That is what keeps the undo history's Scene& binding
+    // (and every panel's) valid for the whole session — see
+    // docs/multi-scene-design-notes.md. Only the world's level identity changes.
+    _world->levelPath = virtualPath;
+
+    // ...and its systems, which belong to the level now in it. This is the re-target
+    // case ApplyProfile's Clear exists for: the world still holds the previous
+    // level's profile.
+    //
+    // A failed install fails the load: an unknown system name is a hard error by
+    // design, since a level that silently runs none of its behaviour is worse than
+    // one that refuses to open. The LevelSystemsAreDeclared check at the top of this
+    // function is what normally catches that, and has to — by here the scene has
+    // already been replaced.
+    //
+    // "Normally" is the whole problem, though, and why this no longer just returns
+    // (ENG-126): the pre-check and this one reach the same verdict by different
+    // routes — one reads the names out of the file, the other resolves them against
+    // the build's catalog — so any disagreement between them lands right here, on
+    // the far side of the point of no return. Two checks for one condition, and only
+    // one of them positioned safely. Rather than argue that they can never disagree,
+    // make the late failure survivable.
+    if (!_worlds.ApplySystems(*_world, header.systems, virtualPath))
+    {
+        Assisi::Core::Log::Error("Editor: '{}' names a system this build does not declare.", virtualPath);
+        AbandonReplacedScene(virtualPath);
+        return false;
+    }
+
+    // Everything the editor was holding about the level that was just replaced. The
+    // same call the two failure returns above make, which is the point of it being a
+    // call: the obligation belongs to the scene having been replaced, not to the
+    // load having succeeded.
+    ReleaseSceneBookkeeping(virtualPath);
 
     return true;
 }

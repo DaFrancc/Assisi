@@ -330,7 +330,7 @@ TEST_CASE("Blueprint: a level's instances expand on load and are written back on
     ECS::Scene           scene;
     InstanceTable        table;
     Runtime::LevelHeader header;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, &header, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
 
     // One authored entity plus the car's two members.
     CHECK(scene.AliveCount() == 3);
@@ -383,7 +383,7 @@ TEST_CASE("Blueprint: a level entity may point into an instance by path")
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const ECS::Entity trailer{.index = 0, .generation = 0};
     REQUIRE(scene.Get<Runtime::Name>(trailer) != nullptr);
@@ -422,7 +422,7 @@ TEST_CASE("Blueprint: an instance and an entity may share a name")
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
     CHECK(table.Size() == 1);
 }
 
@@ -440,7 +440,7 @@ TEST_CASE("Blueprint: two instances of one name are refused, not silently merged
 
     ECS::Scene    scene;
     InstanceTable table;
-    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 }
 
 TEST_CASE("Blueprint: an entity named like a member path is refused")
@@ -457,7 +457,7 @@ TEST_CASE("Blueprint: an entity named like a member path is refused")
 
     ECS::Scene    scene;
     InstanceTable table;
-    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 }
 
 TEST_CASE("Blueprint: two entities of one name are refused")
@@ -641,12 +641,12 @@ TEST_CASE("Blueprint: instance ids restart with the world")
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
     CHECK(table.Find(ECS::InstanceId{1}) != nullptr);
 
     // Not stable across a load, and nothing may assume they are — so the second
     // load hands out 1 again rather than 2.
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
     CHECK(table.Size() == 1);
     CHECK(table.Find(ECS::InstanceId{1}) != nullptr);
     CHECK(table.Find(ECS::InstanceId{2}) == nullptr);

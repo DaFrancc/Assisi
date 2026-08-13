@@ -216,7 +216,7 @@ TEST_CASE("Prepared form: an overridden component takes the JSON path and the ov
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     // A prepared block is full state, so decoding one over a component the override
     // just set would undo it. The claim wins; the field the claim did not name
@@ -306,7 +306,7 @@ TEST_CASE("Prepared form: FindMember on an instance whose file went bad answers,
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
     REQUIRE(MemberOf(scene, table, ECS::InstanceId{1}, "body") != ECS::NullEntity);
 
     // The editor's blueprint save, in the order the editor does it: the file on
@@ -334,7 +334,7 @@ TEST_CASE("Prepared form: saving a level whose blueprint went bad does not throw
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     Write(root, "car.abp", MistypedCar());
     Runtime::InvalidateBlueprint("car.abp");

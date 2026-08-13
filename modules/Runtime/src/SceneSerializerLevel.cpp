@@ -184,9 +184,18 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
 // Load
 // ---------------------------------------------------------------------------
 
-LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const ProgressFn &onProgress,
-                                  LevelHeader *header, InstanceTable *instances)
+LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const LoadOptions &options)
 {
+    LevelHeader *const   header    = options.header;
+    InstanceTable *const instances = options.instances;
+
+    // Flipped at the clear below, and read by every refusal after it. One variable
+    // and one assignment, so a refusal added later cannot report the wrong side of
+    // it without someone moving the clear itself.
+    bool       sceneReplaced = false;
+    const auto refuse = [&sceneReplaced](LevelError kind)
+    { return std::unexpected(LevelFailure{.kind = kind, .sceneReplaced = sceneReplaced}); };
+
     const int32_t version = j.value("version", 0);
     if (version != 2)
     {
@@ -195,7 +204,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         // keeps the level it had.
         Core::Log::Error("SceneSerializer: unsupported level file version {} (this build reads version 2).",
                          version);
-        return std::unexpected(LevelError::UnsupportedVersion);
+        return refuse(LevelError::UnsupportedVersion);
     }
 
     // Read the instance entries before anything is destroyed: a file naming an
@@ -207,7 +216,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         {
             Core::Log::Error("SceneSerializer: the file places blueprint instances, but this load was given "
                              "no instance table to put them in.");
-            return std::unexpected(LevelError::NoInstanceTable);
+            return refuse(LevelError::NoInstanceTable);
         }
 
         placed.reserve(it->size());
@@ -217,13 +226,13 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
                 entry.at("name").get<std::string>().empty())
             {
                 Core::Log::Error("SceneSerializer: an instance entry has no name.");
-                return std::unexpected(LevelError::MissingName);
+                return refuse(LevelError::MissingName);
             }
             if (!entry.contains("source") || !entry.at("source").is_string())
             {
                 Core::Log::Error("SceneSerializer: instance '{}' has no source.",
                                  entry.at("name").get<std::string>());
-                return std::unexpected(LevelError::MissingSource);
+                return refuse(LevelError::MissingSource);
             }
             LevelInstance instance{
                 .name      = entry.at("name").get<std::string>(),
@@ -261,6 +270,10 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
 
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
+    // The point of no return. Every refusal below reports it because `refuse`
+    // reads this, and there is exactly one place to keep in step with the clear.
+    sceneReplaced = true;
+
     scene.Clear();
     if (instances != nullptr)
     {
@@ -285,7 +298,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         if (!entityJson.contains("name") || !entityJson.at("name").is_string())
         {
             Core::Log::Error("SceneSerializer: entity #{} has no name.", i);
-            return std::unexpected(LevelError::MissingName);
+            return refuse(LevelError::MissingName);
         }
 
         std::string name = entityJson.at("name").get<std::string>();
@@ -303,7 +316,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         {
             Core::Log::Error("SceneSerializer: entity #{} is named '{}': {}.", i, name,
                              Describe(valid.error()));
-            return std::unexpected(LevelError::InvalidName);
+            return refuse(LevelError::InvalidName);
         }
         names.push_back(std::move(name));
     }
@@ -325,7 +338,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
             // picking one is picking silently.
             Core::Log::Error("SceneSerializer: two entities are both named '{}'.", names[i]);
             scene.Clear();
-            return std::unexpected(LevelError::DuplicateName);
+            return refuse(LevelError::DuplicateName);
         }
 
         // The name is the entity's Name, not a second identity beside it.
@@ -350,7 +363,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         {
             scene.Clear();
             instances->Clear();
-            return std::unexpected(ok.error());
+            return refuse(ok.error());
         }
     }
 
@@ -360,8 +373,8 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     {
         // This pass is the load's dominant cost, and reporting is cheap enough per
         // entity (a few atomic stores through the callback).
-        if (onProgress)
-            onProgress(entityCount == 0 ? 1.f : static_cast<float>(i) / static_cast<float>(entityCount));
+        if (options.onProgress)
+            options.onProgress(entityCount == 0 ? 1.f : static_cast<float>(i) / static_cast<float>(entityCount));
 
         const auto &entityJson = entities[i];
         if (!entityJson.contains("components"))
@@ -403,7 +416,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
                 Core::Log::Error("SceneSerializer: entity '{}' has an unreadable '{}' — the file is refused.",
                                  names[i], compName);
                 scene.Clear();
-                return std::unexpected(LevelError::MalformedComponent);
+                return refuse(LevelError::MalformedComponent);
             }
         }
     }
@@ -428,7 +441,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         Core::Log::Error("SceneSerializer: {} entity reference(s) name an entity the file does not declare: {}.",
                          bad.size(), list);
         scene.Clear();
-        return std::unexpected(LevelError::UnresolvedReference);
+        return refuse(LevelError::UnresolvedReference);
     }
 
     return {};
