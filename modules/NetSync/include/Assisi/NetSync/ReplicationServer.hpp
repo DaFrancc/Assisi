@@ -12,6 +12,7 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/Core/BiMap.hpp>
 #include <Assisi/Core/Reflect/BinaryCodec.hpp>
 #include <Assisi/Core/Reflect/ComponentMask.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
@@ -786,9 +787,13 @@ class ReplicationServer
     /// may see it (0 while uncontrolled, which means nobody may).
     std::vector<std::pair<NetId, std::uint32_t>> _controllerOnly;
 
-    std::unordered_map<NetId, ECS::Entity>      _entityByNetId;
-    std::unordered_map<std::uint64_t, NetId>    _netIdByEntity; ///< Keyed by the entity's packed handle.
-    std::vector<NetId>                          _liveNetIds;    ///< Sorted; rebuilt each ReconcileNetIds.
+    /// Entity ↔ NetId, both directions. One container rather than two maps
+    /// because the two directions have to be written together: a NetId whose
+    /// reverse row went missing is an entity that holds an id and is skipped by
+    /// every snapshot, and neither pass of ReconcileNetIds can see such a thing
+    /// to repair it.
+    Core::BiMap<ECS::Entity, NetId> _netIds;
+    std::vector<NetId>              _liveNetIds; ///< Sorted; rebuilt each ReconcileNetIds.
 
     /// Raw counter, not a NetId — see ECS::InstanceTable::_nextId. Only
     /// EnsureNetId, ReconcileNetIds and EnsureInstanceBlock turn a count into an
@@ -863,6 +868,21 @@ class ReplicationServer
     /// whether its first member is noticed by an event send or by the snapshot
     /// walk. InvalidNetId is the ordinary-entity fallback, not a failure.
     NetId EnsureInstanceBlock(ECS::Entity entity);
+
+    /// @brief Bind @p entity to @p netId, or refuse and return InvalidNetId.
+    ///
+    /// `Core::BiMap` guarantees the two directions cannot disagree; what is
+    /// decided here is the policy when they *would* — an id already held by
+    /// another live entity is refused rather than stolen, and the caller goes
+    /// without a wire identity this tick.
+    ///
+    /// The reachable case is a blueprint member destroyed and respawned inside
+    /// one frame: `Scene::Destroy` is deferred to the end of the frame, so both
+    /// claimants of `base + memberIndex` are briefly alive at once and nothing
+    /// here can tell which one is leaving. The next tick's cleanup pass retires
+    /// the one that left and the newcomer takes the id — one frame late, in its
+    /// own block, rather than immediately and permanently outside it.
+    [[nodiscard]] NetId BindNetId(ECS::Entity entity, NetId netId);
 
     std::uint64_t _simTick     = 0;
     std::uint64_t _snapshotDiv = 3; ///< tickRateHz / snapshotHz, at least 1.
