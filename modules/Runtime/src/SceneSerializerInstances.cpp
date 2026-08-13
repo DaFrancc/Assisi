@@ -11,12 +11,12 @@
 #include <Assisi/Runtime/Naming.hpp>
 
 #include <cstdint>
-#include <format>
 #include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <vector>
 
 #include "SceneSerializerContext.hpp"
 #include "SceneSerializerInstances.hpp"
@@ -73,27 +73,13 @@ std::string AuthoredName(ECS::Scene &scene, ECS::Entity entity)
 /// byte-identical names.
 std::string UniqueName(std::string base, std::unordered_set<std::string> &used)
 {
-    // Runtime::Name truncates, so truncate here too: the file then says exactly
-    // what the load will hold.
-    if (base.size() > Core::kShortStringMax)
-        base.resize(Core::kShortStringMax);
-
-    if (used.insert(base).second)
-        return base;
-
-    for (uint32_t suffix = 1;; ++suffix)
-    {
-        std::string candidate = std::format("{}_{}", base, suffix);
-        if (candidate.size() > Core::kShortStringMax)
-        {
-            // Make room for the suffix rather than dropping it: a truncated
-            // duplicate is still a duplicate.
-            const std::string tail = std::format("_{}", suffix);
-            candidate = base.substr(0, Core::kShortStringMax - tail.size()) + tail;
-        }
-        if (used.insert(candidate).second)
-            return candidate;
-    }
+    // The same suffix walk the live scene is named by, asked of a set instead of
+    // a world. One policy, so a name this save steps aside is a name the load
+    // keeps as written.
+    std::string chosen = Runtime::UniqueName(
+        std::string_view{base}, [&used](std::string_view candidate) { return used.contains(std::string{candidate}); });
+    used.insert(chosen);
+    return chosen;
 }
 
 /// The path name a live member is addressed by — `car_3/wheel_fl` — or empty if
@@ -160,9 +146,12 @@ std::string_view LeafName(std::string_view path)
 ///        "All or nothing" is the caller's to keep, not a promise made here.
 /// @param adopt when non-null, a re-expansion: the row already exists and members
 ///        are taken over from it by name instead of being created.
+/// @param names when non-null, the batch to claim member names from. A load
+///        shares one across every instance in the file, so the scene is walked
+///        once rather than once per instance.
 std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &table,
                                               const LevelInstance &entry, int32_t levelInstanceIndex,
-                                              StagedInstance &staged, AdoptionSet *adopt)
+                                              StagedInstance &staged, AdoptionSet *adopt, NameBatch *names)
 {
     if (!HasUniformScale(entry.transform))
     {
@@ -202,6 +191,23 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
                                                   .levelInstanceIndex = levelInstanceIndex,
                                                   .overrides          = entry.overrides,
                                                   .removed            = entry.removed});
+
+    // A member is an entity, so it obeys the entity rule: one name, one entity.
+    // The leaf below is what a member is called whenever that name is free, and
+    // free means free of the scene it lands in, not of the file it came from.
+    std::vector<ECS::Entity> rebuilding;
+    if (adopt != nullptr)
+    {
+        // The members this re-expansion is about to rename: their current names
+        // are not claims against themselves.
+        rebuilding.reserve(adopt->byName.size());
+        for (const auto &[memberName, member] : adopt->byName)
+            rebuilding.push_back(member);
+    }
+    std::optional<NameBatch> ownNames;
+    if (names == nullptr)
+        ownNames.emplace(scene, rebuilding);
+    NameBatch &memberNames = names != nullptr ? *names : *ownNames;
 
     staged.members.reserve(definition->members.size());
     staged.resolved.reserve(definition->members.size());
@@ -252,7 +258,7 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
 
         // The leaf, not the path: a Name is what the member's own file calls it,
         // and a path would not fit. MemberPathName rebuilds the path from the tag.
-        (void)scene.Add(e, Name{Core::ShortString{LeafName(desc.name)}});
+        (void)memberNames.Give(e, LeafName(desc.name));
         (void)scene.Add(e, ECS::BlueprintMember{.instanceId = staged.id, .memberIndex = i});
     }
 

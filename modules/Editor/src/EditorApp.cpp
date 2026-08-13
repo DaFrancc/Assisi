@@ -18,7 +18,7 @@
 #include <Assisi/Geometry/DefaultMeshes.hpp>
 #include <Assisi/Render/RenderSystem.hpp>
 #include <Assisi/Render/Vulkan/VulkanContext.hpp>
-#include <Assisi/Core/ShortString.hpp>
+#include <Assisi/Core/TrivialString.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
@@ -1218,7 +1218,7 @@ std::string EditorApp::EntityDisplayName(Assisi::ECS::Entity entity) const
     const auto *name = _scene->Get<Assisi::Runtime::Name>(entity);
     if (name == nullptr || name->value.Empty())
         return {};
-    char buf[Assisi::Core::kShortStringMax + 1];
+    char buf[Assisi::Core::kEntityNameMax + 1];
     name->value.ToCStr(buf, sizeof(buf));
     return buf;
 }

@@ -155,6 +155,48 @@ TEST_CASE("Re-expand: a member the edit left alone is the same entity afterwards
     CHECK(lid->position.y == doctest::Approx(3.f));
 }
 
+TEST_CASE("Re-expand: a member's name does not drift with every edit to the file")
+{
+    // A member steps past names the scene already answers to, and an adopted
+    // member's own name is one of them. Counting it would suffix the
+    // member against itself: `body_1` to `body_2` to `body_3`, one per edit.
+    const std::filesystem::path root = FreshRoot("namedrift");
+    Write(root, "crate.abp", CrateFile());
+
+    ECS::Scene    scene;
+    InstanceTable table;
+
+    // The level entity that made the member step aside in the first place.
+    const ECS::Entity authored = scene.Create();
+    (void)scene.Add(authored, Runtime::Name{Core::EntityName{"body"}});
+
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 5.f),
+                                                       /*authored=*/true);
+    REQUIRE(placed.has_value());
+
+    const ECS::Entity body = MemberNamed(scene, table, placed->instanceId, "body");
+    REQUIRE(body != ECS::NullEntity);
+    const Runtime::Name *named = scene.Get<Runtime::Name>(body);
+    REQUIRE(named != nullptr);
+    REQUIRE(named->value.View() == "body_1");
+
+    const std::vector<std::string> before = MemberNames("crate.abp");
+
+    // An edit somewhere else entirely: the lid moves.
+    Write(root, "crate.abp",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
+                                               Entity("lid", At(0.f, 3.f, 0.f))})}});
+    Runtime::InvalidateBlueprint("crate.abp");
+
+    REQUIRE(SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before).has_value());
+
+    const Runtime::Name *after = scene.Get<Runtime::Name>(body);
+    REQUIRE(after != nullptr);
+    CHECK(after->value.View() == "body_1");
+    CHECK(scene.Get<Runtime::Name>(authored)->value.View() == "body");
+}
+
 TEST_CASE("Re-expand: reordering the file remaps every surviving member's index")
 {
     const std::filesystem::path root = FreshRoot("reorder");
