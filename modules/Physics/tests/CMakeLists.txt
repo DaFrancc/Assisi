@@ -3,6 +3,7 @@
 # simulation into ECS Transforms, which cannot be exercised without a live world.
 add_executable(Assisi-Physics-Tests
   main.cpp
+  TestBodyLifetime.cpp
   TestParentedBodies.cpp
   TestPhysicsWriteback.cpp
 )
