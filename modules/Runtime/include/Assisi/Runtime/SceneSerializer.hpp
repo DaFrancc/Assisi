@@ -78,6 +78,7 @@
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/LevelError.hpp>
 
 namespace Assisi::Runtime
 {
@@ -115,46 +116,42 @@ struct LevelHeader
     std::vector<std::string> systems;
 };
 
-/// @brief Why a level file could not be loaded, or an instance could not be placed.
+/// @brief Optional progress reporter for a load, called with a fraction in
+/// [0, 1] as the component-deserialize pass advances. Invoked on the thread
+/// that drives the load (a worker, for async travel), so an implementation
+/// that publishes to another thread must synchronise itself.
+using LoadProgressFn = std::function<void(float)>;
+
+/// @brief Everything a load can optionally be given. All inputs — what a failed
+/// load did to the scene comes back on the LevelFailure.
 ///
-/// Says what *kind* of thing is wrong; which entity, which member and which name
-/// are logged where they are known, exactly as BlueprintError does in
-/// Blueprint.hpp. Every one of these is a file that means something other than
-/// what it says — the alternative to refusing is a silently mis-wired scene.
-enum class LevelError
+/// At namespace scope rather than nested in SceneSerializer: GCC parses a nested
+/// class's default member initializers only at the end of the enclosing class,
+/// which leaves `= {}` unusable as a default argument.
+struct LoadOptions
 {
-    FileUnreadable,      ///< The asset system or filesystem could not read the file.
-    MalformedJson,       ///< Read, but not parseable as JSON.
-    UnsupportedVersion,  ///< A `version` this build does not read. Refused before the scene is cleared.
-    NoInstanceTable,     ///< The file places instances and the caller passed no table to put them in.
-    MissingName,         ///< An entity or instance entry with no `name`.
-    MissingSource,       ///< An instance entry that names no `source`.
-    InvalidName,         ///< A name ValidateName refuses — empty, too long, or holding a `/`.
-    DuplicateName,       ///< Two entities, or two claims on one member path, under one name.
-    NonUniformScale,     ///< An instance placement that shears; cannot compose exactly (§3).
-    BlueprintUnusable,   ///< An instance names a blueprint that will not load; see BlueprintError.
-    UnresolvedReference, ///< An EntityRef naming an entity or member the file does not declare.
-    MalformedComponent,  ///< A component field is present but unreadable — a string where a number goes.
-    ContextBusy,         ///< A serialization context is already active on this thread (a caller bug).
-    InstanceNotLive,     ///< Re-expansion was asked for an instance id no longer in the table.
-    NameAlreadyLive,     ///< Placing would put two instances of one name in a world.
+    /// Reports progress as the component-deserialize pass advances. Carries an
+    /// initializer it does not need so that designated initializers naming only
+    /// the later members do not trip -Wmissing-field-initializers.
+    LoadProgressFn onProgress = {};
+
+    /// Receives the file's non-entity metadata. Left untouched if the load fails
+    /// its version check.
+    LevelHeader *header = nullptr;
+
+    /// Receives one row per instance the file places, and is where the ids the
+    /// BlueprintMember tags carry are allocated. Passing none for a file that
+    /// *has* instances fails the load rather than dropping them: a silently
+    /// instance-free level is a level missing most of its content.
+    InstanceTable *instances = nullptr;
 };
-
-/// @brief One line saying what is wrong, for a log or a field hint.
-[[nodiscard]] std::string_view Describe(LevelError error);
-
-/// @brief A load either worked or it did not; there is nothing to hand back on
-/// success beyond that. The scene is the output.
-using LevelResult = std::expected<void, LevelError>;
 
 class SceneSerializer
 {
   public:
-    /// @brief Optional progress reporter for a load, called with a fraction in
-    /// [0, 1] as the component-deserialize pass advances. Invoked on the thread
-    /// that drives the load (a worker, for async travel), so an implementation
-    /// that publishes to another thread must synchronise itself.
-    using ProgressFn = std::function<void(float)>;
+    /// @brief Kept as a member name for the callers and signatures that spell it
+    /// that way; LoadProgressFn above is the same type.
+    using ProgressFn = LoadProgressFn;
 
     /// @brief Serialize the entire scene to a JSON value, plus @p header.
     ///
@@ -180,28 +177,19 @@ class SceneSerializer
     ///
     /// Clears the scene before loading.  Only components registered in
     /// ComponentRegistry are restored; unrecognised names are skipped with a warning.
-    /// @p onProgress (optional) is called as the per-entity deserialize pass runs —
-    /// the dominant, entity-scaling cost — ending at 1.0.
-    /// @p header (optional) receives the file's non-entity metadata; left
-    /// untouched if the load fails its version check.
-    ///
-    /// @p instances receives one row per instance the file places, and is where
-    /// the ids the BlueprintMember tags carry are allocated. Passing nullptr for a
-    /// file that *has* instances fails the load rather than dropping them: a
-    /// caller with nowhere to put the table cannot hold the level either, and a
-    /// silently instance-free level is a level missing most of its content.
+    /// What @p options can carry is on LoadOptions.
     ///
     /// **Never throws.** A wrong `version` or a malformed file (see the naming
     /// rules in the file comment) comes back as a LevelError. A version mismatch
     /// is refused *before* the scene is cleared, so that caller keeps what it had;
     /// every other failure is a file this got partway through, and leaves an empty
-    /// scene rather than a half-built one.
+    /// scene rather than a half-built one — LevelFailure::sceneReplaced is how a
+    /// caller learns which of those it got.
     ///
     /// Returning a bare bool — or nothing — is what made a version mismatch read
     /// as a *successful* load of an empty level all the way up to the caller.
     [[nodiscard]] static LevelResult Load(ECS::Scene &scene, const nlohmann::json &j,
-                                          const ProgressFn &onProgress = {}, LevelHeader *header = nullptr,
-                                          InstanceTable *instances = nullptr);
+                                          const LoadOptions &options = {});
 
     /// @brief Expands one instance of @p source into @p scene at @p placement,
     /// outside any level load.
@@ -361,10 +349,10 @@ class SceneSerializer
     [[nodiscard]] static std::expected<std::vector<std::string>, LevelError>
     ReadLevelSystems(std::string_view assetPath);
 
+    /// The catch below clears a half-populated scene, and reports the clearing as
+    /// its own: a throw is the one path where Load cannot say so itself.
     [[nodiscard]] static LevelResult LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
-                                                  const ProgressFn &onProgress = {},
-                                                  LevelHeader      *header     = nullptr,
-                                                  InstanceTable    *instances  = nullptr);
+                                                  const LoadOptions &options = {});
 
     /// @brief Load the scene from an absolute filesystem path, bypassing the
     /// asset system.
@@ -373,9 +361,7 @@ class SceneSerializer
     /// writes so its clients can load the *unsaved* scene it is simulating.
     /// Otherwise identical to LoadFromFile, failure handling included.
     [[nodiscard]] static LevelResult LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
-                                                  const ProgressFn &onProgress = {},
-                                                  LevelHeader      *header     = nullptr,
-                                                  InstanceTable    *instances  = nullptr);
+                                                  const LoadOptions &options = {});
 
     /// @brief Moves a set of entities' component *data* from one scene to another.
     ///

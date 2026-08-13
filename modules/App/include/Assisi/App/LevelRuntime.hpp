@@ -23,6 +23,9 @@
 #include <Assisi/NetSync/NetProtocol.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 #include <Assisi/Render/AssetCache.hpp>
+// The whole of what a LevelResult return needs, and none of SceneSerializer.hpp's
+// nlohmann — see that split's own file comment.
+#include <Assisi/Runtime/LevelError.hpp>
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <cstddef>
@@ -44,6 +47,11 @@ class InstanceTable;
 
 namespace Assisi::App
 {
+
+// Declared, not included, for the same reason as the two above: World.hpp is a
+// heavier header than this one wants, and a caller with a World to load into has
+// already included it.
+struct World;
 
 /// @brief Wires @p database into the two places that translate asset ids:
 /// serialization's save-time path hint, and the cache's id↔path resolution
@@ -80,10 +88,55 @@ enum class AssetCacheReset : std::uint8_t
     Keep,
 };
 
+/// @brief The engine-side pieces a load needs beyond the world it loads into.
+///
+/// References rather than the pointers WorldManager::Services holds, and that is
+/// the distinction: that struct is what an *app installs*, and a headless one
+/// installs none of the three below. This is what a load with a renderer in play
+/// actually requires, so the null check happens once at the boundary that knows
+/// (WorldManager::LoadLevel makes it, and takes the render-free path when it
+/// fails) instead of at every use inside.
+struct LevelServices
+{
+    Render::AssetCache        &cache;
+    const Core::AssetDatabase &database;
+    Runtime::SceneRenderer    &renderer;
+};
+
+/// @brief The optional half of a load: what to do with the asset cache, and what
+/// the caller wants filled in besides the world itself.
+struct LevelLoadOptions
+{
+    AssetCacheReset reset = AssetCacheReset::ClearFirst;
+
+    /// Receives the level's non-entity metadata — notably the system profile it
+    /// asks for, which the caller applies to the world it loaded into
+    /// (docs/world-system-binding-design-notes.md §3).
+    Runtime::LevelHeader *header = nullptr;
+};
+
 /// @brief Loads a level by virtual path (e.g. "levels/Materials.alvl") into
-/// @p scene and makes it runnable: deserialize, optionally drop the old asset set
-/// and evict the renderer's cached bindings, then rebind assets + physics.
-/// Returns false (scene untouched) if the file didn't resolve or deserialize.
+/// @p world and makes it runnable: deserialize into its scene, optionally drop
+/// the old asset set and evict the renderer's cached bindings, then rebind
+/// assets + physics. On failure it hands back the deserializer's own LevelError
+/// rather than a bare bool: the caller's log line is the only place that reason
+/// was ever going to reach a person.
+///
+/// Takes the whole World rather than its scene, physics and instance table
+/// separately because every caller was passing three parts of one world, and a
+/// signature that lets them come from three *different* worlds is a signature
+/// that has to be read carefully to see that they don't.
+///
+/// **A failure does not mean the scene is as you left it.** It said so here
+/// for a long time and it was only ever half true: the deserializer refuses an
+/// unreadable file or an unsupported version before touching anything, but every
+/// refusal *inside* the load — a duplicate name, an unreadable component, a
+/// reference to an entity the file never declares — happens after it has already
+/// emptied the scene. LevelFailure::sceneReplaced is which; the error kind alone
+/// cannot say, and a caller holding entity handles has to look (round-7 B20).
+/// Note that on the replaced path the physics bodies are *not* rebuilt either,
+/// since the rebind below never runs — the caller owns putting that right, e.g.
+/// with BuildSceneBodies over whatever it decides the scene now is.
 ///
 /// ## Call this only at a safe point — never mid-frame.
 ///
@@ -97,52 +150,45 @@ enum class AssetCacheReset : std::uint8_t
 /// Editor-state bookkeeping (undo-history wipe, selection/eyedropper reset,
 /// play-state reset) is deliberately not here — it belongs to the caller that
 /// has that state.
-///
-/// @p header (optional) receives the level's non-entity metadata — notably the
-/// system profile it asks for, which the caller applies to the world it loaded
-/// into (docs/world-system-binding-design-notes.md §3).
-///
-/// @p instances (optional) receives one row per blueprint instance the level
-/// places. A level that places any and is given none fails to load rather than
-/// arriving without most of its content.
-bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
-               const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset = AssetCacheReset::ClearFirst,
-               Runtime::LevelHeader *header = nullptr, Runtime::InstanceTable *instances = nullptr);
+[[nodiscard]] Runtime::LevelResult LoadLevel(World &world, std::string_view virtualPath,
+                                             const LevelServices    &services,
+                                             const LevelLoadOptions &options = {});
 
 /// @brief LoadLevel from an absolute filesystem path instead of a virtual one.
 ///
-/// Same safe-point rules, same everything — the only difference is where the
-/// bytes come from. It exists for levels that are not assets: the temp snapshot
-/// a play-in-editor host writes so its client processes can load the scene it is
-/// actually simulating, unsaved edits included. Asset *references inside* the
-/// level still resolve through the asset system as usual; it is only the level
-/// file itself that lives outside it.
-bool LoadLevelFile(ECS::Scene &scene, const std::filesystem::path &path, Render::AssetCache &cache,
-                   const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-                   Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset = AssetCacheReset::ClearFirst,
-                   Runtime::LevelHeader *header = nullptr, Runtime::InstanceTable *instances = nullptr);
+/// Same safe-point rules, same everything — the failure contract above included,
+/// which means a failure here can also be sitting over an emptied scene, and the
+/// LevelFailure answers it here too.
+///
+/// It exists for levels that are not assets: the temp snapshot a play-in-editor
+/// host writes so its client processes can load the scene it is actually
+/// simulating, unsaved edits included. Asset *references inside* the level still
+/// resolve through the asset system as usual; it is only the level file itself
+/// that lives outside it.
+[[nodiscard]] Runtime::LevelResult LoadLevelFile(World &world, const std::filesystem::path &path,
+                                                 const LevelServices    &services,
+                                                 const LevelLoadOptions &options = {});
 
 /// @brief The simulation half of LoadLevel: deserialize the level and rebuild
 /// its physics bodies, with no asset cache and no renderer involved.
 ///
-/// This is what a dedicated server loads. It takes no Render or Runtime types
-/// at all, which is the point — a headless process has no GPU assets to resolve
-/// and no binding caches to evict, and asking it for an AssetCache just to
-/// throw one away would be a lie about what it needs. Mesh/material GUIDs stay
-/// in the scene as authored data (the server replicates them; it never resolves
-/// them), so a client joining later gets the same references the level declared.
+/// This is what a dedicated server loads. It takes no Render types at all, which
+/// is the point — a headless process has no GPU assets to resolve and no binding
+/// caches to evict, and asking it for an AssetCache just to throw one away would
+/// be a lie about what it needs. Mesh/material GUIDs stay in the scene as
+/// authored data (the server replicates them; it never resolves them), so a
+/// client joining later gets the same references the level declared.
 ///
 /// The safe-point warning on LoadLevel does not apply here: nothing GPU-owned
-/// is freed. Returns false (scene untouched) if the level didn't resolve or
-/// deserialize.
+/// is freed. Fails with the deserializer's LevelError if the level didn't resolve
+/// or deserialize — and, as on LoadLevel, that failure may have emptied the scene
+/// on its way out — the same LevelFailure::sceneReplaced says so.
 ///
 /// @note This header still *includes* the Render/Runtime headers for LoadLevel
 /// above, so including it does not yet give a caller a render-free dependency
 /// footprint — only a render-free call. Untangling the header is part of the
 /// App core/presentation split committed to in the networking design notes.
-bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics,
-                  Runtime::InstanceTable *instances = nullptr);
+[[nodiscard]] Runtime::LevelResult LoadLevelSim(World &world, std::string_view virtualPath);
 
 /// @brief Per-frame streaming upgrade: while the cache has async loads in
 /// flight (and for one frame after the last finishes, to pick up the final

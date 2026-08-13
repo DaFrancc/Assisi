@@ -30,6 +30,25 @@ if (ASSISI_ENABLE_NETWORKING)
   target_link_libraries(Assisi-Sandbox PRIVATE Assisi::NetSync)
 endif()
 
+# A refused start has to reach the exit code (round-7 B18). Driven as a real
+# process because that is the whole claim — `StartupFailed()` returning true is
+# not the property anyone depends on, `$?` being non-zero is, and only main()
+# joins the two.
+#
+# `--connect` at a name the transport will not resolve is the cheapest of the
+# five refusal paths to reach: NetTransport::Connect takes IP literals only, so
+# this fails inside NetSession::Join, synchronously, during OnStart — no peer to
+# stand up, no port to bind, no timeout to wait out, and nothing about it varies
+# with the machine. WILL_FAIL is the assertion: the test passes only on a
+# non-zero exit, which is exactly what B18 says the server does not produce.
+if (ASSISI_BUILD_TESTS AND ASSISI_ENABLE_NETWORKING)
+  add_test(NAME SandboxRefusedStart
+    COMMAND Assisi-Sandbox --connect not-an-ip:27015 --ticks 1
+    WORKING_DIRECTORY "$<TARGET_FILE_DIR:Assisi-Sandbox>"
+  )
+  set_tests_properties(SandboxRefusedStart PROPERTIES WILL_FAIL TRUE)
+endif()
+
 # The game's own ASYSTEM declarations. Scanning them is what puts them in the
 # catalog: a level names a system, and the declaration in a reflected header is
 # the registration — there is no registerGameSystems to call.

@@ -113,7 +113,7 @@ TEST_CASE("Overrides: a level's field claim wins, and the fields it did not name
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"body"));
     REQUIRE(camera != nullptr);
@@ -143,7 +143,7 @@ TEST_CASE("Overrides: outermost wins per field, so two levels' claims both apply
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     // Both, not one replacing the other's whole object — the reading in which the
     // outer claim wipes the inner set is how someone loses edits.
@@ -175,7 +175,7 @@ TEST_CASE("Overrides: null removes a component, and the removal beats an outer f
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     // Removal wins. Resurrecting it from a field edit would silently bring back
     // every *other* field of a component somebody deliberately deleted.
@@ -197,7 +197,7 @@ TEST_CASE("Overrides: an add starts from C++ defaults, not from what was deleted
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const Camera *camera = scene.Get<Camera>(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl"));
     REQUIRE(camera != nullptr);
@@ -221,7 +221,7 @@ TEST_CASE("Overrides: a removed member is not created, and the ones around it ke
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     // One car lost a wheel; the other did not.
     CHECK(scene.AliveCount() == 3);
@@ -254,7 +254,7 @@ TEST_CASE("Overrides: a reference to a removed member nulls, rather than refusin
     InstanceTable table;
     // A removed member is a legitimate thing for a file to say, unlike a name the
     // file never declared — so the wheel arrives with a null parent, not a refusal.
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const Runtime::Parent *parent = scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1},"wheel_fl"));
     REQUIRE(parent != nullptr);
@@ -286,7 +286,7 @@ TEST_CASE("Overrides: a reference orphaned by an in-file removal nulls, exactly 
     // Which path removed the member is not something a reference can see, so it
     // cannot be what decides between "null it" and "this file is unusable". Refusing
     // here takes down every instance of bodyless_car.abp and the level with them.
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const Runtime::Parent *parent =
         scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "car/wheel_fl"));
@@ -322,7 +322,7 @@ TEST_CASE("Overrides: a level's reference into a member an inner file removed nu
     InstanceTable table;
     // The level names a member that a file it does not own decided to remove. That
     // is the level being out of date, not the level being corrupt.
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     ECS::Entity watcher = ECS::NullEntity;
     for (auto [entity, name] : scene.Query<Runtime::Name>())
@@ -354,7 +354,7 @@ TEST_CASE("Overrides: removing a nested instance's name removes everything under
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     // A path removes the member it names and everything beneath it, so nothing has
     // to know whether the path named a member or a nested instance.
@@ -378,7 +378,7 @@ TEST_CASE("Overrides: a claim on a member the blueprint no longer declares is dr
     // deliberate deletion, so dropping the claim cannot be discarding a real edit.
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
     CHECK(scene.AliveCount() == 2);
 
     // "Two entities loaded" is true whether the claim was dropped or applied to
@@ -447,7 +447,7 @@ TEST_CASE("References: a level's override reaches its own entities through a lea
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     ECS::Entity marker = ECS::NullEntity;
     for (auto [entity, name] : scene.Query<Runtime::Name>())
@@ -493,7 +493,7 @@ TEST_CASE("References: a nested file's override resolves in that file, not the i
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const ECS::Entity antenna = MemberOf(scene, table, ECS::InstanceId{1}, "rig/antenna");
     REQUIRE(antenna != ECS::NullEntity);
@@ -531,7 +531,7 @@ TEST_CASE("References: inside a file, a leading slash and a plain name mean the 
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const Runtime::Parent *parent =
         scene.Get<Runtime::Parent>(MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl"));
@@ -582,7 +582,7 @@ TEST_CASE("Placement: an override that adds Parent stops the placement composing
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     // Now relative to hub, which already absorbed the placement — so body keeps its
     // authored 1.0 and does not also take the instance's 100.
@@ -607,7 +607,7 @@ TEST_CASE("Placement: an override that removes Parent lets the placement compose
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     const ECS::Entity wheel = MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl");
     REQUIRE(scene.Get<Runtime::Parent>(wheel) == nullptr);
@@ -640,7 +640,7 @@ TEST_CASE("Placement: adding Parent to a nested member also undoes the placement
 
     ECS::Scene    scene;
     InstanceTable table;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, nullptr, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
 
     // body is now relative to hub, which sits at the rig's origin. Its authored
     // local was 1, and neither the lot's 10 nor the level's 100 belongs to it any
@@ -670,7 +670,7 @@ TEST_CASE("Overrides: a save writes back what was read, and reloading gives the 
     ECS::Scene           scene;
     InstanceTable        table;
     Runtime::LevelHeader header;
-    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {}, &header, &table));
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.header = &header, .instances = &table}));
 
     const nlohmann::json saved = SceneSerializer::Save(scene, header, &table);
     REQUIRE(saved.at("instances").size() == 1);
@@ -682,7 +682,7 @@ TEST_CASE("Overrides: a save writes back what was read, and reloading gives the 
     // level that reads as a plain car the next time it opens.
     ECS::Scene    reloaded;
     InstanceTable reloadedTable;
-    REQUIRE(SceneSerializer::Load(reloaded, saved, {}, nullptr, &reloadedTable).has_value());
+    REQUIRE(SceneSerializer::Load(reloaded, saved, {.instances = &reloadedTable}).has_value());
     CHECK(reloaded.AliveCount() == 1);
     const Camera *camera = reloaded.Get<Camera>(MemberOf(reloaded, reloadedTable, ECS::InstanceId{1}, "body"));
     REQUIRE(camera != nullptr);
