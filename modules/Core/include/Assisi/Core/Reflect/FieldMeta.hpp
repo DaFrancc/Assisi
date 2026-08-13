@@ -142,6 +142,36 @@ struct FieldMeta
     /// still parse each other perfectly and the server's rule governs — the
     /// same argument that keeps the game's neverReplicate list out of the hash.
     bool controlled = false;
+
+    /// @brief AFIELD(subject): this event is *about* the entity this field names,
+    /// and relevancy scopes its delivery by that entity.
+    ///
+    /// Only meaningful on an `EntityRef` field of an `AMSG(event, …)` that is not
+    /// `independent`, and reflectgen rejects it anywhere else — including on an
+    /// intent, which has exactly one recipient and so has nothing to scope.
+    /// Exactly one field per event carries it, which reflectgen also enforces:
+    /// the subject is what relevancy filters on, what the recipient's queue holds
+    /// the message for until it has been told about that entity, and what evicts
+    /// the message when the entity dies. None of those three has an answer for
+    /// two subjects — intersection starves the message, union leaks it — and
+    /// every engine that scopes messages this way (an Unreal actor, a Mirror
+    /// NetworkIdentity, a Godot node) allows exactly one for the same reason.
+    ///
+    /// Other `EntityRef` fields on the same event are ordinary: they travel and
+    /// translate like any reference, they simply do not decide who is told. A
+    /// recipient that has never heard of one of them decodes it as `NullEntity`,
+    /// since a message — unlike a component — has no deferred-reference patch-up.
+    ///
+    /// This replaced an inference: the subject used to be whichever `EntityRef`
+    /// field was declared first, which made reordering two fields silently change
+    /// the audience, and made an event whose first reference happened to be null
+    /// indistinguishable from an independent one — so it was broadcast to
+    /// everyone, which is exactly what relevancy exists to prevent.
+    ///
+    /// Deliberately **not** in the protocol hash, for the same reason as
+    /// `controlled`: it changes who a message is sent to, never how its bytes
+    /// decode, so two builds differing only here still parse each other.
+    bool subject = false;
 };
 
 } // namespace Assisi::Core::Reflect

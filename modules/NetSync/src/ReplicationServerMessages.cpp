@@ -359,12 +359,21 @@ std::size_t ReplicationServer::EventFloorBytes(const Connection &connection) con
     return connection.pendingEvents.empty() ? 0 : _config.reservedEventBytes;
 }
 
-bool ReplicationServer::EventReaches(const Connection &connection, NetId subject) const
+bool ReplicationServer::EventReaches(const Connection &connection, NetId subject, bool independent) const
 {
     if (!connection.ready)
         return false;
+    if (independent)
+        return true; // nothing to scope it by by declaration, so everyone ready
     if (subject == InvalidNetId)
-        return true; // independent: nothing to scope it by, so everyone ready
+    {
+        // Declared to be about an entity, and it named none. Withheld rather
+        // than broadcast: `InvalidNetId` used to be read as "independent" here,
+        // which made a scoped event indistinguishable from a global one and sent
+        // it to everybody — the relevancy boundary failing open, on the one path
+        // whose whole purpose is to fail closed.
+        return false;
+    }
     // The relevancy boundary reused rather than re-derived, so the zero-bytes
     // guarantee covers messages and not only state.
     return IsRelevant(connection.id, subject);
@@ -410,22 +419,46 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
     const std::span<const std::byte> encoded = writer.Data();
     std::vector<std::byte>           bytes(encoded.begin(), encoded.end());
 
-    // What relevancy scopes this by: the first entity the message names. An
-    // `independent` event names none by declaration, and reflectgen refuses an
-    // event that names none without declaring it.
+    // What relevancy scopes this by: the entity named by the field the author
+    // marked AFIELD(subject). Marked rather than inferred — this used to take
+    // whichever `EntityRef` field came first, so declaration order silently
+    // decided the audience of a message naming two entities. reflectgen
+    // guarantees the shape read here: an event is `independent` and marks none,
+    // or it marks exactly one.
     NetId subject = InvalidNetId;
     if (!meta->independent)
     {
         for (const Core::Reflect::FieldMeta &field : meta->fields)
         {
-            if (field.type != Core::Reflect::FieldType::EntityRef)
+            if (!field.subject || field.type != Core::Reflect::FieldType::EntityRef)
                 continue;
             const std::uint64_t packed =
                 *reinterpret_cast<const std::uint64_t *>(static_cast<const std::byte *>(event) + field.offset);
-            subject = EnsureNetId(UnpackEntity(packed));
+            // A null subject leaves InvalidNetId deliberately, rather than being
+            // skipped over in search of another reference: the marked field is
+            // the answer even when the answer is "nothing".
+            const ECS::Entity named = UnpackEntity(packed);
+            if (named != ECS::NullEntity)
+            {
+                // Through the codec's own hook rather than calling EnsureNetId
+                // again. The payload above already translated this very field,
+                // and the two must name the same entity: what routes the message
+                // has to be what the bytes say it is about. Both spellings agree
+                // under OnDemand assignment, but only because they are the same
+                // call underneath — reach for `Existing` here, as the two other
+                // encode sites legitimately do, and the payload would encode
+                // "no entity" for something just spawned while relevancy scoped
+                // delivery by the id this line assigned itself.
+                subject = NetId{static_cast<NetIdValue>(codec.entityToWire(packed))};
+            }
             break;
         }
     }
+
+    // The declaration promised an entity and the send passed none, so there is
+    // nothing to scope delivery by. Every relevancy-scoped recipient class below
+    // withholds it; this is the one place that can say why.
+    const bool unscoped = !meta->independent && subject == InvalidNetId;
 
     const bool reliable = meta->reliability == Core::Reflect::MessageReliability::Reliable;
 
@@ -462,13 +495,27 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
     case Recipients::AllRelevant:
     case Recipients::ExceptInstigator:
     {
+        if (unscoped)
+        {
+            // A caller bug rather than an honestly reachable state — unlike the
+            // Directed case below, where an uncontrolled entity really has no
+            // controller — so it is said out loud as well as counted. Loud
+            // because the alternative reading of a null subject is "tell
+            // everyone", which is silent by nature and indistinguishable from
+            // working.
+            ++_hostDiagnostics.eventsUnscoped;
+            Core::Log::Warn("NetSync: '{}' is scoped by an entity and named none, so no client can be told "
+                            "about it. The host still sees it.",
+                            meta->name);
+        }
+
         const bool exclude = recipients == Recipients::ExceptInstigator;
         for (auto &[connectionId, connection] : _connections)
         {
             (void)connectionId;
             if (exclude && connection.clientId == who)
                 continue;
-            if (EventReaches(connection, subject))
+            if (EventReaches(connection, subject, meta->independent))
                 deliver(connection);
         }
         // The authority sees everything, so the host is always in the

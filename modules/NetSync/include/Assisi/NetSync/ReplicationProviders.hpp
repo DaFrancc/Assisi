@@ -253,6 +253,15 @@ struct ConnectionDiagnostics
     /// Directed events with nobody to direct them at: an uncontrolled entity,
     /// or a client that has left.
     std::uint64_t eventsUndeliverable = 0;
+    /// Scoped events whose AFIELD(subject) named nothing, so relevancy had no
+    /// entity to scope delivery by and no client could be told. Counted on the
+    /// host's diagnostics, since no one connection owns the failure.
+    ///
+    /// Always a caller bug — the declaration says this event is about an entity
+    /// and the send passed none — which is why it is counted rather than
+    /// tolerated: the alternative reading, "deliver it to everybody", is the
+    /// relevancy boundary failing open.
+    std::uint64_t eventsUnscoped     = 0;
 };
 
 } // namespace Assisi::NetSync
