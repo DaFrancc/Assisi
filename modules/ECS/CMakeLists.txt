@@ -10,6 +10,7 @@ target_sources(Assisi-ECS
     "include/Assisi/ECS/Scene.hpp"
     "include/Assisi/ECS/SparseSet.hpp"
     "include/Assisi/ECS/Transform.hpp"
+    "include/Assisi/ECS/TransformPose.hpp"
   PRIVATE
     "src/Registry.cpp"
 )
