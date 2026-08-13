@@ -93,17 +93,34 @@ nlohmann::json CarFile()
 
 struct Fixture
 {
-    Net::NetTransport                               transport;
-    App::World                                      host;
-    App::World                                      guest;
+    Net::NetTransport transport;
+
+    // The worlds a test that does not care where its worlds come from gets:
+    // standalone, so `manager` is null — a shape the engine has to keep working
+    // (World.hpp) and the one every case below but the services case wants.
+    App::World ownHost;
+    App::World ownGuest;
+
+    App::World                                     &host;
+    App::World                                     &guest;
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
     NetSync::ReplicationServer                      server;
     NetSync::ReplicationClient                      client;
     std::uint64_t                                   tick = 0;
 
     Fixture()
-        : pair(transport.CreateLoopbackPair()), server(transport, host.scene),
+        : host(ownHost), guest(ownGuest), pair(transport.CreateLoopbackPair()), server(transport, host.scene),
           client(transport, guest.scene, pair.second)
+    {
+    }
+
+    /// Over worlds the caller owns — a manager's, for the cases that turn on what
+    /// a world can reach through its manager. Spelled out rather than delegated:
+    /// a delegating constructor would have to name `ownHost` as an argument
+    /// before the delegated-to constructor has created it.
+    Fixture(App::World &hostWorld, App::World &guestWorld)
+        : host(hostWorld), guest(guestWorld), pair(transport.CreateLoopbackPair()),
+          server(transport, host.scene), client(transport, guest.scene, pair.second)
     {
     }
 
@@ -470,6 +487,53 @@ TEST_CASE("Blueprint over the wire: the guest installs the systems the blueprint
 
     CHECK(fixture.guest.systems.Has("Counter"));
     CHECK(fixture.host.systems.Has("Counter"));
+}
+
+TEST_CASE("Blueprint over the wire: a guest with no render services expands anyway")
+{
+    const std::filesystem::path root = FreshRoot();
+
+    // A member with something to resolve: the resolve walks MeshRenderers, so a
+    // car of bare Transforms would take the guarded path either way and this case
+    // would pass with no guard at all.
+    nlohmann::json car = CarFile();
+    car["entities"][0]["components"]["MeshRenderer"] = {
+        {"mesh", {{"guid", "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd"}}}};
+    Write(root, "car.abp", car);
+
+    const App::ContentSet content = App::BuildContentSet();
+
+    // Managed worlds with no services installed — what a dedicated server is, and
+    // what every headless process is. The expander resolves its placed members'
+    // assets (round-7 S14), and this is the shape that resolve has to survive:
+    // a manager it can reach, holding a cache and a database that are not there.
+    // The standalone world every other case here uses (`manager == nullptr`) is
+    // the other half of the same guard.
+    App::WorldManager worlds;
+    App::World       &host  = worlds.Create("Host");
+    App::World       &guest = worlds.Create("Guest");
+
+    Fixture fixture{host, guest};
+    fixture.Connect(content.paths);
+
+    REQUIRE(App::SpawnBlueprint(fixture.host, "car.abp", {}).has_value());
+    fixture.Step(12);
+
+    // What the resolve *produces* is a GPU pointer, and a Render::AssetCache has
+    // to be Initialize()d against an nvrhi device before it can produce one —
+    // which this suite has no way to build. So this case does not claim the
+    // meshes came out resolved; it pins the half that is observable without a
+    // device, which is that the expansion completes with the services absent
+    // rather than dereferencing one of them on the way through.
+    CHECK(fixture.client.ReplicatedEntityCount() == 3);
+    const auto rows = fixture.guest.instances.All();
+    REQUIRE(rows.size() == 1);
+    CHECK(rows[0].second->source == "car.abp");
+    for (const char *name : {"body", "wheel_l", "wheel_r"})
+    {
+        CAPTURE(name);
+        CHECK(App::FindMember(fixture.guest, rows[0].first, name) != ECS::NullEntity);
+    }
 }
 
 TEST_CASE("Blueprint over the wire: a blueprint outside the content set still replicates")
