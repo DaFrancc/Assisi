@@ -866,9 +866,41 @@ class EditorApp : public Assisi::App::Application
     void PruneSelection();
 
     // --- Level paths: load and save ---
+    /// @brief Drops everything the editor was holding *about* a scene that has
+    /// just been replaced: play state, selection, armed pickers, undo history,
+    /// an in-flight instance drag, and the pending save/re-expansion state.
+    ///
+    /// One function because it is one obligation. A load replaces the scene in
+    /// place and the new one rebuilds entity identity densely from {0,0}, so
+    /// every handle the editor kept now resolves to a live but *different*
+    /// entity — passing IsAlive, failing to be what anyone meant. Spelled out at
+    /// each site it used to be skippable by an early return, which is exactly
+    /// what B20 is.
+    ///
+    /// @p virtualPath only names the level in the log line about an unanswered
+    /// save; the work is the same either way.
+    void ReleaseSceneBookkeeping(std::string_view virtualPath);
+    /// @brief The above, plus emptying the world the failed load left behind.
+    ///
+    /// For a load that got past the point of no return and then refused. What it
+    /// leaves is not a level — either an empty scene the deserializer gave up
+    /// on, or the new level's entities with none of the systems that make them
+    /// behave — and keeping the previous level's identity over it would make the
+    /// next Save write one file's name onto another's contents. The editor
+    /// already has an honest state for this, the one it starts in, so it goes
+    /// there: no entities, no bodies, no systems, no level path.
+    void AbandonReplacedScene(std::string_view virtualPath);
     /// @brief Loads a level by virtual path (e.g. "levels/Materials.alvl"), doing
     /// the cache-clear + rebind LoadLevel wraps. Returns false if the file didn't
     /// deserialize. The shared core of LoadLevel and the command-line loader.
+    ///
+    /// A false return means one of two things, and they are not interchangeable:
+    /// either nothing was touched and the level on screen is the one that was
+    /// there before, or the load got far enough to replace the scene and then
+    /// failed — in which case this leaves no level open at all rather than the
+    /// previous level's name and history over content that is not it (round-7
+    /// B20, and ENG-126 for the systems half). Either way what is on screen and
+    /// what the editor believes about it agree.
     bool LoadLevelFromPath(const std::string &virtualPath);
     /// @brief Saves the shown world to `levels/<name>.alvl`. Save As, and the
     /// Levels panel's shorthand for a level that lives where levels live.

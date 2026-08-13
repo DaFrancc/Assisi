@@ -177,14 +177,19 @@ void EditorApp::BuildJoinedWorld()
     Assisi::Runtime::LevelHeader header;
     const auto                   reset = _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep
                                                              : Assisi::App::AssetCacheReset::ClearFirst;
-    const bool loaded = level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
-                            ? Assisi::App::LoadLevelFile(*_scene, file, _assetCache, _assetDatabase, *_physics,
-                                                         _sceneRenderer, reset, &header, &_world->instances)
-                            : Assisi::App::LoadLevel(*_scene, level.path, _assetCache, _assetDatabase, *_physics,
-                                                     _sceneRenderer, reset, &header, &_world->instances);
+    const Assisi::App::LevelServices   services{_assetCache, _assetDatabase, _sceneRenderer};
+    const Assisi::App::LevelLoadOptions options{.reset = reset, .header = &header};
+    const Assisi::Runtime::LevelResult loaded =
+        level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
+            ? Assisi::App::LoadLevelFile(*_world, file, services, options)
+            : Assisi::App::LoadLevel(*_world, level.path, services, options);
     if (!loaded)
     {
-        FailJoin("'" + level.path + "' failed to load.");
+        // The reason, not just the fact: this string is what the host is told and
+        // what the player sees, and "failed to load" has never helped anyone work
+        // out which of a dozen things the level file did wrong.
+        FailJoin("'" + level.path + "' failed to load: " +
+                 std::string(Assisi::Runtime::Describe(loaded.error())) + ".");
         return;
     }
 

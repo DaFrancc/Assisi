@@ -79,7 +79,7 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
                                                    {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
     App::World world;
-    REQUIRE(App::LoadLevelSim(world.scene, "levels/yard.alvl", world.physics, &world.instances));
+    REQUIRE(App::LoadLevelSim(world, "levels/yard.alvl"));
 
     CHECK(world.scene.AliveCount() == 2);
     REQUIRE(world.instances.Size() == 1);
