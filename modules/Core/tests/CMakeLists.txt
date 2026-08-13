@@ -14,6 +14,7 @@ add_executable(Assisi-Core-Tests
   TestAssetIdJson.cpp
   TestAssetPath.cpp
   TestAssetSystem.cpp
+  TestBiMap.cpp
   TestBinaryCodec.cpp
   TestComponentMask.cpp
   TestBitStream.cpp

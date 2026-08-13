@@ -10,6 +10,7 @@
 /// registry's current generation for that slot.
 
 #include <cstdint>
+#include <functional>
 
 namespace Assisi::ECS
 {
@@ -38,3 +39,20 @@ struct Entity
 inline constexpr Entity NullEntity = {InvalidEntityIndex, InvalidEntityIndex};
 
 } // namespace Assisi::ECS
+
+/// @brief Lets an Entity be a hash-map key directly.
+///
+/// Both halves are part of the identity, so the two must be combined rather than
+/// hashed on the index alone: a slot reused after a destroy is a *different*
+/// entity, and hashing only the index would put every life of one slot in the
+/// same bucket. Packing them into one 64-bit value is exact — the fields are
+/// 32 bits each — so this loses nothing and collides no more than the underlying
+/// integer hash does.
+template <> struct std::hash<Assisi::ECS::Entity>
+{
+    std::size_t operator()(const Assisi::ECS::Entity &entity) const noexcept
+    {
+        return std::hash<std::uint64_t>{}(static_cast<std::uint64_t>(entity.index) |
+                                          (static_cast<std::uint64_t>(entity.generation) << 32));
+    }
+};
