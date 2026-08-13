@@ -5,6 +5,7 @@
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 
 #include <Jolt/Jolt.h>
 
@@ -564,24 +565,6 @@ RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const Co
     return RigidBody{bodyId};
 }
 
-namespace
-{
-
-/// A parent's rotation alone, with scale divided out of each basis vector.
-///
-/// Exact for uniform scale, which is what a blueprint instance root is
-/// constrained to (docs/blueprint-system-concept.md §3) — and a non-uniformly
-/// scaled parent has no exact rotation to extract in the first place, because
-/// the composition is a shear rather than a TRS.
-glm::quat ParentRotation(const glm::mat4 &parent)
-{
-    const glm::mat3 basis(parent);
-    return glm::quat_cast(
-        glm::mat3(glm::normalize(basis[0]), glm::normalize(basis[1]), glm::normalize(basis[2])));
-}
-
-} // namespace
-
 RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
                                               const RigidBodyDescriptor &descriptor, const ParentWorldFn &parentWorld)
 {
@@ -602,8 +585,9 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
     {
         if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
         {
-            position = glm::vec3(*parent * glm::vec4(position, 1.f));
-            rotation = glm::normalize(ParentRotation(*parent) * rotation);
+            const ECS::Transform pose = ECS::PoseUnderParent(transform, *parent);
+            position                  = pose.position;
+            rotation                  = pose.rotation;
         }
     }
 
@@ -822,7 +806,7 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
             if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
             {
                 targetPosition = glm::vec3(glm::inverse(*parent) * glm::vec4(targetPosition, 1.f));
-                targetRotation = glm::normalize(glm::inverse(ParentRotation(*parent)) * targetRotation);
+                targetRotation = glm::normalize(glm::inverse(ECS::WorldRotationOf(*parent)) * targetRotation);
             }
         }
 
