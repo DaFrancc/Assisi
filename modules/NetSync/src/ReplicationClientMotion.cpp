@@ -97,8 +97,20 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
         _transformHistory.erase(state.netId);
     }
 
-    const Physics::RigidBody *body   = _scene.Get<Physics::RigidBody>(entity);
-    MirrorBody               &record = _bodies[state.netId];
+    const Physics::RigidBody *body = _scene.Get<Physics::RigidBody>(entity);
+    // Never inserts, though the branch above makes it look like it can: a mirror
+    // carrying a RigidBody always has a `_bodies` entry. Both places that build
+    // one (SyncMirrorBody, and the block above) set `_bodies[netId].body` in the
+    // same breath, and DestroyMirrorBody's callers either erase the
+    // `_entityByNetId` mapping first — so the lookup at the top of this function
+    // returns — or drop the RigidBody component in the next statement.
+    //
+    // Reported as a blank handle reaching RemoveBody (ENG-122). It does not, and
+    // would be refused if it did: a default JPH::BodyID is invalid and RemoveBody
+    // returns on it, which TestBodyLifetime.cpp pins. The thinnest leg is the
+    // editor — AddComponentToSelected builds a body into this scene without asking
+    // whether the entity is a mirror, and only a disabled ImGui region stops it.
+    MirrorBody &record = _bodies[state.netId];
 
     // How far the two simulations drifted apart since the last correction. Taken
     // before the snap and against the *physics* pose, not the rendered one:
