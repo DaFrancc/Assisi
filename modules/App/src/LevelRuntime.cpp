@@ -54,8 +54,7 @@ namespace
 {
 
 /// The half of a load that is the same whichever way the bytes arrived.
-void FinishLoad(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,
-                Physics::PhysicsWorld &physics, Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset)
+void FinishLoad(World &world, const LevelServices &services, AssetCacheReset reset)
 {
     if (reset == AssetCacheReset::ClearFirst)
     {
@@ -63,58 +62,63 @@ void FinishLoad(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetD
         // the mesh pass's binding sets (they key on raw texture pointers we're
         // about to free) before re-resolving. With another world alive this would
         // dangle its resolved pointers, which is why it is a caller's choice.
-        cache.Clear();
-        sceneRenderer.InvalidateAssetBindings();
+        services.cache.Clear();
+        services.renderer.InvalidateAssetBindings();
     }
 
-    RebindSceneAssetsAndPhysics(scene, cache, database, physics);
+    RebindSceneAssetsAndPhysics(world.scene, services.cache, services.database, world.physics);
 }
 
 } // namespace
 
-bool LoadLevel(ECS::Scene &scene, std::string_view virtualPath, Render::AssetCache &cache,
-               const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-               Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset, Runtime::LevelHeader *header,
-               Runtime::InstanceTable *instances)
+Runtime::LevelResult LoadLevel(World &world, std::string_view virtualPath, const LevelServices &services,
+                               const LevelLoadOptions &options)
 {
     // Before the load, not after: the load *fills* the cache, and the member list
     // it caches is what resolves a BlueprintMember's index back to a name for the
     // rest of the level's life. ClearFirst means "the old asset set is gone",
     // which is exactly when the old level's blueprints stop being wanted.
-    if (reset == AssetCacheReset::ClearFirst)
+    if (options.reset == AssetCacheReset::ClearFirst)
         Runtime::ClearBlueprintCache();
 
-    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, header, instances))
-        return false;
+    // Passed straight out rather than flattened to a bool. The deserializer knows
+    // exactly what was wrong with the file and this is the only thing between it
+    // and the caller; a bool here is a reason discarded one frame after it was
+    // worked out, and every caller then logging "failed to load" is the visible
+    // cost of that.
+    const Runtime::LevelResult loaded = Runtime::SceneSerializer::LoadFromFile(
+        world.scene, virtualPath, {.header = options.header, .instances = &world.instances});
+    if (!loaded)
+        return loaded;
 
-    FinishLoad(scene, cache, database, physics, sceneRenderer, reset);
-    return true;
+    FinishLoad(world, services, options.reset);
+    return {};
 }
 
-bool LoadLevelFile(ECS::Scene &scene, const std::filesystem::path &path, Render::AssetCache &cache,
-                   const Core::AssetDatabase &database, Physics::PhysicsWorld &physics,
-                   Runtime::SceneRenderer &sceneRenderer, AssetCacheReset reset, Runtime::LevelHeader *header,
-                   Runtime::InstanceTable *instances)
+Runtime::LevelResult LoadLevelFile(World &world, const std::filesystem::path &path,
+                                   const LevelServices &services, const LevelLoadOptions &options)
 {
-    if (reset == AssetCacheReset::ClearFirst)
+    if (options.reset == AssetCacheReset::ClearFirst)
         Runtime::ClearBlueprintCache();
 
-    if (!Runtime::SceneSerializer::LoadFromDisk(scene, path, /*onProgress=*/{}, header, instances))
-        return false;
+    const Runtime::LevelResult loaded = Runtime::SceneSerializer::LoadFromDisk(
+        world.scene, path, {.header = options.header, .instances = &world.instances});
+    if (!loaded)
+        return loaded;
 
-    FinishLoad(scene, cache, database, physics, sceneRenderer, reset);
-    return true;
+    FinishLoad(world, services, options.reset);
+    return {};
 }
 
-bool LoadLevelSim(ECS::Scene &scene, std::string_view virtualPath, Physics::PhysicsWorld &physics,
-                  Runtime::InstanceTable *instances)
+Runtime::LevelResult LoadLevelSim(World &world, std::string_view virtualPath)
 {
-    if (!Runtime::SceneSerializer::LoadFromFile(scene, virtualPath, /*onProgress=*/{}, /*header=*/nullptr,
-                                                instances))
-        return false;
+    const Runtime::LevelResult loaded =
+        Runtime::SceneSerializer::LoadFromFile(world.scene, virtualPath, {.instances = &world.instances});
+    if (!loaded)
+        return loaded;
 
-    (void)BuildSceneBodies(scene, physics);
-    return true;
+    (void)BuildSceneBodies(world.scene, world.physics);
+    return {};
 }
 
 void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const Core::AssetDatabase &database,

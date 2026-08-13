@@ -166,25 +166,26 @@ bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path 
 }
 
 LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesystem::path &path,
-                                   const ProgressFn &onProgress, LevelHeader *header, InstanceTable *instances)
+                                          const LoadOptions &options)
 {
+    // Both refusals below precede the load, so the caller's scene is untouched.
     std::ifstream file(path);
     if (!file.is_open())
     {
         Core::Log::Error("SceneSerializer: cannot open '{}' for reading", path.string());
-        return std::unexpected(LevelError::FileUnreadable);
+        return std::unexpected(LevelFailure{.kind = LevelError::FileUnreadable});
     }
 
     const nlohmann::json doc = nlohmann::json::parse(file, nullptr, /*allow_exceptions=*/false);
     if (doc.is_discarded())
     {
         Core::Log::Error("SceneSerializer: '{}' is not readable JSON", path.string());
-        return std::unexpected(LevelError::MalformedJson);
+        return std::unexpected(LevelFailure{.kind = LevelError::MalformedJson});
     }
 
     try
     {
-        return Load(scene, doc, onProgress, header, instances);
+        return Load(scene, doc, options);
     }
     catch (const std::exception &ex)
     {
@@ -193,9 +194,13 @@ LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesyst
         // not throw-free — the component `addToScene` hooks it runs are generated
         // code over nlohmann, and a file whose `version` or `entities` key is the
         // wrong shape throws out of Load's own top-level reads.
+        //
+        // `sceneReplaced` unconditionally, whichever side of Load's clear the throw
+        // came from: the Clear below is this function's own, so by the time this
+        // returns the caller's scene is gone either way.
         Core::Log::Error("SceneSerializer: failed to load '{}': {}", path.string(), ex.what());
         scene.Clear();
-        return std::unexpected(LevelError::MalformedJson);
+        return std::unexpected(LevelFailure{.kind = LevelError::MalformedJson, .sceneReplaced = true});
     }
 }
 
@@ -229,14 +234,14 @@ std::expected<std::vector<std::string>, LevelError> SceneSerializer::ReadLevelSy
 }
 
 LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
-                                          const ProgressFn &onProgress, LevelHeader *header,
-                                          InstanceTable *instances)
+                                          const LoadOptions &options)
 {
+    // As in LoadFromDisk: everything up to the Load call leaves the scene alone.
     const auto text = Core::AssetSystem::ReadText(assetPath);
     if (!text)
     {
         Core::Log::Error("SceneSerializer: cannot read asset '{}'", assetPath);
-        return std::unexpected(LevelError::FileUnreadable);
+        return std::unexpected(LevelFailure{.kind = LevelError::FileUnreadable});
     }
 
     // Parsed before Load is called, so a parse failure leaves the scene untouched.
@@ -244,12 +249,12 @@ LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view as
     if (doc.is_discarded())
     {
         Core::Log::Error("SceneSerializer: '{}' is not readable JSON", assetPath);
-        return std::unexpected(LevelError::MalformedJson);
+        return std::unexpected(LevelFailure{.kind = LevelError::MalformedJson});
     }
 
     try
     {
-        return Load(scene, doc, onProgress, header, instances);
+        return Load(scene, doc, options);
     }
     catch (const std::exception &ex)
     {
@@ -262,9 +267,13 @@ LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view as
         // std::exception, not json::exception: those hooks are arbitrary code, and
         // one throwing a bad_alloc or its own container's out_of_range would
         // otherwise escape with the half-populated scene left behind.
+        //
+        // `sceneReplaced` for the same reason as in LoadFromDisk: the Clear below is
+        // ours, so the caller's scene is gone whichever side of Load's own clear the
+        // throw came from.
         Core::Log::Error("SceneSerializer: failed to load '{}': {}", assetPath, ex.what());
         scene.Clear();
-        return std::unexpected(LevelError::MalformedJson);
+        return std::unexpected(LevelFailure{.kind = LevelError::MalformedJson, .sceneReplaced = true});
     }
 }
 

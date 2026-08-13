@@ -55,13 +55,17 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     // Keep the cache: the worlds already resident hold resolved pointers into it,
     // and assets this level shares with them are reused instead of re-uploaded.
     // Reclaiming memory is SweepAssetCache's job, after travel, not this load's.
-    Assisi::Runtime::LevelHeader header;
-    if (!Assisi::App::LoadLevel(world.scene, virtualPath, _assetCache, _assetDatabase, world.physics,
-                                _sceneRenderer, Assisi::App::AssetCacheReset::Keep, &header, &world.instances))
+    Assisi::Runtime::LevelHeader       header;
+    const Assisi::Runtime::LevelResult loaded =
+        Assisi::App::LoadLevel(world, virtualPath, {_assetCache, _assetDatabase, _sceneRenderer},
+                               {.reset = Assisi::App::AssetCacheReset::Keep, .header = &header});
+    if (!loaded)
     {
         // Destroy the half-created world rather than leave an empty resident. It
-        // holds no role yet, so this always succeeds.
-        Assisi::Core::Log::Error("Load as new world: '{}' failed to load.", virtualPath);
+        // holds no role yet, so this always succeeds. Nothing about B20 applies: the
+        // scene the load may have emptied is this world's own, and it goes with it.
+        Assisi::Core::Log::Error("Load as new world: '{}' failed to load — {}.", virtualPath,
+                                 Assisi::Runtime::Describe(loaded.error()));
         _worlds.Destroy(world.name);
         return false;
     }

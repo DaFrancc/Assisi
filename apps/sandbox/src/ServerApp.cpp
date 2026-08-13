@@ -92,7 +92,7 @@ void ServerApp::OnStart()
             return;
         }
 
-        if (!Assisi::App::LoadLevelSim(_world.scene, _options.level, _world.physics, &_world.instances))
+        if (!Assisi::App::LoadLevelSim(_world, _options.level))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
             _startupFailed = true; // same reason as above: exiting 0 here hid a failed start
@@ -116,6 +116,7 @@ void ServerApp::OnStart()
     Log::Error("Server: this build was configured with ASSISI_ENABLE_NETWORKING=OFF, so --host and "
                "--connect do nothing. Reconfigure with networking on, or use --server for headless "
                "simulation.");
+    _startupFailed = true;
     RequestClose();
     return;
 #else
@@ -143,8 +144,12 @@ void ServerApp::OnStart()
             }
         }
 
+        // Host logs its own reason (the port is taken, the transport would not come
+        // up). What it cannot do is reach the exit code, and a supervisor restarting
+        // a server that cannot bind is watching for exactly this.
         if (!_session->Host(_options.port, std::move(level)))
         {
+            _startupFailed = true;
             RequestClose();
             return;
         }
@@ -168,6 +173,7 @@ void ServerApp::OnStart()
     // before a NetId has anywhere to land.
     else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/true))
     {
+        _startupFailed = true;
         RequestClose();
     }
 #endif // ASSISI_NETWORKING
@@ -180,10 +186,15 @@ void ServerApp::BuildJoinedWorld()
     if (hello == nullptr)
         return;
 
+    // Every way a join can be refused funnels through here, so the exit code is set
+    // here too rather than at each caller — a refusal added later gets it for free,
+    // which is how the ones below came to be missing it in the first place. A client
+    // that could not join never started, whatever the reason.
     const auto fail = [this](std::string reason)
     {
         Log::Error("Client: join failed — {}", reason);
         _session->AbortJoin(std::move(reason));
+        _startupFailed = true;
         RequestClose();
     };
 
@@ -197,7 +208,7 @@ void ServerApp::BuildJoinedWorld()
         return;
     }
 
-    if (!Assisi::App::LoadLevelSim(_world.scene, hello->level.path, _world.physics, &_world.instances))
+    if (!Assisi::App::LoadLevelSim(_world, hello->level.path))
     {
         fail("'" + hello->level.path + "' failed to load.");
         return;

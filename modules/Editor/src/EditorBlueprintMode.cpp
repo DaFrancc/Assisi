@@ -137,10 +137,15 @@ void EditorApp::OpenBlueprintForEditing(const std::string &source)
     // a blueprint shares most of its meshes and materials with the level that places
     // it — re-uploading them to look at one would be the expensive way round.
     Assisi::Runtime::LevelHeader header;
-    if (!Assisi::App::LoadLevel(world.scene, source, _assetCache, _assetDatabase, world.physics, _sceneRenderer,
-                                Assisi::App::AssetCacheReset::Keep, &header, &world.instances))
+    const Assisi::Runtime::LevelResult loaded =
+        Assisi::App::LoadLevel(world, source, {_assetCache, _assetDatabase, _sceneRenderer},
+                               {.reset = Assisi::App::AssetCacheReset::Keep, .header = &header});
+    if (!loaded)
     {
-        Assisi::Core::Log::Error("Blueprint editor: '{}' failed to load.", source);
+        // Same as opening a level as a new world: the scene this may have emptied is
+        // the throwaway one created two lines up, and it is destroyed here.
+        Assisi::Core::Log::Error("Blueprint editor: '{}' failed to load — {}.", source,
+                                 Assisi::Runtime::Describe(loaded.error()));
         _worlds.Destroy(world.name);
         return;
     }

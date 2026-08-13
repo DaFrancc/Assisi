@@ -338,6 +338,119 @@ TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")
 }
 
 // ---------------------------------------------------------------------------
+// Which side of the clear a refusal landed on (round-7 B20).
+//
+// "The load failed" is not enough for a caller that holds anything *about* the
+// scene — an editor's undo stacks, its selection, its pick targets are all
+// entity handles. A refusal before the clear leaves those valid; one after it
+// leaves every handle aliasing a live but different entity in a scene rebuilt
+// densely from {0,0}. The error kind cannot answer that question (MissingName
+// is returned from both sides of the clear), so the load reports it directly.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SceneSerializer: a refusal before the clear says the scene was not replaced")
+{
+    ECS::Scene        scene;
+    const ECS::Entity kept = scene.Create();
+    REQUIRE(scene.Add(kept, Transform{}) != nullptr);
+
+    SUBCASE("an unreadable version")
+    {
+        const nlohmann::json future = {{"version", 999}, {"entities", nlohmann::json::array()}};
+        const LevelResult    result = SceneSerializer::Load(scene, future);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error() == LevelError::UnsupportedVersion);
+        CHECK_FALSE(result.error().sceneReplaced);
+    }
+
+    SUBCASE("instances with nowhere to put them")
+    {
+        // Read before anything is destroyed, precisely so a caller with no table
+        // does not pay for the file with the level it had.
+        const nlohmann::json fixture = {
+            {"version", 2},
+            {"entities", nlohmann::json::array()},
+            {"instances", nlohmann::json::array({{{"name", "car_0"}, {"source", "car.abp"}}})}};
+        const LevelResult result = SceneSerializer::Load(scene, fixture);
+        REQUIRE_FALSE(result.has_value());
+        CHECK(result.error() == LevelError::NoInstanceTable);
+        CHECK_FALSE(result.error().sceneReplaced);
+    }
+
+    // Either way the caller still has the level it walked in with.
+    CHECK(scene.AliveCount() == 1);
+    CHECK(scene.Get<Transform>(kept) != nullptr);
+}
+
+TEST_CASE("SceneSerializer: a refusal after the clear says the scene was replaced")
+{
+    ECS::Scene        scene;
+    const ECS::Entity doomed = scene.Create();
+    REQUIRE(scene.Add(doomed, Transform{}) != nullptr);
+
+    // Both of these are refused *past* the point where Load committed to building
+    // a scene, and both leave an empty one behind. A caller told only "it failed"
+    // is the B20 bug: it goes on believing its handles describe something.
+    nlohmann::json fixture;
+    SUBCASE("two entities under one name")
+    {
+        fixture = {{"version", 2},
+                   {"entities", nlohmann::json::array({{{"name", "body"}, {"components", nlohmann::json::object()}},
+                                                       {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
+    }
+    SUBCASE("a component field of the wrong type")
+    {
+        fixture = {{"version", 2},
+                   {"entities", nlohmann::json::array({{{"name", "eye"},
+                                                        {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
+    }
+
+    const LevelResult result = SceneSerializer::Load(scene, fixture);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error().sceneReplaced);
+
+    // And it means it: the entity the caller held is gone, not merely suspect.
+    CHECK(scene.AliveCount() == 0);
+    CHECK_FALSE(scene.IsAlive(doomed));
+}
+
+TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
+{
+    namespace fs        = std::filesystem;
+    const fs::path root = fs::temp_directory_path() / "assisi_serializer_replaced_test";
+    fs::create_directories(root);
+    REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
+
+    {
+        std::ofstream bad(root / "unparseable.alvl");
+        bad << "{ this is not valid json";
+    }
+    {
+        // Valid JSON, right version, no `entities` — which throws out of Load's own
+        // top-level read and is caught in LoadFromFile (ENG-120 owns the throw).
+        // The catch clears the scene on its way out, and has to say so: the error
+        // kind alone cannot, since the parse refusal above reports MalformedJson as
+        // well and that one touches nothing.
+        std::ofstream headless(root / "no_entities.alvl");
+        headless << R"({"version": 2})";
+    }
+
+    ECS::Scene        scene;
+    const ECS::Entity kept = scene.Create();
+    REQUIRE(scene.Add(kept, Transform{}) != nullptr);
+
+    const LevelResult unparseable = SceneSerializer::LoadFromFile(scene, "unparseable.alvl");
+    REQUIRE_FALSE(unparseable.has_value());
+    CHECK_FALSE(unparseable.error().sceneReplaced);
+    CHECK(scene.AliveCount() == 1); // never reached the clear
+
+    const LevelResult threw = SceneSerializer::LoadFromFile(scene, "no_entities.alvl");
+    REQUIRE_FALSE(threw.has_value());
+    CHECK(threw.error().sceneReplaced);
+    CHECK(scene.AliveCount() == 0);
+}
+
+// ---------------------------------------------------------------------------
 // Component field values. The generated deserializers used to read a field as
 // `j.at("f").get<float>()` behind a `contains()` guard — which proves the key is
 // there and says nothing about its type, so a mistyped field threw out of
