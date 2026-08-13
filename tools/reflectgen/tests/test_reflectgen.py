@@ -1136,6 +1136,96 @@ class ControlledFieldTest(unittest.TestCase):
         self.assertIn("a component has no sender", str(caught.exception))
 
 
+class SubjectFieldTest(unittest.TestCase):
+    """AFIELD(subject): "relevancy scopes this event by the entity this field
+    names".
+
+    The event-side counterpart to AFIELD(controlled), and it exists for the same
+    reason: which entity the engine acts on is marked rather than inferred. The
+    subject used to be whichever EntityRef field was declared first, so
+    reordering two fields silently changed who received the message, and an event
+    whose first reference happened to be null was indistinguishable from an
+    independent one — which meant broadcast to everyone, past relevancy.
+    """
+
+    def test_subject_reaches_the_field_metadata(self):
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Boom { AFIELD(subject) Assisi::ECS::Entity what; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        # Last in FieldMeta's positional tail, one past `controlled` — so an
+        # event's subject field carries a false for controlled and a true for
+        # itself, and the send site reads the trailing one.
+        self.assertIn('offsetof(T, what), false, false, false, false, 0.f, 0.f, {}, 0, false, "", {}, '
+                      'Assisi::Core::Reflect::RadioBehavior::None, false, true', cpp)
+
+    def test_an_event_with_an_entity_must_mark_its_subject(self):
+        # The defect this annotation replaced: with no mark, the engine took the
+        # first EntityRef field, whatever it held.
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Boom { AFIELD() Assisi::ECS::Entity what; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("marks none of its EntityRef fields", str(caught.exception))
+
+    def test_two_subjects_are_rejected(self):
+        # Relevancy filtering, queue holding, and eviction each take one entity,
+        # and none of the three has an answer for two.
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Hit { AFIELD(subject) Assisi::ECS::Entity victim; "
+               "AFIELD(subject) Assisi::ECS::Entity shooter; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Hit.hpp", messages)
+        self.assertIn("exactly one subject", str(caught.exception))
+
+    def test_a_second_entity_field_is_fine_unmarked(self):
+        # "Mentions two entities" is ordinary and stays legal; only *routing* by
+        # two is refused. The unmarked one still travels and still translates.
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Hit { AFIELD(subject) Assisi::ECS::Entity victim; "
+               "AFIELD() Assisi::ECS::Entity shooter; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Hit.hpp", messages)
+        self.assertIn("MessageDirection::Event", cpp)
+
+    def test_subject_on_an_intent_is_rejected(self):
+        # An intent has exactly one recipient — the server — so there is nothing
+        # for relevancy to scope.
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Go { AFIELD(subject) Assisi::ECS::Entity pawn; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Go.hpp", messages)
+        self.assertIn("is an intent", str(caught.exception))
+
+    def test_subject_on_an_independent_event_is_rejected(self):
+        src = ("namespace N {\nAMSG(event, reliable, independent)\n"
+               "struct Chat { AFIELD(subject) Assisi::ECS::Entity who; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Chat.hpp", messages)
+        self.assertIn("marked independent", str(caught.exception))
+
+    def test_subject_on_a_non_entity_field_is_rejected(self):
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Boom { AFIELD(subject) int32_t what = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("Only an EntityRef field", str(caught.exception))
+
+    def test_subject_on_a_component_is_rejected(self):
+        # A component is not delivered to anyone — it travels as part of the
+        # entity that owns it — so there is no delivery for a subject to scope.
+        src = ("namespace N {\nACOMP()\n"
+               "struct C { AFIELD(subject) Assisi::ECS::Entity e; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("is not a message", str(caught.exception))
+
+
 class MessageTraitsTest(unittest.TestCase):
     """The compile-time facts that make a wrong-direction send a build error."""
 

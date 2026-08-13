@@ -95,15 +95,49 @@ struct TestMovePawn
 /// @brief Server → client, loss tolerable. The default form: rides the snapshot,
 /// so its ordering against the entity it names is free.
 ///
-/// `source` is the entity this is about, and it is what relevancy scopes the
-/// message by — a connection that cannot see the entity is not told the event
-/// happened either, which is the zero-bytes guarantee covering messages and not
-/// only state.
+/// `source` is the entity this is about, and marking it `subject` is what
+/// relevancy scopes the message by — a connection that cannot see the entity is
+/// not told the event happened either, which is the zero-bytes guarantee
+/// covering messages and not only state.
 AMSG(event, unreliable)
 struct TestBurst
 {
-    AFIELD() Assisi::ECS::Entity source;
-    AFIELD() int32_t             intensity = 1;
+    AFIELD(subject) Assisi::ECS::Entity source;
+    AFIELD()        int32_t             intensity = 1;
+};
+
+/// @brief Two entity references, and the subject is deliberately the *second*
+/// one.
+///
+/// The shape the engine used to get wrong. Relevancy scoped an event by whichever
+/// `EntityRef` field came first, so a message about two entities routed by the
+/// wrong one, and swapping two field declarations silently changed who was told.
+/// Declaring `instigator` ahead of the marked `victim` means any test that
+/// passes here could not be passing on declaration order.
+///
+/// `instigator` is the ordinary case for a non-subject reference: it travels and
+/// translates like any other, and a recipient that has never been told about that
+/// entity decodes it as `NullEntity` — a message, unlike a component, has no
+/// deferred patch-up for a reference that arrives early.
+AMSG(event, unreliable)
+struct TestKnockback
+{
+    AFIELD()        Assisi::ECS::Entity instigator;
+    AFIELD(subject) Assisi::ECS::Entity victim;
+    AFIELD()        int32_t             force = 0;
+};
+
+/// @brief Server → client, must arrive, and scoped by an entity.
+///
+/// The reliable counterpart to TestBurst. Reliable events leave by a different
+/// door — immediately, on the control lane, rather than riding the snapshot — so
+/// a rule about who may receive an event has two delivery sites to hold at, and
+/// a fixture that only covers the unreliable one would let the other leak.
+AMSG(event, reliable)
+struct TestReliableHit
+{
+    AFIELD(subject) Assisi::ECS::Entity target;
+    AFIELD()        int32_t             damage = 0;
 };
 
 /// @brief An intent that names a blueprint instance rather than an entity.

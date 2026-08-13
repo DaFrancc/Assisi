@@ -115,22 +115,23 @@ def _gen_field_meta(f: FieldInfo) -> str:
     enum_active       = f.enum_info is not None
     listener_active   = f.radio is not None and f.radio.source != ''
     controlled_active = f.args.has('controlled')
+    subject_active    = f.args.has('subject')
 
     # FieldMeta's trailing members are positional — bounds, then the enum block
-    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled —
-    # so emitting any block forces every *earlier* block to be emitted at its
-    # default. Blocks nobody needs are omitted, which keeps an unannotated field
-    # at the short, golden-stable initializer form.
+    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled,
+    # then subject — so emitting any block forces every *earlier* block to be
+    # emitted at its default. Blocks nobody needs are omitted, which keeps an
+    # unannotated field at the short, golden-stable initializer form.
     tail: list[str] = []
 
-    if bounds_active or enum_active or listener_active or controlled_active:
+    if bounds_active or enum_active or listener_active or controlled_active or subject_active:
         has_min = 'true' if vmin is not None else 'false'
         has_max = 'true' if vmax is not None else 'false'
         min_v   = f'{vmin}f' if vmin is not None else '0.f'
         max_v   = f'{vmax}f' if vmax is not None else '0.f'
         tail += [has_min, has_max, min_v, max_v]
 
-    if enum_active or listener_active or controlled_active:
+    if enum_active or listener_active or controlled_active or subject_active:
         if enum_active:
             consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
             tail.append(f'{{ {consts} }}')
@@ -140,7 +141,7 @@ def _gen_field_meta(f: FieldInfo) -> str:
             # Not an enum: empty enumConstants, size 0 (which marks "not an enum").
             tail += ['{}', '0', 'false']
 
-    if listener_active or controlled_active:
+    if listener_active or controlled_active or subject_active:
         if listener_active:
             values = ', '.join(str(v) for v in f.radio.values)
             tail += [
@@ -151,7 +152,10 @@ def _gen_field_meta(f: FieldInfo) -> str:
         else:
             tail += ['""', '{}', 'Assisi::Core::Reflect::RadioBehavior::None']
 
-    if controlled_active:
+    if controlled_active or subject_active:
+        tail.append('true' if controlled_active else 'false')
+
+    if subject_active:
         tail.append('true')
 
     base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, {norep}'
@@ -378,23 +382,17 @@ def _check_messages(messages: list, header_name: str) -> None:
 
     The first two rejections are about field annotations whose whole purpose is
     to distinguish disk from wire — a distinction a message does not have,
-    because a message *is* its wire form and is never saved anywhere. The third
-    is about an annotation the dispatch site could not act on.
+    because a message *is* its wire form and is never saved anywhere. The rest
+    are about annotations the dispatch site could not act on, and about an event
+    that has not said which entity it is about — the one thing relevancy cannot
+    work out for itself and must not guess at.
     """
     for msg in messages:
-        # An event that is not `independent` is scoped by the entity it is
-        # about: relevancy sends it to whoever can see that entity, and holds it
-        # for whoever has not been told about it yet. With no entity reference
-        # there is nothing to scope by, so the declaration is asking for two
-        # incompatible things and the fix is one word either way.
-        if msg.direction == 'event' and not msg.args.has('independent'):
-            if not any(f.cpp_type in _ENTITY_REF_TYPES for f in msg.fields):
-                raise ValueError(
-                    f"{header_name}: message '{msg.name}' is an event that names no entity, but it is not "
-                    f"marked independent. Relevancy scopes an event by the entity it is about — give it an "
-                    f"EntityRef field, or write AMSG(event, {msg.reliability}, independent) if it genuinely "
-                    f"concerns no entity (a round banner, a chat line).")
+        subjects = [f for f in msg.fields if f.args.has('subject')]
 
+        # Misplaced annotations first, so a field marked with the wrong one is
+        # told which one it wanted rather than being reported as a message that
+        # forgot its subject.
         for f in msg.fields:
             where = f"{header_name}: field '{msg.name}::{f.name}'"
             if f.args.has('norep'):
@@ -419,14 +417,69 @@ def _check_messages(messages: list, header_name: str) -> None:
                         f"{where} is marked AFIELD(controlled) but its type is '{f.cpp_type}'. "
                         f"Only an EntityRef field can name an entity for the dispatch site to "
                         f"check control of.")
+            if f.args.has('subject'):
+                if msg.direction != 'event':
+                    raise ValueError(
+                        f"{where} is marked AFIELD(subject), but '{msg.name}' is an intent. The "
+                        f"annotation names the entity relevancy scopes delivery by, and an intent has "
+                        f"exactly one recipient — the server — so there is nothing to scope. It only "
+                        f"applies to AMSG(event, ...). For 'the entity the sender must control', the "
+                        f"annotation is AFIELD(controlled).")
+                if f.cpp_type not in _ENTITY_REF_TYPES:
+                    raise ValueError(
+                        f"{where} is marked AFIELD(subject) but its type is '{f.cpp_type}'. Only an "
+                        f"EntityRef field can name the entity relevancy scopes the message by.")
+
+        # `independent` says "no entity scopes this", so a marked subject is the
+        # declaration contradicting itself in the same breath.
+        if msg.args.has('independent') and subjects:
+            raise ValueError(
+                f"{header_name}: event '{msg.name}' is marked independent but its field "
+                f"'{subjects[0].name}' is marked AFIELD(subject). Independent means no entity scopes "
+                f"this message; a subject is that entity. Drop one of the two.")
+
+        # An event that is not `independent` is scoped by the entity it is about:
+        # relevancy sends it to whoever can see that entity, and holds it for
+        # whoever has not been told about it yet. Which field names that entity is
+        # *marked*, never inferred — the engine used to take the first EntityRef
+        # field, which made declaration order silently decide the audience, and
+        # left an event whose first reference happened to be null
+        # indistinguishable from an independent one, i.e. broadcast to everyone.
+        # Marking it is the answer AFIELD(controlled) already gives on the intent
+        # side, for the same reason.
+        if msg.direction == 'event' and not msg.args.has('independent'):
+            if not any(f.cpp_type in _ENTITY_REF_TYPES for f in msg.fields):
+                raise ValueError(
+                    f"{header_name}: message '{msg.name}' is an event that names no entity, but it is "
+                    f"not marked independent. Relevancy scopes an event by the entity it is about — give "
+                    f"it an AFIELD(subject) EntityRef field, or write "
+                    f"AMSG(event, {msg.reliability}, independent) if it genuinely concerns no entity "
+                    f"(a round banner, a chat line).")
+            if not subjects:
+                raise ValueError(
+                    f"{header_name}: event '{msg.name}' names an entity but marks none of its EntityRef "
+                    f"fields AFIELD(subject). Relevancy has to know *which* entity scopes the message, "
+                    f"and guessing from declaration order makes reordering two fields silently change who "
+                    f"is told. Mark the one the event is about.")
+            if len(subjects) > 1:
+                names = ', '.join(f"'{f.name}'" for f in subjects)
+                raise ValueError(
+                    f"{header_name}: event '{msg.name}' marks {len(subjects)} fields AFIELD(subject) "
+                    f"({names}). An event has exactly one subject: it is what relevancy scopes delivery "
+                    f"by, what the recipient's queue holds the message for, and what evicts it when that "
+                    f"entity dies — and none of those three has an answer for two. Mark the one the event "
+                    f"is about and leave the others as ordinary fields; they still travel.")
 
 
 def _check_controlled_outside_messages(components: list, header_name: str) -> None:
-    """AFIELD(controlled) on a component field would silently mean nothing.
+    """AFIELD(controlled) / AFIELD(subject) on a component field would silently
+    mean nothing.
 
     There is no sender for a component — it is state, and state has no dispatch
-    site to reject it at — so the annotation would read as a rule being enforced
-    while nothing enforced it.
+    site to reject it at — so `controlled` would read as a rule being enforced
+    while nothing enforced it. `subject` is the same shape one step along: it
+    names what relevancy scopes a *message* by, and a component is not delivered
+    to anyone, it is replicated as part of the entity that owns it.
     """
     for comp in components:
         for f in comp.fields:
@@ -435,6 +488,12 @@ def _check_controlled_outside_messages(components: list, header_name: str) -> No
                     f"{header_name}: field '{comp.name}::{f.name}' is marked AFIELD(controlled), "
                     f"but '{comp.name}' is not a message. The annotation is a rule the intent "
                     f"dispatch site enforces about a sender, and a component has no sender.")
+            if f.args.has('subject'):
+                raise ValueError(
+                    f"{header_name}: field '{comp.name}::{f.name}' is marked AFIELD(subject), "
+                    f"but '{comp.name}' is not a message. The annotation names the entity relevancy "
+                    f"scopes a message's delivery by, and a component is not delivered — it travels "
+                    f"as part of the entity that owns it.")
 
 
 def _gen_message_block(msg: MessageInfo) -> str:

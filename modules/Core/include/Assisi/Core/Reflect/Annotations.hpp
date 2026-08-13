@@ -132,7 +132,14 @@
 /// panel show reliable traffic broken down by type.
 ///
 /// The one optional flag is `independent`: this message names no entity, so
-/// relevancy has nothing to scope it by and nothing to hold it for.
+/// relevancy has nothing to scope it by and nothing to hold it for. Every other
+/// event marks the entity it *is* about with AFIELD(subject) on the field naming
+/// it — exactly one, which reflectgen checks, because that entity is what
+/// relevancy filters delivery by, what a recipient's queue holds the message for
+/// until it has been told about it, and what evicts the message when it dies.
+/// The two are complements: independent and a subject together, or neither, are
+/// both build errors. Other entity references on the same event are ordinary —
+/// they travel, they simply do not decide who is told.
 ///
 /// A message is a plain reflected struct with AFIELD members, so it gets the
 /// binary and JSON codecs, the inspector, and — the part that matters — a place
