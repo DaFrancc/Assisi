@@ -605,7 +605,7 @@ class ReplicationServer
     NetId EnsureNetId(ECS::Entity entity);
 
     /// Whether @p connection should receive an event scoped to @p subject.
-    [[nodiscard]] bool EventReaches(const Connection &connection, NetId subject) const;
+    [[nodiscard]] bool EventReaches(const Connection &connection, NetId subject, bool independent) const;
 
     /// Queue an already-encoded unreliable event for one connection's next
     /// snapshot section, evicting the oldest if the queue is over its cap.

@@ -109,6 +109,11 @@ struct MessageMeta
     /// recipient already knowing about some entity. An independent message
     /// bypasses the hold-until-the-target-arrives queue entirely, because there
     /// is no target to wait for.
+    ///
+    /// The exact complement of `FieldMeta::subject`, and reflectgen enforces
+    /// that: an event is independent and marks no subject, or it marks exactly
+    /// one and is not independent. Never both, never neither — those are the two
+    /// declarations that leave the send site guessing at the audience.
     bool independent = false;
 
     /// @brief Dense wire id, finalized by the registry. `kInvalidMessageId`
