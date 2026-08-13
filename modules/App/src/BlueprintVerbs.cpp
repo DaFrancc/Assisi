@@ -6,8 +6,6 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Runtime/AssetResolve.hpp>
-#include <Assisi/Runtime/Components.hpp>
 #include <Assisi/Runtime/Hierarchy.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -35,20 +33,9 @@ std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view sou
 
     // The prepared form holds asset *ids*, not loaded meshes, so a spawn has to
     // run the same resolve a level load runs — otherwise a spawned car arrives
-    // with unresolved meshes (§11). Skipped when there are no services, which is
-    // the headless case and correct: a server never resolves GPU assets.
-    if (world.manager != nullptr)
-    {
-        const WorldManager::Services &services = world.manager->GetServices();
-        if (services.cache != nullptr && services.database != nullptr)
-        {
-            for (const ECS::Entity member : members)
-            {
-                if (Runtime::MeshRenderer *mesh = world.scene.Get<Runtime::MeshRenderer>(member))
-                    Runtime::ResolveMeshRendererAssets(*mesh, *services.cache, *services.database);
-            }
-        }
-    }
+    // with unresolved meshes (§11). A no-op with no services, which is the
+    // headless case and correct: a server never resolves GPU assets.
+    ResolveEntityAssets(world, members);
 
     // Propagate before building bodies, for the reason App::BuildSceneBodies
     // exists: a member parented to another is placed from its parent's world
