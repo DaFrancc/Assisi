@@ -20,6 +20,7 @@
 #include <expected>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -467,6 +468,20 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// An instance may still be scaled after the fact; that multiplies on top, the
 /// same as any other placement.
 [[nodiscard]] ECS::Transform AuthoringOrigin(const ECS::Transform &root);
+
+/// @brief The origin @p entities is authored around: the AuthoringOrigin of the
+/// first of them, or the identity if that one carries no Transform.
+///
+/// Takes the set rather than one entity so the anchor cannot come from outside
+/// the file being written. The editor's gesture builds its capture set by
+/// dropping selected entities that are dead or not editable, and anchoring on
+/// the raw selection instead let a dropped one supply the origin: every member
+/// then goes into the file measured from a pose no member has, and the copy that
+/// replaces them stands off by the difference (round-7 S16). The front is the
+/// anchor because the *first* entity selected is a stable choice and the last is
+/// not — an author Ctrl-clicking three more things should not move the origin.
+[[nodiscard]] ECS::Transform AuthoringOriginFor(const ECS::Scene            &scene,
+                                                std::span<const ECS::Entity> entities);
 
 /// @brief Rewrites every reflected EntityRef field in @p components by prepending
 /// @p prefix to the name it holds.

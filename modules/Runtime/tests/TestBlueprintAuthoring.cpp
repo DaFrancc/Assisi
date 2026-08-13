@@ -221,6 +221,98 @@ TEST_CASE("Authoring: a selection containing a blueprint member is refused")
     CHECK_FALSE(std::filesystem::exists(root / "nested.abp"));
 }
 
+TEST_CASE("Authoring: children saved without their parent stand where they stood")
+{
+    const std::filesystem::path root = FreshRoot("parented");
+
+    ECS::Scene        scene;
+    const ECS::Entity rig = scene.Create();
+    REQUIRE(scene.Add(rig, At(100.f, 0.f, 0.f)) != nullptr);
+    REQUIRE(scene.Add(rig, Runtime::Name{Core::ShortString{"rig"}}) != nullptr);
+
+    // The crate hangs off the rig, and the rig is not being captured — saving the
+    // parts of a rig without the rig is a thing an author means to do, so it is
+    // supported rather than refused.
+    const Selection selection = BuildSelection(scene);
+    REQUIRE(scene.Add(selection.body, Runtime::Parent{.parent = rig}) != nullptr);
+
+    // The body's own Transform reads (10,0,0), but that is an offset from the rig:
+    // it *stands* at (110,0,0). The origin has to be where it stands, or the
+    // instance is placed into a space that is not coming with it.
+    const ECS::Transform origin = Runtime::AuthoringOriginFor(scene, selection.all);
+    CHECK(origin.position.x == doctest::Approx(110.f));
+
+    const Tests::LogCapture log;
+    REQUIRE(SceneSerializer::SaveEntitiesToFile(scene, selection.all, root / "crate.abp", origin));
+
+    // The parent is not in the file, so it nulls — and the body is a root of this
+    // file. Writing its raw (10,0,0) would leave it measured from a rig the file
+    // does not have, and the copy would come back a hundred units from where the
+    // author was looking (round-7 S16). Written around the origin, it is at zero.
+    const Runtime::BlueprintResult loaded = Runtime::GetBlueprintDefinition("crate.abp");
+    REQUIRE(loaded.has_value());
+    const std::shared_ptr<const Runtime::BlueprintDefinition> &definition = *loaded;
+    REQUIRE(definition->members.size() == 2);
+    CHECK(definition->members[0].components.at("Parent").at("parent").is_null());
+    CHECK_FALSE(definition->members[0].parented); // a cut parent makes it a root
+    CHECK(Runtime::TransformFromJson(definition->members[0].components.at("Transform")).position.x ==
+          doctest::Approx(0.f));
+    CHECK(log.Mentions("rig"));
+
+    // Placed back at that origin, the swap is invisible: the body stands exactly
+    // where it stood, and the lid keeps its offset under it.
+    InstanceTable                table;
+    const Runtime::LevelInstance entry{.name      = "crate_1",
+                                       .source    = "crate.abp",
+                                       .transform = origin,
+                                       .overrides = nlohmann::json::object(),
+                                       .removed   = {}};
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true);
+    REQUIRE(placed.has_value());
+    REQUIRE(placed->members.size() == 2);
+
+    const ECS::Transform *body = scene.Get<ECS::Transform>(placed->members[0]);
+    REQUIRE(body != nullptr);
+    CHECK(body->position.x == doctest::Approx(110.f));
+}
+
+TEST_CASE("Authoring: the origin comes from the set being written, not from beside it")
+{
+    // Round-7 S16's other half. The editor anchored on `_selection.front()`, which
+    // is not necessarily in the captured set — a selected entity that is dead or
+    // mirrored is skipped on the way in, and the origin still came from it. Then
+    // every member is written around a pose no member has, and the whole copy
+    // stands off by the difference. Taking the set rather than an entity is what
+    // makes that unsayable, so the contract worth pinning is that the front of the
+    // set is the anchor.
+    ECS::Scene scene;
+
+    ECS::Transform pose = At(4.f, 0.f, 0.f);
+    pose.scale          = {0.6f, 0.6f, 0.6f};
+    const ECS::Entity first = scene.Create();
+    REQUIRE(scene.Add(first, pose) != nullptr);
+
+    const ECS::Entity second = scene.Create();
+    REQUIRE(scene.Add(second, At(-9.f, 0.f, 0.f)) != nullptr);
+
+    const ECS::Transform origin = Runtime::AuthoringOriginFor(scene, std::vector<ECS::Entity>{first, second});
+    CHECK(origin.position.x == doctest::Approx(4.f));
+    // Same rule as the single-entity form: placement carries where and which way,
+    // never how big.
+    CHECK(origin.scale.x == doctest::Approx(1.f));
+
+    // Order is the set's, so the anchor does not drift with click order.
+    const ECS::Transform reversed =
+        Runtime::AuthoringOriginFor(scene, std::vector<ECS::Entity>{second, first});
+    CHECK(reversed.position.x == doctest::Approx(-9.f));
+
+    // An entity with no Transform anchors at the identity rather than at whatever
+    // the next one happens to have: the file's origin is the front of the set.
+    const ECS::Entity poseless = scene.Create();
+    const ECS::Transform none = Runtime::AuthoringOriginFor(scene, std::vector<ECS::Entity>{poseless, first});
+    CHECK(none.position.x == doctest::Approx(0.f));
+}
+
 TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
 {
     const std::filesystem::path root = FreshRoot("scale");

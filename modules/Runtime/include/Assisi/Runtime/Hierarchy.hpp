@@ -15,6 +15,7 @@
 
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Prelude.hpp>
 
@@ -66,5 +67,20 @@ uint64_t PropagateTransforms(ECS::Scene &scene, uint64_t lastTick);
 /// used (deleting or migrating a subtree). Used by entity migration
 /// (App::MigrateEntity) and mirrors the editor's delete-subtree gather.
 std::vector<ECS::Entity> GatherSubtree(ECS::Scene &scene, ECS::Entity root);
+
+/// @brief @p entity's pose in world space, resolved by walking its Parent chain.
+///
+/// Composes local TRS up the chain rather than reading Transform::worldMatrix,
+/// so it answers without a propagation pass having run and returns a TRS the
+/// compose/inverse-compose pair can take. Callers that need world poses every
+/// frame want PropagateTransforms and the cached matrix instead; this is for the
+/// one-shot questions — chiefly "where does this actually stand", asked when a
+/// selection is written to a blueprint and its parent is not coming with it.
+///
+/// Exact under the same uniform-scale rule ComposeTransform states: a
+/// non-uniformly scaled ancestor cannot be expressed as one TRS, and the result
+/// is the closest one. An entity with no Transform is the identity, and a cycle
+/// in Parent terminates the walk rather than hanging on a corrupt scene.
+[[nodiscard]] ECS::Transform WorldTransformOf(const ECS::Scene &scene, ECS::Entity entity);
 
 } // namespace Assisi::Runtime
