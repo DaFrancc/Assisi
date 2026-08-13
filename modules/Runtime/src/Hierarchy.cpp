@@ -2,6 +2,7 @@
 #include <Assisi/Runtime/Hierarchy.hpp>
 
 #include <Assisi/Core/Logger.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
 #include <algorithm>
@@ -165,6 +166,35 @@ std::vector<ECS::Entity> GatherSubtree(ECS::Scene &scene, ECS::Entity root)
             });
     }
     return result;
+}
+
+ECS::Transform WorldTransformOf(const ECS::Scene &scene, ECS::Entity entity)
+{
+    const Transform *local = scene.Get<Transform>(entity);
+    if (local == nullptr)
+        return {};
+
+    ECS::Transform world = *local;
+
+    // Bounded rather than walked to the root: a cycle in Parent is a corrupt
+    // scene, and the answer to a corrupt chain is a wrong pose, not a hang. The
+    // bound is generous enough that no real hierarchy reaches it.
+    constexpr uint32_t kMaxDepth = 256;
+    ECS::Entity        current   = entity;
+    for (uint32_t depth = 0; depth < kMaxDepth; ++depth)
+    {
+        const Parent *parent = scene.Get<Parent>(current);
+        if (parent == nullptr || parent->parent == ECS::NullEntity)
+            break;
+
+        const Transform *parentLocal = scene.Get<Transform>(parent->parent);
+        if (parentLocal == nullptr)
+            break; // a parent with no pose defines no space; the chain ends here
+
+        world   = ComposeTransform(*parentLocal, world);
+        current = parent->parent;
+    }
+    return world;
 }
 
 } // namespace Assisi::Runtime

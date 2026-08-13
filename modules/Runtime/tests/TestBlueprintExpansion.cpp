@@ -31,6 +31,8 @@
 #include <Assisi/Runtime/Naming.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+#include "LogCapture.hpp"
+
 using namespace Assisi;
 using Assisi::Runtime::BlueprintDefinition;
 using Assisi::Runtime::BlueprintError;
@@ -89,22 +91,32 @@ nlohmann::json CarFile()
                                                                     {"Parent", {{"parent", "body"}}}})})}};
 }
 
-const ECS::Transform *TransformOf(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId,
-                                  std::string_view memberName)
+/// The live entity for member @p memberName of instance @p instanceId, or
+/// NullEntity if this instance does not have it.
+ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId,
+                     std::string_view memberName)
 {
     const Runtime::BlueprintInstance *row = table.Find(instanceId);
     REQUIRE(row != nullptr);
     const BlueprintResult definition = Runtime::GetBlueprintDefinition(row->source);
     REQUIRE(definition.has_value());
     const std::optional<uint32_t> index = (*definition)->IndexOf(memberName);
-    REQUIRE(index.has_value());
+    if (!index.has_value())
+        return ECS::NullEntity;
 
     for (auto [entity, tag] : scene.Query<ECS::BlueprintMember>())
     {
         if (tag.instanceId == instanceId && tag.memberIndex == *index)
-            return scene.Get<ECS::Transform>(entity);
+            return entity;
     }
-    return nullptr;
+    return ECS::NullEntity;
+}
+
+const ECS::Transform *TransformOf(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId instanceId,
+                                  std::string_view memberName)
+{
+    const ECS::Entity member = MemberOf(scene, table, instanceId, memberName);
+    return member == ECS::NullEntity ? nullptr : scene.Get<ECS::Transform>(member);
 }
 
 } // namespace
@@ -458,6 +470,46 @@ TEST_CASE("Blueprint: an entity named like a member path is refused")
     ECS::Scene    scene;
     InstanceTable table;
     CHECK_FALSE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
+}
+
+TEST_CASE("Blueprint: a member's Name component does not displace its leaf name")
+{
+    // The level path already refuses to honour a Name listed beside the `name`
+    // key, because the key is the address: everything reaches the entity by it.
+    // A member's name is an address in exactly the same way — `car_1/body` is
+    // what an override, a reference and the Inspector all spell — so a file that
+    // also declares a Name must not be able to rename it out from under them
+    // (round-7 S23).
+    const std::filesystem::path root = FreshRoot("membername");
+    Write(root, "car.abp",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({{{"name", "body"},
+                                                {"components",
+                                                 {{"Transform",
+                                                   {{"position", {0.f, 1.f, 0.f}},
+                                                    {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                                    {"scale", {1.f, 1.f, 1.f}}}},
+                                                  {"Name", {{"value", "chassis"}}}}}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+
+    const Tests::LogCapture log;
+    const auto              id = SceneSerializer::ExpandInstance(scene, table, "car.abp", ECS::Transform{});
+    REQUIRE(id.has_value());
+
+    const ECS::Entity member = MemberOf(scene, table, *id, "body");
+    REQUIRE(member != ECS::NullEntity);
+
+    // The leaf of the member path, not what the file's Name asked for. Honouring
+    // "chassis" would leave the member answering to a name nothing addresses it
+    // by, and the Inspector showing one while every override names the other.
+    const Runtime::Name *name = scene.Get<Runtime::Name>(member);
+    REQUIRE(name != nullptr);
+    CHECK(name->value.View() == "body");
+
+    // Silently ignoring it would leave the author's declaration looking honoured.
+    CHECK(log.Mentions("Name component"));
 }
 
 TEST_CASE("Blueprint: two entities of one name are refused")
