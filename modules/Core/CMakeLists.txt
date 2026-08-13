@@ -32,6 +32,7 @@ target_sources(Assisi-Core
     "include/Assisi/Core/AssetProvider.hpp"
     "include/Assisi/Core/AssetSidecar.hpp"
     "include/Assisi/Core/AssetSystem.hpp"
+    "include/Assisi/Core/BiMap.hpp"
     "include/Assisi/Core/BitStream.hpp"
     "include/Assisi/Core/ContentHash.hpp"
     "include/Assisi/Core/Diagnostics.hpp"
