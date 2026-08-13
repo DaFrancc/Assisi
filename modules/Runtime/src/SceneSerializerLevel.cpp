@@ -327,6 +327,12 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     s_context->nameToEntity.reserve(names.size());
     std::vector<ECS::Entity> created;
     created.reserve(names.size());
+
+    // One batch for the whole file: these entities claim their names and pass 2b's
+    // members step past them. Built here, over the scene the clear above emptied,
+    // so it starts with nothing taken.
+    NameBatch claims{scene};
+
     for (size_t i = 0; i < names.size(); ++i)
     {
         const ECS::Entity e = scene.Create();
@@ -341,8 +347,11 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
             return refuse(LevelError::DuplicateName);
         }
 
-        // The name is the entity's Name, not a second identity beside it.
-        (void)scene.Add(e, Name{Core::ShortString{names[i]}});
+        // The name is the entity's Name, not a second identity beside it. Always
+        // the name asked for: the refusal above has already turned away the one
+        // file that could make it step aside, and a file's names are not
+        // negotiable — everything in it addresses them.
+        (void)claims.Give(e, names[i]);
     }
 
     // Pass 2b: the same for every member of every instance, and for the same
@@ -354,7 +363,8 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     {
         StagedInstance row;
         const std::expected<void, LevelError> ok =
-            StageInstance(scene, *instances, placed[i], static_cast<int32_t>(i), row);
+            StageInstance(scene, *instances, placed[i], static_cast<int32_t>(i), row, /*adopt=*/nullptr,
+                          &claims);
         // Pushed even on failure: staging creates entities and a table row before
         // the last thing that can fail, and unwinding them is the caller's — here,
         // the wholesale clear below.

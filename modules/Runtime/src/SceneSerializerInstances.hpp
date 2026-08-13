@@ -9,6 +9,7 @@
 
 #include <Assisi/ECS/BlueprintMember.hpp>
 #include <Assisi/Runtime/Blueprint.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -80,7 +81,8 @@ struct AdoptionSet
                                                             const LevelInstance &entry,
                                                             int32_t levelInstanceIndex,
                                                             StagedInstance &staged,
-                                                            AdoptionSet *adopt = nullptr);
+                                                            AdoptionSet *adopt = nullptr,
+                                                            NameBatch   *names = nullptr);
 
 /// @brief Apply a staged instance to the scene.
 void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string_view instanceName);

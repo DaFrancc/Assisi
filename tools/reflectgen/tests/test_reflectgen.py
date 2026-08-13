@@ -147,6 +147,21 @@ class CodegenTest(unittest.TestCase):
         self.assertIn('ReadString(j, _comp, "label", _s)', cpp)       # deserialize, type-checked
         self.assertIn('comp.label.Assign(_s)', cpp)                    # ...then assigned
 
+    def test_entity_name_is_its_own_field_type(self):
+        # Same codegen as ShortString, different FieldType: a name decoded as a
+        # String would truncate at 32 instead of 64. Both are TrivialStrings, so
+        # the generator is what keeps them apart.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Core::EntityName name;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"name", Assisi::Core::Reflect::FieldType::EntityName', cpp)
+        self.assertIn("std::string(c.name.View())", cpp)           # serialize
+        self.assertIn('ReadString(j, _comp, "name", _s)', cpp)     # deserialize, type-checked
+        self.assertIn("comp.name.Assign(_s)", cpp)                 # ...then assigned
+
     def test_asset_id_serializes_via_the_core_helpers(self):
         comps = _parse_source(
             "namespace N {\nACOMP()\nstruct Ref {\n"

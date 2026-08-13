@@ -403,15 +403,10 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
     // address an entity by, and an unnamed one only gets a serializer placeholder
     // at save time — stable, but saying nothing. A unique-in-scene default keeps
     // the file readable and stops two entities racing for the same name.
-    {
-        // The same walk the Blueprints panel uses for instance names, over the
-        // entity namespace instead — one rule, two namespaces (Naming.hpp). It
-        // suffixes only names already taken, so the first is `Entity`, not
-        // `Entity_1`, exactly as the first car is `car`.
-        const std::string candidate = Assisi::Runtime::UniqueEntityName(*_scene, "Entity");
-        (void)_scene->Add<Assisi::Runtime::Name>(entity,
-                                                 {Assisi::Core::ShortString{candidate}});
-    }
+    // The Give door (Naming.hpp): nobody typed this one, so it steps past what is
+    // taken instead of refusing. Only a name in use gets a suffix, so the first
+    // entity is `Entity`, not `Entity_1`.
+    (void)Assisi::Runtime::GiveEntityName(*_scene, entity, "Entity");
 
     // One undoable transaction: undo destroys the bare entity, redo revives it at
     // this exact handle. Components added afterwards are their own transactions, so

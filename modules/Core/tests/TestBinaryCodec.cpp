@@ -37,6 +37,7 @@ using Assisi::Core::AssetId;
 using Assisi::Core::AssetPath;
 using Assisi::Core::BitReader;
 using Assisi::Core::BitWriter;
+using Assisi::Core::EntityName;
 using Assisi::Core::ShortString;
 using Assisi::Core::Reflect::ComponentId;
 using Assisi::Core::Reflect::ComponentMeta;
@@ -96,6 +97,7 @@ struct AllTypes
 
     Mode         mode = Mode::Off;
     ShortString  name;
+    EntityName   entityName;
     EntityHandle target;
     AssetPath    path;
 
@@ -201,6 +203,7 @@ ComponentMeta MakeAllTypesMeta()
     meta.fields.push_back(mode);
 
     meta.fields.push_back(Field("name", FieldType::String, OffsetOf(&AllTypes::name)));
+    meta.fields.push_back(Field("entityName", FieldType::EntityName, OffsetOf(&AllTypes::entityName)));
     meta.fields.push_back(Field("target", FieldType::EntityRef, OffsetOf(&AllTypes::target)));
     meta.fields.push_back(Field("path", FieldType::AssetPath, OffsetOf(&AllTypes::path)));
     meta.fields.push_back(Field("paths", FieldType::AssetPathVector, OffsetOf(&AllTypes::paths)));
@@ -232,6 +235,9 @@ AllTypes MakePopulated()
         value.mat4[i] = static_cast<float>(i) * 1.25f;
     value.mode   = Mode::Fast;
     value.name   = ShortString("player one");
+    // Past a ShortString's 32 on purpose: the two differ only in capacity, so a
+    // codec that read one into the other truncates rather than fails.
+    value.entityName = EntityName("a name longer than a short string would ever hold");
     value.target = EntityHandle{42u, 7u};
     value.path   = AssetPath("meshes/crate.gltf");
     value.paths  = {AssetPath("a/one.png"), AssetPath("b/two.png"), AssetPath("")};
@@ -352,9 +358,9 @@ TEST_CASE("BinaryCodec: a partial mask patches only the named fields")
     const AllTypes      source = MakePopulated();
 
     // Bits are indexed over the *non-transient* fields in declaration order:
-    // 0 floatValue, 2 int32Value, 13 name, 16 paths.
+    // 0 floatValue, 2 int32Value, 13 name, 17 paths.
     const FieldMask mask = Assisi::Core::Reflect::FieldMaskBit(0) | Assisi::Core::Reflect::FieldMaskBit(2) |
-                           Assisi::Core::Reflect::FieldMaskBit(13) | Assisi::Core::Reflect::FieldMaskBit(16);
+                           Assisi::Core::Reflect::FieldMaskBit(13) | Assisi::Core::Reflect::FieldMaskBit(17);
 
     AllTypes  decoded;
     FieldMask applied = 0;

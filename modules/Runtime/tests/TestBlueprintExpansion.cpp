@@ -17,9 +17,12 @@
 #include <ostream>
 
 #include <cstdint>
+#include <expected>
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <unordered_set>
+#include <utility>
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/ECS/BlueprintMember.hpp>
@@ -117,6 +120,31 @@ const ECS::Transform *TransformOf(ECS::Scene &scene, const InstanceTable &table,
 {
     const ECS::Entity member = MemberOf(scene, table, instanceId, memberName);
     return member == ECS::NullEntity ? nullptr : scene.Get<ECS::Transform>(member);
+}
+
+/// What @p entity answers to, or empty if it has no Name at all.
+std::string NameOf(ECS::Scene &scene, ECS::Entity entity)
+{
+    const Runtime::Name *name = scene.Get<Runtime::Name>(entity);
+    return name == nullptr ? std::string{} : std::string{name->value.View()};
+}
+
+/// A name two live entities both answer to, or empty if none does.
+///
+/// Asserted alongside the suffixed spellings: the rule is about the whole scene,
+/// so a new path handing out a duplicate fails these cases too.
+std::string DuplicateName(ECS::Scene &scene)
+{
+    std::unordered_set<std::string> seen;
+    for (auto [entity, name] : scene.Query<Runtime::Name>())
+    {
+        std::string value{name.value.View()};
+        if (value.empty())
+            continue; // "no name" is not a name; any number of entities may have none
+        if (!seen.insert(std::move(value)).second)
+            return std::string{name.value.View()};
+    }
+    return {};
 }
 
 } // namespace
@@ -512,6 +540,85 @@ TEST_CASE("Blueprint: a member's Name component does not displace its leaf name"
     CHECK(log.Mentions("Name component"));
 }
 
+TEST_CASE("Blueprint: an expanded member does not take a name the scene already answers to")
+{
+    // A member is an entity, so a blueprint holding `body` must not put a second
+    // `body` in a level that already has one.
+    const std::filesystem::path root = FreshRoot("dupmember");
+    Write(root, "car.abp", CarFile());
+    Write(root, "main.alvl",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({Entity("body", At(5.f, 0.f, 0.f))})},
+           {"instances", nlohmann::json::array({{{"name", "car_3"}, {"source", "car.abp"}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    REQUIRE(SceneSerializer::LoadFromFile(scene, "main.alvl", {.instances = &table}));
+
+    // The level entity keeps the name the file gave it — it was there first, and
+    // the file addresses it by that name. The member is the one that steps aside.
+    const ECS::Entity authored{.index = 0, .generation = 0};
+    CHECK(NameOf(scene, authored) == "body");
+    CHECK(NameOf(scene, MemberOf(scene, table, ECS::InstanceId{1}, "body")) == "body_1");
+
+    // Only what actually collides moves. A member whose leaf is free still
+    // carries it, which is what the Inspector and every override spell.
+    CHECK(NameOf(scene, MemberOf(scene, table, ECS::InstanceId{1}, "wheel_fl")) == "wheel_fl");
+
+    CHECK(DuplicateName(scene) == "");
+}
+
+TEST_CASE("Blueprint: a spawn steps past the live names, including its own instance's")
+{
+    // The same rule at the other door: `ExpandInstance` is what
+    // App::SpawnBlueprint and the replicated mirror both come through.
+    const std::filesystem::path root = FreshRoot("dupspawn");
+    Write(root, "car.abp", CarFile());
+
+    ECS::Scene    scene;
+    InstanceTable table;
+
+    const ECS::Entity marker = scene.Create();
+    (void)scene.Add(marker, Runtime::Name{Core::EntityName{"body"}});
+
+    const auto first = SceneSerializer::ExpandInstance(scene, table, "car.abp", ECS::Transform{});
+    REQUIRE(first.has_value());
+    const auto second = SceneSerializer::ExpandInstance(scene, table, "car.abp", ECS::Transform{});
+    REQUIRE(second.has_value());
+
+    CHECK(NameOf(scene, MemberOf(scene, table, *first, "body")) == "body_1");
+    CHECK(NameOf(scene, MemberOf(scene, table, *first, "wheel_fl")) == "wheel_fl");
+
+    // The second spawn steps past the first one's members too: two spawns of one
+    // file are the commonest way to reach this at all.
+    CHECK(NameOf(scene, MemberOf(scene, table, *second, "body")) == "body_2");
+    CHECK(NameOf(scene, MemberOf(scene, table, *second, "wheel_fl")) == "wheel_fl_1");
+
+    CHECK(DuplicateName(scene) == "");
+}
+
+TEST_CASE("Blueprint: nested members whose leaves collide are still one name each")
+{
+    // A Name holds the leaf, not the path, so a nested file collides with itself:
+    // `car_1/body` and `car_2/body` are both called `body`.
+    const std::filesystem::path root = FreshRoot("dupleaf");
+    Write(root, "car.abp", CarFile());
+    Write(root, "lot.abp",
+          {{"version", 2},
+           {"entities", nlohmann::json::array({Entity("sign", At(0.f, 0.f, 0.f))})},
+           {"instances", nlohmann::json::array({{{"name", "car_1"}, {"source", "car.abp"}},
+                                                {{"name", "car_2"}, {"source", "car.abp"}}})}});
+
+    ECS::Scene    scene;
+    InstanceTable table;
+    const auto    id = SceneSerializer::ExpandInstance(scene, table, "lot.abp", ECS::Transform{});
+    REQUIRE(id.has_value());
+
+    CHECK(NameOf(scene, MemberOf(scene, table, *id, "car_1/body")) == "body");
+    CHECK(NameOf(scene, MemberOf(scene, table, *id, "car_2/body")) == "body_1");
+    CHECK(DuplicateName(scene) == "");
+}
+
 TEST_CASE("Blueprint: two entities of one name are refused")
 {
     // Reachable the same way, and the reason the rename box needs a guard at all.
@@ -619,30 +726,30 @@ TEST_CASE("Naming: the separator is the one character a name may not hold")
     // writing file, so a name spelling one would be read as an address.
     CHECK(Runtime::ValidateName("/car").error() == Runtime::NameError::ContainsSeparator);
 
-    REQUIRE_FALSE(Runtime::ValidateName(std::string(Core::kShortStringMax + 1, 'a')).has_value());
-    CHECK(Runtime::ValidateName(std::string(Core::kShortStringMax + 1, 'a')).error() ==
+    REQUIRE_FALSE(Runtime::ValidateName(std::string(Core::kEntityNameMax + 1, 'a')).has_value());
+    CHECK(Runtime::ValidateName(std::string(Core::kEntityNameMax + 1, 'a')).error() ==
           Runtime::NameError::TooLong);
-    CHECK(Runtime::ValidateName(std::string(Core::kShortStringMax, 'a')).has_value()); // the limit itself fits
+    CHECK(Runtime::ValidateName(std::string(Core::kEntityNameMax, 'a')).has_value()); // the limit itself fits
 }
 
-TEST_CASE("Naming: an entity name walks past what is taken, and knows itself")
+TEST_CASE("Naming: the Give door walks past what is taken, and knows itself")
 {
     ECS::Scene scene;
 
-    const auto name = [&scene](std::string_view value)
+    const auto give = [&scene](std::string_view stem)
     {
         const ECS::Entity e = scene.Create();
-        (void)scene.Add(e, Runtime::Name{Core::ShortString{value}});
-        return e;
+        return std::pair{e, Runtime::GiveEntityName(scene, e, stem)};
     };
 
-    CHECK(Runtime::UniqueEntityName(scene, "Entity") == "Entity");
+    // The first asks for `Entity` and gets it: the suffix appears only where
+    // something already answers to the name, exactly as the first car is `car`.
+    const auto [first, firstName] = give("Entity");
+    CHECK(firstName == "Entity");
+    CHECK(NameOf(scene, first) == "Entity");
 
-    const ECS::Entity first = name("Entity");
-    CHECK(Runtime::UniqueEntityName(scene, "Entity") == "Entity_1");
-
-    name("Entity_1");
-    CHECK(Runtime::UniqueEntityName(scene, "Entity") == "Entity_2");
+    CHECK(give("Entity").second == "Entity_1");
+    CHECK(give("Entity").second == "Entity_2");
 
     // An entity does not conflict with itself: renaming `Entity` to `Entity` is a
     // no-op, not a refusal, which is what keeps the rename box from rejecting the
@@ -652,6 +759,61 @@ TEST_CASE("Naming: an entity name walks past what is taken, and knows itself")
 
     // "No name" is not a name — any number of entities may have none.
     CHECK_FALSE(Runtime::EntityNameTaken(scene, ""));
+}
+
+TEST_CASE("Naming: a name too long to suffix gives up stem, never suffix")
+{
+    // A full-width stem cannot take its suffix and still fit, so the stem is what
+    // gives way. Otherwise the name is checked in one spelling and stored
+    // truncated back onto the one it was meant to step past — reachable from a
+    // blueprint member whose leaf is the full width.
+    ECS::Scene        scene;
+    const std::string full(Core::kEntityNameMax, 'a');
+
+    const ECS::Entity first = scene.Create();
+    CHECK(Runtime::GiveEntityName(scene, first, full) == full);
+
+    const ECS::Entity second = scene.Create();
+    const std::string stepped = Runtime::GiveEntityName(scene, second, full);
+    CHECK(stepped != full);
+    CHECK(stepped.size() <= Core::kEntityNameMax);
+    // What is stored is what was checked — the whole point. A name that had to be
+    // truncated on the way in is a name nothing verified.
+    CHECK(NameOf(scene, second) == stepped);
+    CHECK(DuplicateName(scene) == "");
+}
+
+TEST_CASE("Naming: the Rename door refuses what it cannot honour, and changes nothing")
+{
+    // The other policy, for the other caller: a human typed this string, so a
+    // taken name comes back as a refusal with a reason, not as `crate_1`.
+    ECS::Scene scene;
+
+    const ECS::Entity crate = scene.Create();
+    (void)Runtime::GiveEntityName(scene, crate, "crate");
+    const ECS::Entity barrel = scene.Create();
+    (void)Runtime::GiveEntityName(scene, barrel, "barrel");
+
+    const std::expected<void, Runtime::NameError> taken = Runtime::RenameEntity(scene, barrel, "crate");
+    REQUIRE_FALSE(taken.has_value());
+    CHECK(taken.error() == Runtime::NameError::Taken);
+    CHECK(NameOf(scene, barrel) == "barrel"); // refused means unchanged, not silently suffixed
+
+    // The loader's rules are this door's rules, so a name it accepts is a name the
+    // level reloads with.
+    CHECK(Runtime::RenameEntity(scene, barrel, "crate/lid").error() ==
+          Runtime::NameError::ContainsSeparator);
+    CHECK(Runtime::RenameEntity(scene, barrel, std::string(Core::kEntityNameMax + 1, 'a')).error() ==
+          Runtime::NameError::TooLong);
+
+    // Its own name is not a conflict with itself, and an empty one clears it: an
+    // entity without a name is ordinary and shows its id in the entity list.
+    CHECK(Runtime::RenameEntity(scene, barrel, "barrel").has_value());
+    CHECK(Runtime::RenameEntity(scene, barrel, "").has_value());
+    CHECK(NameOf(scene, barrel) == "");
+
+    CHECK(Runtime::RenameEntity(scene, barrel, "keg").has_value());
+    CHECK(NameOf(scene, barrel) == "keg");
 }
 
 TEST_CASE("Blueprint: an entity named with the separator is refused on its own")
