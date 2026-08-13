@@ -221,6 +221,136 @@ TEST_CASE("an event about an entity a connection cannot see never reaches it")
     CHECK(harness.Diagnostics(blind).eventsSent == 0);
 }
 
+TEST_CASE("an event is scoped by the field marked subject, not by the one declared first")
+{
+    // TestKnockback names two entities and marks the *second* as its subject, so
+    // a pass here cannot be coming from declaration order. The engine used to
+    // scope by whichever EntityRef came first, which meant that swapping two
+    // field declarations silently changed who was told.
+    Harness harness;
+    const std::size_t nearInstigator = harness.AddPeer();
+    const std::size_t nearVictim     = harness.AddPeer();
+
+    auto *provider = new ScriptedProvider();
+    harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
+    harness.Step(4);
+
+    const ECS::Entity instigator = SpawnReplicated(harness.serverScene);
+    const ECS::Entity victim     = SpawnReplicated(harness.serverScene);
+    harness.Step(2);
+
+    // Each connection is told about exactly one of the two, so "who received it"
+    // names which entity the send scoped by and nothing else.
+    provider->Set({});
+    harness.server.GrantRelevance(harness.peers[nearInstigator].serverSide, harness.server.NetIdOf(instigator));
+    harness.server.GrantRelevance(harness.peers[nearVictim].serverSide, harness.server.NetIdOf(victim));
+    harness.Step(10);
+
+    REQUIRE(harness.peers[nearInstigator].client->EntityOf(harness.server.NetIdOf(instigator)) != ECS::NullEntity);
+    REQUIRE(harness.peers[nearInstigator].client->EntityOf(harness.server.NetIdOf(victim)) == ECS::NullEntity);
+    REQUIRE(harness.peers[nearVictim].client->EntityOf(harness.server.NetIdOf(victim)) != ECS::NullEntity);
+
+    harness.server.Send(TestKnockback{instigator, victim, /*force=*/9});
+    harness.Step(8);
+
+    CHECK(harness.peers[nearVictim].client->EventsDispatched() == 1);
+    CHECK(harness.peers[nearInstigator].client->EventsDispatched() == 0);
+}
+
+TEST_CASE("a non-subject reference the recipient has not been told about arrives null")
+{
+    // The honest cost of scoping by one entity: the others a message mentions are
+    // translated like any reference, and one the recipient has never heard of
+    // decodes to nothing. A message has no deferred patch-up the way a component
+    // does, so this is where it stays.
+    Harness harness;
+    const std::size_t peer = harness.AddPeer();
+
+    auto *provider = new ScriptedProvider();
+    harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
+    harness.Step(4);
+
+    const ECS::Entity instigator = SpawnReplicated(harness.serverScene);
+    const ECS::Entity victim     = SpawnReplicated(harness.serverScene);
+    harness.Step(2);
+
+    provider->Set({});
+    harness.server.GrantRelevance(harness.peers[peer].serverSide, harness.server.NetIdOf(victim));
+    harness.Step(10);
+
+    REQUIRE(harness.peers[peer].client->EntityOf(harness.server.NetIdOf(instigator)) == ECS::NullEntity);
+
+    HandlerLog::Instance().Clear();
+    harness.server.Send(TestKnockback{instigator, victim, /*force=*/4});
+    harness.Step(8);
+
+    // It arrived — the subject is visible — and carried its payload intact.
+    REQUIRE(harness.peers[peer].client->EventsDispatched() == 1);
+    CHECK(HandlerLog::Instance().lastKnockback.force == 4);
+    // ...but the entity the recipient was never told about is not invented for it.
+    CHECK(HandlerLog::Instance().lastKnockback.instigator == ECS::NullEntity);
+}
+
+TEST_CASE("an event whose subject is null reaches no client, and is counted")
+{
+    // The leak this closes: a null subject used to leave `subject ==
+    // InvalidNetId`, which is exactly what an `independent` event carries — so a
+    // scoped event became indistinguishable from a global one and went to
+    // everybody, past the relevancy boundary it was declared to sit behind.
+    //
+    // The host still hears it. It is the authority, it is never relevancy-scoped
+    // in the first place (`deliverToHost` is not gated by `EventReaches`), and
+    // withholding it would be a second behaviour change wearing this one's
+    // clothes.
+    Harness harness;
+    const std::size_t first  = harness.AddPeer();
+    const std::size_t second = harness.AddPeer();
+    harness.Step(4);
+
+    // No provider and no filtering: both connections are relevant to everything,
+    // so nothing but the null subject can be keeping the event from them.
+    const ECS::Entity subject = SpawnReplicated(harness.serverScene);
+    harness.Step(8);
+    (void)subject;
+
+    HandlerLog::Instance().Clear();
+    harness.server.Send(TestBurst{ECS::NullEntity, /*intensity=*/5});
+    harness.Step(8);
+
+    CHECK(harness.peers[first].client->EventsDispatched() == 0);
+    CHECK(harness.peers[second].client->EventsDispatched() == 0);
+    CHECK(harness.Diagnostics(first).eventsSent == 0);
+    CHECK(harness.Diagnostics(second).eventsSent == 0);
+
+    // Counted rather than silent: an event that names nothing is a caller bug,
+    // and a bug nobody can see is one nobody fixes.
+    CHECK(harness.server.HostDiagnostics().eventsUnscoped == 1);
+
+    // The authority still saw it.
+    CHECK(HandlerLog::Instance().burstCalls == 1);
+    CHECK(HandlerLog::Instance().lastBurst.intensity == 5);
+}
+
+TEST_CASE("a null subject withholds a reliable announcement too")
+{
+    // The reliable path sends immediately on the control lane instead of riding
+    // the snapshot, so it is a separate delivery site and would leak on its own.
+    Harness harness;
+    const std::size_t peer = harness.AddPeer();
+    harness.Step(4);
+
+    const ECS::Entity pawn = SpawnReplicated(harness.serverScene);
+    harness.server.SetControl(pawn, harness.server.ClientIdOf(harness.peers[peer].serverSide));
+    harness.Step(8);
+
+    const std::uint64_t before = harness.Diagnostics(peer).announcementsSent;
+    harness.server.Send(TestReliableHit{ECS::NullEntity, /*damage=*/3});
+    harness.Step(6);
+
+    CHECK(harness.Diagnostics(peer).announcementsSent == before);
+    CHECK(harness.server.HostDiagnostics().eventsUnscoped == 1);
+}
+
 TEST_CASE("an independent event goes to everyone, because there is nothing to scope it by")
 {
     Harness harness;

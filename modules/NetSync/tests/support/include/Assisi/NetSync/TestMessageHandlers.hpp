@@ -43,10 +43,14 @@ struct HandlerLog
 
     std::uint32_t tagInstanceCalls   = 0;
     std::uint32_t instanceNamedCalls = 0;
+    std::uint32_t knockbackCalls     = 0;
+    std::uint32_t reliableHitCalls   = 0;
 
     TestPlaceMarker   lastPlaceMarker;
     TestPing          lastPing;
     TestBurst         lastBurst;
+    TestKnockback     lastKnockback;
+    TestReliableHit   lastReliableHit;
     TestAnnounce      lastAnnounce;
     TestMovePawn      lastMovePawn;
     TestTagInstance   lastTagInstance;
@@ -73,6 +77,8 @@ struct HandlerLog
 
 AMSG_HANDLER() void HandlePlaceMarker(NetContext &ctx, const TestPlaceMarker &msg);
 AMSG_HANDLER() void HandleTestBurst(NetContext &ctx, const TestBurst &msg);
+AMSG_HANDLER() void HandleTestKnockback(NetContext &ctx, const TestKnockback &msg);
+AMSG_HANDLER() void HandleTestReliableHit(NetContext &ctx, const TestReliableHit &msg);
 AMSG_HANDLER() void HandleTestAnnounce(NetContext &ctx, const TestAnnounce &msg);
 AMSG_HANDLER() void HandleMovePawn(NetContext &ctx, const TestMovePawn &msg);
 AMSG_HANDLER() void HandleTagInstance(NetContext &ctx, const TestTagInstance &msg);
@@ -92,6 +98,22 @@ inline void HandleTestBurst(NetContext &ctx, const TestBurst &msg)
     HandlerLog &log = HandlerLog::Instance();
     ++log.burstCalls;
     log.lastBurst = msg;
+}
+
+inline void HandleTestKnockback(NetContext &ctx, const TestKnockback &msg)
+{
+    (void)ctx;
+    HandlerLog &log = HandlerLog::Instance();
+    ++log.knockbackCalls;
+    log.lastKnockback = msg;
+}
+
+inline void HandleTestReliableHit(NetContext &ctx, const TestReliableHit &msg)
+{
+    (void)ctx;
+    HandlerLog &log = HandlerLog::Instance();
+    ++log.reliableHitCalls;
+    log.lastReliableHit = msg;
 }
 
 inline void HandleTestAnnounce(NetContext &ctx, const TestAnnounce &msg)
