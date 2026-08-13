@@ -4,6 +4,8 @@
 #include <Assisi/Core/Assert.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
+#include <Assisi/Runtime/NameComponent.hpp>
+#include <Assisi/Runtime/Naming.hpp>
 
 #include <cstdint>
 #include <span>
@@ -251,6 +253,23 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
                                  c.meta->name);
             }
         }
+    }
+
+    // Pass 4: the arrivals take names the destination is not already using. A Name
+    // travels with every other component, so a migration into a world that has its
+    // own `crate` would otherwise make two. The traveller is what steps aside;
+    // the resident is what that world already addresses by name. `created`
+    // is the batch's rebuilding set, or each arrival would be suffixed against the
+    // name it just brought with it.
+    NameBatch claims{dst, created};
+    for (const ECS::Entity entity : created)
+    {
+        const Name *name = dst.Get<Name>(entity);
+        if (name == nullptr || name->value.Empty())
+            continue; // an entity that arrived without a name stays without one
+        // Copied out first: Give writes its answer back into this same component.
+        const std::string arrived{name->value.View()};
+        (void)claims.Give(entity, arrived);
     }
 
     // The originals leave the source scene. Destroy only queues: they survive

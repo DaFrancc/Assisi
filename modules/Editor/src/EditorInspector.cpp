@@ -360,6 +360,20 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             }
             break;
         }
+        case FieldType::EntityName:
+        {
+            // The String box over the wider buffer. Not the entity's own Name —
+            // that one has to stay unique, so the rename box above owns it.
+            auto *name = static_cast<Assisi::Core::EntityName *>(fp);
+            char  buf[Assisi::Core::kEntityNameMax + 1];
+            name->ToCStr(buf, sizeof(buf));
+            if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
+            {
+                name->Assign(buf);
+                edited = true;
+            }
+            break;
+        }
         case FieldType::Vec2:
             edited = ImGui::DragFloat2(field.name.c_str(), static_cast<float *>(fp), 0.01f);
             break;
@@ -1307,7 +1321,7 @@ void EditorApp::DrawInspector()
     // and creates one on the first edit, so naming is click-and-type with no "add
     // component" step. An empty name leaves the entity showing its id in the list.
     {
-        Assisi::Runtime::Name *nameComp = _scene->Get<Assisi::Runtime::Name>(_selectedEntity);
+        const Assisi::Runtime::Name *nameComp = _scene->Get<Assisi::Runtime::Name>(_selectedEntity);
 
         // Opened before the box is drawn, so the first keystroke's *creation* of
         // the Name component is captured as absent -> present. The sweep at end of
@@ -1321,38 +1335,30 @@ void EditorApp::DrawInspector()
                                   Assisi::Core::Reflect::ComponentIdOf<Assisi::Runtime::Name>(),
                                   EditLabel("Rename", _selectedEntity), _selectedEntity);
 
-        char nameBuf[Assisi::Core::kShortStringMax + 1] = {};
+        char nameBuf[Assisi::Core::kEntityNameMax + 1] = {};
         if (nameComp != nullptr)
             nameComp->value.ToCStr(nameBuf, sizeof(nameBuf));
         ImGui::SetNextItemWidth(-1.f);
         const bool edited = ImGui::InputTextWithHint("##entityname", "Name", nameBuf, sizeof(nameBuf));
 
-        // Validated against the same rule the loader enforces, so a name this box
-        // accepts is a name the level reloads with. A duplicate, or a name
-        // spelling `car/body`, makes the loader refuse the whole file: authored
-        // happily, lost on reopen.
-        //
-        // Refused, not auto-suffixed — unlike a *new* entity's name. A fresh
-        // entity has no name worth keeping, so stepping it to `Entity_1` costs
-        // nothing; a rename was typed on purpose, and storing `crate_1` when the
-        // author asked for `crate` is an edit they did not make. Empty is allowed:
-        // it means "no name", and the entity falls back to its id in the list.
+        // The Rename door (Naming.hpp): refused, not auto-suffixed, because this
+        // name was typed on purpose. Checked every frame and written only on a
+        // keystroke, so the reason sits under the field while the bad name is
+        // still in it. The rule is the loader's, so a name this box accepts is a
+        // name the level reloads with.
         const std::string_view typed{nameBuf};
         std::string_view       refusal;
-        if (!typed.empty())
+        if (const auto allowed = Assisi::Runtime::CheckEntityName(*_scene, _selectedEntity, typed);
+            !allowed.has_value())
         {
-            if (const auto valid = Assisi::Runtime::ValidateName(typed); !valid.has_value())
-                refusal = Assisi::Runtime::Describe(valid.error());
-            else if (Assisi::Runtime::EntityNameTaken(*_scene, typed, _selectedEntity))
-                refusal = "another entity already has this name";
+            refusal = Assisi::Runtime::Describe(allowed.error());
         }
 
         if (edited && refusal.empty())
         {
-            if (nameComp == nullptr)
-                nameComp = _scene->Add<Assisi::Runtime::Name>(_selectedEntity, {});
-            if (nameComp != nullptr)
-                nameComp->value.Assign(nameBuf);
+            // Adds the component if the entity had none, which is what makes
+            // naming click-and-type. Empty clears it.
+            (void)Assisi::Runtime::RenameEntity(*_scene, _selectedEntity, typed);
         }
         if (!refusal.empty())
         {

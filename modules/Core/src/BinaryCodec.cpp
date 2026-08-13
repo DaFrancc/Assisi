@@ -239,6 +239,9 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     case FieldType::String:
         writer.WriteString(reinterpret_cast<const ShortString *>(address)->View());
         return true;
+    case FieldType::EntityName:
+        writer.WriteString(reinterpret_cast<const EntityName *>(address)->View());
+        return true;
     case FieldType::EntityRef:
     {
         // The raw handle, optionally translated by the caller's hook. The codec
@@ -359,6 +362,9 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
     case FieldType::String:
         ReadTrivialString(reader, *reinterpret_cast<ShortString *>(address));
         return true;
+    case FieldType::EntityName:
+        ReadTrivialString(reader, *reinterpret_cast<EntityName *>(address));
+        return true;
     case FieldType::EntityRef:
     {
         const std::uint64_t wire = reader.ReadBits64(kEntityRefBits);
@@ -465,6 +471,9 @@ const char *FieldTypeName(FieldType type)
     // different things — one is a number, the other is a baseNetId a peer has to
     // translate. This name is hashed, so two builds that disagree refuse to pair.
     case FieldType::InstanceRef: return "instance";
+    // Distinct from "str": same bytes on the wire, different buffer capacity, so
+    // a build that swapped one for the other would truncate rather than fail.
+    case FieldType::EntityName: return "ename";
     case FieldType::Unknown: break;
     }
     return "unknown";

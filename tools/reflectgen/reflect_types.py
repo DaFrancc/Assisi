@@ -163,6 +163,22 @@ TYPES: dict[str, TypeCodegen] = {
         'String',
         'std::string({a}.View())',
         '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
+    # Core::EntityName — the wider inline string an entity's name lives in. Same
+    # codegen as ShortString, but its own FieldType: the binary codec reads into
+    # the buffer by capacity, so a name decoded as a String would truncate.
+    # Accepts every spelling.
+    'EntityName': TypeCodegen(
+        'EntityName',
+        'std::string({a}.View())',
+        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
+    'Core::EntityName': TypeCodegen(
+        'EntityName',
+        'std::string({a}.View())',
+        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
+    'Assisi::Core::EntityName': TypeCodegen(
+        'EntityName',
+        'std::string({a}.View())',
+        '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
     # Core::AssetPath — a fixed-capacity virtual asset path. Serialized as a JSON
     # string of its view; Assign() re-imposes the length limit on load. Accepts
     # both qualified and unqualified names.

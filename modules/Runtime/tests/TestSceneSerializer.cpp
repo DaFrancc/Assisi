@@ -117,7 +117,7 @@ TEST_CASE("SceneSerializer: a name survives the round trip and is the entity's N
     ECS::Scene        scene;
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
-    REQUIRE(scene.Add(e, Runtime::Name{Core::ShortString{"wheel_fl"}}) != nullptr);
+    REQUIRE(scene.Add(e, Runtime::Name{Core::EntityName{"wheel_fl"}}) != nullptr);
 
     const nlohmann::json saved = SceneSerializer::Save(scene);
     REQUIRE(saved.at("version").get<int32_t>() == 2);
@@ -143,8 +143,8 @@ TEST_CASE("SceneSerializer: an unnamed entity is given a name, and duplicates ar
     REQUIRE(scene.Add(b, Transform{}) != nullptr);
     REQUIRE(scene.Add(c, Transform{}) != nullptr);
     // Two entities really can share a Name — it has always been a free-form label.
-    REQUIRE(scene.Add(a, Runtime::Name{Core::ShortString{"Cube"}}) != nullptr);
-    REQUIRE(scene.Add(b, Runtime::Name{Core::ShortString{"Cube"}}) != nullptr);
+    REQUIRE(scene.Add(a, Runtime::Name{Core::EntityName{"Cube"}}) != nullptr);
+    REQUIRE(scene.Add(b, Runtime::Name{Core::EntityName{"Cube"}}) != nullptr);
 
     const nlohmann::json saved = SceneSerializer::Save(scene);
     const auto          &list  = saved.at("entities");
@@ -205,7 +205,7 @@ TEST_CASE("SceneSerializer: a missing or empty name refuses the file")
     // Truncating instead is how two members become indistinguishable.
     const nlohmann::json tooLong = {
         {"version", 2},
-        {"entities", nlohmann::json::array({{{"name", std::string(Core::kShortStringMax + 1, 'x')},
+        {"entities", nlohmann::json::array({{{"name", std::string(Core::kEntityNameMax + 1, 'x')},
                                              {"components", nlohmann::json::object()}}})}};
     const LevelResult longName = SceneSerializer::Load(loaded, tooLong);
     REQUIRE_FALSE(longName.has_value());
