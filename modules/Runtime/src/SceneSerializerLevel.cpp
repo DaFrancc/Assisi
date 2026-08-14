@@ -54,7 +54,7 @@ namespace
 
 } // namespace
 
-nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &header, const InstanceTable *instances)
+nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &header, InstanceTable *instances)
 {
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 

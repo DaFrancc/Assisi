@@ -316,6 +316,12 @@ Assisi::ECS::InstanceId EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
     if (_scene == nullptr || _world == nullptr)
         return {};
 
+    // The same condition the icons are drawn under — see SetEditorIconsVisible. Off
+    // by either half, the billboard is not on screen, and hit-testing one that is not
+    // there is a click target the author cannot see to avoid.
+    if (!_showEditorOverlays || _playState == PlayState::Playing)
+        return {};
+
     const PickRay ray = BuildPickRay(mousePos);
     if (!ray.valid)
         return {};
