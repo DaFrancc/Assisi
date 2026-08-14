@@ -12,7 +12,7 @@
 namespace Assisi::Core::Reflect
 {
 
-enum class FieldType
+enum class FieldType : std::uint8_t
 {
     Float,
     Double,
@@ -65,7 +65,7 @@ struct EnumConstant
 
 /// @brief What an editor does to a "radio" listener field when its source enum
 /// is not at one of the field's active values (see FieldMeta::radioSource).
-enum class RadioBehavior
+enum class RadioBehavior : std::uint8_t
 {
     None,   ///< Not a radio listener (the default).
     Grey,   ///< Disable (grey out) the field while inactive.

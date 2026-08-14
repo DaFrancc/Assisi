@@ -29,7 +29,7 @@ namespace Assisi::Physics
 {
 
 /// @brief Motion type for newly created bodies.
-enum class BodyMotion
+enum class BodyMotion : std::uint8_t
 {
     Static,  ///< Immovable; collides but is never moved by the simulation.
     Dynamic, ///< Fully simulated; affected by gravity and collisions.

@@ -218,7 +218,7 @@ void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const 
 [[nodiscard]] std::optional<std::uint64_t> HashLevelFile(std::string_view virtualPath);
 
 /// @brief Why a joining peer cannot build the level the host named.
-enum class JoinLevelError
+enum class JoinLevelError : std::uint8_t
 {
     NoLevel,         ///< the host is not running a level file at all
     Unresolvable,    ///< this build has no such file

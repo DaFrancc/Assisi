@@ -84,7 +84,7 @@ struct AssetSidecar
 [[nodiscard]] AssetId MintAssetId();
 
 /// @brief Why reading a `.aast` sidecar failed.
-enum class AssetSidecarError
+enum class AssetSidecarError : std::uint8_t
 {
     ParseFailed, ///< Not valid JSON, or not a JSON object.
     WrongType,   ///< The envelope `type` is not the sidecar type.
