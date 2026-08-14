@@ -12,6 +12,7 @@ target_sources(Assisi-Editor
     "include/Assisi/Editor/ColliderPose.hpp"
     "include/Assisi/Editor/EditHistory.hpp"
     "include/Assisi/Editor/EditorApp.hpp"
+    "include/Assisi/Editor/InspectorFieldChrome.hpp"
     "include/Assisi/Editor/PrePlayState.hpp"
   PRIVATE
     "src/ColliderPose.cpp"
@@ -28,6 +29,7 @@ target_sources(Assisi-Editor
     "src/EditorOptionsPanel.hpp"
     "src/EditorPlay.cpp"
     "src/EditorWorlds.cpp"
+    "src/InspectorFieldChrome.cpp"
     "src/InstanceGesture.cpp"
     "src/PrePlayState.cpp"
     "src/ImGuiQueries.hpp"
