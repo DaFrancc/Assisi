@@ -215,10 +215,10 @@ LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesyst
     catch (const std::exception &ex)
     {
         // Same contract as LoadFromFile below: a failed load yields an empty scene,
-        // never a half-populated one. Load reports its own failures by value, but is
-        // not throw-free — the component `addToScene` hooks it runs are generated
-        // code over nlohmann, and a file whose `version` or `entities` key is the
-        // wrong shape throws out of Load's own top-level reads.
+        // never a half-populated one. Load reports its own failures by value —
+        // including a `version` or `entities` key of the wrong shape, which it once
+        // threw on and now guards. What is left to catch is the component
+        // `addToScene` hooks it runs, which are generated code over nlohmann.
         //
         // `sceneReplaced` unconditionally, whichever side of Load's clear the throw
         // came from: the Clear below is this function's own, so by the time this
