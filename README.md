@@ -27,10 +27,10 @@ The following compilers have been tested:
 - Windows — [MSVC](https://visualstudio.microsoft.com/) (Visual Studio 2022+)
 - Linux — [GCC](https://gcc.gnu.org/), [Clang](https://clang.llvm.org/)
 
-Every third-party C++ library in the table further down is fetched and built by CMake on first
-configure — none of them is a package you install. What your package manager *does* have to provide is
-the toolchain above plus a short list of system development packages: OpenSSL, and the Wayland/X11
-headers GLFW builds its two backends against.
+Every third-party C++ library the engine uses is fetched and built by CMake on first configure — none
+of them is a package you install. What your package manager *does* have to provide is the toolchain
+above plus a short list of system development packages: OpenSSL, and the Wayland/X11 headers GLFW
+builds its two backends against.
 
 #### Windows
 Install [Visual Studio 2022+](https://visualstudio.microsoft.com/) with the **Desktop development with
@@ -38,39 +38,50 @@ C++** workload (which brings MSVC, CMake, and Ninja), plus [Python 3](https://ww
 do not already have it on `PATH`. Build from a *Developer Command Prompt* so the MSVC environment is
 set up.
 
-#### Linux — Arch
+#### Linux
+
+##### Arch
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja python \
                         openssl \
                         wayland libxkbcommon \
                         libxcursor libxi libxinerama libxrandr \
                         vulkan-icd-loader
+```
 
-# A Vulkan driver for your GPU (pick one):
-sudo pacman -S vulkan-radeon    # AMD
-sudo pacman -S vulkan-intel     # Intel
-sudo pacman -S nvidia-utils     # NVIDIA (proprietary; ships its own ICD)
+Plus a Vulkan driver for your GPU:
+- AMD — `sudo pacman -S vulkan-radeon`
+- Intel — `sudo pacman -S vulkan-intel`
+- NVIDIA — `sudo pacman -S nvidia-utils` (proprietary; ships its own ICD)
 
-# Optional — only if you want to build with Clang as well as GCC:
+Optional, only if you want to build with Clang as well as GCC:
+```bash
 sudo pacman -S clang
 ```
 
-#### Linux — Fedora
+##### Fedora and other RHEL-based distributions (RHEL, Rocky, Alma)
 ```bash
 sudo dnf install gcc-c++ make git cmake ninja-build python3 pkgconf-pkg-config \
                  openssl-devel \
                  wayland-devel libxkbcommon-devel \
                  libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
                  vulkan-loader mesa-vulkan-drivers
+```
 
-# NVIDIA users: the proprietary driver supplies its own Vulkan ICD, so
-# mesa-vulkan-drivers is not the package you want.
+NVIDIA users: the proprietary driver supplies its own Vulkan ICD, so `mesa-vulkan-drivers` is not the
+package you want.
 
-# Optional — only if you want to build with Clang as well as GCC:
+Optional, only if you want to build with Clang as well as GCC:
+```bash
 sudo dnf install clang
 ```
 
-On other distributions, install the equivalents of those four groups — they are the whole list:
+##### Other distributions
+Install the equivalents of those four package groups — they are the whole list, and the dropdown below
+says what each one is for.
+
+<details>
+<summary><b>What those packages are for, what CMake fetches for you, and the CPU baseline</b></summary>
 
 | System packages | Why they are needed |
 |---|---|
@@ -85,8 +96,8 @@ the first build but leaves the resulting binary with a runtime dependency on tha
 `-DCMAKE_DISABLE_FIND_PACKAGE_simdjson=TRUE` to force the self-contained build regardless of what is
 installed.
 
-**Everything below is fetched and built automatically by CMake on first configure** — nothing in this
-table is a package to install, pin, or vendor, on any platform:
+**Everything in the next table is fetched and built automatically by CMake on first configure** —
+nothing in it is a package to install, pin, or vendor, on any platform:
 
 | Dependency | What it does |
 |---|---|
@@ -120,6 +131,8 @@ loads Vulkan dynamically).
 extensions that ship alongside it). This is a deliberate baseline — the engine is compiled with these
 instruction sets enabled globally for SIMD performance, so binaries will crash with an
 illegal-instruction fault on older CPUs.
+
+</details>
 
 ### 3. Configure
 #### Windows (from a Visual Studio Developer Command Prompt):
