@@ -195,6 +195,55 @@ TEST_CASE("Authoring: an instance an author placed is written back; a runtime sp
     CHECK(saved.at("instances")[0].at("name").get<std::string>() == "crate_1");
 }
 
+TEST_CASE("Authoring: a save renumbers the rows it wrote to match the file it wrote them into")
+{
+    const std::filesystem::path root = FreshRoot("renumber");
+
+    ECS::Scene scene;
+    const Selection selection = BuildSelection(scene);
+    REQUIRE(SceneSerializer::SaveEntitiesToFile(scene, selection.all, root / "crate.abp",
+                                                *scene.Get<ECS::Transform>(selection.body)));
+
+    ECS::Scene level;
+    InstanceTable table;
+
+    // An editor placement is authored the moment it is made, but carries no file
+    // position: nothing has written it into one yet.
+    const auto place = [&](const char *name, float x)
+    {
+        const Runtime::LevelInstance entry{.name      = name,
+                                           .source    = "crate.abp",
+                                           .transform = At(x, 0.f, 0.f),
+                                           .overrides = nlohmann::json::object(),
+                                           .removed   = {}};
+        const auto placed = SceneSerializer::PlaceInstance(level, table, entry, /*authored=*/ true);
+        REQUIRE(placed.has_value());
+        return placed->instanceId;
+    };
+
+    const ECS::InstanceId first  = place("crate_1", 4.f);
+    const ECS::InstanceId second = place("crate_2", 8.f);
+    const ECS::InstanceId third  = place("crate_3", 12.f);
+
+    REQUIRE(table.Find(first)->levelInstanceIndex == -1);
+    REQUIRE(table.Find(second)->levelInstanceIndex == -1);
+
+    // The middle one goes, so the survivors' positions in the file are not the
+    // positions they would have had.
+    table.Remove(second);
+
+    const nlohmann::json saved = SceneSerializer::Save(level, {}, &table);
+    REQUIRE(saved.at("instances").size() == 2);
+    CHECK(saved.at("instances")[0].at("name").get<std::string>() == "crate_1");
+    CHECK(saved.at("instances")[1].at("name").get<std::string>() == "crate_3");
+
+    // What the rows say must be what the file says: a stale index is a row claiming
+    // an entry that belongs to another instance, which is what the shared-baseline
+    // join reads to pair the two sides up.
+    CHECK(table.Find(first)->levelInstanceIndex == 0);
+    CHECK(table.Find(third)->levelInstanceIndex == 1);
+}
+
 TEST_CASE("Authoring: a selection containing a blueprint member is refused")
 {
     const std::filesystem::path root = FreshRoot("nesting");

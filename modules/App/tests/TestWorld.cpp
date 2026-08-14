@@ -37,6 +37,8 @@
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/Naming.hpp>
 
+#include "LogCapture.hpp"
+
 using namespace Assisi::App;
 
 TEST_CASE("WorldManager generates unique names from the label")
@@ -1124,6 +1126,41 @@ TEST_CASE("A background load's systems are installed when it is promoted")
     CHECK(promoted->systemNames == std::vector<std::string>{"Counter"});
     TickUpdate(*promoted, events);
     CHECK(Runs(*promoted, "Counter") == 1);
+
+    std::filesystem::remove_all(root);
+}
+
+TEST_CASE("A refused preload names the level that asked for the missing system")
+{
+    // The catalog's refusal is the only line carrying *which file* named the system,
+    // and the preload path is the one caller with nothing to give it: a pending
+    // world's levelPath is not set until SwapToActive, which runs after this check.
+    // Asserted against the catalog's wording rather than the discard line beside it,
+    // which names the path either way and would pass with the context still empty.
+    const std::filesystem::path root =
+        std::filesystem::temp_directory_path() / "assisi-world-preload-context";
+    std::filesystem::remove_all(root);
+    std::filesystem::create_directories(root / "levels");
+    REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
+
+    {
+        Assisi::ECS::Scene scene;
+        (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
+        const Assisi::Runtime::LevelHeader header{.instances = {},
+                                                  .systems = std::vector<std::string>{"Nonexistent"}};
+        REQUIRE(
+            Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "Bad.alvl", header));
+    }
+
+    WorldManager worlds;
+    World &start = worlds.Create("Main");
+    worlds.SetActive(start);
+    start.state = WorldState::Active;
+
+    const Assisi::Tests::LogCapture log;
+    REQUIRE(worlds.BeginLoadLevel("levels/Bad.alvl") != nullptr);
+    CHECK(worlds.PromotePendingLoad() == nullptr);
+    CHECK(log.Mentions("SystemCatalog: 'levels/Bad.alvl' names system 'Nonexistent'"));
 
     std::filesystem::remove_all(root);
 }

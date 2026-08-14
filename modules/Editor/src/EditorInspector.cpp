@@ -505,6 +505,49 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                 ImGui::TextDisabled("%s: [unsupported vector]", field.name.c_str());
             break;
         }
+        case FieldType::InstanceRef:
+        {
+            auto *ref = static_cast<Assisi::ECS::InstanceId *>(fp);
+
+            // Named by source and id rather than by id alone: the number is a
+            // per-world counter and means nothing to the author on its own.
+            const auto describe = [this](Assisi::ECS::InstanceId id) -> std::string
+            {
+                if (!id.IsValid())
+                    return "(none)";
+                if (_world == nullptr)
+                    return std::format("instance {}", id.value);
+                const Assisi::Runtime::BlueprintInstance *row = _world->instances.Find(id);
+                if (row == nullptr)
+                    return std::format("instance {} (missing)", id.value);
+                return std::format("{} ({})", row->name.empty() ? row->source : row->name, id.value);
+            };
+
+            if (ImGui::BeginCombo(field.name.c_str(), describe(*ref).c_str()))
+            {
+                if (ImGui::Selectable("(none)", !ref->IsValid()))
+                {
+                    *ref   = Assisi::ECS::NullInstance;
+                    edited = true;
+                }
+                if (_world != nullptr)
+                {
+                    for (const auto &[id, row] : _world->instances.All())
+                    {
+                        const bool selected = (id == *ref);
+                        if (ImGui::Selectable(describe(id).c_str(), selected))
+                        {
+                            *ref   = id;
+                            edited = true;
+                        }
+                        if (selected)
+                            ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+            break;
+        }
         default:
             ImGui::TextDisabled("%s: [unsupported type]", field.name.c_str());
             break;

@@ -349,6 +349,15 @@ public:
     /// row that was restored from under it.
     void RestoreAt(ECS::InstanceId id, BlueprintInstance instance);
 
+    /// @brief Records that @p id's row was written at @p index of the level file's
+    /// instance array.
+    ///
+    /// Only a save knows this: an editor placement is authored the moment it is made
+    /// and has no position until a file has one to give it, and every removal since
+    /// the last save shifts the entries after it. A row still naming its old entry
+    /// names another instance's.
+    void SetLevelInstanceIndex(ECS::InstanceId id, int32_t index);
+
     /// @brief Every live instance, in id order. For the editor's outliner and for
     /// a save, which writes one entry per row.
     [[nodiscard]] std::vector<std::pair<ECS::InstanceId, const BlueprintInstance *>> All() const;
@@ -422,7 +431,7 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// Built from the table rather than kept alongside it, so there is one source of
 /// truth for where an instance is: the editor moves an instance by writing the
 /// row, and the file follows.
-[[nodiscard]] std::vector<LevelInstance> InstancesForSave(const InstanceTable &table);
+[[nodiscard]] std::vector<LevelInstance> InstancesForSave(InstanceTable &table);
 
 /// @brief Composes @p placement onto @p local, the way an instance's root reaches
 /// a member.

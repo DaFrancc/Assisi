@@ -411,6 +411,10 @@ void SceneRenderer::DrawHighlightOutline(const Render::RenderFrame &frame, const
 {
     if (!_outlinePass.IsValid())
     {
+        // Dropped rather than kept: submissions are per-frame and nothing downstream
+        // will ever read these, so holding them grows the vector for the life of the
+        // renderer on every frame a selected instance is on screen.
+        _submittedIconOutlines.clear();
         return;
     }
     for (const ECS::Entity entity : _highlightedEntities)

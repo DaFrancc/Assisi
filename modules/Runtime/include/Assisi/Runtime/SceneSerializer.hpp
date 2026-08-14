@@ -170,8 +170,12 @@ public:
     /// the members are still skipped, and the result would be a level missing both
     /// its instances *and* the entities they expanded into — so that case logs an
     /// error rather than quietly writing a smaller level.
+    ///
+    /// Takes @p instances mutably: writing the file is what decides each row's
+    /// position in it, and the rows are renumbered to match — see
+    /// InstanceTable::SetLevelInstanceIndex.
     static nlohmann::json Save(ECS::Scene &scene, const LevelHeader &header = {},
-                               const InstanceTable *instances = nullptr);
+                               InstanceTable *instances = nullptr);
 
     /// @brief Deserialize entities and components from a JSON value into the scene.
     ///
@@ -335,7 +339,7 @@ public:
     ///
     /// @return true on success, false if the file could not be opened.
     static bool SaveToFile(ECS::Scene &scene, const std::filesystem::path &path, const LevelHeader &header = {},
-                           const InstanceTable *instances = nullptr);
+                           InstanceTable *instances = nullptr);
 
     /// @brief Load the scene from an asset-relative path via AssetSystem.
     ///

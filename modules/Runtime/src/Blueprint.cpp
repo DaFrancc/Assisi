@@ -158,6 +158,12 @@ void InstanceTable::Remove(ECS::InstanceId id)
     _rows.erase(id);
 }
 
+void InstanceTable::SetLevelInstanceIndex(ECS::InstanceId id, int32_t index)
+{
+    if (const auto it = _rows.find(id); it != _rows.end())
+        it->second.levelInstanceIndex = index;
+}
+
 void InstanceTable::RestoreAt(ECS::InstanceId id, BlueprintInstance instance)
 {
     if (!id.IsValid())
@@ -258,7 +264,7 @@ std::string UniqueInstanceName(const InstanceTable &table, std::string_view stem
         });
 }
 
-std::vector<LevelInstance> InstancesForSave(const InstanceTable &table)
+std::vector<LevelInstance> InstancesForSave(InstanceTable &table)
 {
     std::vector<LevelInstance> out;
     for (const auto &[id, row] : table.All())
@@ -274,6 +280,10 @@ std::vector<LevelInstance> InstancesForSave(const InstanceTable &table)
                                     .transform = row->transform,
                                     .overrides = row->overrides,
                                     .removed   = row->removed});
+        // Written here because this is where the position is decided. Anything that
+        // recomputed it later would be a second reader of this filter, free to
+        // disagree with the file that was actually written.
+        table.SetLevelInstanceIndex(id, static_cast<int32_t>(out.size() - 1));
     }
     return out;
 }
