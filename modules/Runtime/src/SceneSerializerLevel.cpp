@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "SceneSerializerContext.hpp"
+#include "SceneSerializerHeader.hpp"
 #include "SceneSerializerInstances.hpp"
 
 // ---------------------------------------------------------------------------
@@ -285,15 +286,9 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
 
     if (header != nullptr)
     {
-        header->systems.clear();
-        if (const auto it = j.find("systems"); it != j.end() && it->is_array())
-        {
-            for (const auto &name : *it)
-            {
-                if (name.is_string())
-                    header->systems.push_back(name.get<std::string>());
-            }
-        }
+        // The reader LevelSystemsAreDeclared pre-checks with, so the gate ahead of
+        // the load and the ApplySystems past it cannot see different lists.
+        header->systems   = ParseSystemNames(j);
         header->instances = placed;
     }
 
