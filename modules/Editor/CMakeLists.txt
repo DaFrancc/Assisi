@@ -33,6 +33,7 @@ target_sources(Assisi-Editor
     "src/InspectorFieldChrome.cpp"
     "src/InstanceGesture.cpp"
     "src/PrePlayState.cpp"
+    "src/ScenePick.cpp"
     "src/ImGuiQueries.hpp"
 )
 
