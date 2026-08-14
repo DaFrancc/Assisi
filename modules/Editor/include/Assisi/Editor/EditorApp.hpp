@@ -634,12 +634,10 @@ private:
         /// tags were written against can say which name that index means. Once the
         /// cache is dropped, `Runtime::FindMember` resolves through the **new** file
         /// — which no longer declares precisely the members this diff is looking for,
-        /// so it returns NullEntity for every one. That made `doomed` structurally
-        /// always empty, and the save destroyed members without ever asking.
+        /// so it returns NullEntity for every one. Resolving the doomed set by name
+        /// rather than from here finds nothing, and the save destroys members without
+        /// ever asking.
         std::vector<Assisi::ECS::Entity> previousMemberEntities;
-        /// Members this instance loses, resolved from the name diff. Empty for the
-        /// common edit, which changes values and adds nothing and removes nothing.
-        std::vector<Assisi::ECS::Entity> doomed;
     };
 
     /// @brief Brings every live copy of @p source up to date, across every resident

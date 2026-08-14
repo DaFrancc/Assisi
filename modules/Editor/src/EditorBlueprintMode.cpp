@@ -478,7 +478,7 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
                                return doomedByWorld.emplace_back(world, std::vector<Assisi::ECS::Entity>{}).second;
                            };
 
-    for (PendingReexpand &pending : collected)
+    for (const PendingReexpand &pending : collected)
     {
         const Assisi::Runtime::BlueprintInstance *row = pending.world->instances.Find(pending.instanceId);
         if (row == nullptr)
@@ -500,7 +500,6 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
             const Assisi::ECS::Entity member = pending.previousMemberEntities[i];
             if (member == Assisi::ECS::NullEntity)
                 continue;
-            pending.doomed.push_back(member);
             doomedFor(pending.world).push_back(member);
 
             if (std::find(_pendingReexpandRemoved.begin(), _pendingReexpandRemoved.end(), name) ==
