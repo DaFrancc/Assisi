@@ -179,12 +179,19 @@ class SceneSerializer
     /// ComponentRegistry are restored; unrecognised names are skipped with a warning.
     /// What @p options can carry is on LoadOptions.
     ///
-    /// **Never throws.** A wrong `version` or a malformed file (see the naming
-    /// rules in the file comment) comes back as a LevelError. A version mismatch
-    /// is refused *before* the scene is cleared, so that caller keeps what it had;
-    /// every other failure is a file this got partway through, and leaves an empty
-    /// scene rather than a half-built one — LevelFailure::sceneReplaced is how a
-    /// caller learns which of those it got.
+    /// **Never throws of its own accord.** A wrong `version`, a wrong *shape* —
+    /// no `entities` array, a quoted version, a document that is not an object —
+    /// or a malformed file (see the naming rules in the file comment) comes back
+    /// as a LevelError; the top-level reads are guarded rather than left to
+    /// nlohmann, whose answer to a bad shape is a throw. What can still escape is
+    /// a component's `addToScene` hook, which is generated code this only calls;
+    /// LoadFromFile and LoadFromDisk catch that for the paths they own.
+    ///
+    /// A version mismatch and a bad top-level shape are both refused *before* the
+    /// scene is cleared, so that caller keeps what it had; every other failure is
+    /// a file this got partway through, and leaves an empty scene rather than a
+    /// half-built one — LevelFailure::sceneReplaced is how a caller learns which
+    /// of those it got.
     ///
     /// Returning a bare bool — or nothing — is what made a version mismatch read
     /// as a *successful* load of an empty level all the way up to the caller.

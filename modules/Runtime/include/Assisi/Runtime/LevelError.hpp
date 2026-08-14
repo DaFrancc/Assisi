@@ -26,7 +26,9 @@ namespace Assisi::Runtime
 enum class LevelError
 {
     FileUnreadable,      ///< The asset system or filesystem could not read the file.
-    MalformedJson,       ///< Read, but not parseable as JSON.
+    MalformedJson,       ///< Read, but not parseable as JSON — or parsed and the wrong shape, such as a
+                         ///< document that is not an object, a non-numeric `version`, or a missing
+                         ///< `entities` array. The shape checks are refused before the scene is cleared.
     UnsupportedVersion,  ///< A `version` this build does not read. Refused before the scene is cleared.
     NoInstanceTable,     ///< The file places instances and the caller passed no table to put them in.
     MissingName,         ///< An entity or instance entry with no `name`.
