@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "SceneSerializerContext.hpp"
+#include "SceneSerializerHeader.hpp"
 #include "SceneSerializerInstances.hpp"
 
 // ---------------------------------------------------------------------------
@@ -246,16 +247,9 @@ std::expected<std::vector<std::string>, LevelError> SceneSerializer::ReadLevelSy
         return std::unexpected(LevelError::MalformedJson);
     }
 
-    std::vector<std::string> out;
-    if (const auto it = doc.find("systems"); it != doc.end() && it->is_array())
-    {
-        for (const auto &name : *it)
-        {
-            if (name.is_string())
-                out.push_back(name.get<std::string>());
-        }
-    }
-    return out;
+    // The same reader Load fills the header with — see ParseSystemNames for why
+    // that has to be the same reader and not merely the same rule.
+    return ParseSystemNames(doc);
 }
 
 LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
