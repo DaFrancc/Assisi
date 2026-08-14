@@ -4,14 +4,13 @@
 #include "ImGuiQueries.hpp"
 
 #include <Assisi/Core/EventQueue.hpp>
+#include <Assisi/Editor/ScenePick.hpp>
 #include <Assisi/Geometry/Bounds.hpp>
 #include <Assisi/Render/IconPass.hpp>
 #include <Assisi/Runtime/Camera.hpp>
 #include <Assisi/Runtime/Components.hpp>
 
-#include <algorithm>
 #include <cmath>
-#include <cstdint>
 #include <limits>
 
 namespace Assisi::Editor
@@ -281,79 +280,7 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
 // Ray picking
 // ---------------------------------------------------------------------------
 
-namespace
-{
-
-/// @brief Ray vs. the unit cube (±0.5 on every axis) in @p model's space — the
-///        stand-in bounds every meshed entity is picked with.
-///
-/// @p tOut is the near hit, or the far one when the ray starts inside.
-bool RayOBBIntersect(glm::vec3 origin, glm::vec3 dir, const glm::mat4 &model, float &tOut)
-{
-    const glm::mat4 inv   = glm::inverse(model);
-    const glm::vec3 lOrig = glm::vec3(inv * glm::vec4(origin, 1.f));
-    const glm::vec3 lDir  = glm::vec3(inv * glm::vec4(dir, 0.f));
-
-    float tMin = -std::numeric_limits<float>::max();
-    float tMax =  std::numeric_limits<float>::max();
-
-    for (int32_t i = 0; i < 3; ++i)
-    {
-        if (std::abs(lDir[i]) < 1e-8f)
-        {
-            if (lOrig[i] < -0.5f || lOrig[i] > 0.5f)
-                return false;
-        }
-        else
-        {
-            float t1 = (-0.5f - lOrig[i]) / lDir[i];
-            float t2 = ( 0.5f - lOrig[i]) / lDir[i];
-            if (t1 > t2)
-                std::swap(t1, t2);
-            tMin = std::max(tMin, t1);
-            tMax = std::min(tMax, t2);
-            if (tMin > tMax)
-                return false;
-        }
-    }
-
-    if (tMax < 0.f)
-        return false;
-
-    tOut = tMin > 0.f ? tMin : tMax;
-    return true;
-}
-
-/// @brief Ray vs. a camera-facing quad centred at @p center, spanning ±@p half
-///        along the unit @p right and @p up axes.
-///
-/// The same quad IconPass draws, so a mesh-less entity is clickable over its icon
-/// and not over a whole unit cube.
-bool RayBillboardIntersect(glm::vec3 origin, glm::vec3 dir, glm::vec3 center, glm::vec3 right, glm::vec3 up,
-                           float half, float &tOut)
-{
-    const glm::vec3 normal = glm::cross(right, up); // the quad faces the camera
-    const float denom  = glm::dot(dir, normal);
-    if (std::abs(denom) < 1e-8f)
-        return false; // ray parallel to the quad
-
-    const float t = glm::dot(center - origin, normal) / denom;
-    if (t < 0.f)
-        return false;
-
-    const glm::vec3 hit    = origin + t * dir;
-    const glm::vec3 offset = hit - center;
-    if (std::abs(glm::dot(offset, right)) <= half && std::abs(glm::dot(offset, up)) <= half)
-    {
-        tOut = t;
-        return true;
-    }
-    return false;
-}
-
-} // namespace
-
-EditorApp::PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
+PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
 {
     PickRay ray;
 
@@ -424,37 +351,8 @@ Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos, float &tOut)
     if (!_scene)
         return Assisi::ECS::NullEntity;
 
-    const PickRay ray = BuildPickRay(mousePos);
-    if (!ray.valid)
-        return Assisi::ECS::NullEntity;
-
-    const glm::vec3 rayOrigin   = ray.origin;
-    const glm::vec3 rayDir      = ray.direction;
-    const glm::vec3 cameraRight = ray.cameraRight;
-    const glm::vec3 cameraUp    = ray.cameraUp;
-    const float iconHalf    = 0.5f * Assisi::Render::kEntityIconWorldSize;
-
-    float closestT = std::numeric_limits<float>::max();
-    Assisi::ECS::Entity result   = Assisi::ECS::NullEntity;
-
-    for (auto [e, tc] : _scene->Query<Assisi::Runtime::Transform>())
-    {
-        // Meshed entities are picked by their unit-cube bounds; a placement-only one
-        // by its icon quad alone, so it does not swallow clicks over a whole cube.
-        float t   = 0.f;
-        const bool hit = _scene->Get<Assisi::Runtime::MeshRenderer>(e) != nullptr
-                             ? RayOBBIntersect(rayOrigin, rayDir, tc.worldMatrix, t)
-                             : RayBillboardIntersect(rayOrigin, rayDir, glm::vec3(tc.worldMatrix[3]), cameraRight,
-                                                     cameraUp, iconHalf, t);
-        if (hit && t < closestT)
-        {
-            closestT = t;
-            result   = e;
-        }
-    }
-
-    tOut = closestT;
-    return result;
+    const float iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    return PickEntityInScene(*_scene, BuildPickRay(mousePos), iconHalf, &MeshPickBounds, tOut);
 }
 
 } // namespace Assisi::Editor
