@@ -24,8 +24,8 @@ namespace Assisi::Core::Reflect
 
 struct ComponentMeta
 {
-    std::string            name;
-    std::type_index        typeIndex;
+    std::string name;
+    std::type_index typeIndex;
     std::vector<FieldMeta> fields;
 
     /// @brief Serialize a component instance to JSON.
@@ -50,7 +50,7 @@ struct ComponentMeta
     ///         refusing every level saved before it.
     std::function<bool(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen,
                        const nlohmann::json &j)>
-        addToScene;
+    addToScene;
 
     /// @brief Iterate all entities in a scene that have this component type.
     ///
@@ -58,7 +58,7 @@ struct ComponentMeta
     ///   scene_ptr — pointer to an ECS::Scene, cast to void*.
     ///   cb        — called once per entity: (entity_index, entity_gen, component_ptr).
     std::function<void(void *scene_ptr, std::function<void(uint32_t, uint32_t, const void *)>)>
-        iterateEntities;
+    iterateEntities;
 
     /// @brief Direct O(1) lookup of one entity's component, or nullptr if absent.
     ///
@@ -69,7 +69,7 @@ struct ComponentMeta
     ///   entity_index — Entity::index of the target entity.
     ///   entity_gen   — Entity::generation of the target entity.
     std::function<const void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)>
-        getByEntity;
+    getByEntity;
 
     /// @brief Default-construct this component on an entity and return a
     /// writable pointer to it, replacing any existing one.

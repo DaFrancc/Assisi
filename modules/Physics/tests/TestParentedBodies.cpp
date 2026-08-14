@@ -67,10 +67,10 @@ constexpr Physics::RigidBodyDescriptor kBall{.shape = Physics::ColliderShape::Sp
 
 TEST_CASE("AddBodyFromDescriptor: a parented body is created at its composed world pose")
 {
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld world;
 
-    const glm::mat4      parent = ParentMatrix();
+    const glm::mat4 parent = ParentMatrix();
     const ECS::Transform local{.position = {1.f, 0.f, 0.f},
                                .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
 
@@ -87,7 +87,7 @@ TEST_CASE("AddBodyFromDescriptor: a parented body is created at its composed wor
 
 TEST_CASE("AddBodyFromDescriptor: without a resolver the local pose is taken as world")
 {
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld world;
 
     // The bug this whole file is about, pinned as behaviour: with nothing to ask,
@@ -106,11 +106,11 @@ TEST_CASE("AddBodyFromDescriptor: without a resolver the local pose is taken as 
 
 TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back to the local field")
 {
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld world;
 
-    const glm::mat4      parent = ParentMatrix();
-    const auto           resolve = [&parent](ECS::Entity) -> const glm::mat4 * { return &parent; };
+    const glm::mat4 parent = ParentMatrix();
+    const auto resolve = [&parent](ECS::Entity) -> const glm::mat4 * { return &parent; };
     const ECS::Transform local{.position = {1.f, 0.f, 0.f},
                                .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
 
@@ -146,20 +146,20 @@ TEST_CASE("InterpolateTransforms: a parented body's world pose decomposes back t
 
 TEST_CASE("InterpolateTransforms: an unparented body in a parented scene is untouched by the conversion")
 {
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld world;
 
     // A live resolver that answers null for *this* entity — the ordinary case in
     // any scene holding one instance and a hundred loose entities. It must cost
     // nothing and change nothing.
-    const glm::mat4      parent  = ParentMatrix();
-    const ECS::Entity    parented = scene.Create();
+    const glm::mat4 parent  = ParentMatrix();
+    const ECS::Entity parented = scene.Create();
     const ECS::Transform local{.position = {4.f, 8.f, 0.f}};
-    const ECS::Entity    entity = scene.Create();
+    const ECS::Entity entity = scene.Create();
     REQUIRE(scene.Add(entity, local) != nullptr);
 
     const auto resolve = [&parent, parented](ECS::Entity e) -> const glm::mat4 *
-    { return e == parented ? &parent : nullptr; };
+                         { return e == parented ? &parent : nullptr; };
 
     const Physics::RigidBody body = world.AddBodyFromDescriptor(scene, entity, local, kBall, resolve);
     CHECK(NearlyEqual(world.GetBodyTransform(body).first, local.position));

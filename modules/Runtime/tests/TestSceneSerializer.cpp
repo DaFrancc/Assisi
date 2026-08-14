@@ -39,8 +39,8 @@ TEST_CASE("SceneSerializer: transform values survive a round-trip")
     ECS::Scene scene;
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 2.f, 3.f},
-                                            .rotation = glm::quat{1.f, 0.f, 0.f, 0.f},
-                                            .scale    = {4.f, 5.f, 6.f}}) != nullptr);
+                                   .rotation = glm::quat{1.f, 0.f, 0.f, 0.f},
+                                   .scale    = {4.f, 5.f, 6.f}}) != nullptr);
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, SceneSerializer::Save(scene)).has_value());
@@ -92,11 +92,11 @@ TEST_CASE("SceneSerializer: child-before-parent fixture loads the hierarchy")
         {"entities",
          nlohmann::json::array(
              {{{"name", "wheel"}, {"components", {{"Parent", {{"parent", "body"}}}}}}, // [0] -> body
-              {{"name", "body"},
-               {"components", {{"Transform",
-                                {{"position", {0.f, 0.f, 0.f}},
-                                 {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                 {"scale", {1.f, 1.f, 1.f}}}}}}}})}}; // [1] body
+                 {{"name", "body"},
+                     {"components", {{"Transform",
+                          {{"position", {0.f, 0.f, 0.f}},
+                              {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                              {"scale", {1.f, 1.f, 1.f}}}}}}}})}};    // [1] body
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
@@ -114,7 +114,7 @@ TEST_CASE("SceneSerializer: child-before-parent fixture loads the hierarchy")
 
 TEST_CASE("SceneSerializer: a name survives the round trip and is the entity's Name")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     REQUIRE(scene.Add(e, Runtime::Name{Core::EntityName{"wheel_fl"}}) != nullptr);
@@ -135,7 +135,7 @@ TEST_CASE("SceneSerializer: a name survives the round trip and is the entity's N
 
 TEST_CASE("SceneSerializer: an unnamed entity is given a name, and duplicates are disambiguated")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity a = scene.Create();
     const ECS::Entity b = scene.Create();
     const ECS::Entity c = scene.Create();
@@ -147,7 +147,7 @@ TEST_CASE("SceneSerializer: an unnamed entity is given a name, and duplicates ar
     REQUIRE(scene.Add(b, Runtime::Name{Core::EntityName{"Cube"}}) != nullptr);
 
     const nlohmann::json saved = SceneSerializer::Save(scene);
-    const auto          &list  = saved.at("entities");
+    const auto &list  = saved.at("entities");
     REQUIRE(list.size() == 3);
 
     std::set<std::string> names;
@@ -172,7 +172,7 @@ TEST_CASE("SceneSerializer: two entities with the same name refuse the file")
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", "body"}, {"components", nlohmann::json::object()}},
-                                            {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
+                                               {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
 
     ECS::Scene loaded;
     const LevelResult result = SceneSerializer::Load(loaded, fixture);
@@ -206,7 +206,7 @@ TEST_CASE("SceneSerializer: a missing or empty name refuses the file")
     const nlohmann::json tooLong = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", std::string(Core::kEntityNameMax + 1, 'x')},
-                                             {"components", nlohmann::json::object()}}})}};
+                                               {"components", nlohmann::json::object()}}})}};
     const LevelResult longName = SceneSerializer::Load(loaded, tooLong);
     REQUIRE_FALSE(longName.has_value());
     CHECK(longName.error() == LevelError::InvalidName);
@@ -220,7 +220,7 @@ TEST_CASE("SceneSerializer: a reference to an undeclared name refuses the file")
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", "wheel"}, {"components", {{"Parent", {{"parent", "chassis"}}}}}},
-                                            {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
+                                               {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
 
     ECS::Scene loaded;
     const LevelResult result = SceneSerializer::Load(loaded, fixture);
@@ -236,9 +236,9 @@ TEST_CASE("SceneSerializer: a v1 file is refused rather than read positionally")
     const nlohmann::json v1 = {
         {"version", 1},
         {"entities", nlohmann::json::array({{{"components", {{"Parent", {{"parent", 1}}}}}},
-                                            {{"components", nlohmann::json::object()}}})}};
+                                               {{"components", nlohmann::json::object()}}})}};
 
-    ECS::Scene        loaded;
+    ECS::Scene loaded;
     const LevelResult result = SceneSerializer::Load(loaded, v1);
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == LevelError::UnsupportedVersion); // the version check refuses it first
@@ -276,7 +276,7 @@ TEST_CASE("SceneSerializer: MeshRenderer asset ids round-trip; GPU handles don't
     const Core::AssetId cubeId     = Core::BuiltinAssetId::Cube;
     const Core::AssetId materialId = *Core::AssetId::Parse("8c08e9c0-e9fb-4f84-a9ba-7a90223526fd");
 
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity e = scene.Create();
     // Built field-by-field rather than as an aggregate: MeshRenderer's two
     // transient members (meshBuffer, materials) are runtime caches this test has
@@ -329,7 +329,7 @@ TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
 
     const nlohmann::json future = {{"version", 999}, {"entities", nlohmann::json::array()}};
-    const LevelResult    result = SceneSerializer::Load(scene, future);
+    const LevelResult result = SceneSerializer::Load(scene, future);
     REQUIRE_FALSE(result.has_value());
     CHECK(result.error() == LevelError::UnsupportedVersion); // rejected before the scene is cleared
 
@@ -350,14 +350,14 @@ TEST_CASE("SceneSerializer: an unsupported version leaves the scene untouched")
 
 TEST_CASE("SceneSerializer: a refusal before the clear says the scene was not replaced")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity kept = scene.Create();
     REQUIRE(scene.Add(kept, Transform{}) != nullptr);
 
     SUBCASE("an unreadable version")
     {
         const nlohmann::json future = {{"version", 999}, {"entities", nlohmann::json::array()}};
-        const LevelResult    result = SceneSerializer::Load(scene, future);
+        const LevelResult result = SceneSerializer::Load(scene, future);
         REQUIRE_FALSE(result.has_value());
         CHECK(result.error() == LevelError::UnsupportedVersion);
         CHECK_FALSE(result.error().sceneReplaced);
@@ -384,7 +384,7 @@ TEST_CASE("SceneSerializer: a refusal before the clear says the scene was not re
 
 TEST_CASE("SceneSerializer: a refusal after the clear says the scene was replaced")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity doomed = scene.Create();
     REQUIRE(scene.Add(doomed, Transform{}) != nullptr);
 
@@ -395,14 +395,14 @@ TEST_CASE("SceneSerializer: a refusal after the clear says the scene was replace
     SUBCASE("two entities under one name")
     {
         fixture = {{"version", 2},
-                   {"entities", nlohmann::json::array({{{"name", "body"}, {"components", nlohmann::json::object()}},
-                                                       {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
+            {"entities", nlohmann::json::array({{{"name", "body"}, {"components", nlohmann::json::object()}},
+                                                   {{"name", "body"}, {"components", nlohmann::json::object()}}})}};
     }
     SUBCASE("a component field of the wrong type")
     {
         fixture = {{"version", 2},
-                   {"entities", nlohmann::json::array({{{"name", "eye"},
-                                                        {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
+            {"entities", nlohmann::json::array({{{"name", "eye"},
+                                                   {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
     }
 
     const LevelResult result = SceneSerializer::Load(scene, fixture);
@@ -430,7 +430,7 @@ TEST_CASE("SceneSerializer: a refusal after the clear says the scene was replace
 
 TEST_CASE("SceneSerializer: a malformed top level is refused, and the scene survives")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity kept = scene.Create();
     REQUIRE(scene.Add(kept, Transform{}) != nullptr);
 
@@ -468,7 +468,7 @@ TEST_CASE("SceneSerializer: a malformed top level is refused, and the scene surv
 
 TEST_CASE("SceneSerializer: a components key of the wrong shape is refused, not thrown")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity doomed = scene.Create();
     REQUIRE(scene.Add(doomed, Transform{}) != nullptr);
 
@@ -518,7 +518,7 @@ TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
         twins << R"({"version": 2, "entities": [{"name": "body"}, {"name": "body"}]})";
     }
 
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity kept = scene.Create();
     REQUIRE(scene.Add(kept, Transform{}) != nullptr);
 
@@ -556,7 +556,7 @@ TEST_CASE("SceneSerializer: a field of the wrong type refuses the file rather th
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", "eye"},
-                                             {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
+                                               {"components", {{"Camera", {{"fovDegrees", "wide"}}}}}}})}};
 
     ECS::Scene loaded;
     LevelResult result;
@@ -577,9 +577,9 @@ TEST_CASE("SceneSerializer: an array field of the wrong length refuses the file"
         {"version", 2},
         {"entities",
          nlohmann::json::array({{{"name", "body"},
-                                 {"components", {{"Transform", {{"position", {0.f, 0.f, 0.f}},
-                                                                {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                                                {"scale", {1.f, 1.f}}}}}}}})}};
+                                   {"components", {{"Transform", {{"position", {0.f, 0.f, 0.f}},
+                                            {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                            {"scale", {1.f, 1.f}}}}}}}})}};
 
     ECS::Scene loaded;
     LevelResult result;
@@ -597,7 +597,7 @@ TEST_CASE("SceneSerializer: an absent field is not a failure and keeps its defau
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", "eye"},
-                                             {"components", {{"Camera", {{"fovDegrees", 42.f}}}}}}})}};
+                                               {"components", {{"Camera", {{"fovDegrees", 42.f}}}}}}})}};
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
@@ -664,7 +664,7 @@ TEST_CASE("SceneSerializer: a saved level is LF on every platform")
     fs::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
 
-    ECS::Scene       scene;
+    ECS::Scene scene;
     const ECS::Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 2.f, 3.f}}) != nullptr);
 
@@ -702,12 +702,12 @@ TEST_CASE("SceneSerializer: unknown component names are skipped, not fatal")
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", "thing"},
-                                             {"components",
-                                              {{"NopeComponent", {{"x", 1}}},
-                                               {"Transform",
-                                                {{"position", {7.f, 0.f, 0.f}},
-                                                 {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                                 {"scale", {1.f, 1.f, 1.f}}}}}}}})}};
+                                               {"components",
+                                                {{"NopeComponent", {{"x", 1}}},
+                                                    {"Transform",
+                                                     {{"position", {7.f, 0.f, 0.f}},
+                                                         {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                                         {"scale", {1.f, 1.f, 1.f}}}}}}}})}};
 
     ECS::Scene loaded;
     REQUIRE(SceneSerializer::Load(loaded, fixture).has_value());
@@ -724,7 +724,7 @@ TEST_CASE("SceneSerializer: unknown component names are skipped, not fatal")
 
 TEST_CASE("SceneSerializer: raw-entity context round-trips a Parent handle outside Save/Load")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity a = scene.Create(); // the parent
     const ECS::Entity b = scene.Create(); // the child, references a
     REQUIRE(scene.Add(a, Transform{}) != nullptr);
@@ -759,7 +759,7 @@ TEST_CASE("SceneSerializer: raw-entity context round-trips a Parent handle outsi
 
 TEST_CASE("SceneSerializer: WITHOUT a context an EntityRef collapses (the bug the scope fixes)")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity a = scene.Create();
     const ECS::Entity b = scene.Create();
     REQUIRE(scene.Add(b, Parent{.parent = a}) != nullptr);
@@ -789,7 +789,7 @@ TEST_CASE("SceneSerializer: WITHOUT a context an EntityRef collapses (the bug th
 // (Only one raw context per thread — non-reentrant — so each phase is scoped.)
 TEST_CASE("SceneSerializer: a raw ref to a recycled slot resolves to null, not its new occupant")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity e = scene.Create();
     REQUIRE(e.generation == 0);
 
@@ -846,8 +846,8 @@ TEST_CASE("SceneSerializer: one non-finite float does not brick the whole level 
 
     REQUIRE(SceneSerializer::SaveToFile(scene, root / "nan.alvl"));
 
-    ECS::Scene  loaded;
-    const bool  ok = SceneSerializer::LoadFromFile(loaded, "nan.alvl").has_value();
+    ECS::Scene loaded;
+    const bool ok = SceneSerializer::LoadFromFile(loaded, "nan.alvl").has_value();
     CHECK(ok); // the load must not fail wholesale
     // The well-formed entity must survive — one bad float can't empty the scene.
     CHECK(loaded.Get<Transform>(ECS::Entity{.index = 0, .generation = 0}) != nullptr);

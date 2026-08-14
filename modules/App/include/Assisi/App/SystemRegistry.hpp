@@ -70,15 +70,15 @@ class WorldManager;
 /// (docs/world-system-binding-design-notes.md §2).
 struct SystemContext
 {
-    World                &world;
-    float                 dt;
+    World &world;
+    float dt;
 
     /// @brief The fixed-step tick this frame belongs to — the engine's network
     /// clock. Incremented once per iteration of the fixed-update loop, so it
     /// advances by one per FixedUpdate and repeats across the Update/PostUpdate
     /// phases of the same frame. Snapshots are stamped with it and input
     /// commands target it.
-    std::uint64_t         simTick;
+    std::uint64_t simTick;
 
     /// Null in headless hosts (dedicated server, tests): an InputContext needs a
     /// live window, so anything that can run windowless must be able to say "no
@@ -87,14 +87,14 @@ struct SystemContext
     /// must read replicated input commands rather than poll these, precisely so
     /// they still work when these are null.
     Window::InputContext *input;
-    Window::ActionMap    *actions;
+    Window::ActionMap *actions;
 
-    Core::EventQueue     &events;
+    Core::EventQueue &events;
 
     /// True when `world` is the one the app treats as active — the world being
     /// rendered and driven by input. Systems registered ActiveWorldOnly() are
     /// skipped when this is false; prefer that over testing this by hand.
-    bool                  isActiveWorld = true;
+    bool isActiveWorld = true;
 
     /// Every resident world, for the few systems that need to change level.
     ///
@@ -104,20 +104,20 @@ struct SystemContext
     /// and log if tried. Change level with `ctx.worlds->RequestTravel(path)`,
     /// which the host applies at its next frame safe point. Null in hosts that
     /// run systems without a manager (tests).
-    WorldManager         *worlds = nullptr;
+    WorldManager *worlds = nullptr;
 };
 
 /// @brief Passed to render systems (Render phase only).
 struct RenderContext
 {
-    ECS::Scene  &scene;
-    float        dt;
-    glm::mat4    view;
-    glm::mat4    projection;
+    ECS::Scene &scene;
+    float dt;
+    glm::mat4 view;
+    glm::mat4 projection;
 };
 
 /// @brief Execution phase that determines when a system runs and which context it receives.
-enum class SystemPhase
+enum class SystemPhase : std::uint8_t
 {
     PreUpdate   = 0, ///< After input is polled; before physics and game logic.
     FixedUpdate = 1, ///< Fixed timestep; may run multiple times per render frame.
@@ -137,7 +137,7 @@ enum class SystemPhase
 /// are registered.
 class SystemRegistry
 {
-  public:
+public:
     /// @brief Fluent handle for chaining ordering constraints after registration.
     ///
     /// Type-erased over the context type: it captures where to append the
@@ -145,7 +145,7 @@ class SystemRegistry
     /// regardless of whether the system is a game or render system.
     class SystemHandle
     {
-      public:
+public:
         /// @brief This system runs after the named system within the same phase.
         SystemHandle &After(std::string_view name);
 
@@ -181,15 +181,15 @@ class SystemRegistry
             return *this;
         }
 
-      private:
+private:
         friend class SystemRegistry;
 
         /// Records a dependency: @p before selects the before-list over the after-list.
-        using AddDependency = std::function<void(bool before, std::string_view name)>;
+        using AddDependency = std::function<void (bool before, std::string_view name)>;
         /// Marks the entry active-world-only. Null for render-phase handles.
-        using SetActiveOnly = std::function<void()>;
+        using SetActiveOnly = std::function<void ()>;
         /// Appends one component id to the entry's activation gate.
-        using AddRequirement = std::function<void(Core::Reflect::ComponentId)>;
+        using AddRequirement = std::function<void (Core::Reflect::ComponentId)>;
 
         /// Non-template half of RequireAny, so the fold above stays a one-liner.
         void Require(Core::Reflect::ComponentId id);
@@ -202,14 +202,14 @@ class SystemRegistry
         {
         }
 
-        AddDependency  _addDependency;
-        SetActiveOnly  _setActiveOnly;
+        AddDependency _addDependency;
+        SetActiveOnly _setActiveOnly;
         AddRequirement _addRequirement;
     };
 
     /// @brief Register a game logic system for a non-Render phase.
-    SystemHandle Register(SystemPhase                          phase,
-                          std::string_view                     name,
+    SystemHandle Register(SystemPhase phase,
+                          std::string_view name,
                           std::function<void(SystemContext &)> fn);
 
     /// @brief Register a render system (runs in the Render phase, receives a RenderContext).
@@ -247,7 +247,7 @@ class SystemRegistry
     /// fresh handles, which is the only supported order.
     void Clear();
 
-  private:
+private:
     /// @brief One phase's worth of systems taking context type @p Ctx, plus its
     /// cached execution order.  Game and render phases are the same machinery
     /// differing only in Ctx — this template is what collapses the duplication.
@@ -256,13 +256,13 @@ class SystemRegistry
     {
         struct Entry
         {
-            std::string               name;
+            std::string name;
             std::function<void(Ctx &)> fn;
             std::vector<std::string>  after;
             std::vector<std::string>  before;
             /// Set by SystemHandle::ActiveWorldOnly(). Always false for render
             /// entries, which only ever run for the world being drawn.
-            bool                      activeOnly = false;
+            bool activeOnly = false;
             /// Set by SystemHandle::RequireAny(). Empty means "always eligible";
             /// otherwise the system runs only while the scene holds at least one
             /// of these components.
@@ -276,7 +276,7 @@ class SystemRegistry
 
         std::vector<Entry>       entries;
         std::vector<std::size_t> sorted; ///< Indices into @ref entries, in execution order.
-        bool                     dirty = false;
+        bool dirty = false;
     };
 
     /// Number of game-logic phases (everything except Render).
@@ -300,7 +300,7 @@ class SystemRegistry
     /// @brief Topological sort (Kahn's algorithm) over any entry type with name/after/before.
     template <typename Entry>
     static std::vector<std::size_t> TopoSort(const std::vector<Entry> &entries,
-                                             std::string_view          phaseName);
+                                             std::string_view phaseName);
 
     /// @brief Re-sort @p phase if dirty, then run its systems in dependency order,
     /// omitting active-world-only entries when @p skipActiveOnly and entries whose

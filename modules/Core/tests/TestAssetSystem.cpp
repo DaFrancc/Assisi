@@ -57,11 +57,11 @@ TEST_CASE("AssetSystem::Resolve rejects escaping and malformed paths")
     REQUIRE(AssetSystem::SetRoot(TempRoot()).has_value());
 
     auto expectInvalid = [](const char *vpath)
-    {
-        auto r = AssetSystem::Resolve(vpath);
-        REQUIRE_FALSE(r.has_value());
-        CHECK(r.error() == AssetError::InvalidVirtualPath);
-    };
+                         {
+                             auto r = AssetSystem::Resolve(vpath);
+                             REQUIRE_FALSE(r.has_value());
+                             CHECK(r.error() == AssetError::InvalidVirtualPath);
+                         };
 
     expectInvalid("");           // empty
     expectInvalid("/etc/passwd"); // absolute

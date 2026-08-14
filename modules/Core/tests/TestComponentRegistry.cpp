@@ -73,17 +73,17 @@ ComponentMeta Meta(const char *name, std::type_index type, bool serializable = t
 // order these arrive in is deliberately not alphabetical so the id-assignment
 // tests still prove the sort.
 const bool s_fixturesRegistered = []
-{
-    auto &registry = ComponentRegistry::Instance();
-    registry.Register(Meta("RegZeta", typeid(RegZeta)));
-    registry.Register(Meta("RegAlpha", typeid(RegAlpha)));
-    registry.Register(Meta("RegMu", typeid(RegMu)));
-    registry.Register(Meta("RegHidden", typeid(RegHidden), /*serializable=*/false));
-    registry.Register(Meta("ZzzM4_Late", typeid(ZzzM4Late)));
-    registry.Register(Meta("M4_DupName", typeid(M4DupA)));
-    registry.Register(Meta("M4_DupName", typeid(M4DupB))); // duplicate on purpose
-    return true;
-}();
+                                  {
+                                      auto &registry = ComponentRegistry::Instance();
+                                      registry.Register(Meta("RegZeta", typeid(RegZeta)));
+                                      registry.Register(Meta("RegAlpha", typeid(RegAlpha)));
+                                      registry.Register(Meta("RegMu", typeid(RegMu)));
+                                      registry.Register(Meta("RegHidden", typeid(RegHidden), /*serializable=*/ false));
+                                      registry.Register(Meta("ZzzM4_Late", typeid(ZzzM4Late)));
+                                      registry.Register(Meta("M4_DupName", typeid(M4DupA)));
+                                      registry.Register(Meta("M4_DupName", typeid(M4DupB))); // duplicate on purpose
+                                      return true;
+                                  }();
 } // namespace
 
 TEST_CASE("ComponentRegistry assigns dense alphabetical ids")

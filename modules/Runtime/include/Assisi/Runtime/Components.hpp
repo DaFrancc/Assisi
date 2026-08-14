@@ -85,7 +85,7 @@ struct Camera
     AFIELD() float fovDegrees = 60.f;  ///< Vertical field of view in degrees.
     AFIELD() float nearZ      = 0.1f;  ///< Near clip plane distance.
     AFIELD() float farZ       = 200.f; ///< Far clip plane distance.
-    AFIELD() bool  isActive   = false; ///< True for the scene's active camera.
+    AFIELD() bool isActive   = false;  ///< True for the scene's active camera.
 };
 
 } // namespace Assisi::Runtime

@@ -32,7 +32,7 @@ namespace Assisi::App::Test
 /// per-world registry exists to prevent.
 class RunCounts
 {
-  public:
+public:
     static RunCounts &Instance()
     {
         static RunCounts counts;
@@ -64,11 +64,11 @@ class RunCounts
         _entries.push_back(Entry{.world = &world, .system = std::string{system}, .runs = 1});
     }
 
-  private:
+private:
     struct Entry
     {
-        const World  *world = nullptr;
-        std::string   system;
+        const World *world = nullptr;
+        std::string system;
         std::uint32_t runs = 0;
     };
     std::vector<Entry> _entries;

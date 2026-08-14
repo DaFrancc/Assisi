@@ -42,8 +42,8 @@ namespace
 struct Harness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
 
@@ -53,8 +53,8 @@ struct Harness
     std::uint64_t tick = 0;
 
     Harness()
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr),
-          client(transport, clientScene, pair.second)
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr),
+        client(transport, clientScene, pair.second)
     {
     }
 

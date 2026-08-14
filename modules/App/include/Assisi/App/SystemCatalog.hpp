@@ -50,7 +50,7 @@ struct SystemDefinition
     /// Ignored when @ref isRender — a render system runs through RunRender, which
     /// has no phase of its own.
     SystemPhase phase = SystemPhase::Update;
-    bool        isRender = false;
+    bool isRender = false;
 
     /// Exactly one of these is set, decided by the phase rather than by the
     /// author: reflectgen refuses a Render system that takes a SystemContext, and
@@ -74,7 +74,7 @@ struct SystemDefinition
 /// rides.
 class SystemCatalog
 {
-  public:
+public:
     static SystemCatalog &Instance();
 
     /// @brief Adds a definition. Called only by generated code.
@@ -116,7 +116,7 @@ class SystemCatalog
     ///         runs and looks nearly right.
     bool Install(World &world, std::span<const std::string> names, std::string_view context) const;
 
-  private:
+private:
     std::vector<SystemDefinition> _definitions;
 };
 

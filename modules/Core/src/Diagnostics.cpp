@@ -22,36 +22,36 @@ namespace Assisi::Core
 const std::chrono::time_zone *LocalZone()
 {
     static const std::chrono::time_zone *zone = []() -> const std::chrono::time_zone *
-    {
-        try
-        {
-            return std::chrono::current_zone();
-        }
-        catch (const std::exception &)
-        {
-            return nullptr;
-        }
-    }();
+                                                {
+                                                    try
+                                                    {
+                                                        return std::chrono::current_zone();
+                                                    }
+                                                    catch (const std::exception &)
+                                                    {
+                                                        return nullptr;
+                                                    }
+                                                }();
     return zone;
 }
 
 const std::string &LaunchStamp()
 {
     static const std::string stamp = []
-    {
-        using namespace std::chrono;
-        const sys_time<seconds> nowUtc = floor<seconds>(system_clock::now());
+                                     {
+                                         using namespace std::chrono;
+                                         const sys_time<seconds> nowUtc = floor<seconds>(system_clock::now());
 #ifdef _WIN32
-        const int32_t pid = static_cast<int32_t>(_getpid());
+                                         const int32_t pid = static_cast<int32_t>(_getpid());
 #else
-        const int32_t pid = static_cast<int32_t>(getpid());
+                                         const int32_t pid = static_cast<int32_t>(getpid());
 #endif
-        if (const time_zone *zone = LocalZone())
-        {
-            return std::format("{:%Y%m%d-%H%M%S}-{}", zone->to_local(nowUtc), pid);
-        }
-        return std::format("{:%Y%m%d-%H%M%S}-{}", nowUtc, pid);
-    }();
+                                         if (const time_zone *zone = LocalZone())
+                                         {
+                                             return std::format("{:%Y%m%d-%H%M%S}-{}", zone->to_local(nowUtc), pid);
+                                         }
+                                         return std::format("{:%Y%m%d-%H%M%S}-{}", nowUtc, pid);
+                                     }();
     return stamp;
 }
 
@@ -85,7 +85,7 @@ void PruneOldFiles(const std::filesystem::path &dir, std::string_view prefix, st
     }
 
     std::vector<fs::path> matches;
-    bool                  protectedPresent = false;
+    bool protectedPresent = false;
     for (const fs::directory_iterator end; it != end; it.increment(ec))
     {
         if (ec)

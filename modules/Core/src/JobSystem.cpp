@@ -164,9 +164,9 @@ void JobSystem::ParallelFor(uint32_t count, uint32_t grain,
         const uint32_t begin = chunk * grain;
         const uint32_t end = std::min(begin + grain, count);
         EnqueueTo(Pool::Worker, [&body, begin, end, remaining] {
-            body(begin, end);
-            remaining->fetch_sub(1u, std::memory_order_acq_rel);
-        });
+                body(begin, end);
+                remaining->fetch_sub(1u, std::memory_order_acq_rel);
+            });
     }
 
     HelpUntil([&remaining] { return remaining->load(std::memory_order_acquire) == 0u; });

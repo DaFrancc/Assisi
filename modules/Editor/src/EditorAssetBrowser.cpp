@@ -42,8 +42,8 @@ void EditorApp::DrawHelloImageWindow()
             if (LoadingSpinnerAvailable())
             {
                 constexpr float kSpin  = 224.f; // nearly fills the 256-wide image column
-                const ImVec2    cursor = ImGui::GetCursorScreenPos();
-                const ImVec2    origin(cursor.x + (256.f - kSpin) * 0.5f, cursor.y);
+                const ImVec2 cursor = ImGui::GetCursorScreenPos();
+                const ImVec2 origin(cursor.x + (256.f - kSpin) * 0.5f, cursor.y);
                 ImGui::Dummy(ImVec2(256.f, kSpin)); // advance the cursor past the hand-drawn row
                 DrawLoadingFrame(origin, kSpin);
             }
@@ -93,15 +93,15 @@ void DrawFolderIcon(const ImVec2 &origin, float size)
 {
     ImDrawList *drawList = ImGui::GetWindowDrawList();
 
-    const ImU32  body     = IM_COL32(236, 202, 122, 255);
-    const ImU32  tab      = IM_COL32(212, 178, 96, 255);
-    const float  left     = origin.x + size * 0.16f;
-    const float  right    = origin.x + size * 0.84f;
-    const float  tabTop   = origin.y + size * 0.30f;
-    const float  bodyTop  = origin.y + size * 0.42f;
-    const float  bottom   = origin.y + size * 0.84f;
-    const float  tabRight = left + (right - left) * 0.45f;
-    const float  rounding = size * 0.03f;
+    const ImU32 body     = IM_COL32(236, 202, 122, 255);
+    const ImU32 tab      = IM_COL32(212, 178, 96, 255);
+    const float left     = origin.x + size * 0.16f;
+    const float right    = origin.x + size * 0.84f;
+    const float tabTop   = origin.y + size * 0.30f;
+    const float bodyTop  = origin.y + size * 0.42f;
+    const float bottom   = origin.y + size * 0.84f;
+    const float tabRight = left + (right - left) * 0.45f;
+    const float rounding = size * 0.03f;
 
     drawList->AddRectFilled(ImVec2(left, tabTop), ImVec2(tabRight, bodyTop + rounding), tab, rounding);
     drawList->AddRectFilled(ImVec2(left, bodyTop), ImVec2(right, bottom), body, rounding);
@@ -113,10 +113,10 @@ void DrawMeshIcon(const ImVec2 &origin, float size)
 {
     ImDrawList *drawList = ImGui::GetWindowDrawList();
 
-    const float  centerX = origin.x + size * 0.5f;
-    const float  centerY = origin.y + size * 0.5f;
-    const float  halfW   = size * 0.26f;
-    const float  halfH   = size * 0.30f;
+    const float centerX = origin.x + size * 0.5f;
+    const float centerY = origin.y + size * 0.5f;
+    const float halfW   = size * 0.26f;
+    const float halfH   = size * 0.30f;
 
     // A hexagonal silhouette plus its centre: three quads, three visible faces.
     const ImVec2 top(centerX, centerY - halfH);
@@ -144,7 +144,7 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
     ImDrawList *drawList = ImGui::GetWindowDrawList();
 
     const ImVec2 center(origin.x + size * 0.5f, origin.y + size * 0.5f);
-    const float  radius = size * 0.30f;
+    const float radius = size * 0.30f;
 
     // Base disc, then a smaller offset highlight disc for a lit-sphere read.
     drawList->AddCircleFilled(center, radius, IM_COL32(150, 120, 96, 255), 32);
@@ -160,9 +160,9 @@ void DrawMaterialIcon(const ImVec2 &origin, float size)
 // from the active backend — the WebP's decoded frames, or the TTF range below.
 // Re-authoring the TTF means updating both constants below: the frame count, and
 // the first frame's codepoint ('a' for an a..z sequence, or a Private-Use one).
-constexpr uint32_t     kTtfFirstFrame = 0xF000; // Spinner.ttf frames: U+F000..U+F12B
-constexpr int32_t      kTtfFrameCount = 300;    // one full spin loop; must match the font
-constexpr double       kLoadingFps    = 30.0;   // 300 frames / 30fps = 10 s per loop.
+constexpr uint32_t kTtfFirstFrame = 0xF000;     // Spinner.ttf frames: U+F000..U+F12B
+constexpr int32_t kTtfFrameCount = 300;         // one full spin loop; must match the font
+constexpr double kLoadingFps    = 30.0;         // 300 frames / 30fps = 10 s per loop.
                                                 // Drives BOTH backends -- the WebP path ignores the
                                                 // durations baked into the file -- so it must match
                                                 // whichever spinner asset is shipped.
@@ -188,7 +188,7 @@ void DrawWebpLoadingFrame(const ImVec2 &origin, float size)
     if (id == ImTextureID_Invalid)
         return;
 
-    const float  quad = size * 0.85f;
+    const float quad = size * 0.85f;
     const ImVec2 pos(origin.x + (size - quad) * 0.5f, origin.y + (size - quad) * 0.5f);
     ImGui::GetWindowDrawList()->AddImage(id, pos, ImVec2(pos.x + quad, pos.y + quad));
 }
@@ -201,7 +201,7 @@ void DrawTtfLoadingFrame(const ImVec2 &origin, float size)
     if (font == nullptr)
         return;
 
-    const int32_t  frame = static_cast<int32_t>(ImGui::GetTime() * kLoadingFps) % kTtfFrameCount;
+    const int32_t frame = static_cast<int32_t>(ImGui::GetTime() * kLoadingFps) % kTtfFrameCount;
     const uint32_t cp    = kTtfFirstFrame + static_cast<uint32_t>(frame);
 
     // Encode the frame codepoint as UTF-8, up to U+FFFF — enough for both mappings
@@ -253,10 +253,10 @@ void DrawStaleBadge(const ImVec2 &origin, float size)
 {
     ImDrawList *drawList = ImGui::GetWindowDrawList();
 
-    const float  radius = std::max(6.f, size * 0.12f);
+    const float radius = std::max(6.f, size * 0.12f);
     const ImVec2 center(origin.x + size - radius - 4.f, origin.y + radius + 4.f);
-    const ImU32  amber = IM_COL32(230, 160, 40, 255);
-    const ImU32  dark  = IM_COL32(40, 30, 10, 255);
+    const ImU32 amber = IM_COL32(230, 160, 40, 255);
+    const ImU32 dark  = IM_COL32(40, 30, 10, 255);
 
     drawList->AddCircleFilled(center, radius, amber, 20);
     drawList->AddCircle(center, radius, dark, 20, 1.5f);
@@ -283,7 +283,7 @@ void EditorApp::OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &
 }
 
 void EditorApp::OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
-                                         int32_t slot)
+                                        int32_t slot)
 {
     OpenAssetBrowserFor(meta, fieldOffset);
     // A non-negative slot also narrows the listing to materials: see DrawAssetBrowser.
@@ -320,8 +320,8 @@ void EditorApp::SelectAsset(std::string_view vpath)
             {
                 // The override list is sparse: pad with nil ids up to the slot,
                 // then assign. A short list means "the rest use the mesh defaults".
-                auto              &overrides = *reinterpret_cast<std::vector<Assisi::Core::AssetId> *>(fieldPtr);
-                const std::size_t  slot      = static_cast<std::size_t>(_assetBrowserVectorSlot);
+                auto &overrides = *reinterpret_cast<std::vector<Assisi::Core::AssetId> *>(fieldPtr);
+                const std::size_t slot      = static_cast<std::size_t>(_assetBrowserVectorSlot);
                 if (overrides.size() <= slot)
                     overrides.resize(slot + 1);
                 overrides[slot] = id;
@@ -363,7 +363,7 @@ void EditorApp::RescanAssetBrowser()
     const std::filesystem::path root   = Assisi::Core::AssetSystem::GetRoot();
     const std::filesystem::path curDir = _assetBrowserDir.empty() ? root : root / _assetBrowserDir;
 
-    std::error_code                     ec;
+    std::error_code ec;
     std::filesystem::directory_iterator dirIt(curDir, ec);
     if (ec)
     {
@@ -372,7 +372,7 @@ void EditorApp::RescanAssetBrowser()
     }
     for (const std::filesystem::directory_entry &entry : dirIt)
     {
-        std::error_code   entryEc;
+        std::error_code entryEc;
         const std::string name = entry.path().filename().string();
         if (entry.is_directory(entryEc))
             _assetBrowserDirs.push_back(name);
@@ -464,7 +464,7 @@ void EditorApp::DrawAssetBrowser()
 
     const float cell = thumb + ImGui::GetStyle().ItemSpacing.x;
     const int32_t cols = std::max(1, static_cast<int32_t>(ImGui::GetContentRegionAvail().x / cell));
-    int32_t       col  = 0;
+    int32_t col  = 0;
 
     // Folders first. Every tile loop below shares this grid flow and `col` with it.
     for (const std::string &dir : _assetBrowserDirs)
@@ -472,7 +472,7 @@ void EditorApp::DrawAssetBrowser()
         ImGui::PushID(dir.c_str());
         ImGui::BeginGroup();
         const ImVec2 tile    = ImGui::GetCursorScreenPos();
-        const bool   clicked = ImGui::Button("##folder", ImVec2(thumb, thumb));
+        const bool clicked = ImGui::Button("##folder", ImVec2(thumb, thumb));
         DrawFolderIcon(tile, thumb);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
         ImGui::TextWrapped("%s", dir.c_str());
@@ -496,89 +496,89 @@ void EditorApp::DrawAssetBrowser()
     // a .amat is the only valid choice.
     if (_assetBrowserVectorSlot < 0)
     {
-    for (const std::string &img : _assetBrowserImages)
-    {
-        const std::string vpath = _assetBrowserDir.empty() ? img : _assetBrowserDir + "/" + img;
-
-        ImGui::PushID(img.c_str());
-        ImGui::BeginGroup();
-        bool clicked = false;
-        // Resolve on-screen tiles only; off-screen rows get a plain placeholder
-        // button. A folder of hundreds of images must not kick hundreds of decodes,
-        // nor exhaust ImGui's 256-set descriptor pool in one frame. Visible tiles
-        // decode on a worker — ResolveThumbnail returns null until one lands.
-        const bool visible = ImGui::IsRectVisible(ImVec2(thumb, thumb));
-        const Assisi::Render::Texture *tex =
-            visible ? _thumbnailCache.ResolveThumbnail(Assisi::Core::AssetPath{std::string_view{vpath}}) : nullptr;
-        if (tex != nullptr && tex->IsValid())
+        for (const std::string &img : _assetBrowserImages)
         {
-            const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(tex->NativeTexture());
-            clicked = ImGui::ImageButton("thumb", id, ImVec2(thumb, thumb));
-        }
-        else if (visible &&
-                 _thumbnailCache.IsThumbnailLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
-                 LoadingSpinnerAvailable())
-        {
-            // Still decoding: a blank tile under the spinner, so it reads as
-            // "loading" rather than as the dead text button of the branch below.
-            const ImVec2 tile = ImGui::GetCursorScreenPos();
-            clicked           = ImGui::Button("##loading", ImVec2(thumb, thumb));
-            DrawLoadingFrame(tile, thumb);
-        }
-        else
-        {
-            clicked = ImGui::Button(img.c_str(), ImVec2(thumb, thumb));
-        }
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
-        ImGui::TextWrapped("%s", img.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndGroup();
-        ImGui::PopID();
+            const std::string vpath = _assetBrowserDir.empty() ? img : _assetBrowserDir + "/" + img;
 
-        if (clicked)
-            SelectAsset(vpath);
-
-        if (++col % cols != 0)
-            ImGui::SameLine();
-    }
-
-    // Mesh files have no thumbnail: a cube icon drawn over a full-tile click target.
-    for (const std::string &mesh : _assetBrowserMeshes)
-    {
-        const std::string vpath = _assetBrowserDir.empty() ? mesh : _assetBrowserDir + "/" + mesh;
-
-        ImGui::PushID(mesh.c_str());
-        ImGui::BeginGroup();
-        const ImVec2 tile    = ImGui::GetCursorScreenPos();
-        const bool   clicked = ImGui::Button("##mesh", ImVec2(thumb, thumb));
-        const bool   hovered = ImGui::IsItemHovered();
-        DrawMeshIcon(tile, thumb);
-        const bool stale = IsAssetStale(vpath);
-        if (stale)
-            DrawStaleBadge(tile, thumb);
-        ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
-        ImGui::TextWrapped("%s", mesh.c_str());
-        ImGui::PopTextWrapPos();
-        ImGui::EndGroup();
-        ImGui::PopID();
-
-        if (stale && hovered)
-            ImGui::SetTooltip("Source changed since import — click to resolve.\nMaterials were left untouched "
-                              "(no auto-resolve).");
-
-        if (clicked)
-        {
-            // A stale mesh cannot be assigned until it is resolved, so a click opens
-            // the resolution prompt rather than selecting it.
-            if (stale)
-                OpenStaleResolution(vpath);
+            ImGui::PushID(img.c_str());
+            ImGui::BeginGroup();
+            bool clicked = false;
+            // Resolve on-screen tiles only; off-screen rows get a plain placeholder
+            // button. A folder of hundreds of images must not kick hundreds of decodes,
+            // nor exhaust ImGui's 256-set descriptor pool in one frame. Visible tiles
+            // decode on a worker — ResolveThumbnail returns null until one lands.
+            const bool visible = ImGui::IsRectVisible(ImVec2(thumb, thumb));
+            const Assisi::Render::Texture *tex =
+                visible ? _thumbnailCache.ResolveThumbnail(Assisi::Core::AssetPath{std::string_view{vpath}}) : nullptr;
+            if (tex != nullptr && tex->IsValid())
+            {
+                const ImTextureID id = Assisi::Debug::DebugUI::GetOrCreateTextureId(tex->NativeTexture());
+                clicked = ImGui::ImageButton("thumb", id, ImVec2(thumb, thumb));
+            }
+            else if (visible &&
+                     _thumbnailCache.IsThumbnailLoading(Assisi::Core::AssetPath{std::string_view{vpath}}) &&
+                     LoadingSpinnerAvailable())
+            {
+                // Still decoding: a blank tile under the spinner, so it reads as
+                // "loading" rather than as the dead text button of the branch below.
+                const ImVec2 tile = ImGui::GetCursorScreenPos();
+                clicked           = ImGui::Button("##loading", ImVec2(thumb, thumb));
+                DrawLoadingFrame(tile, thumb);
+            }
             else
+            {
+                clicked = ImGui::Button(img.c_str(), ImVec2(thumb, thumb));
+            }
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
+            ImGui::TextWrapped("%s", img.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndGroup();
+            ImGui::PopID();
+
+            if (clicked)
                 SelectAsset(vpath);
+
+            if (++col % cols != 0)
+                ImGui::SameLine();
         }
 
-        if (++col % cols != 0)
-            ImGui::SameLine();
-    }
+        // Mesh files have no thumbnail: a cube icon drawn over a full-tile click target.
+        for (const std::string &mesh : _assetBrowserMeshes)
+        {
+            const std::string vpath = _assetBrowserDir.empty() ? mesh : _assetBrowserDir + "/" + mesh;
+
+            ImGui::PushID(mesh.c_str());
+            ImGui::BeginGroup();
+            const ImVec2 tile    = ImGui::GetCursorScreenPos();
+            const bool clicked = ImGui::Button("##mesh", ImVec2(thumb, thumb));
+            const bool hovered = ImGui::IsItemHovered();
+            DrawMeshIcon(tile, thumb);
+            const bool stale = IsAssetStale(vpath);
+            if (stale)
+                DrawStaleBadge(tile, thumb);
+            ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
+            ImGui::TextWrapped("%s", mesh.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::EndGroup();
+            ImGui::PopID();
+
+            if (stale && hovered)
+                ImGui::SetTooltip("Source changed since import — click to resolve.\nMaterials were left untouched "
+                                  "(no auto-resolve).");
+
+            if (clicked)
+            {
+                // A stale mesh cannot be assigned until it is resolved, so a click opens
+                // the resolution prompt rather than selecting it.
+                if (stale)
+                    OpenStaleResolution(vpath);
+                else
+                    SelectAsset(vpath);
+            }
+
+            if (++col % cols != 0)
+                ImGui::SameLine();
+        }
     } // end (_assetBrowserVectorSlot < 0)
 
     // Materials are listed in both modes, and are the only tiles left when the
@@ -590,7 +590,7 @@ void EditorApp::DrawAssetBrowser()
         ImGui::PushID(material.c_str());
         ImGui::BeginGroup();
         const ImVec2 tile    = ImGui::GetCursorScreenPos();
-        const bool   clicked = ImGui::Button("##material", ImVec2(thumb, thumb));
+        const bool clicked = ImGui::Button("##material", ImVec2(thumb, thumb));
         DrawMaterialIcon(tile, thumb);
         ImGui::PushTextWrapPos(ImGui::GetCursorPosX() + thumb);
         ImGui::TextWrapped("%s", material.c_str());

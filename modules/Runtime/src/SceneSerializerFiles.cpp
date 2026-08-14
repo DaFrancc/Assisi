@@ -62,11 +62,11 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
         inSet.insert(EntityKey(entity.index, entity.generation));
 
     const auto parentComesAlong = [&](ECS::Entity entity)
-    {
-        const Parent *parent = scene.Get<Parent>(entity);
-        return parent != nullptr && parent->parent != ECS::NullEntity &&
-               inSet.contains(EntityKey(parent->parent.index, parent->parent.generation));
-    };
+                                  {
+                                      const Parent *parent = scene.Get<Parent>(entity);
+                                      return parent != nullptr && parent->parent != ECS::NullEntity &&
+                                             inSet.contains(EntityKey(parent->parent.index, parent->parent.generation));
+                                  };
 
     const auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
@@ -94,12 +94,12 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
     ForEachRefLeavingSet(scene, entities,
                          [&](const Core::Reflect::ComponentMeta &meta, const Core::Reflect::FieldMeta &field,
                              std::size_t owner, ECS::Entity target)
-                         {
-                             Core::Log::Warn("Blueprint: {}::{} on '{}' references '{}', which is not in the "
-                                             "selection — it is null in '{}'.",
-                                             meta.name, field.name, names[owner],
-                                             AuthoredName(scene, target), path.string());
-                         });
+        {
+            Core::Log::Warn("Blueprint: {}::{} on '{}' references '{}', which is not in the "
+                            "selection — it is null in '{}'.",
+                            meta.name, field.name, names[owner],
+                            AuthoredName(scene, target), path.string());
+        });
 
     nlohmann::json doc;
     doc["version"]  = 2;
@@ -201,7 +201,7 @@ LevelResult SceneSerializer::LoadFromDisk(ECS::Scene &scene, const std::filesyst
         return std::unexpected(LevelFailure{.kind = LevelError::FileUnreadable});
     }
 
-    const nlohmann::json doc = nlohmann::json::parse(file, nullptr, /*allow_exceptions=*/false);
+    const nlohmann::json doc = nlohmann::json::parse(file, nullptr, /*allow_exceptions=*/ false);
     if (doc.is_discarded())
     {
         Core::Log::Error("SceneSerializer: '{}' is not readable JSON", path.string());
@@ -239,7 +239,7 @@ std::expected<std::vector<std::string>, LevelError> SceneSerializer::ReadLevelSy
         return std::unexpected(LevelError::FileUnreadable);
     }
 
-    const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
+    const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
     if (doc.is_discarded())
     {
         Core::Log::Error("SceneSerializer: cannot parse '{}'", assetPath);
@@ -270,7 +270,7 @@ LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view as
     }
 
     // Parsed before Load is called, so a parse failure leaves the scene untouched.
-    const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
+    const nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
     if (doc.is_discarded())
     {
         Core::Log::Error("SceneSerializer: '{}' is not readable JSON", assetPath);

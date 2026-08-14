@@ -26,13 +26,13 @@ namespace Assisi::ChiaraTest
 inline void EnsureInitialized()
 {
     static const bool started = []
-    {
-        Chiara::Config config;
-        config.mainThreadBufferBytes  = 1u << 20; // 32768 records
-        config.otherThreadBufferBytes = 1u << 16; // 2048 records
-        Chiara::Initialize(config);
-        return true;
-    }();
+                                {
+                                    Chiara::Config config;
+                                    config.mainThreadBufferBytes  = 1u << 20;// 32768 records
+                                    config.otherThreadBufferBytes = 1u << 16; // 2048 records
+                                    Chiara::Initialize(config);
+                                    return true;
+                                }();
     (void)started;
 }
 

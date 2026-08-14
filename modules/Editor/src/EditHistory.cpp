@@ -131,7 +131,7 @@ namespace
 bool NamesAny(const Transaction &txn, std::span<const Assisi::ECS::Entity> destroyed)
 {
     const auto hit = [destroyed](Assisi::ECS::Entity entity)
-    { return std::find(destroyed.begin(), destroyed.end(), entity) != destroyed.end(); };
+                     { return std::find(destroyed.begin(), destroyed.end(), entity) != destroyed.end(); };
 
     for (const EditCommand &cmd : txn.cmds)
     {
@@ -146,7 +146,7 @@ bool NamesAny(const Transaction &txn, std::span<const Assisi::ECS::Entity> destr
 /// One past the newest transaction in @p undo that names a destroyed entity, or 0
 /// if none does — exactly how many steps have to go. ForgetEntities' doc comment
 /// says why the answer is a suffix rather than a set.
-std::size_t ForgettableCount(const std::vector<Transaction>       &undo,
+std::size_t ForgettableCount(const std::vector<Transaction> &undo,
                              std::span<const Assisi::ECS::Entity> destroyed)
 {
     if (destroyed.empty())
@@ -162,7 +162,7 @@ std::size_t ForgettableCount(const std::vector<Transaction>       &undo,
 
 } // namespace
 
-std::size_t EditHistory::CountForgettable(const Assisi::ECS::Scene             &scene,
+std::size_t EditHistory::CountForgettable(const Assisi::ECS::Scene &scene,
                                           std::span<const Assisi::ECS::Entity> destroyed) const
 {
     if (&scene != &_scene)
@@ -170,7 +170,7 @@ std::size_t EditHistory::CountForgettable(const Assisi::ECS::Scene             &
     return ForgettableCount(_undo, destroyed);
 }
 
-std::size_t EditHistory::ForgetEntities(const Assisi::ECS::Scene             &scene,
+std::size_t EditHistory::ForgetEntities(const Assisi::ECS::Scene &scene,
                                         std::span<const Assisi::ECS::Entity> destroyed)
 {
     // Refused before anything is compared, never filtered afterwards: the handles
@@ -189,8 +189,8 @@ std::size_t EditHistory::ForgetEntities(const Assisi::ECS::Scene             &sc
     // An open gesture on a destroyed entity would commit a transaction naming it
     // the moment the sweep runs, putting back exactly what was just removed.
     std::erase_if(_open, [destroyed](const OpenGesture &gesture) {
-        return std::find(destroyed.begin(), destroyed.end(), gesture.entity) != destroyed.end();
-    });
+            return std::find(destroyed.begin(), destroyed.end(), gesture.entity) != destroyed.end();
+        });
     return drop;
 }
 
@@ -345,7 +345,7 @@ std::optional<std::string> EditHistory::NameForOverrideTarget(Entity target, ECS
 
 nlohmann::json EditHistory::ReferenceSafeOverride(const nlohmann::json &component,
                                                   const Reflect::ComponentMeta &meta,
-                                                  ECS::InstanceId               instanceId) const
+                                                  ECS::InstanceId instanceId) const
 {
     nlohmann::json out = component;
 
@@ -361,7 +361,7 @@ nlohmann::json EditHistory::ReferenceSafeOverride(const nlohmann::json &componen
             continue; // not a raw-context capture; leave whatever it is alone
 
         const std::uint64_t packed = it->get<std::uint64_t>();
-        const Entity        target{static_cast<std::uint32_t>(packed & 0xFFFFFFFFull),
+        const Entity target{static_cast<std::uint32_t>(packed & 0xFFFFFFFFull),
                             static_cast<std::uint32_t>(packed >> 32)};
 
         if (const std::optional<std::string> name = NameForOverrideTarget(target, instanceId))
@@ -512,7 +512,7 @@ void EditHistory::RestoreComponent(Entity entity, Reflect::ComponentId id,
         if (meta && meta->getByEntity && meta->getByEntity(&_scene, entity.index, entity.generation))
         {
             _scene.RemoveById(entity, id);
-            _rebind(entity, id, /*present=*/false);
+            _rebind(entity, id, /*present=*/ false);
         }
         return;
     }
@@ -520,7 +520,7 @@ void EditHistory::RestoreComponent(Entity entity, Reflect::ComponentId id,
     // Present with `target`. Add, then rebind: a single-component edit has no
     // sibling ordering concern.
     if (AddComponentForRestore(entity, id, *target))
-        _rebind(entity, id, /*present=*/true);
+        _rebind(entity, id, /*present=*/ true);
 }
 
 bool EditHistory::AddComponentForRestore(Entity entity, Reflect::ComponentId id, const nlohmann::json &data)
@@ -568,80 +568,80 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
         // member (Parent), which has to be alive already for the raw context to
         // resolve it, so all revives precede all component work.
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
-            if (const auto *ed = std::get_if<EntityDelta>(&cmd))
-            {
-                const auto &state = undo ? ed->before : ed->after;
-                if (state.has_value() && !_scene.IsAlive(ed->handle))
-                    _scene.ReviveAt(ed->handle);
-            }
-        });
+                if (const auto *ed = std::get_if<EntityDelta>(&cmd))
+                {
+                    const auto &state = undo ? ed->before : ed->after;
+                    if (state.has_value() && !_scene.IsAlive(ed->handle))
+                        _scene.ReviveAt(ed->handle);
+                }
+            });
 
         // Phase 1b — instance records. Before the components, because a member's
         // component restore may want the row it belongs to; pure bookkeeping
         // either way, with no scene state to order against.
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
-            const auto *idl = std::get_if<InstanceDelta>(&cmd);
-            if (idl == nullptr || _instances == nullptr)
-                return;
+                const auto *idl = std::get_if<InstanceDelta>(&cmd);
+                if (idl == nullptr || _instances == nullptr)
+                    return;
 
-            const auto &state = undo ? idl->before : idl->after;
-            if (state.has_value())
-                _instances->RestoreAt(idl->instanceId, *state);
-            else
-                _instances->Remove(idl->instanceId);
-        });
+                const auto &state = undo ? idl->before : idl->after;
+                if (state.has_value())
+                    _instances->RestoreAt(idl->instanceId, *state);
+                else
+                    _instances->Remove(idl->instanceId);
+            });
 
         // Phase 2 — components: restore/remove standalone component deltas, and add
         // the full component set of every just-revived entity.
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
-            if (const auto *cd = std::get_if<ComponentDelta>(&cmd))
-            {
-                RestoreComponent(cd->entity, cd->id, undo ? cd->before : cd->after);
-                return;
-            }
-            if (std::holds_alternative<InstanceDelta>(cmd))
-                return; // handled above
-            const auto &ed    = std::get<EntityDelta>(cmd);
-            const auto &state  = undo ? ed.before : ed.after;
-            if (state.has_value())
-            {
-                // Add the whole set first, THEN rebind each, so every hook sees all
-                // its siblings restored rather than only those that sort before it.
-                // Rebinding per component mid-restore dropped the Jolt body on
-                // undo-of-delete.
-                for (const ComponentSnapshot &snap : *state)
-                    AddComponentForRestore(ed.handle, snap.id, snap.data);
-                for (const ComponentSnapshot &snap : *state)
+                if (const auto *cd = std::get_if<ComponentDelta>(&cmd))
                 {
-                    // Rebind exactly the set AddComponentForRestore acted on:
-                    // serializable, with an addToScene hook.
-                    const auto *meta = Reflect::ComponentRegistry::Instance().ById(snap.id);
-                    if (meta && meta->serializable && meta->addToScene)
-                        _rebind(ed.handle, snap.id, /*present=*/true);
+                    RestoreComponent(cd->entity, cd->id, undo ? cd->before : cd->after);
+                    return;
                 }
-            }
-        });
+                if (std::holds_alternative<InstanceDelta>(cmd))
+                    return; // handled above
+                const auto &ed    = std::get<EntityDelta>(cmd);
+                const auto &state  = undo ? ed.before : ed.after;
+                if (state.has_value())
+                {
+                    // Add the whole set first, THEN rebind each, so every hook sees all
+                    // its siblings restored rather than only those that sort before it.
+                    // Rebinding per component mid-restore dropped the Jolt body on
+                    // undo-of-delete.
+                    for (const ComponentSnapshot &snap : *state)
+                        AddComponentForRestore(ed.handle, snap.id, snap.data);
+                    for (const ComponentSnapshot &snap : *state)
+                    {
+                        // Rebind exactly the set AddComponentForRestore acted on:
+                        // serializable, with an addToScene hook.
+                        const auto *meta = Reflect::ComponentRegistry::Instance().ById(snap.id);
+                        if (meta && meta->serializable && meta->addToScene)
+                            _rebind(ed.handle, snap.id, /*present=*/ true);
+                    }
+                }
+            });
 
         // Phase 3 — destroy the entities that must NOT exist on this side. Tear
         // down each one's transient state first: the populated, non-target side
         // lists the components it currently has.
         bool anyDestroyed = false;
         ForEachCommand(txn, undo, [&](const EditCommand &cmd) {
-            const auto *ed = std::get_if<EntityDelta>(&cmd);
-            if (ed == nullptr)
-                return;
-            const auto &state = undo ? ed->before : ed->after;
-            if (state.has_value() || !_scene.IsAlive(ed->handle))
-                return; // should exist, or already gone
+                const auto *ed = std::get_if<EntityDelta>(&cmd);
+                if (ed == nullptr)
+                    return;
+                const auto &state = undo ? ed->before : ed->after;
+                if (state.has_value() || !_scene.IsAlive(ed->handle))
+                    return; // should exist, or already gone
 
-            const auto &current = undo ? ed->after : ed->before; // the live side
-            if (current.has_value())
-                for (const ComponentSnapshot &snap : *current)
-                    _rebind(ed->handle, snap.id, /*present=*/false);
+                const auto &current = undo ? ed->after : ed->before; // the live side
+                if (current.has_value())
+                    for (const ComponentSnapshot &snap : *current)
+                        _rebind(ed->handle, snap.id, /*present=*/ false);
 
-            _scene.Destroy(ed->handle);
-            anyDestroyed = true;
-        });
+                _scene.Destroy(ed->handle);
+                anyDestroyed = true;
+            });
 
         // Flush now, so a freed slot is available to a later exact ReviveAt and no
         // re-killed entity lingers in the queue.

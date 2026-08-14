@@ -44,7 +44,7 @@ namespace
 std::filesystem::path FreshRoot(const std::string &name)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / ("assisi_edh_" + name);
-    std::error_code             ec;
+    std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
@@ -63,11 +63,11 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
 nlohmann::json CarFile()
 {
     return {{"version", 2},
-            {"entities",
-             nlohmann::json::array({{{"name", "body"},
-                                     {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
-                                    {{"name", "wheel_fl"},
-                                     {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
+        {"entities",
+         nlohmann::json::array({{{"name", "body"},
+                                   {"components", {{"Camera", {{"fovDegrees", 60.f}, {"isActive", true}}}}}},
+                                   {{"name", "wheel_fl"},
+                                       {"components", {{"Parent", {{"parent", "body"}}}}}}})}};
 }
 
 ECS::Entity MemberOf(ECS::Scene &scene, const InstanceTable &table, ECS::InstanceId id, std::string_view name)
@@ -82,7 +82,7 @@ TEST_CASE("EditHistory: editing a member records an override, and undo takes bot
     const std::filesystem::path root = FreshRoot("override");
     Write(root, "car.abp", CarFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
     const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
@@ -131,7 +131,7 @@ TEST_CASE("EditHistory: removing a component from a member records it as a remov
     const std::filesystem::path root = FreshRoot("removal");
     Write(root, "car.abp", CarFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
     const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
@@ -165,7 +165,7 @@ TEST_CASE("EditHistory: a reference override is recorded by name, not by handle"
     const std::filesystem::path root = FreshRoot("refs");
     Write(root, "car.abp", CarFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
     const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
@@ -205,7 +205,7 @@ TEST_CASE("EditHistory: editing a loose entity records no instance claim")
     const std::filesystem::path root = FreshRoot("loose");
     Write(root, "car.abp", CarFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
     const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
@@ -216,7 +216,7 @@ TEST_CASE("EditHistory: editing a loose entity records no instance claim")
     REQUIRE(scene.Add(loose, Camera{}) != nullptr);
 
     EditHistory history(scene, {}, &table);
-    const auto  cameraId = Core::Reflect::ComponentIdOf<Camera>();
+    const auto cameraId = Core::Reflect::ComponentIdOf<Camera>();
     history.RecordBefore(loose, cameraId, "Edit Camera", loose);
     scene.GetMut<Camera>(loose)->fovDegrees = 30.f;
     history.CommitGesture(loose, cameraId);

@@ -241,8 +241,8 @@ std::expected<std::size_t, MeshImportError> ExplodeGltfMaterials(std::string_vie
     {
         return std::unexpected(MeshImportError::ReadFailed);
     }
-    const fs::path    parentDir = gltfAbs->parent_path();
-    const fs::path    gltfSidecar = SidecarPathOf(*gltfAbs);
+    const fs::path parentDir = gltfAbs->parent_path();
+    const fs::path gltfSidecar = SidecarPathOf(*gltfAbs);
     const std::string modelStem = gltfAbs->stem().string();
 
     // The reconcile pass minted the glTF's sidecar before this pass ran; without
@@ -355,13 +355,13 @@ ReconcileResult ReconcileGltfMaterials(std::string_view gltfVirtualPath, const A
     // Dense slot→material from the manifest; a hole or an unreadable/ unparseable
     // `.amat` means we can't safely compare, so treat the whole thing as a
     // conflict rather than risk clobbering authored state.
-    std::size_t                              oldCount     = 0;
+    std::size_t oldCount     = 0;
     std::vector<std::optional<MaterialData>> oldMaterials = LoadManifestMaterials(*sidecar, resolveMaterialPath, oldCount);
 
     // Provably-safe requires every existing slot to be present and byte-for-byte
     // (field-for-field) what the new source produces.
     const std::size_t common = std::min<std::size_t>(oldCount, newTable.size());
-    bool              existingUnchanged = (oldCount <= newTable.size()); // a removed slot is never safe
+    bool existingUnchanged = (oldCount <= newTable.size());              // a removed slot is never safe
     for (std::size_t slot = 0; slot < common && existingUnchanged; ++slot)
     {
         if (!oldMaterials[slot].has_value() || !SameMaterialFields(newTable[slot], *oldMaterials[slot]))
@@ -382,9 +382,9 @@ ReconcileResult ReconcileGltfMaterials(std::string_view gltfVirtualPath, const A
     // refresh the manifest + hash. New `.amat`s are always slot-suffixed so they
     // can never collide with an existing slot's file.
     Core::AssetSidecar updated = *sidecar;
-    const fs::path     parentDir = gltfAbs->parent_path();
-    const std::string  modelStem = gltfAbs->stem().string();
-    std::size_t        added     = 0;
+    const fs::path parentDir = gltfAbs->parent_path();
+    const std::string modelStem = gltfAbs->stem().string();
+    std::size_t added     = 0;
     for (std::size_t slot = oldCount; slot < newTable.size(); ++slot)
     {
         const std::string fileName =
@@ -446,7 +446,7 @@ MaterialDiff DiffGltfMaterials(std::string_view gltfVirtualPath, const AssetIdRe
     }
     const std::vector<MaterialData> &newTable = imported->Materials;
 
-    std::size_t                              oldCount = 0;
+    std::size_t oldCount = 0;
     std::vector<std::optional<MaterialData>> oldMaterials =
         LoadManifestMaterials(*sidecar, resolveMaterialPath, oldCount);
 
@@ -503,7 +503,7 @@ RegenerateGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver 
     {
         return std::nullopt;
     }
-    const fs::path                   gltfSidecarPath = SidecarPathOf(*gltfAbs);
+    const fs::path gltfSidecarPath = SidecarPathOf(*gltfAbs);
     const std::optional<std::string> sidecarText     = ReadWholeFile(gltfSidecarPath);
     if (!sidecarText.has_value())
     {
@@ -539,7 +539,7 @@ RegenerateGltfMaterials(std::string_view gltfVirtualPath, const AssetIdResolver 
         oldIds[entry.slot] = entry.material;
     }
 
-    const fs::path    parentDir = gltfAbs->parent_path();
+    const fs::path parentDir = gltfAbs->parent_path();
     const std::string modelStem = gltfAbs->stem().string();
 
     // Rebuild the manifest from the fresh table. Slots the source dropped simply
@@ -598,7 +598,7 @@ bool AcceptGltfSource(std::string_view gltfVirtualPath)
     {
         return false;
     }
-    const fs::path                   gltfSidecarPath = SidecarPathOf(*gltfAbs);
+    const fs::path gltfSidecarPath = SidecarPathOf(*gltfAbs);
     const std::optional<std::string> sidecarText     = ReadWholeFile(gltfSidecarPath);
     if (!sidecarText.has_value())
     {

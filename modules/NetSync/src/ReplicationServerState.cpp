@@ -86,7 +86,7 @@ void ReplicationServer::ReconcileNetIds()
     for (auto it = _instanceBlocks.begin(); it != _instanceBlocks.end();)
     {
         InstanceBlock &block   = it->second;
-        std::uint32_t  present = 0;
+        std::uint32_t present = 0;
         for (std::uint32_t member = 0; member < block.memberCount; ++member)
         {
             if (_netIds.ContainsRight(NetId{block.base.value + member}))
@@ -236,7 +236,7 @@ void ReplicationServer::CaptureBodyStates()
         if (active != _activeBodies.end())
         {
             record.state = BodyState{netId,   active->position,        active->rotation,
-                                     active->linearVelocity, active->angularVelocity, /*asleep=*/false};
+                                     active->linearVelocity, active->angularVelocity, /*asleep=*/ false};
             record.tick  = _bodyStateTick;
             continue;
         }
@@ -279,7 +279,7 @@ void ReplicationServer::CaptureBodyStates()
                 continue;
 
             const bool transition = justSlept;
-            record.state = BodyState{netId, position, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/true};
+            record.state = BodyState{netId, position, rotation, glm::vec3{0.f}, glm::vec3{0.f}, /*asleep=*/ true};
             record.tick  = _bodyStateTick;
 
             // Every other update is superseded by the next one; a delayed final

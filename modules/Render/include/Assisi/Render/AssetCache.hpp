@@ -60,7 +60,7 @@ namespace Assisi::Render
 {
 class AssetCache
 {
-  public:
+public:
     AssetCache() = default;
 
     /// @brief Bind to a device + job system, register the built-in `prim://` mesh
@@ -73,8 +73,8 @@ class AssetCache
     void Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace = ColorSpace::Srgb);
 
     /// @brief Id↔path translators supplied by the editor (from the AssetDatabase).
-    using IdToPathFn = std::function<Core::AssetPath(const Core::AssetId &)>;
-    using PathToIdFn = std::function<Core::AssetId(std::string_view)>;
+    using IdToPathFn = std::function<Core::AssetPath (const Core::AssetId &)>;
+    using PathToIdFn = std::function<Core::AssetId (std::string_view)>;
 
     /// @brief Install the id↔path resolvers. Reserved built-in ids resolve without
     /// them; real files need them. `pathToId` is handed to the mesh importer so a
@@ -139,7 +139,7 @@ class AssetCache
     /// editor made via DebugUI::GetOrCreateTextureId. Without this, a freed
     /// `nvrhi::ITexture` whose address a later texture reuses would alias a stale
     /// ImGui binding.
-    using ThumbnailReleaseFn = std::function<void(nvrhi::ITexture *)>;
+    using ThumbnailReleaseFn = std::function<void (nvrhi::ITexture *)>;
 
     /// @brief Drop every resident thumbnail and cancel in-flight thumbnail decodes
     /// (their publishes become no-ops). Call on asset-browser directory change /
@@ -227,7 +227,7 @@ class AssetCache
     /// Stable material ids are NOT reused across Clear().
     void Clear();
 
-  private:
+private:
     /// @brief The virtual path an id currently maps to. Reserved built-ins resolve
     /// from the static table (no resolver needed); other ids go through the
     /// installed id→path resolver. Nil/unknown ids return an empty path.
@@ -280,7 +280,7 @@ class AssetCache
     struct TextureKey
     {
         Core::AssetPath path;
-        ColorSpace      space;
+        ColorSpace space;
         bool operator==(const TextureKey &other) const { return space == other.space && path == other.path; }
     };
     struct TextureKeyHash
@@ -295,11 +295,11 @@ class AssetCache
     struct SolidColor
     {
         unsigned char r, g, b, a;
-        ColorSpace    space;
+        ColorSpace space;
     };
 
     nvrhi::IDevice *_device = nullptr;
-    ColorSpace      _textureColorSpace = ColorSpace::Srgb;
+    ColorSpace _textureColorSpace = ColorSpace::Srgb;
 
     // Editor-installed id↔path translators (see SetAssetResolvers). Empty until an
     // editor wires them; reserved built-ins resolve without them.
@@ -320,9 +320,9 @@ class AssetCache
     // Texture is written here once and keys materials by index. The handles are
     // created at Initialize and stay stable across Clear() (only _nextBindlessSlot
     // resets and the default textures re-register), so MeshPass binds them once.
-    nvrhi::BindingLayoutHandle   _bindlessLayout;
+    nvrhi::BindingLayoutHandle _bindlessLayout;
     nvrhi::DescriptorTableHandle _bindlessTable;
-    uint32_t                     _nextBindlessSlot = 0;
+    uint32_t _nextBindlessSlot = 0;
 
     // Latches when the table fills so RegisterBindlessTexture warns once rather
     // than per texture. Reset by Clear() alongside _nextBindlessSlot.
@@ -417,7 +417,7 @@ class AssetCache
     struct RecordedChannel
     {
         nvrhi::TextureHandle texture;
-        Core::AssetPath      path;
+        Core::AssetPath path;
     };
     /// @brief A material load's result: parsed data, every channel's GPU texture
     /// (created + recorded on the worker), and the single closed command list that
@@ -425,10 +425,10 @@ class AssetCache
     /// staging memcpys ran on the worker; the main thread only submits + adopts.
     struct MaterialLoadBundle
     {
-        Geometry::MaterialData           data;
+        Geometry::MaterialData data;
         std::array<RecordedChannel, 5>   channels;
-        nvrhi::CommandListHandle         uploadList;      ///< closed; null if no channel decoded
-        std::size_t                      decodedBytes = 0; ///< for the publish byte budget
+        nvrhi::CommandListHandle uploadList;              ///< closed; null if no channel decoded
+        std::size_t decodedBytes = 0;                      ///< for the publish byte budget
     };
 
     /// @brief A finished mesh import whose geometry the worker has already copied
@@ -440,26 +440,26 @@ class AssetCache
     /// which still has the CPU data because the release is conditional on success.
     struct MeshLoadBundle
     {
-        Geometry::MeshData   data;
-        nvrhi::BufferHandle  staging;
-        uint32_t             vertexCount = 0;
-        uint32_t             indexCount  = 0;
+        Geometry::MeshData data;
+        nvrhi::BufferHandle staging;
+        uint32_t vertexCount = 0;
+        uint32_t indexCount  = 0;
     };
 
     /// @brief A load queued but not yet started — stored as data (not a thunk) so
     /// PumpLoadQueue dispatches it by kind. Only the fields for its kind are used.
     struct PendingLoad
     {
-        bool                           isMaterial = false;
-        Core::AssetPath                path;
-        std::uint64_t                  epoch = 0;
-        PathToIdFn                     pathToId;     ///< mesh only
-        Geometry::MaterialData         materialData; ///< material only
+        bool isMaterial = false;
+        Core::AssetPath path;
+        std::uint64_t epoch = 0;
+        PathToIdFn pathToId;                         ///< mesh only
+        Geometry::MaterialData materialData;         ///< material only
         std::array<Core::AssetPath, 5> channelPaths; ///< material only
     };
 
-    std::size_t             _maxConcurrentLoads = 3;
-    std::size_t             _activeLoads        = 0;
+    std::size_t _maxConcurrentLoads = 3;
+    std::size_t _activeLoads        = 0;
     std::deque<PendingLoad> _pendingLoads;
 
     // --- Decoded-and-waiting publish queue (see PumpPublishes) ------------------
@@ -473,11 +473,11 @@ class AssetCache
     /// fields for its kind are populated (mesh: `mesh`; material: `material`).
     struct PendingPublish
     {
-        bool               isMaterial = false;
-        Core::AssetPath    path;
-        std::uint64_t      epoch    = 0;
-        std::size_t        byteSize = 0; ///< decoded bytes, for the pump's byte budget
-        MeshLoadBundle     mesh;         ///< mesh only
+        bool isMaterial = false;
+        Core::AssetPath path;
+        std::uint64_t epoch    = 0;
+        std::size_t byteSize = 0;        ///< decoded bytes, for the pump's byte budget
+        MeshLoadBundle mesh;             ///< mesh only
         MaterialLoadBundle material;     ///< material only
     };
     std::deque<PendingPublish> _pendingPublishes;
@@ -489,7 +489,7 @@ class AssetCache
     // staging). _uploadOpen tracks whether it is mid-recording within a pump; it is
     // always false between pumps (FlushUploads closes it), so Clear never races it.
     nvrhi::CommandListHandle _uploadList;
-    bool                     _uploadOpen = false;
+    bool _uploadOpen = false;
 
     // Worker-recorded material upload lists collected during a pump (streaming P1):
     // each material's channel textures are created + recorded on its decode worker
@@ -515,7 +515,7 @@ class AssetCache
     // against the completed submission (vulkan-upload.cpp). Staging buffers may NOT:
     // a worker memcpys into them, so one must not be handed out again until the GPU
     // has finished copying out of it — hence the event-query gate below.
-    std::mutex                            _poolMutex;
+    std::mutex _poolMutex;
     std::vector<nvrhi::CommandListHandle> _freeUploadLists;
     std::vector<nvrhi::BufferHandle>      _freeStagingBuffers;
 
@@ -523,7 +523,7 @@ class AssetCache
     /// query that tells us when it has retired.
     struct StagingInFlight
     {
-        nvrhi::EventQueryHandle          query;
+        nvrhi::EventQueryHandle query;
         std::vector<nvrhi::BufferHandle> buffers;
         /// Links the frame that parked this batch to the later, unrelated frame
         /// that reclaims it. This is the deferred-cost case the capture system
@@ -594,7 +594,7 @@ class AssetCache
     /// no cache state is read or mutated.
     static MaterialLoadBundle DecodeAndRecordMaterialChannels(AssetCache &cache, Geometry::MaterialData data,
                                                               std::array<Core::AssetPath, 5> channelPaths,
-                                                              std::uint64_t                  epoch,
+                                                              std::uint64_t epoch,
                                                               const std::atomic<std::uint64_t> &loadEpoch);
 };
 } /* namespace Assisi::Render */

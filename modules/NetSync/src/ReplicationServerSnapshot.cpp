@@ -52,7 +52,7 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
     {
         if (excluded.Test(_replicatedOrdinals[slot]))
             continue;
-        const Core::Reflect::ComponentId    id   = _replicatedComponents[slot];
+        const Core::Reflect::ComponentId id   = _replicatedComponents[slot];
         const Core::Reflect::ComponentMeta *meta = registry.ById(id);
         if (meta != nullptr && meta->getByEntity(&_scene, entity.index, entity.generation) != nullptr)
             outComponents.push_back(PackComponentRef(netId, id));
@@ -118,7 +118,7 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         if (excluded.Test(_replicatedOrdinals[slot]))
             continue; // this entity declines to send it
 
-        const Core::Reflect::ComponentId     id   = _replicatedComponents[slot];
+        const Core::Reflect::ComponentId id   = _replicatedComponents[slot];
         const Core::Reflect::ComponentMeta *meta = registry.ById(id);
         if (meta == nullptr)
             continue;
@@ -314,9 +314,9 @@ void ReplicationServer::SendSnapshot(Connection &connection)
         std::size_t projected = writer.BytesWritten() + kVarIntMaxBytes; // the count prefix
         for (const ECS::InstanceId instanceId : freshInstances)
         {
-            const InstanceBlock  &block = _instanceBlocks.find(instanceId)->second;
-            const std::size_t     cost  = 3 * kVarIntMaxBytes + 10 * sizeof(float) + 1 +
-                                     (static_cast<std::size_t>(block.memberCount) + 7) / 8;
+            const InstanceBlock &block = _instanceBlocks.find(instanceId)->second;
+            const std::size_t cost  = 3 * kVarIntMaxBytes + 10 * sizeof(float) + 1 +
+                                      (static_cast<std::size_t>(block.memberCount) + 7) / 8;
             // Always at least one: a record wider than the whole budget must
             // still make progress, or the instance is never named and its
             // members never arrive.

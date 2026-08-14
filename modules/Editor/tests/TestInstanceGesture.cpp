@@ -48,7 +48,7 @@ namespace
 std::filesystem::path FreshRoot(const std::string &name)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / ("assisi_gest_" + name);
-    std::error_code             ec;
+    std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
@@ -72,14 +72,14 @@ void Write(const std::filesystem::path &path, const nlohmann::json &doc)
 nlohmann::json CartFile()
 {
     const auto placed = [](float x) {
-        return nlohmann::json{{"Transform",
-                               {{"position", {x, 0.0, 0.0}},
-                                {"rotation", {1.0, 0.0, 0.0, 0.0}},
-                                {"scale", {1.0, 1.0, 1.0}}}}};
-    };
+                            return nlohmann::json{{"Transform",
+                                {{"position", {x, 0.0, 0.0}},
+                                    {"rotation", {1.0, 0.0, 0.0, 0.0}},
+                                    {"scale", {1.0, 1.0, 1.0}}}}};
+                        };
     return {{"version", 2},
-            {"entities", nlohmann::json::array({{{"name", "body"}, {"components", placed(0.f)}},
-                                                {{"name", "crate"}, {"components", placed(2.f)}}})}};
+        {"entities", nlohmann::json::array({{{"name", "body"}, {"components", placed(0.f)}},
+                                               {{"name", "crate"}, {"components", placed(2.f)}}})}};
 }
 
 /// What ApplyInstancePlacement does to the scene, minus the physics sync: shift
@@ -143,12 +143,12 @@ struct Fixture
     /// frame of the editor's life.
     void ReleasedFrame() { gesture.EndFrame(scene, table, &*history, "Move Instance"); }
 
-    std::filesystem::path      root;
-    ECS::Scene                 scene;
-    InstanceTable              table;
-    ECS::InstanceId            id;
+    std::filesystem::path root;
+    ECS::Scene scene;
+    InstanceTable table;
+    ECS::InstanceId id;
     std::optional<EditHistory> history;
-    InstanceGesture            gesture;
+    InstanceGesture gesture;
 };
 
 } // namespace

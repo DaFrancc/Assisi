@@ -52,8 +52,8 @@ ComponentMask DeserializeComponentMask(const nlohmann::json &value)
             continue;
         }
 
-        const std::string        name = element.get<std::string>();
-        const ComponentMeta     *meta = registry.Find(name);
+        const std::string name = element.get<std::string>();
+        const ComponentMeta *meta = registry.Find(name);
         // Two distinct failures, deliberately distinguished: a name nobody
         // registered is probably a typo or a renamed type, while a name that
         // resolves but is not replicable is a stale exclusion left behind when a

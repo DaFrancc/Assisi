@@ -99,9 +99,9 @@ TEST_CASE("ColliderBodyModel: a parented body is posed in world space")
     const ECS::Transform local{.position = {1.f, 0.f, 0.f},
                                .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
 
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity body  = AddParentedBody(scene, parentPose, local);
-    const glm::mat4   model = ColliderBodyModel(scene, body, local);
+    const glm::mat4 model = ColliderBodyModel(scene, body, local);
 
     // ComposeTransform is the engine's other statement of the same composition, so
     // the expectation is not this function marking its own homework.
@@ -117,7 +117,7 @@ TEST_CASE("ColliderBodyModel: a parented body is posed in world space")
 
 TEST_CASE("ColliderBodyModel: an unparented body is posed at its own transform")
 {
-    ECS::Scene           scene;
+    ECS::Scene scene;
     const ECS::Transform local{.position = {4.f, -1.f, 2.f},
                                .rotation = glm::angleAxis(glm::radians(30.f), glm::vec3(0.f, 1.f, 0.f))};
 
@@ -135,9 +135,9 @@ TEST_CASE("ColliderBodyModel: a parent's scale moves the body but never stretche
     const ECS::Transform parentPose = ParentPose(2.f);
     const ECS::Transform local{.position = {1.f, 0.f, 0.f}};
 
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity body  = AddParentedBody(scene, parentPose, local);
-    const glm::mat4   model = ColliderBodyModel(scene, body, local);
+    const glm::mat4 model = ColliderBodyModel(scene, body, local);
 
     // The offset is in the parent's space, so it scales with it...
     CHECK(NearlyEqual(TranslationOf(model), Runtime::ComposeTransform(parentPose, local).position));
@@ -153,9 +153,9 @@ TEST_CASE("ColliderBodyModel: the body's own scale does not reach the wireframe"
                                .rotation = glm::angleAxis(glm::radians(45.f), glm::vec3(0.f, 1.f, 0.f)),
                                .scale    = {3.f, 1.f, 1.f}};
 
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity body  = AddParentedBody(scene, parentPose, local);
-    const glm::mat4   model = ColliderBodyModel(scene, body, local);
+    const glm::mat4 model = ColliderBodyModel(scene, body, local);
 
     // Physics ignores the entity's scale when it builds the body. Non-uniform at
     // that, so composing it in would shear the basis rather than merely stretch
@@ -166,7 +166,7 @@ TEST_CASE("ColliderBodyModel: the body's own scale does not reach the wireframe"
 
 TEST_CASE("ColliderBodyModel: a parent with no Transform leaves the body where it stands")
 {
-    ECS::Scene           scene;
+    ECS::Scene scene;
     const ECS::Transform local{.position = {1.f, 5.f, 0.f}};
 
     const ECS::Entity parent = scene.Create();

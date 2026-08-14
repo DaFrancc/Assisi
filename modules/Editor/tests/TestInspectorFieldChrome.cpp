@@ -58,7 +58,7 @@ TEST_CASE("A hidden norep field pushes nothing on the colour stack")
     const int32_t baseline = ColourStackDepth();
 
     {
-        const ScopedFieldChrome chrome{RadioVisibility::Hidden, /*norep=*/true};
+        const ScopedFieldChrome chrome{RadioVisibility::Hidden, /*norep=*/ true};
         CHECK_FALSE(chrome.Visible());
         // The caller `continue`s here. Nothing may be outstanding at this point,
         // because nothing unwinds a `continue`.
@@ -74,7 +74,7 @@ TEST_CASE("A drawn norep field is tinted, and the tint is balanced")
     const int32_t baseline = ColourStackDepth();
 
     {
-        const ScopedFieldChrome chrome{RadioVisibility::Active, /*norep=*/true};
+        const ScopedFieldChrome chrome{RadioVisibility::Active, /*norep=*/ true};
         CHECK(chrome.Visible());
         CHECK_FALSE(chrome.Greyed());
         CHECK(ColourStackDepth() == baseline + 1);
@@ -89,7 +89,7 @@ TEST_CASE("A greyed norep listener is drawn, and tinted like any other")
     const int32_t baseline = ColourStackDepth();
 
     {
-        const ScopedFieldChrome chrome{RadioVisibility::Greyed, /*norep=*/true};
+        const ScopedFieldChrome chrome{RadioVisibility::Greyed, /*norep=*/ true};
         CHECK(chrome.Visible());
         CHECK(chrome.Greyed());
         CHECK(ColourStackDepth() == baseline + 1);
@@ -106,7 +106,7 @@ TEST_CASE("A field that is not norep is never tinted")
     for (const RadioVisibility radio :
          {RadioVisibility::Active, RadioVisibility::Greyed, RadioVisibility::Hidden})
     {
-        const ScopedFieldChrome chrome{radio, /*norep=*/false};
+        const ScopedFieldChrome chrome{radio, /*norep=*/ false};
         CHECK(ColourStackDepth() == baseline);
     }
 
@@ -119,7 +119,7 @@ TEST_CASE("EndTint pops once, and the destructor does not pop it again")
     const int32_t baseline = ColourStackDepth();
 
     {
-        ScopedFieldChrome chrome{RadioVisibility::Active, /*norep=*/true};
+        ScopedFieldChrome chrome{RadioVisibility::Active, /*norep=*/ true};
         REQUIRE(ColourStackDepth() == baseline + 1);
 
         // What the call site does before the trailing "(server-only)" tag.
@@ -142,7 +142,7 @@ TEST_CASE("A tint left outstanding is popped by the destructor")
     {
         // The call site's early-return paths never reach EndTint; the guard is
         // what keeps them balanced.
-        const ScopedFieldChrome chrome{RadioVisibility::Active, /*norep=*/true};
+        const ScopedFieldChrome chrome{RadioVisibility::Active, /*norep=*/ true};
         REQUIRE(ColourStackDepth() == baseline + 1);
     }
 

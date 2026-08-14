@@ -45,8 +45,8 @@ namespace
 struct Harness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
 
@@ -56,8 +56,8 @@ struct Harness
     std::uint64_t tick = 0;
 
     explicit Harness(ReplicationConfig config = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
-          client(transport, clientScene, pair.second)
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
+        client(transport, clientScene, pair.second)
     {
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
@@ -122,7 +122,7 @@ ECS::Entity SpawnRich(ECS::Scene &scene, Core::Reflect::ComponentMask excluded =
 ECS::Entity SoleMirror(const Harness &harness)
 {
     return harness.client.EntityOf(harness.server.NetIdOf(
-        [&]
+                                       [&]
         {
             for (auto [entity, marker] : const_cast<ECS::Scene &>(harness.serverScene).Query<Replicated>())
             {
@@ -313,14 +313,14 @@ TEST_CASE("excluding a component stops costing bandwidth for it")
     harness.Step(20);
 
     const auto churn = [&](std::uint32_t steps)
-    {
-        for (std::uint32_t i = 0; i < steps; ++i)
-        {
-            Test::Health *health = harness.serverScene.GetMut<Test::Health>(entity);
-            health->value        = static_cast<std::int32_t>(i);
-            harness.Step(1);
-        }
-    };
+                       {
+                           for (std::uint32_t i = 0; i < steps; ++i)
+                           {
+                               Test::Health *health = harness.serverScene.GetMut<Test::Health>(entity);
+                               health->value        = static_cast<std::int32_t>(i);
+                               harness.Step(1);
+                           }
+                       };
 
     const std::uint64_t before = harness.BytesSent();
     churn(40);

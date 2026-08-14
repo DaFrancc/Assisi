@@ -58,20 +58,20 @@ struct CaptureStats
     std::uint64_t totalEventsWritten = 0;
     std::uint64_t bufferWrapCount    = 0;   ///< Records lost to overwrite, all rings.
     std::uint32_t threadCount        = 0;
-    double        mainWindowSeconds  = 0.0; ///< Time span the main ring currently covers.
+    double mainWindowSeconds  = 0.0;        ///< Time span the main ring currently covers.
 };
 
 /// @brief One thread's readable window, taken under a paused capture. The index
 /// range is already narrowed to what is safe to read (Event.hpp, EventRing).
 struct ThreadSnapshot
 {
-    const char             *name       = nullptr;
-    std::uint64_t           osThreadId = 0;
+    const char *name       = nullptr;
+    std::uint64_t osThreadId = 0;
     const Detail::EventRing *ring      = nullptr;
-    std::uint64_t           beginIndex = 0; ///< Inclusive.
-    std::uint64_t           endIndex   = 0; ///< Exclusive.
-    std::uint64_t           lostEvents = 0;
-    bool                    isMain     = false;
+    std::uint64_t beginIndex = 0;           ///< Inclusive.
+    std::uint64_t endIndex   = 0;           ///< Exclusive.
+    std::uint64_t lostEvents = 0;
+    bool isMain     = false;
     std::vector<OpenScope>  openScopes;     ///< Still open at snapshot time (§4, the hang case).
 };
 
@@ -97,7 +97,7 @@ extern bool g_useHardwareTicks;
 struct ThreadBuffer
 {
     EventRing ring;
-    Event    *storage = nullptr;
+    Event *storage = nullptr;
 
     // The shadow stack of currently-open scopes. A scope only reaches the ring
     // when it ends, so without this a capture taken during a hang shows nothing
@@ -130,7 +130,7 @@ struct ThreadBuffer
 
     std::uint64_t osThreadId        = 0;
     std::uint32_t registrationIndex = 0;
-    bool          isMain            = false;
+    bool isMain            = false;
     ThreadBuffer *next              = nullptr;
 
     /// @brief Records a scope as open. Owner thread only.
@@ -209,7 +209,7 @@ ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept;
     if (Detail::g_useHardwareTicks)
     {
         std::uint64_t counter = 0;
-        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(counter));
+        __asm__ volatile ("mrs %0, cntvct_el0" : "=r" (counter));
         return counter;
     }
 #endif
@@ -403,8 +403,8 @@ public:
 
 private:
     Detail::ThreadBuffer *_buffer     = nullptr;
-    const char           *_name       = nullptr;
-    std::uint64_t         _beginTicks = 0;
+    const char *_name       = nullptr;
+    std::uint64_t _beginTicks = 0;
 };
 
 /// @brief Initialize on construction, Shutdown on destruction. Declared as
@@ -440,7 +440,7 @@ inline std::uint64_t               MarkFrame() { return 0; }
 [[nodiscard]] inline std::uint64_t CurrentFrame() { return 0; }
 inline void                        EmitClockSnapshot() {}
 
-[[nodiscard]] inline const char   *InternString(std::string_view) { return ""; }
+[[nodiscard]] inline const char *InternString(std::string_view) { return ""; }
 [[nodiscard]] inline std::uint64_t NewFlowId() { return 1; }
 
 inline void EmitCounter(const char *, double) noexcept {}

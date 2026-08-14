@@ -65,7 +65,7 @@ inline constexpr std::uint64_t kFnvPrime       = 0x00000100000001b3ULL; ///< FNV
 [[nodiscard]] inline std::string ToHex64(std::uint64_t value)
 {
     static constexpr std::string_view kDigits = "0123456789abcdef";
-    std::string                       out(16, '0');
+    std::string out(16, '0');
     for (std::size_t i = 16; i-- > 0;)
     {
         out[i] = kDigits[value & 0xFU];

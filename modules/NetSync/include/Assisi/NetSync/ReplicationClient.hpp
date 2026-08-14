@@ -39,7 +39,7 @@ namespace Assisi::NetSync
 /// @brief The receiving half. Applies snapshots into a local scene.
 class ReplicationClient
 {
-  public:
+public:
     /// @param physics The world this client simulates its mirrors in. Null means
     ///   no body is ever built and every mirror is rendered by interpolation —
     ///   what a headless convergence test with no physics world wants.
@@ -122,7 +122,7 @@ class ReplicationClient
                       "what happened, and a client is not the authority.");
         return SendIntentBytes(&intent, typeid(T), clientTick,
                                Core::Reflect::MessageTraits<T>::reliability ==
-                                   Core::Reflect::MessageReliability::Reliable);
+                               Core::Reflect::MessageReliability::Reliable);
     }
 
     /// @brief Whether the handshake succeeded and snapshots are being applied.
@@ -290,8 +290,8 @@ class ReplicationClient
     {
         std::uint64_t applied      = 0;
         std::uint64_t bytesApplied = 0;
-        double        divergenceSum = 0.0;
-        float         divergenceMax = 0.f;
+        double divergenceSum = 0.0;
+        float divergenceMax = 0.f;
         float         divergenceMean() const
         {
             return applied == 0 ? 0.f : static_cast<float>(divergenceSum / static_cast<double>(applied));
@@ -342,7 +342,7 @@ class ReplicationClient
     /// ready to join again with no further setup.
     void Reset();
 
-  private:
+private:
     bool ApplySnapshot(Core::BitReader &reader);
     void ApplyBodyState(const BodyState &state);
 
@@ -364,10 +364,10 @@ class ReplicationClient
     /// than resolved to nothing.
     struct PendingRef
     {
-        ECS::Entity                entity;
+        ECS::Entity entity;
         Core::Reflect::ComponentId component = Core::Reflect::kInvalidComponentId;
-        std::size_t                fieldOffset = 0;
-        NetId                      target      = InvalidNetId;
+        std::size_t fieldOffset = 0;
+        NetId target      = InvalidNetId;
     };
 
     void ResolvePendingRefs();
@@ -404,8 +404,8 @@ class ReplicationClient
     struct DeferredAnnouncement
     {
         Core::Reflect::MessageId messageId = Core::Reflect::kInvalidMessageId;
-        std::uint64_t            serverTick = 0; ///< Applied tick this needs before it means anything.
-        NetId                    subject    = InvalidNetId;
+        std::uint64_t serverTick = 0;            ///< Applied tick this needs before it means anything.
+        NetId subject    = InvalidNetId;
         std::vector<std::byte>   bytes;
     };
 
@@ -425,17 +425,17 @@ class ReplicationClient
     void DispatchEvent(const Core::Reflect::MessageMeta &meta, Core::BitReader &reader);
 
     std::vector<DeferredAnnouncement> _deferredAnnouncements;
-    std::uint64_t                     _eventsDispatched = 0;
-    std::uint64_t                     _eventsUnhandled  = 0;
+    std::uint64_t _eventsDispatched = 0;
+    std::uint64_t _eventsUnhandled  = 0;
 
     /// One entity's pose at one server tick. Only the transform is buffered: a
     /// health value or a state enum has no halfway point worth showing.
     struct TransformSample
     {
         std::uint64_t serverTick = 0;
-        glm::vec3     position{};
-        glm::quat     rotation{1.f, 0.f, 0.f, 0.f};
-        glm::vec3     scale{1.f, 1.f, 1.f};
+        glm::vec3 position{};
+        glm::quat rotation{1.f, 0.f, 0.f, 0.f};
+        glm::vec3 scale{1.f, 1.f, 1.f};
     };
 
     /// Capture the current pose of every mirrored entity at @p serverTick. Call
@@ -452,9 +452,9 @@ class ReplicationClient
     struct MirrorBody
     {
         Physics::RigidBody body;   ///< Kept so the body can be removed after its entity is gone.
-        bool               asleep = false;
-        glm::vec3          restPosition{};
-        glm::quat          restRotation{1.f, 0.f, 0.f, 0.f};
+        bool asleep = false;
+        glm::vec3 restPosition{};
+        glm::quat restRotation{1.f, 0.f, 0.f, 0.f};
 
         /// The visual offset that hides the last correction, as it stands this
         /// frame. Added on top of the physics writeback's pose every rendered
@@ -473,8 +473,8 @@ class ReplicationClient
         /// this exists to avoid.
         glm::vec3 positionErrorStart{0.f};
         glm::quat rotationErrorStart{1.f, 0.f, 0.f, 0.f};
-        float     smoothingElapsed = 0.f;
-        float     smoothingWindow  = 0.f; ///< Seconds; 0 = nothing to smooth.
+        float smoothingElapsed = 0.f;
+        float smoothingWindow  = 0.f;     ///< Seconds; 0 = nothing to smooth.
     };
 
     /// Destroy the Jolt body behind a mirror, if it has one. Keyed by NetId
@@ -482,11 +482,11 @@ class ReplicationClient
     /// a locally-destroyed mirror — have already lost the entity by then.
     void DestroyMirrorBody(NetId netId);
 
-    Net::NetTransport     &_transport;
-    ECS::Scene            &_scene;
+    Net::NetTransport &_transport;
+    ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
-    NetSession            *_session = nullptr; ///< For handler contexts; null in direct-drive tests.
-    Net::ConnectionId      _connection;
+    NetSession *_session = nullptr;            ///< For handler contexts; null in direct-drive tests.
+    Net::ConnectionId _connection;
 
     /// Resolved once, because the removal path sees only ids, never types. A
     /// descriptor *removal* is the one component removal with a side effect: the
@@ -525,10 +525,10 @@ class ReplicationClient
 
     double _interpolationDelayTicks = 6.0; ///< Replaced at handshake from snapshotHz.
 
-    ClockFeedback   _feedback;
-    ServerHello     _handshake;
+    ClockFeedback _feedback;
+    ServerHello _handshake;
     CorrectionStats _corrections;
-    std::string     _rejectMessage;
+    std::string _rejectMessage;
 
     std::uint64_t _lastAppliedTick    = 0;
     std::uint64_t _snapshotsApplied   = 0;
@@ -537,16 +537,16 @@ class ReplicationClient
     std::uint64_t _mirrorsResurrected = 0;
     std::uint32_t _tickRateHz         = 60;
     std::uint32_t _snapshotHz         = 20;
-    bool          _synchronized       = false;
-    bool          _worldComplete      = false;
-    bool          _deferHandshake     = false;
-    bool          _awaitingLevel      = false;
+    bool _synchronized       = false;
+    bool _worldComplete      = false;
+    bool _deferHandshake     = false;
+    bool _awaitingLevel      = false;
 
     /// The content-set hash and whether it has been supplied. A separate flag
     /// rather than a sentinel: 0 is a legitimate hash (an empty content set), and
     /// "not yet" must not be confusable with "nothing to hash".
     std::uint64_t _contentSetHash      = 0;
-    bool          _contentSetHashReady = false;
+    bool _contentSetHashReady = false;
     /// True once ConfirmLevelReady has been told the world is built, so a hash
     /// arriving afterwards can complete the join on its own.
     bool _levelReady = false;

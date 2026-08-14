@@ -56,27 +56,27 @@ inline constexpr glm::vec3 kActiveSelectionOutline{1.0f, 0.28f, 0.05f};
 
 class SceneRenderer
 {
-  public:
+public:
     SceneRenderer() = default;
 
     /// @brief Everything Initialize() needs, gathered so callers name what they
     /// set (the positional list had reached eight parameters).
     struct InitParams
     {
-        nvrhi::IDevice        *device = nullptr;
+        nvrhi::IDevice *device = nullptr;
         /// Format/sample-count the mesh pipeline targets
         /// (e.g. Application::GetSceneFramebufferInfo()).
         nvrhi::FramebufferInfo framebufferInfo;
         /// Viewport size in pixels, for the initial cluster grid.
-        int32_t                width  = 0;
-        int32_t                height = 0;
+        int32_t width  = 0;
+        int32_t height = 0;
         /// Projection params (near/far/FOV) of the active camera.
-        Camera                 camera;
+        Camera camera;
         /// The scene AssetCache's bindless material-texture table + layout,
         /// threaded into the mesh pipeline (stage D). Must outlive the renderer.
-        nvrhi::IBindingLayout   *bindlessLayout = nullptr;
+        nvrhi::IBindingLayout *bindlessLayout = nullptr;
         nvrhi::IDescriptorTable *bindlessTable  = nullptr;
-        nvrhi::IBuffer          *materialTable  = nullptr;
+        nvrhi::IBuffer *materialTable  = nullptr;
         /// Editor overlay passes: selection outline, entity icons, overlay
         /// lines. Off by default — they cost three extra pipelines and load
         /// editor-only assets (assets/editor/**), and a game has no use for
@@ -282,7 +282,7 @@ class SceneRenderer
     /// @brief Convenience for a single-mesh outline group. See SubmitOutlineGroup.
     void SubmitOutline(const Render::MeshBuffer *mesh, const glm::mat4 &model, const glm::vec3 &color);
 
-  private:
+private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
 
@@ -307,17 +307,17 @@ class SceneRenderer
     /// SetIconSuppressedEntities) — it is marked in the world some other way.
     [[nodiscard]] bool IsIconSuppressed(ECS::Entity entity) const;
 
-    nvrhi::IDevice     *_device = nullptr;
-    LightingSystem      _lighting;
-    Render::MeshPass    _meshPass;
+    nvrhi::IDevice *_device = nullptr;
+    LightingSystem _lighting;
+    Render::MeshPass _meshPass;
     // GPU-driven cull (stage F1): the compute cull pass + the reused host-side
     // table builder it uploads from. Initialized alongside the mesh pass; the draw
     // path uses them only when _gpuCulling is on (else the CPU path runs).
-    Render::MeshCuller       _meshCuller;
+    Render::MeshCuller _meshCuller;
     Render::CullTableBuilder _cullBuilder;
     Render::OutlinePass _outlinePass;
-    Render::IconPass    _iconPass;
-    Render::LinePass    _linePass;
+    Render::IconPass _iconPass;
+    Render::LinePass _linePass;
 
     // The entities drawn with a selection outline this frame (empty = none).
     std::vector<ECS::Entity> _highlightedEntities;
@@ -342,7 +342,7 @@ class SceneRenderer
     struct OutlineGroup
     {
         std::vector<Render::OutlinePass::OutlineItem> items;
-        glm::vec3                                     color;
+        glm::vec3 color;
     };
     std::vector<OutlineGroup> _outlineGroups;
     // Entities whose editor icon is suppressed this frame (drawn some other way).
@@ -362,12 +362,12 @@ class SceneRenderer
     // triggers a rebuild. Identity forces one on the first frame.
     glm::mat4 _clusterProjection{1.f};
 
-    bool      _frustumCulling = true; // default draw path culls off-screen meshes
-    bool      _sortDraws      = true; // default draw path sorts by sort key before submit
-    bool      _gpuCulling     = false; // GPU-driven cull path (stage F1); CPU path is the default reference
+    bool _frustumCulling = true;      // default draw path culls off-screen meshes
+    bool _sortDraws      = true;      // default draw path sorts by sort key before submit
+    bool _gpuCulling     = false;      // GPU-driven cull path (stage F1); CPU path is the default reference
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
-    float     _ambientIntensity = Render::kDefaultAmbientIntensity;         // == the constant this replaced
+    float _ambientIntensity = Render::kDefaultAmbientIntensity;             // == the constant this replaced
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene

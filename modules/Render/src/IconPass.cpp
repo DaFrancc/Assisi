@@ -130,7 +130,7 @@ void IconPass::Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, c
 
     // The camera basis and transform are the same for every icon; only the centre
     // changes, so set the state once and vary the push constant per billboard.
-    constexpr float   half = 0.5f * kEntityIconWorldSize;
+    constexpr float half = 0.5f * kEntityIconWorldSize;
     IconPushConstants pc;
     pc.viewProjection = viewProjection;
     pc.rightHalf      = glm::vec4(cameraRight * half, 0.f);

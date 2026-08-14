@@ -29,7 +29,7 @@ namespace
 /// report at all.
 class Rng
 {
-  public:
+public:
     explicit Rng(std::uint64_t seed) : _state(seed ? seed : 0x9E3779B97F4A7C15ULL) {}
 
     std::uint64_t Next()
@@ -42,7 +42,7 @@ class Rng
 
     std::uint32_t Below(std::uint32_t bound) { return static_cast<std::uint32_t>(Next() % bound); }
 
-  private:
+private:
     std::uint64_t _state;
 };
 
@@ -119,9 +119,9 @@ TEST_CASE("BitStream: odd bit widths round-trip and cross byte boundaries")
     // implementation gets wrong and a byte-aligned test would never reach.
     const std::array<std::uint32_t, 12> widths{1, 2, 3, 5, 7, 9, 11, 13, 17, 19, 31, 32};
 
-    BitWriter                  writer;
+    BitWriter writer;
     std::vector<std::uint32_t> values;
-    Rng                        rng(0xA55A);
+    Rng rng(0xA55A);
     for (const std::uint32_t width : widths)
     {
         const std::uint32_t mask  = width >= 32 ? 0xFFFFFFFFu : ((1u << width) - 1u);
@@ -235,7 +235,7 @@ TEST_CASE("BitStream: a varint of all-continuation bytes is rejected, not looped
     // 11 bytes with the continuation bit set: a corrupted stream must not keep
     // the decoder consuming.
     std::vector<std::byte> corrupt(11, std::byte{0xFF});
-    BitReader              reader(corrupt);
+    BitReader reader(corrupt);
     CHECK(reader.ReadVarUInt64() == 0);
     CHECK(reader.Failed());
 }
@@ -262,7 +262,7 @@ TEST_CASE("BitStream: ReadStringInto fails rather than truncating into a short b
     writer.WriteString("0123456789");
 
     BitReader reader(writer.Data());
-    char      buffer[4] = {};
+    char buffer[4] = {};
     CHECK(reader.ReadStringInto(buffer, sizeof(buffer)) == 0);
     CHECK(reader.Failed()); // a string that does not fit means the types disagree
 }
@@ -290,10 +290,10 @@ TEST_CASE("BitStream: quantized floats round-trip within their step size")
 {
     // Not used by the v1 field encoders — this pins the primitive the deferred
     // quantizers will build on, so "bit-capable" is a tested claim.
-    constexpr float       kMin  = -100.f;
-    constexpr float       kMax  = 100.f;
+    constexpr float kMin  = -100.f;
+    constexpr float kMax  = 100.f;
     constexpr std::uint32_t kBits = 12;
-    const float           step  = (kMax - kMin) / static_cast<float>((1u << kBits) - 1u);
+    const float step  = (kMax - kMin) / static_cast<float>((1u << kBits) - 1u);
 
     const std::array<float, 6> values{-100.f, -37.5f, 0.f, 0.001f, 99.9f, 100.f};
 
@@ -436,7 +436,7 @@ TEST_CASE("BitStream: bit-flipped buffers never read out of bounds")
     writer.WriteBits(0x3u, 3);
 
     const std::vector<std::byte> original = ToBytes(writer);
-    Rng                          rng(0xC0FFEE);
+    Rng rng(0xC0FFEE);
 
     for (std::int32_t iteration = 0; iteration < 4000; ++iteration)
     {
@@ -448,7 +448,7 @@ TEST_CASE("BitStream: bit-flipped buffers never read out of bounds")
         const std::uint32_t flips = 1u + rng.Below(3);
         for (std::uint32_t f = 0; f < flips; ++f)
         {
-            const std::size_t   bitIndex = rng.Below(static_cast<std::uint32_t>(corrupt.size() * 8u));
+            const std::size_t bitIndex = rng.Below(static_cast<std::uint32_t>(corrupt.size() * 8u));
             const std::uint32_t bit      = 1u << (bitIndex % 8u);
             corrupt[bitIndex / 8u] ^= static_cast<std::byte>(static_cast<std::uint8_t>(bit));
         }
@@ -474,7 +474,7 @@ TEST_CASE("BitStream: random buffers decoded as arbitrary structure stay in boun
 
     for (std::int32_t iteration = 0; iteration < 2000; ++iteration)
     {
-        const std::size_t      size = rng.Below(64);
+        const std::size_t size = rng.Below(64);
         std::vector<std::byte> noise(size);
         for (std::byte &byte : noise)
             byte = static_cast<std::byte>(static_cast<std::uint8_t>(rng.Next()));

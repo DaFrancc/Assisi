@@ -166,7 +166,7 @@ TEST_CASE("Scene: ReviveAt restores exact handles across a Clear")
     // host's world in the play scene, and a load Clears — which leaves the
     // registry with no slots at all. The snapshot's handles must still land
     // exactly, or every stored handle in the undo history dangles.
-    Scene        scene;
+    Scene scene;
     const Entity first  = scene.Create();
     scene.Create();
     scene.Create();
@@ -226,8 +226,8 @@ struct Unreflected
 TEST_CASE("Scene: adding an unreflected component trips a contract assert")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    Scene                                     scene;
-    const Entity                              e = scene.Create();
+    Scene scene;
+    const Entity e = scene.Create();
 
     CHECK_THROWS_AS((void)scene.Add<Unreflected>(e), Assisi::Core::ContractViolation);
 }
@@ -236,7 +236,7 @@ TEST_CASE("Scene: adding an unreflected component trips a contract assert")
 // crash — so defensive Has/Get on a never-added type stays safe.
 TEST_CASE("Scene: reads of an unreflected component are safe and empty")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     CHECK_FALSE(scene.Has<Unreflected>(e));
     CHECK(scene.Get<Unreflected>(e) == nullptr);

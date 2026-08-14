@@ -52,7 +52,7 @@ struct PreparedComponent
     /// Which component this is. The name is kept beside the id because an
     /// instance's overrides address components by name.
     Core::Reflect::ComponentId id = Core::Reflect::kInvalidComponentId;
-    std::string                name;
+    std::string name;
 
     /// A full-state component block, with every EntityRef encoded as the *member
     /// index* it points at rather than a handle. Spawning maps those to the live
@@ -168,7 +168,7 @@ struct BlueprintDefinition
 /// known. A caller that asked for `lot.abp` learns that an instance cycle exists;
 /// the chain that proves it (`lot.abp -> car.abp -> lot.abp`) is in the log.
 /// Same split as NameError in Naming.hpp.
-enum class BlueprintError
+enum class BlueprintError : std::uint8_t
 {
     FileUnreadable,    ///< The asset system could not read the file, or one it instances.
     MalformedJson,     ///< Read, but not parseable as JSON.
@@ -312,7 +312,7 @@ struct BlueprintInstance
     /// editor has a record to add to. There are no *runtime* overrides: a caller
     /// that wants a red car writes the component after spawning, which is typed,
     /// direct, and expresses things overrides cannot (§5).
-    nlohmann::json           overrides = nlohmann::json::object();
+    nlohmann::json overrides = nlohmann::json::object();
     std::vector<std::string> removed;
 };
 
@@ -326,7 +326,7 @@ struct BlueprintInstance
 /// across a save/load and nothing may assume they are.
 class InstanceTable
 {
-  public:
+public:
     /// @brief Adds a row and returns its fresh id (never 0).
     ECS::InstanceId Add(BlueprintInstance instance);
 
@@ -358,7 +358,7 @@ class InstanceTable
 
     [[nodiscard]] std::size_t Size() const { return _rows.size(); }
 
-  private:
+private:
     std::unordered_map<ECS::InstanceId, BlueprintInstance> _rows;
     /// The next id to hand out. A raw counter rather than an InstanceId because
     /// this is the one place that does arithmetic on the number — which is exactly
@@ -480,7 +480,7 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// replaces them stands off by the difference (round-7 S16). The front is the
 /// anchor because the *first* entity selected is a stable choice and the last is
 /// not — an author Ctrl-clicking three more things should not move the origin.
-[[nodiscard]] ECS::Transform AuthoringOriginFor(const ECS::Scene            &scene,
+[[nodiscard]] ECS::Transform AuthoringOriginFor(const ECS::Scene &scene,
                                                 std::span<const ECS::Entity> entities);
 
 /// @brief Rewrites every reflected EntityRef field in @p components by prepending

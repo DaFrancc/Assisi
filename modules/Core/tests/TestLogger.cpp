@@ -106,7 +106,7 @@ TEST_CASE("ParseLogLevel refuses anything that is not a name")
 TEST_CASE("SetMinLevel suppresses everything below it")
 {
     const LevelGuard guard;
-    auto             sink = std::make_shared<CapturingSink>();
+    auto sink = std::make_shared<CapturingSink>();
     GetLogger().AddSink(sink);
 
     GetLogger().SetMinLevel(LogLevel::Warn);

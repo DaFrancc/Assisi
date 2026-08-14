@@ -37,7 +37,7 @@ namespace Assisi::App
 /// meant to kill the child, not to lose track of it.
 class ChildProcess
 {
-  public:
+public:
     ChildProcess() = default;
     ~ChildProcess();
 
@@ -56,7 +56,7 @@ class ChildProcess
     /// reason is logged; there is no half-spawned state to clean up.
     bool Spawn(const std::filesystem::path &executable, const std::vector<std::string> &args,
                const std::vector<std::string> &environment = {},
-               const std::filesystem::path   &workingDirectory = {});
+               const std::filesystem::path &workingDirectory = {});
 
     /// @brief Whether the child is still alive.
     ///
@@ -74,7 +74,7 @@ class ChildProcess
     [[nodiscard]] bool  Valid() const { return _pid > 0; }
     [[nodiscard]] std::int64_t Pid() const { return _pid; }
 
-  private:
+private:
     /// The platform process id; 0 means "no child". Signed because POSIX pids
     /// are, and because a negative value is how the failure is spelled there.
     std::int64_t _pid = 0;

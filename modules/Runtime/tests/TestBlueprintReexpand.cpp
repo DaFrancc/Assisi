@@ -46,7 +46,7 @@ namespace
 std::filesystem::path FreshRoot(const std::string &name)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / ("assisi_rx_" + name);
-    std::error_code             ec;
+    std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
@@ -64,7 +64,7 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
 nlohmann::json At(float x, float y, float z)
 {
     return {{"Transform",
-             {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
+        {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
 }
 
 nlohmann::json Entity(const std::string &name, nlohmann::json components)
@@ -76,8 +76,8 @@ nlohmann::json Entity(const std::string &name, nlohmann::json components)
 nlohmann::json CrateFile()
 {
     return {{"version", 2},
-            {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                                Entity("lid", At(0.f, 1.f, 0.f))})}};
+        {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
+                                            Entity("lid", At(0.f, 1.f, 0.f))})}};
 }
 
 /// The member names a definition currently declares — what ReexpandInstance needs
@@ -117,10 +117,10 @@ TEST_CASE("Re-expand: a member the edit left alone is the same entity afterwards
     const std::filesystem::path root = FreshRoot("identity");
     Write(root, "crate.abp", CrateFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
-    const auto    placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 5.f),
-                                                          /*authored=*/true);
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 5.f),
+                                                       /*authored=*/ true);
     REQUIRE(placed.has_value());
 
     const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
@@ -133,8 +133,8 @@ TEST_CASE("Re-expand: a member the edit left alone is the same entity afterwards
     // The edit: the lid moves. Nothing is added or removed.
     Write(root, "crate.abp",
           {{"version", 2},
-           {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                               Entity("lid", At(0.f, 3.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
+                                                  Entity("lid", At(0.f, 3.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
@@ -163,7 +163,7 @@ TEST_CASE("Re-expand: a member's name does not drift with every edit to the file
     const std::filesystem::path root = FreshRoot("namedrift");
     Write(root, "crate.abp", CrateFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
 
     // The level entity that made the member step aside in the first place.
@@ -171,7 +171,7 @@ TEST_CASE("Re-expand: a member's name does not drift with every edit to the file
     (void)scene.Add(authored, Runtime::Name{Core::EntityName{"body"}});
 
     const auto placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 5.f),
-                                                       /*authored=*/true);
+                                                       /*authored=*/ true);
     REQUIRE(placed.has_value());
 
     const ECS::Entity body = MemberNamed(scene, table, placed->instanceId, "body");
@@ -185,8 +185,8 @@ TEST_CASE("Re-expand: a member's name does not drift with every edit to the file
     // An edit somewhere else entirely: the lid moves.
     Write(root, "crate.abp",
           {{"version", 2},
-           {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                               Entity("lid", At(0.f, 3.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
+                                                  Entity("lid", At(0.f, 3.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     REQUIRE(SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before).has_value());
@@ -202,10 +202,10 @@ TEST_CASE("Re-expand: reordering the file remaps every surviving member's index"
     const std::filesystem::path root = FreshRoot("reorder");
     Write(root, "crate.abp", CrateFile()); // body is index 0, lid is index 1
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
-    const auto    placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 5.f),
-                                                          /*authored=*/true);
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 5.f),
+                                                       /*authored=*/ true);
     REQUIRE(placed.has_value());
 
     const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
@@ -225,8 +225,8 @@ TEST_CASE("Re-expand: reordering the file remaps every surviving member's index"
     // which is why none of them can tell a working remap from no remap at all.
     Write(root, "crate.abp",
           {{"version", 2},
-           {"entities", nlohmann::json::array({Entity("lid", At(0.f, 1.f, 0.f)),
-                                               Entity("body", At(0.f, 0.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("lid", At(0.f, 1.f, 0.f)),
+                                                  Entity("body", At(0.f, 0.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
@@ -293,10 +293,10 @@ TEST_CASE("Re-expand: a deleted member is reported and destroyed, an added one a
     const std::filesystem::path root = FreshRoot("addremove");
     Write(root, "crate.abp", CrateFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
-    const auto    placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 0.f),
-                                                          /*authored=*/true);
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 0.f),
+                                                       /*authored=*/ true);
     REQUIRE(placed.has_value());
 
     const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
@@ -306,8 +306,8 @@ TEST_CASE("Re-expand: a deleted member is reported and destroyed, an added one a
     // The lid goes, a handle arrives.
     Write(root, "crate.abp",
           {{"version", 2},
-           {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                               Entity("handle", At(1.f, 0.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
+                                                  Entity("handle", At(1.f, 0.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
@@ -339,17 +339,17 @@ TEST_CASE("Re-expand: the instance's own record survives an edit to the file it 
     const std::filesystem::path root = FreshRoot("record");
     Write(root, "crate.abp", CrateFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
 
     // An instance that moved its own lid — the recorded override the whole format
     // exists to keep separate from the file's value.
     LevelInstance entry     = CrateAt("crate_1", 0.f);
     entry.overrides["lid"]  = {{"Transform",
-                                {{"position", {0.f, 9.f, 0.f}},
-                                 {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                 {"scale", {1.f, 1.f, 1.f}}}}};
-    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true);
+        {{"position", {0.f, 9.f, 0.f}},
+            {"rotation", {1.f, 0.f, 0.f, 0.f}},
+            {"scale", {1.f, 1.f, 1.f}}}}};
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
 
     const std::vector<std::string> before = MemberNames("crate.abp");
@@ -359,8 +359,8 @@ TEST_CASE("Re-expand: the instance's own record survives an edit to the file it 
     // re-expansion.
     Write(root, "crate.abp",
           {{"version", 2},
-           {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                               Entity("lid", At(0.f, 2.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
+                                                  Entity("lid", At(0.f, 2.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     const auto result = SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before);
@@ -383,10 +383,10 @@ TEST_CASE("Re-expand: a file that no longer loads changes nothing")
     const std::filesystem::path root = FreshRoot("broken");
     Write(root, "crate.abp", CrateFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
-    const auto    placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 0.f),
-                                                          /*authored=*/true);
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, CrateAt("crate_1", 0.f),
+                                                       /*authored=*/ true);
     REQUIRE(placed.has_value());
 
     const ECS::Entity bodyBefore = MemberNamed(scene, table, placed->instanceId, "body");
@@ -397,8 +397,8 @@ TEST_CASE("Re-expand: a file that no longer loads changes nothing")
     // to re-expand to.
     Write(root, "crate.abp",
           {{"version", 2},
-           {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
-                                               Entity("body", At(1.f, 0.f, 0.f))})}});
+              {"entities", nlohmann::json::array({Entity("body", At(0.f, 0.f, 0.f)),
+                                                  Entity("body", At(1.f, 0.f, 0.f))})}});
     Runtime::InvalidateBlueprint("crate.abp");
 
     CHECK_FALSE(SceneSerializer::ReexpandInstance(scene, table, placed->instanceId, before).has_value());
@@ -415,7 +415,7 @@ TEST_CASE("Re-expand: an unknown instance is refused")
     const std::filesystem::path root = FreshRoot("unknown");
     Write(root, "crate.abp", CrateFile());
 
-    ECS::Scene    scene;
+    ECS::Scene scene;
     InstanceTable table;
     CHECK_FALSE(SceneSerializer::ReexpandInstance(scene, table, ECS::InstanceId{7}, {}).has_value());
 }

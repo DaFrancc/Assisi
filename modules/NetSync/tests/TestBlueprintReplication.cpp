@@ -50,7 +50,7 @@ namespace
 /// Stands in for App's instance table. Only the three facts the server needs.
 class FakeInstances final : public InstanceInfoProvider
 {
-  public:
+public:
     void Add(ECS::InstanceId id, std::uint32_t memberCount, std::uint32_t blueprintIndex = 0)
     {
         InstanceInfo info;
@@ -84,22 +84,22 @@ class FakeInstances final : public InstanceInfoProvider
         return matchEverything;
     }
 
-    int  describeCalls   = 0;
+    int describeCalls   = 0;
     bool matchEverything = false;
 
-  private:
+private:
     std::unordered_map<ECS::InstanceId, InstanceInfo> _rows;
 };
 
 struct Fixture
 {
-    Net::NetTransport                               transport;
-    ECS::Scene                                      scene;
-    ECS::Scene                                      clientScene;
+    Net::NetTransport transport;
+    ECS::Scene scene;
+    ECS::Scene clientScene;
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
-    ReplicationServer                               server;
-    ReplicationClient                               client;
-    FakeInstances                                  *instances = nullptr;
+    ReplicationServer server;
+    ReplicationClient client;
+    FakeInstances *instances = nullptr;
 
     Fixture() : pair(transport.CreateLoopbackPair()), server(transport, scene), client(transport, clientScene, pair.second)
     {
@@ -122,13 +122,13 @@ struct Fixture
     /// While set, the client's acks are buffered instead of delivered. The only
     /// way to put a leave and a re-entry *inside* one round trip, which is the
     /// case the instance-granular re-entry rule exists for.
-    bool                                holdAcks = false;
+    bool holdAcks = false;
     std::vector<std::vector<std::byte>> heldAcks;
 
     /// While set, snapshots are built and counted as sent but never delivered.
     /// Packet loss, in other words — which is the only way to reach the states
     /// that only exist because a snapshot the server believes in never landed.
-    bool          dropSnapshots    = false;
+    bool dropSnapshots    = false;
     std::uint32_t snapshotsDropped = 0;
 
     /// One delivery pass, no tick. Separate because a snapshot built on a tick is
@@ -317,7 +317,7 @@ TEST_CASE("Blueprint replication: an instance the provider cannot describe repli
 TEST_CASE("Blueprint replication: with no provider installed, nothing blocks")
 {
     Net::NetTransport transport;
-    ECS::Scene        scene;
+    ECS::Scene scene;
     ReplicationServer server{transport, scene};
 
     const ECS::Entity entity = scene.Create();
@@ -358,16 +358,16 @@ TEST_CASE("Blueprint replication: a member index outside the block is refused, n
 TEST_CASE("Blueprint replication: the record survives a round trip and is idempotent")
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
-    const auto        pair = transport.CreateLoopbackPair();
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
+    const auto pair = transport.CreateLoopbackPair();
 
     ReplicationServer server{transport, serverScene};
     ReplicationClient client{transport, clientScene, pair.second};
 
-    auto  owned     = std::make_unique<FakeInstances>();
+    auto owned     = std::make_unique<FakeInstances>();
     auto *instances = owned.get();
-    instances->Add(ECS::InstanceId{1}, 2, /*blueprintIndex=*/4);
+    instances->Add(ECS::InstanceId{1}, 2, /*blueprintIndex=*/ 4);
     server.SetInstanceInfoProvider(std::move(owned));
 
     for (std::uint32_t index = 0; index < 2; ++index)
@@ -424,7 +424,7 @@ namespace
 /// which is all the binding needs to be checked.
 class FakeExpander final : public InstanceExpander
 {
-  public:
+public:
     explicit FakeExpander(std::uint32_t produce = 0) : _produce(produce) {}
 
     [[nodiscard]] bool Expand(const InstanceRecord &record, std::vector<ECS::Entity> &out,
@@ -449,15 +449,15 @@ class FakeExpander final : public InstanceExpander
 
     void Collapse(ECS::InstanceId localInstance) override { collapsed.push_back(localInstance); }
 
-    ECS::Scene                  *scene = nullptr;
-    bool                         fail  = false;
-    int                          calls = 0;
+    ECS::Scene *scene = nullptr;
+    bool fail  = false;
+    int calls = 0;
     std::vector<ECS::InstanceId> collapsed;
     /// What this expander answered for each record, so a test can name the id it
     /// chose rather than the server's — which is the whole point of the pair.
     std::unordered_map<NetId, ECS::InstanceId> expandedByBase;
 
-  private:
+private:
     std::uint32_t _produce = 0;
 };
 
@@ -466,18 +466,18 @@ class FakeExpander final : public InstanceExpander
 TEST_CASE("Blueprint replication: the client expands a record into bound members")
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
-    const auto        pair = transport.CreateLoopbackPair();
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
+    const auto pair = transport.CreateLoopbackPair();
 
     ReplicationServer server{transport, serverScene};
     ReplicationClient client{transport, clientScene, pair.second};
 
-    auto  ownedInfo = std::make_unique<FakeInstances>();
+    auto ownedInfo = std::make_unique<FakeInstances>();
     ownedInfo->Add(ECS::InstanceId{1}, 3);
     server.SetInstanceInfoProvider(std::move(ownedInfo));
 
-    auto  ownedExpander = std::make_unique<FakeExpander>();
+    auto ownedExpander = std::make_unique<FakeExpander>();
     auto *expander      = ownedExpander.get();
     expander->scene     = &clientScene;
     client.SetInstanceExpander(std::move(ownedExpander));
@@ -529,9 +529,9 @@ TEST_CASE("Blueprint replication: the client expands a record into bound members
 TEST_CASE("Blueprint replication: a replicated tag names the client's instance, not the server's")
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
-    const auto        pair = transport.CreateLoopbackPair();
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
+    const auto pair = transport.CreateLoopbackPair();
 
     ReplicationServer server{transport, serverScene};
     ReplicationClient client{transport, clientScene, pair.second};
@@ -544,7 +544,7 @@ TEST_CASE("Blueprint replication: a replicated tag names the client's instance, 
     ownedInfo->Add(serverInstance, 2);
     server.SetInstanceInfoProvider(std::move(ownedInfo));
 
-    auto  ownedExpander = std::make_unique<FakeExpander>();
+    auto ownedExpander = std::make_unique<FakeExpander>();
     auto *expander      = ownedExpander.get();
     expander->scene     = &clientScene;
     client.SetInstanceExpander(std::move(ownedExpander));
@@ -579,7 +579,7 @@ TEST_CASE("Blueprint replication: a replicated tag names the client's instance, 
     }
 
     const InstanceRecord &entry  = client.InstanceRecords().begin()->second;
-    const ECS::Entity     mirror = client.EntityOf(entry.base);
+    const ECS::Entity mirror = client.EntityOf(entry.base);
     REQUIRE(mirror != ECS::NullEntity);
 
     const ECS::BlueprintMember *tag = clientScene.Get<ECS::BlueprintMember>(mirror);
@@ -595,9 +595,9 @@ TEST_CASE("Blueprint replication: a replicated tag names the client's instance, 
 TEST_CASE("Blueprint replication: an expansion that comes up short is refused")
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
-    const auto        pair = transport.CreateLoopbackPair();
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
+    const auto pair = transport.CreateLoopbackPair();
 
     ReplicationServer server{transport, serverScene};
     ReplicationClient client{transport, clientScene, pair.second};
@@ -608,7 +608,7 @@ TEST_CASE("Blueprint replication: an expansion that comes up short is refused")
 
     // Two members where the record says three: the disagreement that would bind
     // member ids to the wrong entities if it were tolerated.
-    auto  ownedExpander = std::make_unique<FakeExpander>(/*produce=*/2);
+    auto ownedExpander = std::make_unique<FakeExpander>(/*produce=*/ 2);
     auto *expander      = ownedExpander.get();
     expander->scene     = &clientScene;
     client.SetInstanceExpander(std::move(ownedExpander));
@@ -661,17 +661,17 @@ struct InstanceSession
     /// right.
     static constexpr ECS::InstanceId kServerInstance{7};
 
-    Net::NetTransport                               transport;
-    ECS::Scene                                      serverScene;
-    ECS::Scene                                      clientScene;
+    Net::NetTransport transport;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
-    ReplicationServer                               server;
-    ReplicationClient                               client;
-    std::uint64_t                                   tick = 1;
+    ReplicationServer server;
+    ReplicationClient client;
+    std::uint64_t tick = 1;
 
     InstanceSession()
         : pair(transport.CreateLoopbackPair()), server(transport, serverScene),
-          client(transport, clientScene, pair.second)
+        client(transport, clientScene, pair.second)
     {
         auto ownedInfo = std::make_unique<FakeInstances>();
         ownedInfo->Add(kServerInstance, 2);
@@ -786,7 +786,7 @@ namespace
 /// one wheel" and nothing else.
 class PickyProvider final : public RelevancyProvider
 {
-  public:
+public:
     void Compute(const RelevancyQuery &query, std::vector<NetId> &out) override
     {
         (void)query;
@@ -812,7 +812,7 @@ TEST_CASE("Blueprint replication: naming one member pulls the whole instance")
     const NetId base = fixture.server.NetIdOf(members[0]);
     REQUIRE(base != InvalidNetId);
 
-    auto  owned    = std::make_unique<PickyProvider>();
+    auto owned    = std::make_unique<PickyProvider>();
     auto *provider = owned.get();
     // One wheel, and nothing else at all — not even the loose entity.
     provider->named = {NetId{base.value + 2}};
@@ -841,7 +841,7 @@ TEST_CASE("Blueprint replication: leaving and re-entering resends the record")
     fixture.AssignIds();
     const NetId base = fixture.server.NetIdOf(members[0]);
 
-    auto  owned     = std::make_unique<PickyProvider>();
+    auto owned     = std::make_unique<PickyProvider>();
     auto *provider  = owned.get();
     provider->named = {base};
     fixture.server.SetRelevancyProvider(std::move(owned));
@@ -885,7 +885,7 @@ TEST_CASE("Blueprint replication: a dead member is not resurrected by its siblin
     fixture.AssignIds();
     const NetId base = fixture.server.NetIdOf(members[0]);
 
-    auto  owned    = std::make_unique<PickyProvider>();
+    auto owned    = std::make_unique<PickyProvider>();
     auto *provider = owned.get();
     provider->named = {base};
     fixture.server.SetRelevancyProvider(std::move(owned));
@@ -907,14 +907,14 @@ TEST_CASE("Blueprint replication: a dead member is not resurrected by its siblin
 TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
-    const auto        pair = transport.CreateLoopbackPair();
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
+    const auto pair = transport.CreateLoopbackPair();
 
     ReplicationServer server{transport, serverScene};
     ReplicationClient client{transport, clientScene, pair.second};
 
-    auto  owned     = std::make_unique<FakeInstances>();
+    auto owned     = std::make_unique<FakeInstances>();
     auto *instances = owned.get();
     instances->Add(ECS::InstanceId{1}, 6);
     server.SetInstanceInfoProvider(std::move(owned));
@@ -935,24 +935,24 @@ TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
     server.AddConnection(pair.first);
 
     std::uint64_t tick = 1;
-    const auto    step = [&](int times)
-    {
-        for (int i = 0; i < times; ++i)
-        {
-            std::vector<Net::NetEvent> events;
-            transport.Poll(events);
-            for (const Net::NetEvent &event : events)
-            {
-                if (event.type != Net::NetEvent::Type::Message)
-                    continue;
-                if (event.connection == pair.first)
-                    server.HandleMessage(pair.first, event.payload);
-                else
-                    client.HandleMessage(event.payload);
-            }
-            server.Tick(tick++);
-        }
-    };
+    const auto step = [&](int times)
+                      {
+                          for (int i = 0; i < times; ++i)
+                          {
+                              std::vector<Net::NetEvent> events;
+                              transport.Poll(events);
+                              for (const Net::NetEvent &event : events)
+                              {
+                                  if (event.type != Net::NetEvent::Type::Message)
+                                      continue;
+                                  if (event.connection == pair.first)
+                                      server.HandleMessage(pair.first, event.payload);
+                                  else
+                                      client.HandleMessage(event.payload);
+                              }
+                              server.Tick(tick++);
+                          }
+                      };
 
     step(10);
     REQUIRE(client.ReplicatedEntityCount() == 6);
@@ -975,20 +975,20 @@ TEST_CASE("Blueprint replication: destroying an instance costs one despawn run")
 TEST_CASE("Blueprint replication: a retired record collapses the instance the expander built")
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
-    const auto        pair = transport.CreateLoopbackPair();
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
+    const auto pair = transport.CreateLoopbackPair();
 
     ReplicationServer server{transport, serverScene};
     ReplicationClient client{transport, clientScene, pair.second};
 
-    auto  owned     = std::make_unique<FakeInstances>();
+    auto owned     = std::make_unique<FakeInstances>();
     auto *instances = owned.get();
     instances->Add(ECS::InstanceId{1}, 3);
     instances->Add(ECS::InstanceId{2}, 3);
     server.SetInstanceInfoProvider(std::move(owned));
 
-    auto  ownedExpander = std::make_unique<FakeExpander>();
+    auto ownedExpander = std::make_unique<FakeExpander>();
     auto *expander      = ownedExpander.get();
     expander->scene     = &clientScene;
     client.SetInstanceExpander(std::move(ownedExpander));
@@ -997,18 +997,18 @@ TEST_CASE("Blueprint replication: a retired record collapses the instance the ex
     // that something was. One alone passes against a fix that collapses every
     // instance it has whenever any record retires.
     const auto build = [&](ECS::InstanceId instanceId)
-    {
-        std::vector<ECS::Entity> members;
-        for (std::uint32_t index = 0; index < 3; ++index)
-        {
-            const ECS::Entity entity = serverScene.Create();
-            (void)serverScene.Add(entity, ECS::Transform{});
-            (void)serverScene.Add(entity, Replicated{});
-            (void)serverScene.Add(entity, ECS::BlueprintMember{.instanceId = instanceId, .memberIndex = index});
-            members.push_back(entity);
-        }
-        return members;
-    };
+                       {
+                           std::vector<ECS::Entity> members;
+                           for (std::uint32_t index = 0; index < 3; ++index)
+                           {
+                               const ECS::Entity entity = serverScene.Create();
+                               (void)serverScene.Add(entity, ECS::Transform{});
+                               (void)serverScene.Add(entity, Replicated{});
+                               (void)serverScene.Add(entity, ECS::BlueprintMember{.instanceId = instanceId, .memberIndex = index});
+                               members.push_back(entity);
+                           }
+                           return members;
+                       };
     const std::vector<ECS::Entity> first  = build(ECS::InstanceId{1});
     const std::vector<ECS::Entity> second = build(ECS::InstanceId{2});
 
@@ -1017,24 +1017,24 @@ TEST_CASE("Blueprint replication: a retired record collapses the instance the ex
     server.AddConnection(pair.first);
 
     std::uint64_t tick = 1;
-    const auto    step = [&](int times)
-    {
-        for (int i = 0; i < times; ++i)
-        {
-            std::vector<Net::NetEvent> events;
-            transport.Poll(events);
-            for (const Net::NetEvent &event : events)
-            {
-                if (event.type != Net::NetEvent::Type::Message)
-                    continue;
-                if (event.connection == pair.first)
-                    server.HandleMessage(pair.first, event.payload);
-                else
-                    client.HandleMessage(event.payload);
-            }
-            server.Tick(tick++);
-        }
-    };
+    const auto step = [&](int times)
+                      {
+                          for (int i = 0; i < times; ++i)
+                          {
+                              std::vector<Net::NetEvent> events;
+                              transport.Poll(events);
+                              for (const Net::NetEvent &event : events)
+                              {
+                                  if (event.type != Net::NetEvent::Type::Message)
+                                      continue;
+                                  if (event.connection == pair.first)
+                                      server.HandleMessage(pair.first, event.payload);
+                                  else
+                                      client.HandleMessage(event.payload);
+                              }
+                              server.Tick(tick++);
+                          }
+                      };
 
     step(10);
     REQUIRE(client.InstanceRecords().size() == 2);
@@ -1120,7 +1120,7 @@ ECS::Entity ClassifiedMember(Fixture &fixture, ECS::InstanceId id, std::uint32_t
 /// and "was this rebuilt or did a bare mirror appear" is answerable.
 FakeExpander *InstallExpander(Fixture &fixture)
 {
-    auto  owned = std::make_unique<FakeExpander>();
+    auto owned = std::make_unique<FakeExpander>();
     auto *raw   = owned.get();
     raw->scene  = &fixture.clientScene;
     fixture.client.SetInstanceExpander(std::move(owned));
@@ -1157,7 +1157,7 @@ TEST_CASE("Blueprint replication: escalation does not hand out a ControllerOnly 
     const NetId base = fixture.server.NetIdOf(body);
     REQUIRE(base != InvalidNetId);
 
-    auto  owned    = std::make_unique<PickyProvider>();
+    auto owned    = std::make_unique<PickyProvider>();
     auto *provider = owned.get();
     // One ordinary member, and nothing else. Everything else about this instance
     // reaches the connection through escalation.
@@ -1229,7 +1229,7 @@ TEST_CASE("Blueprint replication: escalation still delivers a ControllerOnly mem
     const NetId base = fixture.server.NetIdOf(body);
     REQUIRE(base != InvalidNetId);
 
-    auto  owned    = std::make_unique<PickyProvider>();
+    auto owned    = std::make_unique<PickyProvider>();
     auto *provider = owned.get();
     // Again only the ordinary member: the private one arrives, if it arrives at
     // all, through escalation.
@@ -1275,7 +1275,7 @@ TEST_CASE("Blueprint replication: escalation costs each relevant block its membe
     REQUIRE(firstBase != InvalidNetId);
     REQUIRE(secondBase != InvalidNetId);
 
-    auto  owned    = std::make_unique<PickyProvider>();
+    auto owned    = std::make_unique<PickyProvider>();
     auto *provider = owned.get();
     // The worst case for the old loop and the ordinary case in a real session:
     // every member of two instances is independently relevant. The third is named
@@ -1338,7 +1338,7 @@ TEST_CASE("Blueprint replication: skipping over an escalated block still sees th
     // The boundary the case is about: nothing sits between the two blocks.
     REQUIRE(secondBase.value == firstBase.value + 4);
 
-    auto  owned    = std::make_unique<PickyProvider>();
+    auto owned    = std::make_unique<PickyProvider>();
     auto *provider = owned.get();
     // The last member of the first block and the first of the second — the two
     // ids either side of the seam, and nothing else.
@@ -1390,7 +1390,7 @@ TEST_CASE("Blueprint replication: two adjacent instances leaving together take b
 
     FakeExpander *expander = InstallExpander(fixture);
 
-    auto  owned     = std::make_unique<PickyProvider>();
+    auto owned     = std::make_unique<PickyProvider>();
     auto *provider  = owned.get();
     provider->named = {firstBase, secondBase};
     fixture.server.SetRelevancyProvider(std::move(owned));
@@ -1484,7 +1484,7 @@ TEST_CASE("Blueprint replication: a stale ack cannot reinstate an instance the c
 
     FakeExpander *expander = InstallExpander(fixture);
 
-    auto  owned     = std::make_unique<PickyProvider>();
+    auto owned     = std::make_unique<PickyProvider>();
     auto *provider  = owned.get();
     provider->named = {base};
     fixture.server.SetRelevancyProvider(std::move(owned));
@@ -1546,9 +1546,9 @@ TEST_CASE("Blueprint replication: the record section pays the snapshot byte budg
     // Paginated now: what fits goes, the rest waits, and no instance is left
     // behind.
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
-    const auto        pair = transport.CreateLoopbackPair();
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
+    const auto pair = transport.CreateLoopbackPair();
 
     // Small enough that twenty records cannot possibly share one snapshot with
     // sixty entity blocks: a record is ~52 bytes, so the section alone wants
@@ -1567,7 +1567,7 @@ TEST_CASE("Blueprint replication: the record section pays the snapshot byte budg
         ownedInfo->Add(ECS::InstanceId{instance}, kMembers);
     server.SetInstanceInfoProvider(std::move(ownedInfo));
 
-    auto  ownedExpander = std::make_unique<FakeExpander>();
+    auto ownedExpander = std::make_unique<FakeExpander>();
     auto *expander      = ownedExpander.get();
     expander->scene     = &clientScene;
     client.SetInstanceExpander(std::move(ownedExpander));
@@ -1588,7 +1588,7 @@ TEST_CASE("Blueprint replication: the record section pays the snapshot byte budg
     client.SetContentSetHash(0);
     server.AddConnection(pair.first);
 
-    std::size_t   largestSnapshot = 0;
+    std::size_t largestSnapshot = 0;
     std::uint64_t tick            = 1;
     for (int step = 0; step < 60; ++step)
     {
@@ -1668,7 +1668,7 @@ TEST_CASE("Blueprint replication: a member the client never expanded is not elid
     fixture.Step(8);
 
     REQUIRE(HasLiveMirror(fixture, NetId{base.value + 1}));
-    const ECS::Entity          mirror = fixture.client.EntityOf(NetId{base.value + 1});
+    const ECS::Entity mirror = fixture.client.EntityOf(NetId{base.value + 1});
     const ECS::Transform *const seen  = fixture.clientScene.Get<ECS::Transform>(mirror);
     REQUIRE(seen != nullptr); // elided, and the mirror has no Transform at all
     CHECK(seen->position.x == doctest::Approx(12.f));
@@ -1950,7 +1950,7 @@ namespace
 struct ForgedRecord
 {
     std::uint32_t blueprintIndex = 0;
-    NetId         base           = InvalidNetId;
+    NetId base           = InvalidNetId;
     std::uint32_t memberCount    = 0;
 };
 
@@ -2035,12 +2035,12 @@ TEST_CASE("Blueprint replication: a record whose block wraps the id space is ref
     // with the guard deleted.
     Fixture fixture;
     const ECS::Entity mirror   = VictimAtNetIdOne(fixture);
-    FakeExpander     *expander = InstallExpander(fixture);
+    FakeExpander *expander = InstallExpander(fixture);
 
     const std::uint64_t rejectedBefore = fixture.client.SnapshotsRejected();
     fixture.client.HandleMessage(ForgeSnapshot(
-        /*serverTick=*/10'000, {ForgedRecord{.blueprintIndex = 0, .base = NetId{0xFFFFFFFFu}, .memberCount = 3}},
-        {}));
+                                     /*serverTick=*/ 10'000, {ForgedRecord{.blueprintIndex = 0, .base = NetId{0xFFFFFFFFu}, .memberCount = 3}},
+                                     {}));
 
     CHECK(fixture.client.SnapshotsRejected() == rejectedBefore + 1);
     // Refused before the expansion, not after it: a record that cannot be bound
@@ -2066,7 +2066,7 @@ TEST_CASE("Blueprint replication: a despawn run that wraps the id space is refus
     const ECS::Entity mirror = VictimAtNetIdOne(fixture);
 
     const std::uint64_t rejectedBefore = fixture.client.SnapshotsRejected();
-    fixture.client.HandleMessage(ForgeSnapshot(/*serverTick=*/10'000, {}, {{NetId{0xFFFFFFFFu}, 3}}));
+    fixture.client.HandleMessage(ForgeSnapshot(/*serverTick=*/ 10'000, {}, {{NetId{0xFFFFFFFFu}, 3}}));
 
     CHECK(fixture.client.SnapshotsRejected() == rejectedBefore + 1);
     CHECK(fixture.client.EntityOf(NetId{1}) == mirror);
@@ -2080,7 +2080,7 @@ TEST_CASE("Blueprint replication: a block and a run ending at the last id are st
     // is legitimate. An off-by-one guard — `>=` where `>` belongs, or comparing
     // `base + memberCount` against the last id rather than one past it — refuses
     // this and passes both cases above.
-    Fixture       fixture;
+    Fixture fixture;
     FakeExpander *expander = InstallExpander(fixture);
     fixture.Connect();
     fixture.Step(4);
@@ -2088,7 +2088,7 @@ TEST_CASE("Blueprint replication: a block and a run ending at the last id are st
     constexpr NetId kTopBase{0xFFFFFFFDu};
     const std::uint64_t rejectedBefore = fixture.client.SnapshotsRejected();
     fixture.client.HandleMessage(ForgeSnapshot(
-        /*serverTick=*/10'000, {ForgedRecord{.blueprintIndex = 0, .base = kTopBase, .memberCount = 3}}, {}));
+                                     /*serverTick=*/ 10'000, {ForgedRecord{.blueprintIndex = 0, .base = kTopBase, .memberCount = 3}}, {}));
 
     CHECK(fixture.client.SnapshotsRejected() == rejectedBefore);
     CHECK(expander->calls == 1);
@@ -2097,7 +2097,7 @@ TEST_CASE("Blueprint replication: a block and a run ending at the last id are st
         CHECK(HasLiveMirror(fixture, NetId{kTopBase.value + member}));
 
     // ...and the run that takes it away again ends on the last id too.
-    fixture.client.HandleMessage(ForgeSnapshot(/*serverTick=*/10'001, {}, {{kTopBase, 3}}));
+    fixture.client.HandleMessage(ForgeSnapshot(/*serverTick=*/ 10'001, {}, {{kTopBase, 3}}));
 
     CHECK(fixture.client.SnapshotsRejected() == rejectedBefore);
     for (std::uint32_t member = 0; member < 3; ++member)

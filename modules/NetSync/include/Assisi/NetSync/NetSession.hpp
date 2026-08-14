@@ -56,19 +56,19 @@ struct SessionStats
 
     // Both roles.
     std::int32_t pingMs           = 0;
-    float        connectionQuality = 0.f; ///< 0..1; negative means "not measured yet".
-    float        inBytesPerSec    = 0.f;
-    float        outBytesPerSec   = 0.f;
+    float connectionQuality = 0.f;        ///< 0..1; negative means "not measured yet".
+    float inBytesPerSec    = 0.f;
+    float outBytesPerSec   = 0.f;
 
     // Host.
-    std::size_t   clientCount        = 0;
+    std::size_t clientCount        = 0;
     std::uint64_t snapshotsSent      = 0;
     std::uint64_t bytesSent          = 0;
     std::uint64_t replicatedEntities = 0;
 
     // Client.
-    bool          synchronized      = false;
-    bool          worldComplete     = false;
+    bool synchronized      = false;
+    bool worldComplete     = false;
     std::uint64_t snapshotsApplied  = 0;
     std::uint64_t snapshotsRejected = 0;
     std::uint64_t serverTick        = 0;
@@ -80,8 +80,8 @@ struct SessionStats
     // window, and whoever is drawing this already has both.
     std::uint64_t correctionsApplied = 0;
     std::uint64_t correctionBytes    = 0;
-    float         divergenceMean     = 0.f; ///< Metres, averaged over every correction so far.
-    float         divergenceMax      = 0.f; ///< Metres, worst since the session began.
+    float divergenceMean     = 0.f;         ///< Metres, averaged over every correction so far.
+    float divergenceMax      = 0.f;         ///< Metres, worst since the session began.
     std::uint64_t mirrorsResurrected = 0;
 
     // Host.
@@ -113,7 +113,7 @@ struct SessionStats
 
 class NetSession
 {
-  public:
+public:
     /// @param scene The scene this session replicates *from* (host) or *into*
     ///   (client). Captured by reference and must outlive the session — which
     ///   is why an application that swaps scenes should destroy the session
@@ -300,12 +300,12 @@ class NetSession
     /// @brief The replication client, client only. Null when not joined.
     [[nodiscard]] ReplicationClient *Client() { return _client.get(); }
 
-  private:
+private:
     void EnsureTransport();
 
-    ECS::Scene            &_scene;
+    ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
-    ReplicationConfig      _config;
+    ReplicationConfig _config;
 
     /// Created on the first Host()/Join() and destroyed on Disconnect(), so an
     /// offline process never initializes the networking library at all.
@@ -314,13 +314,13 @@ class NetSession
     std::unique_ptr<ReplicationClient>  _client;
     std::unique_ptr<NetClock>           _clock;
 
-    SessionRole                    _role       = SessionRole::Offline;
-    Net::ConnectionId              _connection = Net::InvalidConnection;
+    SessionRole _role       = SessionRole::Offline;
+    Net::ConnectionId _connection = Net::InvalidConnection;
     std::vector<Net::ConnectionId> _clients;
     std::vector<Net::NetEvent>     _events;
-    InputCommandBuffer             _inputBuffer;
-    std::string                    _lastError;
-    std::uint64_t                  _simTick = 0;
+    InputCommandBuffer _inputBuffer;
+    std::string _lastError;
+    std::uint64_t _simTick = 0;
 };
 
 } // namespace Assisi::NetSync

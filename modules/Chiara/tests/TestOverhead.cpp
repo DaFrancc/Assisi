@@ -69,24 +69,24 @@ TEST_CASE("A scope costs what the notes claim it does")
     Assisi::Chiara::SetRecording(false);
     const double disabledNanos = NanosPerIteration(kIterations,
                                                    []
-                                                   {
-                                                       ASSISI_PROFILE_SCOPE("overhead-disabled");
-                                                   });
+    {
+        ASSISI_PROFILE_SCOPE("overhead-disabled");
+    });
 
     // Recording on: two clock reads, the shadow-stack seqlock, and a 32-byte
     // ring store.
     Assisi::Chiara::SetRecording(true);
     const double enabledNanos = NanosPerIteration(kIterations,
                                                   []
-                                                  {
-                                                      ASSISI_PROFILE_SCOPE("overhead-enabled");
-                                                  });
+    {
+        ASSISI_PROFILE_SCOPE("overhead-enabled");
+    });
 
     const double counterNanos = NanosPerIteration(kIterations,
                                                   []
-                                                  {
-                                                      ASSISI_PROFILE_COUNTER("overhead/counter", 1.0);
-                                                  });
+    {
+        ASSISI_PROFILE_COUNTER("overhead/counter", 1.0);
+    });
 
     std::printf("\n[chiara] measured overhead, %d iterations each:\n"
                 "         scope, not recording : %6.2f ns\n"

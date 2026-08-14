@@ -20,7 +20,7 @@ namespace Assisi::Window
 /// returned by Acquire().
 class GlfwLibrary
 {
-  public:
+public:
     /// @brief Calls `glfwInit()`.  Sets `_isValid` to false on failure.
     GlfwLibrary();
 
@@ -45,7 +45,7 @@ class GlfwLibrary
     /// @return A shared_ptr to the singleton GlfwLibrary.
     [[nodiscard]] static std::shared_ptr<GlfwLibrary> Acquire();
 
-  private:
+private:
     /// @brief True after a successful `glfwInit()`.
     bool _isValid = false;
 };

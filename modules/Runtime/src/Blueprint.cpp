@@ -37,7 +37,7 @@ bool HasUniformScale(const ECS::Transform &transform)
     constexpr float kTolerance = 1e-5f;
 
     const glm::vec3 &scale = transform.scale;
-    const float      mean  = (std::abs(scale.x) + std::abs(scale.y) + std::abs(scale.z)) / 3.f;
+    const float mean  = (std::abs(scale.x) + std::abs(scale.y) + std::abs(scale.z)) / 3.f;
     if (mean <= 0.f)
         return scale.x == scale.y && scale.y == scale.z;
 
@@ -57,19 +57,19 @@ ECS::Transform TransformFromJson(const nlohmann::json &value)
     // *placement*, whose caller (an instance entry) has already been validated,
     // and there is nothing here to hand a failure back to.
     const auto readAll = [&value](const char *key, std::size_t count, float *into)
-    {
-        const auto it = value.find(key);
-        if (it == value.end() || !it->is_array() || it->size() != count)
-            return false;
-        for (std::size_t i = 0; i < count; ++i)
-        {
-            if (!(*it)[i].is_number())
-                return false;
-        }
-        for (std::size_t i = 0; i < count; ++i)
-            into[i] = (*it)[i].get<float>();
-        return true;
-    };
+                         {
+                             const auto it = value.find(key);
+                             if (it == value.end() || !it->is_array() || it->size() != count)
+                                 return false;
+                             for (std::size_t i = 0; i < count; ++i)
+                             {
+                                 if (!(*it)[i].is_number())
+                                     return false;
+                             }
+                             for (std::size_t i = 0; i < count; ++i)
+                                 into[i] = (*it)[i].get<float>();
+                             return true;
+                         };
 
     float scratch[4] = {};
     if (readAll("position", 3, scratch))
@@ -85,9 +85,9 @@ ECS::Transform TransformFromJson(const nlohmann::json &value)
 nlohmann::json TransformToJson(const ECS::Transform &transform)
 {
     return {{"position", {transform.position.x, transform.position.y, transform.position.z}},
-            {"rotation",
-             {transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z}},
-            {"scale", {transform.scale.x, transform.scale.y, transform.scale.z}}};
+        {"rotation",
+         {transform.rotation.w, transform.rotation.x, transform.rotation.y, transform.rotation.z}},
+        {"scale", {transform.scale.x, transform.scale.y, transform.scale.z}}};
 }
 
 ECS::Transform ComposeTransform(const ECS::Transform &placement, const ECS::Transform &local)
@@ -248,14 +248,14 @@ std::string UniqueInstanceName(const InstanceTable &table, std::string_view stem
 {
     return UniqueName(stem,
                       [&table](std::string_view candidate)
-                      {
-                          for (const auto &[id, row] : table.All())
-                          {
-                              if (row->name == candidate)
-                                  return true;
-                          }
-                          return false;
-                      });
+        {
+            for (const auto &[id, row] : table.All())
+            {
+                if (row->name == candidate)
+                    return true;
+            }
+            return false;
+        });
 }
 
 std::vector<LevelInstance> InstancesForSave(const InstanceTable &table)
@@ -412,14 +412,14 @@ void QualifyOverrideReferences(nlohmann::json &componentOverrides, std::string_v
         nlohmann::json wrapper{{componentName, claim}};
         ForEachEntityRef(wrapper,
                          [writerPrefix, targetPrefix](std::string_view name)
-                         {
-                             if (!name.empty() && name.front() == '/')
-                             {
-                                 name.remove_prefix(1);
-                                 return std::string{writerPrefix} + std::string{name};
-                             }
-                             return std::string{targetPrefix} + std::string{name};
-                         });
+            {
+                if (!name.empty() && name.front() == '/')
+                {
+                    name.remove_prefix(1);
+                    return std::string{writerPrefix} + std::string{name};
+                }
+                return std::string{targetPrefix} + std::string{name};
+            });
         claim = wrapper.at(componentName);
     }
 }
@@ -428,15 +428,15 @@ void QualifyInstanceReferences(nlohmann::json &components, std::string_view pref
 {
     ForEachEntityRef(components,
                      [prefix](std::string_view name)
-                     {
-                         // By now every reference a blueprint could resolve already is
-                         // (the invariant on QualifyReferences), so a surviving slash
-                         // can only be level-scoped: it names an entity of the file that
-                         // placed this instance, and must not take the instance prefix.
-                         if (!name.empty() && name.front() == '/')
-                             return std::string{name.substr(1)};
-                         return std::string{prefix} + std::string{name};
-                     });
+        {
+            // By now every reference a blueprint could resolve already is
+            // (the invariant on QualifyReferences), so a surviving slash
+            // can only be level-scoped: it names an entity of the file that
+            // placed this instance, and must not take the instance prefix.
+            if (!name.empty() && name.front() == '/')
+                return std::string{name.substr(1)};
+            return std::string{prefix} + std::string{name};
+        });
 }
 
 void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &componentOverrides,
@@ -555,7 +555,7 @@ std::expected<nlohmann::json, BlueprintError> ReadFile(std::string_view source)
         return std::unexpected(BlueprintError::FileUnreadable);
     }
 
-    nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/false);
+    nlohmann::json doc = nlohmann::json::parse(*text, nullptr, /*allow_exceptions=*/ false);
     if (doc.is_discarded())
     {
         Core::Log::Error("Blueprint: '{}' is not readable JSON.", source);
@@ -573,7 +573,7 @@ std::expected<nlohmann::json, BlueprintError> ReadFile(std::string_view source)
 
 struct FlattenState
 {
-    BlueprintDefinition                    *out;
+    BlueprintDefinition *out;
     std::vector<std::string>                stack;   ///< Sources currently being flattened, for cycle detection.
     std::unordered_set<std::string>         declared; ///< Member names claimed so far.
 };
@@ -849,7 +849,7 @@ BlueprintResult GetBlueprintDefinition(std::string_view source)
 
         FlattenState state{.out = definition.get(), .stack = {std::string{source}}, .declared = {}};
         if (const std::expected<void, BlueprintError> flattened =
-                FlattenInto(state, *doc, source, /*prefix=*/"", ECS::Transform{});
+                FlattenInto(state, *doc, source, /*prefix=*/ "", ECS::Transform{});
             !flattened)
         {
             return std::unexpected(flattened.error());
@@ -889,10 +889,10 @@ void InvalidateBlueprint(std::string_view source)
     // changes the lot's definition too.
     std::erase_if(Cache(),
                   [source](const auto &entry)
-                  {
-                      const std::vector<std::string> &closure = entry.second->closure;
-                      return std::find(closure.begin(), closure.end(), source) != closure.end();
-                  });
+        {
+            const std::vector<std::string> &closure = entry.second->closure;
+            return std::find(closure.begin(), closure.end(), source) != closure.end();
+        });
 }
 
 } // namespace Assisi::Runtime

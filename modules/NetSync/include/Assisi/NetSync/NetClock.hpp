@@ -67,7 +67,7 @@ struct NetClockConfig
 /// with.
 class NetClock
 {
-  public:
+public:
     explicit NetClock(double tickRateHz, NetClockConfig config = {});
 
     /// @brief Take a snapshot's clock feedback.
@@ -112,13 +112,13 @@ class NetClock
     /// a full rejoin).
     void Reset();
 
-  private:
+private:
     /// @brief Ticks that fit in @p milliseconds, rounded up — rounding down
     /// would systematically under-lead, and under-leading is the failure that
     /// drops input.
     [[nodiscard]] std::uint32_t MillisecondsToTicks(std::int32_t milliseconds) const;
 
-    double         _tickRateHz;
+    double _tickRateHz;
     NetClockConfig _config;
 
     std::uint64_t _clientTick   = 0;
@@ -127,7 +127,7 @@ class NetClock
     std::uint32_t _lead         = 0;
     std::uint32_t _targetLead   = 0;
     std::uint32_t _corrections  = 0;
-    bool          _hasFeedback  = false;
+    bool _hasFeedback  = false;
 };
 
 } // namespace Assisi::NetSync

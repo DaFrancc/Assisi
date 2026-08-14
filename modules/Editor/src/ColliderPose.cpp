@@ -34,7 +34,7 @@ const glm::mat4 *ParentWorld(const ECS::Scene &scene, ECS::Entity entity)
 
 glm::mat4 ColliderBodyModel(const ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &local)
 {
-    const glm::mat4     *parent = ParentWorld(scene, entity);
+    const glm::mat4 *parent = ParentWorld(scene, entity);
     const ECS::Transform pose   = parent != nullptr ? ECS::PoseUnderParent(local, *parent) : local;
 
     glm::mat4 model = glm::mat4_cast(pose.rotation);

@@ -71,7 +71,7 @@ TEST_CASE("ChildProcess: a child that exits on its own is noticed and reaped")
     // The case a play-in-editor client hits every time someone closes its
     // window by hand. Without the reap it would linger as a zombie for the rest
     // of the editor's life.
-    CHECK(WaitUntil(child, /*wantRunning=*/false, 5.0));
+    CHECK(WaitUntil(child, /*wantRunning=*/ false, 5.0));
     CHECK_FALSE(child.Valid());
 }
 

@@ -24,7 +24,7 @@ namespace Assisi::Render
 /// (read in shaders) and, optionally, a UAV (written by compute shaders).
 class Buffer
 {
-  public:
+public:
     Buffer() = default;
 
     /// @brief Allocates a new buffer sized for `capacityElements` elements of
@@ -32,7 +32,7 @@ class Buffer
     /// @param allowUnorderedAccess  true if a compute shader will write this
     /// buffer (UAV); false for buffers only ever read by shaders (SRV).
     void Create(nvrhi::IDevice *device, uint32_t elementStride, uint32_t capacityElements,
-               bool allowUnorderedAccess, const char *debugName);
+                bool allowUnorderedAccess, const char *debugName);
 
     /// @brief Writes `elementCount` elements of `data` starting at element 0.
     /// Elements beyond `CapacityElements()` are dropped; the first time that
@@ -48,11 +48,11 @@ class Buffer
     nvrhi::IBuffer *NativeBuffer() const { return _buffer; }
     uint32_t CapacityElements() const { return _capacityElements; }
 
-  private:
+private:
     nvrhi::BufferHandle _buffer;
-    uint32_t            _elementStride = 0;
-    uint32_t            _capacityElements = 0;
-    std::string         _debugName;
+    uint32_t _elementStride = 0;
+    uint32_t _capacityElements = 0;
+    std::string _debugName;
     // Upload() is const (it only records GPU commands), but the one-shot overflow
     // warning is per-buffer bookkeeping, hence mutable.
     mutable bool _overflowWarned = false;

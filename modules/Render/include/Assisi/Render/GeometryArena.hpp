@@ -30,7 +30,7 @@ namespace Assisi::Render
 {
 class GeometryArena
 {
-  public:
+public:
     /// @brief A mesh's sub-allocation: base offsets into the shared buffers.
     /// `vertexBase` feeds drawIndexed's startVertexLocation (baseVertex, added to
     /// every index); `indexBase` + a submesh's IndexOffset feeds startIndexLocation.
@@ -90,7 +90,7 @@ class GeometryArena
         range.indexCount = indexCount;
 
         nvrhi::CommandListHandle ownList;
-        nvrhi::ICommandList     *commandList = sharedList;
+        nvrhi::ICommandList *commandList = sharedList;
         if (commandList == nullptr)
         {
             ownList = _device->createCommandList();
@@ -177,7 +177,7 @@ class GeometryArena
     [[nodiscard]] uint64_t IndexUsedBytes() const { return _indexUsed; }
     [[nodiscard]] uint64_t IndexCapacityBytes() const { return _indexCapacity; }
 
-  private:
+private:
     void EnsureVertexCapacity(uint64_t needed, nvrhi::ICommandList *sharedList = nullptr)
     {
         Grow(_vertexBuffer, _vertexCapacity, _vertexUsed, needed, true, sharedList);
@@ -212,7 +212,7 @@ class GeometryArena
         if (used > 0)
         {
             nvrhi::CommandListHandle ownList;
-            nvrhi::ICommandList     *commandList = sharedList;
+            nvrhi::ICommandList *commandList = sharedList;
             if (commandList == nullptr)
             {
                 ownList = _device->createCommandList();
@@ -231,13 +231,13 @@ class GeometryArena
         capacity = newCapacity;
     }
 
-    nvrhi::IDevice     *_device = nullptr;
-    uint32_t            _vertexStride = 0;
+    nvrhi::IDevice *_device = nullptr;
+    uint32_t _vertexStride = 0;
     nvrhi::BufferHandle _vertexBuffer;
     nvrhi::BufferHandle _indexBuffer;
-    uint64_t            _vertexCapacity = 0;
-    uint64_t            _indexCapacity = 0;
-    uint64_t            _vertexUsed = 0;
-    uint64_t            _indexUsed = 0;
+    uint64_t _vertexCapacity = 0;
+    uint64_t _indexCapacity = 0;
+    uint64_t _vertexUsed = 0;
+    uint64_t _indexUsed = 0;
 };
 } /* namespace Assisi::Render */

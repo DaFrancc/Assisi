@@ -120,7 +120,7 @@ struct LevelHeader
 /// [0, 1] as the component-deserialize pass advances. Invoked on the thread
 /// that drives the load (a worker, for async travel), so an implementation
 /// that publishes to another thread must synchronise itself.
-using LoadProgressFn = std::function<void(float)>;
+using LoadProgressFn = std::function<void (float)>;
 
 /// @brief Everything a load can optionally be given. All inputs — what a failed
 /// load did to the scene comes back on the LevelFailure.
@@ -148,7 +148,7 @@ struct LoadOptions
 
 class SceneSerializer
 {
-  public:
+public:
     /// @brief Kept as a member name for the callers and signatures that spell it
     /// that way; LoadProgressFn above is the same type.
     using ProgressFn = LoadProgressFn;
@@ -459,7 +459,7 @@ class SceneSerializer
     /// raw) may be active per thread at a time.
     class ScopedRawEntityContext
     {
-      public:
+public:
         explicit ScopedRawEntityContext(ECS::Scene &scene);
         ~ScopedRawEntityContext();
 

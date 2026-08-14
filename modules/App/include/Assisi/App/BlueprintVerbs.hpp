@@ -64,7 +64,7 @@ namespace Assisi::App
 /// overrides cannot. Overrides are an authoring concept for files, and there is no
 /// file to write at runtime.
 [[nodiscard]] std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view source,
-                                                     const ECS::Transform &placement);
+                                                            const ECS::Transform &placement);
 
 /// @brief Destroys every live member of @p instanceId and drops its table row.
 ///

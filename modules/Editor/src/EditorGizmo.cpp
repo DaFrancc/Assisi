@@ -105,12 +105,12 @@ void EditorApp::DrawInstanceGizmo()
     ImGuizmo::SetDrawlist(ImGui::GetBackgroundDrawList());
     ImGuizmo::SetRect(viewport->Pos.x, viewport->Pos.y, viewport->Size.x, viewport->Size.y);
 
-    const float     aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
+    const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
     const glm::mat4 view   = Rt::ViewMatrix(_cameraTransform);
     const glm::mat4 proj   = Rt::ProjectionMatrix(_camera, aspect);
 
     const Rt::Transform placementBefore = row->transform;
-    glm::mat4           world           = TransformMatrix(placementBefore);
+    glm::mat4 world           = TransformMatrix(placementBefore);
 
     const float snapValue = _gizmoOp == GizmoOp::Translate ? kTranslateSnap
                             : _gizmoOp == GizmoOp::Rotate  ? kRotateSnap
@@ -302,7 +302,7 @@ void EditorApp::DrawTransformGizmo()
     // The same view/projection the scene renders with. Do not add a Y-flip: NVRHI
     // already flips the viewport, so what is on screen matches ImGuizmo's
     // convention as-is.
-    const float     aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
+    const float aspect = viewport->Size.y > 0.f ? viewport->Size.x / viewport->Size.y : 1.f;
     const glm::mat4 view   = Rt::ViewMatrix(_cameraTransform);
     const glm::mat4 proj   = Rt::ProjectionMatrix(_camera, aspect);
 
@@ -330,7 +330,7 @@ void EditorApp::DrawTransformGizmo()
     // is unfolded by the same matrix below, so nothing downstream has to know.
     glm::mat4 gizmoView = view;
     glm::mat4 instanceFrame(1.f);
-    bool      inInstanceFrame = false;
+    bool inInstanceFrame = false;
     if (_gizmoInstanceSpace && _world != nullptr)
     {
         if (const auto *tag = _scene->Get<Assisi::ECS::BlueprintMember>(_selectedEntity))
@@ -470,7 +470,7 @@ void EditorApp::DrawTransformGizmo()
 }
 
 void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
-                                       const glm::mat4 &world)
+                                      const glm::mat4 &world)
 {
     // Back to local against the parent's world; `parentWorld` is identity for a
     // root, where local and world are the same matrix.

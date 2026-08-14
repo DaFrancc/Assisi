@@ -24,7 +24,7 @@ namespace
 /// a per-session copy because it is inside the protocol hash: two ends that
 /// disagree refuse to pair, so "which session is this" never comes up.
 BodyQuantization gQuantization;
-ViewSmoothing    gSmoothing;
+ViewSmoothing gSmoothing;
 
 /// Bits for the smallest-three quaternion: two to say which component was
 /// dropped, then nine each for the rest.
@@ -67,7 +67,7 @@ glm::quat ReadQuaternion(Core::BitReader &reader)
     const std::uint32_t largest = reader.ReadBits(kQuatIndexBits);
 
     std::array<float, 4> components{};
-    float                sumOfSquares = 0.f;
+    float sumOfSquares = 0.f;
     for (std::uint32_t i = 0; i < 4; ++i)
     {
         if (i == largest)

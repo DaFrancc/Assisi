@@ -11,7 +11,25 @@
         clean-msvc-debug clean-msvc-dev clean-msvc-ship clean-msvc-asan clean-msvc-chiara clean-msvc \
         clean-gcc-debug clean-gcc-dev clean-gcc-ship clean-gcc-asan clean-gcc-tsan clean-gcc-chiara clean-gcc \
         clean-clang-debug clean-clang-dev clean-clang-ship clean-clang-asan clean-clang-tsan clean-clang-chiara \
-        clean-clang clean
+        clean-clang clean \
+        format format-check
+
+# Source formatting (.uncrustify.cfg). The reflectgen fixtures are excluded:
+# the golden is compared byte-for-byte against generator output and the fixture
+# is that generator's input, so formatting either breaks the reflectgen test.
+FORMAT_FILES = $(shell git ls-files '*.cpp' '*.hpp' '*.h' '*.cc' '*.hxx' \
+                       | grep -v '^tools/reflectgen/tests/golden/' \
+                       | grep -v '^tools/reflectgen/tests/fixtures/')
+
+# Twice: a first pass over unformatted source can leave a couple of files one
+# pass short of a fixed point, which then fails format-check.
+format:
+	uncrustify -c .uncrustify.cfg -l CPP --no-backup $(FORMAT_FILES)
+	uncrustify -c .uncrustify.cfg -l CPP --no-backup $(FORMAT_FILES)
+
+# Reports what `make format` would change, and fails if anything would.
+format-check:
+	uncrustify -c .uncrustify.cfg -l CPP --check $(FORMAT_FILES)
 
 # Configure presets (FetchContent downloads deps on first configure)
 configure-msvc:

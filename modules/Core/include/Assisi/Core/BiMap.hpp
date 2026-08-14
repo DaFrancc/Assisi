@@ -69,7 +69,7 @@ template <typename Left, typename Right, typename LeftHash = std::hash<Left>,
           typename RightHash = std::hash<Right>>
 class BiMap
 {
-  public:
+public:
     using LeftType   = Left;
     using RightType  = Right;
     using ForwardMap = std::unordered_map<Left, Right, LeftHash>;
@@ -185,8 +185,8 @@ class BiMap
 
     [[nodiscard]] Iterator end() const { return _byLeft.end(); }
 
-  private:
-    ForwardMap                                 _byLeft;
+private:
+    ForwardMap _byLeft;
     std::unordered_map<Right, Left, RightHash> _byRight;
 };
 
