@@ -73,7 +73,7 @@ struct RelevancyQuery
 /// verbatim is byte-identical to that path (pinned by test).
 class RelevancyProvider
 {
-  public:
+public:
     virtual ~RelevancyProvider() = default;
 
     RelevancyProvider()                                     = default;
@@ -125,7 +125,7 @@ struct InstanceInfo
 /// replicates as an ordinary entity — correct, just larger.
 class InstanceInfoProvider
 {
-  public:
+public:
     virtual ~InstanceInfoProvider() = default;
 
     InstanceInfoProvider()                                        = default;

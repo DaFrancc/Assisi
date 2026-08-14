@@ -42,7 +42,7 @@ namespace Assisi::Core
 struct AssetSubAsset
 {
     std::uint32_t slot = 0;  ///< Dense material-slot index in the mesh.
-    AssetId       material;  ///< The `.amat` GUID exploded for that slot.
+    AssetId material;        ///< The `.amat` GUID exploded for that slot.
 };
 
 /// @brief The deserialized contents of a `.aast` sidecar.

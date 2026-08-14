@@ -53,7 +53,7 @@ namespace
 std::filesystem::path FreshRoot()
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / "assisi_bpnet";
-    std::error_code             ec;
+    std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
@@ -71,7 +71,7 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
 nlohmann::json At(float x, float y, float z)
 {
     return {{"Transform",
-             {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
+        {{"position", {x, y, z}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}}};
 }
 
 /// A body and two wheels, every member replicated so the server hands the whole
@@ -86,9 +86,9 @@ nlohmann::json CarFile()
     right["Replicated"] = nlohmann::json::object();
 
     return {{"version", 2},
-            {"entities", nlohmann::json::array({{{"name", "body"}, {"components", body}},
-                                                {{"name", "wheel_l"}, {"components", left}},
-                                                {{"name", "wheel_r"}, {"components", right}}})}};
+        {"entities", nlohmann::json::array({{{"name", "body"}, {"components", body}},
+                                               {{"name", "wheel_l"}, {"components", left}},
+                                               {{"name", "wheel_r"}, {"components", right}}})}};
 }
 
 struct Fixture
@@ -101,16 +101,16 @@ struct Fixture
     App::World ownHost;
     App::World ownGuest;
 
-    App::World                                     &host;
-    App::World                                     &guest;
+    App::World &host;
+    App::World &guest;
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
-    NetSync::ReplicationServer                      server;
-    NetSync::ReplicationClient                      client;
-    std::uint64_t                                   tick = 0;
+    NetSync::ReplicationServer server;
+    NetSync::ReplicationClient client;
+    std::uint64_t tick = 0;
 
     Fixture()
         : host(ownHost), guest(ownGuest), pair(transport.CreateLoopbackPair()), server(transport, host.scene),
-          client(transport, guest.scene, pair.second)
+        client(transport, guest.scene, pair.second)
     {
     }
 
@@ -120,7 +120,7 @@ struct Fixture
     /// before the delegated-to constructor has created it.
     Fixture(App::World &hostWorld, App::World &guestWorld)
         : host(hostWorld), guest(guestWorld), pair(transport.CreateLoopbackPair()),
-          server(transport, host.scene), client(transport, guest.scene, pair.second)
+        server(transport, host.scene), client(transport, guest.scene, pair.second)
     {
     }
 
@@ -342,8 +342,8 @@ TEST_CASE("Blueprint over the wire: an untouched member costs no component bytes
     const App::ContentSet content = App::BuildContentSet();
 
     const ECS::Transform origin;
-    const std::uint64_t  derived = CarBytes(content.paths, origin, /*moveOne=*/false);
-    const std::uint64_t  sent    = CarBytes({}, origin, /*moveOne=*/false);
+    const std::uint64_t derived = CarBytes(content.paths, origin, /*moveOne=*/ false);
+    const std::uint64_t sent    = CarBytes({}, origin, /*moveOne=*/ false);
 
     // The members are identical to the file, so with a manifest their components
     // are not on the wire at all — the client already has them.
@@ -351,7 +351,7 @@ TEST_CASE("Blueprint over the wire: an untouched member costs no component bytes
 
     // ...and a member that actually differs is not elided, or the mirror would
     // be quietly wrong.
-    const std::uint64_t withEdit = CarBytes(content.paths, origin, /*moveOne=*/true);
+    const std::uint64_t withEdit = CarBytes(content.paths, origin, /*moveOne=*/ true);
     CHECK(withEdit > derived);
 
     // Spawned at the origin, which is the one placement where comparing a live
@@ -368,8 +368,8 @@ TEST_CASE("Blueprint over the wire: the saving survives a placement that is not 
     const App::ContentSet content = App::BuildContentSet();
 
     const ECS::Transform at      = MovedPlacement();
-    const std::uint64_t  derived = CarBytes(content.paths, at, /*moveOne=*/false);
-    const std::uint64_t  sent    = CarBytes({}, at, /*moveOne=*/false);
+    const std::uint64_t derived = CarBytes(content.paths, at, /*moveOne=*/ false);
+    const std::uint64_t sent    = CarBytes({}, at, /*moveOne=*/ false);
 
     // Nothing about a placement changes what the client can derive: it receives
     // the placement in the record and composes it onto the same file the host
@@ -510,8 +510,8 @@ TEST_CASE("Blueprint over the wire: a guest with no render services expands anyw
     // The standalone world every other case here uses (`manager == nullptr`) is
     // the other half of the same guard.
     App::WorldManager worlds;
-    App::World       &host  = worlds.Create("Host");
-    App::World       &guest = worlds.Create("Guest");
+    App::World &host  = worlds.Create("Host");
+    App::World &guest = worlds.Create("Guest");
 
     Fixture fixture{host, guest};
     fixture.Connect(content.paths);
@@ -585,7 +585,7 @@ TEST_CASE("Content set: the scan job delivers the paths it hashed")
     Write(root, "car.abp", CarFile());
     Write(root, "b_second.abp", CarFile());
 
-    Core::JobSystem        jobs;
+    Core::JobSystem jobs;
     App::ContentSetHashJob job;
     job.Start(jobs);
 
@@ -619,7 +619,7 @@ TEST_CASE("Join: every target answers the host's level the same way")
     SUBCASE("a host running no level")
     {
         NetSync::LevelIdentity level;
-        const auto             resolved = App::ResolveJoinLevel(level);
+        const auto resolved = App::ResolveJoinLevel(level);
         REQUIRE_FALSE(resolved.has_value());
         CHECK(resolved.error() == App::JoinLevelError::NoLevel);
     }
@@ -671,7 +671,7 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
     // The level's own copy of something the host owns, with a body — which is
     // what a joined client has after loading the same file the host did.
     const ECS::Entity replicated = world.scene.Create();
-    ECS::Transform    pose;
+    ECS::Transform pose;
     pose.position = {0.f, 10.f, 0.f};
     (void)world.scene.Add<ECS::Transform>(replicated, pose);
     (void)world.scene.Add<NetSync::Replicated>(replicated, NetSync::Replicated{});

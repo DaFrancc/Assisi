@@ -194,11 +194,11 @@ void EditorApp::StartPlay(NetIntent intent)
 
     const bool started = intent == NetIntent::Host
                              ? _netSession->Host(port, std::move(hostLevel))
-                             // Deferred: the ClientHello waits until this editor
-                             // has built the host's level, because a snapshot
-                             // applied against a world that does not exist yet
-                             // maps NetIds onto whatever is in those slots.
-                             : _netSession->Join(_netAddress.data(), port, /*deferHandshake=*/true);
+                         // Deferred: the ClientHello waits until this editor
+                         // has built the host's level, because a snapshot
+                         // applied against a world that does not exist yet
+                         // maps NetIds onto whatever is in those slots.
+                             : _netSession->Join(_netAddress.data(), port, /*deferHandshake=*/ true);
     if (!started)
     {
         // Copy the reason out before dropping the session that holds it.
@@ -642,7 +642,7 @@ void EditorApp::DeleteEntities(std::span<const Assisi::ECS::Entity> roots)
     // its components (two-phase, so Parent refs resolve); redo re-deletes. One
     // transaction for the whole gesture, so deleting five entities is one Ctrl-Z.
     Assisi::Editor::EditHistory *history = ActiveHistory();
-    Assisi::Editor::Transaction  txn;
+    Assisi::Editor::Transaction txn;
     if (history != nullptr)
     {
         const char *what = doomed.size() == 1  ? "Delete Entity"
@@ -696,8 +696,8 @@ void EditorApp::DrawGameControlWindow()
     // second place sessions start.
     struct NetModeEntry
     {
-        const char  *label;
-        NetIntent    intent;
+        const char *label;
+        NetIntent intent;
         std::int32_t clients;
     };
     static constexpr std::array<NetModeEntry, 6> kNetModes{{
@@ -720,17 +720,17 @@ void EditorApp::DrawGameControlWindow()
     // The one place a play session starts, so the key and the button cannot
     // drift into meaning different things.
     const auto runOrResume = [this, &netMode]
-    {
-        if (_playState == PlayState::Paused)
-        {
-            ResumePlay();
-            return;
-        }
+                             {
+                                 if (_playState == PlayState::Paused)
+                                 {
+                                     ResumePlay();
+                                     return;
+                                 }
 #if defined(ASSISI_NETWORKING)
-        _pieClientCount = netMode.clients;
+                                 _pieClientCount = netMode.clients;
 #endif
-        StartPlay(netMode.intent);
-    };
+                                 StartPlay(netMode.intent);
+                             };
 
     // F5 run/resume, F6 pause, F7 stop — handled here so the keys live with the
     // window that owns them (the pattern F11 follows in DrawOptionsWindow). Each
@@ -770,10 +770,10 @@ void EditorApp::DrawGameControlWindow()
     constexpr bool networked = false;
 #endif
     const auto netTooltip = [networked](const char *text)
-    {
-        if (networked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-            ImGui::SetTooltip("%s", text);
-    };
+                            {
+                                if (networked && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                                    ImGui::SetTooltip("%s", text);
+                            };
 
     // Run starts (from editing) or resumes (from paused); greyed while playing.
     // Pause is live only while playing and never while networked. Stop is live
@@ -919,9 +919,9 @@ void EditorApp::DrawGameControlWindow()
     // swaps. The level is whichever is selected in the Levels window.
     ImGui::SeparatorText("Seamless load");
 
-    const bool  loadingInFlight = _worlds.HasPendingLoad();
-    const bool  preloadReady    = _worlds.PendingLoadReady();
-    const auto  selectedLevel   = _levelFiles.empty()
+    const bool loadingInFlight = _worlds.HasPendingLoad();
+    const bool preloadReady    = _worlds.PendingLoadReady();
+    const auto selectedLevel   = _levelFiles.empty()
                                       ? std::string{}
                                       : _levelFiles[static_cast<std::size_t>(_selectedLevel)];
 
@@ -1097,64 +1097,64 @@ void EditorApp::DrawEntityListWindow()
         members[tag.instanceId].push_back(entity);
 
     const auto drawEntityRow = [&](Assisi::ECS::Entity entity)
-    {
-            _entityRowOrder.push_back(entity);
+                               {
+                                   _entityRowOrder.push_back(entity);
 
-            // The entity's Name if it has a non-empty one, its [index:generation] id
-            // otherwise. PushID(index) keeps rows distinct when two entities share a
-            // name.
-            char        label[64];
-            const auto *nameComp = _scene->Get<Assisi::Runtime::Name>(entity);
-            if (nameComp != nullptr && !nameComp->value.Empty())
-                nameComp->value.ToCStr(label, sizeof(label));
-            else
-                std::snprintf(label, sizeof(label), "Entity [%u:%u]", entity.index, entity.generation);
+                                   // The entity's Name if it has a non-empty one, its [index:generation] id
+                                   // otherwise. PushID(index) keeps rows distinct when two entities share a
+                                   // name.
+                                   char label[64];
+                                   const auto *nameComp = _scene->Get<Assisi::Runtime::Name>(entity);
+                                   if (nameComp != nullptr && !nameComp->value.Empty())
+                                       nameComp->value.ToCStr(label, sizeof(label));
+                                   else
+                                       std::snprintf(label, sizeof(label), "Entity [%u:%u]", entity.index, entity.generation);
 
-            ImGui::PushID(static_cast<int32_t>(entity.index));
-            // Mirrors are tinted: "why can't I move this one" should be answerable
-            // by looking rather than by clicking.
+                                   ImGui::PushID(static_cast<int32_t>(entity.index));
+                                   // Mirrors are tinted: "why can't I move this one" should be answerable
+                                   // by looking rather than by clicking.
 #if defined(ASSISI_NETWORKING)
-            const bool mirrored = _scene->Has<Assisi::NetSync::Mirrored>(entity);
+                                   const bool mirrored = _scene->Has<Assisi::NetSync::Mirrored>(entity);
 #else
-            constexpr bool mirrored = false; // nothing arrives from elsewhere
+                                   constexpr bool mirrored = false; // nothing arrives from elsewhere
 #endif
-            if (mirrored)
-                ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.55f, 0.75f, 1.f, 1.f});
+                                   if (mirrored)
+                                       ImGui::PushStyleColor(ImGuiCol_Text, ImVec4{0.55f, 0.75f, 1.f, 1.f});
 
-            const bool selected = IsSelected(entity);
-            if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowDoubleClick))
-            {
-                // Ctrl picks one more (or drops one); Shift takes everything between
-                // the last plain pick and here. A range needs the whole row order
-                // and half of it is still undrawn, so note the click and resolve it
-                // after the loops.
-                if (ImGui::GetIO().KeyShift)
-                    _pendingRangeTarget = entity;
-                else
-                    SelectEntity(entity, ImGui::GetIO().KeyCtrl ? SelectMode::Toggle : SelectMode::Replace);
+                                   const bool selected = IsSelected(entity);
+                                   if (ImGui::Selectable(label, selected, ImGuiSelectableFlags_AllowDoubleClick))
+                                   {
+                                       // Ctrl picks one more (or drops one); Shift takes everything between
+                                       // the last plain pick and here. A range needs the whole row order
+                                       // and half of it is still undrawn, so note the click and resolve it
+                                       // after the loops.
+                                       if (ImGui::GetIO().KeyShift)
+                                           _pendingRangeTarget = entity;
+                                       else
+                                           SelectEntity(entity, ImGui::GetIO().KeyCtrl ? SelectMode::Toggle : SelectMode::Replace);
 
-                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
-                {
-                    // Deferred: focusing reads the transform and starts an
-                    // animation, neither of which belongs inside the scan.
-                    focusRequest = entity;
-                }
-            }
-            if (mirrored)
-            {
-                ImGui::PopStyleColor();
-                if (ImGui::IsItemHovered())
-                    ImGui::SetTooltip("Mirrored — the host owns this entity. Read-only here.");
-            }
+                                       if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                                       {
+                                           // Deferred: focusing reads the transform and starts an
+                                           // animation, neither of which belongs inside the scan.
+                                           focusRequest = entity;
+                                       }
+                                   }
+                                   if (mirrored)
+                                   {
+                                       ImGui::PopStyleColor();
+                                       if (ImGui::IsItemHovered())
+                                           ImGui::SetTooltip("Mirrored — the host owns this entity. Read-only here.");
+                                   }
 
-            // Bring a just-created entity into view (once), centred in the list.
-            if (entity == _scrollToEntity)
-            {
-                ImGui::SetScrollHereY(0.5f);
-                _scrollToEntity = Assisi::ECS::NullEntity;
-            }
-            ImGui::PopID();
-    };
+                                   // Bring a just-created entity into view (once), centred in the list.
+                                   if (entity == _scrollToEntity)
+                                   {
+                                       ImGui::SetScrollHereY(0.5f);
+                                       _scrollToEntity = Assisi::ECS::NullEntity;
+                                   }
+                                   ImGui::PopID();
+                               };
 
     // Loose entities first: an instance is a group, and reads better as one block
     // than interleaved with whatever the scan happens to sit between its members.
@@ -1184,7 +1184,7 @@ void EditorApp::DrawEntityListWindow()
         // clicking a member is the other mode.
         const bool instanceSelected = _selectedInstance == instanceId && _selectedEntity == Assisi::ECS::NullEntity;
         ImGuiTreeNodeFlags flags    = ImGuiTreeNodeFlags_SpanAvailWidth | ImGuiTreeNodeFlags_OpenOnArrow |
-                                   ImGuiTreeNodeFlags_OpenOnDoubleClick;
+                                      ImGuiTreeNodeFlags_OpenOnDoubleClick;
         if (instanceSelected)
             flags |= ImGuiTreeNodeFlags_Selected;
 

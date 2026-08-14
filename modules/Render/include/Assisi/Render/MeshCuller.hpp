@@ -49,10 +49,10 @@ class Material;
 struct GpuObject
 {
     glm::mat4 model{1.f};
-    uint32_t  meshDescIndex = 0;
-    uint32_t  materialBase  = 0; ///< Into CullTables::objectMaterials.
-    uint32_t  materialCount = 0; ///< == the mesh's material-slot count.
-    uint32_t  _pad0         = 0;
+    uint32_t meshDescIndex = 0;
+    uint32_t materialBase  = 0;  ///< Into CullTables::objectMaterials.
+    uint32_t materialCount = 0;  ///< == the mesh's material-slot count.
+    uint32_t _pad0         = 0;
 };
 static_assert(sizeof(GpuObject) == 80, "GpuObject must match mesh_cull.comp's std430 Object.");
 
@@ -63,10 +63,10 @@ struct GpuMeshDesc
     glm::vec4 sphere{0.f};  ///< xyz = local center, w = radius.
     glm::vec4 aabbMin{0.f}; ///< xyz = local AABB min.
     glm::vec4 aabbMax{0.f}; ///< xyz = local AABB max.
-    uint32_t  vertexBase   = 0;
-    uint32_t  indexBase    = 0;
-    uint32_t  firstSubmesh = 0; ///< Into CullTables::submeshes (LOD0 first submesh).
-    uint32_t  submeshCount = 0; ///< LOD0 submesh count.
+    uint32_t vertexBase   = 0;
+    uint32_t indexBase    = 0;
+    uint32_t firstSubmesh = 0;  ///< Into CullTables::submeshes (LOD0 first submesh).
+    uint32_t submeshCount = 0;  ///< LOD0 submesh count.
 };
 static_assert(sizeof(GpuMeshDesc) == 64, "GpuMeshDesc must match mesh_cull.comp's std430 MeshDesc.");
 
@@ -96,7 +96,7 @@ struct GpuDrawArgs
     uint32_t indexCount    = 0;
     uint32_t instanceCount = 0;
     uint32_t firstIndex    = 0;
-    int32_t  vertexOffset  = 0;
+    int32_t vertexOffset  = 0;
     uint32_t firstInstance = 0;
 };
 static_assert(sizeof(GpuDrawArgs) == 20, "GpuDrawArgs must match VkDrawIndexedIndirectCommand's packed layout.");
@@ -136,8 +136,8 @@ struct MeshGeometry
     glm::vec4 sphere{0.f};  ///< xyz = local center, w = radius.
     glm::vec4 aabbMin{0.f}; ///< xyz = local AABB min.
     glm::vec4 aabbMax{0.f}; ///< xyz = local AABB max.
-    uint32_t  vertexBase = 0;
-    uint32_t  indexBase  = 0;
+    uint32_t vertexBase = 0;
+    uint32_t indexBase  = 0;
     std::span<const GpuSubMesh> lod0Submeshes; ///< LOD0 submeshes, in draw order.
 };
 
@@ -147,7 +147,7 @@ struct MeshGeometry
 /// resolved mesh + materials onto it.
 class CullTableBuilder
 {
-  public:
+public:
     /// @brief Drops all accumulated tables and the mesh dedup map for a new frame.
     void Reset();
 
@@ -177,8 +177,8 @@ class CullTableBuilder
 
     [[nodiscard]] const CullTables &Tables() const { return _tables; }
 
-  private:
-    CullTables                                _tables;
+private:
+    CullTables _tables;
     std::unordered_map<const void *, uint32_t> _meshIndex;
     // Object count per mesh descriptor (parallel to _tables.meshDescs), for
     // Finalize's per-batch instance-region sizing.
@@ -195,7 +195,7 @@ class CullTableBuilder
 /// via the swapped instance-buffer handle, the mesh pass's global set).
 class MeshCuller
 {
-  public:
+public:
     MeshCuller() = default;
 
     /// @brief Loads mesh_cull.comp and allocates the initial buffers.
@@ -236,7 +236,7 @@ class MeshCuller
 
     [[nodiscard]] bool IsValid() const { return _cullShader.IsValid(); }
 
-  private:
+private:
     /// @brief Grows @p buffer to hold @p neededElements of @p stride bytes if it
     /// can't already; sets @p _bindingSetDirty on a (re)allocation.
     void EnsureInput(Buffer &buffer, uint32_t stride, uint32_t neededElements, const char *debugName);
@@ -249,7 +249,7 @@ class MeshCuller
     void RebuildBindingSet();
 
     nvrhi::IDevice *_device = nullptr;
-    ComputeShader   _cullShader;
+    ComputeShader _cullShader;
 
     // Input SRV buffers (host-uploaded each Cull).
     Buffer _objectBuffer;
@@ -264,13 +264,13 @@ class MeshCuller
     // The stats buffer (2 uints: survivor instances, live batches) is a UAV cleared
     // and grown by the pass, read back for the overlay. All keepInitialState-seeded
     // so NVRHI tracks + barriers UAV↔IndirectArgument (and UAV↔CopyDest on upload).
-    Buffer              _instanceBuffer;
+    Buffer _instanceBuffer;
     nvrhi::BufferHandle _indirectBuffer;
     nvrhi::BufferHandle _statsBuffer;
-    uint32_t            _indirectCapacity = 0; // in commands
+    uint32_t _indirectCapacity = 0;            // in commands
 
     nvrhi::BindingSetHandle _cullBindingSet;
-    bool                    _bindingSetDirty = true;
+    bool _bindingSetDirty = true;
 
     uint32_t _lastMaxDraws   = 0; // candidate instance total (drawCapacity) of the last Cull
     uint32_t _lastBatchCount = 0; // indirect command count (batch count) of the last Cull
@@ -281,11 +281,11 @@ class MeshCuller
     // retired) — a few frames stale but never stalls the GPU. Ring depth ≥ frames
     // the swapchain keeps in flight.
     static constexpr uint32_t kReadbackFrames = 3;
-    nvrhi::BufferHandle       _statsReadback[kReadbackFrames];
-    uint32_t                  _readbackCursor        = 0;
-    uint32_t                  _readbackPrimed        = 0; // writes so far; < kReadbackFrames = not yet safe to read
-    uint32_t                  _lastSurvivorInstances = 0;
-    uint32_t                  _lastSurvivorBatches   = 0;
+    nvrhi::BufferHandle _statsReadback[kReadbackFrames];
+    uint32_t _readbackCursor        = 0;
+    uint32_t _readbackPrimed        = 0;                  // writes so far; < kReadbackFrames = not yet safe to read
+    uint32_t _lastSurvivorInstances = 0;
+    uint32_t _lastSurvivorBatches   = 0;
 };
 
 } // namespace Assisi::Render

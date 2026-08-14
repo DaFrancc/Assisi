@@ -1,3 +1,8 @@
+# NOT the authoritative formatter. `.uncrustify.cfg` is — run it with
+# `make format`. This file exists so that an editor formatting on save lands on
+# Allman/4/120 rather than clangd's LLVM default, which is 2-space and attaches
+# every brace. clang-format is not used on this tree because it cannot format a
+# lambda passed alongside other arguments without breaking the argument list.
 BasedOnStyle: Microsoft
 IndentWidth: 4
 TabWidth: 4

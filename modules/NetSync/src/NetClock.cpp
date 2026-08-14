@@ -27,7 +27,7 @@ void NetClock::OnSnapshot(const ClockFeedback &feedback, std::int32_t roundTripM
     // one tick for the frame it is sampled in, plus the cushion we want the
     // server to be holding when it gets there.
     const std::uint32_t oneWayTicks = MillisecondsToTicks(roundTripMs) / 2u + (roundTripMs > 0 ? 1u : 0u);
-    std::uint32_t       target      = oneWayTicks + 1u + _config.targetBufferDepth;
+    std::uint32_t target      = oneWayTicks + 1u + _config.targetBufferDepth;
 
     if (_hasFeedback)
     {

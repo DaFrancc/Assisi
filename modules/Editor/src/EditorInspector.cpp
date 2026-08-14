@@ -164,10 +164,10 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
     }
 
     const auto readEnum = [component](const FieldMeta *fm) -> std::int64_t
-    {
-        const void *fp = static_cast<const char *>(component) + fm->offset;
-        return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
-    };
+                          {
+                              const void *fp = static_cast<const char *>(component) + fm->offset;
+                              return ReadEnumValue(fp, fm->enumSize, fm->enumSigned);
+                          };
 
     // Fold from the root down toward `field` (chain front). `state` holds the
     // resolved visibility of the source one level up.
@@ -182,7 +182,7 @@ RadioVisibility EvaluateRadio(const void *component, const Assisi::Core::Reflect
             continue;
         }
         const std::int64_t current = readEnum(source);
-        bool               match   = false;
+        bool match   = false;
         for (const std::int64_t value : listener->radioValues)
         {
             if (current == value)
@@ -289,8 +289,8 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // silently round, so the open range stops at what is representable
             // rather than pretending to honour it.
             constexpr int64_t kExact   = 1LL << 53;
-            const int64_t     minBound = field.hasMin ? static_cast<int64_t>(field.minValue) : -kExact;
-            const int64_t     maxBound = field.hasMax ? static_cast<int64_t>(field.maxValue) : kExact;
+            const int64_t minBound = field.hasMin ? static_cast<int64_t>(field.minValue) : -kExact;
+            const int64_t maxBound = field.hasMax ? static_cast<int64_t>(field.maxValue) : kExact;
             edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_S64, fp, 1.f, &minBound, &maxBound,
                                        nullptr, ImGuiSliderFlags_AlwaysClamp);
             break;
@@ -298,8 +298,8 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         case FieldType::UInt64:
         {
             constexpr uint64_t kExact   = 1ULL << 53;
-            const uint64_t     minBound = field.hasMin ? static_cast<uint64_t>(field.minValue) : 0u;
-            const uint64_t     maxBound = field.hasMax ? static_cast<uint64_t>(field.maxValue) : kExact;
+            const uint64_t minBound = field.hasMin ? static_cast<uint64_t>(field.minValue) : 0u;
+            const uint64_t maxBound = field.hasMax ? static_cast<uint64_t>(field.maxValue) : kExact;
             edited = ImGui::DragScalar(field.name.c_str(), ImGuiDataType_U64, fp, 1.f, &minBound, &maxBound,
                                        nullptr, ImGuiSliderFlags_AlwaysClamp);
             break;
@@ -312,7 +312,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // Stored as the underlying integer, whose width varies per AENUM —
             // hence the read/write at field.enumSize rather than a plain int.
             const std::int64_t value = ReadEnumValue(fp, field.enumSize, field.enumSigned);
-            const char        *preview = "(unknown)";
+            const char *preview = "(unknown)";
             for (const auto &constant : field.enumConstants)
             {
                 if (constant.value == value)
@@ -344,7 +344,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         {
             // Core::ShortString is the only String type today.
             auto *str = static_cast<Assisi::Core::ShortString *>(fp);
-            char  buf[Assisi::Core::kShortStringMax + 1];
+            char buf[Assisi::Core::kShortStringMax + 1];
             str->ToCStr(buf, sizeof(buf));
             if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
             {
@@ -358,7 +358,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // The String box over the wider buffer. Not the entity's own Name —
             // that one has to stay unique, so the rename box above owns it.
             auto *name = static_cast<Assisi::Core::EntityName *>(fp);
-            char  buf[Assisi::Core::kEntityNameMax + 1];
+            char buf[Assisi::Core::kEntityNameMax + 1];
             name->ToCStr(buf, sizeof(buf));
             if (ImGui::InputText(field.name.c_str(), buf, sizeof(buf)))
             {
@@ -378,7 +378,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             break;
         case FieldType::Quat:
         {
-            auto     *quat  = static_cast<glm::quat *>(fp);
+            auto *quat  = static_cast<glm::quat *>(fp);
             glm::vec3 euler = glm::degrees(glm::eulerAngles(*quat));
             if (ImGui::DragFloat3(field.name.c_str(), &euler.x, 0.5f))
             {
@@ -390,7 +390,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         case FieldType::AssetPath:
         {
             auto *ap = static_cast<Assisi::Core::AssetPath *>(fp);
-            char  buf[Assisi::Core::kAssetPathMax + 1];
+            char buf[Assisi::Core::kAssetPathMax + 1];
             ap->ToCStr(buf, sizeof(buf));
 
             // Laid out as [ input ][…] fieldName. The input's own label is
@@ -418,7 +418,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             // Stored as a GUID, shown and edited as its resolved virtual path —
             // the database translates both ways. Same [ input ][…] label layout
             // as AssetPath above.
-            auto             *id      = static_cast<Assisi::Core::AssetId *>(fp);
+            auto *id      = static_cast<Assisi::Core::AssetId *>(fp);
             const std::string inputId = "##" + field.name;
             if (AssetIdPathField(inputId.c_str(), *id))
                 edited = true;
@@ -433,7 +433,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         }
         case FieldType::EntityRef:
         {
-            auto      *ref   = static_cast<Assisi::ECS::Entity *>(fp);
+            auto *ref   = static_cast<Assisi::ECS::Entity *>(fp);
             const bool empty = (*ref == Assisi::ECS::NullEntity);
 
             std::string preview;
@@ -444,7 +444,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             else
                 preview = DescribeEntity(*ref);
 
-            const bool  armedForThis = _eyedropperArmed && _eyedropperMeta == &meta &&
+            const bool armedForThis = _eyedropperArmed && _eyedropperMeta == &meta &&
                                       _eyedropperFieldOffset == field.offset;
             const char *pickLabel    = armedForThis ? "Cancel" : "Pick";
 
@@ -480,17 +480,17 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
                 }
                 _scene->ForEachEntity(
                     [&](Assisi::ECS::Entity e)
-                    {
-                        const std::string label    = DescribeEntity(e);
-                        const bool        selected = (e == *ref);
-                        if (ImGui::Selectable(label.c_str(), selected))
                         {
-                            *ref   = e;
-                            edited = true;
-                        }
-                        if (selected)
-                            ImGui::SetItemDefaultFocus();
-                    });
+                            const std::string label    = DescribeEntity(e);
+                            const bool selected = (e == *ref);
+                            if (ImGui::Selectable(label.c_str(), selected))
+                            {
+                                *ref   = e;
+                                edited = true;
+                            }
+                            if (selected)
+                                ImGui::SetItemDefaultFocus();
+                        });
                 ImGui::EndCombo();
             }
             break;
@@ -563,7 +563,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
 }
 
 bool EditorApp::EditMaterialSlots(Assisi::Runtime::MeshRenderer &mrc,
-                                   const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
+                                  const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset)
 {
     ImGui::TextUnformatted("materialOverrides");
 
@@ -650,10 +650,10 @@ void EditorApp::HandlePhysicsEditing(bool anyFieldEdited)
         if (rbc && desc)
         {
             _physics->ReshapeBody(*rbc, Assisi::Physics::PhysicsWorld::ColliderShapeDesc{
-                                            .shape       = desc->shape,
-                                            .halfExtents = desc->halfExtents,
-                                            .radius      = desc->radius,
-                                            .halfHeight  = desc->halfHeight});
+                    .shape       = desc->shape,
+                    .halfExtents = desc->halfExtents,
+                    .radius      = desc->radius,
+                    .halfHeight  = desc->halfHeight});
             _physics->SetBodyCCD(*rbc, desc->enableCCD);
         }
     }
@@ -707,7 +707,7 @@ void EditorApp::ThawEditedBody()
         return;
 
     const Assisi::ECS::Entity entity = _frozenBodyEntity;
-    const std::string         worldName = _frozenBodyWorld;
+    const std::string worldName = _frozenBodyWorld;
 
     // Cleared up front so the bail-out paths below (world gone, entity destroyed)
     // cannot leave a record pointing at something that no longer exists.
@@ -728,7 +728,7 @@ void EditorApp::ThawEditedBody()
     // Back to whatever the descriptor authored, never unconditionally Dynamic: the
     // freeze must be invisible, including for bodies that were Static all along.
     const auto *desc     = world->scene.Get<Assisi::Physics::RigidBodyDescriptor>(entity);
-    const bool  isStatic = desc && desc->isStatic;
+    const bool isStatic = desc && desc->isStatic;
     world->physics.SetBodyMotionType(*rbc, isStatic ? Assisi::Physics::BodyMotion::Static
                                                     : Assisi::Physics::BodyMotion::Dynamic);
     if (!isStatic)
@@ -890,9 +890,9 @@ void EditorApp::DrawReplicationSection(bool mirrored)
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip(bodied ? "Simulated locally and re-anchored by the host's corrections. Renders at "
-                                       "host time minus transit."
+                              "host time minus transit."
                                      : "No local simulation, so it is interpolated between received snapshots — "
-                                       "about two snapshot intervals behind.");
+                              "about two snapshot intervals behind.");
         }
 
         // Derived from the components that arrived, **never** from this mirror's
@@ -1124,7 +1124,7 @@ void EditorApp::DrawReplicationPolicy()
     for (const ComponentMeta *meta : present)
     {
         const bool gameVeto = IsComponentGameVetoed(*meta);
-        bool       sends    = SelectedEntitySends(*meta);
+        bool sends    = SelectedEntitySends(*meta);
 
         // A component game.json forbids gets a dead switch with a reason, not a
         // live one that silently does nothing.
@@ -1186,7 +1186,7 @@ void EditorApp::DrawInstanceInspector()
     // fields, and a cached copy would fight it for a frame on every drag.
     glm::vec3 position = row->transform.position;
     glm::vec3 euler    = glm::degrees(glm::eulerAngles(row->transform.rotation));
-    float     scale    = row->transform.scale.x;
+    float scale    = row->transform.scale.x;
 
     bool edited = false;
     edited |= ImGui::DragFloat3("position", &position.x, 0.01f);
@@ -1342,7 +1342,7 @@ void EditorApp::DrawInspector()
         // still in it. The rule is the loader's, so a name this box accepts is a
         // name the level reloads with.
         const std::string_view typed{nameBuf};
-        std::string_view       refusal;
+        std::string_view refusal;
         if (const auto allowed = Assisi::Runtime::CheckEntityName(*_scene, _selectedEntity, typed);
             !allowed.has_value())
         {
@@ -1496,7 +1496,7 @@ void EditorApp::DrawInspector()
             ImGui::SameLine();
             ImGui::BeginDisabled(!editable);
             if (ImGui::SmallButton("Reset##component"))
-                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/{}};
+                _pendingOverrideReset = PendingOverrideReset{_selectedEntity, meta->name, /*field=*/ {}};
             ImGui::EndDisabled();
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
                 ImGui::SetTooltip("Drop this instance's claim and follow the blueprint again.");
@@ -1590,36 +1590,36 @@ void EditorApp::DrawInspector()
     struct SuggestionNav
     {
         int32_t move  = 0;     // -1 = up, +1 = down (Tab or arrows)
-        bool    reset = false; // text edited -> snap back to the first row
+        bool reset = false;    // text edited -> snap back to the first row
     };
-    SuggestionNav  nav;
+    SuggestionNav nav;
     const auto navCallback = [](ImGuiInputTextCallbackData *data) -> int
-    {
-        auto *n = static_cast<SuggestionNav *>(data->UserData);
-        switch (data->EventFlag)
-        {
-        case ImGuiInputTextFlags_CallbackCompletion: n->move = +1; break; // Tab
-        case ImGuiInputTextFlags_CallbackHistory:
-            n->move = data->EventKey == ImGuiKey_UpArrow ? -1 : +1; // Up / Down
-            break;
-        case ImGuiInputTextFlags_CallbackEdit: n->reset = true; break; // typed or deleted
-        default: break;
-        }
-        return 0;
-    };
+                             {
+                                 auto *n = static_cast<SuggestionNav *>(data->UserData);
+                                 switch (data->EventFlag)
+                                 {
+                                 case ImGuiInputTextFlags_CallbackCompletion: n->move = +1; break; // Tab
+                                 case ImGuiInputTextFlags_CallbackHistory:
+                                     n->move = data->EventKey == ImGuiKey_UpArrow ? -1 : +1; // Up / Down
+                                     break;
+                                 case ImGuiInputTextFlags_CallbackEdit: n->reset = true; break; // typed or deleted
+                                 default: break;
+                                 }
+                                 return 0;
+                             };
 
     const bool entered =
         ImGui::InputText("##addcomponent", _addComponentBuf, sizeof(_addComponentBuf),
                          ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCompletion |
-                             ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackEdit,
+                         ImGuiInputTextFlags_CallbackHistory | ImGuiInputTextFlags_CallbackEdit,
                          navCallback, &nav);
 
     const auto toLower = [](std::string text)
-    {
-        std::transform(text.begin(), text.end(), text.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        return text;
-    };
+                         {
+                             std::transform(text.begin(), text.end(), text.begin(),
+                                            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                             return text;
+                         };
     const std::string queryLower = toLower(_addComponentBuf);
 
     if (queryLower.empty())
@@ -1635,7 +1635,7 @@ void EditorApp::DrawInspector()
         struct Match
         {
             const ComponentMeta *meta;
-            std::size_t          pos;
+            std::size_t pos;
         };
         std::vector<Match> matches;
         for (const ComponentMeta *meta : ComponentRegistry::Instance().SerializableComponents())
@@ -1652,16 +1652,16 @@ void EditorApp::DrawInspector()
         }
         std::sort(matches.begin(), matches.end(),
                   [](const Match &a, const Match &b)
-                  {
-                      if (a.pos != b.pos)
-                          return a.pos < b.pos;
-                      if (a.meta->name.size() != b.meta->name.size())
-                          return a.meta->name.size() < b.meta->name.size();
-                      return a.meta->name < b.meta->name;
-                  });
+            {
+                if (a.pos != b.pos)
+                    return a.pos < b.pos;
+                if (a.meta->name.size() != b.meta->name.size())
+                    return a.meta->name.size() < b.meta->name.size();
+                return a.meta->name < b.meta->name;
+            });
 
         constexpr std::size_t kMaxSuggestions = 8;
-        const std::size_t     shown           = std::min(matches.size(), kMaxSuggestions);
+        const std::size_t shown           = std::min(matches.size(), kMaxSuggestions);
 
         // Resolve this frame's navigation into the highlight index: an edit snaps
         // it to the top, Tab/arrows step it with wrap-around across the shown rows.

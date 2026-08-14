@@ -143,8 +143,8 @@ void DistanceRelevancy::Compute(const RelevancyQuery &query, std::vector<NetId> 
     {
         std::erase_if(pairs,
                       [&query](const auto &entry) {
-                          return !std::binary_search(query.live.begin(), query.live.end(), entry.first);
-                      });
+                return !std::binary_search(query.live.begin(), query.live.end(), entry.first);
+            });
     }
 
     // The engine expects sorted output, and `live` is sorted, so this is already

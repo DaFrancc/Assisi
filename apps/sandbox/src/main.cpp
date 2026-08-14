@@ -78,7 +78,7 @@ bool ParseAddress(std::string_view text, std::string &outAddress, std::uint16_t 
     if (!host.empty())
         outAddress = std::string(host);
 
-    std::uint32_t  parsedPort = 0;
+    std::uint32_t parsedPort = 0;
     const auto parsed = std::from_chars(port.data(), port.data() + port.size(), parsedPort);
     if (parsed.ec != std::errc{} || parsed.ptr != port.data() + port.size() || parsedPort == 0 ||
         parsedPort > 65535u)
@@ -152,7 +152,7 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
             if (i + 1 < argc && argv[i + 1][0] != '-')
             {
                 const std::string_view value = argv[++i];
-                std::uint32_t          port  = 0;
+                std::uint32_t port  = 0;
                 const auto parsed = std::from_chars(value.data(), value.data() + value.size(), port);
                 if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || port == 0 ||
                     port > 65535u)
@@ -207,7 +207,7 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
                 return false;
             }
             const std::string_view value = argv[++i];
-            const auto             parsed =
+            const auto parsed =
                 std::from_chars(value.data(), value.data() + value.size(), serverOptions.tickLimit);
             if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
             {
@@ -229,11 +229,11 @@ bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &edit
 
 int main(int argc, char **argv)
 {
-    std::string_view      startupLevel;
-    bool                  editorVisuals = true;
-    bool                  server        = false;
-    bool                  pieClient     = false;
-    bool                  shouldExit    = false;
+    std::string_view startupLevel;
+    bool editorVisuals = true;
+    bool server        = false;
+    bool pieClient     = false;
+    bool shouldExit    = false;
     Sandbox::ServerOptions serverOptions;
     if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, pieClient, shouldExit))
     {

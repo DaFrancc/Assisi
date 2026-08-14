@@ -80,9 +80,9 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
         for (auto [entity, transform, light] : scene.Query<Transform, PointLight>())
         {
             _pointLights.push_back({
-                .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
-                .colorIntensity = {light.color, light.intensity},
-            });
+                    .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
+                    .colorIntensity = {light.color, light.intensity},
+                });
         }
 
         for (auto [entity, transform, light] : scene.Query<Transform, SpotLight>())
@@ -90,19 +90,19 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
             const float innerCos = glm::cos(glm::radians(light.innerAngle));
             const float outerCos = glm::cos(glm::radians(light.outerAngle));
             _spotLights.push_back({
-                .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
-                .directionInner = {WorldSpotDirection(transform.worldMatrix, light.direction), innerCos},
-                .colorIntensity = {light.color, light.intensity},
-                .outerCutoff    = outerCos,
-            });
+                    .positionRadius = {glm::vec3(transform.worldMatrix[3]), light.radius},
+                    .directionInner = {WorldSpotDirection(transform.worldMatrix, light.direction), innerCos},
+                    .colorIntensity = {light.color, light.intensity},
+                    .outerCutoff    = outerCos,
+                });
         }
 
         for (auto [entity, light] : scene.Query<DirectionalLight>())
         {
             _dirLights.push_back({
-                .directionIntensity = {SafeDirection(light.direction), light.intensity},
-                .colorPad           = {light.color, 0.f},
-            });
+                    .directionIntensity = {SafeDirection(light.direction), light.intensity},
+                    .colorPad           = {light.color, 0.f},
+                });
         }
     }
 

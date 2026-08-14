@@ -67,7 +67,7 @@ std::expected<MaterialData, MaterialFileError> DeserializeMaterial(std::string_v
         return std::unexpected(MaterialFileError::NotRegistered);
     }
 
-    const nlohmann::json document = nlohmann::json::parse(jsonText, nullptr, /*allow_exceptions=*/false);
+    const nlohmann::json document = nlohmann::json::parse(jsonText, nullptr, /*allow_exceptions=*/ false);
     if (document.is_discarded() || !document.is_object())
     {
         return std::unexpected(MaterialFileError::ParseFailed);

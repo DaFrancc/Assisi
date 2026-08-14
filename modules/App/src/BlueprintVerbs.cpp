@@ -46,7 +46,7 @@ std::optional<ECS::InstanceId> SpawnBlueprint(World &world, std::string_view sou
 
     for (const ECS::Entity member : members)
     {
-        const ECS::Transform               *transform  = world.scene.Get<ECS::Transform>(member);
+        const ECS::Transform *transform  = world.scene.Get<ECS::Transform>(member);
         const Physics::RigidBodyDescriptor *descriptor = world.scene.Get<Physics::RigidBodyDescriptor>(member);
         if (transform != nullptr && descriptor != nullptr && world.scene.Get<Physics::RigidBody>(member) == nullptr)
             world.physics.AddBodyFromDescriptor(world.scene, member, *transform, *descriptor, parentWorld);

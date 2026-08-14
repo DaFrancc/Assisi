@@ -123,7 +123,7 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
     for (std::size_t i = 0; i < definition.members.size(); ++i)
     {
         BlueprintMemberDesc &member = definition.members[i];
-        const ECS::Entity    e      = scratchEntities[i];
+        const ECS::Entity e      = scratchEntities[i];
 
         for (const Core::Reflect::ComponentMeta *meta : registry.SerializableComponents())
         {
@@ -141,7 +141,7 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
 
             const std::span<const std::byte> bytes = writer.Data();
             member.prepared.push_back(PreparedComponent{
-                .id = meta->id, .name = meta->name, .block = {bytes.begin(), bytes.end()}});
+                    .id = meta->id, .name = meta->name, .block = {bytes.begin(), bytes.end()}});
         }
     }
 
@@ -192,16 +192,16 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
     s_context = SerializationContext{};
 
     StagedInstance instance;
-    const auto     unwind = [&]
-    {
-        for (const ECS::Entity member : instance.members)
-        {
-            if (member != ECS::NullEntity)
-                scene.Destroy(member);
-        }
-        if (instance.id.IsValid())
-            table.Remove(instance.id);
-    };
+    const auto unwind = [&]
+                        {
+                            for (const ECS::Entity member : instance.members)
+                            {
+                                if (member != ECS::NullEntity)
+                                    scene.Destroy(member);
+                            }
+                            if (instance.id.IsValid())
+                                table.Remove(instance.id);
+                        };
 
     // Staging reports by value; the try is for CommitInstance, which runs the generated
     // deserializers and can still take an nlohmann throw. Either way it is all or
@@ -210,7 +210,7 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
     try
     {
         if (const std::expected<void, LevelError> ok =
-                StageInstance(scene, table, entry, /*levelInstanceIndex=*/-1, instance);
+                StageInstance(scene, table, entry, /*levelInstanceIndex=*/ -1, instance);
             !ok)
         {
             unwind();
@@ -356,9 +356,9 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
 }
 
 std::expected<ECS::InstanceId, LevelError> SceneSerializer::ExpandInstance(ECS::Scene &scene,
-                                                                          InstanceTable   &table,
-                                                                          std::string_view source,
-                                                                          const ECS::Transform &placement)
+                                                                           InstanceTable &table,
+                                                                           std::string_view source,
+                                                                           const ECS::Transform &placement)
 {
     // No instance name: the members are `body`, not `car_3/body`, because nothing
     // placed this one and no file addresses into it.
@@ -369,7 +369,7 @@ std::expected<ECS::InstanceId, LevelError> SceneSerializer::ExpandInstance(ECS::
                               .removed   = {}};
 
     const std::expected<ExpandedInstance, LevelError> placed =
-        PlaceInstance(scene, table, entry, /*authored=*/false);
+        PlaceInstance(scene, table, entry, /*authored=*/ false);
     if (!placed)
         return std::unexpected(placed.error());
     return placed->instanceId;

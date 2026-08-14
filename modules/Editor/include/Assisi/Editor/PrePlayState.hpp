@@ -52,9 +52,9 @@ struct PrePlayState
 };
 
 /// @brief Everything Stop will have to put back, as it stands right now.
-[[nodiscard]] PrePlayState CapturePrePlayState(const std::string              &levelPath,
+[[nodiscard]] PrePlayState CapturePrePlayState(const std::string &levelPath,
                                                const std::vector<std::string> &systemNames,
-                                               const Runtime::InstanceTable   &instances);
+                                               const Runtime::InstanceTable &instances);
 
 /// @brief Puts @p captured back into the world the session has been using.
 ///
@@ -70,6 +70,6 @@ struct PrePlayState
 ///         to be reported where there is something to report it to.
 bool RestorePrePlayState(const PrePlayState &captured, std::string &levelPath,
                          const std::vector<std::string> &liveSystemNames,
-                         Runtime::InstanceTable         &instances);
+                         Runtime::InstanceTable &instances);
 
 } // namespace Assisi::Editor

@@ -21,11 +21,11 @@ namespace Assisi::Render
 struct RenderFrame
 {
     nvrhi::ICommandList *commandList = nullptr;
-    nvrhi::ITexture     *colorTexture = nullptr;
-    nvrhi::ITexture     *depthTexture = nullptr;
+    nvrhi::ITexture *colorTexture = nullptr;
+    nvrhi::ITexture *depthTexture = nullptr;
     nvrhi::IFramebuffer *framebuffer = nullptr;
-    uint32_t             width = 0;
-    uint32_t             height = 0;
+    uint32_t width = 0;
+    uint32_t height = 0;
 };
 
 } // namespace Assisi::Render

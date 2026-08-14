@@ -22,9 +22,9 @@ namespace Assisi::NetSync
 /// is the only handle the wire carries.
 struct InstanceRecord
 {
-    std::uint32_t  blueprintIndex = 0;
-    NetId          base;
-    std::uint32_t  memberCount = 0;
+    std::uint32_t blueprintIndex = 0;
+    NetId base;
+    std::uint32_t memberCount = 0;
     ECS::Transform placement;
 
     /// Which members the host actually has an entity for. **Empty means all of
@@ -54,7 +54,7 @@ struct InstanceRecord
 /// the client builds each member from the file.
 class InstanceExpander
 {
-  public:
+public:
     virtual ~InstanceExpander() = default;
 
     InstanceExpander()                                    = default;

@@ -207,7 +207,7 @@ template <typename T> struct SparseSet
     [[nodiscard]] uint32_t StructureVersion() const { return _structureVersion; }
 #endif
 
-  private:
+private:
     /// Bumps the structural-change counter. A no-op (and no member) in release
     /// builds, so the three call sites cost nothing once NDEBUG is defined.
     void BumpVersion()

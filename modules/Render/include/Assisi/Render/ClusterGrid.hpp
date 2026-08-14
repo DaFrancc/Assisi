@@ -44,8 +44,8 @@ struct SpotLightGPU
     glm::vec4 positionRadius; ///< xyz = world position,       w = influence radius
     glm::vec4 directionInner; ///< xyz = direction (unit vec),  w = cos(innerAngle)
     glm::vec4 colorIntensity; ///< xyz = linear-RGB colour,     w = intensity
-    float     outerCutoff;    ///< cos(outerAngle)
-    float     _pad[3]{};
+    float outerCutoff;        ///< cos(outerAngle)
+    float _pad[3]{};
 };
 static_assert(sizeof(SpotLightGPU) == 64);
 
@@ -61,7 +61,7 @@ static_assert(sizeof(DirLightGPU) == 32);
 /// @brief Manages all buffers and compute shaders for clustered forward lighting.
 class ClusterGrid
 {
-  public:
+public:
     // ----- Grid constants --------------------------------------------------
     static constexpr uint32_t kNumX        = 16u;
     static constexpr uint32_t kNumY        = 9u;
@@ -129,7 +129,7 @@ class ClusterGrid
     const Buffer &LightGridBuffer()   const { return _lightGridBuffer; }
     ///@}
 
-  private:
+private:
     nvrhi::IDevice *_device = nullptr;
 
     ComputeShader _buildShader;

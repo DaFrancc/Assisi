@@ -34,15 +34,15 @@ bool LinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
 
     const nvrhi::VertexAttributeDesc attributes[] = {
         nvrhi::VertexAttributeDesc()
-            .setName("POSITION")
-            .setFormat(nvrhi::Format::RGB32_FLOAT)
-            .setOffset(offsetof(LineVertex, position))
-            .setElementStride(sizeof(LineVertex)),
+        .setName("POSITION")
+        .setFormat(nvrhi::Format::RGB32_FLOAT)
+        .setOffset(offsetof(LineVertex, position))
+        .setElementStride(sizeof(LineVertex)),
         nvrhi::VertexAttributeDesc()
-            .setName("COLOR")
-            .setFormat(nvrhi::Format::RGBA32_FLOAT)
-            .setOffset(offsetof(LineVertex, color))
-            .setElementStride(sizeof(LineVertex)),
+        .setName("COLOR")
+        .setFormat(nvrhi::Format::RGBA32_FLOAT)
+        .setOffset(offsetof(LineVertex, color))
+        .setElementStride(sizeof(LineVertex)),
     };
     _inputLayout = device->createInputLayout(attributes, static_cast<uint32_t>(std::size(attributes)), _vertexShader);
 

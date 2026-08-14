@@ -34,7 +34,7 @@ namespace Assisi::Geometry
 ///        resolver, in which case every texture channel imports nil (factor-
 ///        only). Kept as an injected callback so Geometry never depends on the
 ///        editor-only database directly.
-using AssetIdResolver = std::function<Core::AssetId(std::string_view virtualPath)>;
+using AssetIdResolver = std::function<Core::AssetId (std::string_view virtualPath)>;
 
 /// @brief Why an ImportMesh call failed.
 enum class MeshImportError

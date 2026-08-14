@@ -266,8 +266,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "overlay-lines");
         if (_linePass.IsValid())
         {
-            _linePass.Draw(frame, projection * view, _overlayLinesDepthTested, /*onTop=*/false);
-            _linePass.Draw(frame, projection * view, _overlayLinesOnTop, /*onTop=*/true);
+            _linePass.Draw(frame, projection * view, _overlayLinesDepthTested, /*onTop=*/ false);
+            _linePass.Draw(frame, projection * view, _overlayLinesOnTop, /*onTop=*/ true);
         }
         _overlayLinesDepthTested.clear();
         _overlayLinesOnTop.clear();

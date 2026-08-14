@@ -214,7 +214,7 @@ void NetSession::Tick(std::uint64_t simTick, const InputCommand *localInput)
     _clock->Tick();
 
     Net::ConnectionStats transportStats;
-    const std::int32_t   pingMs =
+    const std::int32_t pingMs =
         _transport->GetConnectionStats(_connection, transportStats) ? transportStats.pingMs : 0;
     _clock->OnSnapshot(_client->Feedback(), pingMs);
 

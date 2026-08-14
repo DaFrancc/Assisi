@@ -53,7 +53,7 @@ TEST_CASE("A fresh ring reads back everything pushed")
 {
     constexpr std::uint64_t kCapacity = 16;
     std::vector<Event>      storage(kCapacity);
-    Detail::EventRing       ring;
+    Detail::EventRing ring;
     ring.Reset(storage.data(), kCapacity);
 
     for (std::uint64_t index = 0; index < 10; ++index)
@@ -76,7 +76,7 @@ TEST_CASE("A wrapped ring drops the oldest records and says so")
 {
     constexpr std::uint64_t kCapacity = 8;
     std::vector<Event>      storage(kCapacity);
-    Detail::EventRing       ring;
+    Detail::EventRing ring;
     ring.Reset(storage.data(), kCapacity);
 
     for (std::uint64_t index = 0; index < 20; ++index)
@@ -109,7 +109,7 @@ TEST_CASE("The sacrificed slot is exactly the one a straggler would write")
     constexpr std::uint64_t kCapacity = 8;
     constexpr std::uint64_t kMask     = kCapacity - 1;
     std::vector<Event>      storage(kCapacity);
-    Detail::EventRing       ring;
+    Detail::EventRing ring;
     ring.Reset(storage.data(), kCapacity);
 
     for (std::uint64_t index = 0; index < 32; ++index)
@@ -132,7 +132,7 @@ TEST_CASE("A straggler push cannot disturb an already-observed window")
     // reader was going to read moved.
     constexpr std::uint64_t kCapacity = 8;
     std::vector<Event>      storage(kCapacity);
-    Detail::EventRing       ring;
+    Detail::EventRing ring;
     ring.Reset(storage.data(), kCapacity);
 
     for (std::uint64_t index = 0; index < 20; ++index)
@@ -166,7 +166,7 @@ TEST_CASE("Reading a ring while its producer is stopped never sees a torn record
     // clean under tsan.
     constexpr std::uint64_t kCapacity = 64;
     std::vector<Event>      storage(kCapacity);
-    Detail::EventRing       ring;
+    Detail::EventRing ring;
     ring.Reset(storage.data(), kCapacity);
 
     std::atomic<bool>          keepWriting{true};
@@ -176,13 +176,13 @@ TEST_CASE("Reading a ring while its producer is stopped never sees a torn record
     std::thread writer(
         [&]
         {
-            std::uint64_t seed = 1;
-            while (keepWriting.load(std::memory_order_relaxed))
-            {
-                ring.Push(SelfCheckingEvent(seed++));
-                pushed.store(seed, std::memory_order_relaxed);
-            }
-            writerStopped.store(true, std::memory_order_release);
+        std::uint64_t seed = 1;
+        while (keepWriting.load(std::memory_order_relaxed))
+        {
+            ring.Push(SelfCheckingEvent(seed++));
+            pushed.store(seed, std::memory_order_relaxed);
+        }
+        writerStopped.store(true, std::memory_order_release);
         });
 
     // Wait for actual progress rather than for a number of yields. The ring has

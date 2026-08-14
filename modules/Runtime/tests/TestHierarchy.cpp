@@ -250,7 +250,7 @@ TEST_CASE("PropagateTransforms: moving a parent recomputes an unchanged child")
 // keys only on the Transform change tick, so this reparent is silently missed.
 TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the child")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
     const ECS::Entity child  = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
@@ -274,7 +274,7 @@ TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the
 // child stayed composed against its OLD parent.
 TEST_CASE("PropagateTransforms: reparenting a child to a different parent follows the new parent")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity p1    = scene.Create();
     const ECS::Entity p2    = scene.Create();
     const ECS::Entity child = scene.Create();
@@ -310,7 +310,7 @@ TEST_CASE("PropagateTransforms: reparenting a child to a different parent follow
 
 TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dirty itself")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
     const ECS::Entity child  = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
@@ -343,7 +343,7 @@ TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dir
 
 TEST_CASE("PropagateTransforms: moving a parent leaves the child's local Transform unchanged")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
     const ECS::Entity child  = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);

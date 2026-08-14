@@ -73,10 +73,10 @@ struct TaskState
 {
     using Stored = std::conditional_t<std::is_void_v<T>, std::monostate, T>;
 
-    std::mutex            mutex;
-    bool                  done = false;
-    bool                  continuationClaimed = false; ///< A Then() was chained (stays true after it fires).
-    Stored                value{};
+    std::mutex mutex;
+    bool done = false;
+    bool continuationClaimed = false;                  ///< A Then() was chained (stays true after it fires).
+    Stored value{};
     std::function<void()> continuation; ///< Fires once, on completion (already targets its pool).
 };
 
@@ -117,7 +117,7 @@ class JobSystem;
 template <class T>
 class Task
 {
-  public:
+public:
     Task() = default;
     Task(std::shared_ptr<detail::TaskState<T>> state, JobSystem *jobs) : _state(std::move(state)), _jobs(jobs) {}
 
@@ -152,14 +152,14 @@ class Task
 
     bool IsValid() const { return static_cast<bool>(_state); }
 
-  private:
+private:
     std::shared_ptr<detail::TaskState<T>> _state;
-    JobSystem                            *_jobs = nullptr;
+    JobSystem *_jobs = nullptr;
 };
 
 class JobSystem
 {
-  public:
+public:
     /// @brief Start the pool. @p workerCount 0 means auto: hardware_concurrency
     /// minus one (leave a core for the main thread), floored at 1.
     explicit JobSystem(uint32_t workerCount = 0);
@@ -182,16 +182,16 @@ class JobSystem
         using R = std::invoke_result_t<F>;
         auto state = std::make_shared<detail::TaskState<R>>();
         EnqueueTo(pool, [state, fn = std::move(fn)]() mutable {
-            if constexpr (std::is_void_v<R>)
-            {
-                fn();
-            }
-            else
-            {
-                state->value = fn();
-            }
-            detail::Complete(*state);
-        });
+                if constexpr (std::is_void_v<R>)
+                {
+                    fn();
+                }
+                else
+                {
+                    state->value = fn();
+                }
+                detail::Complete(*state);
+            });
         return Task<R>{state, this};
     }
 
@@ -252,7 +252,7 @@ class JobSystem
         }
     }
 
-  public:
+public:
     /// @brief Tasks waiting on the worker queue. A sampled counter, not a
     /// synchronization primitive: it is read once a frame to plot how deep the
     /// backlog is getting, which is what distinguishes "the pool is saturated"
@@ -262,7 +262,7 @@ class JobSystem
     /// @brief Tasks waiting to run on the main thread — see WorkerQueueDepth.
     [[nodiscard]] uint32_t MainQueueDepth() const { return _mainQueueDepth.load(std::memory_order_relaxed); }
 
-  private:
+private:
     /// @p workerIndex names the thread for the profiler and the OS debugger.
     void WorkerLoop(uint32_t workerIndex);
 
@@ -275,12 +275,12 @@ class JobSystem
 
     std::vector<std::thread>          _workers;
     std::deque<std::function<void()>> _workerQueue;
-    std::mutex                        _mutex; ///< Guards _workerQueue.
-    std::condition_variable           _wake;  ///< Workers sleep on this when idle.
+    std::mutex _mutex;                        ///< Guards _workerQueue.
+    std::condition_variable _wake;            ///< Workers sleep on this when idle.
     std::atomic<bool>                 _stopping{false};
 
     std::vector<std::function<void()>> _mainQueue;
-    std::mutex                         _mainMutex; ///< Guards _mainQueue.
+    std::mutex _mainMutex;                         ///< Guards _mainQueue.
 
     /// Queue sizes mirrored as atomics so a profiler can sample them without
     /// taking the queue locks — reading a depth should never contend with the
@@ -304,7 +304,7 @@ void Task<T>::Wait()
             std::lock_guard<std::mutex> lock(_state->mutex);
             return _state->done;
         },
-        /*helpMain=*/true);
+        /*helpMain=*/ true);
 }
 
 template <class T>
@@ -313,37 +313,37 @@ auto Task<T>::Then(Pool pool, F fn) -> Task<typename detail::ThenResult<F, T>::t
 {
     using R2 = typename detail::ThenResult<F, T>::type;
 
-    auto       next = std::make_shared<detail::TaskState<R2>>();
-    auto       antecedent = _state;
+    auto next = std::make_shared<detail::TaskState<R2>>();
+    auto antecedent = _state;
     JobSystem *jobs = _jobs;
 
     // Runs on `pool` once the antecedent is complete: apply fn to the antecedent's
     // value, store the result in `next`, and fire next's continuation.
     auto work = [antecedent, next, fn = std::move(fn)]() mutable {
-        if constexpr (std::is_void_v<T>)
-        {
-            if constexpr (std::is_void_v<R2>)
-            {
-                fn();
-            }
-            else
-            {
-                next->value = fn();
-            }
-        }
-        else
-        {
-            if constexpr (std::is_void_v<R2>)
-            {
-                fn(std::move(antecedent->value));
-            }
-            else
-            {
-                next->value = fn(std::move(antecedent->value));
-            }
-        }
-        detail::Complete(*next);
-    };
+                    if constexpr (std::is_void_v<T>)
+                    {
+                        if constexpr (std::is_void_v<R2>)
+                        {
+                            fn();
+                        }
+                        else
+                        {
+                            next->value = fn();
+                        }
+                    }
+                    else
+                    {
+                        if constexpr (std::is_void_v<R2>)
+                        {
+                            fn(std::move(antecedent->value));
+                        }
+                        else
+                        {
+                            next->value = fn(std::move(antecedent->value));
+                        }
+                    }
+                    detail::Complete(*next);
+                };
 
     // The continuation registered on the antecedent enqueues `work` onto `pool`;
     // it never runs the work inline, so completion on a worker doesn't run the

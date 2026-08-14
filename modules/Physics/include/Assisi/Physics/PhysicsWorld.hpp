@@ -69,7 +69,7 @@ struct Contact
 /// Destruction cleans up all bodies and unregisters Jolt types.
 class PhysicsWorld
 {
-  public:
+public:
     PhysicsWorld();
     ~PhysicsWorld();
 
@@ -82,9 +82,9 @@ class PhysicsWorld
     struct ColliderShapeDesc
     {
         ColliderShape shape = ColliderShape::Box;
-        glm::vec3     halfExtents{0.5f, 0.5f, 0.5f}; ///< Box.
-        float         radius     = 0.5f;             ///< Sphere/Capsule/Cylinder.
-        float         halfHeight = 0.5f;             ///< Capsule/Cylinder cylindrical half-height.
+        glm::vec3 halfExtents{0.5f, 0.5f, 0.5f};     ///< Box.
+        float radius     = 0.5f;                     ///< Sphere/Capsule/Cylinder.
+        float halfHeight = 0.5f;                     ///< Capsule/Cylinder cylindrical half-height.
     };
 
     /// @brief Creates a rigid body with the given collider and returns its component.
@@ -233,10 +233,10 @@ class PhysicsWorld
     struct ActiveBodyState
     {
         ECS::Entity entity;
-        glm::vec3   position;
-        glm::quat   rotation;
-        glm::vec3   linearVelocity;
-        glm::vec3   angularVelocity;
+        glm::vec3 position;
+        glm::quat rotation;
+        glm::vec3 linearVelocity;
+        glm::vec3 angularVelocity;
     };
 
     /// @brief Every currently-awake dynamic body, with its pose and velocities.
@@ -333,7 +333,7 @@ class PhysicsWorld
     /// @brief Returns the current gravity vector.
     glm::vec3 GetGravity() const;
 
-  private:
+private:
     struct Impl;
     std::unique_ptr<Impl> _impl;
 };

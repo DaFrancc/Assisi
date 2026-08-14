@@ -66,8 +66,8 @@ TEST_CASE("Scoped names may be dynamic through interning")
 {
     // Exercises the documented path for a name that is not a literal. In a
     // default build InternString is an inline stub, so this still compiles.
-    const std::string   dynamicName = std::string("dynamic-") + "scope";
-    const char * const  interned    = Assisi::Chiara::InternString(dynamicName);
+    const std::string dynamicName = std::string("dynamic-") + "scope";
+    const char * const interned    = Assisi::Chiara::InternString(dynamicName);
     ASSISI_PROFILE_SCOPE(interned);
 
     CHECK(interned != nullptr);

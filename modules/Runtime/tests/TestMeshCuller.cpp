@@ -41,12 +41,12 @@ TEST_CASE("AddInstanceRaw packs one object, its mesh descriptor, submeshes, and 
     CullTableBuilder builder;
 
     const std::array<GpuSubMesh, 2> submeshes{
-        GpuSubMesh{/*indexOffset=*/0, /*indexCount=*/6, /*materialSlot=*/0, 0},
-        GpuSubMesh{/*indexOffset=*/6, /*indexCount=*/12, /*materialSlot=*/1, 0},
+        GpuSubMesh{ /*indexOffset=*/ 0, /*indexCount=*/ 6, /*materialSlot=*/ 0, 0},
+        GpuSubMesh{ /*indexOffset=*/ 6, /*indexCount=*/ 12, /*materialSlot=*/ 1, 0},
     };
     const std::array<uint32_t, 2> materials{10u, 20u};
 
-    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, /*vertexBase=*/100, /*indexBase=*/200),
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, /*vertexBase=*/ 100, /*indexBase=*/ 200),
                            glm::mat4(1.f), materials);
 
     const CullTables &tables = builder.Tables();
@@ -156,11 +156,11 @@ TEST_CASE("Finalize builds one draw template per batch with reserved instance ba
 {
     CullTableBuilder builder;
     const std::array<GpuSubMesh, 2> submeshes{
-        GpuSubMesh{/*indexOffset=*/0, /*indexCount=*/6, 0, 0},
-        GpuSubMesh{/*indexOffset=*/6, /*indexCount=*/12, 1, 0},
+        GpuSubMesh{ /*indexOffset=*/ 0, /*indexCount=*/ 6, 0, 0},
+        GpuSubMesh{ /*indexOffset=*/ 6, /*indexCount=*/ 12, 1, 0},
     };
     const std::array<uint32_t, 2> materials{10u, 20u};
-    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, /*vertexBase=*/100, /*indexBase=*/200), glm::mat4(1.f),
+    builder.AddInstanceRaw(&kMeshA, MakeGeometry(submeshes, /*vertexBase=*/ 100, /*indexBase=*/ 200), glm::mat4(1.f),
                            materials);
     builder.Finalize();
 

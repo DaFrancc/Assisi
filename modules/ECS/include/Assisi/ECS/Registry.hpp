@@ -117,7 +117,7 @@ struct Registry
         _aliveCount = 0;
     }
 
-  private:
+private:
     template <typename T> static void RemoveFn(void *pool, Entity entity)
     {
         static_cast<SparseSet<T> *>(pool)->Remove(entity);

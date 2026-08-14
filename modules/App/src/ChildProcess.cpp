@@ -57,7 +57,7 @@ void ChildProcess::Terminate(double) { _pid = 0; }
 
 bool ChildProcess::Spawn(const std::filesystem::path &executable, const std::vector<std::string> &args,
                          const std::vector<std::string> &environment,
-                         const std::filesystem::path   &workingDirectory)
+                         const std::filesystem::path &workingDirectory)
 {
     Terminate();
 
@@ -154,7 +154,7 @@ bool ChildProcess::IsRunning()
     if (_pid <= 0)
         return false;
 
-    int         status = 0;
+    int status = 0;
     const pid_t result = ::waitpid(static_cast<pid_t>(_pid), &status, WNOHANG);
     if (result == 0)
         return true; // still going

@@ -84,7 +84,7 @@ TEST_CASE("Instance view: every generated field is the member of that name")
 {
     UseGeneratedAssets();
 
-    App::World     world;
+    App::World world;
     ECS::Transform at;
     at.position = {10.f, 0.f, 0.f};
 
@@ -147,7 +147,7 @@ TEST_CASE("Instance view: the placement composes exactly as the untyped path com
 {
     UseGeneratedAssets();
 
-    App::World     world;
+    App::World world;
     ECS::Transform at;
     at.position = {100.f, 0.f, 0.f};
 

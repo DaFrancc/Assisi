@@ -60,10 +60,10 @@ TEST_CASE("HashTextFileNormalized folds CRLF, so peers on different checkouts ag
     std::filesystem::create_directories(dir);
 
     const auto write = [](const std::filesystem::path &path, std::string_view bytes)
-    {
-        std::ofstream out(path, std::ios::binary);
-        out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
-    };
+                       {
+                           std::ofstream out(path, std::ios::binary);
+                           out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+                       };
 
     // The same level, checked out by git on two platforms.
     const std::filesystem::path lf   = dir / "level-lf.alvl";

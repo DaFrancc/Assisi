@@ -67,11 +67,11 @@ TEST_CASE("Sorting DrawItems by sortKey groups by material then mesh, front-to-b
     // shuffled. After sorting by sortKey the order must be material-major.
     std::vector<DrawItem> items;
     const auto add = [&items](uint32_t material, uint32_t mesh, uint16_t depth)
-    {
-        DrawItem item;
-        item.sortKey = MakeOpaqueSortKey(0, material, mesh, depth);
-        items.push_back(item);
-    };
+                     {
+                         DrawItem item;
+                         item.sortKey = MakeOpaqueSortKey(0, material, mesh, depth);
+                         items.push_back(item);
+                     };
     add(2, 11, 100);
     add(1, 10, 200);
     add(1, 10, 50);

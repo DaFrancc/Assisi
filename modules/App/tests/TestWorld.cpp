@@ -42,8 +42,8 @@ using namespace Assisi::App;
 TEST_CASE("WorldManager generates unique names from the label")
 {
     WorldManager worlds;
-    World       &a = worlds.Create("Main");
-    World       &b = worlds.Create("Main");
+    World &a = worlds.Create("Main");
+    World &b = worlds.Create("Main");
 
     CHECK(a.name != b.name);
     CHECK(a.name.starts_with("Main#"));
@@ -58,7 +58,7 @@ TEST_CASE("World addresses survive creating and destroying other worlds")
     // EditHistory and the panels hold references into a world for the whole
     // session; reseating one would dangle them.
     WorldManager worlds;
-    World       &kept = worlds.Create("Kept");
+    World &kept = worlds.Create("Kept");
     kept.levelPath    = "levels/A.alvl";
 
     std::vector<World *> scratch;
@@ -93,9 +93,9 @@ TEST_CASE("ForEach visits worlds in creation order")
 TEST_CASE("A world holding a role cannot be destroyed")
 {
     WorldManager worlds;
-    World       &active = worlds.Create("Active");
-    World       &edited = worlds.Create("Edited");
-    World       &spare  = worlds.Create("Spare");
+    World &active = worlds.Create("Active");
+    World &edited = worlds.Create("Edited");
+    World &spare  = worlds.Create("Spare");
 
     worlds.SetActive(active);
     worlds.SetEdited(edited);
@@ -117,8 +117,8 @@ TEST_CASE("Active and edited are independent roles")
     // The point of the split: the game travels (active moves) while the editor
     // keeps saving/undoing into the level the author opened (edited stays).
     WorldManager worlds;
-    World       &authored  = worlds.Create("Authored");
-    World       &travelled = worlds.Create("Travelled");
+    World &authored  = worlds.Create("Authored");
+    World &travelled = worlds.Create("Travelled");
 
     worlds.SetActive(authored);
     worlds.SetEdited(authored);
@@ -185,7 +185,7 @@ TEST_CASE("Resident worlds share one physics thread pool")
 TEST_CASE("DestroyAllExcept keeps one world and gives it both roles")
 {
     WorldManager worlds;
-    World       &keep = worlds.Create("Keep");
+    World &keep = worlds.Create("Keep");
     worlds.SetActive(keep);
     worlds.SetEdited(keep);
     World &travelled = worlds.Create("Travelled");
@@ -205,7 +205,7 @@ TEST_CASE("An unrendered world's transforms follow its physics")
     // simulates without being drawn. Propagating alone would give correct matrices
     // of the spawn pose.
     WorldManager worlds;
-    World       &world = worlds.Create("Falling");
+    World &world = worlds.Create("Falling");
 
     const Assisi::ECS::Entity entity = world.scene.Create();
     auto *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
@@ -245,22 +245,22 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
     // a floor in world B must not catch world A's falling body, and destroying
     // either must leave the other's simulation untouched.
     WorldManager worlds;
-    World       &falling = worlds.Create("Falling");
-    World       &caught  = worlds.Create("Caught");
+    World &falling = worlds.Create("Falling");
+    World &caught  = worlds.Create("Caught");
     worlds.SetActive(falling);
     worlds.SetEdited(falling);
 
     const auto spawnBody = [](World &world, glm::vec3 at)
-    {
-        const Assisi::ECS::Entity entity = world.scene.Create();
-        world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
-        const Assisi::Physics::RigidBody body =
-            world.physics.AddBody(at, glm::quat{1.f, 0.f, 0.f, 0.f},
-                                  Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
-                                  Assisi::Physics::BodyMotion::Dynamic);
-        (void)world.scene.Add<Assisi::Physics::RigidBody>(entity, body);
-        return entity;
-    };
+                           {
+                               const Assisi::ECS::Entity entity = world.scene.Create();
+                               world.scene.Add<Assisi::ECS::Transform>(entity)->position = at;
+                               const Assisi::Physics::RigidBody body =
+                                   world.physics.AddBody(at, glm::quat{1.f, 0.f, 0.f, 0.f},
+                                                         Assisi::Physics::PhysicsWorld::ColliderShapeDesc{},
+                                                         Assisi::Physics::BodyMotion::Dynamic);
+                               (void)world.scene.Add<Assisi::Physics::RigidBody>(entity, body);
+                               return entity;
+                           };
 
     const Assisi::ECS::Entity a = spawnBody(falling, {0.f, 5.f, 0.f});
     const Assisi::ECS::Entity b = spawnBody(caught, {0.f, 5.f, 0.f});
@@ -278,12 +278,12 @@ TEST_CASE("Resident worlds simulate independently and outlive each other")
     {
         worlds.ForEach(
             [](World &world)
-            {
-                if (!world.simulate)
-                    return;
-                world.physics.Update(kStep);
-                world.physics.CaptureState();
-            });
+        {
+            if (!world.simulate)
+                return;
+            world.physics.Update(kStep);
+            world.physics.CaptureState();
+        });
     }
     worlds.ForEach([](World &world) { SyncUnrenderedWorld(world); });
 
@@ -320,19 +320,19 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
 
     // Two levels, distinguishable by entity count.
     const auto writeLevel = [&root](const char *name, int32_t entities)
-    {
-        Assisi::ECS::Scene scene;
-        for (int32_t i = 0; i < entities; ++i)
-        {
-            (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        }
-        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / name));
-    };
+                            {
+                                Assisi::ECS::Scene scene;
+                                for (int32_t i = 0; i < entities; ++i)
+                                {
+                                    (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
+                                }
+                                REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / name));
+                            };
     writeLevel("A.alvl", 3);
     writeLevel("B.alvl", 7);
 
     WorldManager worlds;
-    World       &authored = worlds.Create("Main");
+    World &authored = worlds.Create("Main");
     worlds.SetActive(authored);
     worlds.SetEdited(authored);
     authored.state = WorldState::Active;
@@ -379,8 +379,8 @@ TEST_CASE("Travel swaps the active world and keeps the edited one dormant")
 TEST_CASE("MigrateEntity moves a subtree and rebuilds its physics in the destination")
 {
     WorldManager worlds;
-    World       &src = worlds.Create("Src");
-    World       &dst = worlds.Create("Dst");
+    World &src = worlds.Create("Src");
+    World &dst = worlds.Create("Dst");
     worlds.SetActive(src);
     worlds.SetEdited(src);
 
@@ -399,7 +399,7 @@ TEST_CASE("MigrateEntity moves a subtree and rebuilds its physics in the destina
     (void)src.scene.Add<Assisi::Runtime::Parent>(child, Assisi::Runtime::Parent{parent});
 
     const std::size_t srcBefore = [&]
-    { std::size_t n = 0; src.scene.ForEachEntity([&n](Assisi::ECS::Entity) { ++n; }); return n; }();
+                                  { std::size_t n = 0; src.scene.ForEachEntity([&n](Assisi::ECS::Entity) { ++n; }); return n; }();
     CHECK(srcBefore == 2u);
 
     const Assisi::ECS::Entity movedRoot = worlds.MigrateEntity(src, dst, parent);
@@ -427,10 +427,10 @@ TEST_CASE("MigrateEntity moves a subtree and rebuilds its physics in the destina
     Assisi::ECS::Entity movedChild = Assisi::ECS::NullEntity;
     dst.scene.ForEachEntity(
         [&](Assisi::ECS::Entity e)
-        {
-            if (dst.scene.Get<Assisi::Runtime::Parent>(e) != nullptr)
-                movedChild = e;
-        });
+    {
+        if (dst.scene.Get<Assisi::Runtime::Parent>(e) != nullptr)
+            movedChild = e;
+    });
     REQUIRE(movedChild != Assisi::ECS::NullEntity);
     CHECK(dst.scene.Get<Assisi::Runtime::Parent>(movedChild)->parent == movedRoot);
 
@@ -454,8 +454,8 @@ TEST_CASE("Migrating an entity out from under a ref nulls that ref")
     // ref — now pointing outside the migrated set — must resolve to null in the
     // destination rather than to some unrelated destination entity.
     WorldManager worlds;
-    World       &src = worlds.Create("Src");
-    World       &dst = worlds.Create("Dst");
+    World &src = worlds.Create("Src");
+    World &dst = worlds.Create("Dst");
 
     const Assisi::ECS::Entity anchor = src.scene.Create();
     (void)src.scene.Add<Assisi::ECS::Transform>(anchor);
@@ -483,8 +483,8 @@ TEST_CASE("A migrated entity does not land on a name the destination already use
     // entity is what steps aside; the resident is what that world already
     // addresses by name.
     WorldManager worlds;
-    World       &src = worlds.Create("Src");
-    World       &dst = worlds.Create("Dst");
+    World &src = worlds.Create("Src");
+    World &dst = worlds.Create("Dst");
 
     const Assisi::ECS::Entity resident = dst.scene.Create();
     (void)dst.scene.Add<Assisi::ECS::Transform>(resident);
@@ -607,7 +607,7 @@ TEST_CASE("A pending background load is safely abandoned on cancel")
     }
 
     Assisi::Core::JobSystem jobs;
-    WorldManager            worlds;
+    WorldManager worlds;
     worlds.SetServices({.cache = nullptr, .database = nullptr, .renderer = nullptr, .jobs = &jobs});
     World &start = worlds.Create("Start");
     worlds.SetActive(start);
@@ -660,8 +660,8 @@ namespace
 // will. No window, so no input devices — see SystemContext's pointer fields.
 void TickUpdate(World &world, Assisi::Core::EventQueue &events, bool isActiveWorld = true)
 {
-    world.systems.Run(SystemPhase::Update, SystemContext{world, 0.016f, /*simTick=*/0,
-                                                         /*input=*/nullptr, /*actions=*/nullptr,
+    world.systems.Run(SystemPhase::Update, SystemContext{world, 0.016f, /*simTick=*/ 0,
+                                                         /*input=*/ nullptr, /*actions=*/ nullptr,
                                                          events, isActiveWorld});
 }
 
@@ -677,8 +677,8 @@ TEST_CASE("A level's system list decides which systems its world runs")
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &named   = worlds.Create("Named");
-    World       &unnamed = worlds.Create("Unnamed");
+    World &named   = worlds.Create("Named");
+    World &unnamed = worlds.Create("Unnamed");
 
     REQUIRE(worlds.ApplySystems(named, std::vector<std::string>{"Counter"}, "(test)"));
     REQUIRE(worlds.ApplySystems(unnamed, {}, "(test)"));
@@ -700,8 +700,8 @@ TEST_CASE("Two worlds naming one system hold independent state")
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &first  = worlds.Create("First");
-    World       &second = worlds.Create("Second");
+    World &first  = worlds.Create("First");
+    World &second = worlds.Create("Second");
 
     const std::vector<std::string> names{"Counter"};
     REQUIRE(worlds.ApplySystems(first, names, "(test)"));
@@ -721,7 +721,7 @@ TEST_CASE("A name this build does not declare fails the load instead of running 
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &world = worlds.Create("Typo");
+    World &world = worlds.Create("Typo");
 
     // Nothing is installed, not even the names that *were* valid: a half-installed
     // world runs and looks nearly right, which is worse than a refused load.
@@ -736,7 +736,7 @@ TEST_CASE("The list is a union: naming a system twice installs it once")
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &world = worlds.Create("Doubled");
+    World &world = worlds.Create("Doubled");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter", "Counter"}, "(test)"));
     TickUpdate(world, events);
@@ -752,7 +752,7 @@ TEST_CASE("File order carries no meaning; after/before decides run order")
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &world = worlds.Create("Ordered");
+    World &world = worlds.Create("Ordered");
 
     // Named the wrong way round on purpose. Follower declares `after = Counter`,
     // so the file cannot reorder them.
@@ -770,7 +770,7 @@ TEST_CASE("Re-applying a list replaces the previous systems rather than stacking
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &world = worlds.Create("Reused");
+    World &world = worlds.Create("Reused");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "(test)"));
     TickUpdate(world, events);
@@ -793,8 +793,8 @@ TEST_CASE("A queued install belongs to one world and cannot reach another")
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &doomed   = worlds.Create("Doomed");
-    World       &survivor = worlds.Create("Survivor");
+    World &doomed   = worlds.Create("Doomed");
+    World &survivor = worlds.Create("Survivor");
 
     QueueSystemInstall(doomed, std::vector<std::string>{"Counter"}, "car.abp");
     QueueSystemInstall(survivor, std::vector<std::string>{"Follower"}, "car.abp");
@@ -821,7 +821,7 @@ TEST_CASE("Re-targeting a world drops the outgoing level's queued installs")
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &world = worlds.Create("Retargeted");
+    World &world = worlds.Create("Retargeted");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "levels/Old.alvl"));
     QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
@@ -846,7 +846,7 @@ TEST_CASE("A refused system list leaves the queued installs alone")
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &world = worlds.Create("Refused");
+    World &world = worlds.Create("Refused");
 
     REQUIRE(worlds.ApplySystems(world, std::vector<std::string>{"Counter"}, "levels/Live.alvl"));
     QueueSystemInstall(world, std::vector<std::string>{"Follower"}, "car.abp");
@@ -867,7 +867,7 @@ TEST_CASE("A spawn queues a union, and draining it twice installs once")
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;
-    World       &world = worlds.Create("Spawned");
+    World &world = worlds.Create("Spawned");
     REQUIRE(worlds.ApplySystems(world, {}, "levels/Empty.alvl"));
 
     QueueSystemInstall(world, std::vector<std::string>{"Counter"}, "car.abp");
@@ -906,7 +906,7 @@ TEST_CASE("A level's system list survives a save/load round trip")
             Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / "L.alvl", header));
     }
 
-    Assisi::ECS::Scene          scene;
+    Assisi::ECS::Scene scene;
     Assisi::Runtime::LevelHeader header;
     REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(scene, "levels/L.alvl", {.header = &header}));
     CHECK(header.systems == names);
@@ -916,7 +916,7 @@ TEST_CASE("A level's system list survives a save/load round trip")
         Assisi::ECS::Scene bare;
         REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(bare, root / "levels" / "N.alvl"));
     }
-    Assisi::ECS::Scene          bare;
+    Assisi::ECS::Scene bare;
     Assisi::Runtime::LevelHeader none;
     REQUIRE(Assisi::Runtime::SceneSerializer::LoadFromFile(bare, "levels/N.alvl", {.header = &none}));
     CHECK(none.systems.empty());
@@ -930,7 +930,7 @@ TEST_CASE("Dispatching every simulated world runs shared systems twice, input sy
     // iterate the resident worlds, skip the ones that are not Active+simulate,
     // and mark the active one so ActiveWorldOnly systems can opt out of the rest.
     Assisi::Core::EventQueue events;
-    WorldManager             worlds;
+    WorldManager worlds;
 
     Assisi::App::Test::RunCounts::Instance().Reset();
 
@@ -953,11 +953,11 @@ TEST_CASE("Dispatching every simulated world runs shared systems twice, input sy
 
     worlds.ForEach(
         [&](World &world)
-        {
-            if (world.state != WorldState::Active || !world.simulate)
-                return;
-            TickUpdate(world, events, /*isActiveWorld=*/&world == worlds.Active());
-        });
+    {
+        if (world.state != WorldState::Active || !world.simulate)
+            return;
+        TickUpdate(world, events, /*isActiveWorld=*/ &world == worlds.Active());
+    });
 
     // Both simulated worlds ran the shared system...
     CHECK(Runs(played, "Counter") == 1);
@@ -977,7 +977,7 @@ TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
     // ticking logic while the editor reads Paused. The host's play state is a
     // second, independent gate (EditorApp::OnFixedUpdate/OnUpdate).
     Assisi::Core::EventQueue events;
-    WorldManager             worlds;
+    WorldManager worlds;
 
     Assisi::App::Test::RunCounts::Instance().Reset();
 
@@ -997,17 +997,17 @@ TEST_CASE("Pausing stops game logic in every world, not just the one on screen")
     secondary.simulate = true;
 
     const auto dispatch = [&]
-    {
-        if (!hostIsPlaying)
-            return;
-        worlds.ForEach(
-            [&](World &world)
-            {
-                if (world.state != WorldState::Active || !world.simulate)
-                    return;
-                TickUpdate(world, events, /*isActiveWorld=*/&world == worlds.Active());
-            });
-    };
+                          {
+                              if (!hostIsPlaying)
+                                  return;
+                              worlds.ForEach(
+                                  [&](World &world)
+        {
+            if (world.state != WorldState::Active || !world.simulate)
+                return;
+            TickUpdate(world, events, /*isActiveWorld=*/ &world == worlds.Active());
+        });
+                          };
 
     dispatch();
     CHECK(Runs(viewed, "Counter") + Runs(secondary, "Counter") == 0); // paused everywhere, stale flag or not
@@ -1032,16 +1032,16 @@ TEST_CASE("Travelling from inside a system is refused, and deferred travel repla
     REQUIRE(Assisi::Core::AssetSystem::SetRoot(root).has_value());
 
     const auto writeLevel = [&root](const char *name)
-    {
-        Assisi::ECS::Scene scene;
-        (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
-        REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / name));
-    };
+                            {
+                                Assisi::ECS::Scene scene;
+                                (void)scene.Add<Assisi::ECS::Transform>(scene.Create());
+                                REQUIRE(Assisi::Runtime::SceneSerializer::SaveToFile(scene, root / "levels" / name));
+                            };
     writeLevel("A.alvl");
     writeLevel("B.alvl");
 
     WorldManager worlds;
-    World       &start = worlds.Create("Main");
+    World &start = worlds.Create("Main");
     worlds.SetActive(start);
     start.state = WorldState::Active;
     REQUIRE(worlds.LoadLevel("levels/A.alvl") != nullptr);
@@ -1051,11 +1051,11 @@ TEST_CASE("Travelling from inside a system is refused, and deferred travel repla
     // world list exactly as it was.
     worlds.ForEach(
         [&](World &)
-        {
-            CHECK(worlds.LoadLevel("levels/B.alvl") == nullptr);
-            CHECK(worlds.PromotePendingLoad() == nullptr);
-            CHECK_FALSE(worlds.Destroy("Main#1"));
-        });
+    {
+        CHECK(worlds.LoadLevel("levels/B.alvl") == nullptr);
+        CHECK(worlds.PromotePendingLoad() == nullptr);
+        CHECK_FALSE(worlds.Destroy("Main#1"));
+    });
     CHECK(worlds.Count() == residentBefore);
     CHECK(worlds.Active()->levelPath == "levels/A.alvl");
 
@@ -1103,7 +1103,7 @@ TEST_CASE("A background load's systems are installed when it is promoted")
     }
 
     Assisi::Core::EventQueue events;
-    WorldManager             worlds;
+    WorldManager worlds;
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     World &start = worlds.Create("Main");

@@ -34,16 +34,16 @@ enum class ColorSpace : std::uint8_t
 /// level; each entry is `width_i * height_i * 4` bytes (levels halve down to 1x1).
 struct DecodedImage
 {
-    uint32_t                                width = 0;
-    uint32_t                                height = 0;
-    ColorSpace                              colorSpace = ColorSpace::Srgb;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    ColorSpace colorSpace = ColorSpace::Srgb;
     std::vector<std::vector<unsigned char>> mips;
 };
 
 /// @brief Owner of an NVRHI 2D texture, RGBA8, with a full mip chain.
 class Texture
 {
-  public:
+public:
     Texture() = default;
 
     /// @brief Decode an image from a virtual asset path into a CPU mip chain — the
@@ -113,7 +113,7 @@ class Texture
     ///
     /// @return Success, or an AssetError if the file cannot be resolved/read/decoded.
     std::expected<void, Assisi::Core::AssetError> LoadFromAssets(nvrhi::IDevice *device, std::string_view vpath,
-                                                                  ColorSpace colorSpace = ColorSpace::Srgb) noexcept;
+                                                                 ColorSpace colorSpace = ColorSpace::Srgb) noexcept;
 
     /// @brief Uploads a solid 1x1 color — used for default/placeholder textures.
     /// Single mip level (nothing to downsample). @p sharedList batches the upload
@@ -134,8 +134,8 @@ class Texture
     uint32_t BindlessIndex() const { return _bindlessIndex; }
     void SetBindlessIndex(uint32_t index) { _bindlessIndex = index; }
 
-  private:
+private:
     nvrhi::TextureHandle _texture;
-    uint32_t             _bindlessIndex = kInvalidBindlessIndex;
+    uint32_t _bindlessIndex = kInvalidBindlessIndex;
 };
 } /* namespace Assisi::Render */

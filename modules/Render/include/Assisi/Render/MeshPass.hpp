@@ -57,14 +57,14 @@ inline constexpr float kDefaultAmbientIntensity = 0.03f;
 
 class MeshPass
 {
-  public:
+public:
     MeshPass() = default;
 
     /// @brief Inputs to Initialize(). Grouped into a struct so the call site
     /// stays legible and adding an input doesn't ripple through every caller.
     struct InitParams
     {
-        nvrhi::IDevice        *device = nullptr;
+        nvrhi::IDevice *device = nullptr;
         nvrhi::FramebufferInfo framebufferInfo;
         /// Compiled-SPIR-V shader paths (see ShaderModule.hpp).
         std::string vertexShaderSpvPath;
@@ -75,7 +75,7 @@ class MeshPass
         /// the layout joins the pipeline as register space 1, the table binds
         /// every draw. Both must outlive the pass (AssetCache owns them; the
         /// handles stay stable across Clear()).
-        nvrhi::IBindingLayout   *bindlessLayout = nullptr;
+        nvrhi::IBindingLayout *bindlessLayout = nullptr;
         nvrhi::IDescriptorTable *bindlessTable = nullptr;
         /// The AssetCache's material table (stage D): a structured buffer whose
         /// row `Material::Id()` holds that material's constants. Bound into the
@@ -112,7 +112,7 @@ class MeshPass
                               uint32_t screenWidth, uint32_t screenHeight, float nearZ, float farZ,
                               uint32_t dirLightCount, MaterialDebugView debugView = MaterialDebugView::None,
                               const glm::vec3 &ambientColor = glm::vec3(1.f, 1.f, 1.f),
-                              float             ambientIntensity = kDefaultAmbientIntensity) const;
+                              float ambientIntensity = kDefaultAmbientIntensity) const;
 
     /// @brief Submission counts from one Submit — the consumer half of the
     /// draw-stats (the producer counts drawn/culled). Since stage E the pass builds
@@ -142,8 +142,8 @@ class MeshPass
     struct InstanceData
     {
         glm::mat4 model;
-        uint32_t  materialIndex; // row into the material table (== Material::Id()).
-        uint32_t  _pad0 = 0, _pad1 = 0, _pad2 = 0;
+        uint32_t materialIndex;  // row into the material table (== Material::Id()).
+        uint32_t _pad0 = 0, _pad1 = 0, _pad2 = 0;
     };
     static_assert(sizeof(InstanceData) == 80, "InstanceData must match the shader's std430 array stride.");
 
@@ -208,7 +208,7 @@ class MeshPass
     /// nothing and keeps the seam if a referenced resource is ever recreated.
     void InvalidateBindingSets() { _globalBindingSet = nullptr; }
 
-  private:
+private:
     /// @brief Builds (once, then caches) the pass's single binding set: frame
     /// constants, the shared sampler, the clustered-light buffers, the material
     /// table, and the per-instance buffer at t6 — @p instanceBuffer, which is the
@@ -226,22 +226,22 @@ class MeshPass
     nvrhi::IDevice *_device = nullptr;
     const ClusterGrid *_clusterGrid = nullptr;
 
-    nvrhi::ShaderHandle           _vertexShader;
-    nvrhi::ShaderHandle           _pixelShader;
-    nvrhi::InputLayoutHandle      _inputLayout;
-    nvrhi::BindingLayoutHandle    _bindingLayout;
-    nvrhi::SamplerHandle          _sampler;
+    nvrhi::ShaderHandle _vertexShader;
+    nvrhi::ShaderHandle _pixelShader;
+    nvrhi::InputLayoutHandle _inputLayout;
+    nvrhi::BindingLayoutHandle _bindingLayout;
+    nvrhi::SamplerHandle _sampler;
     nvrhi::GraphicsPipelineHandle _pipeline;
-    nvrhi::BufferHandle           _frameConstantsBuffer;
+    nvrhi::BufferHandle _frameConstantsBuffer;
 
     // The AssetCache's bindless material-texture table + its layout, and its
     // material table (stage D). Non-owning: the AssetCache owns them and keeps the
     // handles stable across Clear(). The bindless layout is register space 1 in
     // the pipeline; the table is bound as the second binding set each draw. The
     // material table binds into the global binding set (set 0).
-    nvrhi::BindingLayoutHandle   _bindlessLayout;
+    nvrhi::BindingLayoutHandle _bindlessLayout;
     nvrhi::DescriptorTableHandle _bindlessTable;
-    nvrhi::IBuffer              *_materialTable = nullptr;
+    nvrhi::IBuffer *_materialTable = nullptr;
 
     // Per-instance data (world matrix + material id), rebuilt and uploaded each
     // frame from the sorted DrawItems; the vertex shader indexes it by
@@ -249,19 +249,19 @@ class MeshPass
     // when a frame has more items than it holds — a growth swaps the buffer handle,
     // which invalidates _globalBindingSet (see GetOrCreateGlobalBindingSet). Owned
     // by the pass, unlike the AssetCache-owned tables above.
-    mutable Buffer                       _instanceBuffer;
-    mutable nvrhi::BindingSetHandle      _globalBindingSet;
+    mutable Buffer _instanceBuffer;
+    mutable nvrhi::BindingSetHandle _globalBindingSet;
     // The instance-buffer handle _globalBindingSet was built against; a mismatch
     // means the buffer grew and the set must be rebuilt.
-    mutable const nvrhi::IBuffer        *_globalSetInstanceBuffer = nullptr;
+    mutable const nvrhi::IBuffer *_globalSetInstanceBuffer = nullptr;
 
     // CPU-built indirect draw-command buffer (stage E): one
     // DrawIndexedIndirectArguments per instanced batch, rebuilt and multi-drawn
     // each frame. Grown geometrically like the instance buffer; not a plain
     // Render::Buffer since it is an indirect-args buffer (isDrawIndirectArgs), not
     // a structured SRV. Owned by the pass.
-    mutable nvrhi::BufferHandle          _indirectBuffer;
-    mutable uint32_t                     _indirectCapacity = 0; // in commands
+    mutable nvrhi::BufferHandle _indirectBuffer;
+    mutable uint32_t _indirectCapacity = 0;                     // in commands
 
     // Per-frame scratch for Submit, kept across frames so the steady state costs
     // no allocations: clear() preserves capacity, whereas the locals these replaced

@@ -70,7 +70,7 @@ inline constexpr std::size_t kMaxStringBytes = 4096;
 /// serializes. Writes past 32 bits go through WriteBits64.
 class BitWriter
 {
-  public:
+public:
     BitWriter() = default;
 
     /// @brief Constructs a writer with @p reserveBytes of capacity pre-allocated
@@ -153,9 +153,9 @@ class BitWriter
     /// packets.
     void Clear();
 
-  private:
+private:
     std::vector<std::byte> _bytes;
-    std::size_t            _bitCount = 0; ///< Bits written; _bytes.size() == ceil(_bitCount / 8).
+    std::size_t _bitCount = 0;            ///< Bits written; _bytes.size() == ceil(_bitCount / 8).
 };
 
 /// @brief Bit-granular reader over a borrowed byte span. Every read is
@@ -168,7 +168,7 @@ class BitWriter
 /// with zeroes, never with adjacent heap bytes.
 class BitReader
 {
-  public:
+public:
     /// @brief Reads from @p data, which must outlive the reader (it is borrowed,
     /// not copied).
     explicit BitReader(std::span<const std::byte> data) : _data(data) {}
@@ -259,7 +259,7 @@ class BitReader
     [[nodiscard]] std::size_t BitsRead() const { return _bitPos; }
     [[nodiscard]] std::size_t BitsRemaining() const { return TotalBits() - _bitPos; }
 
-  private:
+private:
     [[nodiscard]] std::size_t TotalBits() const { return _data.size() * 8u; }
 
     /// Latches failure and parks the cursor at the end, so a subsequent
@@ -285,8 +285,8 @@ class BitReader
     }
 
     std::span<const std::byte> _data;
-    std::size_t                _bitPos = 0;
-    bool                       _failed = false;
+    std::size_t _bitPos = 0;
+    bool _failed = false;
 };
 
 } // namespace Assisi::Core

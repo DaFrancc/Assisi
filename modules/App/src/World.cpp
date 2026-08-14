@@ -210,14 +210,14 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     incoming.state  = WorldState::Loading;
 
     Runtime::LevelHeader header;
-    bool                 loaded = false;
+    bool loaded = false;
     if (_services.cache != nullptr && _services.database != nullptr && _services.renderer != nullptr)
     {
         // Keep, never ClearFirst: the outgoing world is still alive (and still
         // being drawn) until the swap below.
         loaded = App::LoadLevel(incoming, levelPath, {*_services.cache, *_services.database, *_services.renderer},
                                 {.reset = AssetCacheReset::Keep, .header = &header})
-                     .has_value();
+                 .has_value();
     }
     else
     {
@@ -225,7 +225,7 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
         // all that matter.
         loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath,
                                                         {.header = &header, .instances = &incoming.instances})
-                     .has_value();
+                 .has_value();
         if (loaded)
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
     }
@@ -295,8 +295,8 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         // across frames via PumpPendingLoad.
         Runtime::LevelHeader header;
         const bool ok = Runtime::SceneSerializer::LoadFromFile(
-                            incoming.scene, path, {.header = &header, .instances = &incoming.instances})
-                            .has_value();
+            incoming.scene, path, {.header = &header, .instances = &incoming.instances})
+                        .has_value();
         if (ok)
         {
             incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
@@ -329,13 +329,13 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
             // Deserialize drives phase-1 progress 0 -> ~0.9 (the entity-scaling
             // cost); building bodies is the cheap tail to 1.0.
             Runtime::LevelHeader header;
-            const bool           ok =
+            const bool ok =
                 Runtime::SceneSerializer::LoadFromFile(
                     w->scene, path,
                     {.onProgress = [deserProgress](float f) { deserProgress->store(f * 0.9f); },
                      .header     = &header,
                      .instances  = &w->instances})
-                    .has_value();
+                .has_value();
             if (!ok)
                 return false;
             w->propagationTick = BuildSceneBodies(w->scene, w->physics);
@@ -411,7 +411,7 @@ void WorldManager::PumpPendingLoad()
     else
     {
         const float landed = 1.f - static_cast<float>(pending) /
-                                       static_cast<float>(_pending->resolveInitialPending);
+                             static_cast<float>(_pending->resolveInitialPending);
         _pending->assetProgress = std::clamp(landed, 0.f, 1.f);
     }
 
@@ -461,10 +461,10 @@ World *WorldManager::PromotePendingLoad()
         PumpPendingLoad(); // latches workerDone/workerOk, and kicks off resolve
     }
 
-    const bool        ok       = _pending->workerOk;
-    World *const      incoming = _pending->world;
+    const bool ok       = _pending->workerOk;
+    World *const incoming = _pending->world;
     const std::string path     = _pending->path;
-    const bool        resolved = _pending->resolveStarted;
+    const bool resolved = _pending->resolveStarted;
     _pending.reset();
 
     if (!ok)
@@ -568,7 +568,7 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
     // pointers yet.
     for (const ECS::Entity e : arrived)
     {
-        const Runtime::Transform          *transform = dst.scene.Get<Runtime::Transform>(e);
+        const Runtime::Transform *transform = dst.scene.Get<Runtime::Transform>(e);
         const Physics::RigidBodyDescriptor *desc      = dst.scene.Get<Physics::RigidBodyDescriptor>(e);
         if (transform != nullptr && desc != nullptr && dst.scene.Get<Physics::RigidBody>(e) == nullptr)
             dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc, parentWorld);
@@ -695,14 +695,14 @@ Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene)
     // parent, and Physics sits below the layer that owns the parent link — so the
     // answer is handed down rather than looked up there.
     return [&scene](ECS::Entity entity) -> const glm::mat4 *
-    {
-        const Runtime::Parent *parent = scene.Get<Runtime::Parent>(entity);
-        if (parent == nullptr || parent->parent == ECS::NullEntity)
-            return nullptr;
+           {
+               const Runtime::Parent *parent = scene.Get<Runtime::Parent>(entity);
+               if (parent == nullptr || parent->parent == ECS::NullEntity)
+                   return nullptr;
 
-        const ECS::Transform *parentTransform = scene.Get<ECS::Transform>(parent->parent);
-        return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
-    };
+               const ECS::Transform *parentTransform = scene.Get<ECS::Transform>(parent->parent);
+               return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
+           };
 }
 
 uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick)

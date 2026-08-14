@@ -223,7 +223,7 @@ TEST_CASE("HelpUntil with helpMain runs main-queue tasks on the main thread")
 
     uint32_t spins = 0;
     jobs.HelpUntil([&completed, &spins] { return completed.load() || ++spins > 50'000'000u; },
-                   /*helpMain=*/true);
+                   /*helpMain=*/ true);
     CHECK(completed.load());
 }
 
@@ -238,9 +238,9 @@ TEST_CASE("HelpUntil with helpMain never runs main tasks off the main thread")
     // any other thread the main queue must stay untouched (its tasks may assume
     // main-thread affinity, e.g. GPU submit).
     std::thread other([&jobs] {
-        uint32_t spins = 0;
-        jobs.HelpUntil([&spins] { return ++spins > 100'000u; }, /*helpMain=*/true);
-    });
+                      uint32_t spins = 0;
+                      jobs.HelpUntil([&spins] { return ++spins > 100'000u; }, /*helpMain=*/ true);
+        });
     other.join();
 
     CHECK_FALSE(mainTaskRan.load());
@@ -260,9 +260,9 @@ TEST_CASE("Wait on the main thread completes a chain ending in Pool::Main")
     Task<int32_t> task = jobs.Run(Pool::Worker, [] { return 20; })
                          .Then(Pool::Main,
                                [&sawMainStage](int32_t value) {
-                                   sawMainStage.store(true);
-                                   return value + 1;
-                               })
+        sawMainStage.store(true);
+        return value + 1;
+    })
                          .Then(Pool::Worker, [](int32_t value) { return value * 2; });
 
     task.Wait();
@@ -274,7 +274,7 @@ TEST_CASE("Wait on the main thread completes a chain ending in Pool::Main")
 TEST_CASE("A second Then on the same task fires the contract guard")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    JobSystem                                 jobs(2u);
+    JobSystem jobs(2u);
 
     // Pending antecedent: the second Then would silently overwrite the first
     // continuation (orphaning it — its Wait() would livelock), so it asserts.
@@ -302,7 +302,7 @@ TEST_CASE("Many concurrent tasks all complete with the right results")
 {
     JobSystem jobs(4u);
 
-    constexpr uint32_t   kTasks = 1'000u;
+    constexpr uint32_t kTasks = 1'000u;
     std::vector<Task<uint32_t>> tasks;
     tasks.reserve(kTasks);
     for (uint32_t i = 0; i < kTasks; ++i)
@@ -372,24 +372,24 @@ TEST_CASE("Workers name themselves for the capture")
 
     {
         constexpr int32_t kWorkers = 3;
-        JobSystem         jobs(kWorkers);
+        JobSystem jobs(kWorkers);
 
         // Poll rather than submit-and-wait: Wait() help-waits, so the main thread
         // can run the task itself before a single worker has reached its first
         // statement. What is being tested is that each thread registers when it
         // starts, not how fast the scheduler gets there.
         const auto countNamedWorkers = []
-        {
-            int32_t named = 0;
-            for (const Assisi::Chiara::ThreadSnapshot &snapshot : Assisi::Chiara::SnapshotThreads())
-            {
-                if (snapshot.name != nullptr && std::string_view(snapshot.name).starts_with("worker-"))
-                {
-                    ++named;
-                }
-            }
-            return named;
-        };
+                                       {
+                                           int32_t named = 0;
+                                           for (const Assisi::Chiara::ThreadSnapshot &snapshot : Assisi::Chiara::SnapshotThreads())
+                                           {
+                                               if (snapshot.name != nullptr && std::string_view(snapshot.name).starts_with("worker-"))
+                                               {
+                                                   ++named;
+                                               }
+                                           }
+                                           return named;
+                                       };
 
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         while (countNamedWorkers() < kWorkers && std::chrono::steady_clock::now() < deadline)

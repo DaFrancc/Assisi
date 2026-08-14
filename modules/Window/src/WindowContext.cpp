@@ -95,10 +95,10 @@ WindowContext::~WindowContext()
 
 WindowContext::WindowContext(WindowContext &&other) noexcept
     : _glfwLibrary(std::move(other._glfwLibrary)), _nativeWindowHandle(other._nativeWindowHandle),
-      _isValid(other._isValid),
-      _framebufferSizeCallbacks(std::move(other._framebufferSizeCallbacks)),
-      _scrollCallbacks(std::move(other._scrollCallbacks)),
-      _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks))
+    _isValid(other._isValid),
+    _framebufferSizeCallbacks(std::move(other._framebufferSizeCallbacks)),
+    _scrollCallbacks(std::move(other._scrollCallbacks)),
+    _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks))
 {
     other._nativeWindowHandle = nullptr;
     other._isValid = false;

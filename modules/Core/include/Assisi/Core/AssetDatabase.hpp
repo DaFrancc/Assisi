@@ -63,7 +63,7 @@ enum class RebuildMode : std::uint8_t
 /// @brief Editor-time index of every asset under the asset root, keyed by id.
 class AssetDatabase
 {
-  public:
+public:
     /// @brief Scan the asset root, reconcile sidecars, and (re)build the map.
     ///
     /// Clears any previous state, seeds the reserved built-ins, then walks the
@@ -107,7 +107,7 @@ class AssetDatabase
     ///        mesh has no manifest, or the slot is unlisted.
     [[nodiscard]] AssetId SlotMaterial(AssetId meshId, std::uint32_t slot) const;
 
-  private:
+private:
     std::unordered_map<AssetId, std::string> _idToPath;
     std::unordered_map<std::string, AssetId> _pathToId;
 

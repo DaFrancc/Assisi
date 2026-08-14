@@ -45,7 +45,7 @@ namespace
 std::filesystem::path FreshRoot(const std::string &name)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / ("assisi_bpa_" + name);
-    std::error_code             ec;
+    std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
@@ -64,8 +64,8 @@ ECS::Transform At(float x, float y, float z)
 /// would select and turn into a blueprint.
 struct Selection
 {
-    ECS::Entity              body;
-    ECS::Entity              lid;
+    ECS::Entity body;
+    ECS::Entity lid;
     std::vector<ECS::Entity> all;
 };
 
@@ -91,7 +91,7 @@ TEST_CASE("Authoring: a selection saved as a blueprint places back exactly where
 {
     const std::filesystem::path root = FreshRoot("roundtrip");
 
-    ECS::Scene      scene;
+    ECS::Scene scene;
     const Selection selection = BuildSelection(scene);
 
     const ECS::Transform origin = *scene.Get<ECS::Transform>(selection.body);
@@ -115,13 +115,13 @@ TEST_CASE("Authoring: a selection saved as a blueprint places back exactly where
           doctest::Approx(1.f));
 
     // Placed back at the same origin, the copy stands where the original did.
-    InstanceTable                        table;
-    const Runtime::LevelInstance         entry{.name      = "crate_1",
-                                               .source    = "crate.abp",
-                                               .transform = origin,
-                                               .overrides = nlohmann::json::object(),
-                                               .removed   = {}};
-    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true);
+    InstanceTable table;
+    const Runtime::LevelInstance entry{.name      = "crate_1",
+                                       .source    = "crate.abp",
+                                       .transform = origin,
+                                       .overrides = nlohmann::json::object(),
+                                       .removed   = {}};
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
     REQUIRE(placed->members.size() == 2);
 
@@ -141,21 +141,21 @@ TEST_CASE("Authoring: a second copy stands where it was put, not where the first
 {
     const std::filesystem::path root = FreshRoot("second");
 
-    ECS::Scene      scene;
+    ECS::Scene scene;
     const Selection selection = BuildSelection(scene);
     REQUIRE(SceneSerializer::SaveEntitiesToFile(scene, selection.all, root / "crate.abp",
                                                 *scene.Get<ECS::Transform>(selection.body)));
 
     InstanceTable table;
-    const auto    place = [&](const char *name, float x)
-    {
-        const Runtime::LevelInstance entry{.name      = name,
-                                           .source    = "crate.abp",
-                                           .transform = At(x, 0.f, 0.f),
-                                           .overrides = nlohmann::json::object(),
-                                           .removed   = {}};
-        return SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true);
-    };
+    const auto place = [&](const char *name, float x)
+                       {
+                           const Runtime::LevelInstance entry{.name      = name,
+                                                              .source    = "crate.abp",
+                                                              .transform = At(x, 0.f, 0.f),
+                                                              .overrides = nlohmann::json::object(),
+                                                              .removed   = {}};
+                           return SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
+                       };
 
     const auto first  = place("crate_1", 3.f);
     const auto second = place("crate_2", -7.f);
@@ -170,12 +170,12 @@ TEST_CASE("Authoring: an instance an author placed is written back; a runtime sp
 {
     const std::filesystem::path root = FreshRoot("authored");
 
-    ECS::Scene      scene;
+    ECS::Scene scene;
     const Selection selection = BuildSelection(scene);
     REQUIRE(SceneSerializer::SaveEntitiesToFile(scene, selection.all, root / "crate.abp",
                                                 *scene.Get<ECS::Transform>(selection.body)));
 
-    ECS::Scene    level;
+    ECS::Scene level;
     InstanceTable table;
 
     const Runtime::LevelInstance entry{.name      = "crate_1",
@@ -183,7 +183,7 @@ TEST_CASE("Authoring: an instance an author placed is written back; a runtime sp
                                        .transform = At(4.f, 0.f, 0.f),
                                        .overrides = nlohmann::json::object(),
                                        .removed   = {}};
-    REQUIRE(SceneSerializer::PlaceInstance(level, table, entry, /*authored=*/true).has_value());
+    REQUIRE(SceneSerializer::PlaceInstance(level, table, entry, /*authored=*/ true).has_value());
 
     // A runtime spawn exists because something in the game asked for it; writing it
     // into the file would make it authored the next time the level loads.
@@ -199,18 +199,18 @@ TEST_CASE("Authoring: a selection containing a blueprint member is refused")
 {
     const std::filesystem::path root = FreshRoot("nesting");
 
-    ECS::Scene      scene;
+    ECS::Scene scene;
     const Selection selection = BuildSelection(scene);
     REQUIRE(SceneSerializer::SaveEntitiesToFile(scene, selection.all, root / "crate.abp",
                                                 *scene.Get<ECS::Transform>(selection.body)));
 
-    InstanceTable                table;
+    InstanceTable table;
     const Runtime::LevelInstance entry{.name      = "crate_1",
                                        .source    = "crate.abp",
                                        .transform = {},
                                        .overrides = nlohmann::json::object(),
                                        .removed   = {}};
-    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true);
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
 
     // Nesting is an `instances` entry, not copied entities. Copying them would bake
@@ -225,7 +225,7 @@ TEST_CASE("Authoring: children saved without their parent stand where they stood
 {
     const std::filesystem::path root = FreshRoot("parented");
 
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity rig = scene.Create();
     REQUIRE(scene.Add(rig, At(100.f, 0.f, 0.f)) != nullptr);
     REQUIRE(scene.Add(rig, Runtime::Name{Core::EntityName{"rig"}}) != nullptr);
@@ -261,13 +261,13 @@ TEST_CASE("Authoring: children saved without their parent stand where they stood
 
     // Placed back at that origin, the swap is invisible: the body stands exactly
     // where it stood, and the lid keeps its offset under it.
-    InstanceTable                table;
+    InstanceTable table;
     const Runtime::LevelInstance entry{.name      = "crate_1",
                                        .source    = "crate.abp",
                                        .transform = origin,
                                        .overrides = nlohmann::json::object(),
                                        .removed   = {}};
-    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true);
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
     REQUIRE(placed->members.size() == 2);
 
@@ -317,7 +317,7 @@ TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
 {
     const std::filesystem::path root = FreshRoot("scale");
 
-    ECS::Scene  scene;
+    ECS::Scene scene;
     ECS::Entity cube = scene.Create();
     ECS::Transform pose = At(10.f, 0.f, 0.f);
     pose.scale          = {0.6f, 0.6f, 0.6f};
@@ -344,13 +344,13 @@ TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
           doctest::Approx(0.6f));
 
     // A copy placed somewhere else entirely is still the size it was saved at.
-    InstanceTable                table;
+    InstanceTable table;
     const Runtime::LevelInstance entry{.name      = "small_crate_1",
                                        .source    = "small_crate.abp",
                                        .transform = At(-4.f, 0.f, 0.f),
                                        .overrides = nlohmann::json::object(),
                                        .removed   = {}};
-    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/true);
+    const auto placed = SceneSerializer::PlaceInstance(scene, table, entry, /*authored=*/ true);
     REQUIRE(placed.has_value());
 
     const ECS::Transform *copy = scene.Get<ECS::Transform>(placed->members[0]);
@@ -367,7 +367,7 @@ TEST_CASE("Authoring: a scaled selection stays scaled in every copy")
                                           .transform = doubled,
                                           .overrides = nlohmann::json::object(),
                                           .removed   = {}};
-    const auto big = SceneSerializer::PlaceInstance(scene, table, bigEntry, /*authored=*/true);
+    const auto big = SceneSerializer::PlaceInstance(scene, table, bigEntry, /*authored=*/ true);
     REQUIRE(big.has_value());
     CHECK(scene.Get<ECS::Transform>(big->members[0])->scale.x == doctest::Approx(1.2f));
 }
@@ -376,8 +376,8 @@ TEST_CASE("Authoring: a reference leaving the selection is nulled, not dangled")
 {
     const std::filesystem::path root = FreshRoot("outref");
 
-    ECS::Scene        scene;
-    const Selection   selection = BuildSelection(scene);
+    ECS::Scene scene;
+    const Selection selection = BuildSelection(scene);
     const ECS::Entity outsider  = scene.Create();
     REQUIRE(scene.Add(outsider, At(0.f, 0.f, 0.f)) != nullptr);
     REQUIRE(scene.Add(outsider, Runtime::Name{Core::EntityName{"marker"}}) != nullptr);

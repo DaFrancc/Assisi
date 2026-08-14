@@ -115,9 +115,9 @@ void EditorApp::DrawLevelsWindow()
         {
             _pendingLevelLoad = _levelFiles[static_cast<std::size_t>(_selectedLevel)];
             Jobs().RunOnMain([this, name = *_pendingLevelLoad] {
-                LoadLevel(name);
-                _pendingLevelLoad.reset();
-            });
+                    LoadLevel(name);
+                    _pendingLevelLoad.reset();
+                });
         }
         ImGui::EndDisabled();
         if (_playState != PlayState::Editing && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
@@ -149,7 +149,7 @@ void EditorApp::DrawLevelsWindow()
             // *back* to, and picking a name is what Save As is for.
             ImGui::SetTooltip(_playState != PlayState::Editing
                                   ? "Stop play mode to save (avoids overwriting the level with "
-                                    "simulation state)."
+                              "simulation state)."
                               : IsEditable() ? "This world has never been saved — use Save As to name it."
                                              : "Only the edited world can be saved.");
         }
@@ -167,7 +167,7 @@ void EditorApp::DrawLevelsWindow()
         SaveLevel(_saveAsName);
         ScanLevels();
         const std::string newName(_saveAsName);
-        const auto        it = std::find(_levelFiles.begin(), _levelFiles.end(), newName);
+        const auto it = std::find(_levelFiles.begin(), _levelFiles.end(), newName);
         if (it != _levelFiles.end())
             _selectedLevel = static_cast<int32_t>(std::distance(_levelFiles.begin(), it));
     }
@@ -353,7 +353,7 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
                                                .removed   = {}};
 
     const auto placed = Assisi::Runtime::SceneSerializer::PlaceInstance(*_scene, _world->instances, entry,
-                                                                        /*authored=*/true);
+                                                                        /*authored=*/ true);
     if (!placed)
     {
         Assisi::Core::Log::Error("Editor: could not place '{}' — see the log above.", source);
@@ -373,7 +373,7 @@ void EditorApp::PlaceBlueprintInstance(const std::string &source)
         txn.selectionBefore = _selectedEntity;
         txn.selectionAfter  = Assisi::ECS::NullEntity;
         txn.cmds.push_back(Assisi::Editor::InstanceDelta{
-            .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
+                .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
         for (const Assisi::ECS::Entity member : placed->members)
         {
             if (member != Assisi::ECS::NullEntity)
@@ -418,7 +418,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     const Assisi::Runtime::Transform placement = Assisi::Runtime::AuthoringOriginFor(*_scene, subtree);
 
     const std::string source   = "blueprints/" + name + ".abp";
-    const auto        resolved = Assisi::Core::AssetSystem::Resolve(source);
+    const auto resolved = Assisi::Core::AssetSystem::Resolve(source);
     if (!resolved)
     {
         Assisi::Core::Log::Error("Editor: cannot resolve a path for '{}'.", source);
@@ -436,7 +436,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     // Capture the originals before tearing them down: undo has to revive them, and
     // their components have to still be alive to serialize.
     Assisi::Editor::EditHistory *history = ActiveHistory();
-    Assisi::Editor::Transaction  txn;
+    Assisi::Editor::Transaction txn;
     txn.label           = "Create " + name;
     txn.selectionBefore = _selectedEntity;
     txn.selectionAfter  = Assisi::ECS::NullEntity;
@@ -476,7 +476,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
                                                .removed   = {}};
 
     const auto placed = Assisi::Runtime::SceneSerializer::PlaceInstance(*_scene, _world->instances, entry,
-                                                                        /*authored=*/true);
+                                                                        /*authored=*/ true);
     if (!placed)
     {
         // The originals are already destroyed. Push the transaction anyway, so
@@ -494,7 +494,7 @@ void EditorApp::CreateBlueprintFromSelection(const std::string &name)
     if (history != nullptr)
     {
         txn.cmds.push_back(Assisi::Editor::InstanceDelta{
-            .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
+                .instanceId = placed->instanceId, .before = std::nullopt, .after = *_world->instances.Find(placed->instanceId)});
         for (const Assisi::ECS::Entity member : placed->members)
         {
             if (member != Assisi::ECS::NullEntity)
@@ -514,7 +514,7 @@ void EditorApp::RebuildInstanceTransients(std::span<const Assisi::ECS::Entity> m
     RebuildInstanceTransients(*_world, members);
 }
 
-void EditorApp::RebuildInstanceTransients(Assisi::App::World                  &world,
+void EditorApp::RebuildInstanceTransients(Assisi::App::World &world,
                                           std::span<const Assisi::ECS::Entity> members)
 {
     for (const Assisi::ECS::Entity member : members)
@@ -599,7 +599,7 @@ void EditorApp::ResetOverride(Assisi::ECS::Entity entity, const std::string &com
     const Assisi::Runtime::BlueprintInstance original = *row;
 
     Assisi::Runtime::BlueprintInstance updated = original;
-    const auto                         member  = updated.overrides.find(desc.name);
+    const auto member  = updated.overrides.find(desc.name);
     if (member == updated.overrides.end() || !member->is_object() || !member->contains(component))
         return;
 
@@ -738,8 +738,8 @@ bool EditorApp::SaveLevelToPath(const std::string &virtualPath)
     // has to drop what the write cached.
     std::vector<PendingReexpand> reexpandTargets = CollectReexpandTargets(virtualPath);
 
-    const std::string   previousLevelPath = _world->levelPath;
-    const bool          blueprint         = InBlueprintMode();
+    const std::string previousLevelPath = _world->levelPath;
+    const bool blueprint         = InBlueprintMode();
     const std::uint64_t previousSavedToken = blueprint ? _blueprintSavedToken : _savedStateToken;
 
     // Carry the world's systems back into the file. A Scene does not know them; they
@@ -971,7 +971,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // Reaching here means we are at a safe point: this frees GPU state the frame's
     // recorded draws reference, so callers marshal it to the main-thread drain and
     // never call it from OnImGui. See the Load button in DrawLevelsWindow.
-    Assisi::Runtime::LevelHeader       header;
+    Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
         Assisi::App::LoadLevel(*_world, virtualPath, {_assetCache, _assetDatabase, _sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::ClearFirst, .header = &header});

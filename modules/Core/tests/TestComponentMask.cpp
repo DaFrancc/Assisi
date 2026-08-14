@@ -131,7 +131,7 @@ TEST_CASE("the registry's replicable ordinals are dense and fit the generated wi
     // reflectgen sized. A mismatch is what the finalize-time fence shouts about,
     // and asserting the property directly is cheaper and sharper than
     // manufacturing an over-full registry.
-    const ComponentRegistry                    &registry   = ComponentRegistry::Instance();
+    const ComponentRegistry &registry   = ComponentRegistry::Instance();
     const std::span<const ComponentMeta *const> replicable = registry.ReplicableComponents();
 
     CHECK(replicable.size() <= kReplicableComponentCount);
@@ -155,7 +155,7 @@ TEST_CASE("the registry's replicable ordinals are dense and fit the generated wi
 
 TEST_CASE("an empty mask serializes to an empty array and back")
 {
-    const ComponentMask  empty;
+    const ComponentMask empty;
     const nlohmann::json json = SerializeComponentMask(empty);
     CHECK(json.is_array());
     CHECK(json.empty());

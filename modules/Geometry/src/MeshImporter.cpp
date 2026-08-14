@@ -207,7 +207,7 @@ Core::AssetId ResolveImageId(const fastgltf::Asset &asset, size_t textureIndex, 
     }
 
     const fastgltf::Image &image = asset.images[*texture.imageIndex];
-    const auto            *uriSource = std::get_if<fastgltf::sources::URI>(&image.data);
+    const auto *uriSource = std::get_if<fastgltf::sources::URI>(&image.data);
     if (uriSource == nullptr || uriSource->uri.isDataUri())
     {
         if (!warnings.embeddedImage)
@@ -246,15 +246,15 @@ MaterialData ExtractMaterial(const fastgltf::Asset &asset, size_t materialIndex,
     data.EmissiveFactor = glm::vec3(material.emissiveFactor[0], material.emissiveFactor[1], material.emissiveFactor[2]);
 
     const auto texCoordCheck = [&](size_t texCoordIndex)
-    {
-        if (texCoordIndex != 0 && !warnings.secondaryTexCoord)
-        {
-            warnings.secondaryTexCoord = true;
-            Core::Log::Warn("MeshImporter: '{}' has a material sampling TEXCOORD_{} — only TEXCOORD_0 is "
-                            "supported; that channel will sample the wrong UVs.",
-                            virtualPath, texCoordIndex);
-        }
-    };
+                               {
+                                   if (texCoordIndex != 0 && !warnings.secondaryTexCoord)
+                                   {
+                                       warnings.secondaryTexCoord = true;
+                                       Core::Log::Warn("MeshImporter: '{}' has a material sampling TEXCOORD_{} — only TEXCOORD_0 is "
+                                                       "supported; that channel will sample the wrong UVs.",
+                                                       virtualPath, texCoordIndex);
+                                   }
+                               };
 
     if (pbr.baseColorTexture.has_value())
     {
@@ -342,7 +342,7 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
         return; // POSITION is mandatory in glTF; a primitive without it is not drawable.
     }
 
-    const size_t              baseVertex   = out.Vertices.size();
+    const size_t baseVertex   = out.Vertices.size();
     const fastgltf::Accessor &posAccessor  = asset.accessors[positionAttr->accessorIndex];
     out.Vertices.resize(baseVertex + posAccessor.count);
 
@@ -355,20 +355,20 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
 
     fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
         asset, posAccessor, [&](fastgltf::math::fvec3 position, size_t index)
-        {
-            const glm::vec4 world = model * glm::vec4(position[0], position[1], position[2], 1.0f);
-            out.Vertices[baseVertex + index].Position = glm::vec3(world);
-        });
+            {
+                const glm::vec4 world = model * glm::vec4(position[0], position[1], position[2], 1.0f);
+                out.Vertices[baseVertex + index].Position = glm::vec3(world);
+            });
 
     if (const fastgltf::Attribute *normalAttr = primitive.findAttribute("NORMAL");
         normalAttr != primitive.attributes.end())
     {
         fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec3>(
             asset, asset.accessors[normalAttr->accessorIndex], [&](fastgltf::math::fvec3 normal, size_t index)
-            {
-                out.Vertices[baseVertex + index].Normal =
-                    glm::normalize(normalMatrix * glm::vec3(normal[0], normal[1], normal[2]));
-            });
+                {
+                    out.Vertices[baseVertex + index].Normal =
+                        glm::normalize(normalMatrix * glm::vec3(normal[0], normal[1], normal[2]));
+                });
     }
 
     if (const fastgltf::Attribute *uvAttr = primitive.findAttribute("TEXCOORD_0");
@@ -376,9 +376,9 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
     {
         fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec2>(
             asset, asset.accessors[uvAttr->accessorIndex], [&](fastgltf::math::fvec2 uv, size_t index)
-            {
-                out.Vertices[baseVertex + index].TextureCoordinates = glm::vec2(uv[0], uv[1]);
-            });
+                {
+                    out.Vertices[baseVertex + index].TextureCoordinates = glm::vec2(uv[0], uv[1]);
+                });
     }
     else
     {
@@ -391,14 +391,14 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
         const glm::mat3 tangentMatrix(model);
         fastgltf::iterateAccessorWithIndex<fastgltf::math::fvec4>(
             asset, asset.accessors[tangentAttr->accessorIndex], [&](fastgltf::math::fvec4 tangent, size_t index)
-            {
-                const glm::vec3 direction =
-                    glm::normalize(tangentMatrix * glm::vec3(tangent[0], tangent[1], tangent[2]));
-                // A mirrored node flips tangent-space handedness; negate w to keep the
-                // TBN basis consistent with the winding swap below.
-                out.Vertices[baseVertex + index].Tangent =
-                    glm::vec4(direction, mirrored ? -tangent[3] : tangent[3]);
-            });
+                {
+                    const glm::vec3 direction =
+                        glm::normalize(tangentMatrix * glm::vec3(tangent[0], tangent[1], tangent[2]));
+                    // A mirrored node flips tangent-space handedness; negate w to keep the
+                    // TBN basis consistent with the winding swap below.
+                    out.Vertices[baseVertex + index].Tangent =
+                        glm::vec4(direction, mirrored ? -tangent[3] : tangent[3]);
+                });
     }
     else
     {
@@ -408,13 +408,13 @@ void AppendPrimitive(const fastgltf::Asset &asset, const fastgltf::Primitive &pr
     if (primitive.indicesAccessor.has_value())
     {
         const fastgltf::Accessor &indexAccessor = asset.accessors[*primitive.indicesAccessor];
-        const size_t              firstIndex    = out.Indices.size();
+        const size_t firstIndex    = out.Indices.size();
         out.Indices.reserve(firstIndex + indexAccessor.count);
         fastgltf::iterateAccessor<std::uint32_t>(
             asset, indexAccessor, [&](std::uint32_t index)
-            {
-                out.Indices.push_back(static_cast<uint32_t>(baseVertex) + index);
-            });
+                {
+                    out.Indices.push_back(static_cast<uint32_t>(baseVertex) + index);
+                });
         if (mirrored)
         {
             // Swap the 2nd/3rd index of every triangle we just appended to restore CCW
@@ -484,8 +484,8 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
 
     // No LoadExternalBuffers: fastgltf must not touch the filesystem itself.
     // Sibling .bin files are resolved by ResolveExternalBuffers() via AssetSystem.
-    fastgltf::Parser              parser;
-    constexpr fastgltf::Options   options = fastgltf::Options::GenerateMeshIndices;
+    fastgltf::Parser parser;
+    constexpr fastgltf::Options options = fastgltf::Options::GenerateMeshIndices;
     fastgltf::Expected<fastgltf::Asset> assetResult =
         parser.loadGltf(dataBuffer.get(), std::filesystem::path{}, options);
     if (assetResult.error() != fastgltf::Error::None)
@@ -520,7 +520,7 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
                 return;
             }
             const glm::mat4 model = ToGlm(worldMatrix);
-            const uint32_t  lodLevel = LodLevelFor(node, asset, *node.meshIndex);
+            const uint32_t lodLevel = LodLevelFor(node, asset, *node.meshIndex);
             for (const fastgltf::Primitive &primitive : asset.meshes[*node.meshIndex].primitives)
             {
                 const size_t materialKey =
@@ -567,18 +567,18 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
     // order within a bucket, so same-material primitives still merge exactly as
     // the flat importer did. ---
     std::ranges::stable_sort(records, [](const PrimitiveRecord &a, const PrimitiveRecord &b)
-                             {
-                                 if (a.lodIndex != b.lodIndex)
-                                 {
-                                     return a.lodIndex < b.lodIndex;
-                                 }
-                                 return a.materialSlot < b.materialSlot;
-                             });
+        {
+            if (a.lodIndex != b.lodIndex)
+            {
+                return a.lodIndex < b.lodIndex;
+            }
+            return a.materialSlot < b.materialSlot;
+        });
 
-    MeshData       merged;
+    MeshData merged;
     ImportWarnings warnings;
-    bool           allHaveTangents = true;
-    bool           allHaveUv       = true;
+    bool allHaveTangents = true;
+    bool allHaveUv       = true;
 
     // One LodRange per dense LOD level, indexed directly by the (dense) lod value.
     // Pre-sizing — rather than push_back as drawable buckets appear — is what keeps

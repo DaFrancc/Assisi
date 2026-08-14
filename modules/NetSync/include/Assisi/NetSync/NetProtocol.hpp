@@ -280,7 +280,7 @@ enum class LevelAddressing : std::uint8_t
 struct LevelIdentity
 {
     LevelAddressing addressing = LevelAddressing::None;
-    std::string     path; ///< Interpreted per `addressing`; empty when None.
+    std::string path;     ///< Interpreted per `addressing`; empty when None.
     /// `Core::ContentHash64` of the level file as saved. A client that resolves
     /// the path to different bytes refuses the join: everything downstream —
     /// static geometry, unmarked dynamics, the entities that get stripped —

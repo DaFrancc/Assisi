@@ -40,7 +40,7 @@ namespace Assisi::Render
 /// draw time and never rewrite index data.
 class MeshBuffer
 {
-  public:
+public:
     MeshBuffer() = default;
 
     /// @brief Sub-allocates a range in @p arena and uploads `meshData` into it.
@@ -202,17 +202,17 @@ class MeshBuffer
     ///        materials). Indexed by SubMesh::MaterialSlot.
     const std::vector<Geometry::MaterialData> &Materials() const { return _materials; }
 
-  private:
+private:
     // The arena that owns this mesh's geometry, and where the mesh landed in it.
     // A pointer (not a raw buffer handle) so an arena grow/compaction that swaps
     // the underlying buffer is picked up automatically. Null until Upload().
     const GeometryArena *_arena = nullptr;
-    uint32_t             _vertexBase = 0; ///< Base offset into the arena, in vertices.
-    uint32_t             _indexBase = 0;  ///< Base offset into the arena, in indices.
-    uint32_t             _indexCount = 0;
-    uint32_t             _id = 0; ///< Assigned by AssetCache; 0 until then.
+    uint32_t _vertexBase = 0;             ///< Base offset into the arena, in vertices.
+    uint32_t _indexBase = 0;              ///< Base offset into the arena, in indices.
+    uint32_t _indexCount = 0;
+    uint32_t _id = 0;             ///< Assigned by AssetCache; 0 until then.
     Geometry::BoundingSphere _localBounds;
-    Geometry::Aabb           _localAabb;
+    Geometry::Aabb _localAabb;
     std::vector<Geometry::SubMesh>      _subMeshes;
     std::vector<Geometry::LodRange>     _lods;
     std::vector<Geometry::MaterialData> _materials;

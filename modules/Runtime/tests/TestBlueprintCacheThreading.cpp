@@ -48,7 +48,7 @@ std::string SourceName(std::int32_t index)
 std::filesystem::path FreshRoot(const std::string &name)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / ("assisi_bpc_" + name);
-    std::error_code             ec;
+    std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
@@ -95,30 +95,30 @@ TEST_CASE("Blueprint cache: eight threads build and look up at once")
     {
         workers.emplace_back(
             [index, &nulls]
+        {
+            for (std::int32_t iteration = 0; iteration < kIterations; ++iteration)
             {
-                for (std::int32_t iteration = 0; iteration < kIterations; ++iteration)
+                for (std::int32_t step = 0; step < kSources; ++step)
                 {
-                    for (std::int32_t step = 0; step < kSources; ++step)
+                    const std::int32_t which = (index + step) % kSources;
+
+                    const BlueprintResult definition = Runtime::GetBlueprintDefinition(SourceName(which));
+                    if (!definition || (*definition)->members.empty())
                     {
-                        const std::int32_t which = (index + step) % kSources;
+                        nulls.fetch_add(1, std::memory_order_relaxed);
+                        continue;
+                    }
 
-                        const BlueprintResult definition = Runtime::GetBlueprintDefinition(SourceName(which));
-                        if (!definition || (*definition)->members.empty())
-                        {
+                    // Read through it as a caller would, so a torn or
+                    // half-inserted definition is something this notices.
+                    for (const Runtime::BlueprintMemberDesc &member : (*definition)->members)
+                    {
+                        if (member.name.empty())
                             nulls.fetch_add(1, std::memory_order_relaxed);
-                            continue;
-                        }
-
-                        // Read through it as a caller would, so a torn or
-                        // half-inserted definition is something this notices.
-                        for (const Runtime::BlueprintMemberDesc &member : (*definition)->members)
-                        {
-                            if (member.name.empty())
-                                nulls.fetch_add(1, std::memory_order_relaxed);
-                        }
                     }
                 }
-            });
+            }
+        });
     }
 
     for (std::thread &worker : workers)
@@ -190,19 +190,19 @@ TEST_CASE("Blueprint cache: lookups race an eviction without tearing the map")
     {
         readers.emplace_back(
             [index, &torn]
+        {
+            for (std::int32_t iteration = 0; iteration < kIterations; ++iteration)
             {
-                for (std::int32_t iteration = 0; iteration < kIterations; ++iteration)
-                {
-                    const std::int32_t which = (index + iteration) % kSources;
+                const std::int32_t which = (index + iteration) % kSources;
 
-                    // A miss is legitimate here only if the file cannot be built,
-                    // which it always can — an eviction just means the next ask
-                    // rebuilds it.
-                    const BlueprintResult definition = Runtime::GetBlueprintDefinition(SourceName(which));
-                    if (!definition || (*definition)->source != SourceName(which))
-                        torn.fetch_add(1, std::memory_order_relaxed);
-                }
-            });
+                // A miss is legitimate here only if the file cannot be built,
+                // which it always can — an eviction just means the next ask
+                // rebuilds it.
+                const BlueprintResult definition = Runtime::GetBlueprintDefinition(SourceName(which));
+                if (!definition || (*definition)->source != SourceName(which))
+                    torn.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
     }
 
     // The editor saving a blueprint while a level loads in the background: an
@@ -210,12 +210,12 @@ TEST_CASE("Blueprint cache: lookups race an eviction without tearing the map")
     std::thread evictor(
         [&keepEvicting]
         {
-            std::int32_t which = 0;
-            while (keepEvicting.load(std::memory_order_relaxed))
-            {
-                Runtime::InvalidateBlueprint(SourceName(which % kSources));
-                ++which;
-            }
+        std::int32_t which = 0;
+        while (keepEvicting.load(std::memory_order_relaxed))
+        {
+            Runtime::InvalidateBlueprint(SourceName(which % kSources));
+            ++which;
+        }
         });
 
     for (std::thread &reader : readers)

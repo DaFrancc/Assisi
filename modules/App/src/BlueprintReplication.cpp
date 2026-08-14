@@ -74,7 +74,7 @@ bool WritePlacedTransform(const Core::Reflect::ComponentMeta &meta,
     Core::BitReader reader{authored};
     (void)Core::Reflect::ReadComponentId(reader); // the block leads with it
     ECS::Transform local;
-    if (!Core::Reflect::ReadComponent(meta, &local, reader, /*appliedMask=*/nullptr, nullptr))
+    if (!Core::Reflect::ReadComponent(meta, &local, reader, /*appliedMask=*/ nullptr, nullptr))
         return false;
 
     const ECS::Transform placed = Runtime::ComposeTransform(placement, local);
@@ -83,7 +83,7 @@ bool WritePlacedTransform(const Core::Reflect::ComponentMeta &meta,
 
 class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
 {
-  public:
+public:
     WorldInstanceInfo(World &world, std::vector<std::string> manifest)
         : _world(world), _manifest(std::move(manifest))
     {
@@ -188,14 +188,14 @@ class WorldInstanceInfo final : public NetSync::InstanceInfoProvider
         return SameBytes(*authored, live.Data());
     }
 
-  private:
-    World                   &_world;
+private:
+    World &_world;
     std::vector<std::string> _manifest;
 };
 
 class WorldInstanceExpander final : public NetSync::InstanceExpander
 {
-  public:
+public:
     WorldInstanceExpander(World &world, std::vector<std::string> manifest)
         : _world(world), _manifest(std::move(manifest))
     {
@@ -232,7 +232,7 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
         // exists because the server said so, and writing it into a saved level
         // would make it authored content the next time that level loads.
         const std::expected<Runtime::SceneSerializer::ExpandedInstance, Runtime::LevelError> placed =
-            Runtime::SceneSerializer::PlaceInstance(_world.scene, _world.instances, entry, /*authored=*/false);
+            Runtime::SceneSerializer::PlaceInstance(_world.scene, _world.instances, entry, /*authored=*/ false);
         if (!placed)
             return false;
 
@@ -284,8 +284,8 @@ class WorldInstanceExpander final : public NetSync::InstanceExpander
         _world.instances.Remove(localInstance);
     }
 
-  private:
-    World                   &_world;
+private:
+    World &_world;
     std::vector<std::string> _manifest;
 };
 

@@ -29,7 +29,7 @@ const Core::Reflect::ComponentMeta &MetaOf(std::string_view name)
 
 TEST_CASE("construct default-builds a component and returns a writable pointer")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity entity = scene.Create();
 
     const Core::Reflect::ComponentMeta &meta = MetaOf("Position");
@@ -49,7 +49,7 @@ TEST_CASE("construct default-builds a component and returns a writable pointer")
 
 TEST_CASE("construct replaces an existing component with a default one")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity entity = scene.Create();
 
     ECS::Position seeded;
@@ -68,7 +68,7 @@ TEST_CASE("construct replaces an existing component with a default one")
 
 TEST_CASE("getMutable finds what getByEntity finds, and nothing when absent")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity entity  = scene.Create();
     const ECS::Entity without = scene.Create();
 
@@ -78,7 +78,7 @@ TEST_CASE("getMutable finds what getByEntity finds, and nothing when absent")
     CHECK(meta.getMutable(&scene, without.index, without.generation) == nullptr);
 
     (void)scene.Add<ECS::Position>(entity, ECS::Position{});
-    void       *mutablePtr = meta.getMutable(&scene, entity.index, entity.generation);
+    void *mutablePtr = meta.getMutable(&scene, entity.index, entity.generation);
     const void *constPtr   = meta.getByEntity(&scene, entity.index, entity.generation);
     REQUIRE(mutablePtr != nullptr);
     CHECK(mutablePtr == constPtr);
@@ -86,7 +86,7 @@ TEST_CASE("getMutable finds what getByEntity finds, and nothing when absent")
 
 TEST_CASE("the writing hooks stamp change detection and the reading one does not")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity entity = scene.Create();
 
     // Tracked is the ACOMP(tracked) fixture; an untracked type would report

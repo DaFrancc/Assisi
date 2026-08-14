@@ -65,7 +65,7 @@ std::optional<AssetId> AssetId::Parse(std::string_view text) noexcept
 {
     // Collect hex digits, ignoring dashes. Dash placement is intentionally not
     // validated — the invariant we enforce is "exactly 32 hex digits".
-    AssetId     result{};
+    AssetId result{};
     std::size_t nibbleCount = 0;
     for (const char character : text)
     {

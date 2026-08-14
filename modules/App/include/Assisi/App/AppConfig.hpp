@@ -15,10 +15,10 @@ namespace Assisi::App
 struct AppConfig
 {
     std::string title      = "Assisi Game";
-    int32_t     width      = 1280;
-    int32_t     height     = 720;
-    glm::vec4   clearColor = {0.15f, 0.15f, 0.18f, 1.f};
-    double      physicsHz  = 60.0;
+    int32_t width      = 1280;
+    int32_t height     = 720;
+    glm::vec4 clearColor = {0.15f, 0.15f, 0.18f, 1.f};
+    double physicsHz  = 60.0;
 
     /// @brief Run with no window, renderer, input, or debug UI — the dedicated
     /// server mode (`"headless": true` at the root of game.json). A command-line

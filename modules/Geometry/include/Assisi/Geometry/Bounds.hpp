@@ -27,7 +27,7 @@ namespace Assisi::Geometry
 struct BoundingSphere
 {
     glm::vec3 center{0.f, 0.f, 0.f};
-    float     radius = 0.f; ///< 0 means "no geometry" (an empty mesh).
+    float radius = 0.f;     ///< 0 means "no geometry" (an empty mesh).
 };
 
 /// @brief An axis-aligned bounding box in the mesh's local space.
@@ -51,10 +51,10 @@ struct Aabb
 inline BoundingSphere TransformedBoundingSphere(const BoundingSphere &local, const glm::mat4 &worldMatrix)
 {
     const glm::vec3 center = glm::vec3(worldMatrix * glm::vec4(local.center, 1.f));
-    const float     scaleX = glm::length(glm::vec3(worldMatrix[0]));
-    const float     scaleY = glm::length(glm::vec3(worldMatrix[1]));
-    const float     scaleZ = glm::length(glm::vec3(worldMatrix[2]));
-    const float     maxScale = glm::max(scaleX, glm::max(scaleY, scaleZ));
+    const float scaleX = glm::length(glm::vec3(worldMatrix[0]));
+    const float scaleY = glm::length(glm::vec3(worldMatrix[1]));
+    const float scaleZ = glm::length(glm::vec3(worldMatrix[2]));
+    const float maxScale = glm::max(scaleX, glm::max(scaleY, scaleZ));
     return BoundingSphere{.center = center, .radius = local.radius * maxScale};
 }
 

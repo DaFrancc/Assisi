@@ -66,9 +66,9 @@ struct RigidBodyDescriptor
     AFIELD(min = 0.0, radioListen = {source = shape, value = {Sphere, Capsule, Cylinder}, behavior = vanish})
     float radius = 0.5f; ///< Sphere/Capsule/Cylinder radius.
     AFIELD(min = 0.0, radioListen = {source = shape, value = {Capsule, Cylinder}, behavior = vanish})
-    float      halfHeight = 0.5f;         ///< Capsule/Cylinder half-height of the cylindrical part.
-    AFIELD() bool      isStatic  = false; ///< True = immovable static body.
-    AFIELD() bool      enableCCD = false; ///< Enable continuous collision detection (dynamic only).
+    float halfHeight = 0.5f;              ///< Capsule/Cylinder half-height of the cylindrical part.
+    AFIELD() bool isStatic  = false;      ///< True = immovable static body.
+    AFIELD() bool enableCCD = false;      ///< Enable continuous collision detection (dynamic only).
 };
 
 /// @brief Makes a rigid body ricochet off whatever it touches.

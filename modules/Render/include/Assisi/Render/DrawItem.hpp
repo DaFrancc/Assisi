@@ -29,11 +29,11 @@ class Material;
 /// `model` is the entity's world matrix (the MVP is derived in Submit).
 struct DrawItem
 {
-    uint64_t          sortKey      = 0;
+    uint64_t sortKey      = 0;
     const MeshBuffer *mesh         = nullptr;
-    uint32_t          submeshIndex = 0; ///< Index into mesh->SubMeshes().
-    const Material   *material     = nullptr;
-    glm::mat4         model{1.f};
+    uint32_t submeshIndex = 0;          ///< Index into mesh->SubMeshes().
+    const Material *material     = nullptr;
+    glm::mat4 model{1.f};
 };
 
 // --- Opaque sort key: [pipeline:8 | materialId:20 | meshId:20 | depth:16] ----
@@ -73,7 +73,7 @@ inline constexpr uint32_t kSortMeshMax     = (1u << kSortMeshBits) - 1;     ///<
 [[nodiscard]] inline uint16_t QuantizeDepthFrontToBack(float viewDistance, float nearZ, float farZ)
 {
     constexpr float kDepthMax = 65535.f;
-    const float     span      = farZ - nearZ;
+    const float span      = farZ - nearZ;
     if (span <= 0.f)
     {
         return 0;

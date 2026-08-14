@@ -31,7 +31,7 @@ enum class AaMode
 
 class PostProcess
 {
-  public:
+public:
     PostProcess() = default;
 
     /// @brief Builds the FXAA fullscreen pipeline against `swapchainFramebufferInfo`
@@ -48,8 +48,8 @@ class PostProcess
     /// @brief The framebuffer the scene should render into this frame, or nullptr
     /// if it should render directly into the swapchain framebuffer (mode == None).
     [[nodiscard]] nvrhi::IFramebuffer *SceneFramebuffer() const;
-    [[nodiscard]] nvrhi::ITexture     *SceneColorTexture() const;
-    [[nodiscard]] nvrhi::ITexture     *SceneDepthTexture() const;
+    [[nodiscard]] nvrhi::ITexture *SceneColorTexture() const;
+    [[nodiscard]] nvrhi::ITexture *SceneDepthTexture() const;
 
     /// @brief The FramebufferInfo of SceneFramebuffer() (or the swapchain's, when
     /// mode == None) — scene pipelines must be built/rebuilt to match this. Only
@@ -69,34 +69,34 @@ class PostProcess
     /// otherwise run too late (after the device teardown in ~Application).
     void Shutdown();
 
-  private:
+private:
     void Rebuild();
     void RunFxaa(nvrhi::ICommandList *commandList, const RenderFrame &frame) const;
 
-    nvrhi::IDevice        *_device = nullptr;
+    nvrhi::IDevice *_device = nullptr;
     nvrhi::FramebufferInfo _swapchainInfo;
 
-    AaMode   _mode = AaMode::None;
+    AaMode _mode = AaMode::None;
     uint32_t _msaaSamples = 4;
     uint32_t _width = 0;
     uint32_t _height = 0;
 
     // Multisample scene target — used by MSAA and MSAA_FXAA.
-    nvrhi::TextureHandle     _msaaColor;
-    nvrhi::TextureHandle     _msaaDepth;
+    nvrhi::TextureHandle _msaaColor;
+    nvrhi::TextureHandle _msaaDepth;
     nvrhi::FramebufferHandle _msaaFramebuffer;
 
     // Single-sample offscreen scene target — used by FXAA (the scene renders
     // directly into it) and MSAA_FXAA (the MSAA resolve destination).
-    nvrhi::TextureHandle     _sceneColor;
-    nvrhi::TextureHandle     _sceneDepth;
+    nvrhi::TextureHandle _sceneColor;
+    nvrhi::TextureHandle _sceneDepth;
     nvrhi::FramebufferHandle _sceneFramebuffer;
 
     // FXAA fullscreen pass.
-    nvrhi::BindingLayoutHandle    _fxaaBindingLayout;
-    nvrhi::SamplerHandle          _fxaaSampler;
+    nvrhi::BindingLayoutHandle _fxaaBindingLayout;
+    nvrhi::SamplerHandle _fxaaSampler;
     nvrhi::GraphicsPipelineHandle _fxaaPipeline;
-    nvrhi::BindingSetHandle       _fxaaBindingSet; // rebuilt whenever _sceneColor is recreated
+    nvrhi::BindingSetHandle _fxaaBindingSet;       // rebuilt whenever _sceneColor is recreated
 };
 
 } // namespace Assisi::Render

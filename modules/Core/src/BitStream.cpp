@@ -106,7 +106,8 @@ void BitWriter::WriteVarUInt64(std::uint64_t value)
         const std::uint32_t group = static_cast<std::uint32_t>(value & 0x7Fu);
         value >>= 7;
         WriteBits(group | (value != 0 ? 0x80u : 0u), 8);
-    } while (value != 0);
+    }
+    while (value != 0);
 }
 
 void BitWriter::WriteBytes(std::span<const std::byte> bytes)
@@ -129,8 +130,8 @@ void BitWriter::WriteFloatQuantized(float value, float min, float max, std::uint
         return;
 
     const std::uint32_t levels = static_cast<std::uint32_t>(LowBitMask(bits)); // 2^bits - 1
-    const float         span   = max - min;
-    const float         t      = std::clamp((value - min) / span, 0.f, 1.f);
+    const float span   = max - min;
+    const float t      = std::clamp((value - min) / span, 0.f, 1.f);
 
     // Round-to-nearest, so the quantization error is symmetric (±half a step)
     // rather than always biased toward min the way truncation would be.
@@ -171,7 +172,7 @@ std::uint64_t BitReader::ReadBits64(std::uint32_t bitCount)
     std::uint32_t remaining = bitCount;
     while (remaining > 0)
     {
-        const std::size_t   byteIndex = _bitPos / 8u;
+        const std::size_t byteIndex = _bitPos / 8u;
         const std::uint32_t bitInByte = static_cast<std::uint32_t>(_bitPos % 8u);
         const std::uint32_t take      = std::min(8u - bitInByte, remaining);
 

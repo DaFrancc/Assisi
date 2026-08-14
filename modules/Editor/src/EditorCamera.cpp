@@ -29,7 +29,7 @@ void EditorApp::HandleEntityPicking()
     if (_actions.IsActionPressed("Select", input) &&
         !input.IsMouseCaptured() && !ImGuiWantsMouse() && !IsUsingGizmo())
     {
-        float                     entityT = 0.f;
+        float entityT = 0.f;
         const Assisi::ECS::Entity picked  = PickEntity(input.MousePosition(), entityT);
 
         // An armed eyedropper consumes the click to fill its EntityRef field; the
@@ -47,7 +47,7 @@ void EditorApp::HandleEntityPicking()
         // than folded into PickEntity's return, and the nearer hit wins: a root icon
         // behind a wall must not beat the wall, and a member's mesh in front of the
         // icon must not become unclickable because the icon is there.
-        float               instanceT  = 0.f;
+        float instanceT  = 0.f;
         const Assisi::ECS::InstanceId instanceId = PickInstance(input.MousePosition(), instanceT);
         if (instanceId.IsValid() && instanceT <= entityT)
         {
@@ -98,7 +98,7 @@ void EditorApp::ApplyEyedropperPick(Assisi::ECS::Entity picked)
 
 void EditorApp::UpdateCamera(float dt)
 {
-    auto      &input          = GetInput();
+    auto &input          = GetInput();
     const bool imguiWantsMouse = ImGuiWantsMouse();
 
     // A running focus animation owns the camera transform: advance the eased blend and
@@ -203,7 +203,7 @@ glm::quat LookRotation(glm::vec3 forwardWanted)
         return glm::quat(1.f, 0.f, 0.f, 0.f);
     }
     const glm::vec3 forward = forwardWanted / length;
-    glm::vec3       worldUp(0.f, 1.f, 0.f);
+    glm::vec3 worldUp(0.f, 1.f, 0.f);
     if (glm::abs(glm::dot(forward, worldUp)) > 0.999f)
     {
         worldUp = glm::vec3(0.f, 0.f, 1.f);
@@ -250,14 +250,14 @@ void EditorApp::FocusCameraOn(Assisi::ECS::Entity entity)
     RefreshCameraMatrix();
     const glm::vec3 camPos = _cameraTransform.position;
     const glm::vec3 toCam  = camPos - world.center;
-    const float     dist   = glm::length(toCam);
+    const float dist   = glm::length(toCam);
 
     // r / sin(halfFovY) is the distance at which the sphere is exactly tangent to the
     // vertical frame; the margin backs off from there so it does not fill the view.
     constexpr float kFrameMargin = 4.f;
-    const float     halfFovY     = glm::radians(_camera.fovDegrees) * 0.5f;
-    const float     sinHalf      = glm::sin(halfFovY);
-    const float     framingDist  = sinHalf > 1e-4f ? (world.radius / sinHalf) * kFrameMargin : world.radius * 3.f;
+    const float halfFovY     = glm::radians(_camera.fovDegrees) * 0.5f;
+    const float sinHalf      = glm::sin(halfFovY);
+    const float framingDist  = sinHalf > 1e-4f ? (world.radius / sinHalf) * kFrameMargin : world.radius * 3.f;
 
     // Dolly along the current line of sight, which keeps the viewing angle. If the
     // camera is already inside the sphere, or all but on top of its centre, that
@@ -333,7 +333,7 @@ bool RayBillboardIntersect(glm::vec3 origin, glm::vec3 dir, glm::vec3 center, gl
                            float half, float &tOut)
 {
     const glm::vec3 normal = glm::cross(right, up); // the quad faces the camera
-    const float     denom  = glm::dot(dir, normal);
+    const float denom  = glm::dot(dir, normal);
     if (std::abs(denom) < 1e-8f)
         return false; // ray parallel to the quad
 
@@ -359,16 +359,16 @@ EditorApp::PickRay EditorApp::BuildPickRay(glm::vec2 mousePos)
 
     RefreshCameraMatrix();
     const glm::mat4 view   = Assisi::Runtime::ViewMatrix(_cameraTransform);
-    const auto      fbSize = GetWindow().GetFramebufferSize();
-    const float     w      = static_cast<float>(fbSize.Width);
-    const float     h      = static_cast<float>(fbSize.Height);
+    const auto fbSize = GetWindow().GetFramebufferSize();
+    const float w      = static_cast<float>(fbSize.Width);
+    const float h      = static_cast<float>(fbSize.Height);
     if (w <= 0.f || h <= 0.f) // minimized/zero-size framebuffer — no valid ray
         return ray;
     const glm::mat4 projection = Assisi::Runtime::ProjectionMatrix(_camera, w / h);
 
     const float ndcX    = (2.f * mousePos.x / w) - 1.f;
     const float ndcY    = 1.f - (2.f * mousePos.y / h);
-    glm::vec4   viewDir = glm::inverse(projection) * glm::vec4(ndcX, ndcY, -1.f, 1.f);
+    glm::vec4 viewDir = glm::inverse(projection) * glm::vec4(ndcX, ndcY, -1.f, 1.f);
     viewDir.z           = -1.f;
     viewDir.w           = 0.f;
 
@@ -393,7 +393,7 @@ Assisi::ECS::InstanceId EditorApp::PickInstance(glm::vec2 mousePos, float &tOut)
     if (!ray.valid)
         return {};
 
-    const float             iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    const float iconHalf = 0.5f * Assisi::Render::kEntityIconWorldSize;
     Assisi::ECS::InstanceId result;
 
     // The same quad the renderer draws for an instance root — see
@@ -432,16 +432,16 @@ Assisi::ECS::Entity EditorApp::PickEntity(glm::vec2 mousePos, float &tOut)
     const glm::vec3 rayDir      = ray.direction;
     const glm::vec3 cameraRight = ray.cameraRight;
     const glm::vec3 cameraUp    = ray.cameraUp;
-    const float     iconHalf    = 0.5f * Assisi::Render::kEntityIconWorldSize;
+    const float iconHalf    = 0.5f * Assisi::Render::kEntityIconWorldSize;
 
-    float               closestT = std::numeric_limits<float>::max();
+    float closestT = std::numeric_limits<float>::max();
     Assisi::ECS::Entity result   = Assisi::ECS::NullEntity;
 
     for (auto [e, tc] : _scene->Query<Assisi::Runtime::Transform>())
     {
         // Meshed entities are picked by their unit-cube bounds; a placement-only one
         // by its icon quad alone, so it does not swallow clicks over a whole cube.
-        float      t   = 0.f;
+        float t   = 0.f;
         const bool hit = _scene->Get<Assisi::Runtime::MeshRenderer>(e) != nullptr
                              ? RayOBBIntersect(rayOrigin, rayDir, tc.worldMatrix, t)
                              : RayBillboardIntersect(rayOrigin, rayDir, glm::vec3(tc.worldMatrix[3]), cameraRight,

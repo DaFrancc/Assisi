@@ -54,29 +54,29 @@ TEST_CASE("App: a level's blueprint instances load, place, and get physics bodie
     // through the parent's world matrix.
     Write(root / "crate.abp",
           {{"version", 2},
-           {"entities",
-            nlohmann::json::array(
-                {{{"name", "box"},
-                  {"components",
-                   {{"Transform",
-                     {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                    {"RigidBodyDescriptor", {{"isStatic", true}}}}}},
-                 {{"name", "lid"},
-                  {"components",
-                   {{"Transform",
-                     {{"position", {0.f, 1.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                    {"Parent", {{"parent", "box"}}},
-                    {"RigidBodyDescriptor", {{"isStatic", true}}}}}}})}});
+              {"entities",
+               nlohmann::json::array(
+                   {{{"name", "box"},
+                       {"components",
+                        {{"Transform",
+                            {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                            {"RigidBodyDescriptor", {{"isStatic", true}}}}}},
+                       {{"name", "lid"},
+                           {"components",
+                            {{"Transform",
+                                {{"position", {0.f, 1.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                                {"Parent", {{"parent", "box"}}},
+                                {"RigidBodyDescriptor", {{"isStatic", true}}}}}}})}});
 
     Write(root / "levels" / "yard.alvl",
           {{"version", 2},
-           {"entities", nlohmann::json::array()},
-           {"instances", nlohmann::json::array({{{"name", "crate_a"},
-                                                 {"source", "crate.abp"},
-                                                 {"transform",
-                                                  {{"position", {30.f, 0.f, 0.f}},
-                                                   {"rotation", {1.f, 0.f, 0.f, 0.f}},
-                                                   {"scale", {1.f, 1.f, 1.f}}}}}})}});
+              {"entities", nlohmann::json::array()},
+              {"instances", nlohmann::json::array({{{"name", "crate_a"},
+                                                      {"source", "crate.abp"},
+                                                      {"transform",
+                                                       {{"position", {30.f, 0.f, 0.f}},
+                                                           {"rotation", {1.f, 0.f, 0.f, 0.f}},
+                                                           {"scale", {1.f, 1.f, 1.f}}}}}})}});
 
     App::World world;
     REQUIRE(App::LoadLevelSim(world, "levels/yard.alvl"));

@@ -65,10 +65,10 @@ BlueprintInstance Spawned(std::string source)
 TEST_CASE("Join then Stop leaves the level's own instances, not the host's")
 {
     // The level in front of the author: two placed instances.
-    InstanceTable       instances;
-    const auto          mine1 = instances.Add(Authored("car_1", "blueprints/car.abp"));
-    const auto          mine2 = instances.Add(Authored("crate_1", "blueprints/crate.abp"));
-    std::string         levelPath{"levels/mine.alvl"};
+    InstanceTable instances;
+    const auto mine1 = instances.Add(Authored("car_1", "blueprints/car.abp"));
+    const auto mine2 = instances.Add(Authored("crate_1", "blueprints/crate.abp"));
+    std::string levelPath{"levels/mine.alvl"};
     std::vector<std::string> systems{"Spin"};
 
     const PrePlayState captured = CapturePrePlayState(levelPath, systems, instances);
@@ -112,11 +112,11 @@ TEST_CASE("A blueprint spawned during play does not survive Stop")
     // during play adds a row to the edited world's table, and a row that
     // outlives the session is a ghost the outliner shows with no live members.
     InstanceTable instances;
-    const auto    authored = instances.Add(Authored("car_1", "blueprints/car.abp"));
+    const auto authored = instances.Add(Authored("car_1", "blueprints/car.abp"));
 
-    std::string              levelPath{"levels/mine.alvl"};
+    std::string levelPath{"levels/mine.alvl"};
     std::vector<std::string> systems;
-    const PrePlayState       captured = CapturePrePlayState(levelPath, systems, instances);
+    const PrePlayState captured = CapturePrePlayState(levelPath, systems, instances);
 
     const auto spawned = instances.Add(Spawned("blueprints/bullet.abp"));
     REQUIRE(instances.Size() == 2);
@@ -142,9 +142,9 @@ TEST_CASE("Stop puts the instance id allocator back, not just the rows")
     const auto deleted = instances.Add(Authored("car_3", "blueprints/car.abp"));
     instances.Remove(deleted); // deleted in the editor, undoable — id 3 is spoken for
 
-    std::string              levelPath{"levels/mine.alvl"};
+    std::string levelPath{"levels/mine.alvl"};
     std::vector<std::string> systems;
-    const PrePlayState       captured = CapturePrePlayState(levelPath, systems, instances);
+    const PrePlayState captured = CapturePrePlayState(levelPath, systems, instances);
 
     instances.Clear();
     instances.Add(Authored("tower_1", "blueprints/tower.abp"));
@@ -162,8 +162,8 @@ TEST_CASE("A join that retargeted the world's systems asks for them back")
     // fail — so the restore reports rather than performs it. Both directions
     // matter: a session that never touched the list must not provoke a
     // reinstall, and one that did must.
-    InstanceTable            instances;
-    std::string              levelPath{"levels/mine.alvl"};
+    InstanceTable instances;
+    std::string levelPath{"levels/mine.alvl"};
     std::vector<std::string> systems{"Spin", "Bob"};
 
     const PrePlayState captured = CapturePrePlayState(levelPath, systems, instances);

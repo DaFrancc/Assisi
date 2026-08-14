@@ -43,7 +43,7 @@ namespace Assisi::NetSync
 /// what changed.
 class ReplicationServer
 {
-  public:
+public:
     /// @param physics The world whose bodies are the authority on motion. Null
     ///   means Transforms replicate as ordinary components and no body state is
     ///   sent at all.
@@ -321,7 +321,7 @@ class ReplicationServer
 
     [[nodiscard]] const ReplicationConfig &Config() const { return _config; }
 
-  private:
+private:
     /// How much of one entity a connection is known to have.
     ///
     /// Per entity, never one tick per connection. With a single global tick, an
@@ -339,7 +339,7 @@ class ReplicationServer
     /// snapshot *actually wrote* get an entry — that is the point.
     struct WrittenEntity
     {
-        NetId          netId = InvalidNetId;
+        NetId netId = InvalidNetId;
         EntityBaseline ticks;
     };
 
@@ -348,7 +348,7 @@ class ReplicationServer
     /// same comparison, and the per-entity ticks are the delta baselines.
     struct SentSnapshot
     {
-        std::uint64_t              serverTick = 0;
+        std::uint64_t serverTick = 0;
         std::vector<WrittenEntity> written; ///< Sorted ascending by netId.
         std::vector<NetId>         netIds;  ///< Sorted ascending.
 
@@ -372,11 +372,11 @@ class ReplicationServer
 
     struct Connection
     {
-        Net::ConnectionId     id    = Net::InvalidConnection;
+        Net::ConnectionId id    = Net::InvalidConnection;
         /// Assigned at AddConnection, monotonic, never reused. What
         /// `ControlledBy` names and what directed messages address.
-        ClientId              clientId;
-        bool                  ready = false; ///< Handshake completed.
+        ClientId clientId;
+        bool ready = false;                  ///< Handshake completed.
         std::deque<SentSnapshot> inFlight;
 
         /// The acked baseline: the entity set the client is known to have, the
@@ -384,7 +384,7 @@ class ReplicationServer
         /// has been delivered.
         std::vector<NetId>         acked;
         std::vector<std::uint64_t> ackedComponents;
-        std::uint64_t              ackedTick = 0;
+        std::uint64_t ackedTick = 0;
 
         /// Instances this connection has acked a record for, sorted. A record is
         /// resent every snapshot until it lands here: a member block the client
@@ -434,7 +434,7 @@ class ReplicationServer
         std::vector<NetId> effectiveScratch;
         std::vector<NetId> mergeScratch;
 
-        InputCommandQueue     input;
+        InputCommandQueue input;
         ConnectionDiagnostics diagnostics;
 
         /// Sliding one-second window for the input rate limit.
@@ -697,17 +697,17 @@ class ReplicationServer
                                const Connection &connection, Core::BitWriter &writer,
                                std::vector<std::uint64_t> &outComponents);
 
-    Net::NetTransport     &_transport;
-    ECS::Scene            &_scene;
+    Net::NetTransport &_transport;
+    ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
-    NetSession            *_session = nullptr; ///< For handler contexts; null in direct-drive tests.
-    ReplicationConfig      _config;
-    LevelIdentity          _level;
+    NetSession *_session = nullptr;            ///< For handler contexts; null in direct-drive tests.
+    ReplicationConfig _config;
+    LevelIdentity _level;
 
     /// The last state captured for a replicated body, and when.
     struct BodyRecord
     {
-        BodyState     state;
+        BodyState state;
         std::uint64_t tick = 0; ///< 0 = never captured.
     };
 
@@ -753,7 +753,7 @@ class ReplicationServer
     /// connection is registered but its ServerHello is withheld — see
     /// SetContentSetHash.
     std::uint64_t _contentSetHash      = 0;
-    bool          _contentSetHashReady = false;
+    bool _contentSetHashReady = false;
 
     /// Who decides what each connection is told about. Null — the default —
     /// means everyone is told everything, on today's exact code path.
@@ -807,9 +807,9 @@ class ReplicationServer
     /// The contiguous NetId range one instance's members occupy.
     struct InstanceBlock
     {
-        NetId         base;              ///< Member 0's id. Member i is base + i.
+        NetId base;                      ///< Member 0's id. Member i is base + i.
         std::uint32_t memberCount = 0;
-        InstanceInfo  info;              ///< Captured at allocation — see below.
+        InstanceInfo info;               ///< Captured at allocation — see below.
 
         /// One entry per member, non-zero while a client's own expansion of this
         /// blueprint could still stand in for it. Starts all-set and **only ever

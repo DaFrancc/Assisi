@@ -71,10 +71,10 @@ bool OutlinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInf
     using Assisi::Geometry::Vertex;
     const nvrhi::VertexAttributeDesc attributes[] = {
         nvrhi::VertexAttributeDesc()
-            .setName("POSITION")
-            .setFormat(nvrhi::Format::RGB32_FLOAT)
-            .setOffset(offsetof(Vertex, Position))
-            .setElementStride(sizeof(Vertex)),
+        .setName("POSITION")
+        .setFormat(nvrhi::Format::RGB32_FLOAT)
+        .setOffset(offsetof(Vertex, Position))
+        .setElementStride(sizeof(Vertex)),
     };
     _maskInputLayout =
         device->createInputLayout(attributes, static_cast<uint32_t>(std::size(attributes)), _maskVertexShader);
@@ -278,7 +278,7 @@ void OutlinePass::RecordSilhouette(const RenderFrame &frame, const glm::mat4 &mo
         for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
         {
             const Geometry::SubMesh &subMesh = mesh.SubMeshes()[lod0.FirstSubMesh + i];
-            nvrhi::DrawArguments      drawArgs;
+            nvrhi::DrawArguments drawArgs;
             drawArgs.vertexCount         = subMesh.IndexCount;
             drawArgs.startIndexLocation  = mesh.IndexBase() + subMesh.IndexOffset;
             drawArgs.startVertexLocation = mesh.VertexBase();

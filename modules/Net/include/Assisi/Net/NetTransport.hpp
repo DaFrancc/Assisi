@@ -109,14 +109,14 @@ struct NetEvent
         Message,      ///< A payload arrived.
     };
 
-    Type                   type       = Type::Message;
-    ConnectionId           connection = InvalidConnection;
+    Type type       = Type::Message;
+    ConnectionId connection = InvalidConnection;
     std::vector<std::byte> payload;              ///< Message only; empty otherwise.
-    Lane                   lane = Lane::Control; ///< Message only.
+    Lane lane = Lane::Control;                   ///< Message only.
     /// Disconnected only: GNS's end reason plus its debug string, for logging a
     /// diagnosable cause rather than "the client went away".
     std::int32_t closeReason = 0;
-    std::string  closeDebug;
+    std::string closeDebug;
 };
 
 /// @brief A connection's current health, for debug overlays and the adaptive
@@ -124,12 +124,12 @@ struct NetEvent
 struct ConnectionStats
 {
     std::int32_t pingMs                  = 0;
-    float        connectionQualityLocal  = 0.f; ///< 0..1, fraction delivered end-to-end in order.
-    float        connectionQualityRemote = 0.f; ///< The same, as the peer observes it.
-    float        outPacketsPerSec        = 0.f;
-    float        outBytesPerSec          = 0.f;
-    float        inPacketsPerSec         = 0.f;
-    float        inBytesPerSec           = 0.f;
+    float connectionQualityLocal  = 0.f;        ///< 0..1, fraction delivered end-to-end in order.
+    float connectionQualityRemote = 0.f;        ///< The same, as the peer observes it.
+    float outPacketsPerSec        = 0.f;
+    float outBytesPerSec          = 0.f;
+    float inPacketsPerSec         = 0.f;
+    float inBytesPerSec           = 0.f;
     std::int32_t sendRateBytesPerSec     = 0; ///< Estimated channel capacity, not current usage.
     std::int32_t pendingUnreliableBytes  = 0;
     std::int32_t pendingReliableBytes    = 0;
@@ -146,8 +146,8 @@ struct ConnectionStats
 /// NetTransport::CreateLoopbackPair.
 struct SimulatedConditions
 {
-    float        sendLossPercent = 0.f; ///< 0..100, packets dropped on send.
-    float        recvLossPercent = 0.f; ///< 0..100, packets dropped on receive.
+    float sendLossPercent = 0.f;        ///< 0..100, packets dropped on send.
+    float recvLossPercent = 0.f;        ///< 0..100, packets dropped on receive.
     std::int32_t sendLagMs       = 0;   ///< Added one-way delay on send.
     std::int32_t recvLagMs       = 0;   ///< Added one-way delay on receive.
     std::int32_t sendJitterMs    = 0;   ///< Max extra random delay on send.
@@ -165,7 +165,7 @@ struct SimulatedConditions
 /// single call site, not this interface.
 class NetTransport
 {
-  public:
+public:
     /// Initializes the GNS library on first construction (refcounted across
     /// instances, mirroring how PhysicsWorld owns Jolt's globals).
     NetTransport();
@@ -259,7 +259,7 @@ class NetTransport
     };
     static void SetDebugLevel(DebugLevel level);
 
-  private:
+private:
     struct Impl;
     std::unique_ptr<Impl> _impl;
 };

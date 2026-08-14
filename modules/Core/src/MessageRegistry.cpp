@@ -27,7 +27,7 @@ void MessageRegistry::Register(MessageMeta meta)
                          "finalized and its ids are on the wire. The message will not be reflected.",
                          meta.name);
         ASSISI_ASSERT(false, "MessageRegistry::Register after an id was issued — ids are positions in the "
-                             "name-sorted list, and they are what the wire carries");
+                      "name-sorted list, and they are what the wire carries");
         return;
     }
 

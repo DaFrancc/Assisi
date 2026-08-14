@@ -71,8 +71,8 @@ enum class ReconcileOutcome : std::uint8_t
 struct ReconcileResult
 {
     ReconcileOutcome outcome     = ReconcileOutcome::Failed;
-    std::size_t      addedSlots  = 0;     ///< Slots newly materialized (AdditiveSlots).
-    bool             changedDisk = false; ///< Whether any file was written (caller rescans).
+    std::size_t addedSlots  = 0;          ///< Slots newly materialized (AdditiveSlots).
+    bool changedDisk = false;             ///< Whether any file was written (caller rescans).
 };
 
 /// @brief Reconcile an already-exploded glTF (one carrying a manifest) against
@@ -124,8 +124,8 @@ enum class SlotChange : std::uint8_t
 struct SlotDiff
 {
     std::uint32_t slot   = 0;
-    SlotChange    change = SlotChange::Unchanged;
-    std::string   name;             ///< Source material name (empty for a Removed slot; may be empty if unnamed).
+    SlotChange change = SlotChange::Unchanged;
+    std::string name;               ///< Source material name (empty for a Removed slot; may be empty if unnamed).
     Core::AssetId existing;         ///< The stored `.amat` GUID for this slot (nil for Added).
 };
 
@@ -134,7 +134,7 @@ struct SlotDiff
 ///        the union of old and new slots.
 struct MaterialDiff
 {
-    bool                  valid = false; ///< False if the glTF/sidecar/import could not be read.
+    bool valid = false;                  ///< False if the glTF/sidecar/import could not be read.
     std::vector<SlotDiff> slots;
 
     /// @brief Whether any slot is a Changed or Removed conflict. (Added alone is

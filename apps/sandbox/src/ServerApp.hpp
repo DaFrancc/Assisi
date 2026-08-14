@@ -52,9 +52,9 @@ enum class ServerRole : std::uint8_t
 
 struct ServerOptions
 {
-    ServerRole    role = ServerRole::Offline;
-    std::string   level;                  ///< Virtual path; empty for an empty world.
-    std::string   address = "127.0.0.1";  ///< Client only.
+    ServerRole role = ServerRole::Offline;
+    std::string level;                    ///< Virtual path; empty for an empty world.
+    std::string address = "127.0.0.1";    ///< Client only.
     std::uint16_t port    = 27015;
     std::uint64_t tickLimit = 0;          ///< 0 = run until interrupted.
     /// Host only: spawn this many replicated, moving entities. A world that
@@ -65,7 +65,7 @@ struct ServerOptions
 
 class ServerApp final : public Assisi::App::Application
 {
-  public:
+public:
     explicit ServerApp(ServerOptions options);
     ~ServerApp() override;
 
@@ -78,7 +78,7 @@ class ServerApp final : public Assisi::App::Application
     /// shutdown and either ignore it or restart-loop in silence.
     [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
 
-  protected:
+protected:
     void OnStart() override;
     void OnFixedUpdate(float dt) override;
     void OnUpdate(float dt) override;
@@ -86,7 +86,7 @@ class ServerApp final : public Assisi::App::Application
     void FlushDeferred() override;
     void InstallQueuedSystems() override;
 
-  private:
+private:
     bool _startupFailed = false;
 
     void ReportStatus();
@@ -127,7 +127,7 @@ class ServerApp final : public Assisi::App::Application
     /// actually in motion.
     std::vector<Assisi::ECS::Entity> _moving;
 
-    double        _lastReportSeconds = 0.0;
+    double _lastReportSeconds = 0.0;
     std::uint64_t _lastReportTick    = 0;
 };
 

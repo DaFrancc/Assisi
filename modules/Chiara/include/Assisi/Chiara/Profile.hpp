@@ -29,7 +29,7 @@
 
 #include <Assisi/Chiara/Chiara.hpp>
 
-#define ASSISI_CHIARA_CONCAT_INNER(a, b) a##b
+#define ASSISI_CHIARA_CONCAT_INNER(a, b) a ## b
 #define ASSISI_CHIARA_CONCAT(a, b) ASSISI_CHIARA_CONCAT_INNER(a, b)
 #define ASSISI_CHIARA_UNIQUE(prefix) ASSISI_CHIARA_CONCAT(prefix, __LINE__)
 

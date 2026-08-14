@@ -142,7 +142,7 @@ class EditorOptionsPanel;
 
 class EditorApp : public Assisi::App::Application
 {
-  public:
+public:
     explicit EditorApp(EditorConfig config = {});
 
     /// Out of line: `_options` is a unique_ptr to a type only forward-declared
@@ -182,7 +182,7 @@ class EditorApp : public Assisi::App::Application
     void InstallQueuedSystems() override;
     void OnShutdown() override;
 
-  private:
+private:
     // --- Setup ---
     void SetupCamera();
     void SetupScene();
@@ -719,7 +719,7 @@ class EditorApp : public Assisi::App::Application
         /// The dirty-marker token before the save cleared it, and which of the two
         /// it belongs to.
         std::uint64_t previousSavedToken = 0;
-        bool          savedTokenIsBlueprint = false;
+        bool savedTokenIsBlueprint = false;
     };
     std::optional<PendingSaveConfirm> _pendingSaveConfirm;
 
@@ -820,7 +820,7 @@ class EditorApp : public Assisi::App::Application
     /// A `null` claim means the instance removed the component. The returned
     /// pointer is into the instance table's row and lives until the next edit.
     [[nodiscard]] const nlohmann::json *OverrideClaimFor(Assisi::ECS::Entity entity,
-                                                         const std::string  &component) const;
+                                                         const std::string &component) const;
 
     /// @brief Drops an override claim and lets the value fall back to the
     /// blueprint's.
@@ -1043,14 +1043,14 @@ class EditorApp : public Assisi::App::Application
     // default profile at world creation, run only while Playing — and are never
     // mixed in here.
     Assisi::App::SystemRegistry _systems;
-    Assisi::Window::ActionMap   _actions;
+    Assisi::Window::ActionMap _actions;
 
     // --- Game hooks ---
-    EditorConfig                _editorConfig;
+    EditorConfig _editorConfig;
 
     // Latches the once-per-process warning OnStart logs for a game's Render
     // systems, which the editor never runs.
-    bool                        _warnedGameRenderSystems = false;
+    bool _warnedGameRenderSystems = false;
 
     // --- Worlds ---
     // Every resident level lives in the manager. The *active* world is the one
@@ -1059,10 +1059,10 @@ class EditorApp : public Assisi::App::Application
     // travelled elsewhere, or while a blueprint holds the edited role.
     // `_scene`/`_physics` are the active world's, cached so panels can reach them
     // directly.
-    Assisi::App::WorldManager          _worlds;
-    Assisi::App::World                *_world   = nullptr; ///< The active world.
-    Assisi::ECS::Scene                *_scene   = nullptr; ///< == &_world->scene.
-    Assisi::Physics::PhysicsWorld     *_physics = nullptr; ///< == &_world->physics.
+    Assisi::App::WorldManager _worlds;
+    Assisi::App::World *_world   = nullptr;                ///< The active world.
+    Assisi::ECS::Scene *_scene   = nullptr;                ///< == &_world->scene.
+    Assisi::Physics::PhysicsWorld *_physics = nullptr;     ///< == &_world->physics.
 
     // --- Networked play ---
     // `_netIntent` is the role this play session was entered for; `_joinPhase`
@@ -1080,7 +1080,7 @@ class EditorApp : public Assisi::App::Application
     /// UI state for the network panel, kept here rather than in statics so two
     /// editors in one process would not share it.
     std::array<char, 64> _netAddress{"127.0.0.1"};
-    int32_t              _netPort = 27015;
+    int32_t _netPort = 27015;
     /// Why the last Host/Join failed. Held here rather than read back off the
     /// session, because a failed attempt destroys the session that knows.
     std::string _netError;
@@ -1093,7 +1093,7 @@ class EditorApp : public Assisi::App::Application
     /// Seconds spent waiting for a host's ServerHello. A join that never gets
     /// one would otherwise sit in Play forever with an empty world and no
     /// explanation.
-    float                  _joinElapsed         = 0.f;
+    float _joinElapsed         = 0.f;
     static constexpr float kJoinTimeoutSeconds  = 10.f;
     /// Marshalled to OnUpdate: BuildJoinedWorld frees and re-resolves GPU
     /// assets, which must not happen from the fixed step mid-frame.
@@ -1109,11 +1109,11 @@ class EditorApp : public Assisi::App::Application
     // a total that keeps climbing only says the session is still running, which
     // is already visible. Sampled over a second so a frame-rate stutter does not
     // read as a bandwidth spike.
-    float         _netSampleSeconds         = 0.f;
+    float _netSampleSeconds         = 0.f;
     std::uint64_t _lastCorrectionBytes      = 0;
     std::uint64_t _lastCorrectionsApplied   = 0;
-    float         _correctionBytesPerSecond = 0.f;
-    float         _correctionsPerSecond     = 0.f;
+    float _correctionBytesPerSecond = 0.f;
+    float _correctionsPerSecond     = 0.f;
 
     /// The mirrored world's structure revision this editor last resolved assets
     /// against. Mirrors arrive with authored asset ids and null GPU pointers;
@@ -1158,9 +1158,9 @@ class EditorApp : public Assisi::App::Application
     // init and never reset — unlike the asset cache's arena, which a level load
     // clears — so the MeshBuffers stay valid across level changes.
     Assisi::Render::GeometryArena _colliderArena;
-    Assisi::Render::MeshBuffer    _colliderBoxMesh;
-    Assisi::Render::MeshBuffer    _colliderSphereMesh;
-    Assisi::Render::MeshBuffer    _colliderCylinderMesh;
+    Assisi::Render::MeshBuffer _colliderBoxMesh;
+    Assisi::Render::MeshBuffer _colliderSphereMesh;
+    Assisi::Render::MeshBuffer _colliderCylinderMesh;
 
     // --- Asset database and staleness ---
     // Editor-only GUID identity index, populated by ReimportAssets() scanning the
@@ -1178,9 +1178,9 @@ class EditorApp : public Assisi::App::Application
     // open. _staleResolveRequestOpen latches an ImGui::OpenPopup on the next
     // frame. The queue holds still-stale meshes that are live in the open scene,
     // prompted one after another.
-    std::string                     _staleResolveTarget;
-    Assisi::Geometry::MaterialDiff  _staleResolveDiff;
-    bool                            _staleResolveRequestOpen = false;
+    std::string _staleResolveTarget;
+    Assisi::Geometry::MaterialDiff _staleResolveDiff;
+    bool _staleResolveRequestOpen = false;
     std::vector<std::string>        _staleResolveQueue;
 
     // Smoke test for ImGui texture display — loaded once in SetupScene. Owns its
@@ -1193,7 +1193,7 @@ class EditorApp : public Assisi::App::Application
     // RefreshCameraMatrix() recomputes worldMatrix from the TRS (parentless, so
     // world == local) before it is read.
     Assisi::Runtime::Transform _cameraTransform;
-    Assisi::Runtime::Camera    _camera{60.f, 0.1f, 200.f, true};
+    Assisi::Runtime::Camera _camera{60.f, 0.1f, 200.f, true};
 
     // Set by SetupCamera() before first use; these are just safe defaults.
     float _yaw   = 0.f;
@@ -1239,8 +1239,8 @@ class EditorApp : public Assisi::App::Application
     struct PendingOverrideReset
     {
         Assisi::ECS::Entity entity = Assisi::ECS::NullEntity;
-        std::string         component;
-        std::string         field; ///< Empty resets the whole component's claim.
+        std::string component;
+        std::string field;         ///< Empty resets the whole component's claim.
     };
     std::optional<PendingOverrideReset> _pendingOverrideReset;
 
@@ -1278,12 +1278,12 @@ class EditorApp : public Assisi::App::Application
     // whether or not the Inspector drew. Keying the release off the panel's own
     // edge skips it whenever the Inspector early-returns on an empty selection,
     // stranding the body Static while its descriptor still says dynamic.
-    bool                _physicsFreezeRequested = false;
+    bool _physicsFreezeRequested = false;
     Assisi::ECS::Entity _frozenBodyEntity       = Assisi::ECS::NullEntity;
     /// World that owns _frozenBodyEntity, by name rather than pointer: the viewed
     /// world can change (or be destroyed) between freeze and release, and the
     /// thaw must reach the body it actually froze, not whatever is on screen now.
-    std::string         _frozenBodyWorld;
+    std::string _frozenBodyWorld;
 
     // --- Collider wireframe scratch ---
     // Reused per frame by SubmitColliderWireframes: the depth-tested (unselected)
@@ -1301,11 +1301,11 @@ class EditorApp : public Assisi::App::Application
 
     // --- Transform gizmo ---
     GizmoOp _gizmoOp        = GizmoOp::Translate;
-    bool    _gizmoLocalSpace = false; // false = world axes
+    bool _gizmoLocalSpace = false;    // false = world axes
     // Whether the gizmo was being dragged last frame, so its release edge can be
     // detected: the gizmo force-commits its (shared) Transform gesture there, which
     // is what keeps a drag its own undo entry rather than merged with a later edit.
-    bool    _gizmoWasUsing = false;
+    bool _gizmoWasUsing = false;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-
@@ -1344,7 +1344,7 @@ class EditorApp : public Assisi::App::Application
     // gizmo and inspector reach it like anything else); ambient is a renderer knob,
     // since there is no such component and nothing about it belongs in a file.
     glm::vec3 _blueprintAmbientColor{1.f, 1.f, 1.f};
-    float     _blueprintAmbient = 0.25f;
+    float _blueprintAmbient = 0.25f;
     // Deferred, for the same reason level loads are: opening resolves assets and
     // touches GPU state, and a panel runs mid-frame.
     std::optional<std::string> _pendingBlueprintOpen;
@@ -1356,8 +1356,8 @@ class EditorApp : public Assisi::App::Application
     // A collected re-expansion waiting on the author's answer, plus what it costs.
     // Empty the rest of the time; the modal is only raised when history is at stake.
     std::vector<PendingReexpand> _pendingReexpand;
-    std::string                  _pendingReexpandSource;
-    std::size_t                  _pendingReexpandUndoLoss = 0;
+    std::string _pendingReexpandSource;
+    std::size_t _pendingReexpandUndoLoss = 0;
     // The member names the edit removes, for the prompt. Names rather than entities:
     // "lid, hinge" is what the author recognises, and one name may cover four copies.
     std::vector<std::string> _pendingReexpandRemoved;
@@ -1444,7 +1444,7 @@ class EditorApp : public Assisi::App::Application
     // context (EntityRef fields as raw handles), same as the undo capture path.
     struct PlayEntitySnapshot
     {
-        Assisi::ECS::Entity                     handle;
+        Assisi::ECS::Entity handle;
         std::vector<Assisi::Editor::ComponentSnapshot> components;
     };
     std::vector<PlayEntitySnapshot> _playSnapshot; ///< Captured at Run; restored on Stop.
@@ -1453,12 +1453,12 @@ class EditorApp : public Assisi::App::Application
     // An eased move that reframes the camera on an object. While active it owns the
     // camera transform: UpdateCamera advances it and skips fly control. Manual look
     // input cancels it. Always kCameraFocusDuration, whatever the travel distance.
-    bool                   _cameraFocusActive  = false;
-    float                  _cameraFocusElapsed = 0.f;
-    glm::vec3              _cameraFocusStartPos{0.f};
-    glm::vec3              _cameraFocusEndPos{0.f};
-    glm::quat              _cameraFocusStartRot{1.f, 0.f, 0.f, 0.f};
-    glm::quat              _cameraFocusEndRot{1.f, 0.f, 0.f, 0.f};
+    bool _cameraFocusActive  = false;
+    float _cameraFocusElapsed = 0.f;
+    glm::vec3 _cameraFocusStartPos{0.f};
+    glm::vec3 _cameraFocusEndPos{0.f};
+    glm::quat _cameraFocusStartRot{1.f, 0.f, 0.f, 0.f};
+    glm::quat _cameraFocusEndRot{1.f, 0.f, 0.f, 0.f};
     static constexpr float kCameraFocusDuration = 0.25f;
 
     // --- Inspector: Add Component ---
@@ -1474,25 +1474,25 @@ class EditorApp : public Assisi::App::Application
     // EntityRef field instead of changing the selection. The target is pinned by
     // (entity, component meta, field offset) rather than a raw pointer, so a pool
     // reallocation between arming and picking can't dangle it.
-    bool                                        _eyedropperArmed       = false;
-    Assisi::ECS::Entity                         _eyedropperEntity      = Assisi::ECS::NullEntity;
+    bool _eyedropperArmed       = false;
+    Assisi::ECS::Entity _eyedropperEntity      = Assisi::ECS::NullEntity;
     const Assisi::Core::Reflect::ComponentMeta *_eyedropperMeta        = nullptr;
-    std::size_t                                 _eyedropperFieldOffset = 0;
+    std::size_t _eyedropperFieldOffset = 0;
 
     // --- Asset browser ---
     // Opened from an AssetPath field's browse button, it navigates the asset
     // directory and writes the picked path back into the field. The target is
     // pinned by (entity, component meta, field offset) and re-resolved at write
     // time — same anti-dangling scheme as the eyedropper above.
-    bool                                        _assetBrowserOpen        = false;
-    Assisi::ECS::Entity                         _assetBrowserEntity      = Assisi::ECS::NullEntity;
+    bool _assetBrowserOpen        = false;
+    Assisi::ECS::Entity _assetBrowserEntity      = Assisi::ECS::NullEntity;
     const Assisi::Core::Reflect::ComponentMeta *_assetBrowserMeta        = nullptr;
-    std::size_t                                 _assetBrowserFieldOffset = 0;
+    std::size_t _assetBrowserFieldOffset = 0;
     /// @brief -1 when the target field is a plain AssetPath; >= 0 when it is
     /// element `[slot]` of an AssetPathVector (a MeshRenderer material slot). In
     /// the latter mode the browser lists only materials (and folders).
-    int32_t                                     _assetBrowserVectorSlot  = -1;
-    std::string                                 _assetBrowserDir; ///< Current dir, relative to the asset root ("" = root).
+    int32_t _assetBrowserVectorSlot  = -1;
+    std::string _assetBrowserDir;                                 ///< Current dir, relative to the asset root ("" = root).
 
     // Cached listing of _assetBrowserDir — re-read only on navigation / open /
     // Refresh (see _assetBrowserDirty), never per frame.
@@ -1500,9 +1500,9 @@ class EditorApp : public Assisi::App::Application
     std::vector<std::string> _assetBrowserImages;
     std::vector<std::string> _assetBrowserMeshes;    ///< .glb/.gltf files (no thumbnail; shown as cube tiles).
     std::vector<std::string> _assetBrowserMaterials; ///< .amat files (shown as material-sphere tiles).
-    bool                     _assetBrowserDirty     = true;
-    bool                     _assetBrowserReadError = false;
-    float                    _assetBrowserThumbSize = 256.f; ///< Tile size in px; adjustable via the zoom buttons.
+    bool _assetBrowserDirty     = true;
+    bool _assetBrowserReadError = false;
+    float _assetBrowserThumbSize = 256.f;                    ///< Tile size in px; adjustable via the zoom buttons.
 
     // Textures loaded to thumbnail the browser's image entries. Separate from
     // _assetCache so a level load (which Clears that) doesn't drop thumbnails.
@@ -1510,8 +1510,8 @@ class EditorApp : public Assisi::App::Application
 
     // --- Levels panel ---
     std::vector<std::string> _levelFiles;
-    int32_t                  _selectedLevel = 0;
-    char                     _saveAsName[128] = {};
+    int32_t _selectedLevel = 0;
+    char _saveAsName[128] = {};
 
     // --- Blueprints panel ---
     /// Every `.abp` and `.alvl` under the asset root, as virtual paths — what the
@@ -1519,8 +1519,8 @@ class EditorApp : public Assisi::App::Application
     /// format and the extension never gates behaviour: instancing a level into a
     /// level is legal, and the editor should not pretend otherwise.
     std::vector<std::string> _blueprintFiles;
-    int32_t                  _selectedBlueprint = 0;
-    char                     _newBlueprintName[128] = {};
+    int32_t _selectedBlueprint = 0;
+    char _newBlueprintName[128] = {};
 
     // --- World and level operations deferred out of ImGui ---
     // **None of these may run mid-frame.** A level load requested from a panel,
@@ -1543,7 +1543,7 @@ class EditorApp : public Assisi::App::Application
     // BeginLoadLevel mutates the world store and promotion resolves/frees GPU
     // assets.
     std::optional<std::string> _pendingPreload;
-    bool                       _pendingPromote = false;
+    bool _pendingPromote = false;
 };
 
 } // namespace Assisi::Editor

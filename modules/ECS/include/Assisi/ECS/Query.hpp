@@ -149,7 +149,7 @@ template <typename T> struct Mut
     /// @brief The entity this proxy's component belongs to.
     Entity Owner() const { return _entity; }
 
-  private:
+private:
     // Only a query view builds proxies: doing so requires a mutable pool pointer,
     // which the views keep private precisely so nothing outside Scene can perform
     // structural changes behind its liveness gate.
@@ -220,7 +220,7 @@ struct QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>
                 // tick bump only happens if the loop body actually writes.
                 return std::tuple<Entity, Mut<Ts>...>{
                     entity, Mut<Ts>{std::get<Ts *>(_components), std::get<SparseSet<Ts> *>(_required), entity,
-                                    _changeTick}...};
+                                    _changeTick} ...};
             }
             else
             {
@@ -244,7 +244,7 @@ struct QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>
         bool operator==(Sentinel) const { return _pos >= _entities->size(); }
         bool operator!=(Sentinel s) const { return !(*this == s); }
 
-      private:
+private:
         friend QueryView; // only its enclosing view constructs iterators
 
         Iterator(const std::vector<Entity> *entities, std::size_t pos, std::tuple<SparseSet<Ts> *...> required,
@@ -269,7 +269,7 @@ struct QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>
         /// A null excluded pool has no holders, so it rejects nobody.
         bool HasExcluded(Entity e) const
         {
-            return std::apply([&](auto *...ps) { return (false || ... || (ps && ps->Has(e))); }, _excluded);
+            return std::apply([&](auto *... ps) { return (false || ... || (ps && ps->Has(e))); }, _excluded);
         }
 
         /// HasAll must run first: operator* trusts the pointer cache only when
@@ -299,7 +299,7 @@ struct QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>
         {
 #ifndef NDEBUG
             uint32_t sum = 0;
-            std::apply([&](auto *...ps) { ((sum += (ps != nullptr) ? ps->StructureVersion() : 0u), ...); },
+            std::apply([&](auto *... ps) { ((sum += (ps != nullptr) ? ps->StructureVersion() : 0u), ...); },
                        _required);
             return sum;
 #else
@@ -339,7 +339,7 @@ struct QueryView<std::tuple<Ts...>, std::tuple<Es...>, Access>
 
     Sentinel end() const { return {}; }
 
-  private:
+private:
     friend struct Scene; // QueryView exists only to be returned by Scene::Query/QueryMut
 
     QueryView(std::tuple<SparseSet<Ts> *...> required, const std::vector<Entity> *primary,
