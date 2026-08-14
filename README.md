@@ -104,9 +104,17 @@ Then install the driver:
 sudo dnf install akmod-nvidia xorg-x11-drv-nvidia
 ```
 
-Give it a few minutes to build the kernel module, then reboot. `mesa-vulkan-drivers` is not what you
-want on this card — it carries Mesa's open-source drivers, and `xorg-x11-drv-nvidia` is what supplies
-the Vulkan driver your GPU actually runs.
+**Do not reboot yet.** The kernel module is built in the background and takes a few minutes; rebooting
+before it finishes leaves you with a broken driver. This prints the driver version once the module is
+ready, and nothing until then:
+```bash
+modinfo -F version nvidia
+```
+
+Reboot once it answers.
+
+`mesa-vulkan-drivers` is not what you want on this card — it carries Mesa's open-source drivers, and
+`xorg-x11-drv-nvidia` is what supplies the Vulkan driver your GPU actually runs.
 
 Those two URLs are Fedora's. On RHEL and its rebuilds the equivalent repositories are listed at
 [rpmfusion.org/Configuration](https://rpmfusion.org/Configuration).
