@@ -150,13 +150,19 @@ AMD and Intel (Mesa covers both):
 sudo apt install mesa-vulkan-drivers
 ```
 
-NVIDIA (proprietary; brings its own Vulkan driver). On Debian it lives in the `contrib` and `non-free`
-components, which are not enabled by default:
+NVIDIA (proprietary; brings its own Vulkan driver).
+
+On Ubuntu, this picks the version that matches your card — use it rather than the Debian command
+below:
+```bash
+sudo ubuntu-drivers install
+```
+
+On Debian, the driver lives in the `contrib` and `non-free` components, which are not enabled by
+default:
 ```bash
 sudo apt install nvidia-driver
 ```
-
-On Ubuntu, `sudo ubuntu-drivers install` picks the version that matches your card instead.
 
 Optional, only if you want to build with Clang as well as GCC:
 ```bash
