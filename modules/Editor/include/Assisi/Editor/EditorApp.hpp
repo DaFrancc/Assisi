@@ -151,7 +151,7 @@ public:
 
     /// @brief Transform-gizmo handle set. Public so the free helpers in
     /// EditorGizmo.cpp can map it to ImGuizmo's operation enum.
-    enum class GizmoOp
+    enum class GizmoOp : std::uint8_t
     {
         Translate,
         Rotate,

@@ -150,7 +150,7 @@ struct GpuTelemetry::Impl
     // How to read power draw, decided once in Initialize() and then replayed every
     // query: legacy nvmlDeviceGetPowerUsage is unsupported on many laptop GPUs,
     // where the field-value API often works instead (or neither of them, -> N/A).
-    enum class PowerSource
+    enum class PowerSource : std::uint8_t
     {
         None,
         Legacy,

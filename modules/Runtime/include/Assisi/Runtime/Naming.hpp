@@ -64,7 +64,7 @@ namespace Assisi::Runtime
 inline constexpr char kNameSeparator = '/';
 
 /// @brief Why a string may not be used as a name.
-enum class NameError
+enum class NameError : std::uint8_t
 {
     Empty,             ///< Nothing to address it by.
     TooLong,           ///< Past `Core::kEntityNameMax`; refused, never truncated.

@@ -37,7 +37,7 @@ struct SerializationContext
     /// How an EntityRef field addresses its target while this context is live.
     /// Explicit because mixing the two vocabularies produces a plausible scene
     /// rather than an error.
-    enum class RefMode
+    enum class RefMode : std::uint8_t
     {
         Names,      ///< Save/Load of a file: a ref is the target entity's name.
         SetIndices, ///< TransferEntities: a ref is an index within the moved set.

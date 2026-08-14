@@ -19,6 +19,7 @@
 /// relative to the file); embedded images are NOT decoded — unpack .glb to
 /// separate files (see docs/mesh-material-architecture.md §3).
 
+#include <cstdint>
 #include <expected>
 #include <functional>
 #include <string_view>
@@ -37,7 +38,7 @@ namespace Assisi::Geometry
 using AssetIdResolver = std::function<Core::AssetId (std::string_view virtualPath)>;
 
 /// @brief Why an ImportMesh call failed.
-enum class MeshImportError
+enum class MeshImportError : std::uint8_t
 {
     UnsupportedFormat,  ///< The extension has no registered backend (e.g. `.fbx`).
     ReadFailed,         ///< AssetSystem could not read the file (missing / escaped root).

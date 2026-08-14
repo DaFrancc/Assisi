@@ -21,7 +21,7 @@ namespace Assisi::Render
 struct RenderFrame;
 
 /// @brief Anti-aliasing technique selection.
-enum class AaMode
+enum class AaMode : std::uint8_t
 {
     None,     ///< No anti-aliasing — scene renders directly into the swapchain.
     MSAA,     ///< Multisample AA (hardware, geometry edges only).

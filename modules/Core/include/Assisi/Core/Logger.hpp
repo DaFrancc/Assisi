@@ -12,6 +12,7 @@
 ///   Assisi::Core::GetLogger().AddSink(std::make_shared<Assisi::Core::ConsoleSink>());
 
 #include <atomic>
+#include <cstdint>
 #include <format>
 #include <memory>
 #include <mutex>
@@ -29,7 +30,7 @@ namespace Assisi::Core
 // Log level
 // -------------------------------------------------------------------------
 
-enum class LogLevel
+enum class LogLevel : std::uint8_t
 {
     Trace,
     Debug,

@@ -168,7 +168,7 @@ struct BlueprintDefinition
 /// known. A caller that asked for `lot.abp` learns that an instance cycle exists;
 /// the chain that proves it (`lot.abp -> car.abp -> lot.abp`) is in the log.
 /// Same split as NameError in Naming.hpp.
-enum class BlueprintError
+enum class BlueprintError : std::uint8_t
 {
     FileUnreadable,    ///< The asset system could not read the file, or one it instances.
     MalformedJson,     ///< Read, but not parseable as JSON.

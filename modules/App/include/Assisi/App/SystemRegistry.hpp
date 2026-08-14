@@ -117,7 +117,7 @@ struct RenderContext
 };
 
 /// @brief Execution phase that determines when a system runs and which context it receives.
-enum class SystemPhase
+enum class SystemPhase : std::uint8_t
 {
     PreUpdate   = 0, ///< After input is polled; before physics and game logic.
     FixedUpdate = 1, ///< Fixed timestep; may run multiple times per render frame.
