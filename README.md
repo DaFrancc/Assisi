@@ -126,6 +126,45 @@ sudo dnf install clang
 
 ---
 
+#### Debian and Ubuntu — untested
+
+Nobody has built the engine on a Debian-based distribution yet. What follows is a translation of the
+two lists above, not a tested recipe; corrections are welcome.
+
+It needs **Debian 13 (trixie) or newer**, or **Ubuntu 24.04 or newer**. Debian 12 (bookworm) is too
+old at both ends: the engine is C++23 and asks for CMake 3.28+, while bookworm ships GCC 12 and CMake
+3.25 — and `std::expected`, which this codebase returns its errors through, arrived in GCC 13.
+
+```bash
+sudo apt install build-essential git cmake ninja-build python3 pkg-config \
+                 libssl-dev \
+                 libwayland-dev libwayland-bin libxkbcommon-dev \
+                 libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev \
+                 libvulkan1
+```
+
+Plus a Vulkan driver for your GPU.
+
+AMD and Intel (Mesa covers both):
+```bash
+sudo apt install mesa-vulkan-drivers
+```
+
+NVIDIA (proprietary; brings its own Vulkan driver). On Debian it lives in the `contrib` and `non-free`
+components, which are not enabled by default:
+```bash
+sudo apt install nvidia-driver
+```
+
+On Ubuntu, `sudo ubuntu-drivers install` picks the version that matches your card instead.
+
+Optional, only if you want to build with Clang as well as GCC:
+```bash
+sudo apt install clang
+```
+
+---
+
 #### Other distributions
 Install the equivalents of those four package groups — they are the whole list, and the dropdown below
 says what each one is for.
