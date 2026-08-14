@@ -25,6 +25,11 @@
 #include <Assisi/Runtime/NameComponent.hpp>
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
+// Private to the serializer's own translation units: the nesting tests at the
+// bottom engage a context directly, which is the one thing the public API cannot
+// do. No include path covers it, so it is reached by relative path.
+#include "../src/SceneSerializerContext.hpp"
+
 using namespace Assisi;
 using Assisi::Runtime::Camera;
 using Assisi::Runtime::LevelError;
@@ -822,6 +827,156 @@ TEST_CASE("SceneSerializer: a raw ref to a recycled slot resolves to null, not i
         REQUIRE(freshKey.is_number_unsigned());
         CHECK(SceneSerializer::RefToEntity(freshKey) == e2);
     }
+}
+
+// ---------------------------------------------------------------------------
+// Nesting — one serialization context per thread, and an entry point reached
+// from inside another one must not silently take it over. Load clears the
+// caller's scene, so it refuses; the outer context's tables would otherwise
+// name entities the clear destroyed.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SceneSerializer: Load inside a raw-entity context refuses, and the caller keeps its scene")
+{
+    ECS::Scene source;
+    const ECS::Entity written = source.Create();
+    REQUIRE(source.Add(written, Transform{.position = {1.f, 2.f, 3.f}}) != nullptr);
+    const nlohmann::json level = SceneSerializer::Save(source);
+
+    ECS::Scene scene;
+    const ECS::Entity keep = scene.Create();
+    REQUIRE(scene.Add(keep, Transform{.position = {9.f, 9.f, 9.f}}) != nullptr);
+
+    const SceneSerializer::ScopedRawEntityContext raw(scene);
+
+    const LevelResult result = SceneSerializer::Load(scene, level);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::ContextBusy);
+    // Refused before the clear, so the caller's handles are still good.
+    CHECK_FALSE(result.error().sceneReplaced);
+
+    const Transform *kept = scene.Get<Transform>(keep);
+    REQUIRE(kept != nullptr);
+    CHECK(kept->position.x == doctest::Approx(9.f));
+}
+
+// The three below engage a context directly, which only the serializer's own
+// translation units can do — hence the private header. Nothing else in the tree
+// includes it; a test is the one other place that has business proving what the
+// guard does.
+
+TEST_CASE("SceneSerializer: a Save nested inside another context hands it back untouched")
+{
+    ECS::Scene outerScene;
+    const ECS::Entity target = outerScene.Create();
+
+    ECS::Scene toSave;
+    const ECS::Entity written = toSave.Create();
+    REQUIRE(toSave.Add(written, Transform{}) != nullptr);
+
+    Runtime::SerializationContext ctx;
+    ctx.entityToName.emplace(Runtime::EntityKey(target.index, target.generation), "outer_target");
+    const Runtime::ScopedContext outer(std::move(ctx));
+
+    const nlohmann::json before = SceneSerializer::EntityToRef(target);
+    REQUIRE(before.is_string());
+    REQUIRE(before.get<std::string>() == "outer_target");
+
+    // A save only reads its scene, so nesting one is legal — and it must leave the
+    // context it ran under exactly as it found it.
+    const nlohmann::json level = SceneSerializer::Save(toSave);
+    CHECK(level.at("entities").size() == 1);
+
+    const nlohmann::json after = SceneSerializer::EntityToRef(target);
+    REQUIRE(after.is_string()); // was null before ENG-121: Save blanked the outer context
+    CHECK(after.get<std::string>() == "outer_target");
+}
+
+TEST_CASE("SceneSerializer: Load inside another serialization context refuses and leaves it live")
+{
+    ECS::Scene source;
+    const ECS::Entity written = source.Create();
+    REQUIRE(source.Add(written, Transform{}) != nullptr);
+    const nlohmann::json level = SceneSerializer::Save(source);
+
+    ECS::Scene scene;
+    const ECS::Entity target = scene.Create();
+    REQUIRE(scene.Add(target, Transform{.position = {4.f, 4.f, 4.f}}) != nullptr);
+
+    Runtime::SerializationContext ctx;
+    ctx.entityToName.emplace(Runtime::EntityKey(target.index, target.generation), "outer_target");
+    const Runtime::ScopedContext outer(std::move(ctx));
+
+    const LevelResult result = SceneSerializer::Load(scene, level);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::ContextBusy);
+    CHECK_FALSE(result.error().sceneReplaced);
+
+    // The scene the outer context speaks for is still standing.
+    const Transform *kept = scene.Get<Transform>(target);
+    REQUIRE(kept != nullptr);
+    CHECK(kept->position.x == doctest::Approx(4.f));
+
+    const nlohmann::json after = SceneSerializer::EntityToRef(target);
+    REQUIRE(after.is_string());
+    CHECK(after.get<std::string>() == "outer_target");
+}
+
+TEST_CASE("SceneSerializer: nested contexts restore in order, and the outermost leaves none behind")
+{
+    ECS::Scene scene;
+    const ECS::Entity e    = scene.Create();
+    const uint64_t     key = Runtime::EntityKey(e.index, e.generation);
+
+    // Which context is live, read the way the generated code reads it.
+    const auto liveName = [&]
+                          {
+                              const nlohmann::json ref = SceneSerializer::EntityToRef(e);
+                              return ref.is_string() ? ref.get<std::string>() : std::string{};
+                          };
+
+    const auto engage = [&key](std::string name)
+                        {
+                            Runtime::SerializationContext ctx;
+                            ctx.entityToName.emplace(key, std::move(name));
+                            return ctx;
+                        };
+
+    // An entry point that gives up part-way: the exit path that is not falling off
+    // the end of the block, which is how most of the refusals in these files leave.
+    const auto nestThenReturnEarly = [&](std::string name)
+                                     {
+                                         const Runtime::ScopedContext scoped(engage(std::move(name)));
+                                         if (liveName().empty())
+                                             return std::string{}; // unreachable; the guard just engaged one
+                                         return liveName();
+                                     };
+
+    CHECK(liveName().empty()); // nothing engaged
+
+    {
+        const Runtime::ScopedContext outer(engage("outer"));
+        CHECK(liveName() == "outer");
+        {
+            const Runtime::ScopedContext middle(engage("middle"));
+            CHECK(liveName() == "middle");
+            {
+                const Runtime::ScopedContext inner(engage("inner"));
+                CHECK(liveName() == "inner");
+            }
+            // Three deep, because two cannot tell "restores the previous one" from
+            // "restores the outermost one".
+            CHECK(liveName() == "middle");
+        }
+        CHECK(liveName() == "outer");
+
+        CHECK(nestThenReturnEarly("transient") == "transient");
+        CHECK(liveName() == "outer");
+    }
+
+    // Past the outermost entry point the hooks must see nothing again — a guard
+    // that restored its own table here would leak a context into whatever runs next.
+    CHECK(liveName().empty());
 }
 
 // Round-6 review C7: a single non-finite float must not make the whole level

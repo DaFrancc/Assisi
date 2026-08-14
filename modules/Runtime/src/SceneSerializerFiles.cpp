@@ -34,7 +34,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
         Core::Log::Error("Blueprint: nothing selected to save.");
         return false;
     }
-    if (s_context || s_rawContextScene != nullptr)
+    if (ScopedContext::Current() != nullptr || s_rawContextScene != nullptr)
     {
         Core::Log::Error("SaveEntitiesToFile: a serialization context is already active on this thread.");
         return false;
@@ -71,8 +71,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
 
     const auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
-    ScopedContextReset guard;
-    s_context = SerializationContext{};
+    const ScopedContext scoped;
 
     // Names first, so a reference between two selected entities resolves whichever
     // order they serialize in.
@@ -82,7 +81,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
     for (const ECS::Entity entity : entities)
     {
         std::string name = UniqueName(AuthoredName(scene, entity), usedNames);
-        s_context->entityToName.emplace(EntityKey(entity.index, entity.generation), name);
+        scoped->entityToName.emplace(EntityKey(entity.index, entity.generation), name);
         names.push_back(std::move(name));
     }
 
@@ -280,8 +279,8 @@ LevelResult SceneSerializer::LoadFromFile(ECS::Scene &scene, std::string_view as
         // Load reports its own failures by value and clears as it goes; what is left
         // to catch is a throw partway through — out of a component's addToScene hook
         // above all — which leaves the scene half-populated. Clear it, so a failed
-        // load yields an empty scene and never a corrupt one. (ScopedContextReset in
-        // Load already freed s_context.)
+        // load yields an empty scene and never a corrupt one. (Load's ScopedContext
+        // has already put back whatever context was live before it.)
         //
         // std::exception, not json::exception: those hooks are arbitrary code, and
         // one throwing a bad_alloc or its own container's out_of_range would
