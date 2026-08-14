@@ -489,11 +489,13 @@ World *WorldManager::PromotePendingLoad()
     //
     // Hard error, as on the synchronous path: a level naming a system this build
     // does not declare must not be promoted to Active running none of it.
-    if (!ApplySystems(*incoming, std::vector<std::string>(incoming->systemNames), incoming->levelPath))
+    // The path from the load, not the world's: SwapToActive sets levelPath and runs
+    // below, so the field is still empty here and the catalog's refusal would name
+    // no file — the one thing that refusal exists to say.
+    if (!ApplySystems(*incoming, std::vector<std::string>(incoming->systemNames), path))
     {
         Core::Log::Error("Preload of '{}' names a system this build does not declare; discarding it.", path);
         EraseWorld(*incoming);
-        _pending.reset();
         return nullptr;
     }
 
