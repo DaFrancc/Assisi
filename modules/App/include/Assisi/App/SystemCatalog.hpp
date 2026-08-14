@@ -163,6 +163,16 @@ void DrainSystemInstalls(World &world);
 ///
 /// A file that cannot be read or parsed is *not* declared valid: the caller
 /// gets false and the read logs why.
+///
+/// **This subsumes the WorldManager::ApplySystems that follows a load**, which is
+/// what makes it a gate rather than a first opinion. Both reach their verdict by
+/// running the catalog's `Find` over the file's system list, and both get that
+/// list from `Runtime::ParseSystemNames` — one reader, so they cannot come to
+/// different conclusions about what the file names. That matters because the
+/// second check runs *after* the scene has been replaced, where refusing costs
+/// the open level (ENG-126; `App/tests/TestLevelSystemsPrecheck.cpp` pins the
+/// agreement). Anything that gives one of them its own reader, or its own
+/// predicate, re-opens that window.
 [[nodiscard]] bool LevelSystemsAreDeclared(std::string_view virtualPath);
 
 } // namespace Assisi::App

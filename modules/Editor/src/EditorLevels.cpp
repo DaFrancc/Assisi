@@ -1010,13 +1010,14 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // function is what normally catches that, and has to — by here the scene has
     // already been replaced.
     //
-    // "Normally" is the whole problem, though, and why this no longer just returns
-    // (ENG-126): the pre-check and this one reach the same verdict by different
-    // routes — one reads the names out of the file, the other resolves them against
-    // the build's catalog — so any disagreement between them lands right here, on
-    // the far side of the point of no return. Two checks for one condition, and only
-    // one of them positioned safely. Rather than argue that they can never disagree,
-    // make the late failure survivable.
+    // "Normally" used to be the whole problem: two checks for one condition, only
+    // one of them positioned safely, so any disagreement between them landed right
+    // here on the far side of the point of no return. Both halves of that are now
+    // closed (ENG-126). The pre-check subsumes this one by construction — same
+    // `Find` predicate, and the same `ParseSystemNames` for the list they run it
+    // over, so neither can see a name the other does not. And this return is
+    // survivable regardless, because the argument above is exactly the kind that
+    // stops being true quietly.
     if (!_worlds.ApplySystems(*_world, header.systems, virtualPath))
     {
         Assisi::Core::Log::Error("Editor: '{}' names a system this build does not declare.", virtualPath);
