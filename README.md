@@ -49,10 +49,22 @@ sudo pacman -S --needed base-devel git cmake ninja python \
                         vulkan-icd-loader
 ```
 
-Plus a Vulkan driver for your GPU:
-- AMD — `sudo pacman -S vulkan-radeon`
-- Intel — `sudo pacman -S vulkan-intel`
-- NVIDIA — `sudo pacman -S nvidia-utils` (proprietary; ships its own ICD)
+Plus a Vulkan driver for your GPU.
+
+AMD:
+```bash
+sudo pacman -S vulkan-radeon
+```
+
+Intel:
+```bash
+sudo pacman -S vulkan-intel
+```
+
+NVIDIA (proprietary; ships its own ICD):
+```bash
+sudo pacman -S nvidia-utils
+```
 
 Optional, only if you want to build with Clang as well as GCC:
 ```bash
