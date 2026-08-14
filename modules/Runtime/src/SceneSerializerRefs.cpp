@@ -76,21 +76,22 @@ nlohmann::json SceneSerializer::EntityToRef(ECS::Entity entity)
     if (s_rawContextScene != nullptr)
         return EntityKey(entity.index, entity.generation);
 
-    if (!s_context)
+    const SerializationContext *context = ScopedContext::Current();
+    if (context == nullptr)
         return nullptr;
 
     const uint64_t key = EntityKey(entity.index, entity.generation);
 
-    if (s_context->mode == SerializationContext::RefMode::SetIndices)
+    if (context->mode == SerializationContext::RefMode::SetIndices)
     {
-        const auto it = s_context->entityToIndex.find(key);
+        const auto it = context->entityToIndex.find(key);
         // Out of the moved set: ~0ull, which RefToEntity reads as out of range and
         // nulls. TransferEntities has already warned about each of these.
-        return it != s_context->entityToIndex.end() ? nlohmann::json(it->second) : nlohmann::json(~0ull);
+        return it != context->entityToIndex.end() ? nlohmann::json(it->second) : nlohmann::json(~0ull);
     }
 
-    const auto it = s_context->entityToName.find(key);
-    return it != s_context->entityToName.end() ? nlohmann::json(it->second) : nlohmann::json(nullptr);
+    const auto it = context->entityToName.find(key);
+    return it != context->entityToName.end() ? nlohmann::json(it->second) : nlohmann::json(nullptr);
 }
 
 ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
@@ -113,16 +114,17 @@ ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
         return live.generation == wantGen ? live : ECS::NullEntity;
     }
 
-    if (!s_context)
+    SerializationContext *const context = ScopedContext::Current();
+    if (context == nullptr)
         return ECS::NullEntity;
 
-    if (s_context->mode == SerializationContext::RefMode::SetIndices)
+    if (context->mode == SerializationContext::RefMode::SetIndices)
     {
         if (!value.is_number_unsigned())
             return ECS::NullEntity;
         const uint64_t index = value.get<uint64_t>();
-        return index < s_context->indexToEntity.size() ? s_context->indexToEntity[static_cast<std::size_t>(index)]
-                                                       : ECS::NullEntity;
+        return index < context->indexToEntity.size() ? context->indexToEntity[static_cast<std::size_t>(index)]
+                                                     : ECS::NullEntity;
     }
 
     // A file ref is a name. Anything else is a v1 file or a hand-edit that meant a
@@ -130,7 +132,7 @@ ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
     // to remove. Record it and let Load refuse the file.
     if (!value.is_string())
     {
-        s_context->unresolvedRefNames.push_back(value.dump());
+        context->unresolvedRefNames.push_back(value.dump());
         return ECS::NullEntity;
     }
 
@@ -141,10 +143,10 @@ ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
     if (!name.empty() && name.front() == '/')
         name.erase(0, 1);
 
-    const auto it = s_context->nameToEntity.find(name);
-    if (it == s_context->nameToEntity.end())
+    const auto it = context->nameToEntity.find(name);
+    if (it == context->nameToEntity.end())
     {
-        s_context->unresolvedRefNames.push_back(std::move(name));
+        context->unresolvedRefNames.push_back(std::move(name));
         return ECS::NullEntity;
     }
 
@@ -166,7 +168,7 @@ ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
 std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS::Scene &dst,
                                                            std::span<const ECS::Entity> entities)
 {
-    if (s_context || s_rawContextScene != nullptr)
+    if (ScopedContext::Current() != nullptr || s_rawContextScene != nullptr)
     {
         Core::Log::Error("TransferEntities: a serialization context is already active on this thread.");
         return {};
@@ -174,9 +176,8 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
     if (entities.empty())
         return {};
 
-    ScopedContextReset guard;
-    s_context       = SerializationContext{};
-    s_context->mode = SerializationContext::RefMode::SetIndices;
+    ScopedContext scoped;
+    scoped->mode = SerializationContext::RefMode::SetIndices;
 
     // Source half of the remap: each migrated entity → its index within the set.
     // A ref to any entity NOT in this map serializes as ~0ull and resolves to
@@ -184,7 +185,7 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
     for (uint32_t i = 0; i < entities.size(); ++i)
     {
         const ECS::Entity e = entities[i];
-        s_context->entityToIndex[EntityKey(e.index, e.generation)] = i;
+        scoped->entityToIndex[EntityKey(e.index, e.generation)] = i;
     }
 
     const auto &registry = Core::Reflect::ComponentRegistry::Instance();
@@ -227,12 +228,12 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
     // resolves in pass 3 (the same forward-ref handling as Load).
     std::vector<ECS::Entity> created;
     created.reserve(entities.size());
-    s_context->indexToEntity.reserve(entities.size());
+    scoped->indexToEntity.reserve(entities.size());
     for (std::size_t i = 0; i < entities.size(); ++i)
     {
         const ECS::Entity d = dst.Create();
         created.push_back(d);
-        s_context->indexToEntity.push_back(d);
+        scoped->indexToEntity.push_back(d);
     }
 
     // Pass 3: deserialize each captured component into its destination entity.
@@ -289,7 +290,7 @@ SceneSerializer::ScopedRawEntityContext::ScopedRawEntityContext(ECS::Scene &scen
 {
     // One context per thread. Nesting raw-in-raw or raw-in-Save/Load is a bug: the
     // mappings are incompatible and neither the pointer nor the optional stacks.
-    ASSISI_ASSERT(s_rawContextScene == nullptr && !s_context,
+    ASSISI_ASSERT((s_rawContextScene == nullptr && ScopedContext::Current() == nullptr),
                   "SceneSerializer: a serialization context is already active on this thread "
                   "(raw-entity and Save/Load contexts are mutually exclusive and non-reentrant).");
     s_rawContextScene = &scene;

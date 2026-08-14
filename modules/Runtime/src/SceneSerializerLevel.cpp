@@ -58,6 +58,19 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
 {
     auto &registry = Core::Reflect::ComponentRegistry::Instance();
 
+    // A save only reads the scene, so it nests inside another serialization
+    // context and hands it back untouched. The raw-entity context is the one it
+    // cannot work under: the hooks consult that first, so every EntityRef would
+    // serialize as a packed handle where the file wants a name, and the level
+    // would come back with nothing but unresolved references. Reported rather
+    // than refused — Save has no error channel, and stopping here would mean
+    // returning a document indistinguishable from an empty level.
+    if (s_rawContextScene != nullptr)
+    {
+        Core::Log::Error("SceneSerializer: saving while a raw-entity context is active — every entity "
+                         "reference in this file will be written as a raw handle and will not load.");
+    }
+
     // Pass 1: collect entity keys into a sorted map, so array order is deterministic.
     // Members are excluded — their instance entry describes them, and writing them as
     // entities too would bake the blueprint into the level. They still need names: a
@@ -115,8 +128,7 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
             ctx.entityToName.emplace(key, path);
     }
 
-    s_context = std::move(ctx);
-    const ScopedContextReset contextReset;
+    const ScopedContext scoped(std::move(ctx));
 
     // Pass 3: serialize components (the context is live, so EntityToRef works).
     for (const auto *meta : registry.SerializableComponents())
@@ -196,6 +208,17 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     bool sceneReplaced = false;
     const auto refuse = [&sceneReplaced](LevelError kind)
                         { return std::unexpected(LevelFailure{.kind = kind, .sceneReplaced = sceneReplaced}); };
+
+    // Ahead of the file itself: a load reached from inside another serialization
+    // context is a caller bug, and it outranks anything wrong with the document.
+    // Unlike Save this one cannot nest — it clears the caller's scene, so the
+    // outer context would come back naming entities that no longer exist.
+    if (ScopedContext::Current() != nullptr || s_rawContextScene != nullptr)
+    {
+        Core::Log::Error("SceneSerializer: loading a level while a serialization context is already active "
+                         "on this thread.");
+        return refuse(LevelError::ContextBusy);
+    }
 
     // Everything below reads `j` as an object, and nlohmann answers a non-object
     // with a throw rather than a default — out of a function whose return type is
@@ -306,8 +329,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         instances->Clear();
     }
 
-    s_context = SerializationContext{};
-    const ScopedContextReset contextReset;
+    const ScopedContext scoped;
 
     const nlohmann::json &entities = *entitiesIt;
 
@@ -348,7 +370,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     // Pass 2: create every entity up front, so nameToEntity is complete before any
     // component deserializes. A reference may point *forward*, and a single pass
     // would resolve those to NullEntity and silently flatten the hierarchy.
-    s_context->nameToEntity.reserve(names.size());
+    scoped->nameToEntity.reserve(names.size());
     std::vector<ECS::Entity> created;
     created.reserve(names.size());
 
@@ -362,7 +384,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         const ECS::Entity e = scene.Create();
         created.push_back(e);
 
-        if (!s_context->nameToEntity.emplace(names[i], e).second)
+        if (!scoped->nameToEntity.emplace(names[i], e).second)
         {
             // Duplicate names make every reference and every override ambiguous;
             // picking one is picking silently.
@@ -476,9 +498,9 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     // Every reference had to resolve. One that did not means the file names an
     // entity it does not declare — a hand rename, a merge that dropped an entity,
     // or a v1 file whose numeric refs came through here.
-    if (!s_context->unresolvedRefNames.empty())
+    if (!scoped->unresolvedRefNames.empty())
     {
-        const std::vector<std::string> &bad = s_context->unresolvedRefNames;
+        const std::vector<std::string> &bad = scoped->unresolvedRefNames;
         std::string list;
         for (size_t i = 0; i < bad.size() && i < 8; ++i)
             list += (i == 0 ? "" : ", ") + bad[i];
