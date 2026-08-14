@@ -414,6 +414,81 @@ TEST_CASE("SceneSerializer: a refusal after the clear says the scene was replace
     CHECK_FALSE(scene.IsAlive(doomed));
 }
 
+// ---------------------------------------------------------------------------
+// A malformed *shape* is refused by value, not thrown (ENG-120).
+//
+// Load's contract is std::expected-shaped: every way a file can be wrong comes
+// back as a LevelError. The top-level reads used to reach nlohmann unguarded, so
+// a file whose `version` was a string, or that carried no `entities` array at
+// all, threw out of Load instead — and threw from *past* the clear, leaving the
+// caller an emptied scene and no error return. The disk paths hid it behind
+// their own try/catch; a caller handing Load an already-parsed json (as these
+// tests do) wore it.
+//
+// A throw here fails the test outright, which is the behaviour under test.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("SceneSerializer: a malformed top level is refused, and the scene survives")
+{
+    ECS::Scene        scene;
+    const ECS::Entity kept = scene.Create();
+    REQUIRE(scene.Add(kept, Transform{}) != nullptr);
+
+    nlohmann::json fixture;
+    SUBCASE("a version that is not a number")
+    {
+        // Reaches j.value("version", 0), which converts rather than checking.
+        fixture = {{"version", "2"}, {"entities", nlohmann::json::array()}};
+    }
+    SUBCASE("no entities key at all")
+    {
+        // The at() that gave this issue its name.
+        fixture = {{"version", 2}};
+    }
+    SUBCASE("an entities key that is not an array")
+    {
+        // size() answers on an object too, so this got as far as entities[0].
+        fixture = {{"version", 2}, {"entities", {{"body", 1}}}};
+    }
+    SUBCASE("a document that is not an object")
+    {
+        fixture = nlohmann::json::array({1, 2});
+    }
+
+    const LevelResult result = SceneSerializer::Load(scene, fixture);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::MalformedJson);
+
+    // All four are read before the clear, so the caller keeps the level it had —
+    // the same bargain the version-mismatch refusal already made.
+    CHECK_FALSE(result.error().sceneReplaced);
+    CHECK(scene.AliveCount() == 1);
+    CHECK(scene.Get<Transform>(kept) != nullptr);
+}
+
+TEST_CASE("SceneSerializer: a components key of the wrong shape is refused, not thrown")
+{
+    ECS::Scene        scene;
+    const ECS::Entity doomed = scene.Create();
+    REQUIRE(scene.Add(doomed, Transform{}) != nullptr);
+
+    // Presence was checked, shape was not. This one never threw: items() over a
+    // primitive yields a single empty key, so the lookup missed, every component
+    // the entity declared was dropped as "unknown", and the load reported
+    // success. Silent, which is worse than the throws above. Found in pass 3,
+    // which is past the clear by construction, so it reports the replacement
+    // rather than pretending the scene survived.
+    const nlohmann::json fixture = {
+        {"version", 2},
+        {"entities", nlohmann::json::array({{{"name", "body"}, {"components", "Transform"}}})}};
+
+    const LevelResult result = SceneSerializer::Load(scene, fixture);
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == LevelError::MalformedJson);
+    CHECK(result.error().sceneReplaced);
+    CHECK(scene.AliveCount() == 0);
+}
+
 TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
 {
     namespace fs        = std::filesystem;
@@ -426,13 +501,21 @@ TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
         bad << "{ this is not valid json";
     }
     {
-        // Valid JSON, right version, no `entities` — which throws out of Load's own
-        // top-level read and is caught in LoadFromFile (ENG-120 owns the throw).
-        // The catch clears the scene on its way out, and has to say so: the error
-        // kind alone cannot, since the parse refusal above reports MalformedJson as
-        // well and that one touches nothing.
+        // Valid JSON, right version, no `entities`. This used to throw out of
+        // Load's own top-level read and get caught in LoadFromFile, whose catch
+        // cleared the scene on the way out — so a shape Load could see coming cost
+        // the caller its level. Load guards it now (ENG-120) and refuses before
+        // the clear, which is why this file is grouped with the parse failure
+        // rather than with the replacement below.
         std::ofstream headless(root / "no_entities.alvl");
         headless << R"({"version": 2})";
+    }
+    {
+        // A refusal that genuinely lands past the clear, so the replacement half
+        // of this test still has a subject: the duplicate is only discoverable
+        // once Load is building the scene.
+        std::ofstream twins(root / "twins.alvl");
+        twins << R"({"version": 2, "entities": [{"name": "body"}, {"name": "body"}]})";
     }
 
     ECS::Scene        scene;
@@ -444,9 +527,19 @@ TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
     CHECK_FALSE(unparseable.error().sceneReplaced);
     CHECK(scene.AliveCount() == 1); // never reached the clear
 
-    const LevelResult threw = SceneSerializer::LoadFromFile(scene, "no_entities.alvl");
-    REQUIRE_FALSE(threw.has_value());
-    CHECK(threw.error().sceneReplaced);
+    const LevelResult headless = SceneSerializer::LoadFromFile(scene, "no_entities.alvl");
+    REQUIRE_FALSE(headless.has_value());
+    CHECK(headless.error() == LevelError::MalformedJson);
+    CHECK_FALSE(headless.error().sceneReplaced);
+    CHECK(scene.AliveCount() == 1); // the guard is what keeps this 1
+
+    // The error kind cannot answer which side of the clear a failure landed on —
+    // both refusals above report MalformedJson and neither touches the scene — so
+    // the load reports the replacement separately.
+    const LevelResult replaced = SceneSerializer::LoadFromFile(scene, "twins.alvl");
+    REQUIRE_FALSE(replaced.has_value());
+    CHECK(replaced.error() == LevelError::DuplicateName);
+    CHECK(replaced.error().sceneReplaced);
     CHECK(scene.AliveCount() == 0);
 }
 

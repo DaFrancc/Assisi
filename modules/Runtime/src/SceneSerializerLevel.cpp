@@ -196,6 +196,24 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     const auto refuse = [&sceneReplaced](LevelError kind)
     { return std::unexpected(LevelFailure{.kind = kind, .sceneReplaced = sceneReplaced}); };
 
+    // Everything below reads `j` as an object, and nlohmann answers a non-object
+    // with a throw rather than a default — out of a function whose return type is
+    // the promise that it does not.
+    if (!j.is_object())
+    {
+        Core::Log::Error("SceneSerializer: the level document is {}, not an object.", j.type_name());
+        return refuse(LevelError::MalformedJson);
+    }
+
+    // `value` converts rather than checks: a quoted "2" reaches get<int32_t> and
+    // throws. Checked here so the version refusal below can stay the answer for a
+    // version this build merely does not read.
+    if (const auto it = j.find("version"); it != j.end() && !it->is_number_integer())
+    {
+        Core::Log::Error("SceneSerializer: the level's 'version' is {}, not a whole number.", it->type_name());
+        return refuse(LevelError::MalformedJson);
+    }
+
     const int32_t version = j.value("version", 0);
     if (version != 2)
     {
@@ -205,6 +223,17 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
         Core::Log::Error("SceneSerializer: unsupported level file version {} (this build reads version 2).",
                          version);
         return refuse(LevelError::UnsupportedVersion);
+    }
+
+    // Read before the clear for the reason the instance entries below are: a file
+    // has to prove it carries a scene before the caller's is destroyed for it.
+    // `size()` answers on an object and a string too, so an unchecked shape got
+    // as far as indexing one.
+    const auto entitiesIt = j.find("entities");
+    if (entitiesIt == j.end() || !entitiesIt->is_array())
+    {
+        Core::Log::Error("SceneSerializer: the level has no 'entities' array.");
+        return refuse(LevelError::MalformedJson);
     }
 
     // Read the instance entries before anything is destroyed: a file naming an
@@ -285,7 +314,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     s_context = SerializationContext{};
     const ScopedContextReset contextReset;
 
-    const auto &entities = j.at("entities");
+    const nlohmann::json &entities = *entitiesIt;
 
     // Pass 1: read and validate every name before a single entity is created.
     // Refusing here rather than mid-load is what keeps a bad file from leaving a
@@ -387,11 +416,24 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
             options.onProgress(entityCount == 0 ? 1.f : static_cast<float>(i) / static_cast<float>(entityCount));
 
         const auto &entityJson = entities[i];
-        if (!entityJson.contains("components"))
+        const auto componentsIt = entityJson.find("components");
+        if (componentsIt == entityJson.end())
             continue;
 
+        // Shape, not just presence. `items()` over a primitive yields one entry
+        // under an empty key, so a `"components": "Transform"` used to look up the
+        // component named "" — missing it, warning about it, and loading the
+        // entity stripped of everything the file said it had.
+        if (!componentsIt->is_object())
+        {
+            Core::Log::Error("SceneSerializer: entity '{}' has a 'components' that is {}, not an object.",
+                             names[i], componentsIt->type_name());
+            scene.Clear();
+            return refuse(LevelError::MalformedJson);
+        }
+
         const ECS::Entity e = created[i];
-        for (const auto &[compName, compData] : entityJson.at("components").items())
+        for (const auto &[compName, compData] : componentsIt->items())
         {
             // The entity's `name` key already wrote this one and is authoritative: a
             // file that also lists Name in components is out of spec, and honouring
