@@ -109,8 +109,7 @@ struct EditorConfig
 {
     // Systems are declared with ASYSTEM, reach the catalog by being linked, and
     // a level names the ones it wants — there is deliberately nothing to
-    // register here. The hooks this replaced had to be remembered, and a host
-    // that forgot got a world that physics-stepped and ran no game logic.
+    // register here.
 
     /// Virtual path (under the asset root) of a level to open once at
     /// startup, e.g. "levels/Materials.alvl". Empty = none. Resolved through
@@ -122,8 +121,8 @@ struct EditorConfig
     ///
     /// This is the whole of what makes a play-in-editor client a client: a full
     /// editor, launched by another one, that enters Play as a joiner as soon as
-    /// it is up. Deliberately no special code path — one that differed would
-    /// stop being a test of the thing it is meant to test.
+    /// it is up. No special code path — one that differed would stop testing
+    /// the path it exists to test.
     std::string autoJoinEndpoint;
 
     /// Run as a restricted viewer: no writes to anything the editor that
@@ -216,11 +215,10 @@ private:
     /// @brief Draws the manipulator and applies whatever it produced this frame.
     /// Returns whether the handles are held.
     ///
-    /// Split out so the drag's release edge sits in the caller: this function early-
-    /// returns on four conditions a drag can end through — no scene, a dead or
-    /// non-editable entity, a missing Transform — and a release read at the bottom of
-    /// it was reachable from none of them (ENG-127). Every such return is "not held",
-    /// which is all the caller needs to close the drag.
+    /// Split out so the drag's release edge sits in the caller: this early-returns on
+    /// several conditions a drag can end through — no scene, a dead or non-editable
+    /// entity, a missing Transform — and every such return is "not held", which is all
+    /// the caller needs to close the drag.
     [[nodiscard]] bool DrawTransformGizmoHandles();
     void DrawInstanceGizmo();     // …and over a selected blueprint instance, which moves as one
     /// @brief Writes @p world onto @p entity as a local TRS against @p parentWorld,
@@ -358,19 +356,19 @@ private:
     /// @brief Arms the browser to write into @p meta's field at @p fieldOffset on
     /// the selected entity, and opens the window.
     void OpenAssetBrowserFor(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset);
-    /// @brief Arms the browser to write into element @p slot of an AssetPathVector
+    /// @brief Arms the browser to write into element @p slot of an AssetIdVector
     /// field (a MeshRenderer material slot), listing only materials, and opens it.
     void OpenAssetBrowserForSlot(const Assisi::Core::Reflect::ComponentMeta &meta, std::size_t fieldOffset,
                                  int32_t slot);
-    /// @brief Writes @p vpath into the pinned browser target field and closes.
+    /// @brief Resolves @p vpath to an AssetId, writes it into the pinned browser
+    /// target field, and closes.
     void SelectAsset(std::string_view vpath);
-    /// @brief Re-resolves a MeshRenderer entity's mesh/texture from its current
-    /// paths, so an inspector/browser edit takes effect without a level reload.
-    /// Wraps Runtime::ResolveMeshRendererAssets with the alive/has-component
-    /// checks over the selected entity.
+    /// @brief Re-resolves @p entity's MeshRenderer assets from its current ids, so
+    /// an inspector/browser edit takes effect without a level reload. Wraps
+    /// Runtime::ResolveMeshRendererAssets with the alive/has-component checks.
     void ReresolveEntityAssets(Assisi::ECS::Entity entity);
-    /// @brief Reads _assetBrowserDir into the cached dirs/images lists. Called
-    /// only when the listing may have changed, not every frame.
+    /// @brief Reads _assetBrowserDir into the cached dirs/images/meshes/materials
+    /// lists. Called only when the listing may have changed, not every frame.
     void RescanAssetBrowser();
 
     // --- Inspector helpers ---
@@ -451,7 +449,7 @@ private:
     /// OnImGui, on the first frame nothing calls this. See ThawEditedBody.
     void RequestPhysicsFreeze();
 
-    /// @brief Returns the body frozen by HandlePhysicsEditing to its authored
+    /// @brief Returns the body frozen by RequestPhysicsFreeze to its authored
     /// motion type and clears the freeze.
     ///
     /// Safe when nothing is frozen, when the world it belonged to is gone, and
@@ -486,9 +484,8 @@ private:
     /// **Ask what an edit *costs* here, not @ref ActiveHistory.** Those are
     /// different questions: a blueprint save destroys members in the *level*
     /// worlds while the active history is the blueprint world's, and EditHistory
-    /// refuses any scene it is not bound to — so the cost came back 0, the "this
-    /// will drop N undo steps" prompt never opened, and the level's stack kept
-    /// transactions naming entities that no longer existed.
+    /// refuses any scene it is not bound to — so asking only the active one puts
+    /// the cost at 0 and leaves the level's stack naming dead entities.
     ///
     /// No world→history map is needed: `CountForgettable` and `ForgetEntities`
     /// both take the scene and return 0 for one they do not own, so asking all of
@@ -547,19 +544,19 @@ private:
     ///
     /// **One predicate**, gating the inspector, the gizmo, the Delete key and the
     /// hierarchy actions together, because a guard applied to three of the four
-    /// is a guard nobody can reason about. It now protects only a disposable play
-    /// scene, and still earns its keep: a gizmo fighting the correction stream is
-    /// a confusing artifact even in a world about to be thrown away, and the
-    /// server only resends what *changes* — so an edit to a static replicated
-    /// field would sit visibly wrong until the next keyframe sweep.
+    /// is a guard nobody can reason about. It guards only a disposable play scene
+    /// and still earns its keep: a gizmo fighting the correction stream is a
+    /// confusing artifact either way, and the server only resends what *changes*,
+    /// so an edit to a static replicated field sits visibly wrong until the next
+    /// keyframe sweep.
     [[nodiscard]] bool IsEditable(Assisi::ECS::Entity entity) const;
 
     // --- Entity identity ---
     /// @brief A human label for an entity in a picker or a header.
     ///
     /// `car_3 › wheel_fl` for a blueprint member, its Name if it has one, else
-    /// `[index:generation]`. Previewing everything as `Entity [41:0]` is already
-    /// hard to pick from and unusable once a level holds forty cars.
+    /// `[index:generation]`. The instance comes first because that is the part
+    /// that disambiguates: forty cars means forty entities called `wheel_fl`.
     [[nodiscard]] std::string DescribeEntity(Assisi::ECS::Entity entity) const;
 
     /// @brief Whether @p entity is a mirror the server owns.
@@ -632,11 +629,10 @@ private:
         ///
         /// A `BlueprintMember` tag carries an *index*, and only the definition those
         /// tags were written against can say which name that index means. Once the
-        /// cache is dropped, `Runtime::FindMember` resolves through the **new** file
-        /// — which no longer declares precisely the members this diff is looking for,
-        /// so it returns NullEntity for every one. Resolving the doomed set by name
-        /// rather than from here finds nothing, and the save destroys members without
-        /// ever asking.
+        /// cache is dropped, `Runtime::FindMember` resolves through the **new** file,
+        /// which no longer declares the members this diff is looking for, and returns
+        /// NullEntity for every one — so the doomed set must come from here, not from
+        /// a name lookup.
         std::vector<Assisi::ECS::Entity> previousMemberEntities;
     };
 
@@ -654,7 +650,7 @@ private:
     /// author is told what it costs.
     ///
     /// **The cache is dropped unconditionally**, before any of that: it is a statement
-    /// about the file, not about the copies, and a save that skipped it would leave
+    /// about the file, not about the copies, and skipping it leaves
     /// `GetBlueprintDefinition` handing out the contents from before the write. A save
     /// arriving while an earlier prompt is still up cannot ask a second question, so it
     /// takes the declining answer (@ref MarkInstancesStale) rather than returning
@@ -672,8 +668,8 @@ private:
     /// is about to replace, and two of them — the member names and the entities behind
     /// them — exist only until it does. `GetBlueprintDefinition` falls back to parsing
     /// from disk when the cache is cold, so gathering after the write is correct only
-    /// by luck of the cache being warm; a cancelled save is exactly the case that
-    /// leaves it cold, and the retry then saw no change at all.
+    /// while the cache happens to be warm; a cancelled save leaves it cold, and the
+    /// retry then sees no change at all.
     [[nodiscard]] std::vector<PendingReexpand> CollectReexpandTargets(const std::string &source);
 
     /// @brief Records @p source as a file whose live copies are behind it, and says so.
@@ -766,8 +762,8 @@ private:
     ///
     /// Called once from OnImGui after every panel has drawn, and from nowhere else.
     /// **Neither edit site may close the gesture on its own**: the gizmo draws first
-    /// and cannot see that the Inspector is mid-scrub, which is how one dragged field
-    /// once recorded a transaction per frame.
+    /// and cannot see that the Inspector is mid-scrub, so closing there cuts a dragged
+    /// field into one transaction per frame.
     void SweepInstanceGesture();
 
     /// @brief The Inspector, when what is selected is an *instance* rather than an
@@ -882,9 +878,7 @@ private:
     /// One function because it is one obligation. A load replaces the scene in
     /// place and the new one rebuilds entity identity densely from {0,0}, so
     /// every handle the editor kept now resolves to a live but *different*
-    /// entity — passing IsAlive, failing to be what anyone meant. Spelled out at
-    /// each site it used to be skippable by an early return, which is exactly
-    /// what B20 is.
+    /// entity — passing IsAlive, failing to be what anyone meant.
     ///
     /// @p virtualPath only names the level in the log line about an unanswered
     /// save; the work is the same either way.
@@ -906,10 +900,9 @@ private:
     /// A false return means one of two things, and they are not interchangeable:
     /// either nothing was touched and the level on screen is the one that was
     /// there before, or the load got far enough to replace the scene and then
-    /// failed — in which case this leaves no level open at all rather than the
-    /// previous level's name and history over content that is not it (round-7
-    /// B20, and ENG-126 for the systems half). Either way what is on screen and
-    /// what the editor believes about it agree.
+    /// failed — in which case this leaves no level open at all, rather than the
+    /// previous level's name and history over content that is not it. Either way
+    /// what is on screen and what the editor believes about it agree.
     bool LoadLevelFromPath(const std::string &virtualPath);
     /// @brief Saves the shown world to `levels/<name>.alvl`. Save As, and the
     /// Levels panel's shorthand for a level that lives where levels live.
@@ -1190,8 +1183,6 @@ private:
     // --- Editor camera ---
     // The fly camera is not level data, so it is plain state here rather than an
     // entity: as members the pose survives a level load for free.
-    // RefreshCameraMatrix() recomputes worldMatrix from the TRS (parentless, so
-    // world == local) before it is read.
     Assisi::Runtime::Transform _cameraTransform;
     Assisi::Runtime::Camera _camera{60.f, 0.1f, 200.f, true};
 
@@ -1269,14 +1260,14 @@ private:
     Assisi::Editor::InstanceGesture _instanceGesture;
 
     // --- Physics freeze while editing ---
-    // Dragging a Transform field on a dynamic body would fight the solver, so the
-    // body is made Static for the duration of the gesture and restored on release
-    // (RequestPhysicsFreeze / ThawEditedBody).
+    // Placing a dynamic body — an Inspector Transform field or a gizmo drag — would
+    // fight the solver, so the body is made Static for the duration of the gesture
+    // and restored on release (RequestPhysicsFreeze / ThawEditedBody).
     //
     // Shaped like _captureEditingActive: the request is a per-frame flag raised by
-    // the panel, but the *release* is decided at the end of OnImGui, where it runs
-    // whether or not the Inspector drew. Keying the release off the panel's own
-    // edge skips it whenever the Inspector early-returns on an empty selection,
+    // the edit site, but the *release* is decided at the end of OnImGui, where it
+    // runs whether or not the Inspector drew. Keying it off the panel's own edge
+    // skips the release whenever the Inspector early-returns on an empty selection,
     // stranding the body Static while its descriptor still says dynamic.
     bool _physicsFreezeRequested = false;
     Assisi::ECS::Entity _frozenBodyEntity       = Assisi::ECS::NullEntity;
@@ -1490,8 +1481,8 @@ private:
     Assisi::ECS::Entity _assetBrowserEntity      = Assisi::ECS::NullEntity;
     const Assisi::Core::Reflect::ComponentMeta *_assetBrowserMeta        = nullptr;
     std::size_t _assetBrowserFieldOffset = 0;
-    /// @brief -1 when the target field is a plain AssetPath; >= 0 when it is
-    /// element `[slot]` of an AssetPathVector (a MeshRenderer material slot). In
+    /// @brief -1 when the target field is a scalar asset field; >= 0 when it is
+    /// element `[slot]` of an AssetIdVector (a MeshRenderer material slot). In
     /// the latter mode the browser lists only materials (and folders).
     int32_t _assetBrowserVectorSlot  = -1;
     std::string _assetBrowserDir;                                 ///< Current dir, relative to the asset root ("" = root).
@@ -1525,10 +1516,13 @@ private:
     char _newBlueprintName[128] = {};
 
     // --- World and level operations deferred out of ImGui ---
-    // **None of these may run mid-frame.** A level load requested from a panel,
-    // applied at the next OnUpdate: LoadLevel frees GPU assets (including the
-    // bindless table) that this frame's already-recorded draws still reference,
-    // which faults the GPU.
+    // **None of these may run mid-frame.** LoadLevel frees GPU assets (including
+    // the bindless table) that this frame's already-recorded draws still
+    // reference, which faults the GPU.
+    //
+    // The level load itself is marshalled through Jobs().RunOnMain by the Levels
+    // panel; this holds the request only while it is in flight, so the button
+    // disables and a second click cannot queue a duplicate.
     std::optional<std::string> _pendingLevelLoad;
 
     // The Game panel's "Load as new world" debug control: it creates a second

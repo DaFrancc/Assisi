@@ -25,7 +25,7 @@ namespace Assisi::Editor
 /// @brief The F11 overlay: a CPU/GPU frame graph, percentile frame-time stats,
 /// and the anti-aliasing / frame-sync controls.
 ///
-/// Lives in the app rather than the engine base class. Application exposes the
+/// Lives in the editor rather than the engine base class. Application exposes the
 /// timing history and the persisted OptionsConfig; this assembles a debug UI on
 /// top, and a game built on the template can restyle or drop it without editing
 /// the engine.

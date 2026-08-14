@@ -12,15 +12,11 @@
 /// find an existing record can produce a blank one instead, and the blank one is
 /// removed alongside the real ones at teardown.
 ///
-/// That is exactly the reading of `ReplicationClient::ApplyBodyState` that ENG-122
-/// reported. The branch turned out to be unreachable — see the comment at
-/// ReplicationClientMotion.cpp's `_bodies[state.netId]` for why — but the argument
-/// closing it has two legs, and this is the second: unreachable *and* harmless if
-/// it were ever reached. The first leg is an invariant spanning NetSync and the
-/// editor's inspector, and it rests in part on a disabled ImGui region rather than
-/// a check — a refactor could break it without noticing. This one is a single
-/// guard in a single function, so pinning it here is what keeps the second leg
-/// true independently of the first.
+/// `ReplicationClientMotion.cpp`'s `_bodies[state.netId]` is that reading, and it
+/// is unreachable — but only by an invariant spanning NetSync and the editor's
+/// inspector that rests partly on a disabled ImGui region rather than a check.
+/// This file pins the other half: harmless even if it were reached, which is one
+/// guard in one function and survives a refactor of the first half.
 
 #include <doctest/doctest.h>
 

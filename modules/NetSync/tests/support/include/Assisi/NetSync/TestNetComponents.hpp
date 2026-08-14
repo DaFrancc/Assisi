@@ -4,16 +4,15 @@
 /// @file TestNetComponents.hpp
 /// @brief Test-only reflected components for the replication suite.
 ///
-/// The engine's own replicable component set is currently Transform plus the
-/// Replicated marker, and removing the marker means despawn rather than
-/// component removal — so proving that a *component* can be removed and
-/// replicated away needs a second, ordinary component that exists only here.
+/// The engine's own replicable component set is Transform plus the Replicated
+/// marker, and removing the marker means despawn rather than component removal
+/// — so proving that a *component* can be removed and replicated away needs a
+/// second, ordinary component that exists only here.
 ///
-/// The gating milestone added two more jobs: a component that is reflected,
-/// serializable, and deliberately *not* marked replicable (so "unmarked types
-/// never travel" has something to be true about), and a norep field inside a
-/// replicable one (so "saved to disk, never sent" has something to be true
-/// about).
+/// Two more fixtures are here for the same reason: a component that is
+/// reflected, serializable, and deliberately *not* marked replicable (so
+/// "unmarked types never travel" has something to be true about), and a norep
+/// field inside a replicable one (so "saved to disk, never sent" does too).
 
 #include <Assisi/ECS/Entity.hpp>
 #include <Assisi/ECS/InstanceId.hpp>
@@ -39,23 +38,22 @@ struct Health
 
 /// @brief Reflected, serializable, tracked — and deliberately not replicated.
 ///
-/// The negative control for wire gating. Before opt-in, every serializable
-/// component travelled, which is how a marked entity could ship a `Camera` whose
-/// `isActive` hijacked the receiving client's view.
+/// The negative control for wire gating. Without opt-in every serializable
+/// component travels, and a marked entity ships things like a `Camera` whose
+/// `isActive` hijacks the receiving client's view.
 ACOMP(tracked)
 struct LocalOnly
 {
     AFIELD() int32_t value = 0;
 };
 
-/// @brief One message per cell of the AMSG grammar, so every combination has
-/// something to be true about.
+/// @brief Messages covering every cell of the AMSG grammar, so each combination
+/// of direction, reliability, and independence has something to be true about.
 ///
-/// A test build is the only place all four exist together; a real game would
-/// declare whichever it needs. They are also what the registry, the codec
-/// round-trip, the hash-moves property, and the generated handler table are
-/// exercised against — none of which can be tested by a build that registers no
-/// messages at all.
+/// A real game declares whichever it needs; a test build is the only place they
+/// all exist together. They are also what the registry, the codec round-trip,
+/// the hash-moves property, and the generated handler table are exercised
+/// against — none of which a build registering no messages can test at all.
 
 /// @brief Client → server, must arrive. The shape of a deliberate action whose
 /// loss the player would notice.
@@ -109,11 +107,10 @@ struct TestBurst
 /// @brief Two entity references, and the subject is deliberately the *second*
 /// one.
 ///
-/// The shape the engine used to get wrong. Relevancy scoped an event by whichever
-/// `EntityRef` field came first, so a message about two entities routed by the
-/// wrong one, and swapping two field declarations silently changed who was told.
 /// Declaring `instigator` ahead of the marked `victim` means any test that
-/// passes here could not be passing on declaration order.
+/// passes here could not be passing on declaration order — scoping by whichever
+/// entity field comes first would let swapping two declarations silently change
+/// who is told.
 ///
 /// `instigator` is the ordinary case for a non-subject reference: it travels and
 /// translates like any other, and a recipient that has never been told about that

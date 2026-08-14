@@ -5,9 +5,9 @@
 ///
 /// The Runtime suite tests the flattening and the tag; this is the composition
 /// App owns — deserialize, propagate, build bodies — over a scene whose members
-/// are parented and placed. It exists because that combination is what the
-/// physics/`Parent` fix (step zero) was for: a member is created in world space
-/// from a placement it only reaches through its parent's matrix.
+/// are parented and placed. That combination is what needs pinning: a member is
+/// created in world space from a placement it only reaches through its parent's
+/// matrix.
 
 #include <doctest/doctest.h>
 

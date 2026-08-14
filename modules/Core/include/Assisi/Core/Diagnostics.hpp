@@ -47,8 +47,7 @@ const std::string &LaunchStamp();
 /// is per-thread, so installing it on the main thread — which is all a crash
 /// handler can do for itself — leaves every worker without one. A stack-overflow
 /// SIGSEGV arrives with no usable stack, so a worker that overflows faults again
-/// inside the handler and produces no report at all: the crash that most needs
-/// explaining is the one that explains nothing.
+/// inside the handler and produces no report at all.
 ///
 /// No-op on Windows, which has no equivalent concept (structured exception
 /// handling gets its own stack from the OS).
@@ -65,13 +64,14 @@ void InstallSignalStackForThisThread() noexcept;
 ///
 /// `protect` is a filename that is never deleted and counts toward `keep`. Pass
 /// the current run's own artifact. Sorting alone cannot keep it: LaunchStamp()
-/// is local time, so a DST fall-back, a westward flight or an NTP step back
-/// makes this run's name sort *oldest* and it is pruned first — on POSIX while
-/// its descriptor is still open, so the run writes its whole log into an
-/// unlinked inode and loses it silently at exit.
+/// is local time, so a DST fall-back or an NTP step back makes this run's name
+/// sort *oldest* and it is pruned first — on POSIX while its descriptor is still
+/// open, so the run writes its whole log into an unlinked inode and loses it
+/// silently at exit.
 ///
-/// Best-effort: an unreadable directory or an undeletable file warns and is
-/// skipped. Failing to tidy up is not worth failing a launch over.
+/// Best-effort: a directory it cannot read is skipped (the normal first-launch
+/// case), and a file it cannot delete warns and stays. Failing to tidy up is not
+/// worth failing a launch over.
 void PruneOldFiles(const std::filesystem::path &dir, std::string_view prefix, std::string_view extension,
                    uint32_t keep, std::string_view protect = {}) noexcept;
 

@@ -34,17 +34,15 @@
 /// and the acked baseline says the client does not already hold this value.
 ///
 /// **`replicable` grants a capability, not a policy.** It says this type *has* a
-/// wire form; whether a given entity actually sends it is G2 and G4. The retired
-/// spelling `replicated` fused the two, and reflectgen rejects it by name rather
-/// than ignoring it — an unknown flag would parse as nothing and silently
-/// un-replicate a component that used to travel.
+/// wire form; whether a given entity actually sends it is G2 and G4. reflectgen
+/// rejects the spelling `replicated` by name rather than ignoring it — an
+/// unknown flag would parse as nothing and silently un-replicate the component.
 ///
 /// **Polarity is deliberate in both directions.** G1 is opt-in because a type
-/// should not acquire a wire form by accident (SpatialOS migrated to opt-in
-/// after blanket schema generation failed to scale). G4 is opt-out because
-/// Transform, Name, MeshRenderer and RigidBodyDescriptor are wanted on
-/// essentially every replicated entity, and making each level author restate
-/// that would manufacture boilerplate and silent under-replication.
+/// should not acquire a wire form by accident. G4 is opt-out because Transform,
+/// Name, MeshRenderer and RigidBodyDescriptor are wanted on essentially every
+/// replicated entity, and making each level author restate that would manufacture
+/// boilerplate and silent under-replication.
 ///
 /// **`replicable` implies `tracked`**, because an untracked component reports
 /// change tick 0 forever — it would replicate once at spawn and then go silent.
@@ -52,9 +50,8 @@
 /// two readers, so the implication serves replication while an explicit
 /// `tracked` records that a local system needs the ticks too — which is what
 /// keeps them if `replicable` is ever removed. `ECS::Transform` is the live
-/// example (PropagateTransforms predates the network by a long way). Nothing is
-/// emitted at build time to say this, deliberately: a note printed forever on
-/// correct code teaches people to skim build output.
+/// example: PropagateTransforms reads its ticks with or without the network.
+/// The implication is silent at build time; nothing is printed for correct code.
 ///
 /// A type that simply does not replicate says so by *not* being marked. Where
 /// that silence is a decision rather than an oversight — `Runtime::Camera`,

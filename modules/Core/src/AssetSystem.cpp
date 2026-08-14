@@ -24,10 +24,9 @@ namespace fs = std::filesystem;
 /// form is `noexcept` and reports by value — and choosing it is what makes the
 /// `noexcept` on every function here true rather than aspirational.
 ///
-/// Three functions used to get this wrong in the direction that terminates:
-/// Initialize, SetRoot and SetUserRoot were `noexcept` and called
-/// `weakly_canonical` / `is_directory` with no handler at all, so a permission
-/// error or an unmounted volume was `std::terminate`, not a bad return.
+/// Getting this wrong terminates: a `noexcept` function calling the throwing
+/// `weakly_canonical` / `is_directory` turns a permission error or an unmounted
+/// volume into `std::terminate` rather than a bad return.
 ///
 /// A few `try` blocks survive below and each says why: constructing an
 /// `fs::path` from an OS or environment string performs an encoding conversion

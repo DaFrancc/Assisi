@@ -62,8 +62,8 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     if (!loaded)
     {
         // Destroy the half-created world rather than leave an empty resident. It
-        // holds no role yet, so this always succeeds. Nothing about B20 applies: the
-        // scene the load may have emptied is this world's own, and it goes with it.
+        // holds no role yet, so this always succeeds, and the scene the load may
+        // have emptied is this world's own — it goes with it.
         Assisi::Core::Log::Error("Load as new world: '{}' failed to load — {}.", virtualPath,
                                  Assisi::Runtime::Describe(loaded.error()));
         _worlds.Destroy(world.name);
@@ -188,8 +188,7 @@ void EditorApp::DestroyPlayWorlds()
 
 void EditorApp::DrawWorldSelector()
 {
-    // Only once there is a choice to make: a single-world session looks exactly as
-    // it did before multi-scene existed.
+    // Only once there is a choice to make; a single-world session shows no selector.
     if (_worlds.Count() < 2)
         return;
 

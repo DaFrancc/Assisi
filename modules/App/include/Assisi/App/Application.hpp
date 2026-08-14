@@ -58,11 +58,11 @@ public:
     /// server mode. Must be called before Initialize(); after that the split has
     /// already happened.
     ///
-    /// This is a flag on Application rather than a separate headless class on
-    /// purpose: the simulation hooks, the SystemRegistry, and (later) the
-    /// listen server embedding a server inside a client process all want the
-    /// two modes to be the *same* object with one of its halves not brought up.
-    /// `game.json` may also set it; Initialize() takes either.
+    /// A flag on Application rather than a separate headless class: the simulation
+    /// hooks, the SystemRegistry, and a listen server embedding a server inside a
+    /// client process all want the two modes to be the *same* object with one of
+    /// its halves not brought up. `game.json` may also set it; Initialize() takes
+    /// either.
     void SetHeadless(bool headless) { _headless = headless; }
 
     /// @brief Whether this process runs without presentation. Valid before
@@ -126,9 +126,9 @@ protected:
 
     /// @brief Called once per frame at the main-thread safe point — after the
     /// marshalled work where deferred level loads land, before OnUpdate — to apply
-    /// the system installs a blueprint spawn queued (App::DrainSystemInstalls, per
-    /// resident world). Default is a no-op, for the same reason FlushDeferred's is:
-    /// Application owns no worlds, so the app must opt in.
+    /// the system installs a blueprint spawn queued (App::DrainSystemInstalls, once
+    /// per resident world). Default is a no-op, for the same reason FlushDeferred's
+    /// is: Application owns no worlds, so the app must opt in.
     ///
     /// Ordering is the whole point. Spawning a blueprint usually happens *inside* a
     /// system, and SystemRegistry invalidates its cached execution order on every
@@ -350,11 +350,6 @@ private:
     /// can report a per-frame rate rather than an ever-climbing total.
     uint64_t _lastJoltAllocCount = 0;
     uint64_t _lastJoltAllocBytes = 0;
-
-    // RenderFrame's sub-phase breakdown used to live here as a struct of doubles
-    // scraped into the slow-frame log line. It is now profile scopes inside
-    // RenderFrame — same numbers, but scrubbable, nested under the frame, and
-    // costing nothing in a build without capture.
 };
 
 } // namespace Assisi::App

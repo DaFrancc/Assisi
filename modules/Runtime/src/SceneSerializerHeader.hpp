@@ -25,8 +25,8 @@ namespace Assisi::Runtime
 /// (ENG-114 made that survivable; ENG-126 is about it not happening at all).
 ///
 /// So the early check is only a real gate while it sees exactly what the late one
-/// will. These were two copies of this loop in two translation units, agreeing by
-/// coincidence rather than by construction; editing either one moved the
+/// will. Two copies of this loop in two translation units would agree by
+/// coincidence rather than by construction, and editing either one moves the
 /// disagreement into the window between them. Pinned by
 /// `App/tests/TestLevelSystemsPrecheck.cpp`.
 ///

@@ -8,8 +8,7 @@
 /// Most behaviour is observable in the scene and should be asserted there. A
 /// warning is different: "nulled with a warning" and "nulled silently" produce
 /// identical worlds, and the whole point of the warning is that somebody finds
-/// out. A test that cannot see it is the test round 7 found documenting the
-/// absence of the thing it was named for.
+/// out — so a test named for one has to be able to read it.
 ///
 /// The logger has AddSink and no RemoveSink, so the sink is installed once for
 /// the process and cleared per use rather than attached and detached per test.

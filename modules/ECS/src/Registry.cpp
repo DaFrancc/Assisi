@@ -24,7 +24,7 @@ Entity Registry::Create()
         return {.index = index, .generation = _generations[index]};
     }
 
-    /* No free slots — grow the generations array with a new slot at index 0. */
+    /* No free slots — append a fresh slot at the end, generation 0. */
     const auto index = static_cast<uint32_t>(_generations.size());
     _generations.push_back(0);
     _alive.push_back(true);
@@ -57,11 +57,9 @@ void Registry::Destroy(Entity entity)
 
 void Registry::ReviveAt(Entity entity)
 {
-    /* Grow the slot table when the target sits past its end. The invariant that
-       matters is "no live handle for this slot", not "the slot existed a moment
-       ago": a scene that has been Clear()ed has no slots at all, and a restore
-       spanning a reset — the editor's play/stop round trip once a joining client
-       loads the host's level into the play scene — must still land every entity
+    /* Grow the slot table when the target sits past its end. The invariant is "no
+       live handle for this slot", not "the slot exists": a Clear()ed scene has no
+       slots at all, and a restore spanning that reset must still land every entity
        on its exact handle. Slots skipped on the way in are created free, so the
        next Create() fills them instead of allocating past them. */
     if (entity.index >= _generations.size())
@@ -118,8 +116,8 @@ Entity Registry::EntityAt(uint32_t index) const
     }
 
     /* A slot present in the generations table is live unless it is currently
-       parked in the free list awaiting reuse — tracked by the O(1) alive flag
-       (this used to scan the free list, O(free) per call). */
+       parked in the free list awaiting reuse — which the O(1) alive flag answers
+       without scanning that list. */
     if (!_alive[index])
     {
         return NullEntity;

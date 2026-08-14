@@ -2,10 +2,8 @@
 /// @file TestOverhead.cpp
 /// @brief What a scope actually costs.
 ///
-/// The design notes carried an *estimate* through every stage. An estimate is
-/// how a profiler ends up lying about the one number it has no excuse to guess,
-/// so this measures it and prints the result — the self-measurement caveat
-/// carried over from the deferred frame-profiler notes, discharged.
+/// The one number a profiler has no excuse to guess, so it is measured and
+/// printed rather than estimated.
 ///
 /// This is a measurement, not a threshold. It asserts only that instrumentation
 /// is *cheap*, with a bound loose enough that a loaded CI machine or a debug

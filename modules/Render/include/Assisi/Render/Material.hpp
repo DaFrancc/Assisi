@@ -7,9 +7,9 @@
 /// Built by AssetCache::ResolveMaterial from a Geometry::MaterialData. Channels
 /// are bindless-table slots (empty ones resolve to the cache's `prim://` default
 /// textures — white / flat normal — so the shader always samples a valid index
-/// and never branches on null). The material no longer owns a GPU buffer: it
-/// holds its `MaterialConstants` as a plain value and AssetCache writes it into
-/// one row of the shared material table (stage D), indexed by the material's id.
+/// and never branches on null). The material owns no GPU buffer: it holds its
+/// `MaterialConstants` as a plain value and AssetCache writes it into one row of
+/// the shared material table (stage D), indexed by the material's id.
 
 #include <cstdint>
 

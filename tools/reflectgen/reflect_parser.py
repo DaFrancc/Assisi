@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """reflect_parser — header scanning and the parse-time data model for reflectgen.
 
-Turns a C++ header into a list[ComponentInfo]: strips comments, tracks the
-namespace stack, extracts ACOMP/AASSET/AENUM/AFIELD annotations, and resolves
+Reads a C++ header: strips comments, tracks the namespace stack, extracts the
+ACOMP/AASSET/AENUM/AFIELD/AMSG/AMSG_HANDLER/ASYSTEM annotations, and resolves
 enum-typed fields and the AFIELD(radio ...) references (with cycle detection).
 Everything here is about *understanding* the header; nothing emits C++ (that is
 reflect_codegen). The dataclasses below are the contract between the two.
@@ -282,9 +282,8 @@ _ENUM_RE   = re.compile(r'\benum\s+(?:class|struct)\s+(\w+)\s*(?::\s*([^{]+))?')
 _NS_RE     = re.compile(r'\bnamespace\s+([\w:]+)')
 
 # Underlying-type spelling → (byte width, is_signed). Whitespace is normalised to
-# single spaces before lookup. Only fixed-width types and the `int`/`unsigned`
-# defaults are supported; platform-dependent `long`/`unsigned long` are omitted
-# on purpose so their ambiguous width fails the build (see _enum_underlying).
+# single spaces before lookup. `long` and `unsigned long` are absent on purpose,
+# so their platform-dependent width fails the build (see _enum_underlying).
 _ENUM_UNDERLYING: dict[str, tuple[int, bool]] = {
     'char':                   (1, True),   # impl-defined signedness; treat as signed
     'signed char':            (1, True),
@@ -866,8 +865,8 @@ def parse_header(path: Path) -> list[ComponentInfo]:
 def parse_header_systems(path: Path) -> list:
     """Every ASYSTEM() declaration in @p path.
 
-    Separate from parse_header_full rather than a fourth tuple element, so the
-    three existing callers and every existing test keep working unchanged.
+    Its own entry point rather than a fourth element of parse_header_full's
+    tuple, so callers that want only components are unaffected.
     """
     return find_systems(strip_comments(path.read_text(encoding='utf-8')), path)
 
@@ -875,9 +874,8 @@ def parse_header_systems(path: Path) -> list:
 def parse_header_full(path: Path) -> tuple[list, list, list]:
     """Everything a header declares: (components, messages, handlers).
 
-    parse_header stays the components-only facade because that is what almost
-    every caller and every existing test wants; this is the form the message
-    milestone needs.
+    parse_header is the components-only facade over this, which is all most
+    callers want. Systems come from parse_header_systems.
     """
     text = strip_comments(path.read_text(encoding='utf-8'))
     components: list[ComponentInfo] = []

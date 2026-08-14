@@ -414,9 +414,8 @@ NetId ReplicationServer::EnsureInstanceBlock(ECS::Entity entity)
         block.base        = NetId{_nextNetId};
         block.memberCount = info.memberCount;
         block.info        = info;
-        // All of them until a reconcile pass finds otherwise; ReconcileNetIds is
-        // what actually seeds this, in the same pass that gives every existing
-        // member its id.
+        // All set here; ReconcileNetIds clears the bit for any member that has
+        // no entity, in the same pass that gives every existing member its id.
         block.derivable.assign(info.memberCount, 1u);
 
         // The whole range at once. Reserving lazily per member would let an

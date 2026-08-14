@@ -4,17 +4,16 @@
 /// @file MeshPass.hpp
 /// @brief NVRHI graphics pipeline for drawing lit, opaque scene geometry.
 ///
-/// One pipeline shared by every entity, and — since stage D — one binding set
-/// too: `MeshBuffer`'s vertex layout in, per-object data (world matrix + material
-/// id) read from a per-instance structured buffer indexed by gl_InstanceIndex, a
+/// One pipeline and one binding set shared by every entity (stage D):
+/// `MeshBuffer`'s vertex layout in, per-object data (world matrix + material id)
+/// read from a per-instance structured buffer indexed by gl_InstanceIndex, a
 /// per-frame constant buffer carrying the camera / view-projection / cluster-grid
 /// parameters, the material's glTF metallic-roughness factors fetched from the
 /// AssetCache's material table (and its textures from the bindless table) by that
 /// id, and clustered point/spot/directional lighting (see ClusterGrid) read
-/// directly from cube_min.frag. Nothing binds per-draw any more — the whole span
-/// draws against one binding set + the bindless table, one drawIndexed per item
-/// with a distinct startInstanceLocation. That is the precondition for stage E's
-/// indirect/instanced draws.
+/// directly from cube_min.frag. Nothing binds per-draw — the whole span draws
+/// against one binding set + the bindless table as instanced indirect commands,
+/// built either on the CPU (Submit) or by a MeshCuller (SubmitIndirect).
 
 #include <cstdint>
 #include <span>
@@ -49,10 +48,8 @@ enum class MaterialDebugView : uint32_t
 
 /// @brief The ambient term every surface gets for free, when nobody says otherwise.
 ///
-/// Named here rather than left as a literal in three places because it is a value
-/// with a history: it was `const float kAmbient = 0.03` inside cube_min.frag, and
-/// moving it into the frame constants must not change a single rendered pixel by
-/// accident. Anything that wants a different one passes it.
+/// Named rather than left as a literal in three places; anything that wants a
+/// different one passes it.
 inline constexpr float kDefaultAmbientIntensity = 0.03f;
 
 class MeshPass
@@ -104,9 +101,7 @@ public:
     /// for clip position, so the model matrix never leaves the GPU.
     ///
     /// @p ambientColor / @p ambientIntensity are the uniform term every surface
-    /// receives regardless of what lights it. The defaults reproduce the constant
-    /// this replaced (`kAmbient = 0.03` in cube_min.frag) exactly, so a caller that
-    /// says nothing renders what it always did; the editor turns it up to inspect a
+    /// receives regardless of what lights it. The editor turns it up to inspect a
     /// model without having to light one.
     void UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm::mat4 &viewProjection, const glm::mat4 &view,
                               uint32_t screenWidth, uint32_t screenHeight, float nearZ, float farZ,
@@ -115,14 +110,13 @@ public:
                               float ambientIntensity = kDefaultAmbientIntensity) const;
 
     /// @brief Submission counts from one Submit — the consumer half of the
-    /// draw-stats (the producer counts drawn/culled). Since stage E the pass builds
-    /// a CPU-side indirect command buffer and multi-draws it, so these describe the
-    /// batching the frame collapsed to: @p instances is the per-instance records
-    /// uploaded (== DrawItems drawn); @p batches is the instanced draw commands
-    /// after coalescing consecutive same-(mesh,submesh) items (the count that drops
-    /// as the scene instances better — see the "Sort Draws" A/B); @p drawCalls is
-    /// the `drawIndexedIndirect` API calls issued (one per arena buffer-group, so
-    /// ~1 while everything shares the one GeometryArena from stage C).
+    /// draw-stats (the producer counts drawn/culled). They describe the batching
+    /// the frame collapsed to: @p instances is the per-instance records uploaded
+    /// (== DrawItems drawn); @p batches is the instanced draw commands after
+    /// coalescing consecutive same-(mesh,submesh) items (the count that drops as
+    /// the scene instances better — see the "Sort Draws" A/B); @p drawCalls is the
+    /// `drawIndexedIndirect` API calls issued (one per arena buffer-group, so ~1
+    /// while everything shares the one GeometryArena from stage C).
     struct SubmitStats
     {
         uint32_t instances = 0;
@@ -159,16 +153,16 @@ public:
     /// `drawIndexedIndirect` per arena buffer-group (~1, since stage C shares one
     /// GeometryArena). The caller sorts the span by DrawItem::sortKey
     /// (material/mesh-major): that ordering places identical same-material meshes
-    /// adjacent, so they coalesce — the sort now drives instancing, not binds.
+    /// adjacent, so they coalesce — the sort drives instancing, not binds.
     /// Items must reference live resources (valid until the frame is submitted).
     /// @param frame  The frame's command list + framebuffer + viewport size.
     /// @pre IsValid() — call Initialize() first, and UpdateFrameConstants() this frame.
     [[nodiscard]] SubmitStats Submit(const RenderFrame &frame, std::span<const DrawItem> items) const;
 
     /// @brief The GPU-built draw list a MeshCuller produced this frame (stage F1):
-    /// the compute pass wrote the per-instance records + indirect commands + the
-    /// draw count itself, so SubmitIndirect binds them and issues one
-    /// drawIndexedIndirectCount rather than recording draws on the CPU.
+    /// the compute pass wrote the per-instance records and grew each batch
+    /// command's instanceCount, so SubmitIndirect binds them and issues one
+    /// drawIndexedIndirect rather than recording draws on the CPU.
     struct IndirectDrawInputs
     {
         /// Per-instance records (world matrix + material id), read by the vertex
@@ -201,11 +195,10 @@ public:
     bool IsValid() const { return _pipeline != nullptr; }
 
     /// @brief Drops the cached global binding set so the next Submit rebuilds it.
-    /// Kept for the level-unload path (SceneRenderer::InvalidateAssetBindings): the
-    /// set references only handles that survive an AssetCache::Clear (frame CB,
-    /// sampler, light buffers, material table, instance buffer), so this is really
-    /// just hygiene now — the rebuild produces an identical set — but it costs
-    /// nothing and keeps the seam if a referenced resource is ever recreated.
+    /// Called on level unload (SceneRenderer::InvalidateAssetBindings). Every handle
+    /// the set references survives an AssetCache::Clear (frame CB, sampler, light
+    /// buffers, material table, instance buffer), so the rebuild is identical today
+    /// — the seam is here for when a referenced resource is recreated.
     void InvalidateBindingSets() { _globalBindingSet = nullptr; }
 
 private:
@@ -264,8 +257,7 @@ private:
     mutable uint32_t _indirectCapacity = 0;                     // in commands
 
     // Per-frame scratch for Submit, kept across frames so the steady state costs
-    // no allocations: clear() preserves capacity, whereas the locals these replaced
-    // heap-allocated (and grew) on every single frame.
+    // no allocations: clear() preserves capacity.
     mutable std::vector<InstanceData>                        _scratchInstances;
     mutable std::vector<nvrhi::DrawIndexedIndirectArguments> _scratchCommands;
     mutable std::vector<const MeshBuffer *>                  _scratchBatchMeshes;

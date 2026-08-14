@@ -250,7 +250,7 @@ TEST_CASE("Prepared form: a blueprint naming a reference it does not declare is 
 // as `j.at("fovDegrees").get<float>()` — which throws if the file says a string.
 // That is the *last* step of building a definition, so it is the step most likely
 // to be left outside the error path, and the contract callers wrote themselves
-// against says nullptr (Blueprint.hpp). The three below are the callers that
+// against is "never throws" (Blueprint.hpp). The three below are the callers that
 // documented the promise; the editor's Save is the one a user meets.
 
 namespace

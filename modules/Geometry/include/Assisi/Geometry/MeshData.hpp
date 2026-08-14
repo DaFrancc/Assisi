@@ -6,14 +6,13 @@
 ///        and the input to Render's MeshBuffer::Upload().
 ///
 /// This lives in Geometry (not Render) on purpose: it is pure CPU data with no
-/// GPU dependency, so importers, physics, tools, and tests can produce or read
-/// geometry without linking the renderer.
+/// GPU dependency, so importers, tools, and tests can produce or read geometry
+/// without linking the renderer.
 ///
 /// One vertex array + one index array per mesh asset, addressed through
-/// SubMesh index ranges. The storage shape is deliberately flat so it later
-/// relocates into a shared geometry arena (GPU-driven stage 2) by adding base
-/// offsets — SubMesh offsets are already relative, so consumers never change.
-/// See docs/mesh-material-architecture.md §1.
+/// SubMesh index ranges. SubMesh offsets are relative, so the data
+/// sub-allocates into Render's shared GeometryArena by adding a base offset
+/// without any consumer changing. See docs/mesh-material-architecture.md §1.
 
 #include <cmath>
 #include <cstdint>
@@ -70,11 +69,10 @@ struct MeshData
     std::vector<LodRange>     Lods;      ///< [0] = LOD0. May be empty alongside SubMeshes.
     std::vector<MaterialData> Materials; ///< Material slot table (import defaults).
 
-    // Whole-mesh bounds, fit over every vertex. Filled by EnsureMeshBounds — at
-    // import time, on the worker thread — so the main-thread publish reads them
-    // instead of re-walking the vertex array (three passes over a 600k-vertex mesh
-    // was the streaming publish's dominant main-thread cost). `BoundsComputed`
-    // distinguishes "not yet fit" from a legitimately zero-sized mesh.
+    // Whole-mesh bounds, fit over every vertex by EnsureMeshBounds on the import
+    // worker, so the main-thread publish reads them instead of re-walking the
+    // vertex array. `BoundsComputed` distinguishes "not yet fit" from a
+    // legitimately zero-sized mesh.
     BoundingSphere LocalBounds;
     Aabb LocalAabb;
     bool BoundsComputed = false;
@@ -167,12 +165,10 @@ inline BoundingSphere ComputeBoundingSphere(const MeshData &meshData)
 /// @brief Fits the whole-mesh bounds (`LocalBounds` / `LocalAabb`) if they have
 ///        not been fit yet; a no-op afterwards.
 ///
-/// Walking every vertex three times (ComputeBoundingSphere is itself two passes,
-/// plus ComputeAabb) is expensive on a large mesh — ~3 ms optimized, ~60 ms at
-/// -O0, for a 600k-vertex model — so this must run on the import worker, NOT on
-/// the main thread at publish. Call it wherever a MeshData is produced off the
-/// main thread; consumers then read the fields. Idempotent, so a mesh that
-/// arrives already fit costs nothing.
+/// Walks every vertex three times (ComputeBoundingSphere is itself two passes,
+/// plus ComputeAabb), which is expensive on a large mesh: call it wherever a
+/// MeshData is produced off the main thread, never on the main thread at
+/// publish. Idempotent, so a mesh that arrives already fit costs nothing.
 inline void EnsureMeshBounds(MeshData &meshData)
 {
     if (meshData.BoundsComputed)

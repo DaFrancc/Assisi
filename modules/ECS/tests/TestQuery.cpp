@@ -309,8 +309,8 @@ TEST_CASE("Query guard: mutating an excluded pool mid-iteration is allowed")
 
     int32_t seen = 0;
     // Query<Position>(Without<Tag>): the excluded Tag pool is re-probed each step
-    // through its stable address, so growing it mid-iteration is safe. This is a
-    // regression guard — the check once summed excluded pools and would abort here.
+    // through its stable address, so growing it mid-iteration is safe. Regression
+    // guard — a version check that summed excluded pools would abort here.
     CHECK_NOTHROW(([&]
     {
         for (auto [e, pos] : scene.Query<Position>(Without<Tag>{}))

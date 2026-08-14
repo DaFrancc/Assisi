@@ -18,9 +18,8 @@ namespace Assisi::ECS
 /// @brief A live blueprint instance, by the id its world handed out.
 ///
 /// A `std::uint32_t` underneath and deliberately not interchangeable with one.
-/// Blueprint replication has four unsigned integers in the same functions —
-/// instance id, member index, NetId, and an instance's `baseNetId` — and they are
-/// not the same kind of thing:
+/// Blueprint replication passes four unsigned integers through the same
+/// functions, and they are not the same kind of thing:
 ///
 ///   - an **instance id** is a per-world counter from 1 (Runtime::InstanceTable),
 ///     restarted on every level load, meaningful only on the machine that issued
@@ -29,20 +28,17 @@ namespace Assisi::ECS
 ///     identical on every machine that reads the same file;
 ///   - a **NetId** is a replication identity, agreed across the session;
 ///   - a **baseNetId** is the NetId an instance's member block starts at, and
-///     `baseNetId + memberIndex` is *usually* — not always — a member's NetId,
-///     which is exactly why the two must not be spelled the same.
+///     `baseNetId + memberIndex` is *usually* — not always — a member's NetId.
 ///
-/// Passing any of them where another was meant compiles fine as a bare integer
-/// and produces a plausible wrong answer. This type makes the one with the
-/// narrowest meaning — a purely local identity — the one the compiler checks.
+/// As bare integers, passing one where another was meant compiles and produces a
+/// plausible wrong answer. This type makes the narrowest of them — a purely local
+/// identity — the one the compiler checks.
 ///
 /// **No implicit conversion, in either direction.** `InstanceId{7}` and `id.value`
-/// are both deliberate and both meant to be rare: reach for them at the boundary
-/// where a raw number genuinely arrives (a file, a wire, an ImGui id), never to
-/// quiet a compiler that is telling you two id spaces met.
-/// An aggregate, matching NetSync::ClientId — the module's existing strong id.
-/// Aggregate initialization (`InstanceId{7}`) is the only way in, which is what
-/// blocks the implicit conversion; there is deliberately no arithmetic, because
+/// belong at the boundary where a raw number genuinely arrives (a file, a wire, an
+/// ImGui id), never to quiet a compiler that is telling you two id spaces met.
+/// An aggregate, matching NetSync::ClientId; aggregate initialization is the only
+/// way in, which is what blocks the implicit conversion. No arithmetic, because
 /// adding to an instance id is never a meaningful operation.
 struct InstanceId
 {
@@ -74,8 +70,7 @@ static_assert(StrongId<ECS::InstanceId>);
 } // namespace Assisi::Core
 
 /// Prints as the bare number, so a log line reads "instance 7" rather than making
-/// every call site spell `.value`. Without this the type would be strictly worse to
-/// hold than the integer it replaces, which is how a good rule gets worked around.
+/// every call site spell `.value`.
 template <> struct std::formatter<Assisi::ECS::InstanceId> : std::formatter<std::uint32_t>
 {
     auto format(Assisi::ECS::InstanceId id, std::format_context &ctx) const

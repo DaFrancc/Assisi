@@ -6,7 +6,6 @@
 ///
 ///   - ConsoleSink — stdout, colored when stdout is a terminal
 ///   - FileSink    — timestamped lines, flushed per line
-///   - ScreenSink  — in-game console overlay (planned)
 
 #include <filesystem>
 #include <fstream>

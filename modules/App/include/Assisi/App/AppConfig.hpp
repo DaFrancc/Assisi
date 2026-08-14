@@ -28,10 +28,10 @@ struct AppConfig
 
     /// @brief How many past runs' logs to keep (`diagnostics.keepLogs`).
     ///
-    /// Each launch writes its own timestamped file and the oldest are pruned,
-    /// so a player who relaunches after a crash no longer overwrites the run
-    /// that explains it. Five covers "it happened a few launches ago" without
-    /// letting the directory grow without bound.
+    /// Each launch writes its own timestamped file and the oldest are pruned, so
+    /// a player who relaunches after a crash does not overwrite the run that
+    /// explains it. Five covers "it happened a few launches ago" without letting
+    /// the directory grow without bound.
     ///
     /// A total including the run in progress, whose file is passed to the
     /// pruner as protected and so is never a deletion candidate. 0 is valid and

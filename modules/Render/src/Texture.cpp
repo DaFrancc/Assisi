@@ -141,7 +141,7 @@ Texture::DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace) noexc
     webpData.size  = bytes->size();
 
     // AnimDecoder composites frame disposal/blending for us and hands back full
-    // 256x256-ish RGBA canvases — exactly what we upload. MODE_RGBA matches our
+    // canvas-sized RGBA frames — exactly what we upload. MODE_RGBA matches our
     // top-down RGBA8 convention (WebP rows are top-down like Vulkan's V=0).
     WebPAnimDecoderOptions options;
     if (!WebPAnimDecoderOptionsInit(&options))

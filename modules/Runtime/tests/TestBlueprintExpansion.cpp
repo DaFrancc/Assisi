@@ -229,9 +229,8 @@ TEST_CASE("Blueprint: a cycle is refused rather than expanded")
     // Unrecoverable if missed: a containing b containing a expands forever.
     const BlueprintResult loaded = Runtime::GetBlueprintDefinition("a.abp");
     REQUIRE_FALSE(loaded.has_value());
-    // The *reason*, not just the refusal: a cycle and a missing file both used to
-    // come back as a bare nullptr, so a test asserting only that could not tell
-    // this case from the one below it.
+    // The *reason*, not just the refusal: a bare "it failed" cannot tell this case
+    // from the missing-file one below it.
     CHECK(loaded.error() == BlueprintError::InstanceCycle);
 }
 
@@ -468,9 +467,9 @@ TEST_CASE("Blueprint: an instance and an entity may share a name")
 
 TEST_CASE("Blueprint: two instances of one name are refused, not silently merged")
 {
-    // Both claim `car/body`. Reachable from the editor: CreateBlueprintFromSelection
-    // names the instance after the file and checks nothing, so this is a level the
-    // author can save and then never open again.
+    // Both claim `car/body`, which is a level the author could save and then never
+    // open again. The editor's gestures uniquify the instance name before placing;
+    // this is the loader refusing a file that says it anyway.
     const std::filesystem::path root = FreshRoot("dupinstance");
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl", {{"version", 2},
@@ -634,10 +633,9 @@ TEST_CASE("Blueprint: two entities of one name are refused")
 TEST_CASE("Blueprint: placing a second instance under a live name is refused")
 {
     // The guard sits here, at the one door both editor gestures come through,
-    // rather than at each gesture — "Place instance" already uniquified and
-    // "Create blueprint from selection" did not, which is exactly the shape of
-    // bug a per-caller rule produces (round-7 S17). A refusal at the choke point
-    // cannot be forgotten by the next caller.
+    // rather than at each gesture: a per-caller rule is one the next caller
+    // forgets, which is exactly how the two gestures came to disagree (round-7
+    // S17). A refusal at the choke point cannot be forgotten.
     const std::filesystem::path root = FreshRoot("dupplace");
     Write(root, "car.abp", CarFile());
 

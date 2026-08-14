@@ -4,16 +4,14 @@
 /// @file Reflect/JsonRead.hpp
 /// @brief Typed, non-throwing field reads for generated deserializers.
 ///
-/// Every reflected component's `addToScene` hook is generated code, and it used
-/// to read a field as `j.at("fov").get<float>()`. The `contains()` guard in front
-/// of that proves the *key* is there and says nothing about its type, so a file
-/// holding `{"fov": "wide"}` reached `get<float>()` and nlohmann threw — the last
-/// exception in the engine, and one nobody chose: it was a side effect of which
-/// accessor got typed into a codegen template.
+/// Every reflected component's `addToScene` hook is generated code, and these are
+/// what it reads fields with. A `contains()` guard plus `j.at(...).get<float>()`
+/// proves only that the *key* is there, so a file holding `{"fov": "wide"}` makes
+/// nlohmann throw; nothing in the engine is prepared to catch that.
 ///
-/// These replace it. Each one answers three questions in the order that matters —
-/// is the key present (absent is not an error; see below), is it the right shape,
-/// and can it be read — and says so by return value.
+/// Each of these answers three questions in the order that matters — is the key
+/// present (absent is not an error; see below), is it the right shape, and can it
+/// be read — and says so by return value, never by throwing.
 ///
 /// **An absent key is success, and leaves @p out alone.** That is what lets a
 /// component gain a field without refusing every level saved before it, and it is
@@ -57,9 +55,8 @@ namespace Assisi::Core::Reflect
 /// @brief Reads a fixed-length array of numbers into @p out — the vec2/3/4, quat
 /// and mat4 case.
 ///
-/// The length is checked before a single element is read. Indexing past the end
-/// was the other way the old templates threw: a hand-edited `"scale": [1, 1]`
-/// walked off `_v[2]`.
+/// The length is checked before a single element is read, so a hand-edited
+/// `"scale": [1, 1]` is refused rather than walking off the end of the array.
 ///
 /// @param count exactly how many elements the field must hold.
 /// @param out   an array of at least @p count floats.

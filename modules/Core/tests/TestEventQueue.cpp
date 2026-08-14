@@ -24,8 +24,8 @@ struct Healed
 
 } // namespace
 
-// Constructing a local EventQueue here is the point of de-singletonizing it:
-// tests get an isolated queue instead of sharing one process-wide instance.
+// Each case builds its own EventQueue: it is not a global, so tests never share
+// state through it.
 TEST_CASE("EventQueue: push then read returns events in order")
 {
     EventQueue queue;

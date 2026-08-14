@@ -35,26 +35,15 @@ other way.
 import json
 from pathlib import Path
 
-# Every word C++ reserves, and the only authority here on what is reserved.
+# Every word C++ reserves, and the only authority here on what is reserved:
+# [lex.key] Table 5 in full, plus the [lex.digraph] alternative tokens, which are
+# spelled like identifiers and behave as keywords.
 #
-# This used to be "the ones Python's `keyword` module misses", with
-# `keyword.iskeyword` asked alongside it. That split the table between two
-# authorities and got both halves wrong. It was too lax, because Python's list
-# is not a subset of C++'s and was never going to cover the difference: `case`
-# is a soft keyword there, `true` and `false` are spelled capitalised, and the
-# alternative tokens (`bitand`, `xor_eq`) and the coroutine keywords have no
-# Python counterpart at all — so all fourteen walked through and became
-# `ECS::Entity case;` in a file marked "Do not edit", failing the build at the
-# generated line instead of naming the .abp and the member. It was also too
-# strict, because Python reserves words C++ does not: `lambda`, `pass` and
-# `yield` are ordinary identifiers in the generated header, and the loader takes
-# a file that uses them, so refusing one failed a build over a legal blueprint —
-# the same divergence the module docstring argues against, pointing the other
-# way.
-#
-# So: [lex.key] Table 5 in full, plus the [lex.digraph] alternative tokens,
-# which are spelled like identifiers and behave as keywords. Nothing is left out
-# on the grounds that another language happens to reserve it too.
+# Python's `keyword` module is not consulted, in either direction. It is neither
+# a superset nor a subset of this: `case` is soft there, `true`/`false` are
+# spelled capitalised, and the alternative tokens and coroutine keywords have no
+# Python counterpart — while `lambda`, `pass` and `yield` are ordinary
+# identifiers in the generated header and the loader takes a file using them.
 _CXX_KEYWORDS = {
     'alignas', 'alignof', 'and', 'and_eq', 'asm', 'auto', 'bitand', 'bitor',
     'bool', 'break', 'case', 'catch', 'char', 'char8_t', 'char16_t', 'char32_t',
@@ -280,11 +269,8 @@ def _is_usable_name(name):
     """A name the generator can emit into C++ as written.
 
     The single decision behind both the member-name check and the type-name
-    check, so a word banned as one is banned as the other. Those drifted once:
-    the type name was tested against `_CXX_KEYWORDS` alone while member names
-    were also asked of Python's `keyword` module, and `--blueprint
-    class=car.abp` emitted `struct class;`. The two differ only in what they say
-    when they refuse, which is why that is all `_check_identifier` decides for
+    check, so a word banned as one is banned as the other. They differ only in
+    what they say when they refuse, which is all `_check_identifier` decides for
     itself.
     """
     return name.isidentifier() and name not in _CXX_KEYWORDS
@@ -349,25 +335,20 @@ _CXX_STRING_ESCAPES = {'\\': r'\\', '"': r'\"', '\n': r'\n', '\r': r'\r', '\t': 
 def _cxx_escaped(text):
     r"""`text` with everything a C++ literal would read as syntax spelled out.
 
-    The one authority on this, because the alternative is escaping at some emit
-    sites and not others, which is the same file's B21 lesson about splitting a
-    rule between two places.
+    The one authority on this, so no emit site escapes differently from another.
 
-    Source paths need it. They are input — whatever `--blueprint
-    Car=blueprints\car.abp` was given — with none of the constraints member
-    names have, and every Windows path is full of backslashes: emitted as
-    written, `blueprints\car.abp` carries `\c`, which no C++ escape names, and
-    `assets\test.abp` carries a tab in the middle of a path the runtime then
-    fails to find. A quote ends the literal outright and takes the rest of the
-    header with it.
+    Source paths need it: they are input — whatever `--blueprint
+    Car=blueprints\car.abp` was given — with none of the constraints member names
+    have. Emitted as written, `blueprints\car.abp` carries `\c`, which no C++
+    escape names; `assets\test.abp` carries a tab; a quote ends the literal and
+    takes the rest of the header with it.
 
     Control characters go out in octal rather than hex because a hex escape has
     no length limit: `\x1` followed by a digit of the path swallows it and
     changes the value, while `\001` is three digits and stops.
 
     Comments get the same treatment. The hazard there is only a newline, which
-    ends the `//` and leaves the rest of the path standing where code goes, but
-    one function answering for both is the point.
+    ends the `//` and leaves the rest of the path standing where code goes.
     """
     out = []
     for character in text:

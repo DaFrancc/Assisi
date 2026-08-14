@@ -3,10 +3,10 @@
 
 /// @file MeshCuller.hpp
 /// @brief GPU-driven draw-list build (mesh-material stage F1): a compute pass
-///        (mesh_cull.comp) frustum-culls every scene object and writes the
-///        indirect draw commands + per-instance records itself, so the CPU
-///        issues one drawIndexedIndirectCount instead of extracting/sorting a
-///        draw list per frame.
+///        (mesh_cull.comp) frustum-culls every scene object and fills the
+///        per-instance records + each batch command's instanceCount, so the CPU
+///        issues one drawIndexedIndirect instead of extracting/sorting a draw
+///        list per frame.
 ///
 /// Two halves, split so the CPU-side packing is unit-testable without a device:
 ///   - `CullTableBuilder` (pure): turns a set of (mesh, world matrix, resolved
@@ -101,8 +101,8 @@ struct GpuDrawArgs
 };
 static_assert(sizeof(GpuDrawArgs) == 20, "GpuDrawArgs must match VkDrawIndexedIndirectCommand's packed layout.");
 
-/// @brief The flat host arrays the culler uploads. Built once per frame in F1/F2a;
-/// F2c dirty-tracks them. After Finalize(): one @ref batchTemplates entry per
+/// @brief The flat host arrays the culler uploads, built once per frame.
+/// After Finalize(): one @ref batchTemplates entry per
 /// distinct (mesh, submesh) — i.e. per @ref submeshes entry — sizes the indirect
 /// buffer, and @ref drawCapacity (the reserved instance total) sizes the instance
 /// buffer.
@@ -227,8 +227,8 @@ public:
     /// candidate total until the readback ring is primed.
     [[nodiscard]] uint32_t SurvivorInstanceCount() const;
     /// @brief Live batches the cull pass emitted (distinct (mesh, submesh) with ≥1
-    /// surviving instance), read back alongside the instance count. This is the
-    /// coalesced draw count — stage E's batch win, now GPU-side.
+    /// surviving instance), read back alongside the instance count — the coalesced
+    /// draw count.
     [[nodiscard]] uint32_t SurvivorBatchCount() const;
     /// @brief The candidate instance total for the last Cull (== tables.drawCapacity),
     /// the pre-cull upper bound the survivor count is measured against.

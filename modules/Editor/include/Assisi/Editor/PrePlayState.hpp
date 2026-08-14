@@ -14,14 +14,12 @@
 /// the editing undo history's stored handles valid across a session. This holds
 /// everything else a session can move.
 ///
-/// **One struct, one capture, one restore — rather than a member per field.** The
-/// bug this shape exists to prevent was a forgotten field: the level path and the
-/// system list were captured and restored, the instance table was not. After
-/// Join → Stop you were editing your own level with the host's instance rows in
-/// it, every one flagged `authored`, with no dirty marker and nothing on screen to
-/// say so — and the next Save wrote the host's instances into your file and
-/// dropped yours. So: anything a session can move goes here, where the capture and
-/// the restore sit next to each other and cannot drift apart.
+/// **One struct, one capture, one restore — rather than a member per field.** A
+/// field a per-field capture forgets is restored by nothing: Join → Stop then
+/// leaves the author editing their own level with the host's instance rows in it,
+/// flagged `authored`, with no dirty marker and nothing on screen to say so, and
+/// the next Save writes those rows into their file. Anything a session can move
+/// goes here, where the capture and the restore cannot drift apart.
 
 #include <string>
 #include <vector>

@@ -51,14 +51,13 @@ struct ContentSet
 /// @brief Scans the asset root and hashes it.
 ///
 /// Blocking, and deliberately not called on the main thread: run it as a job
-/// (Core::Jobs::Pool::Worker) at the moment hosting or joining starts. It is never
+/// (Core::Pool::Worker) at the moment hosting or joining starts. It is never
 /// triggered by a level load, so a single-player game never pays for it.
 ///
-/// Each file is hashed through Core::HashTextFileNormalized, not by raw bytes.
-/// The level hash already had to learn this the hard way (`562aa5d`): a Windows
-/// laptop and a Linux desktop refused each other over 439 CR bytes, because git
-/// checks text out as CRLF on Windows. Blueprints are JSON text and inherit the
-/// trap exactly.
+/// Each file is hashed through Core::HashTextFileNormalized, not by raw bytes:
+/// git checks text out as CRLF on Windows, so raw bytes make a Windows checkout
+/// and a Linux one of the same file refuse each other. The level hash normalizes
+/// for the same reason.
 ///
 /// Enumeration order is *not* stable across machines, so the list is sorted by
 /// virtual path before combining — the ordering is part of the format, not an

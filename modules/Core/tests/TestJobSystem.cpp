@@ -21,9 +21,9 @@ using Assisi::Core::Task;
 
 namespace
 {
-// Spin-drain the main queue until `predicate` holds or a generous bound is hit,
-// yielding between drains so the workers make progress. Returns whether it held.
-// Bounds the loop so a bug fails the test instead of hanging it.
+// Spin-drain the main queue until `predicate` holds, yielding between drains so
+// the workers make progress. Bounded, so a bug fails the test instead of hanging
+// it. Returns whether the predicate held.
 template <class Predicate>
 bool DrainMainUntil(JobSystem &jobs, Predicate predicate)
 {
@@ -252,10 +252,9 @@ TEST_CASE("Wait on the main thread completes a chain ending in Pool::Main")
 {
     JobSystem jobs(2u);
 
-    // The M8 trap: before the HelpUntil main-drain fix this livelocked — the
-    // final stage sat in the main queue and Wait() only ran worker tasks. The
-    // bounded HelpUntil test above catches the mechanism regressing; this one
-    // pins Wait() itself to the help-main path.
+    // Wait() must take the help-main path: the middle stage sits in the main
+    // queue, so a Wait() that ran only worker tasks would livelock here. The
+    // bounded HelpUntil test above covers the mechanism; this pins Wait() to it.
     std::atomic<bool> sawMainStage{false};
     Task<int32_t> task = jobs.Run(Pool::Worker, [] { return 20; })
                          .Then(Pool::Main,

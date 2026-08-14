@@ -93,9 +93,7 @@ static_assert(StrongId<Reflect::ComponentId>);
 } // namespace Assisi::Core
 
 /// Prints as the bare number, so a log line reads "component 7" rather than
-/// making every call site spell `.value`. Without this the type would be
-/// strictly worse to hold than the integer it replaces, which is how a good
-/// rule gets worked around.
+/// making every call site spell `.value`.
 template <> struct std::formatter<Assisi::Core::Reflect::ComponentId> : std::formatter<std::uint32_t>
 {
     auto format(Assisi::Core::Reflect::ComponentId id, std::format_context &ctx) const

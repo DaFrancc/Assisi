@@ -77,7 +77,7 @@ TEST_CASE("HashTextFileNormalized folds CRLF, so peers on different checkouts ag
     REQUIRE(crlfHash.has_value());
     CHECK(*lfHash == *crlfHash);
 
-    // Raw bytes would have refused the join — the bug this replaced.
+    // Raw bytes disagree — the refused join the fold exists to prevent.
     CHECK(ContentHash64(Bytes("{\n  \"version\": 2\n}\n")) !=
           ContentHash64(Bytes("{\r\n  \"version\": 2\r\n}\r\n")));
 

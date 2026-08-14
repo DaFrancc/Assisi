@@ -17,6 +17,8 @@
       },
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "CMAKE_C_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
         "ASSISI_WARNINGS_AS_ERRORS": "ON",
         "ASSISI_ENABLE_FAST_MATH": "ON",
         "ASSISI_ENABLE_SANITIZERS": "OFF",

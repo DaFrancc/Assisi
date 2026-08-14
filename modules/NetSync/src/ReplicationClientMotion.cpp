@@ -105,11 +105,11 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // `_entityByNetId` mapping first — so the lookup at the top of this function
     // returns — or drop the RigidBody component in the next statement.
     //
-    // Reported as a blank handle reaching RemoveBody (ENG-122). It does not, and
-    // would be refused if it did: a default JPH::BodyID is invalid and RemoveBody
-    // returns on it, which TestBodyLifetime.cpp pins. The thinnest leg is the
-    // editor — AddComponentToSelected builds a body into this scene without asking
-    // whether the entity is a mirror, and only a disabled ImGui region stops it.
+    // A blank handle would be refused anyway: a default JPH::BodyID is invalid
+    // and RemoveBody returns on it, which TestBodyLifetime.cpp pins. The thinnest
+    // leg is the editor's AddComponentToSelected, which builds a body into this
+    // scene without asking whether the entity is a mirror — only a disabled ImGui
+    // region stops it.
     MirrorBody &record = _bodies[state.netId];
 
     // How far the two simulations drifted apart since the last correction. Taken

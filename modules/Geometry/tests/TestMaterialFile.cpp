@@ -27,7 +27,7 @@ MaterialData MakeFullMaterial()
     m.OcclusionStrength = 0.5f;
     m.EmissiveFactor = {1.0f, 0.5f, 0.25f};
     // Distinct GUIDs per channel so a round-trip that swapped or dropped one is
-    // caught. (Channel references are AssetIds now, not paths.)
+    // caught.
     m.BaseColorTexture         = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
     m.NormalTexture            = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000002");
     m.MetallicRoughnessTexture = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000003");

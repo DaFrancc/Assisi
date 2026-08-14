@@ -99,11 +99,11 @@ public:
 
     /// @brief Selects which backend the loading spinner plays. `true` → the
     /// animated WebP (editor/loading/Spinner.webp, decoded to per-frame textures);
-    /// `false` → the TTF whose consecutive glyphs are the frames. This is the single
-    /// switch the header comment in the asset browser refers to: flip it and rebuild.
-    /// Both assets load independently at startup and either may be absent (the
-    /// browser then falls back to a plain placeholder), so flipping never crashes
-    /// even if only one asset is shipped.
+    /// `false` → the TTF whose consecutive glyphs are the frames. Flip it and
+    /// rebuild — this is the switch the asset browser refers to. Both assets load
+    /// independently at startup and either may be absent (the browser then falls
+    /// back to a plain placeholder), so flipping never crashes even if only one
+    /// asset is shipped.
     static constexpr bool kUseWebpSpinner = false;
 
     /// @brief The editor's loading-spinner font, or null if none was shipped. A

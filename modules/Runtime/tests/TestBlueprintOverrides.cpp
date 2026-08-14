@@ -247,7 +247,7 @@ TEST_CASE("Overrides: a reference to a removed member nulls, rather than refusin
               {"entities", nlohmann::json::array()},
               {"instances", nlohmann::json::array({{{"name", "car_3"},
                                                       {"source", "car.abp"},
-                                                      // The wheel's Parent
+                                                      // body is what wheel_fl's Parent names.
                                                       {"removed", {"body"}}}})}});
 
     ECS::Scene scene;
@@ -691,17 +691,14 @@ TEST_CASE("Overrides: a save writes back what was read, and reloading gives the 
 
 TEST_CASE("Overrides: an override may not rename the member it applies to")
 {
-    // The other half of round-7 S23. A file declaring a Name renames the member
-    // outright; an override claiming one arrives through the JSON path instead,
-    // where Scene::Add refuses an occupied slot — so today it is not a rename but
-    // a silent no-op, which is its own defect. The author wrote something that
-    // will never happen and is told nothing. Both halves are the same rule: the
-    // member path is the address the override was itself routed by, so the claim
-    // is refused, and said out loud.
+    // The other half of round-7 S23. The member path is the address the override
+    // was itself routed by, so a Name claim cannot displace the leaf: expansion
+    // skips the component and warns, rather than renaming the member out from
+    // under every reference that spells it.
     //
-    // The name assertion holds before the fix and is a pin, not the proof: it is
-    // what catches a future add-or-replace path quietly turning the no-op into
-    // the rename. The warning is what this case actually moves.
+    // The name assertion is the pin, not the proof — it is what catches a future
+    // add-or-replace path quietly turning the skip into a rename. The warning is
+    // what stops the author's declaration from looking honoured.
     const std::filesystem::path root = FreshRoot("rename");
     Write(root, "car.abp", CarFile());
     Write(root, "main.alvl",

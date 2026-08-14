@@ -787,11 +787,10 @@ TEST_CASE("Re-applying a list replaces the previous systems rather than stacking
 
 TEST_CASE("A queued install belongs to one world and cannot reach another")
 {
-    // The queue used to be a process-global list keyed by raw World*, drained one
-    // line after the marshalled work where deferred level loads — the things that
-    // free worlds — land. Destroying a world left an entry naming freed memory.
-    // Owned by the world, the entry cannot outlive it; this is the regression
-    // guard for anyone who moves it back out.
+    // The queue is owned by the world, so destroying one cannot leave an entry
+    // behind naming freed memory. The regression guard for anyone who moves it
+    // out into a process-global list keyed by raw World*, which the frame loop
+    // drains one line after the work that frees worlds.
     Assisi::App::Test::RunCounts::Instance().Reset();
 
     WorldManager worlds;

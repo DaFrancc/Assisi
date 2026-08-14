@@ -199,12 +199,11 @@ TEST_CASE("an event about an entity a connection cannot see never reaches it")
     const ECS::Entity subject = SpawnReplicated(harness.serverScene);
     harness.Step(2);
 
-    // Only the first connection is told about it at all.
+    // The provider is global, so this makes the subject relevant to both.
     provider->Set({harness.server.NetIdOf(subject)});
     harness.Step(10);
 
-    // ...but the provider is global here, so both would see it. Revoke for the
-    // second by granting explicitly to the first only.
+    // Now take it back globally and hand it to the first connection only.
     provider->Set({});
     harness.server.GrantRelevance(harness.peers[seeing].serverSide, harness.server.NetIdOf(subject));
     harness.Step(10);
@@ -224,9 +223,8 @@ TEST_CASE("an event about an entity a connection cannot see never reaches it")
 TEST_CASE("an event is scoped by the field marked subject, not by the one declared first")
 {
     // TestKnockback names two entities and marks the *second* as its subject, so
-    // a pass here cannot be coming from declaration order. The engine used to
-    // scope by whichever EntityRef came first, which meant that swapping two
-    // field declarations silently changed who was told.
+    // a pass here cannot be coming from declaration order — which would make
+    // swapping two field declarations silently change who is told.
     Harness harness;
     const std::size_t nearInstigator = harness.AddPeer();
     const std::size_t nearVictim     = harness.AddPeer();
@@ -293,15 +291,13 @@ TEST_CASE("a non-subject reference the recipient has not been told about arrives
 
 TEST_CASE("an event whose subject is null reaches no client, and is counted")
 {
-    // The leak this closes: a null subject used to leave `subject ==
-    // InvalidNetId`, which is exactly what an `independent` event carries — so a
-    // scoped event became indistinguishable from a global one and went to
-    // everybody, past the relevancy boundary it was declared to sit behind.
+    // A null subject leaves `subject == InvalidNetId`, which is exactly what an
+    // `independent` event carries — so a scoped event has to be withheld
+    // explicitly, or it is indistinguishable from a global one and crosses the
+    // relevancy boundary it was declared to sit behind.
     //
-    // The host still hears it. It is the authority, it is never relevancy-scoped
-    // in the first place (`deliverToHost` is not gated by `EventReaches`), and
-    // withholding it would be a second behaviour change wearing this one's
-    // clothes.
+    // The host still hears it: it is the authority and is never
+    // relevancy-scoped (`deliverToHost` is not gated by `EventReaches`).
     Harness harness;
     const std::size_t first  = harness.AddPeer();
     const std::size_t second = harness.AddPeer();

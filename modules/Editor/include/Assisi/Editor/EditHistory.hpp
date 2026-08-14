@@ -209,10 +209,10 @@ public:
     ///
     /// **A suffix of the replay order, not a filter.** Undo replays newest first,
     /// so once a step is unreplayable nothing older is reachable either: the newest
-    /// offender and everything older than it go. Dropping only the offenders leaves steps whose `before`
-    /// was never restored, each applying against the wrong world, quietly. The redo
-    /// stack goes too — a redo naming a destroyed entity would recreate it into a
-    /// slot the world has moved on from.
+    /// offender and everything older than it go. Dropping only the offenders leaves
+    /// steps whose `before` was never restored, each applying against the wrong
+    /// world, quietly. The redo stack goes too — a redo naming a destroyed entity
+    /// would recreate it into a slot the world has moved on from.
     ///
     /// Handles from a scene other than @p scene are refused wholesale: a handle is
     /// (slot, generation) with **no scene identity in it** and every Scene numbers
@@ -310,7 +310,7 @@ private:
     ///
     /// **The per-field override is derived by diffing this gesture's before and
     /// after**, never by comparing the live scene against the blueprint. That
-    /// comparison spans edits, so editing a blueprint froze the old values into
+    /// comparison spans edits, so a blueprint edit would freeze the old values into
     /// every instance as fake overrides.
     ///
     /// Returns nullopt when there is nothing to record: no table, not a member, or

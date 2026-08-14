@@ -24,8 +24,8 @@ target_link_libraries(Assisi-Physics-Tests
 # Scene stores components by ComponentId, which the static initializers reflectgen
 # emits into the *-Generated OBJECT libraries assign. Transform lives in the ECS
 # layer (Assisi-ECS-Generated); RigidBody / RigidBodyDescriptor in Physics's own.
-# Without both, the pools these tests touch have no registration and Add<T> fires
-# the static_assert / stores nothing.
+# Without both, the pools these tests touch have no registration and Add<T> trips
+# its debug contract assert (and stores nothing).
 target_sources(Assisi-Physics-Tests PRIVATE
   $<TARGET_OBJECTS:Assisi-ECS-Generated>
   $<TARGET_OBJECTS:Assisi-Physics-Generated>

@@ -687,13 +687,12 @@ TEST_CASE("EditHistory: empty history and no-op transactions are safe")
     CHECK_FALSE(hist.CanUndo());
 }
 
-// Round-6 review C4: on undo of an entity delete, EditHistory restores each
-// component and fires the rebind hook immediately — in registry (alphabetical)
-// order. A component that sorts before Transform (Camera here; RigidBodyDescriptor
-// in the app) is therefore rebound while Transform is still absent. The app's
-// physics rebind reads Transform at that moment and, finding none, silently skips
-// creating the Jolt body. The invariant: when any component is rebound during a
-// revive, its siblings from the same snapshot are already present.
+// The invariant: when any component is rebound during a revive, its siblings from
+// the same snapshot are already present. Components restore in registry
+// (alphabetical) order, so one sorting before Transform (Camera here;
+// RigidBodyDescriptor in the app) would otherwise be rebound while Transform is
+// still absent — and the app's physics rebind, finding none, silently skips
+// creating the Jolt body.
 TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component is rebound")
 {
     Scene scene;
@@ -728,7 +727,7 @@ TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component
     hist.Undo(); // revive + restore components, firing the hook per component
     REQUIRE(scene.IsAlive(e));
     REQUIRE(sawCameraRebind);
-    CHECK(transformPresentAtCameraRebind); // false today: hook fires before Transform is restored
+    CHECK(transformPresentAtCameraRebind); // the whole set is added before any rebind fires
 }
 
 TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below it")
