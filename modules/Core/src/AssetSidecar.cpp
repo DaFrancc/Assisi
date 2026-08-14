@@ -32,7 +32,7 @@ std::string SerializeSidecar(const AssetSidecar &sidecar)
     document["guid"]    = sidecar.guid.ToString();
 
     // Composite manifest: emitted only when present, so a leaf asset's sidecar
-    // stays a plain `{version,type,guid}` (unchanged from S1).
+    // stays a plain `{version,type,guid}`.
     if (!sidecar.subAssets.empty())
     {
         nlohmann::json subAssets = nlohmann::json::array();

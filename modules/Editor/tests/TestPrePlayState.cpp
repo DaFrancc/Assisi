@@ -7,19 +7,18 @@
 /// The failure this exists to prevent edits a file nobody asked it to edit.
 /// Joining a session loads the *host's* level into the edited world, which
 /// clears the instance table and refills it with the host's rows, every one of
-/// them flagged `authored`. Stop used to restore the entities, the level path
-/// and the system list — and not the table. So you came back to your own level
+/// them flagged `authored`. A Stop that restores the entities, the level path
+/// and the system list but not the table leaves the author on their own level
 /// holding somebody else's instances, with no dirty marker and nothing on screen
-/// to say so, and the next Save wrote them into your file over your own.
+/// to say so, and the next Save writes them into their file.
 ///
 /// What is covered here is the restore itself: capture, let a session overwrite
 /// the table however it likes, restore, and check that what comes back is the
 /// author's table down to the id allocator. What is *not* covered is StopPlay
 /// actually calling it — that path needs a live EditorApp (ImGui, GLFW, Jolt)
 /// and there is no headless harness for it. Keeping the capture and the restore
-/// to one call each is the structural half of that: B4 was a forgotten field in
-/// a per-field capture, and a field cannot be forgotten from a struct that is
-/// assigned whole.
+/// to one call each is the structural half: a field cannot be forgotten from a
+/// struct that is assigned whole.
 
 #include <doctest/doctest.h>
 

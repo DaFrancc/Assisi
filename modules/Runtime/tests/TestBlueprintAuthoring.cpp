@@ -327,13 +327,12 @@ TEST_CASE("Authoring: children saved without their parent stand where they stood
 
 TEST_CASE("Authoring: the origin comes from the set being written, not from beside it")
 {
-    // Round-7 S16's other half. The editor anchored on `_selection.front()`, which
-    // is not necessarily in the captured set — a selected entity that is dead or
-    // mirrored is skipped on the way in, and the origin still came from it. Then
-    // every member is written around a pose no member has, and the whole copy
-    // stands off by the difference. Taking the set rather than an entity is what
-    // makes that unsayable, so the contract worth pinning is that the front of the
-    // set is the anchor.
+    // Round-7 S16's other half. An anchor taken from the selection rather than from
+    // the captured set can be an entity that was skipped on the way in — a dead or
+    // uneditable one — and then every member is written around a pose no member has
+    // and the whole copy stands off by the difference. Taking the set rather than an
+    // entity is what makes that unsayable, so the contract worth pinning is that the
+    // front of the set is the anchor.
     ECS::Scene scene;
 
     ECS::Transform pose = At(4.f, 0.f, 0.f);

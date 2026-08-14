@@ -14,14 +14,11 @@ std::optional<std::uint64_t> HashTextFileNormalized(const std::filesystem::path 
     if (!file.is_open())
         return std::nullopt;
 
-    // Read through the stream rather than an istreambuf_iterator pair. The
-    // iterator drives the streambuf directly, with nothing between a failing
-    // `underflow` and the caller: libstdc++ lets its exception escape the string
-    // constructor, so a path naming a directory took the process down, and the
-    // state check that stood here was dead either way — the iterator sets
-    // neither eofbit nor failbit, so a short read hashed what it got and called
-    // it a success. `read` runs the same failure through its sentry, which
-    // records badbit and returns.
+    // Read through the stream, never an istreambuf_iterator pair. The iterator
+    // drives the streambuf directly, so libstdc++'s `underflow` failure escapes
+    // as an exception (a path naming a directory), and it sets neither eofbit
+    // nor failbit, so a short read looks like success. `read` runs the same
+    // failure through its sentry, which records badbit and returns.
     std::string bytes;
     std::array<char, 64 * 1024> chunk{};
     while (file.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) || file.gcount() > 0)

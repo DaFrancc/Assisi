@@ -7,7 +7,7 @@
 /// Declared with ASYSTEM rather than registered by hand, because that *is* the
 /// thing under test: a declaration in a reflected header reaches the catalog by
 /// being linked, and a level naming it gets it. Nothing calls a registration
-/// function, which is the point — there is no longer one to forget.
+/// function, which is the point — there is none to forget.
 ///
 /// Defined inline, deliberately. assisi_link_reflections sweeps *every* generated
 /// object into each final executable, so a header whose registrations reference

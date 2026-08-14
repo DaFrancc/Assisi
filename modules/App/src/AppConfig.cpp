@@ -77,10 +77,6 @@ AppConfig AppConfig::LoadFromJson()
         Core::Log::Warn("Failed to parse game.json: {} — using defaults.", e.what());
     }
 
-    // Zero needs no clamp: the pruner is given this run's own artifact as
-    // protected, so 0 means "keep no history" rather than "delete the log you
-    // are writing".
-
     // A zero rate silently disables fixed update (step = inf) and a negative
     // one makes the accumulator loop in Application::Run non-terminating, so
     // reject both here rather than trusting the config file.

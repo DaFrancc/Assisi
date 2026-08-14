@@ -212,8 +212,8 @@ void EditorApp::SubmitColliderWireframes()
 
         // Silhouette outlines (collider volume + entity mesh) are a selection
         // highlight, so only the selection gets them: each one costs a full-screen
-        // edge-detect pass per frame, and outlining every rigidbody multiplied that
-        // by the body count.
+        // edge-detect pass per frame, which outlining every rigidbody would
+        // multiply by the body count.
         if (selected)
         {
             outlinedAsBodies.push_back(entity);

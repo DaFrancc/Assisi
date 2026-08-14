@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file OutlinePass.hpp
-/// @brief Coloured always-on-top / depth-tested silhouette outline via
-/// screen-space edge detection.
+/// @brief Coloured always-on-top silhouette outline via screen-space edge
+/// detection.
 
 #include <cstdint>
 #include <span>
@@ -25,8 +25,7 @@ class MeshBuffer;
 /// Technique — the same screen-space edge detect Unreal uses, which (unlike a
 /// normal-extruded "hull" outline) is clean on any topology, boxes included:
 ///   1. Mask pass — render each silhouette into a single-channel offscreen
-///      coverage mask. Depth test off ("always on top"), or tested against the
-///      scene depth so occluded parts of the silhouette drop out.
+///      coverage mask, depth test off, so occluded parts still count.
 ///   2. Edge pass — a fullscreen triangle reads that mask and paints the caller's
 ///      colour on pixels just OUTSIDE the covered region.
 ///

@@ -244,8 +244,8 @@ void SceneRenderer::Render(const Render::RenderFrame &frame, ECS::Scene &scene,
     // independently rather than merging into one border. Drawn on top of the scene.
     {
         // One scope for both outline sources (submitted groups + the highlight):
-        // they are the same pass paying the same per-group cost, and splitting them
-        // would only say which caller queued the work, not what it cost.
+        // same pass, same per-group cost, so a split would name the caller rather
+        // than the cost.
         ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "outlines");
         if (_outlinePass.IsValid())
         {

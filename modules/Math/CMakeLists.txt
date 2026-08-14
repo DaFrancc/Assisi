@@ -12,9 +12,8 @@ target_include_directories(Assisi-Math
 )
 
 # GLM.hpp is a public header that includes <glm/glm.hpp>, so Math owns the glm
-# dependency and propagates its include path to every consumer. (Previously glm
-# only reached Math's consumers transitively through Render, which broke the
-# moment a renderer-free module — Physics — depended on Math alone.)
+# dependency and propagates its include path to every consumer — not only the
+# ones that also link Render.
 target_link_libraries(Assisi-Math
   PUBLIC
     glm::glm

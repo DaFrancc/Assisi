@@ -98,8 +98,9 @@ struct ComponentMeta
     /// True for normal ACOMP components. False for ACOMP(transient) components,
     /// which register only to receive a stable ComponentId (so a Scene can store
     /// them) but carry no serialize/addToScene/iterateEntities/getByEntity/
-    /// construct/getMutable hooks — those are all null. This is the explicit gate consumers must check
-    /// before invoking a hook; do not probe the hooks for null yourself.
+    /// construct/getMutable hooks — those are all null. This is the explicit
+    /// gate consumers must check before invoking a hook; do not probe the hooks
+    /// for null yourself.
     /// Examples: Physics::RigidBody (wraps a live Jolt handle that must never be
     /// saved), Runtime::DestroyTag (a transient per-frame lifecycle marker).
     bool serializable = true;
@@ -121,15 +122,12 @@ struct ComponentMeta
     /// flag says the type has a defined wire form; whether any particular entity
     /// actually sends it is decided elsewhere — by the `Replicated` marker's
     /// exclusion mask (per entity) and the game's `neverReplicate` list (per
-    /// game). Fusing the two is what let a one-word edit inside a *physics*
-    /// module become network policy for every game built on this engine; an
-    /// engine module cannot know a game's policy, so it is no longer able to set
-    /// one. See docs/replication-optin-plan-v1.md.
+    /// game). Keeping them apart is what stops an engine module setting network
+    /// policy for every game built on it. See docs/replication-optin-plan-v1.md.
     ///
-    /// Opt-in, and deliberately so: replication is the one consumer that pays for
-    /// a component by default rather than by request, and "everything
-    /// serializable travels" shipped a `Camera` whose `isActive` could hijack the
-    /// receiving client's view.
+    /// Opt-in: a type must not acquire a wire form by accident. "Everything
+    /// serializable travels" replicates things like a `Camera` whose `isActive`
+    /// would hijack the receiving client's view.
     ///
     /// A replicable component is always also tracked — reflectgen implies
     /// `tracked` from `replicable`, because an untracked component's change tick

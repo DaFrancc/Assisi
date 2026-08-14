@@ -50,12 +50,11 @@ ECS::Transform TransformFromJson(const nlohmann::json &value)
     if (!value.is_object())
         return out;
 
-    // Every slot checked, not just the array's length: this guarded `is_array()`
-    // and `size()` and then read the elements as floats, so a hand-edited
-    // `"position": ["a","b","c"]` was the right shape and still threw. A slot that
-    // is not a number leaves the whole field at its default — this reads a
-    // *placement*, whose caller (an instance entry) has already been validated,
-    // and there is nothing here to hand a failure back to.
+    // Every slot checked, not just the array's length: a hand-edited
+    // `"position": ["a","b","c"]` is the right shape and throws on `get<float>()`.
+    // A slot that is not a number leaves the whole field at its default — this
+    // reads a *placement*, whose caller (an instance entry) has already been
+    // validated, and there is nothing here to hand a failure back to.
     const auto readAll = [&value](const char *key, std::size_t count, float *into)
                          {
                              const auto it = value.find(key);
@@ -348,11 +347,6 @@ std::string QualifyName(std::string_view prefix, std::string_view name)
     return std::string{prefix} + std::string{name};
 }
 
-/// Calls @p rewrite on every EntityRef field of every component in @p components.
-///
-/// Reflection is what makes this possible at all: a reference is a *string* in the
-/// file, indistinguishable from any other string without asking the component what
-/// its fields mean.
 /// True if @p components declares a Parent whose target is not null. Such a member
 /// is positioned relative to that parent, so the instance's placement must not be
 /// composed onto it a second time.
@@ -367,6 +361,11 @@ bool DeclaresParent(const nlohmann::json &components)
     return parent != it->end() && !parent->is_null();
 }
 
+/// Calls @p rewrite on every EntityRef field of every component in @p components.
+///
+/// Reflection is what makes this possible at all: a reference is a *string* in the
+/// file, indistinguishable from any other string without asking the component what
+/// its fields mean.
 template <typename Fn> void ForEachEntityRef(nlohmann::json &components, Fn &&rewrite)
 {
     if (!components.is_object())
@@ -506,8 +505,8 @@ void ApplyMemberOverride(BlueprintMemberDesc &member, const nlohmann::json &comp
     // The flip also invalidates the composition flatten already did. A member that
     // has just become parented is holding a Transform with the chain's placement
     // baked in and must give it back; one that has just been cut loose never got it
-    // and now needs it. Doing only the first half is what put a member the whole
-    // nesting placement away from its instance.
+    // and now needs it. Both halves, or the member ends up the whole nesting
+    // placement away from its instance.
     ECS::Transform current;
     if (const auto it = member.components.find("Transform"); it != member.components.end())
         current = TransformFromJson(*it);
@@ -638,8 +637,8 @@ std::expected<void, BlueprintError> FlattenInstance(FlattenState &state, const n
     const std::string childPrefix = prefix + name + "/";
     const std::size_t first       = state.out->members.size();
 
-    // Hoisted out of the recursive call: the read has to be checked before the
-    // recursion it feeds, which is the one shape the old throw let us skip.
+    // Read here rather than inside the recursion, so a failed read is checked
+    // before it feeds one.
     const std::expected<nlohmann::json, BlueprintError> childDoc = ReadFile(childSource);
     if (!childDoc)
         return std::unexpected(childDoc.error());

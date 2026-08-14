@@ -47,8 +47,10 @@ public:
     GpuTelemetry(const GpuTelemetry &)            = delete;
     GpuTelemetry &operator=(const GpuTelemetry &) = delete;
 
-    /// The latest sample, re-querying the driver only once the throttle interval
-    /// has elapsed since the last query. Lazily initialises NVML on first call.
+    /// The latest sample the background worker has published — never touches the
+    /// driver, never blocks. The first call spins the worker up (and with it the
+    /// NVML init); the worker re-queries on its own throttle interval. The
+    /// reference stays valid until the next Poll().
     const GpuTelemetrySample &Poll();
 
 private:

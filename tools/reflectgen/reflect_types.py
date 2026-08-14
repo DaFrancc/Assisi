@@ -146,11 +146,10 @@ TYPES: dict[str, TypeCodegen] = {
         'InstanceRef',
         '{a}.value',
         '{{ std::uint32_t _n = {a}.value; if (!Assisi::Core::Reflect::ReadUInt32(j, _comp, "{f}", _n)) return false; {a} = Assisi::ECS::InstanceId{{ _n }}; }}'),
-    # Core::ShortString — a small fixed-capacity inline string (e.g. an entity
-    # Name). Serialized as a JSON string of its view; Assign() re-imposes the
-    # capacity on load. Same codegen as AssetPath but a distinct FieldType so the
-    # editor renders a plain text box (no asset-browse button). Accepts every
-    # spelling.
+    # Core::ShortString — a small fixed-capacity inline string. Serialized as a
+    # JSON string of its view; Assign() re-imposes the capacity on load. Same
+    # codegen as AssetPath but a distinct FieldType so the editor renders a plain
+    # text box (no asset-browse button). Accepts every spelling.
     'ShortString': TypeCodegen(
         'String',
         'std::string({a}.View())',
@@ -190,12 +189,12 @@ TYPES: dict[str, TypeCodegen] = {
         'AssetPath',
         'std::string({a}.View())',
         '{{ std::string _s; if (!Assisi::Core::Reflect::ReadString(j, _comp, "{f}", _s)) return false; if (j.contains("{f}")) {a}.Assign(_s); }}'),
-    # std::vector<Core::AssetPath> — a variable-length list of virtual paths
-    # (e.g. MeshRenderer's per-slot material overrides). Serialized as a JSON
-    # array of strings; deserialize clears then rebuilds, so a shorter saved
-    # array shrinks the vector rather than leaving stale tail entries. Accepts
-    # unqualified and qualified element spellings (no internal-whitespace forms;
-    # keep the declaration spelled like the keys below).
+    # std::vector<Core::AssetPath> — a variable-length list of virtual paths.
+    # Serialized as a JSON array of strings; deserialize clears then rebuilds, so
+    # a shorter saved array shrinks the vector rather than leaving stale tail
+    # entries. Accepts unqualified and qualified element spellings (no
+    # internal-whitespace forms; keep the declaration spelled like the keys
+    # below).
     'std::vector<AssetPath>':               _ASSET_PATH_VECTOR,
     'std::vector<Core::AssetPath>':         _ASSET_PATH_VECTOR,
     'std::vector<Assisi::Core::AssetPath>': _ASSET_PATH_VECTOR,
@@ -258,8 +257,7 @@ _ENTITY_REF_TYPES = {'ECS::Entity', 'Assisi::ECS::Entity'}
 UNSUPPORTED_TYPES: dict[str, str] = {
     # The engine requires explicit-width integer types everywhere, so the
     # implementation-defined spellings are rejected by name rather than silently
-    # reflected. Previously `int` was a supported type while int64_t/uint64_t were
-    # hard build errors — exactly backwards from the project's own rule.
+    # reflected.
     'int':                'use int32_t (or int64_t) — bare int has an implementation-defined width',
     'unsigned':           'use uint32_t (or uint64_t) — bare unsigned has an implementation-defined width',
     'unsigned int':       'use uint32_t (or uint64_t) — bare unsigned int has an implementation-defined width',

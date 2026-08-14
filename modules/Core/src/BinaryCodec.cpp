@@ -834,18 +834,17 @@ std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
 
     for (const ComponentMeta &meta : components)
     {
-        text += std::to_string(meta.id.value); // hashed layout text, printf-shaped
+        text += std::to_string(meta.id.value); // hashed layout text
         text += ' ';
         text += meta.name;
         // Whether the component replicates at all is wire semantics, not layout:
         // two builds that disagree about it exchange different component sets
         // while every field description matches, so nothing else here would
         // catch it.
-        // The emitted spelling is deliberately *not* renamed alongside the flag:
-        // this text is hashed, and changing a word here would repartition every
-        // deployed build into incompatible pairs for no semantic reason. The
-        // flag is `replicable` in C++; the wire calls it what it always called
-        // it. TestReplication pins the hash across the rename to prove it.
+        // The emitted word stays `replicated` even though the C++ flag is
+        // `replicable`: this text is hashed, so changing a word here would
+        // repartition every deployed build into incompatible pairs for no
+        // semantic reason.
         text += meta.replicable ? " replicated" : " local";
         text += '\n';
 

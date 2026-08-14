@@ -254,11 +254,11 @@ struct LevelInstance
     /// What this instance changed: `{ memberPath: { ComponentName: {...} | null } }`.
     ///
     /// **Recorded, not computed.** An override exists because somebody edited that
-    /// field, not because a comparison found a difference — the computed version
-    /// was built once and it silently froze the old values into every instance as
-    /// fake overrides the moment the blueprint changed. A field nobody touched
-    /// re-reads from the source on every load, which is what makes "fix it once,
-    /// fixed everywhere" true and is the whole point of the format.
+    /// field, not because a comparison found a difference — a computed diff freezes
+    /// the old values into every instance as fake overrides the moment the blueprint
+    /// changes. A field nobody touched re-reads from the source on every load, which
+    /// is what makes "fix it once, fixed everywhere" true and is the whole point of
+    /// the format.
     ///
     /// Addresses downward and never upward: a level placing a lot may override
     /// `car_3/wheel_fl/…`. `null` reads unambiguously as "this instance does not
@@ -298,7 +298,7 @@ struct BlueprintInstance
     /// Distinct from `levelInstanceIndex` because an instance the author places in
     /// the editor is authored but has no index yet; it gets one the next time the
     /// file is written. Deriving "should this be saved?" from the index instead
-    /// dropped every freshly placed instance on the first save.
+    /// drops every freshly placed instance on the first save.
     bool authored = false;
 
     /// Index in the level file's `instances` array for an instance the level
@@ -419,9 +419,8 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 ///
 /// This is the polite half of that rule: the editor calls it so an author who
 /// places a second car gets `car_1` instead of a refusal. The refusal itself
-/// lives in `SceneSerializer::PlaceInstance`, because a rule enforced only by
-/// the callers who remember it is the bug this was written for (round-7 S17:
-/// "Place instance" uniquified, "Create blueprint from selection" did not).
+/// lives in `SceneSerializer::PlaceInstance` — a rule enforced only by the
+/// callers who remember it is a rule one gesture will skip (round-7 S17).
 ///
 /// Unnamed instances are not considered and never collide — see PlaceInstance.
 [[nodiscard]] std::string UniqueInstanceName(const InstanceTable &table, std::string_view stem);
@@ -482,13 +481,13 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// first of them, or the identity if that one carries no Transform.
 ///
 /// Takes the set rather than one entity so the anchor cannot come from outside
-/// the file being written. The editor's gesture builds its capture set by
-/// dropping selected entities that are dead or not editable, and anchoring on
-/// the raw selection instead let a dropped one supply the origin: every member
-/// then goes into the file measured from a pose no member has, and the copy that
-/// replaces them stands off by the difference (round-7 S16). The front is the
-/// anchor because the *first* entity selected is a stable choice and the last is
-/// not — an author Ctrl-clicking three more things should not move the origin.
+/// the file being written. The editor's gesture drops selected entities that are
+/// dead or not editable, and anchoring on the raw selection lets a dropped one
+/// supply the origin: every member then goes into the file measured from a pose
+/// no member has, and the copy that replaces them stands off by the difference
+/// (round-7 S16). The front is the anchor because the *first* entity selected is
+/// a stable choice and the last is not — an author Ctrl-clicking three more
+/// things should not move the origin.
 [[nodiscard]] ECS::Transform AuthoringOriginFor(const ECS::Scene &scene,
                                                 std::span<const ECS::Entity> entities);
 

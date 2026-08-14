@@ -5,23 +5,20 @@
 /// @brief Bit-granular little-endian writer/reader — the network codec's
 ///        lowest layer.
 ///
-/// Bit-level from day one, deliberately: the two biggest wins a state-replication
-/// codec has — a 1-bit "unchanged" flag per field and smallest-three quaternions
-/// (2 + 9 + 9 + 9 = 29 bits) — are arithmetically impossible on a byte-aligned
-/// writer, and retrofitting bit granularity under a shipped wire format is a
-/// format *and* protocol-hash break at exactly the moment bandwidth starts
-/// hurting. The v1 field encoders above this layer stay whole-value (see
-/// Reflect/BinaryCodec.hpp); the primitive is bit-capable so quantizers drop in
-/// later with no format break.
+/// Bit-granular because the two biggest wins a state-replication codec has — a
+/// 1-bit "unchanged" flag per field and smallest-three quaternions
+/// (2 + 9 + 9 + 9 = 29 bits) — are impossible on a byte-aligned writer, and
+/// retrofitting bit granularity under a shipped wire format breaks the format
+/// and the protocol hash together. The v1 field encoders above this layer stay
+/// whole-value (see Reflect/BinaryCodec.hpp); quantizers drop in later with no
+/// format break.
 ///
 /// **Bit order: LSB-first within each byte.** The first bit written lands in bit
 /// 0 of byte 0, the ninth in bit 0 of byte 1. A multi-bit value is written
 /// low-bits-first, so a byte-aligned `WriteBits(v, 8)` stores exactly `v`, and a
-/// byte-aligned 32-bit write stores little-endian bytes — the same order the
-/// engine's target platforms use natively, so a future memcpy fast path is a
-/// drop-in. (LSB-first is the conventional choice: Quake, Source, yojimbo and
-/// GNS's own serializers all do it.) Reader and writer are exact mirrors; the
-/// round-trip tests pin the symmetry.
+/// byte-aligned 32-bit write stores little-endian bytes — the order the target
+/// platforms use natively, so a memcpy fast path would be a drop-in. Reader and
+/// writer are exact mirrors; the round-trip tests pin the symmetry.
 ///
 /// **Trust boundary.** BitWriter serializes data this process owns and cannot
 /// fail (it grows its own buffer). BitReader eats *untrusted network bytes*, so
@@ -58,11 +55,11 @@ inline constexpr std::size_t kMaxStringBytes = 4096;
 // ClientId live in NetSync, InstanceId in ECS, and Core sits below both, so
 // naming one would invert the dependency.
 //
-// The point of routing them through here rather than open-coding
-// `WriteVarUInt32(id.value)`: the width comes from the id's own declaration, so
-// widening one is an edit to that declaration and nothing else. An open-coded
-// call silently keeps the old width, and a too-narrow *read* truncates — which
-// does not fail, it just yields a valid id naming something else.
+// Routing them through here rather than open-coding `WriteVarUInt32(id.value)`
+// takes the width from the id's own declaration, so widening an id is an edit
+// to that declaration and nothing else. An open-coded call keeps the old width,
+// and a too-narrow *read* truncates — which does not fail, it just yields a
+// valid id naming something else.
 
 /// @brief Bit-granular writer over a growable byte buffer.
 ///
@@ -126,12 +123,11 @@ public:
 
     /// @brief Maps @p value from [@p min, @p max] onto @p bits of resolution.
     ///
-    /// Reserved for the quantizers the design defers past v1 (positions,
-    /// velocities, smallest-three quaternions): the field encoders in
-    /// Reflect/BinaryCodec.hpp stay whole-value, so nothing calls this yet. It
-    /// exists now so the primitive is provably bit-capable rather than
-    /// aspirationally so. Values outside the range are clamped; @p bits must be
-    /// in 1..32 and @p max must exceed @p min.
+    /// Reserved for the quantizers deferred past v1 (positions, velocities,
+    /// smallest-three quaternions): the field encoders in
+    /// Reflect/BinaryCodec.hpp stay whole-value, so nothing calls this yet — it
+    /// exists so the primitive is provably bit-capable. Values outside the range
+    /// are clamped; @p bits must be in 1..32 and @p max must exceed @p min.
     void WriteFloatQuantized(float value, float min, float max, std::uint32_t bits);
 
     /// @brief Advances to the next byte boundary, zero-filling. Only needed by a
@@ -200,9 +196,9 @@ public:
     /// the range check comes from the id's own declaration, so widening the type
     /// widens what the wire accepts with no edit here and none at the call sites.
     ///
-    /// Refused rather than truncated, on the same principle as ReadStringInto
-    /// above — a truncated id is not a detectably broken id, it is a valid one
-    /// naming a different object, and it propagates silently from there.
+    /// Refused rather than truncated, on the same principle as ReadStringInto:
+    /// a truncated id is not a detectably broken id, it is a valid one naming a
+    /// different object, and it propagates silently from there.
     template <StrongId T> T ReadVarId()
     {
         const std::uint64_t raw = ReadVarUInt64();

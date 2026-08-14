@@ -12,7 +12,7 @@
 /// @code{.json}
 /// {
 ///   "version": 2,
-///   "profile": "Gameplay",
+///   "systems": ["Bounce"],
 ///   "entities": [
 ///     {
 ///       "name": "body",
@@ -32,24 +32,21 @@
 /// Entity IDs are not persisted; loading always clears the scene first and
 /// allocates fresh sequential entities so generation numbers stay at zero.
 ///
-/// ## Names, and why v1 is gone
+/// ## Names
 /// Every entity carries a `name`, unique within the file, and every EntityRef
 /// field (`Parent::parent` and friends) stores that name rather than a position
 /// in the array. Positions are only safe while nothing outside the file points
 /// into it, and blueprint overrides point into it by design: an override that
 /// says "entity #1" means something different the moment somebody inserts a
-/// member above it, and a red wheel silently becomes a red headlight. The same
-/// fragility was already latent in `Parent`, where a hand-edited or merged file
-/// could re-target a parent link with no error at all.
+/// member above it, and a red wheel silently becomes a red headlight.
 ///
-/// The name lives on the entity as Runtime::Name, which is the same field the
-/// editor already shows — one name per entity, not a file identity beside a
-/// display label. Load fills it in for every entity, so a name is never absent
-/// after a round trip.
+/// The name lives on the entity as Runtime::Name, the same field the editor
+/// shows — one name per entity, not a file identity beside a display label.
+/// Load fills it in for every entity, so a name is never absent after a round
+/// trip.
 ///
-/// There is **no v1 reader**. The four level files in the tree were converted
-/// when the format changed (docs/blueprint-system-concept.md §6); carrying a
-/// positional path forever would have kept the failure it exists to remove.
+/// There is **no v1 reader**: a positional path would keep the exact failure
+/// names exist to remove (docs/blueprint-system-concept.md §6).
 ///
 /// A file is refused outright — the load fails and leaves an empty scene — for a
 /// duplicate name, a missing or empty name, a name too long for Runtime::Name,
@@ -59,9 +56,9 @@
 ///
 /// ## Transient fields
 /// Fields marked AFIELD(transient) (e.g. GPU handles, raw pointers) are
-/// excluded from serialization.  Components where every field is transient
-/// (e.g. MeshRenderer) are saved as an empty object `{}` — their
-/// presence on the entity is preserved but no data is restored.
+/// excluded from serialization.  A component whose fields are all transient is
+/// saved as an empty object `{}` — its presence on the entity is preserved but
+/// no data is restored.
 
 #include <cstdint>
 #include <expected>
@@ -95,24 +92,18 @@ struct LevelHeader
     std::vector<LevelInstance> instances;
 
     /// @brief The systems this file needs, by name — closer to a module import
-    /// than an include.
-    ///
-    /// **Profiles are gone.** A profile was a second vocabulary a level had to
-    /// know, defined somewhere else, and "which systems does profile X install?"
-    /// was answerable only by reading the game's C++. A list is longer and more
-    /// straightforward (docs/blueprint-system-concept.md §8).
+    /// than an include (docs/blueprint-system-concept.md §8).
     ///
     /// The list is a **union, not a concatenation** — naming a system twice, or
     /// two nested blueprints both naming `Bounce`, installs it once — and **file
     /// order carries no meaning**, because run order comes from `after`/`before`
-    /// on the system itself. An unknown name is a **hard error at load**: a level
-    /// that names a system this build does not have is a level that will run
-    /// without it, which is the silent failure the whole design opens with.
+    /// on the system itself. This reader accepts any name; a name this build does
+    /// not declare is refused by WorldManager::ApplySystems, because a level that
+    /// names a system it does not get is a level that runs without it, silently.
     ///
     /// The list is authored, never derived. Inferring it from the members'
-    /// components is tempting and wrong, and not hypothetically — every blueprint
-    /// with a rigid body would declare a dependency on physics when almost none
-    /// mean it.
+    /// components would have every blueprint with a rigid body declare a
+    /// dependency on physics when almost none mean it.
     std::vector<std::string> systems;
 };
 
@@ -193,15 +184,14 @@ public:
     ///
     /// A version mismatch, a bad top-level shape, and a serialization context
     /// already live on this thread (ContextBusy — a load cannot run inside another
-    /// one, because the clear below would strand the outer context's tables on
-    /// destroyed entities) are all refused *before* the scene is cleared, so that
-    /// caller keeps what it had; every other failure is
-    /// a file this got partway through, and leaves an empty scene rather than a
-    /// half-built one — LevelFailure::sceneReplaced is how a caller learns which
-    /// of those it got.
+    /// one, because the clear would strand the outer context's tables on destroyed
+    /// entities) are all refused *before* the scene is cleared, so that caller
+    /// keeps what it had. Every other failure is a file this got partway through,
+    /// and leaves an empty scene rather than a half-built one.
+    /// LevelFailure::sceneReplaced is how a caller learns which of those it got.
     ///
-    /// Returning a bare bool — or nothing — is what made a version mismatch read
-    /// as a *successful* load of an empty level all the way up to the caller.
+    /// The return type is the error channel and has to stay one: a bare bool makes
+    /// a version mismatch read as a *successful* load of an empty level.
     [[nodiscard]] static LevelResult Load(ECS::Scene &scene, const nlohmann::json &j,
                                           const LoadOptions &options = {});
 
@@ -302,9 +292,11 @@ public:
     /// selection" half of authoring.
     ///
     /// Members are stored around @p origin rather than around wherever they were
-    /// standing, so the new file is placeable: a parentless entity's transform is
-    /// divided by the origin, and a parented one is already relative to its parent
-    /// and left alone.
+    /// standing, so the new file is placeable. An entity whose parent comes along
+    /// is already relative to that parent and left alone; every other entity is a
+    /// root of the new file and is written as its *world* transform measured from
+    /// @p origin — including one whose parent was left behind, whose local offset
+    /// names a space the new file does not have.
     ///
     /// A reference pointing *outside* @p entities becomes null, with a warning —
     /// the same rule entity migration follows, and for the same reason: the file
@@ -337,18 +329,11 @@ public:
 
     /// @brief Write the scene to a JSON file at the given filesystem path.
     ///
-    /// @return true on success, false if the file could not be opened.
+    /// @return true on success, false if the file could not be opened or the
+    ///         write did not complete.
     static bool SaveToFile(ECS::Scene &scene, const std::filesystem::path &path, const LevelHeader &header = {},
                            InstanceTable *instances = nullptr);
 
-    /// @brief Load the scene from an asset-relative path via AssetSystem.
-    ///
-    /// @param assetPath  Virtual path relative to the asset root (e.g. "levels/main.json").
-    /// @param onProgress Optional; forwarded to Load() (see it) for load-progress UI.
-    /// @param header     Optional; receives the file's non-entity metadata.
-    /// @param instances  Optional; forwarded to Load() (see it). A file with
-    ///                   instances fails to load without one.
-    /// @return true on success, false on any IO or parse error.
     /// @brief The systems a level names, read **without** loading it.
     ///
     /// Exists because a load that fails after filling the scene cannot be undone.
@@ -363,8 +348,19 @@ public:
     [[nodiscard]] static std::expected<std::vector<std::string>, LevelError>
     ReadLevelSystems(std::string_view assetPath);
 
-    /// The catch below clears a half-populated scene, and reports the clearing as
-    /// its own: a throw is the one path where Load cannot say so itself.
+    /// @brief Load the scene from an asset-relative path via AssetSystem.
+    ///
+    /// Reads and parses the file before calling Load, so an unreadable or
+    /// unparseable one costs the caller nothing.
+    ///
+    /// @param assetPath Virtual path relative to the asset root (e.g.
+    ///        "levels/main.alvl").
+    /// @param options   Forwarded to Load; see LoadOptions.
+    /// @return Load's own result, or FileUnreadable / MalformedJson for a file
+    ///         that never reached it. A throw out of a component's addToScene
+    ///         hook is caught here: it clears the half-populated scene and
+    ///         reports the clearing as its own, because a throw is the one path
+    ///         where Load cannot say so itself.
     [[nodiscard]] static LevelResult LoadFromFile(ECS::Scene &scene, std::string_view assetPath,
                                                   const LoadOptions &options = {});
 
@@ -443,15 +439,15 @@ public:
     /// The generated serialize/deserialize for an `AFIELD() ECS::Entity` field
     /// (e.g. `Parent.parent`) routes through EntityToRef/RefToEntity, which resolve
     /// names only inside Save/Load. Called outside that (e.g. the editor undo/redo
-    /// system capturing or restoring a single component's JSON), they return
-    /// "unknown" and the field silently collapses to NullEntity — flattening the
-    /// hierarchy with no error.
+    /// system capturing or restoring a single component's JSON), they resolve to
+    /// NullEntity and the field silently collapses — flattening the hierarchy with
+    /// no error.
     ///
     /// Within this scope the mapping is identity-preserving instead:
     ///   - EntityToRef(e) returns a packed (slot, generation) key, no remap;
     ///   - RefToEntity(k) returns the live handle at that slot, but only when its
-///     generation still matches the one packed into `k` — a recycled slot
-///     resolves to NullEntity rather than to its new occupant.
+    ///     generation still matches the one packed into `k` — a recycled slot
+    ///     resolves to NullEntity rather than to its new occupant.
     /// This is exact only because the paired restore uses Scene::ReviveAt to bring
     /// entities back at their original (index, generation) — EntityAt(index) then
     /// resolves to the same handle that was captured.
@@ -462,8 +458,10 @@ public:
     /// ReviveAt exact-identity guarantee). Do not mix the two — a raw-context
     /// payload is not a valid level file and vice versa.
     ///
-    /// Non-reentrant with Save/Load and with itself: exactly one context (remap or
-    /// raw) may be active per thread at a time.
+    /// Non-reentrant with Save/Load and with itself. Serialization contexts stack;
+    /// this one does not stack with anything, because the hooks check it first —
+    /// so a raw context and a serialization context are never both live on a
+    /// thread.
     class ScopedRawEntityContext
     {
 public:

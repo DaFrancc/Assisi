@@ -324,11 +324,10 @@ public:
 private:
     /// How much of one entity a connection is known to have.
     ///
-    /// Per entity, never one tick per connection. With a single global tick, an
-    /// entity skipped for byte budget was still listed in the in-flight
-    /// snapshot, so on ack its pending changes were declared delivered and never
-    /// sent again. Here an entity the budget skipped simply keeps its old
-    /// baseline.
+    /// Per entity, never one tick per connection: an entity the byte budget
+    /// skipped is still listed in the in-flight snapshot, so a single global tick
+    /// would declare its pending changes delivered on ack and never send them.
+    /// Per entity, the skipped one simply keeps its old baseline.
     struct EntityBaseline
     {
         std::uint64_t componentTick = 0; ///< Component state delivered up to here.
@@ -563,9 +562,8 @@ private:
     ///
     /// Both reference kinds or neither: an entity handle and a blueprint instance
     /// id are equally per-machine, and a codec site that remembers one and
-    /// forgets the other writes a number naming the sender's world. Six sites
-    /// each remembering two lines is how that happened once already (round-7
-    /// B12), so the lines live here and the sites ask for a context.
+    /// forgets the other writes a number naming the sender's world. The hooks
+    /// live here rather than at each site, so no site can install half the set.
     ///
     /// @param assignment Whether an unidentified entity is given a NetId. Events
     ///                   want OnDemand — announcing something spawned this frame
@@ -668,11 +666,14 @@ private:
     /// Refresh `_bodyStates` from the physics world. Once per tick, before any
     /// snapshot is built, for the same reason as ReconcileNetIds.
     ///
-    /// Three cases:
+    /// Four cases:
     ///  - an awake body — recorded every tick;
     ///  - a body that just *stopped* being active — its rest state must be
     ///    recorded and its tick bumped, because the sleep transition is itself a
     ///    change and nothing later restates it;
+    ///  - a resting body whose pose moved anyway — nothing wakes a body for an
+    ///    editor drag or a gameplay reposition, so the active set never reports
+    ///    it and the pose is polled instead;
     ///  - a NetId seen for the first time — recorded whatever its state, so
     ///    joining a world that settled before anyone connected gives sleeping
     ///    mirrors at the server's rest poses instead of a client-side re-settle.

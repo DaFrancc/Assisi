@@ -42,12 +42,9 @@ inline constexpr Entity NullEntity = {InvalidEntityIndex, InvalidEntityIndex};
 
 /// @brief Lets an Entity be a hash-map key directly.
 ///
-/// Both halves are part of the identity, so the two must be combined rather than
-/// hashed on the index alone: a slot reused after a destroy is a *different*
-/// entity, and hashing only the index would put every life of one slot in the
-/// same bucket. Packing them into one 64-bit value is exact — the fields are
-/// 32 bits each — so this loses nothing and collides no more than the underlying
-/// integer hash does.
+/// Both halves are part of the identity — a slot reused after a destroy is a
+/// *different* entity — so hashing the index alone would bucket every life of one
+/// slot together. Packing the two 32-bit fields into one 64-bit value is exact.
 template <> struct std::hash<Assisi::ECS::Entity>
 {
     std::size_t operator()(const Assisi::ECS::Entity &entity) const noexcept

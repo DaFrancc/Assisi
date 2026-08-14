@@ -3,9 +3,8 @@
 /// @file ColliderPose.cpp
 /// @brief Implements ColliderBodyModel — see the header for what it answers.
 ///
-/// A free function in its own unit rather than an EditorApp member: the pose is
-/// the whole of the bug this fixes, and the Editor test binary compiles this file
-/// directly (Runtime alone, no ImGui/GLFW/Jolt) to hold it to it.
+/// A free function in its own unit rather than an EditorApp member, so the Editor
+/// test binary can compile it directly — Runtime alone, no ImGui/GLFW/Jolt.
 
 #include <Assisi/Editor/ColliderPose.hpp>
 

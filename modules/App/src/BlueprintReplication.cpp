@@ -168,8 +168,8 @@ public:
             return false;
 
         // Expansion composes the placement onto every *parentless* member's
-        // Transform (SceneSerializerInstances.cpp:378-386), so the block alone is
-        // only the authored local. Away from the origin it matches nothing — and
+        // Transform (SceneSerializerInstances.cpp), so the block alone is only the
+        // authored local. Away from the origin it matches nothing — and
         // matches exactly when the member has been moved *to* that local, eliding
         // the one value the far side did not already have.
         //
@@ -257,9 +257,9 @@ public:
         // the same reason: expansion produces the members from the prepared form,
         // which holds asset *ids*, and the draw path reads the transient pointers
         // those resolve to. An expansion that skips it mirrors the world correctly
-        // and renders none of it. The editor happens to re-resolve the whole scene
-        // when the client's structure revision moves (EditorApp.cpp), so this was
-        // invisible there and total in a build with no editor in it (round-7 S14).
+        // and renders none of it — invisible in the editor, which re-resolves the
+        // whole scene when the client's structure revision moves (EditorApp.cpp),
+        // and total in a build with no editor in it.
         //
         // A no-op on a headless client, which is the same answer SpawnBlueprint
         // gives: no cache, nothing to resolve onto, and no entity left worse off.
@@ -280,7 +280,7 @@ public:
         // are the caller's business, and a row outliving them is the leak this
         // exists to close. It is what the viewport draws an instance icon from
         // and what PickInstance ray-tests, so one left behind is a ghost that is
-        // still clickable (round-7 S5, corrected in §9.5).
+        // still clickable.
         _world.instances.Remove(localInstance);
     }
 

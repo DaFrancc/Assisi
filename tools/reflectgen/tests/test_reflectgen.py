@@ -4,10 +4,11 @@
 
 reflectgen is a regex-based C++ parser that emits engine-critical registration
 code. These tests defend it against silent regex regressions: a checked-in
-golden output for a fixture header that exercises every supported field type
-and edge case, plus targeted behavioural cases (comment stripping, namespace
-capture, transient exclusion, the unsupported-type hard fail, EntityRef include
-emission).
+golden output for a fixture header covering the scalar, glm, enum, string and
+path field types plus the annotation edge cases, and targeted behavioural cases
+for everything the fixture does not reach (comment stripping, namespace capture,
+transient exclusion, the unsupported-type hard fail, EntityRef include emission,
+AssetId, messages, handlers, systems).
 
 Run directly (`python test_reflectgen.py`) or via ctest. To adopt a deliberate
 change to the generated output, regenerate the golden:
@@ -126,7 +127,7 @@ class CodegenTest(unittest.TestCase):
     def test_asset_path_vector_serializes_as_a_string_array(self):
         components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
         cpp = reflectgen.generate_cpp(components, SAMPLE_INCLUDE)
-        # Field metadata carries the new enum value.
+        # Field metadata carries the vector's own FieldType.
         self.assertIn('"paths", Assisi::Core::Reflect::FieldType::AssetPathVector', cpp)
         # Serialize builds a JSON array from each path's View().
         self.assertIn("nlohmann::json::array()", cpp)
@@ -170,7 +171,7 @@ class CodegenTest(unittest.TestCase):
             "};\n}\n"
         )
         cpp = reflectgen.generate_cpp(comps, "N/Ref.hpp")
-        # Field metadata carries the new enum values.
+        # Field metadata carries the scalar and vector FieldTypes.
         self.assertIn('"mesh", Assisi::Core::Reflect::FieldType::AssetId', cpp)
         self.assertIn('"slots", Assisi::Core::Reflect::FieldType::AssetIdVector', cpp)
         # Serialize/deserialize route through the Core AssetId JSON helpers.
@@ -377,9 +378,10 @@ class ParserEdgeCaseTest(unittest.TestCase):
         self.assertIn("may not hold an InstanceView", str(caught.exception))
 
     def test_a_transient_instance_view_field_is_still_a_hard_error(self):
-        # The distinction that matters: AFIELD(transient) excuses a type that
-        # cannot serialize, but the objection here is to storing it at all, so
-        # transient must NOT be a way through.
+        # A field spelling InstanceView<> outright, marked AFIELD(transient):
+        # generate_cpp still raises. The spelling is literal, so the plain
+        # substring check is what fires; the exception is not matched, so this
+        # does not pin *which* check refused it.
         components = _parse_source(
             "namespace N {\nACOMP()\n"
             "struct C { AFIELD(transient) InstanceView<Car> car = {}; "
@@ -389,8 +391,9 @@ class ParserEdgeCaseTest(unittest.TestCase):
             reflectgen.generate_cpp(components, "N/C.hpp")
 
     def test_an_instance_id_field_is_the_supported_way(self):
-        # The id is what may be kept, so this must keep working — otherwise the
-        # ban above would have no legal alternative to point at.
+        # The id is what may be kept, so the ban above has a legal alternative to
+        # point at. Pins only that generate_cpp accepts the field: "instance"
+        # matches the field name, not FieldType::InstanceRef.
         components = _parse_source(
             "namespace N {\nACOMP()\n"
             "struct C { AFIELD() ECS::InstanceId instance = {}; };\n}\n"
@@ -669,7 +672,7 @@ class ReplicationAnnotationTest(unittest.TestCase):
 
     def test_the_retired_replicated_spelling_is_rejected_by_name(self):
         # It would otherwise parse as an unknown flag and be silently ignored,
-        # un-replicating a component that used to travel.
+        # taking the component off the wire without a word.
         src = "namespace N {\nACOMP(replicated)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
@@ -857,8 +860,8 @@ class RadioTest(unittest.TestCase):
             "Assisi::Core::Reflect::RadioBehavior::Grey",
             cpp,
         )
-        # The broadcaster enum stays an ordinary enum field (no radio members),
-        # now carrying its width (default int -> 4, signed).
+        # The broadcaster enum stays an ordinary enum field (no radio members)
+        # and carries its width (default int -> 4, signed).
         self.assertIn(
             'offsetof(T, mode), false, false, false, false, 0.f, 0.f, '
             '{ { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 4, true }',
@@ -1156,11 +1159,11 @@ class SubjectFieldTest(unittest.TestCase):
     names".
 
     The event-side counterpart to AFIELD(controlled), and it exists for the same
-    reason: which entity the engine acts on is marked rather than inferred. The
-    subject used to be whichever EntityRef field was declared first, so
-    reordering two fields silently changed who received the message, and an event
-    whose first reference happened to be null was indistinguishable from an
-    independent one — which meant broadcast to everyone, past relevancy.
+    reason: which entity the engine acts on is marked rather than inferred.
+    Inferring it from declaration order would let a reorder change who receives
+    the message, and would make an event whose reference happens to be null
+    indistinguishable from an independent one — broadcast to everyone, past
+    relevancy.
     """
 
     def test_subject_reaches_the_field_metadata(self):
@@ -1175,8 +1178,8 @@ class SubjectFieldTest(unittest.TestCase):
                       'Assisi::Core::Reflect::RadioBehavior::None, false, true', cpp)
 
     def test_an_event_with_an_entity_must_mark_its_subject(self):
-        # The defect this annotation replaced: with no mark, the engine took the
-        # first EntityRef field, whatever it held.
+        # An unmarked EntityRef is not a subject by default: the alternative is
+        # routing by whichever field happens to come first.
         src = ("namespace N {\nAMSG(event, unreliable)\n"
                "struct Boom { AFIELD() Assisi::ECS::Entity what; };\n}\n")
         _, messages, _ = _parse_full(src)

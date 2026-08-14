@@ -3,11 +3,10 @@
 /// @file TestDiagnostics.cpp
 /// @brief Launch stamps and artifact retention.
 ///
-/// The property under test throughout is that a run cannot lose its own log.
-/// Every case here corresponds to a way that has actually failed: a filename
-/// that sorts wrong because local time moved backwards, and two processes that
-/// computed the same name because the stamp had one-second resolution. Both
-/// were silent — the log went missing with nothing to say it had.
+/// The property under test throughout is that a run cannot lose its own log, and
+/// each case covers a way it can: a filename that sorts wrong because local time
+/// moved backwards, and two processes computing the same name at one-second
+/// resolution. Both fail silently — the log goes missing with nothing to say so.
 
 #include <doctest/doctest.h>
 
@@ -111,11 +110,10 @@ TEST_CASE("PruneOldFiles keeps the newest and deletes the rest")
 
 TEST_CASE("PruneOldFiles never deletes the protected file")
 {
-    // The case that made this function wrong. LaunchStamp() is local time, so a
-    // DST fall-back, a westward flight or an NTP step backwards gives this run a
-    // name that sorts OLDEST of the set. Sorting alone would delete it first —
-    // on POSIX while its descriptor is still open, so the run would go on
-    // writing into an unlinked inode and lose everything at exit.
+    // LaunchStamp() is local time, so a DST fall-back or an NTP step backwards
+    // gives this run a name that sorts OLDEST of the set. Sorting alone would
+    // delete it first — on POSIX while its descriptor is still open, so the run
+    // would go on writing into an unlinked inode and lose everything at exit.
     const std::string current = "assisi-20260809-140000-1.log"; // launched in New York
     const auto populate = [&current](const TempDir &target)
                           {
@@ -158,8 +156,8 @@ TEST_CASE("PruneOldFiles with keep = 0 still keeps the current run")
     dir.Touch("assisi-20260809-110000-1.log");
     dir.Touch(current);
 
-    // 0 means "keep no history", not "delete the log being written" — which is
-    // what game.json documents and what the removed clamp used to contradict.
+    // 0 means "keep no history", not "delete the log being written", matching
+    // what game.json documents.
     PruneOldFiles(dir.path, "assisi-", ".log", 0, current);
 
     CHECK(dir.Names() == std::vector<std::string>{current});

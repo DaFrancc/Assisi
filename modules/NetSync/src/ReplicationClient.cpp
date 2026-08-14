@@ -596,13 +596,13 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
 
     // A record dies with its last member — the *same* predicate the server
     // resends on, since an instance leaves `knownInstances` exactly when no
-    // member of it is left to be relevant. Anything narrower breaks: matching a
-    // run against a record's exact base and width kept both records alive when
-    // two adjacent instances left in one run (six ids over two blocks of three)
-    // while destroying all six entities, and the resend then found the records
-    // present, skipped the expansion, and left the members as bare mirrors
-    // attributed to nothing — permanently, because authored-value elision
-    // suppresses everything still equal to the file on an empty baseline.
+    // member of it is left to be relevant. Anything narrower breaks: one run can
+    // span two adjacent blocks, so matching a run against a record's exact base
+    // and width leaves both records alive with all their entities destroyed. The
+    // resend then finds the records present, skips the expansion, and leaves the
+    // members as bare mirrors attributed to nothing — permanently, because
+    // authored-value elision suppresses everything still equal to the file on an
+    // empty baseline.
     //
     // Only records a run actually touched are considered: one whose members have
     // not arrived yet — held back by the byte budget, or waiting on an expander —

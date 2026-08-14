@@ -79,9 +79,9 @@ TEST_CASE("DeserializeAssetId yields nil on malformed input")
 
 TEST_CASE("DeserializeAssetId does not throw on an object with a wrong-typed 'guid' (round-6 C2)")
 {
-    // { "guid": 42 } — value("guid", std::string{}) throws json::type_error
-    // because the key is present with the wrong type; a hand-edited level file
-    // must degrade to nil, not crash the loader.
+    // { "guid": 42 } — the key is present with the wrong type, which
+    // `value("guid", std::string{})` would throw json::type_error on. A
+    // hand-edited level file must degrade to nil, not crash the loader.
     const nlohmann::json obj = {{"guid", 42}};
     AssetId id;
     CHECK_NOTHROW(id = DeserializeAssetId(obj));

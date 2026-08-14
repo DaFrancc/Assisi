@@ -2,21 +2,15 @@
 #pragma once
 
 /// @file World.hpp
-/// @brief A level at runtime — scene + physics + the per-level state that used
-///        to live as scattered members of the app — and the manager that owns
-///        them. Design: docs/multi-scene-design-notes.md.
+/// @brief A level at runtime — scene + physics + the state that is per-level
+///        rather than per-app — and the manager that owns every resident one.
+///        Design: docs/multi-scene-design-notes.md.
 ///
-/// An app used to hold "the" scene and "the" physics world as members. That
-/// works exactly as long as one level is resident, which is not long: a game
-/// changing level mid-play needs the outgoing and incoming levels alive at the
-/// same time, and a game running two levels at once (different players in
-/// different places) needs both simulating. Both are just "more than one
-/// World".
-///
-/// Stage S1 introduces the bundle and moves the app onto it without changing
-/// behaviour: exactly one world exists, and it is both the active and the
-/// edited world. Multiple residents (S2) and in-play level change (S3) build on
-/// this without touching the panels.
+/// Several worlds can be resident at once, because one "the scene" plus one
+/// "the physics world" only carries a host that never has two levels alive: a
+/// game changing level mid-play needs the outgoing and incoming levels alive at
+/// the same time, and a game running two levels at once (different players in
+/// different places) needs both simulating.
 
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
@@ -117,14 +111,12 @@ struct World
     /// Systems a blueprint spawned into this world has asked for, waiting for the
     /// frame's safe point (App::QueueSystemInstall / App::DrainSystemInstalls).
     ///
-    /// **A member, not a process-global list keyed by `World*`.** That list was
-    /// the previous design, and it could outlive the world it named: the frame
-    /// loop drains one line after the marshalled work where deferred level loads
-    /// land, which is exactly what frees worlds, so a queued entry became a
-    /// use-after-free — or worse, was inherited by whatever the allocator put at
-    /// that address next. Owned by the world, none of that is expressible: the
-    /// queue cannot outlive its world, and replacing the world's content
-    /// (ApplySystems) drops it with the rest of what that content owned.
+    /// **A member, not a process-global list keyed by `World*`.** The frame loop
+    /// drains one line after the marshalled work where deferred level loads land,
+    /// which is exactly what frees worlds — so an entry held outside the world
+    /// could name freed memory. Owned by the world, the queue cannot outlive it,
+    /// and replacing the world's content (ApplySystems) drops it with the rest of
+    /// what that content owned.
     struct PendingSystems
     {
         /// A union, not a concatenation — a hundred bullets spawned in one frame
@@ -217,10 +209,6 @@ public:
     // by the *list of names* its file carries. Code defines the systems — they
     // are C++ functions, so data cannot create them — and declares them with
     // ASYSTEM, which is what puts them in the catalog; a file merely names them.
-    //
-    // This replaced named profiles, which were a second vocabulary a level had to
-    // know, defined somewhere else, where "which systems does profile X install?"
-    // was answerable only by reading the game's C++.
 
     /// @brief Installs @p names into @p world, replacing whatever it had.
     ///
@@ -239,11 +227,9 @@ public:
     ///         caller refuses the load. (`world.systemNames` is the exception: it
     ///         records what the file asked for either way, since that is what a
     ///         save round-trips.)
-    /// `[[nodiscard]]`, and it earned it: every caller but one was discarding the
-    /// result with `(void)`, so a level naming a system this build does not
-    /// declare loaded, went Active, and ran none of it — silently. Discarding is
-    /// still allowed where it is genuinely meaningless (an empty list), but it
-    /// now has to be written down rather than typed by habit.
+    /// `[[nodiscard]]`: silently discarding the result loads a level that runs
+    /// none of its systems. Write the discard down where it is genuinely
+    /// meaningless (an empty list).
     [[nodiscard]] bool ApplySystems(World &world, std::span<const std::string> names,
                                     std::string_view context);
 
@@ -493,9 +479,6 @@ private:
     World *_edited = nullptr;
     std::uint32_t _nextId = 1;
     Services _services;
-
-    // Profiles number in the handful and are looked up once per world load, so a
-    // vector scan beats hashing and keeps registration order for diagnostics.
 
     // Non-zero while a ForEach is walking _worlds; the mutating operations refuse
     // rather than invalidate it. A counter, not a flag, so nested iteration

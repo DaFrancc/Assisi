@@ -52,9 +52,9 @@ enum class LevelError : std::uint8_t
 /// had already replaced the caller's scene before it gave up.
 ///
 /// A refusal before the clear leaves the caller's entity handles valid; one after
-/// it leaves an empty scene those handles silently alias into (round-7 B20).
-/// @ref kind cannot answer which — `MissingName` is returned from both sides of
-/// the clear — so it is reported separately.
+/// it leaves an empty scene those handles silently alias into. @ref kind cannot
+/// answer which — `MissingName` is returned from both sides of the clear — so it
+/// is reported separately.
 struct LevelFailure
 {
     LevelError kind;
@@ -62,7 +62,7 @@ struct LevelFailure
     /// True if the caller's scene is gone. Set where the clearing happens.
     bool sceneReplaced = false;
 
-    /// So `result.error() == LevelError::DuplicateName` keeps working.
+    /// Lets `result.error() == LevelError::DuplicateName` compare directly.
     [[nodiscard]] friend bool operator==(const LevelFailure &failure, LevelError error)
     {
         return failure.kind == error;

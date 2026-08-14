@@ -343,7 +343,7 @@ TEST_CASE("Relevance::ControllerOnly reaches its controller and nobody else")
 TEST_CASE("ControllerOnly outranks an explicit grant")
 {
     // The one class that is not a preference. "Only this player may know about
-    // it" has to beat the provider, a grant, and Always alike, or it is not a
+    // it" has to beat both the provider and an explicit grant, or it is not a
     // privacy statement at all.
     Harness harness(Distance(1.f, 2.f, 0));
 

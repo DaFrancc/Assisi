@@ -452,8 +452,8 @@ TEST_CASE("Only one session runs at a time")
 
 TEST_CASE("Serializing while other threads emit stays consistent")
 {
-    // Stage 6 runs the dump on a JobSystem worker while the frame keeps going,
-    // so the pause-drain-read protocol has to hold with producers live.
+    // The dump runs on a JobSystem worker while the frame keeps going, so the
+    // pause-drain-read protocol has to hold with producers live.
     EnsureInitialized();
     const TempTrace trace("concurrent");
 

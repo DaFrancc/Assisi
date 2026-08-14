@@ -4,39 +4,26 @@
 /// @file BiMap.hpp
 /// @brief A one-to-one pairing that can be looked up from either side in O(1).
 ///
-/// The problem this exists for is not lookup speed; it is that two hash maps
-/// kept as each other's inverse have to be *written* as a pair, and nothing in
-/// the type system says so. The failure is always the same shape: one side is
-/// written, the other is refused — `emplace` does not overwrite, and its result
-/// is easy to discard — and the pairing is left half-installed. Nothing
-/// afterwards can see it, because each direction is only ever consulted through
-/// its own map, so the half that exists looks correct from one side and absent
-/// from the other. NetSync's server lost a NetId's reverse row exactly this way
-/// and never replicated that entity again.
+/// The point is not lookup speed; it is that two hash maps kept as each other's
+/// inverse have to be *written* as a pair, and nothing in the type system says
+/// so. Half-installed pairings are invisible — each direction is only consulted
+/// through its own map, so the half that exists looks correct from one side and
+/// absent from the other. Here every mutation writes both directions or neither,
+/// and both are checked before either is touched.
 ///
-/// So the invariant moves into the type: every mutation writes both directions
-/// or neither, and each is checked before either is touched. There is no
-/// operation that can leave one side ahead of the other.
-///
-/// **Insert refuses; it never evicts.** An id already paired with somebody else
-/// is a disagreement the container cannot resolve, and the caller is the only
-/// one who knows which pairing is the real one. Overwriting would orphan the
-/// incumbent's row on the *other* side — the exact corruption above, arrived at
-/// from the other direction. A caller who genuinely means replacement erases and
-/// then inserts, which is two visible operations instead of one silent one.
+/// **Insert refuses; it never evicts.** A value already paired with somebody
+/// else is a disagreement only the caller can resolve, and overwriting would
+/// orphan the incumbent's row on the *other* side. Replacement is erase then
+/// insert: two visible operations instead of one silent one.
 ///
 /// **Neither side is mutable through this API.** Lookups hand back `const`
-/// pointers and iteration is const-only, because rewriting half of a pairing in
-/// place is indistinguishable from the corruption this type prevents.
+/// pointers and iteration is const-only — rewriting half of a pairing in place
+/// is indistinguishable from the corruption this type prevents.
 ///
-/// Both keys are stored twice, which is the ordinary cost of the two-map design
-/// and is meant for small, cheap-to-copy keys — ids, handles, indices. It is the
-/// wrong container for pairing two large strings.
-///
-/// The alternative, for what it is worth, is one map plus a linear scan for the
-/// reverse direction: unbreakable for the same reason (there is nothing to keep
-/// in sync) and O(n) to read. Prefer this when the reverse lookup is on a path
-/// that runs per-entity per-frame.
+/// Both keys are stored twice, so this is for small, cheap-to-copy keys — ids,
+/// handles, indices — not for pairing two large strings. The alternative is one
+/// map plus a linear scan for the reverse direction: equally unbreakable, O(n)
+/// to read. Prefer this when the reverse lookup runs per-entity per-frame.
 
 #include <Assisi/Core/Assert.hpp>
 

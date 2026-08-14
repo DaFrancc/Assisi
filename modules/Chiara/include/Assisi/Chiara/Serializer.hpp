@@ -96,9 +96,10 @@ struct SessionStats
 
 /// @brief Drains whatever the rings hold into the open session file.
 ///
-/// Call once per frame — it returns immediately unless a ring is filling up, so
-/// the cost of asking is a few atomic loads. This is what keeps a session from
-/// losing events; nothing else calls it.
+/// Call once per frame — it returns immediately unless enough events or enough
+/// time have piled up since the last drain, so the cost of asking is a couple of
+/// loads. This is what keeps a session from losing events; nothing else drains
+/// the rings mid-session.
 void PumpSession();
 
 /// @brief Final drain, then closes the file. Safe to call when none is running.

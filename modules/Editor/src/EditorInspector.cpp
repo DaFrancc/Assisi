@@ -560,7 +560,7 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         if (serverOnly)
         {
             // Dropped here rather than at end of scope so the tag and its tooltip
-            // draw in their own colour, as they always have.
+            // draw in their own colour.
             chrome.EndTint();
             ImGui::SameLine();
             ImGui::TextDisabled("(server-only)");
@@ -808,7 +808,7 @@ void EditorApp::AddComponentToSelected(const Assisi::Core::Reflect::ComponentMet
     // if-contains deserialization leaves every field at its default when given an
     // empty object, so no component needs a bespoke "make default" hook. Nothing
     // in an empty object can be rejected, so the failure branch is unreachable
-    // today — kept because that is a property of the argument, not of the call.
+    // today; it is kept because that is a property of the argument, not the call.
     if (!meta.addToScene(_scene, _selectedEntity.index, _selectedEntity.generation,
                          nlohmann::json::object()))
     {

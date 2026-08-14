@@ -15,10 +15,10 @@
 ///
 /// **No site decides when the gesture is over.** A site holding the placement
 /// raises Hold() and nothing else; committing belongs to EndFrame(), called once
-/// after every panel has drawn. When each site judged for itself, the gizmo — which
-/// draws first and sees "the gizmo is not being held" throughout an Inspector
-/// scrub — committed a fresh entry every frame of that scrub, sixty times a second,
-/// until the real history had been evicted by its own noise.
+/// after every panel has drawn. A site judging for itself sees only its own state:
+/// the gizmo draws first and reads "the gizmo is not being held" throughout an
+/// Inspector scrub, so it would commit a fresh entry every frame of that scrub
+/// until the real history is evicted by its own noise.
 ///
 /// Same accumulate-then-sweep shape as the capture gestures
 /// (EditHistory::EndFrameSweep) and the physics freeze after it, for the same
@@ -78,8 +78,8 @@ public:
     ///
     /// "Moved nothing" means the *placement* is where it was, not that no member
     /// shifted. The two part company on an instance the placement reaches no member
-    /// of — every member parented elsewhere, or no members left — where taking the
-    /// members as the evidence left the move saved but not undoable.
+    /// of — every member parented elsewhere, or no members left — where member
+    /// poses as the evidence would leave the move saved but not undoable.
     void EndFrame(Assisi::ECS::Scene &scene, const Assisi::Runtime::InstanceTable &instances,
                   EditHistory *history, const char *label);
 

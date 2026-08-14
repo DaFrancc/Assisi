@@ -12,23 +12,6 @@
 namespace Assisi::NetSync
 {
 
-/// @brief Marks an entity as replicated: the server sends it to clients, and a
-/// client creates a local mirror of it.
-///
-/// An opt-in marker, not a default. Most entities in a level are static
-/// scenery that both sides already have from the level file, and replicating
-/// them would spend bandwidth restating what nobody is changing. Authored in
-/// the level (so it is a plain serialized ACOMP, not transient) and also added
-/// at runtime for spawned entities.
-///
-/// Carries no id: the NetId↔Entity mapping is per-session runtime state owned
-/// by ReplicationServer / ReplicationClient. Baking a session id into a level
-/// file would be meaningless the next time it loaded.
-///
-/// Deliberately *not* ACOMP(replicable) itself: it says only *that* an entity
-/// replicates, which the client learns from the spawn, so putting it on the wire
-/// would be pure overhead. The client adds its own copy to every mirror it
-/// creates.
 /// @brief How relevancy treats an entity that carries `Replicated`.
 ///
 /// The complete standard set, present in every system surveyed from Quake 3's
@@ -55,6 +38,23 @@ enum class Relevance : uint8_t
     ControllerOnly = 2,
 };
 
+/// @brief Marks an entity as replicated: the server sends it to clients, and a
+/// client creates a local mirror of it.
+///
+/// An opt-in marker, not a default. Most entities in a level are static
+/// scenery that both sides already have from the level file, and replicating
+/// them would spend bandwidth restating what nobody is changing. Authored in
+/// the level (so it is a plain serialized ACOMP, not transient) and also added
+/// at runtime for spawned entities.
+///
+/// Carries no id: the NetId↔Entity mapping is per-session runtime state owned
+/// by ReplicationServer / ReplicationClient. Baking a session id into a level
+/// file would be meaningless the next time it loaded.
+///
+/// Deliberately *not* ACOMP(replicable) itself: it says only *that* an entity
+/// replicates, which the client learns from the spawn, so putting it on the wire
+/// would be pure overhead. The client adds its own copy to every mirror it
+/// creates.
 ACOMP()
 struct Replicated
 {

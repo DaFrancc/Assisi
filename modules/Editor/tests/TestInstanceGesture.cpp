@@ -5,13 +5,13 @@
 ///
 /// The failure this exists to prevent has a name: **per-frame history**. An
 /// instance's placement is written by two sites — the gizmo handles and the
-/// Inspector's Placement fields — and each of them used to decide on its own
-/// when the gesture was over. The gizmo drew first in the frame, so an Inspector
-/// scrub opened a gesture the gizmo closed at the top of the next frame, over
-/// and over: sixty frames of dragging one field, sixty transactions, and a
-/// `kMaxDepth`-deep stack of noise where the author's real edits used to be.
-/// Ctrl-Z then walked the drag back one frame at a time and never reached the
-/// value the author started from (round-7 B19).
+/// Inspector's Placement fields — and neither may decide on its own when the
+/// gesture is over. The gizmo draws first in the frame, so an Inspector scrub
+/// would open a gesture the gizmo closes at the top of the next frame, over and
+/// over: sixty frames of dragging one field, sixty transactions, and a
+/// `kMaxDepth`-deep stack of noise in place of the author's real edits, with
+/// Ctrl-Z walking the drag back one frame at a time and never reaching the value
+/// the author started from.
 ///
 /// So the assertion that matters is not "a transaction is pushed" but "*one* is,
 /// and undoing it lands back where the drag began" — which is the only thing the
@@ -174,10 +174,9 @@ TEST_CASE("InstanceGesture: a scrub held across many frames is one undo entry")
     CHECK_FALSE(fixture.gesture.IsOpen());
     CHECK(fixture.history->UndoDepth() == 1);
 
-    // And it is the *whole* drag. This is the half that per-frame transactions got
-    // wrong in a way a depth count alone would not catch: sixty entries would also
-    // leave the scene at the right place, and Ctrl-Z would still walk back 0.1 at a
-    // time and land nowhere the author recognises.
+    // And it is the *whole* drag — the half a depth count alone would not catch:
+    // sixty entries also leave the scene at the right place, but Ctrl-Z walks back
+    // 0.1 at a time and lands nowhere the author recognises.
     const float endX = BodyX(fixture.scene, fixture.table, fixture.id);
     CHECK(endX == doctest::Approx(startX + 6.f));
 
@@ -246,9 +245,9 @@ TEST_CASE("InstanceGesture: an all-parented instance still records its move")
         fixture.HeldFrame(0.5f);
     fixture.ReleasedFrame();
 
-    // The three states have to agree. Before this was fixed they did not: the row
-    // was at 5, the save would have written 5, and the history was empty — so the
-    // move was on disk, not undoable, and never marked the scene dirty.
+    // The three states have to agree. Judging by member poses alone they do not:
+    // the row sits at 5 and the save writes 5 with the history empty, so the move
+    // reaches disk, is not undoable, and never marks the scene dirty.
     CHECK(fixture.history->UndoDepth() == 1);
     CHECK(fixture.table.Find(fixture.id)->transform.position.x == doctest::Approx(5.f));
 

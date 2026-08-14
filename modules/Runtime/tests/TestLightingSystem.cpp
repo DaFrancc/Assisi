@@ -19,9 +19,9 @@ bool Approx3(const glm::vec3 &a, const glm::vec3 &b)
 }
 } // namespace
 
-// Round-6 M2 follow-on: a spot light's direction is local and must be rotated by
-// the entity's world matrix, so a light parented to something that turns aims
-// with it. Position already behaved this way; direction did not.
+// A spot light's direction is local and is rotated by the entity's world matrix,
+// so a light parented to something that turns aims with it — the same rule its
+// position follows.
 TEST_CASE("WorldSpotDirection rotates a spot's local aim into world space")
 {
     const glm::vec3 forward{0.f, 0.f, -1.f};

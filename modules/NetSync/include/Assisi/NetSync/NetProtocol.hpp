@@ -232,9 +232,9 @@ enum class RejectReason : std::uint8_t
 ///    (same plan, M5).
 ///  - 6 → 7: `ClientHello.contentSetHash` and `RejectReason::ContentMismatch`
 ///    (docs/blueprint-system-concept.md §9).
-/// 8: the snapshot gained an instance-record section, ahead of despawns. A v7
-/// client reads that count as its despawn count and desyncs the whole stream, so
-/// this is a refuse-to-join change, not a tolerable one.
+///  - 7 → 8: the snapshot gained an instance-record section, ahead of despawns.
+///    A v7 client reads that count as its despawn count and desyncs the whole
+///    stream, so this is a refuse-to-join change, not a tolerable one.
 ///  - 8 → 9: an instance record carries **which of its members exist** — one bit
 ///    for "all of them", and one bit per member when they do not
 ///    (docs/blueprint-review-round7-findings.md B8). Nothing on the wire said so
@@ -393,9 +393,10 @@ template <> struct IsStrongId<NetSync::NetId> : std::true_type
 };
 static_assert(StrongId<NetSync::NetId>);
 
-/// Never on the wire as an id today — a ClientId reaches a peer inside a
-/// component, not as a bare field — but it is the same kind of thing, and
-/// declaring it here is what keeps that a decision rather than an oversight.
+/// Reaches a peer inside a component (`ControlledBy`) and, as a bare field, in
+/// `ServerHello.clientId` — which encodes it as a plain `WriteVarUInt32` of the
+/// value rather than through `WriteVarId`. Declaring the opt-in here is what
+/// keeps that a decision rather than an oversight.
 template <> struct IsStrongId<NetSync::ClientId> : std::true_type
 {
 };

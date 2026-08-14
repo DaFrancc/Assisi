@@ -77,7 +77,7 @@ public:
     /// command list and submits it once (see AssetCache's shared upload list), which
     /// avoids a fresh command list + staging allocation + queue submit per texture.
     /// When null (the synchronous convenience path) a private command list is
-    /// created, recorded, closed, and executed here as before.
+    /// created, recorded, closed, and executed here.
     void UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, const char *debugName = nullptr,
                        nvrhi::ICommandList *sharedList = nullptr);
 

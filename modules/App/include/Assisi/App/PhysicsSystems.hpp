@@ -54,11 +54,8 @@ inline constexpr float kMinBounceSpeed = 0.001f;
 /// Register it in **FixedUpdate**, which puts it immediately before its world's
 /// physics step: it consumes the contacts the previous step found, and the
 /// velocity it writes is the one the next step simulates, with no frame of wasted
-/// motion in between. The world's PhysicsWorld must have contact reporting on
-/// **It turns contact reporting on for its own world**, once, on first run. That
-/// used to be the *level's* job through its profile, which meant a level that
-/// forgot the line got a system that ran and silently did nothing. The need
-/// belongs to the system, so anyone who names it gets it — one branch per fixed
+/// motion in between. It turns contact reporting on for its own world, so a level
+/// that names it does not also have to ask for reporting — one branch per fixed
 /// step, and it survives a world that turns reporting back off. The cost is that
 /// the very first step of a world's life has no contacts yet, which is one step
 /// of a bounce nobody can see.

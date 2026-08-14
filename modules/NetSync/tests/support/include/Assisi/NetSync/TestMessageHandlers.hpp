@@ -37,8 +37,6 @@ struct HandlerLog
     std::uint32_t burstCalls       = 0;
     std::uint32_t announceCalls    = 0;
 
-    /// The last payload each handler saw, so a round trip is checked all the way
-    /// through dispatch rather than only through the codec.
     std::uint32_t movePawnCalls = 0;
 
     std::uint32_t tagInstanceCalls   = 0;
@@ -46,6 +44,8 @@ struct HandlerLog
     std::uint32_t knockbackCalls     = 0;
     std::uint32_t reliableHitCalls   = 0;
 
+    /// The last payload each handler saw, so a round trip is checked all the way
+    /// through dispatch rather than only through the codec.
     TestPlaceMarker lastPlaceMarker;
     TestPing lastPing;
     TestBurst lastBurst;

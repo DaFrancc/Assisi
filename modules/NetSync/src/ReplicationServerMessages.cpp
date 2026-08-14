@@ -368,10 +368,10 @@ bool ReplicationServer::EventReaches(const Connection &connection, NetId subject
     if (subject == InvalidNetId)
     {
         // Declared to be about an entity, and it named none. Withheld rather
-        // than broadcast: `InvalidNetId` used to be read as "independent" here,
-        // which made a scoped event indistinguishable from a global one and sent
-        // it to everybody — the relevancy boundary failing open, on the one path
-        // whose whole purpose is to fail closed.
+        // than broadcast: reading `InvalidNetId` as "independent" here would
+        // make a scoped event indistinguishable from a global one and send it to
+        // everybody — the relevancy boundary failing open, on the one path whose
+        // whole purpose is to fail closed.
         return false;
     }
     // The relevancy boundary reused rather than re-derived, so the zero-bytes
@@ -420,11 +420,10 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
     std::vector<std::byte>           bytes(encoded.begin(), encoded.end());
 
     // What relevancy scopes this by: the entity named by the field the author
-    // marked AFIELD(subject). Marked rather than inferred — this used to take
-    // whichever `EntityRef` field came first, so declaration order silently
-    // decided the audience of a message naming two entities. reflectgen
-    // guarantees the shape read here: an event is `independent` and marks none,
-    // or it marks exactly one.
+    // marked AFIELD(subject). Marked rather than inferred, so declaration order
+    // cannot silently decide the audience of a message naming two entities.
+    // reflectgen guarantees the shape read here: an event is `independent` and
+    // marks none, or it marks exactly one.
     NetId subject = InvalidNetId;
     if (!meta->independent)
     {

@@ -111,9 +111,9 @@ void Complete(TaskState<T> &state)
 
 class JobSystem;
 
-/// @brief A handle to the eventual result of a Run()/Then() task. Move-only-ish
-/// value type (copyable — it shares the underlying state). Chain with Then();
-/// block for the result on the main thread with Wait()/Get().
+/// @brief A handle to the eventual result of a Run()/Then() task. Copyable —
+/// copies share the underlying state. Chain with Then(); block for the result on
+/// the main thread with Wait()/Get().
 template <class T>
 class Task
 {
@@ -138,8 +138,9 @@ public:
         return _state->done;
     }
 
-    /// @brief Help-wait until complete (runs queued worker tasks while waiting).
-    /// Main-thread / gate use (e.g. a loading screen polling to completion).
+    /// @brief Help-wait until complete: runs queued worker tasks while waiting,
+    /// and on the main thread queued main tasks too, so a chain ending in
+    /// Pool::Main completes instead of livelocking.
     void Wait();
 
     /// @brief The result (moved out). @pre IsComplete(). Only for non-void T.

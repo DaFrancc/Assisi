@@ -79,10 +79,12 @@ void ServerApp::OnStart()
         // LoadLevelSim, not LoadLevel: no asset cache, no scene renderer,
         // nothing GPU-owned to evict. Mesh and material GUIDs stay in the scene
         // as authored data for replication; the server never resolves them.
-        // Checked even though a headless server installs no systems at all. The
-        // file naming behaviour this build cannot supply is a broken file, and a
-        // server that serves it hands every client a level the host itself is
-        // not running — worse than refusing, because it looks like it worked.
+        //
+        // The declaration check runs even though a headless server installs no
+        // systems: a level naming a system this build does not declare is a
+        // broken file, and serving it hands every client a level the host
+        // itself is not running — worse than refusing, because it looks like it
+        // worked.
         if (!Assisi::App::LevelSystemsAreDeclared(_options.level))
         {
             Log::Error("Server: refusing '{}' — it names a system this build does not declare.",
@@ -95,7 +97,7 @@ void ServerApp::OnStart()
         if (!Assisi::App::LoadLevelSim(_world, _options.level))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
-            _startupFailed = true; // same reason as above: exiting 0 here hid a failed start
+            _startupFailed = true;
             RequestClose();
             return;
         }
@@ -186,10 +188,9 @@ void ServerApp::BuildJoinedWorld()
     if (hello == nullptr)
         return;
 
-    // Every way a join can be refused funnels through here, so the exit code is set
-    // here too rather than at each caller — a refusal added later gets it for free,
-    // which is how the ones below came to be missing it in the first place. A client
-    // that could not join never started, whatever the reason.
+    // Every way a join can be refused funnels through here, so the exit code is
+    // set once rather than at each caller. A client that could not join never
+    // started, whatever the reason.
     const auto fail = [this](std::string reason)
                       {
                           Log::Error("Client: join failed — {}", reason);

@@ -32,8 +32,8 @@ struct InstanceRecord
     ///
     /// Not the same fact as `memberCount`, which is the definition's width and
     /// stays fixed so destroying a member cannot shift its siblings' ids. Without
-    /// this, a client expanded every member and kept a live phantom for any the
-    /// host had pruned.
+    /// it a client expands every member and keeps a live phantom for each one the
+    /// host has pruned.
     std::vector<std::uint8_t> memberPresent;
 
     /// @brief Does the host have an entity for member @p index?
@@ -90,9 +90,9 @@ public:
     /// about — the instance table row App writes, which nothing else can reach.
     ///
     /// Not optional, and deliberately not defaulted to a no-op: an expander that
-    /// records nothing writes an empty body, but it has to say so. The version of
-    /// this interface without it leaked a row per instance for the length of a
-    /// session (round-7 S5) precisely because the question was never asked.
+    /// records nothing writes an empty body, but it has to say so. Leaving the
+    /// question unasked leaks one instance-table row per instance for the length
+    /// of the session.
     virtual void Collapse(ECS::InstanceId localInstance) = 0;
 };
 

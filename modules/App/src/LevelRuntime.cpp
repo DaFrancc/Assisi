@@ -81,11 +81,10 @@ Runtime::LevelResult LoadLevel(World &world, std::string_view virtualPath, const
     if (options.reset == AssetCacheReset::ClearFirst)
         Runtime::ClearBlueprintCache();
 
-    // Passed straight out rather than flattened to a bool. The deserializer knows
+    // Passed straight out rather than flattened to a bool: the deserializer knows
     // exactly what was wrong with the file and this is the only thing between it
-    // and the caller; a bool here is a reason discarded one frame after it was
-    // worked out, and every caller then logging "failed to load" is the visible
-    // cost of that.
+    // and the caller. A bool discards that reason and leaves every caller logging
+    // "failed to load".
     const Runtime::LevelResult loaded = Runtime::SceneSerializer::LoadFromFile(
         world.scene, virtualPath, {.header = options.header, .instances = &world.instances});
     if (!loaded)

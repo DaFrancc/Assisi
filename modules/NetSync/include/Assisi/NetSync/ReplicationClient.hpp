@@ -186,8 +186,9 @@ public:
     /// @brief Inverse of EntityOf: the wire identity of a local mirror, or
     /// InvalidNetId if this entity is not one.
     ///
-    /// A linear scan, deliberately: the only caller is an inspector asking about
-    /// one selected entity, and a reverse map would cost more to keep correct
+    /// A linear scan, deliberately: both callers — an inspector asking about one
+    /// selected entity, and the intent encoder's entity-ref hook — ask about a
+    /// single entity at a time, and a reverse map would cost more to keep correct
     /// than it saves.
     [[nodiscard]] NetId NetIdOf(ECS::Entity entity) const;
 
@@ -478,8 +479,9 @@ private:
     };
 
     /// Destroy the Jolt body behind a mirror, if it has one. Keyed by NetId
-    /// rather than read back off the entity because both callers — a despawn and
-    /// a locally-destroyed mirror — have already lost the entity by then.
+    /// rather than read back off the entity because two of its three callers — a
+    /// despawn and a locally-destroyed mirror — have already lost the entity by
+    /// then; only the descriptor-removal path still holds it.
     void DestroyMirrorBody(NetId netId);
 
     Net::NetTransport &_transport;
@@ -497,9 +499,10 @@ private:
 
     std::unordered_map<NetId, ECS::Entity>               _entityByNetId;
 
-    /// Instances named by the server, keyed by base NetId. Never cleared by an
-    /// individual snapshot — a record is a fact about the session, not about the
-    /// packet that carried it, and the same one arrives repeatedly until acked.
+    /// Instances named by the server, keyed by base NetId. The same record
+    /// arrives repeatedly until acked and only the first one expands. A record
+    /// outlives the packet that carried it, and is dropped only when a despawn
+    /// leaves its instance with no member bound, or when its expansion failed.
     std::unordered_map<NetId, InstanceRecord>            _instanceRecords;
 
     std::unique_ptr<InstanceExpander>                    _instanceExpander;

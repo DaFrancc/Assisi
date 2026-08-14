@@ -30,9 +30,8 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
 
     DrawStats stats;
 
-    // The ECS walk that stage F2 exists to delete. Keeping it under its own name
-    // is the point: when the dirty-tracked mirror lands, this slice is the
-    // before/after measurement.
+    // The ECS walk stage F2 exists to delete; its own profile slice is the
+    // before/after measurement for the dirty-tracked mirror.
     const Assisi::Render::MeshBuffer *anyMesh = nullptr;
     {
         ASSISI_PROFILE_SCOPE("cull-gather");
@@ -200,9 +199,8 @@ DrawStats DrawScene(const DrawSceneParams &params)
     // sort key is a total order over what matters, so stability is irrelevant.
     if (params.sortDraws)
     {
-        // Scoped rather than folded into draw-extract precisely because it is the
-        // half the `sortDraws` toggle turns off — the A/B is a slice appearing or
-        // not, with no arithmetic.
+        // Its own slice, not folded into draw-extract: `sortDraws` turns exactly
+        // this half off, so the A/B reads as a slice appearing or not.
         ASSISI_PROFILE_SCOPE("draw-sort");
         std::sort(items.begin(), items.end(),
                   [](const Assisi::Render::DrawItem &lhs, const Assisi::Render::DrawItem &rhs)

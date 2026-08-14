@@ -102,8 +102,7 @@ TEST_CASE("this binary actually has replicable components to test against")
 {
     // A guard, not a formality. Every test below translates through real
     // component names, and if the replicable set ever emptied they would all
-    // pass by doing nothing — which is exactly the failure that moved these
-    // tests out of the Core suite in the first place.
+    // pass by doing nothing.
     REQUIRE_FALSE(ComponentRegistry::Instance().ReplicableComponents().empty());
 }
 
@@ -200,9 +199,9 @@ TEST_CASE("a mask round-trips through the binary codec as names")
 
 TEST_CASE("an empty mask costs a single count varint on the wire")
 {
-    // Not a size assertion for its own sake: the default policy is "exclude
-    // nothing", so the empty case is what almost every entity pays, and it must
-    // stay negligible.
+    // The default policy is "exclude nothing", so the empty mask is what almost
+    // every entity carries: it has to encode, decode, and clear whatever the
+    // destination was already holding.
     const ComponentMeta meta = MaskHolderMeta();
     const ComponentMask empty;
     Assisi::Core::BitWriter writer;
@@ -253,7 +252,7 @@ TEST_CASE("a hostile element count cannot outrun the buffer")
     // Same framing WriteComponent produces — id, then the one-bit field mask —
     // with an absurd count spliced into the body.
     Assisi::Core::BitWriter hostile;
-    hostile.WriteVarUInt32(meta.id.value); // wire write
+    hostile.WriteVarUInt32(meta.id.value);
     hostile.WriteBits64(1, 1); // the single wire field is present
     hostile.WriteVarUInt64(1'000'000'000ull);
 

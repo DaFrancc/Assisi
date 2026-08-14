@@ -14,9 +14,8 @@ namespace Assisi::Core
 // The lock can be held by a thread that just died, and blocking there hangs the
 // process. But writing to the sinks anyway is not the answer: std::ofstream
 // carries no data-race guarantee, so an unlocked FileSink write races the put
-// area of a shared filebuf. Measured, that does not merely interleave one line
-// — it duplicates and byte-corrupts entries already in the file, which destroys
-// the log as evidence.
+// area of a shared filebuf, which duplicates and byte-corrupts entries already
+// in the file rather than merely interleaving one line.
 //
 // stdio is thread-safe ([C11 7.21.2]/7), so stderr takes the line without
 // touching anything a sink owns. Unbuffered, so it survives the abort that

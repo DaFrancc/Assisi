@@ -137,9 +137,8 @@ void EditorApp::StripReplicatedEntities()
     if (_scene == nullptr || _physics == nullptr)
         return;
 
-    // Shared with the headless client, which used to carry its own copy of this
-    // and had drifted: it ended the entities without taking their bodies out of
-    // the physics world, and never dropped the orphaned parent links.
+    // The engine's strip, shared with the headless client: one implementation, so
+    // the two cannot disagree about bodies or orphaned parent links.
     const Assisi::App::StrippedEntities stripped = Assisi::App::StripReplicatedEntities(*_scene, *_physics);
 
     if (stripped.entities != 0 || stripped.orphans != 0)
@@ -323,15 +322,12 @@ void EditorApp::ShutdownPieClients()
     }
 }
 
-// Joining leaves the camera exactly where the author pointed it, deliberately.
-//
-// Nothing has to preserve it: the fly camera is plain EditorApp state
-// (_cameraTransform), not an entity, so a level load cannot disturb it. What must
-// not come back is auto-framing. Focusing "the first mirrored entity" frames
-// whichever one happened to arrive first — in a level of falling crates, a crate
-// mid-fall — so the camera landed somewhere that depended on how long the join
-// took, further underground the later you joined. Double-clicking an entity in
-// the list is the deliberate version of the same thing.
+// Joining leaves the camera exactly where the author pointed it. Nothing has to
+// preserve it — the fly camera is plain EditorApp state (_cameraTransform), not an
+// entity, so a level load cannot disturb it — and nothing may auto-frame it:
+// framing "the first mirrored entity" lands wherever that entity happened to be
+// when it arrived. Double-clicking a row in the entity list is the deliberate
+// version.
 
 void EditorApp::ShutdownNetSession()
 {
@@ -413,9 +409,7 @@ void EditorApp::SmoothNetView()
 {
     // Must run from OnRender, after the physics writeback: it decays a bodied
     // mirror's visual offset onto the pose the writeback just wrote, so running
-    // first means writing an offset the writeback then erases. (It used to live in
-    // OnUpdate, which is safe only for interpolated mirrors — they have no
-    // writeback to lose to.)
+    // first means writing an offset the writeback then erases.
     if (_netSession)
         _netSession->SmoothView(ImGui::GetIO().DeltaTime);
 }
@@ -527,8 +521,7 @@ void EditorApp::DrawNetworkWindow()
 
     // Re-read liveness at every point that depends on it, never once at the top:
     // the buttons below can destroy the session *during this frame*, and a cached
-    // flag then describes a session that no longer exists. That is how the
-    // Disconnect button used to segfault.
+    // flag then describes a session that no longer exists.
     const auto active = [this] { return IsNetSessionActive(); };
 
     // ---- status line -------------------------------------------------------

@@ -10,8 +10,9 @@
 ///   - DirectionalLight  — direction is stored directly on the component;
 ///     no Transform is needed (it has no world position).
 ///   - PointLight        — requires a Transform for world position.
-///   - SpotLight         — requires a Transform for world position;
-///     direction is stored on the component.
+///   - SpotLight         — requires a Transform for world position; `direction`
+///     is stored on the component and is LOCAL, rotated into world by that
+///     Transform (see LightingSystem::WorldSpotDirection).
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -33,7 +34,7 @@ namespace Assisi::Runtime
 ACOMP()
 struct DirectionalLight
 {
-    AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< World-space direction toward the light (unit vector).
+    AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< World-space direction the light shines (unit vector).
     AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.
     AFIELD() float intensity = 1.f;
 };
@@ -58,7 +59,7 @@ struct PointLight
 ACOMP()
 struct SpotLight
 {
-    AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< World-space direction (unit vector).
+    AFIELD() glm::vec3 direction{0.f, -1.f, 0.f}; ///< Aim in LOCAL space; the Transform rotates it into world.
     AFIELD() glm::vec3 color{1.f, 1.f, 1.f};      ///< Linear-RGB colour.
     AFIELD() float intensity   = 1.f;              ///< May be negative (light subtraction).
     AFIELD(min = 0) float radius   = 10.f;         ///< Maximum influence range in world units; never negative.

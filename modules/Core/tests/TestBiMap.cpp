@@ -94,10 +94,10 @@ TEST_CASE("BiMap: a missing key resolves to nullptr on both sides")
 
 TEST_CASE("BiMap: a taken right is refused, and the refusal writes nothing")
 {
-    // The shape that cost NetSync an entity's replication: the *right* is the
-    // side already spoken for, so a container that writes the left first and
-    // then discovers the collision leaves a left row pointing at an id that does
-    // not point back. Checking only the return value would pass against that.
+    // The *right* is the side already spoken for, so a container that writes the
+    // left first and then discovers the collision leaves a left row pointing at
+    // an id that does not point back. Checking only the return value would pass
+    // against that.
     IntMap map;
     RequireInserted(map, 1, kRightBase + 1);
 

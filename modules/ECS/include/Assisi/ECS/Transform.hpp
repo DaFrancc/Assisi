@@ -8,8 +8,8 @@
 /// and the scene-graph hierarchy all read and write it. It lives here, in the
 /// ECS layer, precisely so it stays free of any renderer dependency — lower
 /// modules (e.g. Physics) can use it without pulling in nvrhi/GPU headers.
-/// Runtime re-exports it from Components.hpp, so `Runtime::Transform` still
-/// names this exact type for the render-facing code that grew up around it.
+/// Runtime re-exports it from Components.hpp, so `Runtime::Transform` names this
+/// exact type.
 
 #include <Assisi/Prelude.hpp>
 #include <Assisi/Math/GLM.hpp>
@@ -28,11 +28,10 @@ namespace Assisi::ECS
 /// (PropagateTransforms writes it via a plain Get, so that write does not itself
 /// re-mark the Transform changed).
 ///
-/// `replicable` as well: pose is the one thing every mirrored entity needs. The
+/// `replicable` as well: pose is the one thing every mirrored entity needs.
 /// `tracked` is spelled out beside it rather than left to `replicable`'s
-/// implication, because change detection here predates the network by a long way
-/// and PropagateTransforms depends on it — so if this type ever stopped being
-/// replicable, the explicit word is what keeps its ticks.
+/// implication, so that dropping `replicable` would not silently take
+/// PropagateTransforms's change signal with it.
 ACOMP(replicable, tracked)
 struct Transform
 {

@@ -129,11 +129,11 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
         // dividing it too would divide twice — its local offset is already right.
         //
         // Every other entity is a root of this file, including one whose parent was
-        // left behind. That parent is nulled just above, so what the file holds must
-        // be a pose measured from the origin rather than from a parent that is not
-        // coming: its own Transform is an offset in a space this file does not have,
-        // and writing it raw is what put the copy somewhere the original never stood
-        // (round-7 S16). WorldTransformOf resolves the chain that is being cut, so a
+        // left behind. That parent is nulled just above, so the file must hold a
+        // pose measured from the origin rather than from a parent that is not
+        // coming: the entity's own Transform is an offset in a space this file does
+        // not have, and writing it raw puts the copy somewhere the original never
+        // stood. WorldTransformOf resolves the chain that is being cut, so a
         // selection of children saved without their parent lands where it was.
         if (!parentComesAlong(entity))
         {

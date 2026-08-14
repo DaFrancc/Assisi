@@ -12,17 +12,15 @@
 ///
 /// **Two things the drawing code cannot be trusted with.**
 ///
-/// The release edge must not live at the bottom of the draw function. Every early
-/// return there — instance mode, a dead or non-editable entity, a Transform that
-/// went away — skipped it and left the "was dragging" flag raised, so the next
-/// frame that did reach the bottom read a release edge belonging to a drag that
-/// had ended frames ago and committed it against whatever was selected by then
-/// (ENG-127). Release() is therefore driven from outside the early returns: the
-/// draw function only reports whether the handles are held.
+/// The release edge is driven from outside the draw function, not from its bottom.
+/// Every early return there — instance mode, a dead or non-editable entity, a
+/// Transform that went away — would skip the commit and leave the edge raised, for
+/// the next frame that does reach the bottom to fire against whatever is selected
+/// by then. The draw function only reports whether the handles are held.
 ///
-/// And the entity set is the *drag's*, fixed at the press edge. Rebuilding it from
-/// the live selection each frame let the commit loop name entities the drag never
-/// moved — the selection is free to change under an open drag, the drag is not.
+/// And the entity set is the *drag's*, fixed at the press edge. The selection is
+/// free to change under an open drag; rebuilding the set from it each frame would
+/// commit entities the drag never moved.
 ///
 /// Same shape as InstanceGesture: state that outlives one panel's frame does not
 /// belong to the panel that draws it.
