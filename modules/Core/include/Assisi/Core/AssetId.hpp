@@ -44,7 +44,7 @@ struct AssetId
     /// the canonical string form. Default-constructed = nil (all zero).
     std::array<std::uint8_t, 16> bytes{};
 
-    friend bool                 operator==(const AssetId &, const AssetId &)  = default;
+    friend bool operator==(const AssetId &, const AssetId &)  = default;
     friend std::strong_ordering operator<=>(const AssetId &, const AssetId &) = default;
 
     /// @brief True when every byte is zero — the "no asset" sentinel.
@@ -92,7 +92,7 @@ inline constexpr AssetId FlatNormal  = detail::ReservedAssetId(4); ///< prim://f
 /// @brief One reserved built-in id and the virtual path it stands in for.
 struct BuiltinAssetEntry
 {
-    AssetId          id;
+    AssetId id;
     std::string_view virtualPath;
 };
 
@@ -119,14 +119,14 @@ template <> struct std::hash<Assisi::Core::AssetId>
         constexpr std::uint32_t kMixShift3  = 31;
 
         auto load = [&](std::size_t offset) noexcept
-        {
-            std::uint64_t acc = 0;
-            for (std::size_t i = 0; i < 8; ++i)
-            {
-                acc = (acc << 8) | assetId.bytes[offset + i];
-            }
-            return acc;
-        };
+                    {
+                        std::uint64_t acc = 0;
+                        for (std::size_t i = 0; i < 8; ++i)
+                        {
+                            acc = (acc << 8) | assetId.bytes[offset + i];
+                        }
+                        return acc;
+                    };
         std::uint64_t mixed = load(0) ^ (load(8) + kGamma);
         mixed = (mixed ^ (mixed >> kMixShift1)) * kMixMul1;
         mixed = (mixed ^ (mixed >> kMixShift2)) * kMixMul2;

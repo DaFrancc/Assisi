@@ -32,7 +32,7 @@ namespace
 // The report path as plain bytes: the handler must not allocate to name its
 // own output file.
 std::array<char, 1024> gReportPath{};
-bool                   gReportPathSet = false;
+bool gReportPathSet = false;
 
 // A handler cannot report that it failed to open its own output file — it runs
 // in signal context, where warning is not an option, so the failure would be
@@ -42,7 +42,7 @@ bool                   gReportPathSet = false;
 bool ProbeWritable(const std::filesystem::path &path) noexcept
 {
     std::error_code ec;
-    const bool      existed = std::filesystem::exists(path, ec);
+    const bool existed = std::filesystem::exists(path, ec);
 
     const bool writable = std::ofstream(path, std::ios::app).is_open();
     if (!existed)
@@ -194,7 +194,7 @@ namespace
 alignas(16) std::array<char, 256 * 1024> gSignalStack{};
 
 constexpr size_t kFrameCapacity = 64;
-void            *gFrames[kFrameCapacity]{};
+void *gFrames[kFrameCapacity]{};
 
 // Load address of this executable, resolved at install time while calling into
 // the loader is still safe. Frame address minus this is what addr2line wants;
@@ -242,7 +242,7 @@ void WriteAll(int fileDesc, const char *data, size_t size) noexcept
 struct Report
 {
     std::array<char, 8192> data{};
-    size_t                 used = 0;
+    size_t used = 0;
 
     void Str(const char *text) noexcept
     {
@@ -256,7 +256,7 @@ struct Report
     // Hand-rolled because snprintf is not async-signal-safe.
     void Hex(uintptr_t value) noexcept
     {
-        char        buffer[2 + (sizeof(uintptr_t) * 2)];
+        char buffer[2 + (sizeof(uintptr_t) * 2)];
         const char *digits = "0123456789abcdef";
         buffer[0]          = '0';
         buffer[1]          = 'x';
@@ -270,15 +270,16 @@ struct Report
 
     void Dec(int64_t value) noexcept
     {
-        char     buffer[24];
-        size_t   index     = sizeof(buffer);
-        bool     negative  = value < 0;
+        char buffer[24];
+        size_t index     = sizeof(buffer);
+        bool negative  = value < 0;
         uint64_t magnitude = negative ? static_cast<uint64_t>(-(value + 1)) + 1 : static_cast<uint64_t>(value);
         do
         {
             buffer[--index] = static_cast<char>('0' + (magnitude % 10));
             magnitude /= 10;
-        } while (magnitude != 0 && index > 0);
+        }
+        while (magnitude != 0 && index > 0);
         if (negative && index > 0)
         {
             buffer[--index] = '-';
@@ -368,7 +369,8 @@ void SignalHandler(int signal, siginfo_t *info, void *) noexcept
         do
         {
             fd = open(gReportPath.data(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        } while (fd < 0 && errno == EINTR);
+        }
+        while (fd < 0 && errno == EINTR);
 
         if (fd >= 0)
         {
@@ -438,7 +440,7 @@ void InstallCrashHandlers(const std::filesystem::path &path) noexcept
         Core::Log::Warn("sigaltstack failed — a stack-overflow crash will not be reported.");
     }
 
-    struct sigaction action{};
+    struct sigaction action {};
     action.sa_sigaction = SignalHandler;
     action.sa_flags     = SA_SIGINFO | SA_ONSTACK | SA_RESTART;
     sigemptyset(&action.sa_mask);

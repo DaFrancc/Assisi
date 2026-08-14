@@ -35,7 +35,7 @@ namespace Assisi::Debug
 
 class DebugUI
 {
-  public:
+public:
     /// @brief Initialises ImGui and attaches the GLFW + Vulkan backends.
     ///
     /// @p persistLayout false suppresses `imgui.ini` entirely. ImGui resolves

@@ -26,7 +26,7 @@ namespace Assisi::Runtime
 
 class LightingSystem
 {
-  public:
+public:
     LightingSystem() = default;
 
     /// @brief Load compute shaders, allocate buffers, and build initial cluster AABBs.
@@ -39,7 +39,7 @@ class LightingSystem
 
     /// @brief Rebuild cluster AABBs after a viewport or projection change.
     void Resize(nvrhi::ICommandList *commandList, int32_t width, int32_t height, float nearZ, float farZ,
-               const glm::mat4 &projection);
+                const glm::mat4 &projection);
 
     /// @brief Collect lights from the scene, upload to GPU, and run the cull pass.
     void Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view);
@@ -63,9 +63,9 @@ class LightingSystem
 
     const Assisi::Render::ClusterGrid &Grid() const { return _grid; }
 
-  private:
+private:
     Assisi::Render::ClusterGrid _grid;
-    uint32_t                    _dirLightCount = 0u;
+    uint32_t _dirLightCount = 0u;
 
     // Per-frame light staging buffers, kept as members so Update() reuses their
     // capacity instead of allocating three vectors every frame (clear() retains

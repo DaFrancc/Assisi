@@ -67,22 +67,22 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
     for (const auto *meta : registry.SerializableComponents())
     {
         meta->iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *)
-        {
-            const ECS::Entity entity{idx, gen};
-
-            // Editor scaffolding — the blueprint editor's sun above all. Skipping it
-            // here covers the whole save: passes 2 and 3 both work off `entityMap`.
-            if (scene.Has<EditorOnly>(entity))
-                return;
-
-            if (const ECS::BlueprintMember *tag = scene.Get<ECS::BlueprintMember>(entity))
             {
-                if (instances != nullptr)
-                    memberNames.emplace(EntityKey(idx, gen), MemberPathName(*instances, *tag));
-                return;
-            }
-            entityMap.emplace(EntityKey(idx, gen), nlohmann::json{});
-        });
+                const ECS::Entity entity{idx, gen};
+
+                // Editor scaffolding — the blueprint editor's sun above all. Skipping it
+                // here covers the whole save: passes 2 and 3 both work off `entityMap`.
+                if (scene.Has<EditorOnly>(entity))
+                    return;
+
+                if (const ECS::BlueprintMember *tag = scene.Get<ECS::BlueprintMember>(entity))
+                {
+                    if (instances != nullptr)
+                        memberNames.emplace(EntityKey(idx, gen), MemberPathName(*instances, *tag));
+                    return;
+                }
+                entityMap.emplace(EntityKey(idx, gen), nlohmann::json{});
+            });
     }
 
     if (instances == nullptr && scene.Query<ECS::BlueprintMember>().begin() != scene.Query<ECS::BlueprintMember>().end())
@@ -94,13 +94,13 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
     // Pass 2: name every entity before anything serializes — an EntityRef resolves
     // to a *name*, and its target may sit anywhere in the file, including ahead of
     // the entity pointing at it.
-    SerializationContext            ctx;
+    SerializationContext ctx;
     std::unordered_set<std::string> usedNames;
     usedNames.reserve(entityMap.size());
     for (auto &[key, entityJson] : entityMap)
     {
         const ECS::Entity entity{static_cast<uint32_t>(key & 0xFFFFFFFFull), static_cast<uint32_t>(key >> 32)};
-        std::string       name = UniqueName(AuthoredName(scene, entity), usedNames);
+        std::string name = UniqueName(AuthoredName(scene, entity), usedNames);
 
         entityJson["name"] = name;
         ctx.entityToName.emplace(key, std::move(name));
@@ -126,13 +126,13 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
             continue;
 
         meta->iterateEntities(&scene, [&](uint32_t idx, uint32_t gen, const void *compPtr)
-        {
-            const uint64_t key = EntityKey(idx, gen);
-            const auto     it  = entityMap.find(key);
-            if (it == entityMap.end())
-                return; // a member: described by its instance entry, not written here
-            it->second["components"][meta->name] = meta->serialize(compPtr);
-        });
+            {
+                const uint64_t key = EntityKey(idx, gen);
+                const auto it  = entityMap.find(key);
+                if (it == entityMap.end())
+                    return; // a member: described by its instance entry, not written here
+                it->second["components"][meta->name] = meta->serialize(compPtr);
+            });
     }
 
     nlohmann::json result;
@@ -157,8 +157,8 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
             for (const LevelInstance &entry : placed)
             {
                 nlohmann::json written{{"name", entry.name},
-                                       {"source", entry.source},
-                                       {"transform", TransformToJson(entry.transform)}};
+                    {"source", entry.source},
+                    {"transform", TransformToJson(entry.transform)}};
                 // Only when there is something to say, so an instance nobody edited
                 // stays three lines.
                 if (!entry.overrides.empty())
@@ -186,15 +186,15 @@ nlohmann::json SceneSerializer::Save(ECS::Scene &scene, const LevelHeader &heade
 
 LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, const LoadOptions &options)
 {
-    LevelHeader *const   header    = options.header;
+    LevelHeader *const header    = options.header;
     InstanceTable *const instances = options.instances;
 
     // Flipped at the clear below, and read by every refusal after it. One variable
     // and one assignment, so a refusal added later cannot report the wrong side of
     // it without someone moving the clear itself.
-    bool       sceneReplaced = false;
+    bool sceneReplaced = false;
     const auto refuse = [&sceneReplaced](LevelError kind)
-    { return std::unexpected(LevelFailure{.kind = kind, .sceneReplaced = sceneReplaced}); };
+                        { return std::unexpected(LevelFailure{.kind = kind, .sceneReplaced = sceneReplaced}); };
 
     // Everything below reads `j` as an object, and nlohmann answers a non-object
     // with a throw rather than a default — out of a function whose return type is
@@ -392,7 +392,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     {
         StagedInstance row;
         const std::expected<void, LevelError> ok =
-            StageInstance(scene, *instances, placed[i], static_cast<int32_t>(i), row, /*adopt=*/nullptr,
+            StageInstance(scene, *instances, placed[i], static_cast<int32_t>(i), row, /*adopt=*/ nullptr,
                           &claims);
         // Pushed even on failure: staging creates entities and a table row before
         // the last thing that can fail, and unwinding them is the caller's — here,
@@ -484,7 +484,7 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
     if (!s_context->unresolvedRefNames.empty())
     {
         const std::vector<std::string> &bad = s_context->unresolvedRefNames;
-        std::string                     list;
+        std::string list;
         for (size_t i = 0; i < bad.size() && i < 8; ++i)
             list += (i == 0 ? "" : ", ") + bad[i];
         if (bad.size() > 8)

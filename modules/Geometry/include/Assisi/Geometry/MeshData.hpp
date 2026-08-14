@@ -44,7 +44,7 @@ struct SubMesh
     uint32_t IndexCount = 0;
     uint32_t MaterialSlot = 0; ///< Index into MeshData::Materials.
     BoundingSphere LocalBounds; ///< Fit over this range at import.
-    Aabb           LocalAabb;   ///< Fit over this range at import.
+    Aabb LocalAabb;             ///< Fit over this range at import.
 };
 
 /// @brief One level of detail: a contiguous run of entries in
@@ -76,8 +76,8 @@ struct MeshData
     // was the streaming publish's dominant main-thread cost). `BoundsComputed`
     // distinguishes "not yet fit" from a legitimately zero-sized mesh.
     BoundingSphere LocalBounds;
-    Aabb           LocalAabb;
-    bool           BoundsComputed = false;
+    Aabb LocalAabb;
+    bool BoundsComputed = false;
 };
 
 /// @brief Fits an AABB around the vertices referenced by an index range
@@ -131,7 +131,7 @@ inline BoundingSphere ComputeBoundingSphere(const MeshData &meshData, size_t ind
         return {};
     }
 
-    const Aabb      box = ComputeAabb(meshData, indexOffset, indexCount);
+    const Aabb box = ComputeAabb(meshData, indexOffset, indexCount);
     const glm::vec3 center = (box.min + box.max) * 0.5f;
 
     float radiusSquared = 0.f;
@@ -152,7 +152,7 @@ inline BoundingSphere ComputeBoundingSphere(const MeshData &meshData)
         return {};
     }
 
-    const Aabb      box = ComputeAabb(meshData);
+    const Aabb box = ComputeAabb(meshData);
     const glm::vec3 center = (box.min + box.max) * 0.5f;
 
     float radiusSquared = 0.f;

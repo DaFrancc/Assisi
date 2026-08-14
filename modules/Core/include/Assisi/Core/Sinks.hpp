@@ -36,7 +36,7 @@ struct ConsoleSink : Sink
 
     void Write(LogLevel level, std::string_view message) override;
 
-  private:
+private:
     bool _color = false;
 };
 
@@ -52,7 +52,7 @@ struct FileSink : Sink
 
     void Write(LogLevel level, std::string_view message) override;
 
-  private:
+private:
     std::ofstream _file;
 };
 

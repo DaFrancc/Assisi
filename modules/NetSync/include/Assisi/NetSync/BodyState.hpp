@@ -176,12 +176,12 @@ void LoadSmoothingFromConfig(std::string_view configPath = "game.json");
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState
 {
-    NetId     netId = InvalidNetId;
+    NetId netId = InvalidNetId;
     glm::vec3 position{};
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     glm::vec3 linearVelocity{};  ///< Omitted on the wire when asleep.
     glm::vec3 angularVelocity{}; ///< Ditto.
-    bool      asleep = false;
+    bool asleep = false;
 };
 
 /// @brief Write one body record: id, the at-rest bit, pose, and — only when

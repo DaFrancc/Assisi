@@ -58,7 +58,7 @@ struct WindowConfiguration
 /// transfer window ownership; copying is disabled.
 class WindowContext
 {
-  public:
+public:
     /// @brief Creates the GLFW window and installs its GLFW callbacks.
     ///
     /// On failure (GLFW not initialised, or window creation error) the object
@@ -127,7 +127,7 @@ class WindowContext
     /// during a live resize/move where the main loop is otherwise blocked).
     void OnWindowRefresh(std::function<void()> callback);
 
-  private:
+private:
     /// @brief Points the window's GLFW user pointer at this object and installs
     /// the GLFW callbacks that fan out to subscribers. Called on construction
     /// and after a move (which re-seats the user pointer on the new owner).

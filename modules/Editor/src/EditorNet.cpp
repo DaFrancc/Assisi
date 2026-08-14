@@ -155,7 +155,7 @@ void EditorApp::BuildJoinedWorld()
     if (!_netSession || !_netSession->IsAwaitingLevel() || _scene == nullptr)
         return;
 
-    const Assisi::NetSync::ServerHello  *hello = _netSession->Handshake();
+    const Assisi::NetSync::ServerHello *hello = _netSession->Handshake();
     const Assisi::NetSync::LevelIdentity level = hello->level;
 
     // --- Which file, and is it the same file? -------------------------------
@@ -175,9 +175,9 @@ void EditorApp::BuildJoinedWorld()
     // Straight into the play scene: the pre-play snapshot already holds the
     // editing scene, so there is nothing here to preserve and nothing to confirm.
     Assisi::Runtime::LevelHeader header;
-    const auto                   reset = _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep
+    const auto reset = _worlds.Count() > 1 ? Assisi::App::AssetCacheReset::Keep
                                                              : Assisi::App::AssetCacheReset::ClearFirst;
-    const Assisi::App::LevelServices   services{_assetCache, _assetDatabase, _sceneRenderer};
+    const Assisi::App::LevelServices services{_assetCache, _assetDatabase, _sceneRenderer};
     const Assisi::App::LevelLoadOptions options{.reset = reset, .header = &header};
     const Assisi::Runtime::LevelResult loaded =
         level.addressing == Assisi::NetSync::LevelAddressing::AbsolutePath
@@ -449,7 +449,7 @@ void EditorApp::DrawHostAuthoringWarnings()
     if (marked == 0)
     {
         ImGui::TextColored(kWarnColor, "Nothing in this level is marked Replicated — clients will connect to a "
-                                       "world that never changes.");
+                           "world that never changes.");
     }
 
     if (unmarkedDynamic > 0)
@@ -490,10 +490,10 @@ void EditorApp::DrawHostUnsavedModal()
     ImGui::Separator();
 
     const auto close = [this]
-    {
-        _hostPromptOpen = false;
-        ImGui::CloseCurrentPopup();
-    };
+                       {
+                           _hostPromptOpen = false;
+                           ImGui::CloseCurrentPopup();
+                       };
 
     if (ImGui::Button("Save and host"))
     {
@@ -636,7 +636,7 @@ void EditorApp::DrawNetworkWindow()
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         {
             ImGui::SetTooltip(canNudge ? "Throw the selected replicated body. Every client should follow within a "
-                                         "correction interval."
+                              "correction interval."
                                        : "Select a replicated entity with a rigid body.");
         }
 
@@ -807,13 +807,13 @@ void EditorApp::DrawNetworkWindow()
             const Assisi::Physics::RigidBody *body = _scene->Get<Assisi::Physics::RigidBody>(_selectedEntity);
             const auto [position, rotation]        = _physics->GetBodyTransform(*body);
             _physics->ApplyBodyState(*body, position + glm::vec3{0.f, 3.f, 1.5f}, rotation, glm::vec3{0.f},
-                                     glm::vec3{0.f}, /*activate=*/false);
+                                     glm::vec3{0.f}, /*activate=*/ false);
         }
         ImGui::EndDisabled();
         if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         {
             ImGui::SetTooltip(canScramble ? "Shove this mirror somewhere the host never put it. Nothing in the "
-                                            "delta path can notice; only a resync (or the sweep) heals it."
+                              "delta path can notice; only a resync (or the sweep) heals it."
                                           : "Select a mirrored entity with a body.");
         }
         ImGui::SeparatorText("Clock");

@@ -81,19 +81,19 @@ ContentSet BuildContentSet()
     }
 
     std::uint64_t combined = Core::kFnvOffsetBasis;
-    const auto    fold     = [&combined](std::uint64_t value)
-    {
-        for (int32_t byte = 0; byte < 8; ++byte)
-        {
-            combined ^= (value >> (byte * 8)) & 0xFFull;
-            combined *= Core::kFnvPrime;
-        }
-    };
+    const auto fold     = [&combined](std::uint64_t value)
+                          {
+                              for (int32_t byte = 0; byte < 8; ++byte)
+                              {
+                                  combined ^= (value >> (byte * 8)) & 0xFFull;
+                                  combined *= Core::kFnvPrime;
+                              }
+                          };
 
     for (const std::string &virtualPath : set.paths)
     {
         fold(Core::ContentHash64(
-            std::as_bytes(std::span{virtualPath.data(), virtualPath.size()})));
+                 std::as_bytes(std::span{virtualPath.data(), virtualPath.size()})));
 
         // Content, not bytes. A Windows checkout of the same file differs by its
         // line endings alone, and hashing that difference refuses a join between

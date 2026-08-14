@@ -108,27 +108,27 @@ AssetId MintAssetId()
     // Editor-time only. Seeded once from the platform entropy source; a single
     // 64-bit engine is plenty for id generation (this is not cryptographic).
     static std::mt19937_64 engine = []
-    {
-        std::random_device                                       device;
-        std::array<std::uint32_t, std::mt19937_64::state_size>   seedData{};
-        for (auto &word : seedData)
-        {
-            word = device();
-        }
-        std::seed_seq seeds(seedData.begin(), seedData.end());
-        return std::mt19937_64(seeds);
-    }();
+                                    {
+                                        std::random_device device;
+                                        std::array<std::uint32_t, std::mt19937_64::state_size>   seedData{};
+                                        for (auto &word : seedData)
+                                        {
+                                            word = device();
+                                        }
+                                        std::seed_seq seeds(seedData.begin(), seedData.end());
+                                        return std::mt19937_64(seeds);
+                                    }();
 
     // Drawing from the engine mutates it. The magic-static initialization above is
     // thread-safe but the draws are not, and asset import already runs on job
     // threads (AssetImport calls this), so serialize them: two concurrent imports
     // racing the engine's state could otherwise hand back a torn or duplicate id,
     // and a duplicate id is exactly the collision the caller then has to re-mint.
-    static std::mutex               engineMutex;
+    static std::mutex engineMutex;
     std::lock_guard<std::mutex>     lock(engineMutex);
     std::uniform_int_distribution<std::uint64_t> dist;
-    const std::uint64_t                          high = dist(engine);
-    const std::uint64_t                          low  = dist(engine);
+    const std::uint64_t high = dist(engine);
+    const std::uint64_t low  = dist(engine);
 
     AssetId id{};
     for (std::size_t i = 0; i < 8; ++i)
@@ -283,8 +283,8 @@ std::expected<std::size_t, AssetError> AssetDatabase::Rebuild(RebuildMode mode)
         }
         if (!inserted)
         {
-            const AssetId  previous = id;
-            const AssetId  reminted = MintAssetId();
+            const AssetId previous = id;
+            const AssetId reminted = MintAssetId();
             const std::string content = SerializeSidecar(AssetSidecar::Leaf(reminted));
             if (!WriteWholeFile(sidecarPath, content))
             {

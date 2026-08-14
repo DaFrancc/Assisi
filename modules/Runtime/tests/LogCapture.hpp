@@ -53,8 +53,8 @@ struct RecordingSink final : Core::Sink
         return false;
     }
 
-  private:
-    mutable std::mutex       _mutex;
+private:
+    mutable std::mutex _mutex;
     std::vector<std::string> _messages;
 };
 
@@ -62,18 +62,18 @@ struct RecordingSink final : Core::Sink
 inline RecordingSink &InstalledSink()
 {
     static const std::shared_ptr<RecordingSink> sink = []
-    {
-        auto created = std::make_shared<RecordingSink>();
-        Core::GetLogger().AddSink(created);
-        return created;
-    }();
+                                                       {
+                                                           auto created = std::make_shared<RecordingSink>();
+                                                           Core::GetLogger().AddSink(created);
+                                                           return created;
+                                                       }();
     return *sink;
 }
 
 /// Clears the log on construction, so a test reads only its own lines.
 class LogCapture
 {
-  public:
+public:
     LogCapture() { InstalledSink().Clear(); }
 
     [[nodiscard]] bool Mentions(std::string_view needle) const { return InstalledSink().Mentions(needle); }

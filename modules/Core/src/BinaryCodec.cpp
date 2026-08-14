@@ -138,7 +138,7 @@ void UnpackEntity(std::byte *address, std::uint64_t packed)
 
 template <std::size_t Capacity> void ReadTrivialString(BitReader &reader, TrivialString<Capacity> &out)
 {
-    char              buffer[Capacity];
+    char buffer[Capacity];
     const std::size_t length = reader.ReadStringInto(buffer, Capacity);
     if (reader.Failed())
         return; // sticky failure already latched; leave the destination alone
@@ -271,7 +271,7 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
         // builds can hash equal and still number their ordinals differently —
         // one id-only registration apart is enough. Raw bits would silently
         // re-aim; names cannot.
-        const auto                                 &mask       = *reinterpret_cast<const ComponentMask *>(address);
+        const auto &mask       = *reinterpret_cast<const ComponentMask *>(address);
         const std::span<const ComponentMeta *const> replicable = ComponentRegistry::Instance().ReplicableComponents();
 
         std::size_t count = 0;
@@ -559,7 +559,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     if (meta.id == kInvalidComponentId)
     {
         ASSISI_ASSERT(false, "WriteComponent: component id is not finalized — the registry finalizes "
-                             "lazily on first query, so call this only after startup registration.");
+                      "lazily on first query, so call this only after startup registration.");
         Log::Error("BinaryCodec: refusing to encode '{}' — its ComponentId is not finalized", meta.name);
         return false;
     }
@@ -596,7 +596,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
                 // component (and a log line naming the field) than a stream that
                 // decodes into garbage.
                 ASSISI_ASSERT(false, "WriteComponent: unencodable field type (FieldType::Unknown, or an enum "
-                                     "with a width that is not 1/2/4/8 bytes)");
+                              "with a width that is not 1/2/4/8 bytes)");
                 Log::Error("BinaryCodec: cannot encode field '{}::{}' (type {}, enumSize {})", meta.name, field.name,
                            FieldTypeName(field.type), field.enumSize);
                 return false;
@@ -613,7 +613,7 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
     if (meta.id == kInvalidMessageId)
     {
         ASSISI_ASSERT(false, "WriteMessage: message id is not finalized — the registry finalizes lazily on "
-                             "first query, so call this only after startup registration.");
+                      "first query, so call this only after startup registration.");
         Log::Error("BinaryCodec: refusing to encode message '{}' — its MessageId is not finalized", meta.name);
         return false;
     }
@@ -644,7 +644,7 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
     writer.WriteVarUInt32(meta.id.value); // wire write
     writer.WriteVarUInt32(static_cast<std::uint32_t>(bodyBits));
 
-    BitReader   copy(body.Data());
+    BitReader copy(body.Data());
     std::size_t remaining = bodyBits;
     while (remaining > 0)
     {

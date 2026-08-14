@@ -82,7 +82,7 @@ struct AdoptionSet
                                                             int32_t levelInstanceIndex,
                                                             StagedInstance &staged,
                                                             AdoptionSet *adopt = nullptr,
-                                                            NameBatch   *names = nullptr);
+                                                            NameBatch *names = nullptr);
 
 /// @brief Apply a staged instance to the scene.
 void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string_view instanceName);

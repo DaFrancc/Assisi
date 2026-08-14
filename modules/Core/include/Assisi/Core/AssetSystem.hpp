@@ -46,7 +46,7 @@ namespace Assisi::Core
 {
 class AssetSystem
 {
-  public:
+public:
     /**
      * @brief Initializes the asset system by discovering and caching the asset root.
      *
@@ -255,7 +255,7 @@ class AssetSystem
     static std::expected<void, AssetError> WriteBinary(std::string_view vpath,
                                                        std::span<const std::byte> data) noexcept;
 
-  private:
+private:
     /**
      * @brief Returns whether the asset system has been initialized.
      *

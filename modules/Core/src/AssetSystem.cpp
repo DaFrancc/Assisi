@@ -227,7 +227,7 @@ VoidResult AssetSystem::Initialize() noexcept
     }
 
     std::error_code ec;
-    fs::path        canonical = fs::weakly_canonical(*root, ec);
+    fs::path canonical = fs::weakly_canonical(*root, ec);
     if (ec)
     {
         Log::Warn("AssetSystem: cannot canonicalize the asset root '{}' ({}).", root->string(), ec.message());
@@ -309,7 +309,7 @@ PathResult AssetSystem::ResolveUnder(const fs::path &root, std::string_view vpat
     }
 
     std::error_code ec;
-    const fs::path  absolute = fs::weakly_canonical(root / *relative, ec);
+    const fs::path absolute = fs::weakly_canonical(root / *relative, ec);
     if (ec)
     {
         return std::unexpected(AssetError::FileReadFailed);
@@ -521,23 +521,23 @@ PathResult AssetSystem::DiscoverRoot() noexcept
        A directory it cannot stat is simply not a match — the walk carries on
        upward rather than abandoning discovery over one unreadable parent. */
     auto walkUp = [](fs::path dir) -> std::optional<fs::path>
-    {
-        for (int32_t i = 0; i < 10; ++i)
-        {
-            std::error_code ec;
-            const fs::path  candidate = dir / "assets";
-            if (fs::is_directory(candidate, ec) && !ec)
-            {
-                return candidate;
-            }
-            if (!dir.has_parent_path())
-            {
-                break;
-            }
-            dir = dir.parent_path();
-        }
-        return std::nullopt;
-    };
+                  {
+                      for (int32_t i = 0; i < 10; ++i)
+                      {
+                          std::error_code ec;
+                          const fs::path candidate = dir / "assets";
+                          if (fs::is_directory(candidate, ec) && !ec)
+                          {
+                              return candidate;
+                          }
+                          if (!dir.has_parent_path())
+                          {
+                              break;
+                          }
+                          dir = dir.parent_path();
+                      }
+                      return std::nullopt;
+                  };
 
     /* Walk upward from the executable's directory first — works regardless of CWD. */
     if (const std::optional<fs::path> exe = ExeDir())
@@ -550,7 +550,7 @@ PathResult AssetSystem::DiscoverRoot() noexcept
 
     /* Fall back to walking upward from the current working directory. */
     std::error_code cwdEc;
-    const fs::path  cwd = fs::current_path(cwdEc);
+    const fs::path cwd = fs::current_path(cwdEc);
     if (!cwdEc)
     {
         if (const std::optional<fs::path> found = walkUp(cwd))

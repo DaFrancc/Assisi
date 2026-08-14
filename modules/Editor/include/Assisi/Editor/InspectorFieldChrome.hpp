@@ -31,7 +31,7 @@ enum class RadioVisibility : uint8_t
 /// colour stack deeper than it found it.
 class ScopedFieldChrome
 {
-  public:
+public:
     ScopedFieldChrome(RadioVisibility radio, bool norep);
     ~ScopedFieldChrome();
 
@@ -51,7 +51,7 @@ class ScopedFieldChrome
     /// reach it.
     void EndTint();
 
-  private:
+private:
     bool _visible;
     bool _greyed;
     bool _tinted;

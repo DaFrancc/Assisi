@@ -49,14 +49,14 @@ struct DrawStats
 /// sensible defaults. Built at the call site with designated initializers.
 struct DrawSceneParams
 {
-    Assisi::ECS::Scene        &scene;    ///< ECS scene to draw.
+    Assisi::ECS::Scene &scene;           ///< ECS scene to draw.
     const Assisi::Render::MeshPass &meshPass; ///< Shared pipeline; must be initialized.
     const Assisi::Render::RenderFrame &frame; ///< Command list + framebuffer + viewport size.
 
     glm::mat4 view{1.f};       ///< View matrix (e.g. Runtime::ViewMatrix).
     glm::mat4 projection{1.f}; ///< Projection matrix (e.g. Runtime::ProjectionMatrix).
-    float     nearZ = 0.f;     ///< Camera near plane, for the sort key's depth quantization.
-    float     farZ  = 0.f;     ///< Camera far plane.
+    float nearZ = 0.f;         ///< Camera near plane, for the sort key's depth quantization.
+    float farZ  = 0.f;         ///< Camera far plane.
 
     bool frustumCulling = true; ///< Skip meshes outside the view frustum.
     bool sortDraws      = true; ///< Sort the draw list by sort key before submitting.

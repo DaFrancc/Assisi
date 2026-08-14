@@ -23,7 +23,7 @@ enum class FrameSyncMode : std::uint8_t
 struct OptionsConfig
 {
     Render::AaMode aaMode      = Render::AaMode::None;
-    int32_t        msaaSamples = 4; ///< MSAA sample count; valid values: 2, 4, 8.
+    int32_t msaaSamples = 4;        ///< MSAA sample count; valid values: 2, 4, 8.
 
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 

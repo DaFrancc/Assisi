@@ -98,9 +98,9 @@ enum class AssetCacheReset : std::uint8_t
 /// fails) instead of at every use inside.
 struct LevelServices
 {
-    Render::AssetCache        &cache;
+    Render::AssetCache &cache;
     const Core::AssetDatabase &database;
-    Runtime::SceneRenderer    &renderer;
+    Runtime::SceneRenderer &renderer;
 };
 
 /// @brief The optional half of a load: what to do with the asset cache, and what
@@ -151,7 +151,7 @@ struct LevelLoadOptions
 /// play-state reset) is deliberately not here — it belongs to the caller that
 /// has that state.
 [[nodiscard]] Runtime::LevelResult LoadLevel(World &world, std::string_view virtualPath,
-                                             const LevelServices    &services,
+                                             const LevelServices &services,
                                              const LevelLoadOptions &options = {});
 
 /// @brief LoadLevel from an absolute filesystem path instead of a virtual one.
@@ -166,7 +166,7 @@ struct LevelLoadOptions
 /// resolve through the asset system as usual; it is only the level file itself
 /// that lives outside it.
 [[nodiscard]] Runtime::LevelResult LoadLevelFile(World &world, const std::filesystem::path &path,
-                                                 const LevelServices    &services,
+                                                 const LevelServices &services,
                                                  const LevelLoadOptions &options = {});
 
 /// @brief The simulation half of LoadLevel: deserialize the level and rebuild

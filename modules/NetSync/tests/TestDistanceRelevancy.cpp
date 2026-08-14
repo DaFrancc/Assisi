@@ -39,8 +39,8 @@ namespace
 struct Harness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
 
@@ -57,8 +57,8 @@ struct Harness
     }
 
     explicit Harness(RelevancyConfig relevancy)
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, With(relevancy)),
-          client(transport, clientScene, pair.second)
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, With(relevancy)),
+        client(transport, clientScene, pair.second)
     {
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
@@ -95,7 +95,7 @@ struct Harness
 ECS::Entity SpawnAt(ECS::Scene &scene, glm::vec3 position, Relevance relevance = Relevance::Default)
 {
     const ECS::Entity entity = scene.Create();
-    ECS::Transform    transform;
+    ECS::Transform transform;
     transform.position = position;
     (void)scene.Add<ECS::Transform>(entity, transform);
 
@@ -179,7 +179,7 @@ TEST_CASE("entering is immediate, so an anchor teleport does not show an empty w
     // transition or a spectator jump display nothing for its duration and then
     // pop the world in — which is the artefact hysteresis exists to prevent,
     // merely moved somewhere less obvious.
-    Harness harness(Distance(10.f, 12.f, /*dwellTicks=*/600));
+    Harness harness(Distance(10.f, 12.f, /*dwellTicks=*/ 600));
 
     const ECS::Entity anchor = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
     const ECS::Entity distant = SpawnAt(harness.serverScene, {1000.f, 0.f, 0.f});
@@ -209,7 +209,7 @@ TEST_CASE("an entity hovering on the boundary does not thrash")
     // that can be doing the work: an entity oscillating across the *enter*
     // radius never once reaches the exit radius, so there is nothing to revoke
     // and no clock to run out.
-    Harness harness(Distance(/*radius=*/10.f, /*exitRadius=*/15.f, /*dwellTicks=*/0));
+    Harness harness(Distance(/*radius=*/ 10.f, /*exitRadius=*/ 15.f, /*dwellTicks=*/ 0));
 
     const ECS::Entity anchor  = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
     const ECS::Entity hoverer = SpawnAt(harness.serverScene, {5.f, 0.f, 0.f});
@@ -243,7 +243,7 @@ TEST_CASE("an entity hovering on the boundary does not thrash")
 
 TEST_CASE("the dwell delays a revoke, and then allows it")
 {
-    Harness harness(Distance(/*radius=*/10.f, /*exitRadius=*/15.f, /*dwellTicks=*/30));
+    Harness harness(Distance(/*radius=*/ 10.f, /*exitRadius=*/ 15.f, /*dwellTicks=*/ 30));
 
     const ECS::Entity anchor  = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
     const ECS::Entity leaving = SpawnAt(harness.serverScene, {5.f, 0.f, 0.f});
@@ -269,7 +269,7 @@ TEST_CASE("the dwell delays a revoke, and then allows it")
 
 TEST_CASE("coming back inside the exit radius resets the dwell")
 {
-    Harness harness(Distance(/*radius=*/10.f, /*exitRadius=*/15.f, /*dwellTicks=*/30));
+    Harness harness(Distance(/*radius=*/ 10.f, /*exitRadius=*/ 15.f, /*dwellTicks=*/ 30));
 
     const ECS::Entity anchor   = SpawnAt(harness.serverScene, {0.f, 0.f, 0.f});
     const ECS::Entity wanderer = SpawnAt(harness.serverScene, {5.f, 0.f, 0.f});

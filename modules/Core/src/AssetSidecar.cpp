@@ -58,7 +58,7 @@ std::string SerializeSidecar(const AssetSidecar &sidecar)
 
 std::expected<AssetSidecar, AssetSidecarError> DeserializeSidecar(std::string_view jsonText)
 {
-    const nlohmann::json document = nlohmann::json::parse(jsonText, nullptr, /*allow_exceptions=*/false);
+    const nlohmann::json document = nlohmann::json::parse(jsonText, nullptr, /*allow_exceptions=*/ false);
     if (document.is_discarded() || !document.is_object())
     {
         return std::unexpected(AssetSidecarError::ParseFailed);

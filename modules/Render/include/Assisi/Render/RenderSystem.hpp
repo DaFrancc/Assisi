@@ -24,7 +24,7 @@ namespace Assisi::Render
 /// reference then; today it is deliberately a global.
 class RenderSystem
 {
-  public:
+public:
     RenderSystem() = delete;
 
     /// @brief Initializes the Vulkan/NVRHI backend against the given window.
@@ -53,7 +53,7 @@ class RenderSystem
     /// (tearing the device down through an unloaded DLL is an access violation).
     static void Shutdown() { s_vulkanContext.reset(); }
 
-  private:
+private:
     static inline std::unique_ptr<Vulkan::VulkanContext> s_vulkanContext;
 };
 } /* namespace Assisi::Render */

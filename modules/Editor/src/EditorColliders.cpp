@@ -72,7 +72,7 @@ void AddArc(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec
     for (int32_t i = 1; i <= segments; ++i)
     {
         const float t   = a0 + (a1 - a0) * (static_cast<float>(i) / static_cast<float>(segments));
-        glm::vec3   cur = center + radius * (std::cos(t) * u + std::sin(t) * v);
+        glm::vec3 cur = center + radius * (std::cos(t) * u + std::sin(t) * v);
         AddSegment(out, model, color, prev, cur);
         prev = cur;
     }
@@ -90,8 +90,8 @@ void AddBoxWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const
     }
     // 12 edges: pairs of corners differing in exactly one axis bit.
     constexpr int32_t edges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7},  // along X
-                                  {0, 2}, {1, 3}, {4, 6}, {5, 7},  // along Y
-                                  {0, 4}, {1, 5}, {2, 6}, {3, 7}}; // along Z
+        {0, 2}, {1, 3}, {4, 6}, {5, 7},                            // along Y
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}};                           // along Z
     for (const auto &e : edges)
     {
         AddSegment(out, model, color, c[e[0]], c[e[1]]);
@@ -113,12 +113,12 @@ void AddCylinderBody(std::vector<LineVertex> &out, const glm::mat4 &model, const
 {
     const glm::vec3 top(0.f, halfHeight, 0.f);
     const glm::vec3 bot(0.f, -halfHeight, 0.f);
-    const float     full = glm::two_pi<float>();
+    const float full = glm::two_pi<float>();
     AddArc(out, model, color, top, kAxisX, kAxisZ, radius, 0.f, full, kCircleSegments);
     AddArc(out, model, color, bot, kAxisX, kAxisZ, radius, 0.f, full, kCircleSegments);
     for (int32_t k = 0; k < 4; ++k)
     {
-        const float     angle = static_cast<float>(k) * glm::half_pi<float>();
+        const float angle = static_cast<float>(k) * glm::half_pi<float>();
         const glm::vec3 offset = radius * (std::cos(angle) * kAxisX + std::sin(angle) * kAxisZ);
         AddSegment(out, model, color, top + offset, bot + offset);
     }
@@ -131,8 +131,8 @@ void AddCapsuleWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, c
 
     const glm::vec3 top(0.f, halfHeight, 0.f);
     const glm::vec3 bot(0.f, -halfHeight, 0.f);
-    const float     pi = glm::pi<float>();
-    const int32_t   capSegs = kCircleSegments / 2;
+    const float pi = glm::pi<float>();
+    const int32_t capSegs = kCircleSegments / 2;
     // Two orthogonal profile half-arcs per hemisphere: rim point, over the pole, to
     // the opposite rim point. Top domes up (+Y), bottom domes down (−Y).
     AddArc(out, model, color, top, kAxisX, kAxisY, radius, 0.f, pi, capSegs);
@@ -231,8 +231,8 @@ void EditorApp::SubmitColliderWireframes()
         }
     }
 
-    _sceneRenderer.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/false);
-    _sceneRenderer.SubmitOverlayLines(_colliderLinesOnTop, /*onTop=*/true);
+    _sceneRenderer.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/ false);
+    _sceneRenderer.SubmitOverlayLines(_colliderLinesOnTop, /*onTop=*/ true);
     _sceneRenderer.SetIconSuppressedEntities(_colliderEntities);
 
     // Drop the bodies from the generic selection highlight: their mesh and collider
@@ -254,7 +254,7 @@ void EditorApp::SubmitColliderWireframes()
 }
 
 void EditorApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
-                                       const Assisi::Physics::RigidBodyDescriptor &desc, const glm::vec3 &color)
+                                      const Assisi::Physics::RigidBodyDescriptor &desc, const glm::vec3 &color)
 {
     using Assisi::Physics::ColliderShape;
     using Item = Assisi::Render::OutlinePass::OutlineItem;

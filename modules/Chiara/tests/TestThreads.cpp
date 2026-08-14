@@ -36,20 +36,20 @@ TEST_CASE("Eight threads emit concurrently while a reader walks their open scope
     {
         workers.emplace_back(
             [index, &ready]
-            {
-                Chiara::RegisterCurrentThread(("chiara-w" + std::to_string(index)).c_str());
-                ready.fetch_add(1, std::memory_order_release);
+        {
+            Chiara::RegisterCurrentThread(("chiara-w" + std::to_string(index)).c_str());
+            ready.fetch_add(1, std::memory_order_release);
 
-                for (std::int32_t iteration = 0; iteration < kIterations; ++iteration)
+            for (std::int32_t iteration = 0; iteration < kIterations; ++iteration)
+            {
+                ASSISI_PROFILE_SCOPE("worker-outer");
+                ASSISI_PROFILE_ARG_U64("iteration", static_cast<std::uint64_t>(iteration));
                 {
-                    ASSISI_PROFILE_SCOPE("worker-outer");
-                    ASSISI_PROFILE_ARG_U64("iteration", static_cast<std::uint64_t>(iteration));
-                    {
-                        ASSISI_PROFILE_SCOPE("worker-inner");
-                        ASSISI_PROFILE_COUNTER("worker/iteration", static_cast<double>(iteration));
-                    }
+                    ASSISI_PROFILE_SCOPE("worker-inner");
+                    ASSISI_PROFILE_COUNTER("worker/iteration", static_cast<double>(iteration));
                 }
-            });
+            }
+        });
     }
 
     // Reading the shadow stacks while their owners push and pop is the whole
@@ -57,24 +57,24 @@ TEST_CASE("Eight threads emit concurrently while a reader walks their open scope
     // would be a different story — that needs the producers stopped — so this
     // loop deliberately touches only what SnapshotThreads can give safely.
     std::int32_t observedOpenScopes = 0;
-    std::thread  reader(
+    std::thread reader(
         [&keepReading, &observedOpenScopes]
         {
-            while (keepReading.load(std::memory_order_relaxed))
+        while (keepReading.load(std::memory_order_relaxed))
+        {
+            for (const Chiara::ThreadSnapshot &snapshot : Chiara::SnapshotThreads())
             {
-                for (const Chiara::ThreadSnapshot &snapshot : Chiara::SnapshotThreads())
+                for (const Chiara::OpenScope &open : snapshot.openScopes)
                 {
-                    for (const Chiara::OpenScope &open : snapshot.openScopes)
+                    // A torn read would surface a null name or a begin from
+                    // a different entry; both would trip here or in tsan.
+                    if (open.name != nullptr && open.beginTicks != 0)
                     {
-                        // A torn read would surface a null name or a begin from
-                        // a different entry; both would trip here or in tsan.
-                        if (open.name != nullptr && open.beginTicks != 0)
-                        {
-                            ++observedOpenScopes;
-                        }
+                        ++observedOpenScopes;
                     }
                 }
             }
+        }
         });
 
     for (std::thread &worker : workers)

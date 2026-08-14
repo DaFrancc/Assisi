@@ -52,7 +52,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
     ImGui::SetNextWindowSize(ImVec2(320, 420), ImGuiCond_FirstUseEver);
     if (ImGui::Begin("Options", &_showOptions))
     {
-        const int32_t                     frameHistory = static_cast<int32_t>(frame.cpuMs.size());
+        const int32_t frameHistory = static_cast<int32_t>(frame.cpuMs.size());
 
         // CPU against GPU frame time: whichever dominates is what the frame is bound
         // by. Both are averaged over the same window as the FPS counter; the plots
@@ -107,15 +107,15 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                 // is what ImPlot's Offset wants.
                 const int32_t plotCount  = _gpuTelemetryCount;
                 const int32_t plotOffset = _gpuTelemetryCount < kGpuHistory ? 0 : _gpuTelemetryOffset;
-                const auto    bufMax     = [plotCount](const std::array<float, kGpuHistory> &buf)
-                {
-                    float m = 0.0f;
-                    for (int32_t i = 0; i < plotCount; ++i)
-                    {
-                        m = std::max(m, buf[static_cast<std::size_t>(i)]);
-                    }
-                    return m;
-                };
+                const auto bufMax     = [plotCount](const std::array<float, kGpuHistory> &buf)
+                                        {
+                                            float m = 0.0f;
+                                            for (int32_t i = 0; i < plotCount; ++i)
+                                            {
+                                                m = std::max(m, buf[static_cast<std::size_t>(i)]);
+                                            }
+                                            return m;
+                                        };
 
                 // One compact history plot per metric. `title` is drawn above the plot
                 // and carries the unit, which is why the y-axis label is empty; its
@@ -124,28 +124,28 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                 const auto drawGpuPlot = [plotCount, plotOffset](const char *title,
                                                                  const std::array<float, kGpuHistory> &buf,
                                                                  float ymax, ImVec4 color)
-                {
-                    ImPlotSpec spec;
-                    spec.LineColor  = color;
-                    spec.FillColor  = color;
-                    spec.FillAlpha  = 0.25f;
-                    spec.LineWeight = 1.5f;
-                    spec.Offset     = plotOffset;
-                    // NoInputs: the limits are re-locked every frame anyway, so pan and
-                    // zoom would do nothing except make the x-axis look like a
-                    // draggable control.
-                    if (ImPlot::BeginPlot(title, ImVec2(-1.0f, 100.0f),
-                                          ImPlotFlags_NoMenus | ImPlotFlags_NoLegend | ImPlotFlags_NoInputs))
-                    {
-                        ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
-                                          ImPlotAxisFlags_NoHighlight);
-                        ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, plotCount - 1, ImPlotCond_Always);
-                        ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, static_cast<double>(ymax), ImPlotCond_Always);
-                        ImPlot::PlotShaded(title, buf.data(), plotCount, 0.0, 1.0, 0.0, spec);
-                        ImPlot::PlotLine(title, buf.data(), plotCount, 1.0, 0.0, spec);
-                        ImPlot::EndPlot();
-                    }
-                };
+                                         {
+                                             ImPlotSpec spec;
+                                             spec.LineColor  = color;
+                                             spec.FillColor  = color;
+                                             spec.FillAlpha  = 0.25f;
+                                             spec.LineWeight = 1.5f;
+                                             spec.Offset     = plotOffset;
+                                             // NoInputs: the limits are re-locked every frame anyway, so pan and
+                                             // zoom would do nothing except make the x-axis look like a
+                                             // draggable control.
+                                             if (ImPlot::BeginPlot(title, ImVec2(-1.0f, 100.0f),
+                                                                   ImPlotFlags_NoMenus | ImPlotFlags_NoLegend | ImPlotFlags_NoInputs))
+                                             {
+                                                 ImPlot::SetupAxes(nullptr, nullptr, ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines,
+                                                                   ImPlotAxisFlags_NoHighlight);
+                                                 ImPlot::SetupAxisLimits(ImAxis_X1, 0.0, plotCount - 1, ImPlotCond_Always);
+                                                 ImPlot::SetupAxisLimits(ImAxis_Y1, 0.0, static_cast<double>(ymax), ImPlotCond_Always);
+                                                 ImPlot::PlotShaded(title, buf.data(), plotCount, 0.0, 1.0, 0.0, spec);
+                                                 ImPlot::PlotLine(title, buf.data(), plotCount, 1.0, 0.0, spec);
+                                                 ImPlot::EndPlot();
+                                             }
+                                         };
 
                 const float clockMax = std::max(bufMax(_gpuClockHistory) * 1.1f, 500.0f);
                 drawGpuPlot("GPU Clock (MHz)###gpuClock", _gpuClockHistory, clockMax,
@@ -176,7 +176,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
                         ImGui::SetCursorPosX(start.x + ((avail.x - ImGui::CalcTextSize(title).x) * 0.5f));
                         ImGui::TextUnformatted(title);
 
-                        const char  *label     = "N/A (Unsupported by this GPU)";
+                        const char *label     = "N/A (Unsupported by this GPU)";
                         const ImVec2 labelSize = ImGui::CalcTextSize(label);
                         ImGui::SetCursorPos(ImVec2(start.x + ((avail.x - labelSize.x) * 0.5f),
                                                    start.y + ((avail.y - labelSize.y) * 0.5f)));
@@ -199,7 +199,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         for (int32_t i = 0; i < frameHistory; ++i)
         {
             plotMax = std::max({plotMax, frame.cpuMs[static_cast<std::size_t>(i)],
-                                 frame.gpuMs[static_cast<std::size_t>(i)]});
+                                frame.gpuMs[static_cast<std::size_t>(i)]});
         }
         plotMax *= 1.1f; // headroom, so the peak is not pinned to the top edge
 
@@ -253,7 +253,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
 
             // The tail of the sort, at least one frame however short the history is.
             const int32_t worstCount = std::max<int32_t>(1, static_cast<int32_t>(sorted.size()) / 100);
-            double        worstSum   = 0.0;
+            double worstSum   = 0.0;
             for (int32_t i = static_cast<int32_t>(sorted.size()) - worstCount; i < static_cast<int32_t>(sorted.size()); ++i)
             {
                 worstSum += static_cast<double>(sorted[static_cast<std::size_t>(i)]);
@@ -321,7 +321,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // value** — it must stay in Render::MaterialDebugView's order.
         static const char *kDebugViewNames[] = {"Off",       "Base Color", "Metallic", "Roughness",
                                                 "Normal",    "Occlusion",  "Emissive"};
-        int32_t            debugViewIndex     = static_cast<int32_t>(frame.renderer.DebugView());
+        int32_t debugViewIndex     = static_cast<int32_t>(frame.renderer.DebugView());
         if (ImGui::Combo("Debug View", &debugViewIndex, kDebugViewNames, IM_ARRAYSIZE(kDebugViewNames)))
         {
             frame.renderer.SetDebugView(static_cast<Assisi::Render::MaterialDebugView>(debugViewIndex));
@@ -332,7 +332,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         OptionsConfig &options = frame.options;
 
         static const char *kModeNames[] = {"Disabled", "MSAA", "FXAA", "MSAA + FXAA"};
-        int                modeIndex    = static_cast<int>(options.aaMode);
+        int modeIndex    = static_cast<int>(options.aaMode);
         if (ImGui::Combo("AA Mode", &modeIndex, kModeNames, 4))
         {
             options.aaMode = static_cast<Assisi::Render::AaMode>(modeIndex);
@@ -347,9 +347,9 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
             ImGui::BeginDisabled();
         }
 
-        static const char *   kSampleNames[]  = {"2x", "4x", "8x"};
-        static const int32_t  kSampleValues[] = {2, 4, 8};
-        int                   sampleIndex     = 1;
+        static const char *kSampleNames[]  = {"2x", "4x", "8x"};
+        static const int32_t kSampleValues[] = {2, 4, 8};
+        int sampleIndex     = 1;
         for (int32_t i = 0; i < 3; ++i)
         {
             if (kSampleValues[i] == options.msaaSamples)
@@ -380,7 +380,7 @@ bool EditorOptionsPanel::Draw(const Frame &frame)
         // VSync and an FPS cap are mutually exclusive, hence radio buttons. Only the
         // option is written here; Application::Run() switches the swapchain's present
         // mode between frames, which is the only safe place to do it.
-        int  frameSyncIndex = static_cast<int>(options.frameSync);
+        int frameSyncIndex = static_cast<int>(options.frameSync);
         bool frameSyncChanged =
             ImGui::RadioButton("VSync", &frameSyncIndex, static_cast<int>(FrameSyncMode::VSync));
         ImGui::SameLine();

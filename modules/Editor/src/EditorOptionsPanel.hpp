@@ -36,18 +36,18 @@ namespace Assisi::Editor
 /// surface the struct below.
 class EditorOptionsPanel
 {
-  public:
+public:
     /// @brief One frame's worth of everything the overlay reads or writes.
     struct Frame
     {
-        Window::InputContext   &input;
+        Window::InputContext &input;
         Runtime::SceneRenderer &renderer;
-        App::OptionsConfig     &options;
-        bool                   &showEditorOverlays;
+        App::OptionsConfig &options;
+        bool &showEditorOverlays;
 
         int32_t fps;
-        double  cpuFrameMs;
-        double  gpuFrameMs;
+        double cpuFrameMs;
+        double gpuFrameMs;
 
         /// The rolling history behind the graphs: ring buffers of `sampleCount`
         /// samples, `offset` being the oldest and the next slot to overwrite.
@@ -61,8 +61,8 @@ class EditorOptionsPanel
         std::span<const float> cpuMs;
         std::span<const float> gpuMs;
         std::span<const float> frameDeltaMs;
-        int32_t                offset;
-        int32_t                sampleCount;
+        int32_t offset;
+        int32_t sampleCount;
     };
 
     /// @brief Draw the overlay if it is open, and handle its F11 toggle.
@@ -70,7 +70,7 @@ class EditorOptionsPanel
     ///         rebuilding — the caller applies it, because only it can.
     [[nodiscard]] bool Draw(const Frame &frame);
 
-  private:
+private:
     bool _showOptions = false;
 
     /// NVIDIA GPU telemetry (clocks/power/util/temp). Initialises NVML on first
@@ -84,13 +84,13 @@ class EditorOptionsPanel
     /// is the next write slot and the chronological start ImPlot wants;
     /// `_gpuTelemetryCount` saturates at the capacity. Only advanced while the
     /// overlay is open.
-    static constexpr int32_t       kGpuHistory = 150; // ~30 s at 5 Hz
+    static constexpr int32_t kGpuHistory = 150;       // ~30 s at 5 Hz
     std::array<float, kGpuHistory> _gpuClockHistory{};
     std::array<float, kGpuHistory> _gpuUtilHistory{};
     std::array<float, kGpuHistory> _gpuPowerHistory{};
-    int32_t                        _gpuTelemetryOffset = 0;
-    int32_t                        _gpuTelemetryCount  = 0;
-    uint64_t                       _lastGpuSequence    = 0;
+    int32_t _gpuTelemetryOffset = 0;
+    int32_t _gpuTelemetryCount  = 0;
+    uint64_t _lastGpuSequence    = 0;
 };
 
 } // namespace Assisi::Editor

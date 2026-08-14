@@ -59,7 +59,7 @@ enum class FieldType
 /// is safe but changing an existing enumerator's value migrates saved data.
 struct EnumConstant
 {
-    std::string  name;
+    std::string name;
     std::int64_t value = 0;
 };
 
@@ -75,9 +75,9 @@ enum class RadioBehavior
 struct FieldMeta
 {
     std::string name;
-    FieldType   type      = FieldType::Unknown;
+    FieldType type      = FieldType::Unknown;
     std::size_t offset    = 0;
-    bool        transient = false; ///< If true, excluded from serialization.
+    bool transient = false;        ///< If true, excluded from serialization.
 
     /// @brief AFIELD(norep): saved to disk, never sent over the network.
     ///
@@ -96,8 +96,8 @@ struct FieldMeta
     // Editor hints from AFIELD(min=..., max=...): inclusive bounds an editor
     // must clamp numeric edits to (e.g. a light radius that must not go
     // negative). Hints only — serialization does not enforce them.
-    bool  hasMin   = false; ///< True when AFIELD supplied min=...
-    bool  hasMax   = false; ///< True when AFIELD supplied max=...
+    bool hasMin   = false;  ///< True when AFIELD supplied min=...
+    bool hasMax   = false;  ///< True when AFIELD supplied max=...
     float minValue = 0.f;   ///< Inclusive lower bound; meaningful when hasMin.
     float maxValue = 0.f;   ///< Inclusive upper bound; meaningful when hasMax.
 
@@ -110,7 +110,7 @@ struct FieldMeta
     // for an 8/16-bit enum). enumSize is the byte width (1/2/4/8); 0 marks a
     // non-enum field. enumSigned selects sign-extension when reading.
     std::uint8_t enumSize   = 0;     ///< Underlying byte width; 0 = not an enum.
-    bool         enumSigned = false; ///< Underlying type is signed (sign-extend on read).
+    bool enumSigned = false;         ///< Underlying type is signed (sign-extend on read).
 
     // Radio: declarative editor visibility driven by a sibling enum's value. A
     // field annotated AFIELD(radioListen = { source = enumField, value = ...,
@@ -122,9 +122,9 @@ struct FieldMeta
     // listeners hide unconditionally, so the editor resolves visibility by
     // walking radioSource up the chain (reflectgen rejects cycles). radioSource is
     // empty for every non-listener field.
-    std::string               radioSource;                          ///< Sibling enum field this field's visibility follows ("" = not a listener).
+    std::string radioSource;                                        ///< Sibling enum field this field's visibility follows ("" = not a listener).
     std::vector<std::int64_t> radioValues;                          ///< Enum values at which this field is active; meaningful when radioSource set.
-    RadioBehavior             radioBehavior = RadioBehavior::None;   ///< Editor treatment while inactive.
+    RadioBehavior radioBehavior = RadioBehavior::None;               ///< Editor treatment while inactive.
 
     /// @brief AFIELD(controlled): this message field must name an entity the
     /// sender controls.

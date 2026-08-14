@@ -61,7 +61,7 @@ constexpr unsigned int kNvmlPowerScopeGpu     = 0;   // NVML_POWER_SCOPE_GPU (wh
 
 union NvmlValue
 {
-    double        dVal;  // forces the 8-byte size/alignment of the real nvmlValue_t union
+    double dVal;         // forces the 8-byte size/alignment of the real nvmlValue_t union
     std::uint64_t u64;   //   "
     std::uint32_t uiVal; // instant/average power is an unsigned int in mW — the member we read
 };
@@ -71,9 +71,9 @@ struct NvmlFieldValue
     std::uint32_t scopeId;
     std::uint64_t timestamp;   // nvml.h: signed long long; opaque to us
     std::uint64_t latencyUsec; // nvml.h: signed long long; opaque to us
-    std::int32_t  valueType;   // nvmlValueType_t
-    std::int32_t  nvmlReturn;  // nvmlReturn_t
-    NvmlValue     value;
+    std::int32_t valueType;    // nvmlValueType_t
+    std::int32_t nvmlReturn;   // nvmlReturn_t
+    NvmlValue value;
 };
 using PFN_GetFieldValues = int (*)(nvmlDevice_t, int, NvmlFieldValue *);
 
@@ -134,18 +134,18 @@ struct GpuTelemetry::Impl
 {
     // --- Worker-thread-owned NVML state. Touched only by Run() (Initialize +
     // QueryOnce + Cleanup), never from the main thread, so it needs no locking. ---
-    LibHandle    lib    = nullptr;
+    LibHandle lib    = nullptr;
     nvmlDevice_t device = nullptr;
-    bool         ok     = false; // NVML up and a device handle acquired
+    bool ok     = false;         // NVML up and a device handle acquired
 
-    PFN_Shutdown            shutdown  = nullptr;
-    PFN_GetClockInfo        clockInfo = nullptr;
+    PFN_Shutdown shutdown  = nullptr;
+    PFN_GetClockInfo clockInfo = nullptr;
     PFN_GetUtilizationRates util      = nullptr;
-    PFN_GetPowerUsage       power     = nullptr;
-    PFN_GetPowerLimit       powerLim  = nullptr;
-    PFN_GetTemperature      temp      = nullptr;
-    PFN_GetMemoryInfo       memInfo   = nullptr;
-    PFN_GetFieldValues      getFieldValues = nullptr;
+    PFN_GetPowerUsage power     = nullptr;
+    PFN_GetPowerLimit powerLim  = nullptr;
+    PFN_GetTemperature temp      = nullptr;
+    PFN_GetMemoryInfo memInfo   = nullptr;
+    PFN_GetFieldValues getFieldValues = nullptr;
 
     // How to read power draw, decided once in Initialize() and then replayed every
     // query: legacy nvmlDeviceGetPowerUsage is unsupported on many laptop GPUs,
@@ -156,20 +156,20 @@ struct GpuTelemetry::Impl
         Legacy,
         Field
     };
-    PowerSource  powerSource  = PowerSource::None;
+    PowerSource powerSource  = PowerSource::None;
     unsigned int powerFieldId = kNvmlFiDevPowerInstant; // which field id worked, when Field
 
     GpuTelemetrySample working; // the worker's scratch sample (name + accumulating fields + sequence)
 
     // --- Shared between the worker and the main (Poll) thread, under `mutex`. -----
-    std::mutex              mutex;
+    std::mutex mutex;
     std::condition_variable wake;          // lets the dtor cut the worker's sleep short
-    bool                    stop   = false;
-    GpuTelemetrySample      shared;        // latest sample the worker has published
+    bool stop   = false;
+    GpuTelemetrySample shared;             // latest sample the worker has published
 
     // --- Main-thread-only state. -------------------------------------------------
-    std::thread        worker;
-    bool               started = false;
+    std::thread worker;
+    bool started = false;
     GpuTelemetrySample cached;             // what Poll() returns a reference to
 
     // Open NVML, resolve the entry points, and grab device 0's handle + name.
@@ -269,7 +269,7 @@ struct GpuTelemetry::Impl
         if (clockInfo && clockInfo(device, kNvmlClockMem, &v) == kNvmlSuccess)
             working.memClockMhz = v;
 
-        if (NvmlUtilization u{}; util && util(device, &u) == kNvmlSuccess)
+        if (NvmlUtilization u{}; util &&util(device, &u) == kNvmlSuccess)
         {
             working.gpuUtilPct = u.gpu;
             working.memUtilPct = u.memory;
@@ -291,7 +291,7 @@ struct GpuTelemetry::Impl
             working.powerLimitWatts = v / 1000.0;
         if (temp && temp(device, kNvmlTemperatureGpu, &v) == kNvmlSuccess)
             working.temperatureC = v;
-        if (NvmlMemory m{}; memInfo && memInfo(device, &m) == kNvmlSuccess)
+        if (NvmlMemory m{}; memInfo &&memInfo(device, &m) == kNvmlSuccess)
         {
             working.memUsedBytes  = m.used;
             working.memTotalBytes = m.total;

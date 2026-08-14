@@ -46,14 +46,14 @@ struct HandlerLog
     std::uint32_t knockbackCalls     = 0;
     std::uint32_t reliableHitCalls   = 0;
 
-    TestPlaceMarker   lastPlaceMarker;
-    TestPing          lastPing;
-    TestBurst         lastBurst;
-    TestKnockback     lastKnockback;
-    TestReliableHit   lastReliableHit;
-    TestAnnounce      lastAnnounce;
-    TestMovePawn      lastMovePawn;
-    TestTagInstance   lastTagInstance;
+    TestPlaceMarker lastPlaceMarker;
+    TestPing lastPing;
+    TestBurst lastBurst;
+    TestKnockback lastKnockback;
+    TestReliableHit lastReliableHit;
+    TestAnnounce lastAnnounce;
+    TestMovePawn lastMovePawn;
+    TestTagInstance lastTagInstance;
     TestInstanceNamed lastInstanceNamed;
 
     /// The server dispatches its own copy of every event it sends, through the

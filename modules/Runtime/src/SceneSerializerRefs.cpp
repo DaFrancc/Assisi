@@ -106,9 +106,9 @@ ECS::Entity SceneSerializer::RefToEntity(const nlohmann::json &value)
     {
         if (!value.is_number_unsigned())
             return ECS::NullEntity;
-        const uint64_t    key     = value.get<uint64_t>();
-        const auto        slot    = static_cast<uint32_t>(key & 0xFFFFFFFFull);
-        const auto        wantGen = static_cast<uint32_t>(key >> 32);
+        const uint64_t key     = value.get<uint64_t>();
+        const auto slot    = static_cast<uint32_t>(key & 0xFFFFFFFFull);
+        const auto wantGen = static_cast<uint32_t>(key >> 32);
         const ECS::Entity live    = s_rawContextScene->EntityAt(slot);
         return live.generation == wantGen ? live : ECS::NullEntity;
     }
@@ -196,20 +196,20 @@ std::vector<ECS::Entity> SceneSerializer::TransferEntities(ECS::Scene &src, ECS:
                          [entities](const Core::Reflect::ComponentMeta &meta,
                                     const Core::Reflect::FieldMeta &field, std::size_t owner,
                                     ECS::Entity target)
-                         {
-                             Core::Log::Warn("Migrate: {}::{} on entity (index {}, gen {}) references entity "
-                                             "(index {}, gen {}) outside the migrated set — it will be null "
-                                             "in the destination.",
-                                             meta.name, field.name, entities[owner].index,
-                                             entities[owner].generation, target.index, target.generation);
-                         });
+        {
+            Core::Log::Warn("Migrate: {}::{} on entity (index {}, gen {}) references entity "
+                            "(index {}, gen {}) outside the migrated set — it will be null "
+                            "in the destination.",
+                            meta.name, field.name, entities[owner].index,
+                            entities[owner].generation, target.index, target.generation);
+        });
 
     // Pass 1: serialize every migrated component while the source map is live, so
     // in-set EntityRefs capture their set index. Held per entity until pass 3.
     struct CapturedComponent
     {
         const Core::Reflect::ComponentMeta *meta;
-        nlohmann::json                      data;
+        nlohmann::json data;
     };
     std::vector<std::vector<CapturedComponent>> captured(entities.size());
     for (std::size_t i = 0; i < entities.size(); ++i)

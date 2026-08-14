@@ -142,7 +142,7 @@ template <typename TakenFn>
 /// entities. Build it, use it, drop it.
 class NameBatch
 {
-  public:
+public:
     /// @param rebuilding entities whose current names do not count as taken,
     ///        because this same batch is about to rename them. A re-expansion
     ///        passes its adopted members: without it each one is suffixed against
@@ -152,8 +152,8 @@ class NameBatch
     /// @brief Names @p entity @p stem, or the first free `stem_N`, and says which.
     std::string Give(ECS::Entity entity, std::string_view stem);
 
-  private:
-    ECS::Scene                     &_scene;
+private:
+    ECS::Scene &_scene;
     std::unordered_set<std::string> _taken;
 };
 

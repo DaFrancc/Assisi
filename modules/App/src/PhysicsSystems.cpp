@@ -83,7 +83,7 @@ void BounceSystem(SystemContext &ctx)
         // clamped rather than trusted: the inspector floors the field, but a level
         // file is just text and can hold anything.
         const glm::vec3 reflected = contact.velocity - 2.f * closingSpeed * contact.normal;
-        const float     rebound   = glm::max(bounce->rebound, 0.f);
+        const float rebound   = glm::max(bounce->rebound, 0.f);
         ctx.world.physics.SetBodyLinearVelocity(*body, reflected * rebound);
     }
 }

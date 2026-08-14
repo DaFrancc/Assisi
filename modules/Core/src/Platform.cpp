@@ -89,17 +89,17 @@ void ShowErrorDialog([[maybe_unused]] std::string_view title, std::string_view m
     // MessageBoxW takes NUL-terminated UTF-16; widen the UTF-8 inputs. An empty
     // view yields an empty string, which is a valid (if blank) argument.
     const auto widen = [](std::string_view text) -> std::wstring
-    {
-        if (text.empty())
-        {
-            return std::wstring{};
-        }
-        const int wide =
-            MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
-        std::wstring result(static_cast<size_t>(wide), L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), wide);
-        return result;
-    };
+                       {
+                           if (text.empty())
+                           {
+                               return std::wstring{};
+                           }
+                           const int wide =
+                               MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), nullptr, 0);
+                           std::wstring result(static_cast<size_t>(wide), L'\0');
+                           MultiByteToWideChar(CP_UTF8, 0, text.data(), static_cast<int>(text.size()), result.data(), wide);
+                           return result;
+                       };
 
     const std::wstring wideTitle   = widen(title);
     const std::wstring wideMessage = widen(message);
@@ -113,14 +113,14 @@ void ShowErrorDialog([[maybe_unused]] std::string_view title, std::string_view m
     const std::string messageStr(message);
 
     const auto tryZenity = [&]
-    { return RunDialogProcess({"zenity", "--error", "--title", titleStr, "--text", messageStr}); };
+                           { return RunDialogProcess({"zenity", "--error", "--title", titleStr, "--text", messageStr}); };
     const auto tryKdialog = [&]
-    { return RunDialogProcess({"kdialog", "--error", messageStr, "--title", titleStr}); };
+                            { return RunDialogProcess({"kdialog", "--error", messageStr, "--title", titleStr}); };
     const auto tryXmessage = [&]
-    { return RunDialogProcess({"xmessage", "-center", titleStr + "\n\n" + messageStr}); };
+                             { return RunDialogProcess({"xmessage", "-center", titleStr + "\n\n" + messageStr}); };
 
     const char *desktop = std::getenv("XDG_CURRENT_DESKTOP");
-    const bool  preferKde =
+    const bool preferKde =
         desktop != nullptr && std::string_view(desktop).find("KDE") != std::string_view::npos;
 
     if (preferKde)

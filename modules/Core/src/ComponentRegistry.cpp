@@ -60,8 +60,8 @@ void ComponentRegistry::Register(ComponentMeta meta)
                          "finalized and its ids are in use. The component will not be reflected.",
                          meta.name);
         ASSISI_ASSERT(false, "ComponentRegistry::Register after an id was issued — ids are positions in the "
-                             "name-sorted list, so registering now would renumber ids that callers have "
-                             "already cached and saved scenes already store");
+                      "name-sorted list, so registering now would renumber ids that callers have "
+                      "already cached and saved scenes already store");
         return;
     }
 

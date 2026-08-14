@@ -56,7 +56,7 @@ namespace
 /// not a consequence of geometry.
 class ScriptedProvider final : public RelevancyProvider
 {
-  public:
+public:
     /// Nothing is relevant until something is added. The harshest default, so a
     /// test that forgets to grant sees an empty world rather than a full one.
     void Set(std::vector<NetId> members)
@@ -83,10 +83,10 @@ class ScriptedProvider final : public RelevancyProvider
 
     void ForgetClient(ClientId client) override { forgotten.push_back(client); }
 
-    std::uint32_t         calls = 0;
+    std::uint32_t calls = 0;
     std::vector<ClientId> forgotten;
 
-  private:
+private:
     std::vector<NetId> _members;
 };
 
@@ -94,7 +94,7 @@ class ScriptedProvider final : public RelevancyProvider
 /// the live set verbatim, so its only effect is to run the machinery.
 class IdentityProvider final : public RelevancyProvider
 {
-  public:
+public:
     void Compute(const RelevancyQuery &query, std::vector<NetId> &out) override
     {
         out.assign(query.live.begin(), query.live.end());
@@ -105,8 +105,8 @@ class IdentityProvider final : public RelevancyProvider
 struct Harness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
 
@@ -133,8 +133,8 @@ struct Harness
     bool dropClientMessages = false;
 
     explicit Harness(ReplicationConfig config = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
-          client(transport, clientScene, pair.second)
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
+        client(transport, clientScene, pair.second)
     {
         server.SetContentSetHash(0);
         client.SetContentSetHash(0);
@@ -178,7 +178,7 @@ struct Harness
 ECS::Entity SpawnReplicated(ECS::Scene &scene, glm::vec3 position = {})
 {
     const ECS::Entity entity = scene.Create();
-    ECS::Transform    transform;
+    ECS::Transform transform;
     transform.position = position;
     (void)scene.Add<ECS::Transform>(entity, transform);
     (void)scene.Add<Replicated>(entity, Replicated{});
@@ -255,7 +255,7 @@ TEST_CASE("no provider means no cost: the bytes are identical to an identity fil
 TEST_CASE("a filtered connection is told about its set and nothing else")
 {
     Harness harness;
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     const ECS::Entity seen   = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
@@ -281,7 +281,7 @@ TEST_CASE("a filtered connection is told about its set and nothing else")
 TEST_CASE("world completeness is per connection, against the set it can see")
 {
     Harness harness;
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     const ECS::Entity seen = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
@@ -301,7 +301,7 @@ TEST_CASE("world completeness is per connection, against the set it can see")
 TEST_CASE("leaving the set is a despawn, and it heals like one")
 {
     Harness harness;
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     const ECS::Entity entity = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
@@ -331,7 +331,7 @@ TEST_CASE("leaving the set is a despawn, and it heals like one")
 TEST_CASE("an entity outside the set costs zero bytes, and the mover proves it")
 {
     Harness harness;
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     const ECS::Entity kept    = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
@@ -395,13 +395,13 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
     // despawn round-trips, so that gate says yes for the whole exit window and
     // for as long as the despawn keeps being resent. Left unfiltered, a falling
     // box the connection cannot see ships its pose every single snapshot.
-    Net::NetTransport     transport;
-    ECS::Scene            serverScene;
-    ECS::Scene            clientScene;
+    Net::NetTransport transport;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
     Physics::PhysicsWorld serverPhysics;
     Physics::PhysicsWorld clientPhysics;
 
-    const auto        pair = transport.CreateLoopbackPair();
+    const auto pair = transport.CreateLoopbackPair();
     ReplicationServer server(transport, serverScene, &serverPhysics);
     ReplicationClient client(transport, clientScene, pair.second, &clientPhysics);
     server.SetContentSetHash(0);
@@ -412,56 +412,56 @@ TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
     server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     constexpr float kFixedStep         = 1.f / 60.f;
-    std::uint64_t   tick               = 0;
-    bool            dropClientMessages = false;
-    const auto      step               = [&](std::uint32_t times)
-    {
-        for (std::uint32_t i = 0; i < times; ++i)
-        {
-            std::vector<Net::NetEvent> events;
-            transport.Poll(events);
-            for (const Net::NetEvent &event : events)
-            {
-                if (event.type != Net::NetEvent::Type::Message)
-                    continue;
-                if (event.connection == pair.first)
-                {
-                    if (!dropClientMessages)
-                        server.HandleMessage(pair.first, event.payload);
-                }
-                else if (event.connection == pair.second)
-                {
-                    client.HandleMessage(event.payload);
-                }
-            }
-            serverPhysics.Update(kFixedStep);
-            serverPhysics.CaptureState();
-            clientPhysics.Update(kFixedStep);
-            clientPhysics.CaptureState();
-            client.EnforceSleep();
-            server.Tick(tick++);
-        }
-    };
+    std::uint64_t tick               = 0;
+    bool dropClientMessages = false;
+    const auto step               = [&](std::uint32_t times)
+                                    {
+                                        for (std::uint32_t i = 0; i < times; ++i)
+                                        {
+                                            std::vector<Net::NetEvent> events;
+                                            transport.Poll(events);
+                                            for (const Net::NetEvent &event : events)
+                                            {
+                                                if (event.type != Net::NetEvent::Type::Message)
+                                                    continue;
+                                                if (event.connection == pair.first)
+                                                {
+                                                    if (!dropClientMessages)
+                                                        server.HandleMessage(pair.first, event.payload);
+                                                }
+                                                else if (event.connection == pair.second)
+                                                {
+                                                    client.HandleMessage(event.payload);
+                                                }
+                                            }
+                                            serverPhysics.Update(kFixedStep);
+                                            serverPhysics.CaptureState();
+                                            clientPhysics.Update(kFixedStep);
+                                            clientPhysics.CaptureState();
+                                            client.EnforceSleep();
+                                            server.Tick(tick++);
+                                        }
+                                    };
 
     // One box that will never stop falling — it is spawned high enough that it
     // is still in the air at the end of the test, so its body state is captured
     // on every single tick and there is always something to leak.
     const auto spawnBox = [&](glm::vec3 position)
-    {
-        const ECS::Entity entity = serverScene.Create();
-        ECS::Transform    transform;
-        transform.position = position;
-        (void)serverScene.Add<ECS::Transform>(entity, transform);
+                          {
+                              const ECS::Entity entity = serverScene.Create();
+                              ECS::Transform transform;
+                              transform.position = position;
+                              (void)serverScene.Add<ECS::Transform>(entity, transform);
 
-        Physics::RigidBodyDescriptor descriptor;
-        descriptor.shape       = Physics::ColliderShape::Box;
-        descriptor.halfExtents = glm::vec3{0.5f};
-        descriptor.isStatic    = false;
-        (void)serverScene.Add<Physics::RigidBodyDescriptor>(entity, descriptor);
-        (void)serverScene.Add<Replicated>(entity, Replicated{});
-        (void)serverPhysics.AddBodyFromDescriptor(serverScene, entity, transform, descriptor);
-        return entity;
-    };
+                              Physics::RigidBodyDescriptor descriptor;
+                              descriptor.shape       = Physics::ColliderShape::Box;
+                              descriptor.halfExtents = glm::vec3{0.5f};
+                              descriptor.isStatic    = false;
+                              (void)serverScene.Add<Physics::RigidBodyDescriptor>(entity, descriptor);
+                              (void)serverScene.Add<Replicated>(entity, Replicated{});
+                              (void)serverPhysics.AddBodyFromDescriptor(serverScene, entity, transform, descriptor);
+                              return entity;
+                          };
 
     const ECS::Entity falling = spawnBox({0.f, 400.f, 0.f});
     step(4);
@@ -514,7 +514,7 @@ TEST_CASE("re-entering before the despawn acks sends full state, not a delta")
     // and the client, which destroyed its mirror when the despawn landed,
     // rebuilds a fresh entity out of whichever components that delta carried.
     Harness harness;
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     const ECS::Entity entity = SpawnReplicated(harness.serverScene, {5.f, 6.f, 7.f});
@@ -557,7 +557,7 @@ TEST_CASE("re-entering before the despawn acks sends full state, not a delta")
 TEST_CASE("an explicit grant outranks the provider")
 {
     Harness harness;
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     const ECS::Entity pinned = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
@@ -587,13 +587,13 @@ TEST_CASE("a connection always sees what it controls")
     // face and fatal to any future prediction, since a controller must always
     // hold its subject.
     Harness harness;
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
     harness.Step(4);
 
     const ECS::Entity pawn = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
     harness.Step(2);
-    const NetId    netId = harness.server.NetIdOf(pawn);
+    const NetId netId = harness.server.NetIdOf(pawn);
     const ClientId id    = harness.server.ClientIdOf(harness.serverSide());
 
     provider->Set({}); // the provider wants this connection to see nothing at all
@@ -619,7 +619,7 @@ TEST_CASE("priority does not climb for entities outside the set")
     config.maxSnapshotBytes = 240; // small enough that ordering is observable
 
     Harness harness(config);
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     std::vector<ECS::Entity> entities;
@@ -653,7 +653,7 @@ TEST_CASE("the keyframe sweep re-anchors a filtered connection to its own set")
     config.keyframeIntervalTicks = 12;
 
     Harness harness(config);
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
 
     const ECS::Entity seen = SpawnReplicated(harness.serverScene, {1.f, 0.f, 0.f});
@@ -675,7 +675,7 @@ TEST_CASE("the keyframe sweep re-anchors a filtered connection to its own set")
 TEST_CASE("a departing connection takes its provider state with it")
 {
     Harness harness;
-    auto   *provider = new ScriptedProvider();
+    auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
     harness.Step(4);
 

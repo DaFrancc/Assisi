@@ -44,7 +44,7 @@ namespace Assisi::Editor
 /// sides present) and add/remove (one side absent) share one shape.
 struct ComponentDelta
 {
-    Assisi::ECS::Entity            entity; ///< Exact (index, generation) while alive.
+    Assisi::ECS::Entity entity;            ///< Exact (index, generation) while alive.
     Assisi::Core::Reflect::ComponentId id;
     std::optional<nlohmann::json>  before; ///< nullopt = component absent before.
     std::optional<nlohmann::json>  after;  ///< nullopt = component absent after.
@@ -58,7 +58,7 @@ struct ComponentDelta
 struct ComponentSnapshot
 {
     Assisi::Core::Reflect::ComponentId id;
-    nlohmann::json                     data;
+    nlohmann::json data;
 };
 
 /// @brief A whole-entity lifetime change (create or delete), possibly a subtree.
@@ -68,7 +68,7 @@ struct ComponentSnapshot
 /// in one Transaction.
 struct EntityDelta
 {
-    Assisi::ECS::Entity                              handle; ///< Exact (index, generation).
+    Assisi::ECS::Entity handle;                              ///< Exact (index, generation).
     std::optional<std::vector<ComponentSnapshot>>    before;
     std::optional<std::vector<ComponentSnapshot>>    after;
 };
@@ -101,11 +101,11 @@ using EditCommand = std::variant<ComponentDelta, EntityDelta, InstanceDelta>;
 /// the atom of undo. Applying it toward `before` is undo; toward `after` is redo.
 struct Transaction
 {
-    std::string              label; ///< "Move", "Add MeshRenderer", … (for the history panel).
+    std::string label;              ///< "Move", "Add MeshRenderer", … (for the history panel).
     std::vector<EditCommand> cmds;
-    Assisi::ECS::Entity      selectionBefore = Assisi::ECS::NullEntity;
-    Assisi::ECS::Entity      selectionAfter  = Assisi::ECS::NullEntity;
-    std::uint64_t            seq             = 0; ///< Unique sequence, assigned on Push (dirty tracking).
+    Assisi::ECS::Entity selectionBefore = Assisi::ECS::NullEntity;
+    Assisi::ECS::Entity selectionAfter  = Assisi::ECS::NullEntity;
+    std::uint64_t seq             = 0;            ///< Unique sequence, assigned on Push (dirty tracking).
 };
 
 /// @brief A linear undo/redo stack over one Scene.
@@ -122,15 +122,15 @@ struct Transaction
 /// linear history, which is what Push() clearing the redo stack guarantees.
 class EditHistory
 {
-  public:
+public:
     /// @brief Called once per component right after an apply restores or removes
     /// it, so the editor can rebuild the transient state serialization excludes
     /// (physics body, resolved asset pointers). This class stays agnostic about
     /// which ids need what; the hook dispatches. Its arguments are the affected
     /// entity (alive unless it is being destroyed), the component's id, and
     /// whether the component now exists.
-    using RebindHook = std::function<void(Assisi::ECS::Entity entity,
-                                          Assisi::Core::Reflect::ComponentId id, bool present)>;
+    using RebindHook = std::function<void (Assisi::ECS::Entity entity,
+                                           Assisi::Core::Reflect::ComponentId id, bool present)>;
 
     /// @param scene     The scene edits apply to. Must outlive this history.
     /// @param rebind    Transient-rebuild dispatch (may be empty — then a no-op).
@@ -220,13 +220,13 @@ class EditHistory
     /// unrelated entity in another. The one caller sweeps every resident world at
     /// once (a blueprint save re-expands every live copy), so without this a
     /// level's dead members would truncate the blueprint world's history.
-    std::size_t ForgetEntities(const Assisi::ECS::Scene             &scene,
+    std::size_t ForgetEntities(const Assisi::ECS::Scene &scene,
                                std::span<const Assisi::ECS::Entity> destroyed);
 
     /// @brief What ForgetEntities would drop, without dropping it, so a save can
     /// say how much history is at stake first. Same cross-scene rule: @p scene
     /// must be the one @p destroyed came from.
-    [[nodiscard]] std::size_t CountForgettable(const Assisi::ECS::Scene             &scene,
+    [[nodiscard]] std::size_t CountForgettable(const Assisi::ECS::Scene &scene,
                                                std::span<const Assisi::ECS::Entity> destroyed) const;
 
     /// @brief True while an Undo()/Redo() is applying. The capture layer checks
@@ -275,7 +275,7 @@ class EditHistory
     /// payloads are heavy, so history stays bounded whatever the edit count.
     static constexpr std::size_t kMaxDepth = 256;
 
-  private:
+private:
     enum class Direction : std::uint8_t
     {
         Undo,
@@ -286,12 +286,12 @@ class EditHistory
     /// snapshotted and whose commit is still pending.
     struct OpenGesture
     {
-        Assisi::ECS::Entity                entity;
+        Assisi::ECS::Entity entity;
         Assisi::Core::Reflect::ComponentId id;
-        std::string                        label;
+        std::string label;
         std::optional<nlohmann::json>      before;
-        Assisi::ECS::Entity                selection;
-        bool                               touchedThisFrame = true;
+        Assisi::ECS::Entity selection;
+        bool touchedThisFrame = true;
     };
 
     OpenGesture *FindOpen(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id);
@@ -328,7 +328,7 @@ class EditHistory
     /// reference this cannot name — no Name, or a member of an instance the table
     /// has forgotten — is dropped from the claim with a warning rather than written
     /// wrong: an override that means something else is worse than a missing one.
-    [[nodiscard]] nlohmann::json ReferenceSafeOverride(const nlohmann::json                &component,
+    [[nodiscard]] nlohmann::json ReferenceSafeOverride(const nlohmann::json &component,
                                                        const Assisi::Core::Reflect::ComponentMeta &meta,
                                                        Assisi::ECS::InstanceId instanceId) const;
 
@@ -356,14 +356,14 @@ class EditHistory
     bool AddComponentForRestore(Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id,
                                 const nlohmann::json &data);
 
-    Assisi::ECS::Scene             &_scene;
+    Assisi::ECS::Scene &_scene;
     Assisi::Runtime::InstanceTable *_instances = nullptr;
-    RebindHook                      _rebind;
+    RebindHook _rebind;
     std::vector<Transaction> _undo;
     std::vector<Transaction> _redo;
     std::vector<OpenGesture> _open; ///< Capture gestures awaiting commit.
-    std::uint64_t            _nextSeq  = 1; ///< Next transaction sequence (0 = base state).
-    bool                     _applying = false;
+    std::uint64_t _nextSeq  = 1;            ///< Next transaction sequence (0 = base state).
+    bool _applying = false;
 };
 
 } // namespace Assisi::Editor

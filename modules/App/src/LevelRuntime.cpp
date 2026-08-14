@@ -155,7 +155,7 @@ std::string JoinLevelErrorMessage(JoinLevelError error, std::string_view path)
         return "cannot read '" + std::string{path} + "'.";
     case JoinLevelError::ContentMismatch:
         return "your copy of '" + std::string{path} + "' differs from the host's; sync the file from the host and "
-                                                      "retry.";
+               "retry.";
     case JoinLevelError::SystemsMissing:
         return "'" + std::string{path} + "' names a system this build does not declare.";
     }

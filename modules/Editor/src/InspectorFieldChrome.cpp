@@ -18,8 +18,8 @@ namespace Assisi::Editor
 /// the constructor exists to enforce.
 ScopedFieldChrome::ScopedFieldChrome(RadioVisibility radio, bool norep)
     : _visible(radio != RadioVisibility::Hidden),
-      _greyed(radio == RadioVisibility::Greyed),
-      _tinted(_visible && norep)
+    _greyed(radio == RadioVisibility::Greyed),
+    _tinted(_visible && norep)
 {
     if (_tinted)
     {

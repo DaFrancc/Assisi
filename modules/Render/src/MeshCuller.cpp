@@ -17,7 +17,7 @@ namespace
 // std430: vec4 arrays and uvec4 are 16-byte aligned, so no manual padding.
 struct CullPushConstants
 {
-    glm::vec4  planes[6];
+    glm::vec4 planes[6];
     glm::uvec4 counts; // x = object count, y = cull enabled (0/1), zw unused
 };
 static_assert(sizeof(CullPushConstants) == 112, "CullPushConstants must match mesh_cull.comp's push_constant block.");
@@ -121,12 +121,12 @@ void CullTableBuilder::Finalize()
     for (size_t m = 0; m < _tables.meshDescs.size(); ++m)
     {
         const GpuMeshDesc &desc        = _tables.meshDescs[m];
-        const uint32_t     objectCount = _meshObjectCount[m];
+        const uint32_t objectCount = _meshObjectCount[m];
         for (uint32_t s = 0; s < desc.submeshCount; ++s)
         {
-            const uint32_t     g  = desc.firstSubmesh + s;
-            const GpuSubMesh  &sm = _tables.submeshes[g];
-            GpuDrawArgs       &t  = _tables.batchTemplates[g];
+            const uint32_t g  = desc.firstSubmesh + s;
+            const GpuSubMesh &sm = _tables.submeshes[g];
+            GpuDrawArgs &t  = _tables.batchTemplates[g];
             t.indexCount    = sm.indexCount;
             t.instanceCount = 0u; // grown atomically by the cull pass
             t.firstIndex    = desc.indexBase + sm.indexOffset;
@@ -144,9 +144,9 @@ void CullTableBuilder::AddInstance(const MeshBuffer *mesh, const glm::mat4 &mode
     {
         return;
     }
-    const std::vector<Geometry::SubMesh>  &subMeshes = mesh->SubMeshes();
+    const std::vector<Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
     const std::vector<Geometry::LodRange> &lods      = mesh->Lods();
-    const Geometry::LodRange               lod0 =
+    const Geometry::LodRange lod0 =
         !lods.empty() ? lods.front() : Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
     if (lod0.SubMeshCount == 0)
     {
@@ -226,7 +226,7 @@ void MeshCuller::EnsureInput(Buffer &buffer, uint32_t stride, uint32_t neededEle
         return;
     }
     const uint32_t capacity = std::max(buffer.CapacityElements() * 2u, neededElements);
-    buffer.Create(_device, stride, capacity, /*allowUnorderedAccess=*/false, debugName);
+    buffer.Create(_device, stride, capacity, /*allowUnorderedAccess=*/ false, debugName);
     _bindingSetDirty = true;
 }
 
@@ -237,7 +237,7 @@ void MeshCuller::EnsureInstanceCapacity(uint32_t neededElements)
         return;
     }
     const uint32_t capacity = std::max(_instanceBuffer.CapacityElements() * 2u, neededElements);
-    _instanceBuffer.Create(_device, kInstanceStride, capacity, /*allowUnorderedAccess=*/true, "MeshCuller::Instances");
+    _instanceBuffer.Create(_device, kInstanceStride, capacity, /*allowUnorderedAccess=*/ true, "MeshCuller::Instances");
     _bindingSetDirty = true;
 }
 

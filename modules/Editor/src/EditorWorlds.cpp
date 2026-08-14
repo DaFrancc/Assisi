@@ -55,7 +55,7 @@ bool EditorApp::LoadLevelAsNewWorld(const std::string &virtualPath)
     // Keep the cache: the worlds already resident hold resolved pointers into it,
     // and assets this level shares with them are reused instead of re-uploaded.
     // Reclaiming memory is SweepAssetCache's job, after travel, not this load's.
-    Assisi::Runtime::LevelHeader       header;
+    Assisi::Runtime::LevelHeader header;
     const Assisi::Runtime::LevelResult loaded =
         Assisi::App::LoadLevel(world, virtualPath, {_assetCache, _assetDatabase, _sceneRenderer},
                                {.reset = Assisi::App::AssetCacheReset::Keep, .header = &header});

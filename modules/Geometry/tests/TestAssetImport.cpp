@@ -60,7 +60,7 @@ constexpr std::string_view kMaterialGltf = R"({
 
 std::string ReadFile(const fs::path &path)
 {
-    std::ifstream     stream(path, std::ios::binary);
+    std::ifstream stream(path, std::ios::binary);
     std::stringstream buffer;
     buffer << stream.rdbuf();
     return buffer.str();
@@ -173,7 +173,7 @@ constexpr std::string_view kMaterialGltfChangedGeometry = R"({
 // AssetSystem at the fresh root and returns it.
 fs::path WriteMaterialAssets(AssetId gltfId)
 {
-    const fs::path  root = fs::temp_directory_path() / "assisi_assetimport_test";
+    const fs::path root = fs::temp_directory_path() / "assisi_assetimport_test";
     std::error_code ec;
     fs::remove_all(root, ec);
     fs::create_directories(root);
@@ -183,9 +183,9 @@ fs::path WriteMaterialAssets(AssetId gltfId)
         gltf.write(kMaterialGltf.data(), static_cast<std::streamsize>(kMaterialGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
-        std::ofstream  bin(root / "triangle.bin", std::ios::binary);
+        std::ofstream bin(root / "triangle.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
     }
@@ -213,7 +213,7 @@ TEST_CASE("ExplodeGltfMaterials writes a .amat + sidecar and the glTF manifest")
     // Resolver stands in for the AssetDatabase: the base-color texture resolves
     // to its GUID; anything else is nil (factor-only).
     const auto resolve = [woodId](std::string_view path) -> AssetId
-    { return path == "wood.png" ? woodId : AssetId{}; };
+                         { return path == "wood.png" ? woodId : AssetId{}; };
 
     const std::expected<std::size_t, Assisi::Geometry::MeshImportError> count =
         ExplodeGltfMaterials("model.gltf", resolve);
@@ -252,9 +252,9 @@ TEST_CASE("ExplodeGltfMaterials writes a .amat + sidecar and the glTF manifest")
 
 TEST_CASE("ExplodeGltfMaterials is idempotent: an existing .amat keeps its id and bytes")
 {
-    const AssetId  gltfId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolve = [](std::string_view) -> AssetId { return {}; };
+    const auto resolve = [](std::string_view) -> AssetId { return {}; };
 
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolve).has_value());
     const std::string firstAmat   = ReadFile(root / "model_Wood.amat");
@@ -286,11 +286,11 @@ auto MakeTextureResolver(AssetId woodId)
 
 TEST_CASE("ReconcileGltfMaterials: unchanged source is up to date")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
 
     const ReconcileResult result = ReconcileGltfMaterials("model.gltf", resolveTex, resolveMat);
@@ -302,11 +302,11 @@ TEST_CASE("ReconcileGltfMaterials: unchanged source is up to date")
 
 TEST_CASE("ReconcileGltfMaterials: a pre-S4 manifest (no hash) is stamped")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
 
     // Strip the stamped hash to simulate an S3-era sidecar.
@@ -334,11 +334,11 @@ TEST_CASE("ReconcileGltfMaterials: a pre-S4 manifest (no hash) is stamped")
 
 TEST_CASE("ReconcileGltfMaterials: a changed material is left stale, untouched")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
     const std::string amatBefore = ReadFile(root / "model_Wood.amat");
 
@@ -355,11 +355,11 @@ TEST_CASE("ReconcileGltfMaterials: a changed material is left stale, untouched")
 
 TEST_CASE("ReconcileGltfMaterials: a non-material change refreshes the hash only")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
     const std::string amatBefore = ReadFile(root / "model_Wood.amat");
 
@@ -376,11 +376,11 @@ TEST_CASE("ReconcileGltfMaterials: a non-material change refreshes the hash only
 
 TEST_CASE("ReconcileGltfMaterials: a new slot is materialized (additive)")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
     const std::string woodBefore = ReadFile(root / "model_Wood.amat");
 
@@ -419,11 +419,11 @@ AssetId AmatIdIn(const fs::path &amatSidecar)
 
 TEST_CASE("DiffGltfMaterials: a changed factor is reported as a per-slot conflict")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
 
     OverwriteGltf(root, kMaterialGltfChangedFactor);
@@ -440,11 +440,11 @@ TEST_CASE("DiffGltfMaterials: a changed factor is reported as a per-slot conflic
 
 TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Removed")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
 
     // Explode the two-material version, then drop back to one material: slot 0
     // survives unchanged, slot 1 is removed.
@@ -461,8 +461,8 @@ TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Remov
 
     // The reverse (one material exploded, source grows to two) reports slot 1
     // Added — the additive-safe case, no conflict.
-    const fs::path  root2   = WriteMaterialAssets(MintAssetId());
-    const auto      resMat2 = [&root2](const AssetId &id) { return ResolveMaterialPathIn(root2, id); };
+    const fs::path root2   = WriteMaterialAssets(MintAssetId());
+    const auto resMat2 = [&root2](const AssetId &id) { return ResolveMaterialPathIn(root2, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
     OverwriteGltf(root2, kTwoMaterialGltf);
     const MaterialDiff addedDiff = DiffGltfMaterials("model.gltf", resolveTex, resMat2);
@@ -478,11 +478,11 @@ TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Remov
 
 TEST_CASE("RegenerateGltfMaterials: overwrites the material from source, keeping its GUID")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
     const AssetId woodBefore = AmatIdIn(root / "model_Wood.amat.aast");
 
@@ -508,11 +508,11 @@ TEST_CASE("RegenerateGltfMaterials: overwrites the material from source, keeping
 
 TEST_CASE("RegenerateGltfMaterials: a dropped slot leaves the manifest short, orphaned file kept")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
 
     OverwriteGltf(root, kTwoMaterialGltf);
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
@@ -536,11 +536,11 @@ TEST_CASE("RegenerateGltfMaterials: a dropped slot leaves the manifest short, or
 
 TEST_CASE("AcceptGltfSource: accepts the source without touching the materials")
 {
-    const AssetId  gltfId = MintAssetId();
-    const AssetId  woodId = MintAssetId();
+    const AssetId gltfId = MintAssetId();
+    const AssetId woodId = MintAssetId();
     const fs::path root   = WriteMaterialAssets(gltfId);
-    const auto     resolveTex = MakeTextureResolver(woodId);
-    const auto     resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
+    const auto resolveTex = MakeTextureResolver(woodId);
+    const auto resolveMat = [&root](const AssetId &id) { return ResolveMaterialPathIn(root, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
     const std::string amatBefore = ReadFile(root / "model_Wood.amat");
 

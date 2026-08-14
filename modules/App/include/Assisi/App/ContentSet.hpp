@@ -78,7 +78,7 @@ struct ContentSet
 /// reached without one, so there is no race to lose (§9).
 class ContentSetHashJob
 {
-  public:
+public:
     /// @brief Kicks the scan, unless one is already running or has landed.
     void Start(Core::JobSystem &jobs);
 
@@ -102,9 +102,9 @@ class ContentSetHashJob
     /// session: the content on disk may have moved on since.
     void Reset();
 
-  private:
+private:
     Core::Task<ContentSet> _task;
-    bool                   _running = false;
+    bool _running = false;
 };
 
 } // namespace Assisi::App

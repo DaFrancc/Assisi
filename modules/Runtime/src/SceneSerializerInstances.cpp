@@ -214,7 +214,7 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
     for (uint32_t i = 0; i < definition->members.size(); ++i)
     {
         const BlueprintMemberDesc &desc = definition->members[i];
-        const std::string          path = entry.name.empty() ? desc.name : entry.name + "/" + desc.name;
+        const std::string path = entry.name.empty() ? desc.name : entry.name + "/" + desc.name;
 
         if (IsMemberRemoved(desc.name, entry.removed))
         {
@@ -318,12 +318,12 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
     // looking for references afterwards.
     Core::Reflect::CodecContext codec;
     codec.entityFromWire = [&staged](uint64_t packed) -> uint64_t
-    {
-        const auto index = static_cast<uint32_t>(packed & 0xFFFFFFFFull);
-        if (packed == PackEntity(ECS::NullEntity) || index >= staged.members.size())
-            return PackEntity(ECS::NullEntity);
-        return PackEntity(staged.members[index]);
-    };
+                           {
+                               const auto index = static_cast<uint32_t>(packed & 0xFFFFFFFFull);
+                               if (packed == PackEntity(ECS::NullEntity) || index >= staged.members.size())
+                                   return PackEntity(ECS::NullEntity);
+                               return PackEntity(staged.members[index]);
+                           };
 
     for (std::size_t i = 0; i < staged.members.size(); ++i)
     {
@@ -372,7 +372,7 @@ void CommitInstance(ECS::Scene &scene, const StagedInstance &staged, std::string
 
             Core::BitReader reader{prepared.block};
             (void)Core::Reflect::ReadComponentId(reader); // the block leads with it
-            if (!Core::Reflect::ReadComponent(*meta, component, reader, /*appliedMask=*/nullptr, &codec))
+            if (!Core::Reflect::ReadComponent(*meta, component, reader, /*appliedMask=*/ nullptr, &codec))
             {
                 Core::Log::Error("Blueprint: '{}' member '{}' failed to decode its '{}' block.",
                                  staged.definition->source, desc.name, prepared.name);
