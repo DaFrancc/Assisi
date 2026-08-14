@@ -61,10 +61,13 @@ Intel:
 sudo pacman -S vulkan-intel
 ```
 
-NVIDIA (proprietary; ships its own ICD):
+NVIDIA (proprietary; brings its own Vulkan driver, so the Mesa packages above are not what you want):
 ```bash
-sudo pacman -S nvidia-utils
+sudo pacman -S nvidia nvidia-utils
 ```
+
+`nvidia` builds against the stock `linux` kernel — on `linux-lts` or any other kernel, install
+`nvidia-dkms` in its place.
 
 Optional, only if you want to build with Clang as well as GCC:
 ```bash
@@ -79,11 +82,34 @@ sudo dnf install gcc-c++ make git cmake ninja-build python3 pkgconf-pkg-config \
                  openssl-devel \
                  wayland-devel libxkbcommon-devel \
                  libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
-                 vulkan-loader mesa-vulkan-drivers
+                 vulkan-loader
 ```
 
-NVIDIA users: the proprietary driver supplies its own Vulkan ICD, so `mesa-vulkan-drivers` is not the
-package you want.
+Plus a Vulkan driver for your GPU.
+
+AMD and Intel (Mesa covers both):
+```bash
+sudo dnf install mesa-vulkan-drivers
+```
+
+NVIDIA: the proprietary driver brings its own Vulkan driver, and it comes from RPM Fusion rather than
+Fedora's own repositories. Enable those first:
+```bash
+sudo dnf install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+                 https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+```
+
+Then install the driver:
+```bash
+sudo dnf install akmod-nvidia xorg-x11-drv-nvidia
+```
+
+Give it a few minutes to build the kernel module, then reboot. `mesa-vulkan-drivers` is not what you
+want on this card — it carries Mesa's open-source drivers, and `xorg-x11-drv-nvidia` is what supplies
+the Vulkan driver your GPU actually runs.
+
+Those two URLs are Fedora's. On RHEL and its rebuilds the equivalent repositories are listed at
+[rpmfusion.org/Configuration](https://rpmfusion.org/Configuration).
 
 Optional, only if you want to build with Clang as well as GCC:
 ```bash
