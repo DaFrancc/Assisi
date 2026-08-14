@@ -37,10 +37,10 @@ constexpr const char *kValidationLayer = "VK_LAYER_KHRONOS_validation";
 // Routes every validation message into Core::Log. Returns VK_FALSE so the
 // offending Vulkan call is NOT aborted — we want to observe, not intercept.
 VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT       severity,
-    VkDebugUtilsMessageTypeFlagsEXT              /*types*/,
-    const VkDebugUtilsMessengerCallbackDataEXT  *data,
-    void                                        * /*userData*/)
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+    const VkDebugUtilsMessengerCallbackDataEXT *data,
+    void * /*userData*/)
 {
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
         Core::Log::Error("[Vulkan] {}", data->pMessage);
@@ -170,9 +170,9 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
 
     const bool hasSwapchain = std::any_of(extensions.begin(), extensions.end(),
                                           [](const VkExtensionProperties &ext) {
-                                              return std::strcmp(ext.extensionName,
-                                                                 VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
-                                          });
+                return std::strcmp(ext.extensionName,
+                                   VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
+            });
     if (!hasSwapchain)
     {
         Core::Log::Info("  rejected: missing {}", VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -297,7 +297,7 @@ std::optional<PhysicalDeviceChoice> ChoosePhysicalDevice(VkInstance instance, Vk
         const bool isDiscrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
         Core::Log::Info("Vulkan candidate: {} ({})", props.deviceName,
-                         isDiscrete ? "discrete" : "integrated/other");
+                        isDiscrete ? "discrete" : "integrated/other");
 
         // Selection must agree with CreateLogicalDevice's hard requirements, or a
         // capable-looking-but-unsupported device gets chosen and then fails at
@@ -404,7 +404,7 @@ nvrhi::Format ToNvrhiFormat(VkFormat format)
 
 struct DepthFormatChoice
 {
-    VkFormat      vk        = VK_FORMAT_UNDEFINED;
+    VkFormat vk        = VK_FORMAT_UNDEFINED;
     nvrhi::Format nvrhiFmt  = nvrhi::Format::UNKNOWN;
 };
 
@@ -494,7 +494,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     // the sampler request to the device's limit. 8x is a good quality/cost
     // default for texture minification at grazing angles (plain trilinear
     // over-blurs there); samplers read this back via GetMaxAnisotropy().
-    constexpr float          kDesiredMaxAnisotropy = 8.0f;
+    constexpr float kDesiredMaxAnisotropy = 8.0f;
     VkPhysicalDeviceFeatures supportedFeatures{};
     VKD.vkGetPhysicalDeviceFeatures(context->_physicalDevice, &supportedFeatures);
     const bool anisotropySupported = supportedFeatures.samplerAnisotropy == VK_TRUE;
@@ -970,7 +970,7 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     // in submit/present below). Fold it into _lastGpuWaitMs so it's excluded from
     // the CPU frame-time figure rather than mislabeled as CPU work.
     const std::chrono::steady_clock::time_point acquireStart = std::chrono::steady_clock::now();
-    VkResult                                    acquireResult = VK_SUCCESS;
+    VkResult acquireResult = VK_SUCCESS;
     {
         ASSISI_PROFILE_SCOPE("acquire");
         acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphores[slot],
@@ -989,14 +989,14 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
     {
         Core::Log::Error("VulkanContext: vkAcquireNextImageKHR failed with VkResult {}",
-                          static_cast<int32_t>(acquireResult));
+                         static_cast<int32_t>(acquireResult));
         return std::nullopt;
     }
 
     _commandList->open();
     _commandList->beginTimerQuery(_timerQueries[slot]); // spans the whole frame; ended in EndFrame()
     _commandList->setTextureState(_swapchainTextures[_currentImageIndex], nvrhi::AllSubresources,
-                                   nvrhi::ResourceStates::RenderTarget);
+                                  nvrhi::ResourceStates::RenderTarget);
 
     RenderFrame frame;
     frame.commandList = _commandList;
@@ -1019,30 +1019,30 @@ void VulkanContext::EndFrame()
     // CPU work, so time it and fold it into _lastGpuWaitMs. GC (below, after this
     // window) is genuine CPU work and stays counted.
     const std::chrono::steady_clock::time_point presentWaitStart = std::chrono::steady_clock::now();
-    VkResult                                    presentResult    = VK_SUCCESS;
+    VkResult presentResult    = VK_SUCCESS;
     {
-    ASSISI_PROFILE_SCOPE("submit-present");
+        ASSISI_PROFILE_SCOPE("submit-present");
 
-    _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
-    _commandList->close();
+        _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
+        _commandList->close();
 
-    _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
-    _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphores[_currentImageIndex], 0);
-    _nvrhiDevice->executeCommandList(_commandList);
+        _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
+        _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphores[_currentImageIndex], 0);
+        _nvrhiDevice->executeCommandList(_commandList);
 
-    // Snapshot this submission's completion into the slot's query; the frame that
-    // reuses this slot kFramesInFlight later waits on it in BeginFrame().
-    _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
-    _frameQueryPending[slot] = true;
+        // Snapshot this submission's completion into the slot's query; the frame that
+        // reuses this slot kFramesInFlight later waits on it in BeginFrame().
+        _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
+        _frameQueryPending[slot] = true;
 
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &_swapchain;
-    presentInfo.pImageIndices = &_currentImageIndex;
-    presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &_swapchain;
+        presentInfo.pImageIndices = &_currentImageIndex;
+        presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
     }
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentWaitStart).count();

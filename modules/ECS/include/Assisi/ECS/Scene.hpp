@@ -349,7 +349,7 @@ struct Scene
         return MakeView<MutAccess, Ts...>(without, &_changeTick);
     }
 
-  private:
+private:
     /// @brief Shared body of Query/QueryMut: resolve the pools, reject the
     /// no-match case, and pick the pool that drives iteration.
     ///
@@ -368,7 +368,7 @@ struct Scene
         /* If any required pool is missing, there are no matching entities. A
            missing excluded pool is fine — it simply excludes nobody. */
         bool anyNull = false;
-        std::apply([&](auto *...ps) { anyNull = (... || (ps == nullptr)); }, pools);
+        std::apply([&](auto *... ps) { anyNull = (... || (ps == nullptr)); }, pools);
         if (anyNull)
         {
             return View{pools, nullptr, excluded, changeTick};
@@ -379,16 +379,16 @@ struct Scene
         const std::vector<Entity> *primary = nullptr;
         std::size_t minSize = SIZE_MAX;
         std::apply(
-            [&](auto *...ps)
+            [&](auto *... ps)
             {
                 auto check = [&](auto *p)
-                {
-                    if (p->Size() < minSize)
-                    {
-                        minSize = p->Size();
-                        primary = &p->Entities();
-                    }
-                };
+                             {
+                                 if (p->Size() < minSize)
+                                 {
+                                     minSize = p->Size();
+                                     primary = &p->Entities();
+                                 }
+                             };
                 (check(ps), ...);
             },
             pools);

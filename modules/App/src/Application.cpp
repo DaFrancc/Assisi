@@ -184,8 +184,8 @@ bool Application::InitializeCore()
     // next launch trims it. Overshooting by one beats doing directory work with
     // a corrupt heap.
     const std::filesystem::path &userRoot   = Core::AssetSystem::GetUserRoot();
-    const std::string            logName    = std::format("assisi-{}.log", Core::LaunchStamp());
-    const std::string            crashName  = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
+    const std::string logName    = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::string crashName  = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
     Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
     Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps, crashName);
 
@@ -223,7 +223,7 @@ bool Application::InitializePresentation()
     }
 
     Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext(),
-                               /*persistLayout=*/!_restrictedViewer);
+                               /*persistLayout=*/ !_restrictedViewer);
 
     _input = std::make_unique<Window::InputContext>(*_window);
 
@@ -245,14 +245,14 @@ bool Application::InitializePresentation()
 Window::WindowContext &Application::GetWindow() const
 {
     ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process — there is no window. Guard with "
-                                      "IsHeadless()/HasPresentation().");
+                  "IsHeadless()/HasPresentation().");
     return *_window;
 }
 
 Window::InputContext &Application::GetInput() const
 {
     ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process — there are no input devices. Guard with "
-                                     "IsHeadless()/HasPresentation().");
+                  "IsHeadless()/HasPresentation().");
     return *_input;
 }
 
@@ -323,7 +323,7 @@ void SleepUntil(Clock::time_point target)
     const double remainingSec = Seconds(target - Clock::now()).count();
     if (remainingSec > marginSec)
     {
-        const double           requestSec = remainingSec - marginSec;
+        const double requestSec = remainingSec - marginSec;
         const Clock::time_point before     = Clock::now();
         std::this_thread::sleep_for(Seconds(requestSec));
         const double overshootSec = std::max(0.0, Seconds(Clock::now() - before).count() - requestSec);
@@ -361,12 +361,12 @@ void Application::Run()
 
     Clock::time_point prevTime       = Clock::now();
     Clock::time_point nextRenderTime = Clock::now();
-    double            accumulator    = 0.0;
+    double accumulator    = 0.0;
 
-    double  fpsAccum       = 0.0;
+    double fpsAccum       = 0.0;
     int32_t fpsFrameCount  = 0;
-    double  cpuMsAccum     = 0.0;
-    double  gpuMsAccum     = 0.0;
+    double cpuMsAccum     = 0.0;
+    double gpuMsAccum     = 0.0;
 
     // Headless pacing target: the next fixed tick. A windowed process paces on
     // frames (vsync or the FPS cap); a server has no frames, so without this it
@@ -450,14 +450,14 @@ void Application::Run()
         }
 
         const Clock::time_point now   = Clock::now();
-        const double            rawDt = Seconds(now - prevTime).count();
-        const double            dt    = std::min(rawDt, 0.25);
+        const double rawDt = Seconds(now - prevTime).count();
+        const double dt    = std::min(rawDt, 0.25);
         prevTime                      = now;
 
         // Per-phase stopwatches for the slow-frame diagnostic below. Cheap
         // (steady_clock reads), and only reported when a frame actually spikes.
         const auto phaseMs = [](Clock::time_point from, Clock::time_point to)
-        { return Seconds(to - from).count() * 1000.0; };
+                             { return Seconds(to - from).count() * 1000.0; };
 
         const Clock::time_point inputStart = Clock::now();
         {

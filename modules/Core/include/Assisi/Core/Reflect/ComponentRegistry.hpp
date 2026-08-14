@@ -28,7 +28,7 @@ namespace Assisi::Core::Reflect
 
 class ComponentRegistry
 {
-  public:
+public:
     static ComponentRegistry &Instance();
 
     /// @brief Register a component type.  Called by generated code at startup.
@@ -91,7 +91,7 @@ class ComponentRegistry
     /// component.
     static constexpr std::size_t kInvalidOrdinal = static_cast<std::size_t>(-1);
 
-  private:
+private:
     ComponentRegistry() = default;
 
     /// @brief Sort by name, assign dense ids, and rebuild the type→id map.

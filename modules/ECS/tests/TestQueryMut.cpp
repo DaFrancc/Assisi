@@ -36,7 +36,7 @@ int32_t Read(const Tracked &tracked)
 
 TEST_CASE("QueryMut: a tracked component written through the proxy reports Changed")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Tracked>(e, {1}) != nullptr);
 
@@ -57,7 +57,7 @@ TEST_CASE("QueryMut: a tracked component written through the proxy reports Chang
 
 TEST_CASE("QueryMut: every mutable spelling stamps")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Tracked>(e, {0}) != nullptr);
 
@@ -112,7 +112,7 @@ TEST_CASE("QueryMut: every mutable spelling stamps")
 
 TEST_CASE("QueryMut: const access through the proxy does not stamp")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Tracked>(e, {5}) != nullptr);
 
@@ -139,7 +139,7 @@ TEST_CASE("QueryMut: the same write through a plain Query is a missed change")
     // This documents the hazard QueryMut exists to close. Plain Query hands out
     // raw Ts& and cannot tell a read from a write, so a tracked write through it
     // is silently invisible to Changed() — exactly like writing through Get<T>.
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Tracked>(e, {1}) != nullptr);
 
@@ -158,7 +158,7 @@ TEST_CASE("QueryMut: the same write through a plain Query is a missed change")
 
 TEST_CASE("QueryMut: exclusions yield the same entity set as Query")
 {
-    Scene        scene;
+    Scene scene;
     const Entity plain   = scene.Create();
     const Entity tagged  = scene.Create();
     const Entity another = scene.Create();
@@ -191,7 +191,7 @@ TEST_CASE("QueryMut: exclusions yield the same entity set as Query")
 
 TEST_CASE("QueryMut: an untracked component behaves like a plain reference and burns no tick")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
 
@@ -213,7 +213,7 @@ TEST_CASE("QueryMut: an untracked component behaves like a plain reference and b
 
 TEST_CASE("QueryMut: a mixed signature stamps only the tracked pool")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Tracked>(e, {1}) != nullptr);
     REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
@@ -257,7 +257,7 @@ TEST_CASE("QueryMut: a missing pool yields nothing and stamps nothing")
 
 TEST_CASE("QueryMut: stamping is per entity, not per pool")
 {
-    Scene        scene;
+    Scene scene;
     const Entity a = scene.Create();
     const Entity b = scene.Create();
     REQUIRE(scene.Add<Tracked>(a, {1}) != nullptr);

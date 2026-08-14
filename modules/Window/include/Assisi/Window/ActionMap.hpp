@@ -86,7 +86,7 @@ using ActionTable = std::unordered_map<std::string, std::vector<ActionBinding>,
 /// remove existing ones — call Unbind() first if you want to replace them.
 class ActionMap
 {
-  public:
+public:
     // -------------------------------------------------------------------------
     // Registration
     // -------------------------------------------------------------------------
@@ -162,7 +162,7 @@ class ActionMap
     /// @brief Parse a MouseButton from its name string. std::nullopt if unrecognised.
     [[nodiscard]] static std::optional<MouseButton> MouseButtonFromName(std::string_view name) noexcept;
 
-  private:
+private:
     ActionTable _actions;
 
     static const std::vector<ActionBinding> _emptyBindings;

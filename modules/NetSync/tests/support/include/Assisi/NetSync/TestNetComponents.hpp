@@ -63,7 +63,7 @@ AMSG(intent, reliable)
 struct TestPlaceMarker
 {
     AFIELD() uint32_t target = 0;
-    AFIELD() int32_t  slot   = 0;
+    AFIELD() int32_t slot   = 0;
 };
 
 /// @brief Client → server, freshest wins. The spammy case, where a resent stale
@@ -89,7 +89,7 @@ struct TestMovePawn
 {
     AFIELD(controlled) Assisi::ECS::Entity pawn;
     AFIELD()           Assisi::ECS::Entity target;
-    AFIELD()           int32_t             mode = 0;
+    AFIELD()           int32_t mode = 0;
 };
 
 /// @brief Server → client, loss tolerable. The default form: rides the snapshot,
@@ -103,7 +103,7 @@ AMSG(event, unreliable)
 struct TestBurst
 {
     AFIELD(subject) Assisi::ECS::Entity source;
-    AFIELD()        int32_t             intensity = 1;
+    AFIELD()        int32_t intensity = 1;
 };
 
 /// @brief Two entity references, and the subject is deliberately the *second*
@@ -124,7 +124,7 @@ struct TestKnockback
 {
     AFIELD()        Assisi::ECS::Entity instigator;
     AFIELD(subject) Assisi::ECS::Entity victim;
-    AFIELD()        int32_t             force = 0;
+    AFIELD()        int32_t force = 0;
 };
 
 /// @brief Server → client, must arrive, and scoped by an entity.
@@ -137,7 +137,7 @@ AMSG(event, reliable)
 struct TestReliableHit
 {
     AFIELD(subject) Assisi::ECS::Entity target;
-    AFIELD()        int32_t             damage = 0;
+    AFIELD()        int32_t damage = 0;
 };
 
 /// @brief An intent that names a blueprint instance rather than an entity.
@@ -152,7 +152,7 @@ AMSG(intent, reliable)
 struct TestTagInstance
 {
     AFIELD() Assisi::ECS::InstanceId instance;
-    AFIELD() int32_t                 note = 0;
+    AFIELD() int32_t note = 0;
 };
 
 /// @brief The same question in the other direction, naming no entity — so

@@ -40,7 +40,7 @@ TEST_CASE("Built-in ids are reserved, distinct, and not nil")
 TEST_CASE("AssetId string round-trips")
 {
     const std::string canonical = "12345678-9abc-4def-8123-456789abcdef";
-    auto              parsed    = AssetId::Parse(canonical);
+    auto parsed    = AssetId::Parse(canonical);
     REQUIRE(parsed.has_value());
     CHECK(parsed->ToString() == canonical);
     CHECK_FALSE(parsed->IsReserved());

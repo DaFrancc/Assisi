@@ -12,6 +12,7 @@
 ///   Assisi::Core::GetLogger().AddSink(std::make_shared<Assisi::Core::ConsoleSink>());
 
 #include <atomic>
+#include <cstdint>
 #include <format>
 #include <memory>
 #include <mutex>
@@ -29,7 +30,7 @@ namespace Assisi::Core
 // Log level
 // -------------------------------------------------------------------------
 
-enum class LogLevel
+enum class LogLevel : std::uint8_t
 {
     Trace,
     Debug,
@@ -105,7 +106,7 @@ struct Logger
     /// @brief Logs a message with source location (Error, Fatal).
     void Log(LogLevel level, std::source_location loc, std::string_view message);
 
-  private:
+private:
     /// @brief Takes the lock and fans a finished line out to every sink.
     void Emit(LogLevel level, std::string_view line);
 
@@ -163,7 +164,7 @@ struct LocFmtStr
 namespace Log
 {
 
-template <typename... Args> void Trace(std::format_string<Args...> fmt, Args &&...args)
+template <typename... Args> void Trace(std::format_string<Args...> fmt, Args &&... args)
 {
     Logger &logger = GetLogger();
     if (!logger.IsEnabled(LogLevel::Trace))
@@ -173,7 +174,7 @@ template <typename... Args> void Trace(std::format_string<Args...> fmt, Args &&.
     logger.Log(LogLevel::Trace, std::format(fmt, std::forward<Args>(args)...));
 }
 
-template <typename... Args> void Debug(std::format_string<Args...> fmt, Args &&...args)
+template <typename... Args> void Debug(std::format_string<Args...> fmt, Args &&... args)
 {
     Logger &logger = GetLogger();
     if (!logger.IsEnabled(LogLevel::Debug))
@@ -183,7 +184,7 @@ template <typename... Args> void Debug(std::format_string<Args...> fmt, Args &&.
     logger.Log(LogLevel::Debug, std::format(fmt, std::forward<Args>(args)...));
 }
 
-template <typename... Args> void Info(std::format_string<Args...> fmt, Args &&...args)
+template <typename... Args> void Info(std::format_string<Args...> fmt, Args &&... args)
 {
     Logger &logger = GetLogger();
     if (!logger.IsEnabled(LogLevel::Info))
@@ -193,7 +194,7 @@ template <typename... Args> void Info(std::format_string<Args...> fmt, Args &&..
     logger.Log(LogLevel::Info, std::format(fmt, std::forward<Args>(args)...));
 }
 
-template <typename... Args> void Warn(std::format_string<Args...> fmt, Args &&...args)
+template <typename... Args> void Warn(std::format_string<Args...> fmt, Args &&... args)
 {
     Logger &logger = GetLogger();
     if (!logger.IsEnabled(LogLevel::Warn))
@@ -206,7 +207,7 @@ template <typename... Args> void Warn(std::format_string<Args...> fmt, Args &&..
 /// @brief Logs an error with automatic file/line capture.
 ///
 /// Example: Log::Error("Entity {} not found", id);
-template <typename... Args> void Error(LocFmtStr<std::type_identity_t<Args>...> fmtLoc, Args &&...args)
+template <typename... Args> void Error(LocFmtStr<std::type_identity_t<Args>...> fmtLoc, Args &&... args)
 {
     Logger &logger = GetLogger();
     if (!logger.IsEnabled(LogLevel::Error))
@@ -219,7 +220,7 @@ template <typename... Args> void Error(LocFmtStr<std::type_identity_t<Args>...> 
 /// @brief Logs a fatal error with automatic file/line capture.
 ///
 /// Example: Log::Fatal("Unrecoverable state: {}", reason);
-template <typename... Args> void Fatal(LocFmtStr<std::type_identity_t<Args>...> fmtLoc, Args &&...args)
+template <typename... Args> void Fatal(LocFmtStr<std::type_identity_t<Args>...> fmtLoc, Args &&... args)
 {
     Logger &logger = GetLogger();
     if (!logger.IsEnabled(LogLevel::Fatal))

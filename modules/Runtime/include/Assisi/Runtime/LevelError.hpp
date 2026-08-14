@@ -10,6 +10,7 @@
 /// than includes wherever it can; a function returning LevelResult needs the
 /// enum complete, and this is the whole of what it needs.
 
+#include <cstdint>
 #include <expected>
 #include <string_view>
 
@@ -23,7 +24,7 @@ namespace Assisi::Runtime
 /// are logged where they are known, exactly as BlueprintError does in
 /// Blueprint.hpp. Every one of these is a file that means something other than
 /// what it says — the alternative to refusing is a silently mis-wired scene.
-enum class LevelError
+enum class LevelError : std::uint8_t
 {
     FileUnreadable,      ///< The asset system or filesystem could not read the file.
     MalformedJson,       ///< Read, but not parseable as JSON — or parsed and the wrong shape, such as a

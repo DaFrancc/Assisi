@@ -238,8 +238,8 @@ TEST_CASE("BiMap: Clear empties both directions")
 TEST_CASE("BiMap: a non-integral key works through a supplied hash")
 {
     BiMap<Handle, int32_t, HandleHash> map;
-    const Handle                       first{.index = 4, .generation = 1};
-    const Handle                       reused{.index = 4, .generation = 2}; // same slot, later life
+    const Handle first{.index = 4, .generation = 1};
+    const Handle reused{.index = 4, .generation = 2};                       // same slot, later life
 
     RequireInserted(map, first, kRightBase + 1);
 
@@ -260,16 +260,16 @@ TEST_CASE("BiMap: random operations never desynchronise the two directions")
     // invisible to a test that only ever looks up keys it expects to find.
     constexpr int32_t kLefts = 12;
 
-    IntMap                               map;
+    IntMap map;
     std::unordered_map<int32_t, int32_t> leftToRight; // the model
     std::unordered_map<int32_t, int32_t> rightToLeft;
-    std::uint32_t                        random = 0x5eed1234u;
+    std::uint32_t random = 0x5eed1234u;
 
     for (int32_t step = 0; step < 3000; ++step)
     {
         const std::uint32_t action = NextRandom(random) % 4u;
-        const int32_t       left   = static_cast<int32_t>(NextRandom(random) % static_cast<std::uint32_t>(kLefts));
-        const int32_t       right =
+        const int32_t left   = static_cast<int32_t>(NextRandom(random) % static_cast<std::uint32_t>(kLefts));
+        const int32_t right =
             kRightBase + static_cast<int32_t>(NextRandom(random) % static_cast<std::uint32_t>(kLefts));
 
         if (action == 0u)
@@ -324,7 +324,7 @@ TEST_CASE("BiMap: random operations never desynchronise the two directions")
             // pattern a sweep uses and the one most able to leave an orphan.
             if (!map.Empty())
             {
-                const auto    it          = map.begin();
+                const auto it          = map.begin();
                 const int32_t erasedLeft  = it->first;
                 const int32_t erasedRight = it->second;
                 (void)map.Erase(it);
@@ -340,7 +340,7 @@ TEST_CASE("BiMap: random operations never desynchronise the two directions")
         // have stayed.
         for (int32_t key = 0; key < kLefts; ++key)
         {
-            const auto     expected = leftToRight.find(key);
+            const auto expected = leftToRight.find(key);
             const int32_t *actual   = map.FindRight(key);
             if (expected == leftToRight.end())
             {
@@ -352,8 +352,8 @@ TEST_CASE("BiMap: random operations never desynchronise the two directions")
                 REQUIRE(*actual == expected->second);
             }
 
-            const int32_t  value        = kRightBase + key;
-            const auto     expectedLeft = rightToLeft.find(value);
+            const int32_t value        = kRightBase + key;
+            const auto expectedLeft = rightToLeft.find(value);
             const int32_t *actualLeft   = map.FindLeft(value);
             if (expectedLeft == rightToLeft.end())
             {
@@ -374,7 +374,7 @@ TEST_CASE("BiMap: random operations never desynchronise the two directions")
 TEST_CASE("BiMap guard: erasing the end iterator is caught")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    IntMap                                    map;
+    IntMap map;
     RequireInserted(map, 1, kRightBase + 1);
 
     CHECK_THROWS_AS((void)map.Erase(map.end()), ContractViolation);

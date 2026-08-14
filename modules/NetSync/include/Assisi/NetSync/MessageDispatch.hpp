@@ -112,7 +112,7 @@ struct NetContext
 /// could exist. Immutable once startup is over.
 class MessageDispatch
 {
-  public:
+public:
     static MessageDispatch &Instance();
 
     /// @brief Erased function-pointer storage.
@@ -169,7 +169,7 @@ class MessageDispatch
     /// generated code, and never unbinds.
     void Clear() { _bindings.clear(); }
 
-  private:
+private:
     MessageDispatch() = default;
 
     using InvokeFn = void (*)(NetContext &, Core::BitReader &, const Core::Reflect::MessageMeta &,
@@ -198,8 +198,8 @@ class MessageDispatch
     struct Binding
     {
         std::type_index type;
-        InvokeFn        invoke  = nullptr;
-        ErasedFn        handler = nullptr;
+        InvokeFn invoke  = nullptr;
+        ErasedFn handler = nullptr;
     };
 
     void BindErased(std::type_index type, InvokeFn invoke, ErasedFn handler);
@@ -222,8 +222,8 @@ bool WriteMessageValue(const T &message, Core::BitWriter &writer,
                        const Core::Reflect::CodecContext *codec = nullptr)
 {
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
-    const Core::Reflect::MessageId        id       = registry.IdOf(typeid(T));
-    const Core::Reflect::MessageMeta     *meta     = registry.ById(id);
+    const Core::Reflect::MessageId id       = registry.IdOf(typeid(T));
+    const Core::Reflect::MessageMeta *meta     = registry.ById(id);
     if (meta == nullptr)
         return false;
     return Core::Reflect::WriteMessage(*meta, &message, writer, codec);

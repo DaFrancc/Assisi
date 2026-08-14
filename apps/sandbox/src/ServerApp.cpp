@@ -160,7 +160,7 @@ void ServerApp::OnStart()
         for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
         {
             const ECS::Entity entity = _world.scene.Create();
-            ECS::Transform    transform;
+            ECS::Transform transform;
             transform.position = {static_cast<float>(i) * 2.f, 0.f, 0.f};
             (void)_world.scene.Add<ECS::Transform>(entity, transform);
             (void)_world.scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
@@ -171,7 +171,7 @@ void ServerApp::OnStart()
     }
     // Deferred, exactly like the editor's join: this process has a level to load
     // before a NetId has anywhere to land.
-    else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/true))
+    else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/ true))
     {
         _startupFailed = true;
         RequestClose();
@@ -191,12 +191,12 @@ void ServerApp::BuildJoinedWorld()
     // which is how the ones below came to be missing it in the first place. A client
     // that could not join never started, whatever the reason.
     const auto fail = [this](std::string reason)
-    {
-        Log::Error("Client: join failed — {}", reason);
-        _session->AbortJoin(std::move(reason));
-        _startupFailed = true;
-        RequestClose();
-    };
+                      {
+                          Log::Error("Client: join failed — {}", reason);
+                          _session->AbortJoin(std::move(reason));
+                          _startupFailed = true;
+                          RequestClose();
+                      };
 
     // Every question a join has to answer before touching the scene, asked in the
     // one place every target asks it.
@@ -324,8 +324,8 @@ void ServerApp::ReportStatus()
     // Measured, not configured: this line exists to show whether the loop is
     // actually holding its tick rate.
     const std::uint64_t tick     = GetSimTick();
-    const double        elapsed  = now - _lastReportSeconds;
-    const double        tickRate = elapsed > 0.0 ? static_cast<double>(tick - _lastReportTick) / elapsed : 0.0;
+    const double elapsed  = now - _lastReportSeconds;
+    const double tickRate = elapsed > 0.0 ? static_cast<double>(tick - _lastReportTick) / elapsed : 0.0;
     _lastReportSeconds           = now;
     _lastReportTick              = tick;
 

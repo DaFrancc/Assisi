@@ -34,7 +34,7 @@ namespace
 std::filesystem::path FreshRoot(const std::string &name)
 {
     const std::filesystem::path root = std::filesystem::temp_directory_path() / ("assisi_bpv_" + name);
-    std::error_code             ec;
+    std::error_code ec;
     std::filesystem::remove_all(root, ec);
     std::filesystem::create_directories(root);
     REQUIRE(Core::AssetSystem::SetRoot(root).has_value());
@@ -53,18 +53,18 @@ void Write(const std::filesystem::path &root, const std::string &name, const nlo
 nlohmann::json CarFile()
 {
     return {{"version", 2},
-            {"entities",
-             nlohmann::json::array(
-                 {{{"name", "body"},
-                   {"components",
-                    {{"Transform",
+        {"entities",
+         nlohmann::json::array(
+             {{{"name", "body"},
+                 {"components",
+                  {{"Transform",
                       {{"position", {0.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                     {"RigidBodyDescriptor", {{"isStatic", true}}}}}},
-                  {{"name", "wheel_fl"},
-                   {"components",
-                    {{"Transform",
-                      {{"position", {1.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
-                     {"Parent", {{"parent", "body"}}}}}}})}};
+                      {"RigidBodyDescriptor", {{"isStatic", true}}}}}},
+                 {{"name", "wheel_fl"},
+                     {"components",
+                      {{"Transform",
+                          {{"position", {1.f, 0.f, 0.f}}, {"rotation", {1.f, 0.f, 0.f, 0.f}}, {"scale", {1.f, 1.f, 1.f}}}},
+                          {"Parent", {{"parent", "body"}}}}}}})}};
 }
 
 int32_t TaggedCount(ECS::Scene &scene, ECS::InstanceId instanceId)
@@ -85,7 +85,7 @@ TEST_CASE("Verbs: spawning creates a runnable instance and returns an id worth k
     const std::filesystem::path root = FreshRoot("spawn");
     Write(root, "car.abp", CarFile());
 
-    App::World     world;
+    App::World world;
     ECS::Transform at;
     at.position = {12.f, 0.f, 0.f};
 
@@ -112,8 +112,8 @@ TEST_CASE("Verbs: spawning creates a runnable instance and returns an id worth k
 TEST_CASE("Verbs: a failed spawn leaves nothing")
 {
     const std::filesystem::path root = FreshRoot("failed");
-    App::World                  world;
-    const ECS::Entity           loose = world.scene.Create();
+    App::World world;
+    const ECS::Entity loose = world.scene.Create();
     (void)world.scene.Add(loose, ECS::Transform{});
 
     CHECK_FALSE(App::SpawnBlueprint(world, "gone.abp", {}).has_value());
@@ -164,9 +164,9 @@ TEST_CASE("Verbs: destroy takes the Jolt bodies with it, not just the components
 
     // The car's body is a static half-metre box at the origin, so a ball dropped
     // down the y axis lands on top of it at about y = 0.75.
-    constexpr float                                     kStep = 1.f / 60.f;
-    constexpr Physics::PhysicsWorld::ColliderShapeDesc  kBall{.shape = Physics::ColliderShape::Sphere,
-                                                              .radius = 0.25f};
+    constexpr float kStep = 1.f / 60.f;
+    constexpr Physics::PhysicsWorld::ColliderShapeDesc kBall{.shape = Physics::ColliderShape::Sphere,
+                                                             .radius = 0.25f};
     const Physics::RigidBody probe =
         world.physics.AddBody({0.f, 3.f, 0.f}, glm::quat(1.f, 0.f, 0.f, 0.f), kBall, Physics::BodyMotion::Dynamic);
 
@@ -194,7 +194,7 @@ TEST_CASE("Verbs: a pruned member lives on, and destroy no longer reaches it")
     const std::filesystem::path root = FreshRoot("prune");
     Write(root, "car.abp", CarFile());
 
-    App::World                    world;
+    App::World world;
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
@@ -221,7 +221,7 @@ TEST_CASE("Verbs: explode ends the instance and destroys nothing")
     const std::filesystem::path root = FreshRoot("explode");
     Write(root, "car.abp", CarFile());
 
-    App::World                    world;
+    App::World world;
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
@@ -238,7 +238,7 @@ TEST_CASE("Verbs: the id outlives a member's death; the handle does not")
     const std::filesystem::path root = FreshRoot("receipts");
     Write(root, "car.abp", CarFile());
 
-    App::World                    world;
+    App::World world;
     const std::optional<ECS::InstanceId> id = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(id.has_value());
 
@@ -264,7 +264,7 @@ TEST_CASE("Verbs: two spawns of one file are separate instances")
     const std::filesystem::path root = FreshRoot("two");
     Write(root, "car.abp", CarFile());
 
-    App::World                    world;
+    App::World world;
     const std::optional<ECS::InstanceId> first  = App::SpawnBlueprint(world, "car.abp", {});
     const std::optional<ECS::InstanceId> second = App::SpawnBlueprint(world, "car.abp", {});
     REQUIRE(first.has_value());

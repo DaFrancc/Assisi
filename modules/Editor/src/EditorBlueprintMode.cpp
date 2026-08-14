@@ -101,9 +101,9 @@ void EditorApp::AddBlueprintEditorRig(Assisi::App::World &world)
     (void)world.scene.Add(sun, Assisi::Runtime::EditorOnly{});
     (void)Assisi::Runtime::GiveEntityName(world.scene, sun, "Editor Sun");
     (void)world.scene.Add(sun, Assisi::Runtime::DirectionalLight{
-                                   .direction = SunDirection(kSunAzimuth, kSunElevation),
-                                   .color     = {1.f, 0.98f, 0.94f},
-                                   .intensity = kSunIntensity});
+            .direction = SunDirection(kSunAzimuth, kSunElevation),
+            .color     = {1.f, 0.98f, 0.94f},
+            .intensity = kSunIntensity});
 }
 
 void EditorApp::OpenBlueprintForEditing(const std::string &source)
@@ -314,7 +314,7 @@ void EditorApp::SubmitInstanceIcons()
     // placed and deleted by the same gestures that would have to invalidate a cache,
     // and there are tens of them, not thousands.
     std::vector<glm::vec3> positions;
-    const auto             rows = _world->instances.All();
+    const auto rows = _world->instances.All();
     positions.reserve(rows.size());
     for (const auto &[id, row] : rows)
     {
@@ -377,7 +377,7 @@ std::vector<EditorApp::PendingReexpand> EditorApp::CollectReexpandTargets(const 
                         continue;
                     if (row->source == source ||
                         std::find((*definition)->closure.begin(), (*definition)->closure.end(), source) !=
-                            (*definition)->closure.end())
+                        (*definition)->closure.end())
                     {
                         skipped.push_back(world.name);
                         break;
@@ -469,14 +469,14 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
     // another — and this loop deliberately spans every resident world.
     std::vector<std::pair<Assisi::App::World *, std::vector<Assisi::ECS::Entity>>> doomedByWorld;
     const auto doomedFor = [&doomedByWorld](Assisi::App::World *world) -> std::vector<Assisi::ECS::Entity> &
-    {
-        for (auto &[owner, list] : doomedByWorld)
-        {
-            if (owner == world)
-                return list;
-        }
-        return doomedByWorld.emplace_back(world, std::vector<Assisi::ECS::Entity>{}).second;
-    };
+                           {
+                               for (auto &[owner, list] : doomedByWorld)
+                               {
+                                   if (owner == world)
+                                       return list;
+                               }
+                               return doomedByWorld.emplace_back(world, std::vector<Assisi::ECS::Entity>{}).second;
+                           };
 
     for (PendingReexpand &pending : collected)
     {
@@ -555,14 +555,14 @@ void EditorApp::ApplyPendingReexpand()
     std::vector<std::pair<Assisi::App::World *, std::vector<Assisi::ECS::Entity>>> destroyedByWorld;
     const auto destroyedFor =
         [&destroyedByWorld](Assisi::App::World *world) -> std::vector<Assisi::ECS::Entity> &
-    {
-        for (auto &[owner, list] : destroyedByWorld)
         {
-            if (owner == world)
-                return list;
-        }
-        return destroyedByWorld.emplace_back(world, std::vector<Assisi::ECS::Entity>{}).second;
-    };
+            for (auto &[owner, list] : destroyedByWorld)
+            {
+                if (owner == world)
+                    return list;
+            }
+            return destroyedByWorld.emplace_back(world, std::vector<Assisi::ECS::Entity>{}).second;
+        };
 
     std::size_t instancesUpdated = 0;
 

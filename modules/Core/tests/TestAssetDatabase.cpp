@@ -32,7 +32,7 @@ void WriteFile(const fs::path &path, std::string_view contents)
 
 std::string ReadFile(const fs::path &path)
 {
-    std::ifstream     stream(path, std::ios::binary);
+    std::ifstream stream(path, std::ios::binary);
     std::stringstream buffer;
     buffer << stream.rdbuf();
     return buffer.str();
@@ -57,7 +57,7 @@ TEST_CASE("AssetDatabase generates missing sidecars and builds the map")
     REQUIRE(AssetSystem::SetRoot(root).has_value());
 
     AssetDatabase db;
-    auto          count = db.Rebuild();
+    auto count = db.Rebuild();
     REQUIRE(count.has_value());
     CHECK(*count == 2); // two payload files registered
 
@@ -116,13 +116,13 @@ TEST_CASE("AssetDatabase skips a malformed sidecar without clobbering it")
 {
     const fs::path root = MakeTree();
 
-    const fs::path    sidecar = root / "textures" / "crate.png.aast";
+    const fs::path sidecar = root / "textures" / "crate.png.aast";
     const std::string garbage = "this is not json";
     WriteFile(sidecar, garbage);
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
     AssetDatabase db;
-    auto          count = db.Rebuild();
+    auto count = db.Rebuild();
     REQUIRE(count.has_value());
 
     // crate.png is skipped (unparseable id), checker.amat still registers.
@@ -200,7 +200,7 @@ TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMateria
     // crate.png (any file can carry one; the DB does not care about the type).
     const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
     const AssetId matId  = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000009");
-    AssetSidecar  sidecar = AssetSidecar::Leaf(meshId);
+    AssetSidecar sidecar = AssetSidecar::Leaf(meshId);
     sidecar.subAssets.push_back(AssetSubAsset{.slot = 2, .material = matId});
     WriteFile(root / "textures" / "crate.png.aast", SerializeSidecar(sidecar));
 
@@ -274,10 +274,10 @@ TEST_CASE("Rebuild survives a sidecar with an out-of-range manifest slot")
     // A huge but syntactically valid unsigned slot: Rebuild resizes the slot
     // vector to ~4 billion entries (a multi-GB reservation / OOM risk). The
     // database must reject the entry instead.
-    const fs::path    root = MakeTree();
+    const fs::path root = MakeTree();
     const std::string json = R"({"version":1,"type":"AssetSidecar",)"
-                            R"("guid":"11111111-2222-4333-8444-555555555555",)"
-                            R"("subAssets":[{"slot":4294967294,"material":"aaaaaaaa-0000-4000-8000-000000000001"}]})";
+                             R"("guid":"11111111-2222-4333-8444-555555555555",)"
+                             R"("subAssets":[{"slot":4294967294,"material":"aaaaaaaa-0000-4000-8000-000000000001"}]})";
     WriteFile(root / "materials" / "checker.amat.aast", json);
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
@@ -292,10 +292,10 @@ TEST_CASE("Rebuild survives a sidecar with a wrapping (negative) manifest slot")
     // slot -1 deserializes to 0xFFFFFFFF; Rebuild's `resize(slot + 1)` then wraps
     // to resize(0) and writes slots[0xFFFFFFFF] — an out-of-bounds heap write
     // (segfault). The database must reject the entry instead.
-    const fs::path    root = MakeTree();
+    const fs::path root = MakeTree();
     const std::string json = R"({"version":1,"type":"AssetSidecar",)"
-                            R"("guid":"11111111-2222-4333-8444-555555555555",)"
-                            R"("subAssets":[{"slot":-1,"material":"aaaaaaaa-0000-4000-8000-000000000001"}]})";
+                             R"("guid":"11111111-2222-4333-8444-555555555555",)"
+                             R"("subAssets":[{"slot":-1,"material":"aaaaaaaa-0000-4000-8000-000000000001"}]})";
     WriteFile(root / "materials" / "checker.amat.aast", json);
 
     REQUIRE(AssetSystem::SetRoot(root).has_value());
@@ -316,7 +316,7 @@ TEST_CASE("LooseFileProvider reads bytes by id and rejects unknown ids")
     LooseFileProvider provider(db);
 
     const AssetId crateId = *db.IdFor("textures/crate.png");
-    auto          bytes   = provider.Open(crateId);
+    auto bytes   = provider.Open(crateId);
     REQUIRE(bytes.has_value());
     const std::string text(reinterpret_cast<const char *>(bytes->data()), bytes->size());
     CHECK(text == "PNG-BYTES");

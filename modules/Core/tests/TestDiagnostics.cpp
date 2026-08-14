@@ -63,7 +63,7 @@ struct TempDir
     [[nodiscard]] std::vector<std::string> Names() const
     {
         std::vector<std::string> names;
-        std::error_code          ec;
+        std::error_code ec;
         for (const fs::directory_entry &entry : fs::directory_iterator(path, ec))
         {
             names.push_back(entry.path().filename().string());
@@ -117,16 +117,16 @@ TEST_CASE("PruneOldFiles never deletes the protected file")
     // on POSIX while its descriptor is still open, so the run would go on
     // writing into an unlinked inode and lose everything at exit.
     const std::string current = "assisi-20260809-140000-1.log"; // launched in New York
-    const auto        populate = [&current](const TempDir &target)
-    {
-        for (const char *name : {"assisi-20260809-200000-1.log", "assisi-20260809-201000-1.log",
-                                 "assisi-20260809-202000-1.log", "assisi-20260809-203000-1.log",
-                                 "assisi-20260809-204000-1.log"})
-        {
-            target.Touch(name); // earlier session, later local wall-clock
-        }
-        target.Touch(current);
-    };
+    const auto populate = [&current](const TempDir &target)
+                          {
+                              for (const char *name : {"assisi-20260809-200000-1.log", "assisi-20260809-201000-1.log",
+                                                       "assisi-20260809-202000-1.log", "assisi-20260809-203000-1.log",
+                                                       "assisi-20260809-204000-1.log"})
+                              {
+                                  target.Touch(name); // earlier session, later local wall-clock
+                              }
+                              target.Touch(current);
+                          };
 
     {
         const TempDir dir("protect");
@@ -152,7 +152,7 @@ TEST_CASE("PruneOldFiles never deletes the protected file")
 
 TEST_CASE("PruneOldFiles with keep = 0 still keeps the current run")
 {
-    const TempDir     dir("keep-zero");
+    const TempDir dir("keep-zero");
     const std::string current = "assisi-20260809-120000-1.log";
     dir.Touch("assisi-20260809-100000-1.log");
     dir.Touch("assisi-20260809-110000-1.log");

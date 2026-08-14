@@ -43,19 +43,19 @@ namespace
 struct ControlHarness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
+    ECS::Scene serverScene;
 
     ReplicationServer server;
-    std::uint64_t     tick = 0;
+    std::uint64_t tick = 0;
 
     /// One joined client: its own scene, its own end of a loopback pair.
     struct Peer
     {
         std::unique_ptr<ECS::Scene>        scene;
         std::unique_ptr<ReplicationClient> client;
-        Net::ConnectionId                  serverSide = Net::InvalidConnection;
-        Net::ConnectionId                  clientSide = Net::InvalidConnection;
-        bool                               attached   = true;
+        Net::ConnectionId serverSide = Net::InvalidConnection;
+        Net::ConnectionId clientSide = Net::InvalidConnection;
+        bool attached   = true;
     };
 
     std::vector<Peer> peers;
@@ -123,7 +123,7 @@ struct ControlHarness
 ECS::Entity SpawnReplicated(ECS::Scene &scene, glm::vec3 position = {})
 {
     const ECS::Entity entity = scene.Create();
-    ECS::Transform    transform;
+    ECS::Transform transform;
     transform.position = position;
     (void)scene.Add<ECS::Transform>(entity, transform);
     (void)scene.Add<Replicated>(entity, Replicated{});
@@ -217,7 +217,7 @@ TEST_CASE("control replicates to every client, not only to its controller")
     harness.Step(4);
 
     const ECS::Entity pawn     = SpawnReplicated(harness.serverScene);
-    const ClientId    ownerId  = harness.server.ClientIdOf(harness.peers[owner].serverSide);
+    const ClientId ownerId  = harness.server.ClientIdOf(harness.peers[owner].serverSide);
     harness.server.SetControl(pawn, ownerId);
     harness.Step(8);
 
@@ -227,7 +227,7 @@ TEST_CASE("control replicates to every client, not only to its controller")
     REQUIRE(onOwner != nullptr);
     CHECK(onOwner->client == ownerId.value);
     CHECK(harness.peers[owner].client->ControlsEntity(harness.peers[owner].client->EntityOf(
-        harness.server.NetIdOf(pawn))));
+                                                          harness.server.NetIdOf(pawn))));
 
     // The bystander gets it too — name tags and team colours are ordinary
     // gameplay questions, and hiding the answer would need a whole new
@@ -236,7 +236,7 @@ TEST_CASE("control replicates to every client, not only to its controller")
     REQUIRE(onBystander != nullptr);
     CHECK(onBystander->client == ownerId.value);
     CHECK_FALSE(harness.peers[bystander].client->ControlsEntity(
-        harness.peers[bystander].client->EntityOf(harness.server.NetIdOf(pawn))));
+                    harness.peers[bystander].client->EntityOf(harness.server.NetIdOf(pawn))));
 }
 
 TEST_CASE("a transfer is an ordinary component delta")
@@ -247,8 +247,8 @@ TEST_CASE("a transfer is an ordinary component delta")
     harness.Step(4);
 
     const ECS::Entity pawn     = SpawnReplicated(harness.serverScene);
-    const ClientId    firstId  = harness.server.ClientIdOf(harness.peers[first].serverSide);
-    const ClientId    secondId = harness.server.ClientIdOf(harness.peers[second].serverSide);
+    const ClientId firstId  = harness.server.ClientIdOf(harness.peers[first].serverSide);
+    const ClientId secondId = harness.server.ClientIdOf(harness.peers[second].serverSide);
 
     harness.server.SetControl(pawn, firstId);
     harness.Step(8);
@@ -279,7 +279,7 @@ TEST_CASE("clearing control leaves the entity and drops only the claim")
     harness.Step(4);
 
     const ECS::Entity pawn = SpawnReplicated(harness.serverScene);
-    const ClientId    id   = harness.server.ClientIdOf(harness.peers[peer].serverSide);
+    const ClientId id   = harness.server.ClientIdOf(harness.peers[peer].serverSide);
     harness.server.SetControl(pawn, id);
     harness.Step(8);
     REQUIRE(MirroredClaim(harness, peer, pawn) != nullptr);
@@ -306,8 +306,8 @@ TEST_CASE("a disconnect despawns what its client owned, and only that")
     const ECS::Entity prop    = SpawnReplicated(harness.serverScene, {3.f, 0.f, 0.f});
 
     const ClientId leaverId = harness.server.ClientIdOf(harness.peers[leaver].serverSide);
-    harness.server.SetControl(pawn, leaverId, /*despawnOnDisconnect=*/true);
-    harness.server.SetControl(vehicle, leaverId, /*despawnOnDisconnect=*/false);
+    harness.server.SetControl(pawn, leaverId, /*despawnOnDisconnect=*/ true);
+    harness.server.SetControl(vehicle, leaverId, /*despawnOnDisconnect=*/ false);
     harness.Step(8);
 
     const NetId pawnId    = harness.server.NetIdOf(pawn);
@@ -337,12 +337,12 @@ TEST_CASE("a disconnect despawns what its client owned, and only that")
 TEST_CASE("a level file's authored control is stripped when the session starts")
 {
     Net::NetTransport transport;
-    ECS::Scene        scene;
+    ECS::Scene scene;
 
     // What a level saved mid-session would contain: a claim on an id from a
     // session that is over.
     const ECS::Entity loaded = SpawnReplicated(scene);
-    (void)scene.Add<ControlledBy>(loaded, ControlledBy{/*client=*/7, /*despawnOnDisconnect=*/true});
+    (void)scene.Add<ControlledBy>(loaded, ControlledBy{ /*client=*/ 7, /*despawnOnDisconnect=*/ true});
     REQUIRE(scene.Get<ControlledBy>(loaded) != nullptr);
 
     // Hosting is what starts a session.
@@ -363,7 +363,7 @@ TEST_CASE("a client cannot give itself control by writing the component")
     const ECS::Entity pawn = SpawnReplicated(harness.serverScene);
     harness.Step(8);
 
-    const NetId       netId  = harness.server.NetIdOf(pawn);
+    const NetId netId  = harness.server.NetIdOf(pawn);
     const ECS::Entity mirror = harness.peers[peer].client->EntityOf(netId);
     REQUIRE(mirror != ECS::NullEntity);
 
@@ -389,7 +389,7 @@ TEST_CASE("the control index survives an entity coming back from the dead")
     harness.Step(4);
 
     const ECS::Entity pawn = SpawnReplicated(harness.serverScene);
-    const ClientId    id   = harness.server.ClientIdOf(harness.peers[peer].serverSide);
+    const ClientId id   = harness.server.ClientIdOf(harness.peers[peer].serverSide);
     harness.server.SetControl(pawn, id);
     harness.Step(6);
     REQUIRE(harness.server.ControlledEntities(id).size() == 1);

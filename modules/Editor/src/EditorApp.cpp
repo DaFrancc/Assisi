@@ -64,7 +64,7 @@ EditorApp::~EditorApp() = default;
 void EditorApp::DrawOptionsWindow()
 {
     const FrameStatsView stats = GetFrameStats();
-    const bool           applyDisplay =
+    const bool applyDisplay =
         _options->Draw({.input              = GetInput(),
                         .renderer           = _sceneRenderer,
                         .options            = GetOptions(),
@@ -228,7 +228,7 @@ void EditorApp::OnStart()
 #if defined(ASSISI_NETWORKING)
     if (!_editorConfig.autoJoinEndpoint.empty())
     {
-        std::string   address = "127.0.0.1";
+        std::string address = "127.0.0.1";
         std::uint16_t port    = static_cast<std::uint16_t>(_netPort);
         const std::string_view endpoint = _editorConfig.autoJoinEndpoint;
         if (const std::size_t colon = endpoint.rfind(':'); colon != std::string_view::npos)
@@ -255,17 +255,17 @@ void EditorApp::OnStart()
 
     _systems.Register(Assisi::App::SystemPhase::Update, "CameraController",
                       [this](Assisi::App::SystemContext &ctx) { UpdateCamera(ctx.dt); })
-        .After("EntityPicking");
+    .After("EntityPicking");
 
     _systems.Register(Assisi::App::SystemPhase::PostUpdate, "ProcessEntitySelection",
                       [this](Assisi::App::SystemContext &ctx)
-                      {
-                          for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
-                          {
-                              SelectEntity(e.entity,
-                                           e.additive ? SelectMode::Toggle : SelectMode::Replace);
-                          }
-                      });
+        {
+            for (const auto &e : ctx.events.Read<EntitySelectionChangedEvent>())
+            {
+                SelectEntity(e.entity,
+                             e.additive ? SelectMode::Toggle : SelectMode::Replace);
+            }
+        });
 
 }
 
@@ -317,7 +317,7 @@ void EditorApp::ReimportAssets()
             const std::optional<std::string> meshPath = _assetDatabase.PathFor(mrc.mesh);
             if (meshPath && _staleMeshes.contains(*meshPath) &&
                 std::find(_staleResolveQueue.begin(), _staleResolveQueue.end(), *meshPath) ==
-                    _staleResolveQueue.end())
+                _staleResolveQueue.end())
             {
                 _staleResolveQueue.push_back(*meshPath);
             }
@@ -337,29 +337,29 @@ bool EditorApp::ReconcileMeshMaterials()
 {
     // Case-insensitive glTF-extension test on the virtual path.
     const auto isGltf = [](std::string_view path)
-    {
-        const auto endsWith = [path](std::string_view suffix)
-        {
-            if (path.size() < suffix.size())
-                return false;
-            const std::string_view tail = path.substr(path.size() - suffix.size());
-            for (std::size_t i = 0; i < suffix.size(); ++i)
-                if (std::tolower(static_cast<unsigned char>(tail[i])) != suffix[i])
-                    return false;
-            return true;
-        };
-        return endsWith(".gltf") || endsWith(".glb");
-    };
+                        {
+                            const auto endsWith = [path](std::string_view suffix)
+                                                  {
+                                                      if (path.size() < suffix.size())
+                                                          return false;
+                                                      const std::string_view tail = path.substr(path.size() - suffix.size());
+                                                      for (std::size_t i = 0; i < suffix.size(); ++i)
+                                                          if (std::tolower(static_cast<unsigned char>(tail[i])) != suffix[i])
+                                                              return false;
+                                                      return true;
+                                                  };
+                            return endsWith(".gltf") || endsWith(".glb");
+                        };
 
     // Texture channels in the written `.amat`s resolve through the database, the
     // same map the asset cache uses, so an exploded material references the same
     // texture GUIDs the mesh would have imported.
     const auto resolveTextureId = [this](std::string_view vpath) -> Assisi::Core::AssetId
-    { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); };
+                                  { return _assetDatabase.IdFor(vpath).value_or(Assisi::Core::AssetId{}); };
     // Existing `.amat` files, by their GUID, so the reconciler can load and
     // compare them against the fresh material table.
     const auto resolveMaterialPath = [this](const Assisi::Core::AssetId &id) -> std::string
-    { return _assetDatabase.PathFor(id).value_or(std::string{}); };
+                                     { return _assetDatabase.PathFor(id).value_or(std::string{}); };
 
     _staleMeshes.clear();
     bool changed = false;
@@ -566,7 +566,7 @@ void EditorApp::DrawStaleResolutionModal()
                 ImGui::TextUnformatted(slot.name.empty() ? "(unnamed)" : slot.name.c_str());
                 ImGui::TableNextColumn();
                 const char *label = "unchanged";
-                ImVec4      color(0.6f, 0.6f, 0.6f, 1.f);
+                ImVec4 color(0.6f, 0.6f, 0.6f, 1.f);
                 switch (slot.change)
                 {
                 case Assisi::Geometry::SlotChange::Unchanged:
@@ -602,13 +602,13 @@ void EditorApp::DrawStaleResolutionModal()
 
     if (ImGui::Button("Regenerate from source"))
     {
-        ApplyStaleResolution(/*regenerate=*/true);
+        ApplyStaleResolution(/*regenerate=*/ true);
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
     if (ImGui::Button("Keep my materials"))
     {
-        ApplyStaleResolution(/*regenerate=*/false);
+        ApplyStaleResolution(/*regenerate=*/ false);
         ImGui::CloseCurrentPopup();
     }
     ImGui::SameLine();
@@ -798,7 +798,7 @@ void EditorApp::OnFixedUpdate(float dt)
 
                 world.systems.Run(Assisi::App::SystemPhase::FixedUpdate,
                                   {world, dt, GetSimTick(), &GetInput(), &_actions, GetEvents(),
-                                   /*isActiveWorld=*/&world == _worlds.Active(), &_worlds});
+                                   /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds});
 
                 {
                     // Jolt's whole step, including its internal job dispatch:
@@ -968,9 +968,9 @@ void EditorApp::OnUpdate(float dt)
     // frame time from the world being played; a foreground load has nothing to
     // protect and gets the generous one. A no-op on an empty queue.
     if (_worlds.HasPendingLoad())
-        _assetCache.PumpPublishes(/*timeBudgetMs=*/2.0, /*byteBudget=*/16ull << 20);
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/ 2.0, /*byteBudget=*/ 16ull << 20);
     else
-        _assetCache.PumpPublishes(/*timeBudgetMs=*/10.0, /*byteBudget=*/128ull << 20);
+        _assetCache.PumpPublishes(/*timeBudgetMs=*/ 10.0, /*byteBudget=*/ 128ull << 20);
 
     // Swap billboard placeholders for the real mesh/material as each finishes
     // streaming. A UI-requested level load is marshalled via Jobs().RunOnMain (see
@@ -980,12 +980,12 @@ void EditorApp::OnUpdate(float dt)
     // are not looking at keeps its placeholders forever. A world still Loading is
     // skipped: a worker owns its scene until promotion.
     _worlds.ForEach([this](Assisi::App::World &world)
-                    {
-                        if (world.state == Assisi::App::WorldState::Loading)
-                            return;
-                        Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
-                                                            world.streamingPending);
-                    });
+        {
+            if (world.state == Assisi::App::WorldState::Loading)
+                return;
+            Assisi::App::UpgradeStreamingAssets(world.scene, _assetCache, _assetDatabase,
+                                                world.streamingPending);
+        });
 
     // Resolve assets for entities that arrived over the wire. A mirror carries
     // authored asset ids and null resolved pointers, and nothing else here would
@@ -1031,7 +1031,7 @@ void EditorApp::OnUpdate(float dt)
     // The editor's own systems act on the world being *viewed*: picking, the fly
     // camera and selection follow the world selector, not the played world.
     const Assisi::App::SystemContext editorCtx{
-        *_world, dt, GetSimTick(), &input, &_actions, GetEvents(), /*isActiveWorld=*/true, &_worlds};
+        *_world, dt, GetSimTick(), &input, &_actions, GetEvents(), /*isActiveWorld=*/ true, &_worlds};
     _systems.Run(Assisi::App::SystemPhase::Update,     editorCtx);
     _systems.Run(Assisi::App::SystemPhase::PostUpdate, editorCtx);
 
@@ -1052,7 +1052,7 @@ void EditorApp::OnUpdate(float dt)
 
                 const Assisi::App::SystemContext ctx{
                     world,   dt, GetSimTick(), &input, &_actions, GetEvents(),
-                    /*isActiveWorld=*/&world == _worlds.Active(), &_worlds};
+                    /*isActiveWorld=*/ &world == _worlds.Active(), &_worlds};
                 world.systems.Run(Assisi::App::SystemPhase::PreUpdate,  ctx);
                 world.systems.Run(Assisi::App::SystemPhase::Update,     ctx);
                 world.systems.Run(Assisi::App::SystemPhase::PostUpdate, ctx);
@@ -1081,10 +1081,10 @@ void EditorApp::FlushDeferred()
     // it is next shown and then land all at once. A world still Loading is skipped:
     // its scene belongs to a worker until promotion.
     _worlds.ForEach([](Assisi::App::World &world)
-                    {
-                        if (world.state != Assisi::App::WorldState::Loading)
-                            world.scene.FlushDestroyed();
-                    });
+        {
+            if (world.state != Assisi::App::WorldState::Loading)
+                world.scene.FlushDestroyed();
+        });
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,7 +1094,7 @@ void EditorApp::FlushDeferred()
 Assisi::Editor::EditHistory::RebindHook EditorApp::MakeEditRebindHook()
 {
     return [this](Assisi::ECS::Entity entity, Assisi::Core::Reflect::ComponentId id, bool present)
-    { ApplyEditRebind(entity, id, present); };
+           { ApplyEditRebind(entity, id, present); };
 }
 
 // **Keep this definition here, not in EditorNet.cpp.** Everything it does is
@@ -1564,7 +1564,7 @@ void EditorApp::LogImGuiWedgeDiagnostics()
     // A widget holding ActiveId for seconds with no mouse button down and no text
     // field being edited is wedged, not in use. Log enough internal state to name
     // the widget and whatever freed it.
-    const ImGuiIO      &io = ImGui::GetIO();
+    const ImGuiIO &io = ImGui::GetIO();
     const ImGuiContext &g  = *ImGui::GetCurrentContext();
 
     const bool anyMouseDown = io.MouseDown[0] || io.MouseDown[1] || io.MouseDown[2];

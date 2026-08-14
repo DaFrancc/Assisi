@@ -46,7 +46,7 @@ constexpr std::array<int, LaneCount> kLanePriorities{
 /// GNS's global init is refcounted here rather than left to the caller: the
 /// listen server constructs two NetTransports in one process, and neither can
 /// be the one that owns library lifetime.
-std::mutex   g_libraryMutex;
+std::mutex g_libraryMutex;
 std::int32_t g_libraryRefs = 0;
 
 /// Does this host have IPv6 at all?
@@ -58,22 +58,22 @@ std::int32_t g_libraryRefs = 0;
 bool HostSupportsIPv6()
 {
     static const bool supported = []
-    {
+                                  {
 #ifdef _WIN32
-        // Safe without our own WSAStartup: this is only ever reached after GNS
-        // has opened a listen socket, so Winsock is already initialised.
-        const SOCKET probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-        if (probe == INVALID_SOCKET)
-            return false;
-        ::closesocket(probe);
+                                      // Safe without our own WSAStartup: this is only ever reached after GNS
+                                      // has opened a listen socket, so Winsock is already initialised.
+                                      const SOCKET probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+                                      if (probe == INVALID_SOCKET)
+                                          return false;
+                                      ::closesocket(probe);
 #else
-        const int probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-        if (probe < 0)
-            return false;
-        ::close(probe);
+                                      const int probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+                                      if (probe < 0)
+                                          return false;
+                                      ::close(probe);
 #endif
-        return true;
-    }();
+                                      return true;
+                                  }();
     return supported;
 }
 
@@ -510,7 +510,7 @@ void NetTransport::Poll(std::vector<NetEvent> &outEvents)
     _impl->pendingEvents.clear();
 
     // Drain in bounded batches so one very busy tick cannot spin here forever.
-    constexpr int             kBatchSize = 64;
+    constexpr int kBatchSize = 64;
     SteamNetworkingMessage_t *batch[kBatchSize];
     for (;;)
     {
@@ -581,7 +581,7 @@ bool NetTransport::SetSimulatedConditions(const SimulatedConditions &conditions)
         return false;
 
     ISteamNetworkingUtils *utils = SteamNetworkingUtils();
-    bool                   ok    = true;
+    bool ok    = true;
     ok &= utils->SetGlobalConfigValueFloat(k_ESteamNetworkingConfig_FakePacketLoss_Send, conditions.sendLossPercent);
     ok &= utils->SetGlobalConfigValueFloat(k_ESteamNetworkingConfig_FakePacketLoss_Recv, conditions.recvLossPercent);
     ok &= utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_FakePacketLag_Send, conditions.sendLagMs);

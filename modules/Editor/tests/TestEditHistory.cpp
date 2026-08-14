@@ -72,9 +72,9 @@ struct RebindLog
 {
     struct Call
     {
-        Entity                     entity;
+        Entity entity;
         Core::Reflect::ComponentId id;
-        bool                       present;
+        bool present;
     };
     std::vector<Call> calls;
 };
@@ -82,7 +82,7 @@ struct RebindLog
 
 TEST_CASE("EditHistory: field-edit transaction undoes and redoes a value")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 2.f, 3.f}}) != nullptr);
 
@@ -119,7 +119,7 @@ TEST_CASE("EditHistory: field-edit transaction undoes and redoes a value")
 
 TEST_CASE("EditHistory: add-component transaction toggles presence")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
 
@@ -147,7 +147,7 @@ TEST_CASE("EditHistory: add-component transaction toggles presence")
 
 TEST_CASE("EditHistory: remove-component transaction toggles presence the other way")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     REQUIRE(scene.Add(e, Camera{.fovDegrees = 30.f}) != nullptr);
@@ -176,7 +176,7 @@ TEST_CASE("EditHistory: remove-component transaction toggles presence the other 
 
 TEST_CASE("EditHistory: entity-create transaction destroys on undo and revives exact on redo")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {5.f, 0.f, 0.f}}) != nullptr);
     const auto snap = SnapshotEntity(scene, e);
@@ -207,7 +207,7 @@ TEST_CASE("EditHistory: entity-create transaction destroys on undo and revives e
 
 TEST_CASE("EditHistory: subtree-delete revives entities and resolves the Parent ref on undo")
 {
-    Scene        scene;
+    Scene scene;
     const Entity parent = scene.Create();
     const Entity child  = scene.Create();
     REQUIRE(scene.Add(parent, Transform{}) != nullptr);
@@ -254,7 +254,7 @@ TEST_CASE("EditHistory: subtree-delete revives entities and resolves the Parent 
 
 TEST_CASE("EditHistory: a new commit clears the redo stack")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     const auto tid = IdOf("Transform");
@@ -262,11 +262,11 @@ TEST_CASE("EditHistory: a new commit clears the redo stack")
 
     EditHistory hist(scene);
     const auto push = [&](const char *label) {
-        Transaction txn;
-        txn.label = label;
-        txn.cmds.push_back(ComponentDelta{e, tid, j, j}); // no-op values, still a command
-        hist.Push(std::move(txn));
-    };
+                          Transaction txn;
+                          txn.label = label;
+                          txn.cmds.push_back(ComponentDelta{e, tid, j, j}); // no-op values, still a command
+                          hist.Push(std::move(txn));
+                      };
 
     push("A");
     push("B");
@@ -279,7 +279,7 @@ TEST_CASE("EditHistory: a new commit clears the redo stack")
 
 TEST_CASE("EditHistory: the depth cap drops the oldest transactions")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     const auto tid = IdOf("Transform");
@@ -298,7 +298,7 @@ TEST_CASE("EditHistory: the depth cap drops the oldest transactions")
 
 TEST_CASE("EditHistory: the rebind hook fires during apply and only during apply")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     const auto tid    = IdOf("Transform");
@@ -306,17 +306,17 @@ TEST_CASE("EditHistory: the rebind hook fires during apply and only during apply
     scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
     const auto after = CaptureComponent(scene, e, tid);
 
-    RebindLog          log;
-    bool               sawApplyingFalse = false;
+    RebindLog log;
+    bool sawApplyingFalse = false;
     const EditHistory *applier          = nullptr; // set to &hist after construction
 
     // The hook reads IsApplying() on the very history it is bound to — resolved via
     // a back-pointer filled in once the object exists (ctor-argument chicken/egg).
     EditHistory hist(scene, [&](Entity ent, Core::Reflect::ComponentId id, bool present) {
-        if (applier != nullptr && !applier->IsApplying())
-            sawApplyingFalse = true;
-        log.calls.push_back({ent, id, present});
-    });
+                     if (applier != nullptr && !applier->IsApplying())
+                         sawApplyingFalse = true;
+                     log.calls.push_back({ent, id, present});
+        });
     applier = &hist;
 
     Transaction txn;
@@ -339,7 +339,7 @@ TEST_CASE("EditHistory: the rebind hook fires during apply and only during apply
 
 TEST_CASE("EditHistory: a captured drag commits on gesture end")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     const auto tid = IdOf("Transform");
@@ -349,17 +349,17 @@ TEST_CASE("EditHistory: a captured drag commits on gesture end")
     // Frame 1: open the gesture (before = pos 1), then the "widget" writes pos 2.
     hist.RecordBefore(e, tid, "Move", e);
     scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
-    hist.EndFrameSweep(/*editingActive=*/true); // still dragging — no commit yet
+    hist.EndFrameSweep(/*editingActive=*/ true); // still dragging — no commit yet
     CHECK_FALSE(hist.CanUndo());
 
     // Frame 2: still holding, value moves again to 3.
     hist.RecordBefore(e, tid, "Move", e); // idempotent — keeps before = pos 1
     scene.GetMut<Transform>(e)->position = {3.f, 0.f, 0.f};
-    hist.EndFrameSweep(/*editingActive=*/true);
+    hist.EndFrameSweep(/*editingActive=*/ true);
     CHECK_FALSE(hist.CanUndo());
 
     // Frame 3: released. One transaction spanning the whole drag (pos 1 -> 3).
-    hist.EndFrameSweep(/*editingActive=*/false);
+    hist.EndFrameSweep(/*editingActive=*/ false);
     REQUIRE(hist.CanUndo());
 
     hist.Undo();
@@ -370,7 +370,7 @@ TEST_CASE("EditHistory: a captured drag commits on gesture end")
 
 TEST_CASE("EditHistory: a no-op gesture (click without change) commits nothing")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     const auto tid = IdOf("Transform");
@@ -378,13 +378,13 @@ TEST_CASE("EditHistory: a no-op gesture (click without change) commits nothing")
     EditHistory hist(scene);
     hist.RecordBefore(e, tid, "Move", e);
     // no write happened
-    hist.EndFrameSweep(/*editingActive=*/false);
+    hist.EndFrameSweep(/*editingActive=*/ false);
     CHECK_FALSE(hist.CanUndo());
 }
 
 TEST_CASE("EditHistory: CommitGesture closes an instant edit immediately")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     const auto cid = IdOf("Camera");
@@ -401,7 +401,7 @@ TEST_CASE("EditHistory: CommitGesture closes an instant edit immediately")
 
 TEST_CASE("EditHistory: a gesture whose entity dies is abandoned, not committed")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     const auto tid = IdOf("Transform");
@@ -413,13 +413,13 @@ TEST_CASE("EditHistory: a gesture whose entity dies is abandoned, not committed"
     scene.Destroy(e);
     scene.FlushDestroyed();
 
-    hist.EndFrameSweep(/*editingActive=*/false); // entity gone — must not throw or commit
+    hist.EndFrameSweep(/*editingActive=*/ false); // entity gone — must not throw or commit
     CHECK_FALSE(hist.CanUndo());
 }
 
 TEST_CASE("EditHistory: capture is suppressed while applying")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     const auto tid = IdOf("Transform");
@@ -459,7 +459,7 @@ namespace
 {
 struct EntitySnap
 {
-    Entity                         handle;
+    Entity handle;
     std::vector<ComponentSnapshot> components;
 };
 
@@ -481,7 +481,7 @@ void RestoreSceneExact(Scene &scene, const std::vector<EntitySnap> &snapshot)
     scene.FlushDestroyed();
 
     SceneSerializer::ScopedRawEntityContext raw(scene);
-    const auto                             &registry = Core::Reflect::ComponentRegistry::Instance();
+    const auto &registry = Core::Reflect::ComponentRegistry::Instance();
     for (const EntitySnap &snap : snapshot)
         scene.ReviveAt(snap.handle);
     for (const EntitySnap &snap : snapshot)
@@ -493,7 +493,7 @@ void RestoreSceneExact(Scene &scene, const std::vector<EntitySnap> &snapshot)
 
 TEST_CASE("EditHistory: an editing undo survives a play (snapshot -> restore) cycle")
 {
-    Scene        scene;
+    Scene scene;
     const Entity a = scene.Create();
     const Entity b = scene.Create(); // a second entity so identity isn't trivially {0,0}
     REQUIRE(scene.Add(a, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
@@ -503,7 +503,7 @@ TEST_CASE("EditHistory: an editing undo survives a play (snapshot -> restore) cy
 
     // --- Editing: record a change to a.position (1 -> 5). ---
     EditHistory hist(scene);
-    const auto  before = CaptureComponent(scene, a, tid);
+    const auto before = CaptureComponent(scene, a, tid);
     scene.GetMut<Transform>(a)->position = {5.f, 0.f, 0.f};
     const auto after = CaptureComponent(scene, a, tid);
     Transaction txn;
@@ -532,13 +532,13 @@ TEST_CASE("EditHistory: an editing undo survives a play (snapshot -> restore) cy
 
 TEST_CASE("EditHistory: CaptureEntityComponents snapshots every serializable component")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {3.f, 0.f, 0.f}}) != nullptr);
     REQUIRE(scene.Add(e, Camera{.fovDegrees = 12.f}) != nullptr);
 
     EditHistory hist(scene);
-    const auto  snap = hist.CaptureEntityComponents(e);
+    const auto snap = hist.CaptureEntityComponents(e);
     CHECK(snap.size() == 2); // Transform + Camera
 
     const Entity bare = scene.Create();
@@ -547,21 +547,21 @@ TEST_CASE("EditHistory: CaptureEntityComponents snapshots every serializable com
 
 TEST_CASE("EditHistory: labels and the dirty-state token track the stack")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{}) != nullptr);
     const auto tid = IdOf("Transform");
     const auto j   = CaptureComponent(scene, e, tid);
 
     EditHistory hist(scene);
-    const auto  push = [&](const char *label) {
-        Transaction txn;
-        txn.label = label;
-        // distinct before/after so the transaction isn't a no-op
-        auto after = j;
-        txn.cmds.push_back(ComponentDelta{e, tid, j, after});
-        hist.Push(std::move(txn));
-    };
+    const auto push = [&](const char *label) {
+                          Transaction txn;
+                          txn.label = label;
+                          // distinct before/after so the transaction isn't a no-op
+                          auto after = j;
+                          txn.cmds.push_back(ComponentDelta{e, tid, j, after});
+                          hist.Push(std::move(txn));
+                      };
 
     CHECK(hist.CurrentStateToken() == 0); // base state
     push("A");
@@ -588,7 +588,7 @@ TEST_CASE("EditHistory: a subtree delete built via CaptureEntityComponents round
 {
     // Mirrors EditorApp::DeleteEntity: snapshot each subtree member with the public
     // CaptureEntityComponents helper, build one delete transaction, destroy, undo.
-    Scene        scene;
+    Scene scene;
     const Entity parent = scene.Create();
     const Entity child  = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {2.f, 0.f, 0.f}}) != nullptr);
@@ -624,7 +624,7 @@ TEST_CASE("EditHistory: a subtree delete built via CaptureEntityComponents round
 
 TEST_CASE("EditHistory: RecordBefore refreshes the label of an open gesture (keeps before)")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
     const auto tid = IdOf("Transform");
@@ -648,7 +648,7 @@ TEST_CASE("EditHistory: a force-committed gesture stays separate from a followin
     // Models a gizmo drag (force-commit on release) followed by an inspector edit of
     // the same Transform: two distinct undo entries, never coalesced, even though
     // they share the (entity, Transform) gesture key.
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Transform{.position = {0.f, 0.f, 0.f}}) != nullptr);
     const auto tid = IdOf("Transform");
@@ -664,7 +664,7 @@ TEST_CASE("EditHistory: a force-committed gesture stays separate from a followin
     // Inspector edit: a fresh gesture, move to 2, committed by the sweep.
     hist.RecordBefore(e, tid, "Edit Transform", e);
     scene.GetMut<Transform>(e)->position = {2.f, 0.f, 0.f};
-    hist.EndFrameSweep(/*editingActive=*/false);
+    hist.EndFrameSweep(/*editingActive=*/ false);
     CHECK(hist.UndoDepth() == 2); // two separate actions
 
     hist.Undo();
@@ -675,7 +675,7 @@ TEST_CASE("EditHistory: a force-committed gesture stays separate from a followin
 
 TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 {
-    Scene       scene;
+    Scene scene;
     EditHistory hist(scene);
 
     CHECK_FALSE(hist.CanUndo());
@@ -696,7 +696,7 @@ TEST_CASE("EditHistory: empty history and no-op transactions are safe")
 // revive, its siblings from the same snapshot are already present.
 TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component is rebound")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add(e, Camera{}) != nullptr); // sorts before "Transform"
     REQUIRE(scene.Add(e, Transform{.position = {5.f, 0.f, 0.f}}) != nullptr);
@@ -706,13 +706,13 @@ TEST_CASE("EditHistory: undo-of-delete has all siblings present when a component
     bool sawCameraRebind               = false;
     bool transformPresentAtCameraRebind = false;
     EditHistory::RebindHook hook = [&](Entity ent, Core::Reflect::ComponentId id, bool present)
-    {
-        if (present && id == cameraId)
-        {
-            sawCameraRebind                = true;
-            transformPresentAtCameraRebind = (scene.Get<Transform>(ent) != nullptr);
-        }
-    };
+                                   {
+                                       if (present && id == cameraId)
+                                       {
+                                           sawCameraRebind                = true;
+                                           transformPresentAtCameraRebind = (scene.Get<Transform>(ent) != nullptr);
+                                       }
+                                   };
 
     const auto snap = SnapshotEntity(scene, e); // [Camera, Transform]
     scene.Destroy(e);
@@ -737,7 +737,7 @@ TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below 
     // copy (stage 5d). Undo is linear, so a transaction naming a dead handle makes
     // everything *older* than it unreachable too — the rule is a suffix, not a
     // filter. See EditHistory::ForgetEntities.
-    Scene        scene;
+    Scene scene;
     const Entity kept  = scene.Create();
     const Entity doomed = scene.Create();
     REQUIRE(scene.Add(kept, Transform{}) != nullptr);
@@ -747,13 +747,13 @@ TEST_CASE("EditHistory: forgetting a destroyed entity truncates the stack below 
     const auto now = CaptureComponent(scene, kept, tid);
 
     EditHistory hist(scene);
-    const auto  push = [&](const char *label, Entity target)
-    {
-        Transaction txn;
-        txn.label = label;
-        txn.cmds.push_back(ComponentDelta{target, tid, now, now});
-        hist.Push(std::move(txn));
-    };
+    const auto push = [&](const char *label, Entity target)
+                      {
+                          Transaction txn;
+                          txn.label = label;
+                          txn.cmds.push_back(ComponentDelta{target, tid, now, now});
+                          hist.Push(std::move(txn));
+                      };
 
     push("A", kept);    // 1
     push("B", doomed);  // 2  <- names the doomed member

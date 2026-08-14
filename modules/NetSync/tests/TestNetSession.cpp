@@ -49,7 +49,7 @@ std::uint16_t HostOnFreePort(NetSession &session)
 ECS::Entity SpawnReplicated(ECS::Scene &scene, float x)
 {
     const ECS::Entity entity = scene.Create();
-    ECS::Transform    transform;
+    ECS::Transform transform;
     transform.position = {x, 0.f, 0.f};
     (void)scene.Add<ECS::Transform>(entity, transform);
     (void)scene.Add<Replicated>(entity, Replicated{});

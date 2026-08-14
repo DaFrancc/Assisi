@@ -68,7 +68,7 @@ static constexpr unsigned int kCount = 2;
 // Maps object layers → broad-phase layers.
 class BPLayerInterface final : public JPH::BroadPhaseLayerInterface
 {
-  public:
+public:
     unsigned int GetNumBroadPhaseLayers() const override { return BPLayers::kCount; }
 
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override
@@ -87,7 +87,7 @@ class BPLayerInterface final : public JPH::BroadPhaseLayerInterface
 // Decides whether an object layer should be tested against a broad-phase layer.
 class ObjVsBPFilter final : public JPH::ObjectVsBroadPhaseLayerFilter
 {
-  public:
+public:
     bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer bpLayer) const override
     {
         switch (layer)
@@ -105,7 +105,7 @@ class ObjVsBPFilter final : public JPH::ObjectVsBroadPhaseLayerFilter
 // Decides whether two object layers should collide at all.
 class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
 {
-  public:
+public:
     bool ShouldCollide(JPH::ObjectLayer layerA, JPH::ObjectLayer layerB) const override
     {
         switch (layerA)
@@ -246,13 +246,13 @@ void CountingAlignedFree(void *block)
 }
 
 std::atomic<int32_t> gJoltRefCount{0};
-JoltRuntime         *gJoltRuntime = nullptr;
+JoltRuntime *gJoltRuntime = nullptr;
 
 /// @brief RAII handle to the shared runtime. The first one constructed brings
 /// Jolt up; the last one destroyed tears it down.
 class JoltRuntimeRef
 {
-  public:
+public:
     JoltRuntimeRef()
     {
         if (gJoltRefCount++ == 0)
@@ -276,7 +276,7 @@ class JoltRuntimeRef
 #else
                                     ""
 #endif
-            );
+                                    );
         }
     }
 
@@ -368,7 +368,7 @@ struct PhysicsWorld::Impl
     /// between steps. The mutex only guards the append: contacts are rare relative
     /// to the collision work that produced them, so this never becomes the
     /// bottleneck, and per-thread buffers would cost more to merge than they save.
-    std::mutex           contactMutex;
+    std::mutex contactMutex;
     std::vector<Contact> contacts;
 
     ECS::Entity EntityFor(const JPH::BodyID &id) const
@@ -386,7 +386,7 @@ struct PhysicsWorld::Impl
     /// on, so a world that does not want contacts never even pays the virtual call.
     class ContactCollector final : public JPH::ContactListener
     {
-      public:
+public:
         explicit ContactCollector(Impl &owner) : _owner(owner) {}
 
         void OnContactAdded(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
@@ -401,7 +401,7 @@ struct PhysicsWorld::Impl
         // contact-driven response (a bounce) re-fire forever into something that
         // is simply lying still.
 
-      private:
+private:
         Impl &_owner;
     };
 
@@ -424,12 +424,12 @@ void PhysicsWorld::Impl::RecordContact(const JPH::Body &body1, const JPH::Body &
 
     // Body::GetLinearVelocity asserts on a static body (no motion state to read).
     const auto linearVelocity = [](const JPH::Body &body)
-    {
-        if (body.IsStatic())
-            return glm::vec3(0.f);
-        const JPH::Vec3 v = body.GetLinearVelocity();
-        return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
-    };
+                                {
+                                    if (body.IsStatic())
+                                        return glm::vec3(0.f);
+                                    const JPH::Vec3 v = body.GetLinearVelocity();
+                                    return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
+                                };
 
     const std::lock_guard<std::mutex> lock(contactMutex);
     if (e1 != ECS::NullEntity)
@@ -732,7 +732,7 @@ void PhysicsWorld::CaptureState()
         }
 
         const JPH::RVec3 pos = bodies.GetPosition(id);
-        const JPH::Quat  rot = bodies.GetRotation(id);
+        const JPH::Quat rot = bodies.GetRotation(id);
 
         // Retire the previous current, then record this step's pose as current.
         it->second.prevPosition = it->second.curPosition;
@@ -785,7 +785,7 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
         // so it renders stable. Snapping still tracks a slow creep exactly (it
         // writes curPosition/curRotation every frame) — it only drops the blend.
         const glm::vec3 positionDelta = s.curPosition - s.prevPosition;
-        glm::vec3       targetPosition = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
+        glm::vec3 targetPosition = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
                                              ? s.curPosition
                                              : glm::mix(s.prevPosition, s.curPosition, alpha);
 
@@ -793,7 +793,7 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
         // quaternion q/-q double cover. slerp keeps angular speed constant across
         // the blend and is renormalised since the result feeds the render matrix.
         const float rotationDelta  = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
-        glm::quat   targetRotation = rotationDelta < kRestRotationDelta
+        glm::quat targetRotation = rotationDelta < kRestRotationDelta
                                          ? s.curRotation
                                          : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
 
@@ -856,17 +856,17 @@ void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
             continue; // a raw AddBody body: nothing a caller could name it by
 
         const JPH::RVec3 position = bodies.GetPosition(id);
-        const JPH::Quat  rotation = bodies.GetRotation(id);
-        const JPH::Vec3  linear   = bodies.GetLinearVelocity(id);
-        const JPH::Vec3  angular  = bodies.GetAngularVelocity(id);
+        const JPH::Quat rotation = bodies.GetRotation(id);
+        const JPH::Vec3 linear   = bodies.GetLinearVelocity(id);
+        const JPH::Vec3 angular  = bodies.GetAngularVelocity(id);
 
         out.push_back(ActiveBodyState{
-            entity,
-            glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
-            glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
-            glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
-            glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
-        });
+                entity,
+                glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
+                glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
+                glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
+                glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+            });
     }
 }
 
@@ -1015,7 +1015,7 @@ void PhysicsWorld::ReshapeBody(const RigidBody &body, const ColliderShapeDesc &s
     if (!bodies.IsAdded(body.bodyId))
         return;
 
-    bodies.SetShape(body.bodyId, MakeShape(shape), /*inUpdateMassProperties=*/true,
+    bodies.SetShape(body.bodyId, MakeShape(shape), /*inUpdateMassProperties=*/ true,
                     JPH::EActivation::DontActivate);
 }
 

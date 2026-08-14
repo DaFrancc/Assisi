@@ -44,10 +44,10 @@ static_assert(sizeof(nvrhi::DrawIndexedIndirectArguments) == 20,
 // matrix. Mirrors cube_min.vert/frag's matching `uniform FrameConstants` block.
 struct FrameConstants
 {
-    glm::mat4  viewProjection;
-    glm::mat4  view;
+    glm::mat4 viewProjection;
+    glm::mat4 view;
     glm::uvec4 gridDim;           // xyz used, w unused
-    glm::vec4  screenSizeNearFar; // xy = screen size, z = nearZ, w = farZ
+    glm::vec4 screenSizeNearFar;  // xy = screen size, z = nearZ, w = farZ
     glm::uvec4 lightCounts;       // x = directional light count, y = debug view, zw unused
     /// World-space camera position, w unused. The fragment shader used to
     /// recover this per fragment as -transpose(mat3(view)) * view[3] — a mat3
@@ -72,10 +72,10 @@ struct FrameConstants
 
 bool MeshPass::Initialize(const InitParams &params)
 {
-    nvrhi::IDevice *const           device = params.device;
-    const nvrhi::FramebufferInfo   &framebufferInfo = params.framebufferInfo;
-    const std::string              &vertexShaderSpvPath = params.vertexShaderSpvPath;
-    const std::string              &pixelShaderSpvPath = params.pixelShaderSpvPath;
+    nvrhi::IDevice *const device = params.device;
+    const nvrhi::FramebufferInfo &framebufferInfo = params.framebufferInfo;
+    const std::string &vertexShaderSpvPath = params.vertexShaderSpvPath;
+    const std::string &pixelShaderSpvPath = params.pixelShaderSpvPath;
 
     _device = device;
     _clusterGrid = params.clusterGrid;
@@ -93,25 +93,25 @@ bool MeshPass::Initialize(const InitParams &params)
     using Assisi::Geometry::Vertex;
     const nvrhi::VertexAttributeDesc attributes[] = {
         nvrhi::VertexAttributeDesc()
-            .setName("POSITION")
-            .setFormat(nvrhi::Format::RGB32_FLOAT)
-            .setOffset(offsetof(Vertex, Position))
-            .setElementStride(sizeof(Vertex)),
+        .setName("POSITION")
+        .setFormat(nvrhi::Format::RGB32_FLOAT)
+        .setOffset(offsetof(Vertex, Position))
+        .setElementStride(sizeof(Vertex)),
         nvrhi::VertexAttributeDesc()
-            .setName("NORMAL")
-            .setFormat(nvrhi::Format::RGB32_FLOAT)
-            .setOffset(offsetof(Vertex, Normal))
-            .setElementStride(sizeof(Vertex)),
+        .setName("NORMAL")
+        .setFormat(nvrhi::Format::RGB32_FLOAT)
+        .setOffset(offsetof(Vertex, Normal))
+        .setElementStride(sizeof(Vertex)),
         nvrhi::VertexAttributeDesc()
-            .setName("TEXCOORD")
-            .setFormat(nvrhi::Format::RG32_FLOAT)
-            .setOffset(offsetof(Vertex, TextureCoordinates))
-            .setElementStride(sizeof(Vertex)),
+        .setName("TEXCOORD")
+        .setFormat(nvrhi::Format::RG32_FLOAT)
+        .setOffset(offsetof(Vertex, TextureCoordinates))
+        .setElementStride(sizeof(Vertex)),
         nvrhi::VertexAttributeDesc()
-            .setName("TANGENT")
-            .setFormat(nvrhi::Format::RGBA32_FLOAT)
-            .setOffset(offsetof(Vertex, Tangent))
-            .setElementStride(sizeof(Vertex)),
+        .setName("TANGENT")
+        .setFormat(nvrhi::Format::RGBA32_FLOAT)
+        .setOffset(offsetof(Vertex, Tangent))
+        .setElementStride(sizeof(Vertex)),
     };
     _inputLayout = device->createInputLayout(attributes, static_cast<uint32_t>(std::size(attributes)), _vertexShader);
 
@@ -283,7 +283,7 @@ void MeshPass::EnsureIndirectCapacity(uint32_t commandCount) const
 MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const DrawItem> items) const
 {
     nvrhi::ICommandList *const commandList = frame.commandList;
-    SubmitStats                stats;
+    SubmitStats stats;
 
     // Build the frame's per-instance records and indirect commands in one pass over
     // the (already sorted) items. Each valid item appends one instance record — the
@@ -297,19 +297,19 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     // vectors meant three heap allocations (and their growth reallocs) per frame,
     // every frame. clear() keeps the capacity, so a steady-state scene settles
     // into zero allocations here.
-    std::vector<InstanceData>                        &instances   = _scratchInstances;
+    std::vector<InstanceData> &instances   = _scratchInstances;
     std::vector<nvrhi::DrawIndexedIndirectArguments> &commands    = _scratchCommands;
     // Parallel to `commands`: the mesh each batch draws, for the arena vertex/index
     // buffers at record time (they bind via GraphicsState, not the indirect args).
-    std::vector<const MeshBuffer *>                  &batchMeshes = _scratchBatchMeshes;
+    std::vector<const MeshBuffer *> &batchMeshes = _scratchBatchMeshes;
     instances.clear();
     commands.clear();
     batchMeshes.clear();
     instances.reserve(items.size());
 
     const MeshBuffer *prevMesh    = nullptr;
-    uint32_t          prevSubmesh = UINT32_MAX;
-    uint32_t          instanceIndex = 0;
+    uint32_t prevSubmesh = UINT32_MAX;
+    uint32_t instanceIndex = 0;
     for (const DrawItem &item : items)
     {
         if (item.material == nullptr || item.mesh == nullptr)
@@ -363,7 +363,7 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     {
         const uint32_t needed = static_cast<uint32_t>(instances.size());
         const uint32_t grown = std::max(_instanceBuffer.CapacityElements() * 2u, kInitialInstanceCapacity);
-        _instanceBuffer.Create(_device, sizeof(InstanceData), std::max(grown, needed), /*allowUnorderedAccess=*/false,
+        _instanceBuffer.Create(_device, sizeof(InstanceData), std::max(grown, needed), /*allowUnorderedAccess=*/ false,
                                "MeshPass::Instances");
     }
     EnsureIndirectCapacity(static_cast<uint32_t>(commands.size()));
@@ -381,12 +381,12 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     // so this is a single call spanning all batches; the per-buffer grouping stays
     // correct if a second arena (divergent vertex format) is ever added.
     const uint32_t commandCount = static_cast<uint32_t>(commands.size());
-    uint32_t       runStart     = 0;
+    uint32_t runStart     = 0;
     while (runStart < commandCount)
     {
         nvrhi::IBuffer *const vertexBuffer = batchMeshes[runStart]->VertexBuffer();
         nvrhi::IBuffer *const indexBuffer  = batchMeshes[runStart]->IndexBuffer();
-        uint32_t              runEnd       = runStart + 1;
+        uint32_t runEnd       = runStart + 1;
         while (runEnd < commandCount && batchMeshes[runEnd]->VertexBuffer() == vertexBuffer &&
                batchMeshes[runEnd]->IndexBuffer() == indexBuffer)
         {
@@ -444,7 +444,7 @@ MeshPass::SubmitStats MeshPass::SubmitIndirect(const RenderFrame &frame, const I
     state.indirectParams = in.indirectBuffer;
     commandList->setGraphicsState(state);
 
-    commandList->drawIndexedIndirect(/*offsetBytes=*/0, in.commandCount);
+    commandList->drawIndexedIndirect(/*offsetBytes=*/ 0, in.commandCount);
 
     // Survivor/batch tallies come from the culler's readback; report the one call.
     stats.drawCalls = 1;

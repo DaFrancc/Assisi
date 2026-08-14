@@ -42,7 +42,7 @@ namespace Assisi::Core
 struct AssetSubAsset
 {
     std::uint32_t slot = 0;  ///< Dense material-slot index in the mesh.
-    AssetId       material;  ///< The `.amat` GUID exploded for that slot.
+    AssetId material;        ///< The `.amat` GUID exploded for that slot.
 };
 
 /// @brief The deserialized contents of a `.aast` sidecar.
@@ -84,7 +84,7 @@ struct AssetSidecar
 [[nodiscard]] AssetId MintAssetId();
 
 /// @brief Why reading a `.aast` sidecar failed.
-enum class AssetSidecarError
+enum class AssetSidecarError : std::uint8_t
 {
     ParseFailed, ///< Not valid JSON, or not a JSON object.
     WrongType,   ///< The envelope `type` is not the sidecar type.

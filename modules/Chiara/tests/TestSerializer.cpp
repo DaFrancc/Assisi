@@ -464,14 +464,14 @@ TEST_CASE("Serializing while other threads emit stays consistent")
     {
         emitters.emplace_back(
             [&keepEmitting]
+        {
+            Chiara::RegisterCurrentThread("chiara-emit");
+            while (keepEmitting.load(std::memory_order_relaxed))
             {
-                Chiara::RegisterCurrentThread("chiara-emit");
-                while (keepEmitting.load(std::memory_order_relaxed))
-                {
-                    ASSISI_PROFILE_SCOPE("concurrent-work");
-                    ASSISI_PROFILE_COUNTER("concurrent/value", 1.0);
-                }
-            });
+                ASSISI_PROFILE_SCOPE("concurrent-work");
+                ASSISI_PROFILE_COUNTER("concurrent/value", 1.0);
+            }
+        });
     }
 
     const Chiara::SerializeResult result = Chiara::SerializeCapture(trace.Path());

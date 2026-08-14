@@ -29,7 +29,7 @@ namespace Assisi::Core::Reflect
 
 class MessageRegistry
 {
-  public:
+public:
     static MessageRegistry &Instance();
 
     /// @brief Register a message type. Called by generated code at startup.
@@ -59,14 +59,14 @@ class MessageRegistry
     /// one, so this is an index.
     [[nodiscard]] const MessageMeta *ById(MessageId id) const;
 
-  private:
+private:
     MessageRegistry() = default;
 
     void EnsureFinalized() const;
 
     mutable std::vector<MessageMeta>                       _metas;
     mutable std::unordered_map<std::type_index, MessageId> _idByType;
-    mutable bool                                           _finalized = false;
+    mutable bool _finalized = false;
 };
 
 } // namespace Assisi::Core::Reflect

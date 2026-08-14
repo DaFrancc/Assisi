@@ -47,7 +47,7 @@ class EditHistory;
 /// @brief The open placement gesture, or nothing. One per editor.
 class InstanceGesture
 {
-  public:
+public:
     /// @brief Whether a gesture is in progress at all.
     [[nodiscard]] bool IsOpen() const { return _instanceId.IsValid(); }
 
@@ -88,14 +88,14 @@ class InstanceGesture
     /// snapshots name entities in that scene and mean nothing in the next one.
     void Abandon();
 
-  private:
+private:
     /// The instance being moved; invalid when no gesture is open. This *is* the
     /// open flag — there is no separate bool to fall out of step with it.
     Assisi::ECS::InstanceId _instanceId;
 
     /// The record as it stood before the drag, and every member pose likewise.
     /// Captured once at Begin because the drag overwrites both in place.
-    Assisi::Runtime::BlueprintInstance                          _row;
+    Assisi::Runtime::BlueprintInstance _row;
     std::vector<std::pair<Assisi::ECS::Entity, nlohmann::json>> _poses;
 
     /// Raised by the edit sites during the frame, read and cleared by EndFrame.

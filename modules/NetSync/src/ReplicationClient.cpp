@@ -127,17 +127,17 @@ Core::Reflect::CodecContext ReplicationClient::EncodeContext() const
     Core::Reflect::CodecContext codec;
 
     codec.entityToWire = [this](std::uint64_t packed) -> std::uint64_t
-    // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
-    { return NetIdOf(UnpackEntity(packed)).value; };
+                         // .value: the codec's entity-ref slot is a bare uint64_t — the wire boundary.
+                         { return NetIdOf(UnpackEntity(packed)).value; };
 
     // Local instance id in, the base NetId the server named it by out. Zero for
     // an instance this client made on its own: the server has no name for it, and
     // sending the local counter would name one of *its* instances at random.
     codec.instanceToWire = [this](std::uint32_t instanceId) -> std::uint32_t
-    {
-        const auto base = _baseByInstanceId.find(ECS::InstanceId{instanceId});
-        return base == _baseByInstanceId.end() ? 0u : base->second.value;
-    };
+                           {
+                               const auto base = _baseByInstanceId.find(ECS::InstanceId{instanceId});
+                               return base == _baseByInstanceId.end() ? 0u : base->second.value;
+                           };
 
     return codec;
 }
@@ -147,17 +147,17 @@ Core::Reflect::CodecContext ReplicationClient::DecodeContext() const
     Core::Reflect::CodecContext codec;
 
     codec.entityFromWire = [this](std::uint64_t wire) -> std::uint64_t
-    // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
-    { return PackEntity(EntityOf(NetId{static_cast<NetIdValue>(wire)})); };
+                           // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
+                           { return PackEntity(EntityOf(NetId{static_cast<NetIdValue>(wire)})); };
 
     // Base NetId in, this machine's own instance id out. Zero when the instance
     // was never expanded here, which leaves the tag invalid rather than pointing
     // at an unrelated local instance.
     codec.instanceFromWire = [this](std::uint32_t base) -> std::uint32_t
-    {
-        const auto local = _instanceIdByBase.find(NetId{base});
-        return local == _instanceIdByBase.end() ? 0u : local->second.value;
-    };
+                             {
+                                 const auto local = _instanceIdByBase.find(NetId{base});
+                                 return local == _instanceIdByBase.end() ? 0u : local->second.value;
+                             };
 
     return codec;
 }
@@ -169,7 +169,7 @@ bool ReplicationClient::SendIntentBytes(const void *intent, std::type_index type
         return false;
 
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
-    const Core::Reflect::MessageMeta     *meta     = registry.ById(registry.IdOf(type));
+    const Core::Reflect::MessageMeta *meta     = registry.ById(registry.IdOf(type));
     if (meta == nullptr)
     {
         // Unreachable through SendIntent, whose static_assert needs a
@@ -313,7 +313,7 @@ void ReplicationClient::DrainAnnouncements()
 
 void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
 {
-    Core::BitReader   reader(payload);
+    Core::BitReader reader(payload);
     const MessageType type = ReadMessageType(reader);
     if (!reader.Ok())
         return;
@@ -364,7 +364,7 @@ void ReplicationClient::HandleMessage(std::span<const std::byte> payload)
     case MessageType::Reject:
     {
         const std::uint32_t reason = reader.ReadBits(8);
-        const std::string   detail = reader.ReadString();
+        const std::string detail = reader.ReadString();
         if (!reader.Ok())
             return;
         switch (static_cast<RejectReason>(reason))
@@ -484,7 +484,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
             continue;
 
         std::vector<ECS::Entity> members;
-        ECS::InstanceId          localInstance;
+        ECS::InstanceId localInstance;
         if (!_instanceExpander->Expand(entry, members, localInstance) || members.size() != entry.memberCount)
         {
             // Fatal, not survivable: binding a short or failed expansion attaches
@@ -559,7 +559,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     despawnRuns.reserve(despawnCount);
     for (std::uint32_t i = 0; i < despawnCount; ++i)
     {
-        const NetId         start  = reader.ReadVarId<NetId>(); // wire read
+        const NetId start  = reader.ReadVarId<NetId>();         // wire read
         const std::uint32_t length = reader.ReadVarUInt32();
         // Bounded like every other count on this path: the length is attacker-
         // controlled, and unchecked it is a loop the packet sizes.
@@ -583,7 +583,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
         for (std::uint32_t offset = 0; offset < length; ++offset)
         {
             const NetId netId{start.value + offset};
-            const auto  it = _entityByNetId.find(netId);
+            const auto it = _entityByNetId.find(netId);
             if (it == _entityByNetId.end())
                 continue; // a run may name ids this client never had
 
@@ -617,44 +617,44 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     {
         std::erase_if(_instanceRecords,
                       [this, &despawnRuns, &collapsed](const std::pair<const NetId, InstanceRecord> &row)
-                      {
-                          const NetId base = row.second.base;
-                          // 64-bit, so a block or a run running off the top of
-                          // the id space compares as the range it is rather than
-                          // wrapping into a low one.
-                          const std::uint64_t end =
-                              static_cast<std::uint64_t>(base.value) + row.second.memberCount;
+            {
+                const NetId base = row.second.base;
+                // 64-bit, so a block or a run running off the top of
+                // the id space compares as the range it is rather than
+                // wrapping into a low one.
+                const std::uint64_t end =
+                    static_cast<std::uint64_t>(base.value) + row.second.memberCount;
 
-                          const bool touched =
-                              std::any_of(despawnRuns.begin(), despawnRuns.end(),
-                                          [base, end](const auto &run)
-                                          {
-                                              return run.first.value < end &&
-                                                     static_cast<std::uint64_t>(run.first.value) + run.second >
-                                                         base.value;
-                                          });
-                          if (!touched)
-                              return false;
+                const bool touched =
+                    std::any_of(despawnRuns.begin(), despawnRuns.end(),
+                                [base, end](const auto &run)
+                {
+                    return run.first.value < end &&
+                           static_cast<std::uint64_t>(run.first.value) + run.second >
+                           base.value;
+                });
+                if (!touched)
+                    return false;
 
-                          for (std::uint32_t member = 0; member < row.second.memberCount; ++member)
-                          {
-                              if (_entityByNetId.contains(NetId{base.value + member}))
-                                  return false;
-                          }
+                for (std::uint32_t member = 0; member < row.second.memberCount; ++member)
+                {
+                    if (_entityByNetId.contains(NetId{base.value + member}))
+                        return false;
+                }
 
-                          // The local instance goes with it, both ways round:
-                          // `instanceFromWire` would otherwise keep resolving
-                          // this base to an instance whose members are all
-                          // destroyed, and `instanceToWire` would keep naming a
-                          // base the server has retired.
-                          if (const auto local = _instanceIdByBase.find(base); local != _instanceIdByBase.end())
-                          {
-                              collapsed.push_back(local->second);
-                              _baseByInstanceId.erase(local->second);
-                              _instanceIdByBase.erase(local);
-                          }
-                          return true;
-                      });
+                // The local instance goes with it, both ways round:
+                // `instanceFromWire` would otherwise keep resolving
+                // this base to an instance whose members are all
+                // destroyed, and `instanceToWire` would keep naming a
+                // base the server has retired.
+                if (const auto local = _instanceIdByBase.find(base); local != _instanceIdByBase.end())
+                {
+                    collapsed.push_back(local->second);
+                    _baseByInstanceId.erase(local->second);
+                    _instanceIdByBase.erase(local);
+                }
+                return true;
+            });
     }
 
     // Everything this class owns for those instances is gone; what the expansion
@@ -676,7 +676,7 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     struct RefSite
     {
         NetId target   = InvalidNetId;
-        bool  resolved = false;
+        bool resolved = false;
     };
     std::vector<RefSite> refSites;
 
@@ -686,28 +686,28 @@ bool ReplicationClient::ApplySnapshot(Core::BitReader &reader)
     // building a fresh one is what keeps that true when a hook is added.
     Core::Reflect::CodecContext context = DecodeContext();
     context.entityFromWire              = [this, &refSites](std::uint64_t wire) -> std::uint64_t
-    {
-        // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
-        const NetId netId = NetId{static_cast<NetIdValue>(wire)};
-        if (netId == InvalidNetId)
-        {
-            refSites.push_back(RefSite{InvalidNetId, true}); // a genuine null reference
-            return PackEntity(ECS::NullEntity);
-        }
-        const auto it = _entityByNetId.find(netId);
-        if (it == _entityByNetId.end())
-        {
-            refSites.push_back(RefSite{netId, false});
-            return PackEntity(ECS::NullEntity);
-        }
-        refSites.push_back(RefSite{netId, true});
-        return PackEntity(it->second);
-    };
+                                          {
+                                              // Wire boundary: the codec's entity-ref slot is a bare uint64_t.
+                                              const NetId netId = NetId{static_cast<NetIdValue>(wire)};
+                                              if (netId == InvalidNetId)
+                                              {
+                                                  refSites.push_back(RefSite{InvalidNetId, true}); // a genuine null reference
+                                                  return PackEntity(ECS::NullEntity);
+                                              }
+                                              const auto it = _entityByNetId.find(netId);
+                                              if (it == _entityByNetId.end())
+                                              {
+                                                  refSites.push_back(RefSite{netId, false});
+                                                  return PackEntity(ECS::NullEntity);
+                                              }
+                                              refSites.push_back(RefSite{netId, true});
+                                              return PackEntity(it->second);
+                                          };
 
     while (reader.Ok() && reader.ReadBool())
     {
         const NetId netId   = reader.ReadVarId<NetId>(); // wire read
-        const bool  isSpawn = reader.ReadBool();
+        const bool isSpawn = reader.ReadBool();
         if (!reader.Ok() || netId == InvalidNetId)
         {
             reader.Invalidate();

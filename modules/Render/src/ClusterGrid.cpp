@@ -70,7 +70,7 @@ bool ClusterGrid::Initialize(nvrhi::IDevice *device)
 
     // Fixed-capacity buffers, allocated once — see Buffer.hpp's header comment
     // for why these never get resized/recreated per frame like the old GL SSBOs did.
-    _clusterAABBBuffer.Create(device, kAABBStride, kNumClusters, /*allowUnorderedAccess=*/true,
+    _clusterAABBBuffer.Create(device, kAABBStride, kNumClusters, /*allowUnorderedAccess=*/ true,
                               "ClusterGrid::ClusterAABBs");
     _pointLightBuffer.Create(device, sizeof(PointLightGPU), kMaxPointLights, false, "ClusterGrid::PointLights");
     _spotLightBuffer.Create(device, sizeof(SpotLightGPU), kMaxSpotLights, false, "ClusterGrid::SpotLights");

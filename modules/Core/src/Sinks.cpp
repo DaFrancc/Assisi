@@ -75,14 +75,14 @@ ConsoleSink::ConsoleSink() : _color(StdoutIsTerminal())
 {
 #ifdef _WIN32
     auto enableAnsi = [](DWORD stdHandle)
-    {
-        HANDLE handle = GetStdHandle(stdHandle);
-        DWORD mode = 0;
-        if (GetConsoleMode(handle, &mode))
-        {
-            SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
-        }
-    };
+                      {
+                          HANDLE handle = GetStdHandle(stdHandle);
+                          DWORD mode = 0;
+                          if (GetConsoleMode(handle, &mode))
+                          {
+                              SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                          }
+                      };
     enableAnsi(STD_OUTPUT_HANDLE);
     enableAnsi(STD_ERROR_HANDLE);
 #endif

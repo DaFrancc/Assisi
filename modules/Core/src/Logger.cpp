@@ -145,21 +145,21 @@ std::optional<LogLevel> ParseLogLevel(std::string_view name)
     // request, and rejecting one of them helps nobody. ASCII only, which is all
     // the names use.
     const auto equalsFold = [](std::string_view lhs, std::string_view rhs)
-    {
-        if (lhs.size() != rhs.size())
-        {
-            return false;
-        }
-        for (size_t i = 0; i < lhs.size(); ++i)
-        {
-            const char lower = (lhs[i] >= 'A' && lhs[i] <= 'Z') ? static_cast<char>(lhs[i] - 'A' + 'a') : lhs[i];
-            if (lower != rhs[i])
-            {
-                return false;
-            }
-        }
-        return true;
-    };
+                            {
+                                if (lhs.size() != rhs.size())
+                                {
+                                    return false;
+                                }
+                                for (size_t i = 0; i < lhs.size(); ++i)
+                                {
+                                    const char lower = (lhs[i] >= 'A' && lhs[i] <= 'Z') ? static_cast<char>(lhs[i] - 'A' + 'a') : lhs[i];
+                                    if (lower != rhs[i])
+                                    {
+                                        return false;
+                                    }
+                                }
+                                return true;
+                            };
 
     for (size_t i = 0; i < std::size(kLevelNames); ++i)
     {

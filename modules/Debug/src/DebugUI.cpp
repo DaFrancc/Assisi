@@ -61,7 +61,7 @@ constexpr std::uint64_t kTextureRetireDelayFrames = 3;
 struct RegisteredTexture
 {
     VkDescriptorSet set           = VK_NULL_HANDLE;
-    std::uint64_t   lastUsedFrame = 0;
+    std::uint64_t lastUsedFrame = 0;
 };
 using TextureIdMap = std::unordered_map<nvrhi::ITexture *, RegisteredTexture>;
 TextureIdMap s_textureIds;
@@ -137,7 +137,7 @@ void LoadEditorFont()
     };
 
     constexpr const char *kFontVPath = "editor/JetBrainsMono/JetBrainsMonoNLNerdFontMono-Regular.ttf";
-    constexpr float        kFontSize = 16.0f;
+    constexpr float kFontSize = 16.0f;
 
     const std::expected<std::filesystem::path, Core::AssetError> resolved =
         Core::AssetSystem::Resolve(kFontVPath);
@@ -177,7 +177,7 @@ void LoadLoadingSpinnerFont()
         0,
     };
     constexpr const char *kFontVPath = "editor/loading/Spinner.ttf";
-    constexpr float        kFontSize = 128.0f; // rasterised big so the spinner stays crisp when drawn large
+    constexpr float kFontSize = 128.0f;        // rasterised big so the spinner stays crisp when drawn large
 
     const std::expected<std::filesystem::path, Core::AssetError> resolved =
         Core::AssetSystem::Resolve(kFontVPath);
@@ -279,8 +279,8 @@ void DebugUI::Initialize(const Window::WindowContext &window, Render::Vulkan::Vu
     // aspect when the chosen format carries one — D32_SFLOAT does not.
     s_colorFormat = vulkanContext.GetSwapchainFormat();
     const VkFormat kDepthFormat   = vulkanContext.GetDepthFormat();
-    const bool     kDepthHasStencil = (kDepthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
-                                       kDepthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT);
+    const bool kDepthHasStencil = (kDepthFormat == VK_FORMAT_D24_UNORM_S8_UINT ||
+                                   kDepthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT);
 
     ImGui_ImplVulkan_InitInfo initInfo{};
     initInfo.ApiVersion = VK_API_VERSION_1_2;

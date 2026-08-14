@@ -37,7 +37,7 @@ namespace Assisi::Core
 
 /// @brief Supplies the advisory path hint for an id at save time. Returns the
 ///        current virtual path, or an empty string if unknown (hint omitted).
-using AssetIdHintResolver = std::function<std::string(const AssetId &)>;
+using AssetIdHintResolver = std::function<std::string (const AssetId &)>;
 
 /// @brief Install the hint resolver (editor-only). Pass an empty function to
 ///        clear it — serialization then omits the hint.

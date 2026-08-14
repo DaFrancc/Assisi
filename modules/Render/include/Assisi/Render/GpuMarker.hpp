@@ -46,7 +46,7 @@ namespace Assisi::Render
 /// A null command list is a no-op, so call sites need no guard.
 class GpuMarkerScope
 {
-  public:
+public:
     GpuMarkerScope(nvrhi::ICommandList *commandList, const char *name) : _commandList(commandList)
     {
         if (_commandList != nullptr)
@@ -68,7 +68,7 @@ class GpuMarkerScope
     GpuMarkerScope(GpuMarkerScope &&)                 = delete;
     GpuMarkerScope &operator=(GpuMarkerScope &&)      = delete;
 
-  private:
+private:
     nvrhi::ICommandList *_commandList = nullptr;
 };
 
@@ -91,5 +91,5 @@ class GpuMarkerScope
 /// (debug-utils), from a single name. The preferred form at any site that
 /// records commands.
 #define ASSISI_PROFILE_GPU_SCOPE(commandList, name)                                                             \
-    ASSISI_PROFILE_SCOPE(name);                                                                                 \
-    ASSISI_GPU_MARKER((commandList), (name))
+        ASSISI_PROFILE_SCOPE(name);                                                                                 \
+        ASSISI_GPU_MARKER((commandList), (name))

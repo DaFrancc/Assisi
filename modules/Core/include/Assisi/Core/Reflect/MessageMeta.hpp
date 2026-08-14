@@ -95,11 +95,11 @@ enum class MessageReliability : std::uint8_t
 /// @brief Runtime descriptor for one `AMSG` type.
 struct MessageMeta
 {
-    std::string            name;
-    std::type_index        typeIndex;
+    std::string name;
+    std::type_index typeIndex;
     std::vector<FieldMeta> fields;
 
-    MessageDirection   direction   = MessageDirection::Intent;
+    MessageDirection direction   = MessageDirection::Intent;
     MessageReliability reliability = MessageReliability::Unreliable;
 
     /// @brief `AMSG(..., independent)`: this message names no entity, so

@@ -23,7 +23,7 @@ namespace Assisi::Core::Reflect
 
 class AssetTypeRegistry
 {
-  public:
+public:
     static AssetTypeRegistry &Instance();
 
     /// @brief Register an asset type. Called by generated code at startup.
@@ -42,7 +42,7 @@ class AssetTypeRegistry
     /// @brief Number of registered asset types.
     std::size_t Count() const;
 
-  private:
+private:
     AssetTypeRegistry() = default;
 
     std::vector<AssetTypeMeta> _metas;

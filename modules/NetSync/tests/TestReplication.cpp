@@ -46,8 +46,8 @@ namespace
 struct Harness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     /// Both ends of the in-process pair. Created in the member init list
     /// because ReplicationClient takes its connection handle at construction —
@@ -64,8 +64,8 @@ struct Harness
     /// it may answer — the editor's join. Off by default, which is every other
     /// case here.
     explicit Harness(ReplicationConfig config = {}, bool deferHandshake = false, LevelIdentity level = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
-          client(transport, clientScene, pair.second)
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
+        client(transport, clientScene, pair.second)
     {
         client.SetDeferHandshake(deferHandshake);
         server.SetLevelIdentity(std::move(level));
@@ -137,7 +137,7 @@ struct Harness
 ECS::Entity SpawnReplicated(ECS::Scene &scene, glm::vec3 position)
 {
     const ECS::Entity entity = scene.Create();
-    ECS::Transform    transform;
+    ECS::Transform transform;
     transform.position = position;
     (void)scene.Add<ECS::Transform>(entity, transform);
     (void)scene.Add<Replicated>(entity, Replicated{});
@@ -227,7 +227,7 @@ TEST_CASE("the handshake carries which level the host is running, and its conten
     level.path        = "levels/Materials.alvl";
     level.contentHash = 0xFEEDFACECAFEBEEDull;
 
-    Harness harness(ReplicationConfig{}, /*deferHandshake=*/true, level);
+    Harness harness(ReplicationConfig{}, /*deferHandshake=*/ true, level);
     harness.Step(4);
 
     // Deferred: connected, told which level, and deliberately not synchronized.
@@ -260,7 +260,7 @@ TEST_CASE("the handshake carries which level the host is running, and its conten
 
 TEST_CASE("a host with no level advertises none, and an aborted join says why")
 {
-    Harness harness(ReplicationConfig{}, /*deferHandshake=*/true);
+    Harness harness(ReplicationConfig{}, /*deferHandshake=*/ true);
     harness.Step(4);
 
     REQUIRE(harness.client.IsAwaitingLevel());
@@ -417,12 +417,12 @@ TEST_CASE("a norep field still round-trips to disk")
     REQUIRE(meta != nullptr);
     REQUIRE(meta->replicable);
 
-    const Test::Health   source{55, 8888};
+    const Test::Health source{55, 8888};
     const nlohmann::json json = meta->serialize(&source);
     CHECK(json.contains("value"));
     CHECK(json.contains("secret"));
 
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity entity = scene.Create();
     meta->addToScene(&scene, entity.index, entity.generation, json);
 
@@ -586,8 +586,8 @@ TEST_CASE("a late-joining client converges on a world already in motion")
     // A second client shows up long after the world was built. Its baseline is
     // the empty one, which is the same code path as any other delta — that
     // unification is the reason late join needs no special message.
-    ECS::Scene       lateScene;
-    const auto       latePair = harness.transport.CreateLoopbackPair();
+    ECS::Scene lateScene;
+    const auto latePair = harness.transport.CreateLoopbackPair();
     ReplicationClient lateClient(harness.transport, lateScene, latePair.second);
     lateClient.SetContentSetHash(0);
     harness.server.AddConnection(latePair.first);
@@ -874,7 +874,7 @@ TEST_CASE("input flows the other way and is bounded on arrival")
     REQUIRE(harness.client.IsSynchronized());
 
     InputCommandBuffer buffer;
-    InputCommand       command;
+    InputCommand command;
     command.tick  = harness.tick + 4;
     command.moveX = 5.f; // well past any legal stick deflection
     command.moveY = 5.f;
@@ -923,7 +923,7 @@ TEST_CASE("a component removed on the server is removed on the client")
     (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{42});
     harness.Step(12);
 
-    const NetId       netId  = harness.server.NetIdOf(entity);
+    const NetId netId  = harness.server.NetIdOf(entity);
     const ECS::Entity mirror = harness.client.EntityOf(netId);
     REQUIRE(mirror != ECS::NullEntity);
     REQUIRE(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
@@ -1047,7 +1047,7 @@ TEST_CASE("interpolation renders between snapshots rather than stepping at the s
         harness.Step(1);
 
         const std::uint64_t applied = harness.client.LastAppliedTick();
-        const float         shown   = harness.clientScene.Get<ECS::Transform>(mirror)->position.x;
+        const float shown   = harness.clientScene.Get<ECS::Transform>(mirror)->position.x;
         if (samples.empty() || samples.back().first != applied)
             samples.emplace_back(applied, shown);
     }
@@ -1126,8 +1126,8 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     // is nothing to configure until the library has been initialized by at
     // least one live NetTransport.
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     Net::SimulatedConditions conditions;
     conditions.sendLossPercent = 5.f;
@@ -1136,8 +1136,8 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     conditions.recvLagMs       = 75;
     REQUIRE(Net::NetTransport::SetSimulatedConditions(conditions));
 
-    const auto        pair = transport.CreateLoopbackPair(true);
-    ReplicationServer server(transport, serverScene, /*physics=*/nullptr, ReplicationConfig{});
+    const auto pair = transport.CreateLoopbackPair(true);
+    ReplicationServer server(transport, serverScene, /*physics=*/ nullptr, ReplicationConfig{});
     ReplicationClient client(transport, clientScene, pair.second);
     server.SetContentSetHash(0);
     client.SetContentSetHash(0);
@@ -1246,7 +1246,7 @@ TEST_CASE("Reset clears the level-ready gate, so a hash does not join on its own
     // puts the second half back to "not said", so the next attempt waits for the
     // application again. The case is the editor's join, where the world takes
     // frames to load and the hash lands whenever the content scan finishes.
-    Harness harness{{}, /*deferHandshake=*/true};
+    Harness harness{{}, /*deferHandshake=*/ true};
     harness.client.ConfirmLevelReady();
     harness.Step(6);
     REQUIRE(harness.client.IsSynchronized());

@@ -53,7 +53,7 @@ void ReplicationServer::HandleMessage(Net::ConnectionId connection, std::span<co
     if (it == _connections.end())
         return;
 
-    Core::BitReader   reader(payload);
+    Core::BitReader reader(payload);
     const MessageType type = ReadMessageType(reader);
     if (!reader.Ok())
         return;
@@ -150,7 +150,7 @@ void ReplicationServer::HandleAck(Connection &connection, Core::BitReader &reade
     // reused, so no straggler ack can resurrect one. Without this the map grows
     // with every entity that has ever replicated.
     const auto retired = [&connection](const auto &entry)
-    { return !std::binary_search(connection.acked.begin(), connection.acked.end(), entry.first); };
+                         { return !std::binary_search(connection.acked.begin(), connection.acked.end(), entry.first); };
     std::erase_if(connection.baselines, retired);
     std::erase_if(connection.priority, retired);
     connection.diagnostics.baselineEntries = static_cast<std::uint32_t>(connection.baselines.size());
@@ -213,9 +213,9 @@ namespace
 /// What the validation gate needs to say no, and to say which rule said it.
 struct IntentGate
 {
-    ReplicationServer    *server      = nullptr;
-    ECS::Scene           *scene       = nullptr;
-    ClientId              sender;
+    ReplicationServer *server      = nullptr;
+    ECS::Scene *scene       = nullptr;
+    ClientId sender;
     ConnectionDiagnostics *diagnostics = nullptr;
 };
 
@@ -270,8 +270,8 @@ bool ValidateIntent(const Core::Reflect::MessageMeta &meta, const void *message,
 void ReplicationServer::HandleIntent(Connection &connection, Core::BitReader &reader)
 {
     // Step 1 — envelope: bounded, and read before anything decides to care.
-    const std::uint64_t             clientTick = reader.ReadVarUInt64();
-    const Core::Reflect::MessageId  messageId  = Core::Reflect::ReadMessageId(reader);
+    const std::uint64_t clientTick = reader.ReadVarUInt64();
+    const Core::Reflect::MessageId messageId  = Core::Reflect::ReadMessageId(reader);
     if (!reader.Ok() || messageId == Core::Reflect::kInvalidMessageId)
     {
         ++connection.diagnostics.intentsMalformed;
@@ -396,8 +396,8 @@ void ReplicationServer::QueueEvent(Connection &connection, NetId subject, std::v
 void ReplicationServer::SendEvent(const void *event, std::type_index type, Recipients recipients, ClientId who)
 {
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
-    const Core::Reflect::MessageId        id       = registry.IdOf(type);
-    const Core::Reflect::MessageMeta     *meta     = registry.ById(id);
+    const Core::Reflect::MessageId id       = registry.IdOf(type);
+    const Core::Reflect::MessageMeta *meta     = registry.ById(id);
     if (meta == nullptr)
     {
         Core::Log::Error("NetSync: refusing to send an event of an unregistered type — is it AMSG?");
@@ -463,32 +463,32 @@ void ReplicationServer::SendEvent(const void *event, std::type_index type, Recip
     const bool reliable = meta->reliability == Core::Reflect::MessageReliability::Reliable;
 
     const auto deliver = [&](Connection &connection)
-    {
-        if (reliable)
-        {
-            // Immediately, on the control lane, stamped with the tick the client
-            // must have applied before it may act on this. Rare by design — see
-            // MessageType::Announcement.
-            Core::BitWriter announcement;
-            WriteMessageType(MessageType::Announcement, announcement);
-            announcement.WriteVarUInt64(_simTick);
-            announcement.WriteVarId(subject); // wire write
-            announcement.WriteBytes(bytes);
-            _transport.Send(connection.id, announcement.Data(), Net::SendMode::Reliable, Net::Lane::Control);
-            ++connection.diagnostics.announcementsSent;
-            return;
-        }
-        QueueEvent(connection, subject, bytes);
-    };
+                         {
+                             if (reliable)
+                             {
+                                 // Immediately, on the control lane, stamped with the tick the client
+                                 // must have applied before it may act on this. Rare by design — see
+                                 // MessageType::Announcement.
+                                 Core::BitWriter announcement;
+                                 WriteMessageType(MessageType::Announcement, announcement);
+                                 announcement.WriteVarUInt64(_simTick);
+                                 announcement.WriteVarId(subject); // wire write
+                                 announcement.WriteBytes(bytes);
+                                 _transport.Send(connection.id, announcement.Data(), Net::SendMode::Reliable, Net::Lane::Control);
+                                 ++connection.diagnostics.announcementsSent;
+                                 return;
+                             }
+                             QueueEvent(connection, subject, bytes);
+                         };
 
     const auto deliverToHost = [&]()
-    {
-        // No transport, so no reliability distinction: the host's delivery is a
-        // queue drained at the end of its tick, which gives it the same "the
-        // world is at least as new as the message" property that packet
-        // ordering gives a remote client.
-        _hostEvents.emplace_back(id, bytes);
-    };
+                               {
+                                   // No transport, so no reliability distinction: the host's delivery is a
+                                   // queue drained at the end of its tick, which gives it the same "the
+                                   // world is at least as new as the message" property that packet
+                                   // ordering gives a remote client.
+                                   _hostEvents.emplace_back(id, bytes);
+                               };
 
     switch (recipients)
     {
@@ -650,13 +650,13 @@ void ReplicationServer::DispatchHostEvents()
 void ReplicationServer::DispatchLocalIntent(const void *intent, std::type_index type)
 {
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
-    const Core::Reflect::MessageMeta     *meta     = registry.ById(registry.IdOf(type));
+    const Core::Reflect::MessageMeta *meta     = registry.ById(registry.IdOf(type));
     if (meta == nullptr)
         return;
 
     // The host has no connection, hence no ConnectionDiagnostics; _hostDiagnostics
     // stands in so its intents are counted like everyone else's.
-    Core::BitWriter                   writer;
+    Core::BitWriter writer;
     const Core::Reflect::CodecContext codec = EncodeContext(IdAssignment::Existing);
     if (!Core::Reflect::WriteMessage(*meta, intent, writer, &codec))
         return;

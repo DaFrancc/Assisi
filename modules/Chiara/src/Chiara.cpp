@@ -41,7 +41,7 @@ namespace Detail
 {
 
 std::atomic<bool> g_recording{false};
-bool              g_useHardwareTicks = false;
+bool g_useHardwareTicks = false;
 
 thread_local ThreadBuffer *t_buffer = nullptr;
 
@@ -64,9 +64,9 @@ std::atomic<std::uint64_t>          g_nextFlowId{1};
 std::atomic<std::uint64_t>          g_nextAsyncId{1};
 
 std::mutex g_initMutex;
-bool       g_initialized    = false;
-Config     g_config         = {};
-double     g_ticksPerSecond = 1'000'000'000.0;
+bool g_initialized    = false;
+Config g_config         = {};
+double g_ticksPerSecond = 1'000'000'000.0;
 
 // Main-thread only: when the last ~1 Hz clock snapshot went out.
 std::uint64_t g_lastSnapshotTicks = 0;
@@ -185,7 +185,7 @@ void SetOsThreadName(const char *name) noexcept
     return __rdtsc();
 #    elif defined(__aarch64__)
     std::uint64_t counter = 0;
-    __asm__ volatile("mrs %0, cntvct_el0" : "=r"(counter));
+    __asm__ volatile ("mrs %0, cntvct_el0" : "=r" (counter));
     return counter;
 #    else
     return Detail::ReadFallbackTicks();
@@ -234,11 +234,11 @@ std::uint64_t ReadFallbackTicks() noexcept
 {
 #    if defined(_WIN32)
     static const std::uint64_t frequency = []
-    {
-        LARGE_INTEGER value{};
-        ::QueryPerformanceFrequency(&value);
-        return static_cast<std::uint64_t>(value.QuadPart);
-    }();
+                                           {
+                                               LARGE_INTEGER value{};
+                                               ::QueryPerformanceFrequency(&value);
+                                               return static_cast<std::uint64_t>(value.QuadPart);
+                                           }();
     LARGE_INTEGER counter{};
     ::QueryPerformanceCounter(&counter);
     const std::uint64_t ticks = static_cast<std::uint64_t>(counter.QuadPart);
@@ -301,7 +301,7 @@ ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept
     }
 
     const std::uint32_t index  = g_threadCount.fetch_add(1, std::memory_order_relaxed);
-    const bool          isMain = index == 0;
+    const bool isMain = index == 0;
 
     auto *buffer = new (std::nothrow) ThreadBuffer(); // NOLINT(cppcoreguidelines-owning-memory) — never freed
     if (buffer == nullptr)
@@ -328,7 +328,7 @@ ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept
     // that acquires the head.
     buffer->next = g_threadListHead.load(std::memory_order_acquire);
     while (!g_threadListHead.compare_exchange_weak(
-        buffer->next, buffer, std::memory_order_release, std::memory_order_acquire))
+               buffer->next, buffer, std::memory_order_release, std::memory_order_acquire))
     {
     }
 

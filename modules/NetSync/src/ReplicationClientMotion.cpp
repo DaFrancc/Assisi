@@ -38,7 +38,7 @@ void ReplicationClient::SyncMirrorBody(NetId netId, ECS::Entity entity)
         return;
 
     const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
-    const ECS::Transform               *transform  = _scene.Get<ECS::Transform>(entity);
+    const ECS::Transform *transform  = _scene.Get<ECS::Transform>(entity);
     if (descriptor == nullptr || transform == nullptr)
         return; // not a physical entity, or not fully described yet
 
@@ -82,7 +82,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
         // First state for this mirror: build the body the server described. Both
         // halves must have arrived — descriptor says what, Transform says where.
         // If either has not, drop this record; the delta path resends until acked.
-        const ECS::Transform               *transform  = _scene.Get<ECS::Transform>(entity);
+        const ECS::Transform *transform  = _scene.Get<ECS::Transform>(entity);
         const Physics::RigidBodyDescriptor *descriptor = _scene.Get<Physics::RigidBodyDescriptor>(entity);
         if (transform == nullptr || descriptor == nullptr)
             return;
@@ -133,13 +133,13 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
     // physics state, and a half-applied correction is not one. Hiding the jump
     // belongs to the view.
     _physics->ApplyBodyState(*body, state.position, state.rotation, state.linearVelocity, state.angularVelocity,
-                             /*activate=*/!state.asleep);
+                             /*activate=*/ !state.asleep);
 
     record.positionError = renderedPosition - state.position;
     record.rotationError = glm::normalize(renderedRotation * glm::inverse(state.rotation));
 
     const ViewSmoothing &smoothing = Smoothing();
-    const float          carried   = glm::length(record.positionError);
+    const float carried   = glm::length(record.positionError);
 
     // Two ways an offset is not worth carrying: below the floor it is too small
     // to see, and past the ceiling a body sliding half a room to catch up reads
@@ -161,7 +161,7 @@ void ReplicationClient::ApplyBodyState(const BodyState &state)
                        ? smoothing.positionCorrectionTimeFast
                        : glm::mix(smoothing.positionCorrectionTime, smoothing.positionCorrectionTimeFast,
                                   (carried - smoothing.smallErrorDistance) /
-                                      (smoothing.largeErrorDistance - smoothing.smallErrorDistance)));
+                                  (smoothing.largeErrorDistance - smoothing.smallErrorDistance)));
 
         // Restarted by every correction, from wherever the picture currently is,
         // so one arriving mid-convergence stays continuous.
@@ -250,7 +250,7 @@ void ReplicationClient::EnforceSleep()
         // Woken by something the server never saw. Put it back and hold it there
         // — the server's own correction is the only thing allowed to wake it.
         _physics->ApplyBodyState(*body, record.restPosition, record.restRotation, glm::vec3{0.f}, glm::vec3{0.f},
-                                 /*activate=*/false);
+                                 /*activate=*/ false);
     }
 }
 
@@ -263,28 +263,28 @@ void ReplicationClient::ResolvePendingRefs()
 
     std::erase_if(_pendingRefs,
                   [&](const PendingRef &pending)
-                  {
-                      const auto target = _entityByNetId.find(pending.target);
-                      if (target == _entityByNetId.end())
-                          return false; // still waiting; keep it
+        {
+            const auto target = _entityByNetId.find(pending.target);
+            if (target == _entityByNetId.end())
+                return false;           // still waiting; keep it
 
-                      const Core::Reflect::ComponentMeta *meta = registry.ById(pending.component);
-                      if (meta == nullptr || !_scene.IsAlive(pending.entity))
-                          return true; // the holder went away — the reference is moot
+            const Core::Reflect::ComponentMeta *meta = registry.ById(pending.component);
+            if (meta == nullptr || !_scene.IsAlive(pending.entity))
+                return true;           // the holder went away — the reference is moot
 
-                      void *component = const_cast<void *>(
-                          meta->getByEntity(&_scene, pending.entity.index, pending.entity.generation));
-                      if (component == nullptr)
-                          return true;
+            void *component = const_cast<void *>(
+                meta->getByEntity(&_scene, pending.entity.index, pending.entity.generation));
+            if (component == nullptr)
+                return true;
 
-                      // By-offset write, the same access the codec uses; the type
-                      // is fixed by FieldType::EntityRef.
-                      auto *slot = reinterpret_cast<ECS::Entity *>(static_cast<std::byte *>(component) +
-                                                                   pending.fieldOffset);
-                      *slot      = target->second;
-                      _scene.MarkChanged(pending.entity, pending.component);
-                      return true;
-                  });
+            // By-offset write, the same access the codec uses; the type
+            // is fixed by FieldType::EntityRef.
+            auto *slot = reinterpret_cast<ECS::Entity *>(static_cast<std::byte *>(component) +
+                                                         pending.fieldOffset);
+            *slot      = target->second;
+            _scene.MarkChanged(pending.entity, pending.component);
+            return true;
+        });
 }
 
 void ReplicationClient::CaptureTransforms(std::uint64_t serverTick)
@@ -370,7 +370,7 @@ void ReplicationClient::Interpolate(double serverTimeTicks)
         }
 
         const double span = static_cast<double>(after->serverTick) - static_cast<double>(before->serverTick);
-        const float  t    = span > 0.0
+        const float t    = span > 0.0
                                 ? static_cast<float>((serverTimeTicks - static_cast<double>(before->serverTick)) / span)
                                 : 1.f;
 

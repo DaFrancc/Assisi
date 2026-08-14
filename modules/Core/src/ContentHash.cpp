@@ -22,7 +22,7 @@ std::optional<std::uint64_t> HashTextFileNormalized(const std::filesystem::path 
     // neither eofbit nor failbit, so a short read hashed what it got and called
     // it a success. `read` runs the same failure through its sentry, which
     // records badbit and returns.
-    std::string                 bytes;
+    std::string bytes;
     std::array<char, 64 * 1024> chunk{};
     while (file.read(chunk.data(), static_cast<std::streamsize>(chunk.size())) || file.gcount() > 0)
         bytes.append(chunk.data(), static_cast<std::size_t>(file.gcount()));

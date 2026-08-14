@@ -56,9 +56,9 @@ fs::path WriteTriangleAssets()
         gltf.write(kTriangleGltf.data(), static_cast<std::streamsize>(kTriangleGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
-        std::ofstream  bin(root / "triangle.bin", std::ios::binary);
+        std::ofstream bin(root / "triangle.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
     }
@@ -186,11 +186,11 @@ fs::path WriteTwoMaterialAssets()
     }
     {
         // Layout: pos0 (z=0), pos1 (z=1), idx0, idx1 — matching the bufferViews.
-        const float    pos0[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
-        const float    pos1[9] = {0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f};
+        const float pos0[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float pos1[9] = {0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f};
         const uint16_t idx0[3] = {0, 1, 2};
         const uint16_t idx1[3] = {0, 1, 2};
-        std::ofstream  bin(root / "two.bin", std::ios::binary);
+        std::ofstream bin(root / "two.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(pos0), sizeof(pos0));
         bin.write(reinterpret_cast<const char *>(pos1), sizeof(pos1));
         bin.write(reinterpret_cast<const char *>(idx0), sizeof(idx0));
@@ -209,16 +209,16 @@ TEST_CASE("ImportMesh: two materials become two submeshes with extracted materia
     // A resolver stands in for the editor's AssetDatabase: it maps the texture's
     // resolved virtual path to a known id, and records the path it was asked for.
     const Assisi::Core::AssetId kGreenId = *Assisi::Core::AssetId::Parse("11111111-1111-4111-8111-111111111111");
-    std::string                 seenPath;
-    const auto                  resolveId = [&](std::string_view vpath) -> Assisi::Core::AssetId
-    {
-        if (vpath == "textures/green.png")
-        {
-            seenPath = std::string(vpath);
-            return kGreenId;
-        }
-        return {};
-    };
+    std::string seenPath;
+    const auto resolveId = [&](std::string_view vpath) -> Assisi::Core::AssetId
+                           {
+                               if (vpath == "textures/green.png")
+                               {
+                                   seenPath = std::string(vpath);
+                                   return kGreenId;
+                               }
+                               return {};
+                           };
 
     const std::expected<MeshData, MeshImportError> result = ImportMesh("two.gltf", resolveId);
     REQUIRE(result.has_value());
@@ -301,9 +301,9 @@ fs::path WriteLodAssets()
         gltf.write(kLodGltf.data(), static_cast<std::streamsize>(kLodGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
-        std::ofstream  bin(root / "lod.bin", std::ios::binary);
+        std::ofstream bin(root / "lod.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
     }
@@ -383,11 +383,11 @@ fs::path WriteLodOobAssets()
         gltf.write(kLodOobGltf.data(), static_cast<std::streamsize>(kLodOobGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
         const uint16_t pad          = 0;
-        const float    normals[9]   = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
-        std::ofstream  bin(root / "lodoob.bin", std::ios::binary);
+        const float normals[9]   = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+        std::ofstream bin(root / "lodoob.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
         bin.write(reinterpret_cast<const char *>(&pad), sizeof(pad));
@@ -452,9 +452,9 @@ fs::path WriteMirroredAssets()
         gltf.write(kMirroredGltf.data(), static_cast<std::streamsize>(kMirroredGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
-        std::ofstream  bin(root / "mirror.bin", std::ios::binary);
+        std::ofstream bin(root / "mirror.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
     }

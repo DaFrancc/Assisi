@@ -44,7 +44,7 @@ struct ContractViolation
     const char *condition; ///< Stringized failing expression.
     const char *message;   ///< Human-readable detail passed to the macro.
     const char *file;      ///< __FILE__ of the check.
-    int32_t     line;      ///< __LINE__ of the check.
+    int32_t line;          ///< __LINE__ of the check.
 };
 
 /// @brief Handler invoked when an ASSISI_ASSERT fails. Must not return normally
@@ -71,7 +71,7 @@ void ReportContractViolation(const ContractViolation &violation);
 #    define ASSISI_ASSERT(cond, msg)                                                                          \
         ((cond) ? (void)0                                                                                     \
                 : ::Assisi::Core::ReportContractViolation(                                                    \
-                      ::Assisi::Core::ContractViolation{#cond, (msg), __FILE__, __LINE__}))
+             ::Assisi::Core::ContractViolation{#cond, (msg), __FILE__, __LINE__}))
 #else
 // Both operands sit under sizeof, so nothing is evaluated and no code is
 // emitted — but the expressions are still parsed and type-checked. A typo in

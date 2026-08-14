@@ -23,8 +23,8 @@ namespace Assisi::Core::Reflect
 
 struct AssetTypeMeta
 {
-    std::string            name;
-    std::type_index        typeIndex;
+    std::string name;
+    std::type_index typeIndex;
     std::vector<FieldMeta> fields;
 
     /// @brief Serialize an asset instance to a JSON object of its fields.
