@@ -32,15 +32,21 @@ of them is a package you install. What your package manager *does* have to provi
 above plus a short list of system development packages: OpenSSL, and the Wayland/X11 headers GLFW
 builds its two backends against.
 
-### Windows
+<details>
+<summary><b>Windows</b></summary>
+
 Install [Visual Studio 2022+](https://visualstudio.microsoft.com/) with the **Desktop development with
 C++** workload (which brings MSVC, CMake, and Ninja), plus [Python 3](https://www.python.org/) if you
 do not already have it on `PATH`. Build from a *Developer Command Prompt* so the MSVC environment is
 set up.
 
+</details>
+
 ### Linux
 
-#### Arch
+<details>
+<summary><b>Arch</b></summary>
+
 ```bash
 sudo pacman -S --needed base-devel git cmake ninja python \
                         openssl \
@@ -74,9 +80,11 @@ Optional, only if you want to build with Clang as well as GCC:
 sudo pacman -S clang
 ```
 
----
+</details>
 
-#### Fedora and other RHEL-based distributions (RHEL, Rocky, Alma)
+<details>
+<summary><b>Fedora and other RHEL-based distributions (RHEL, Rocky, Alma)</b></summary>
+
 ```bash
 sudo dnf install gcc-c++ make git cmake ninja-build python3 pkgconf-pkg-config \
                  openssl-devel \
@@ -124,9 +132,10 @@ Optional, only if you want to build with Clang as well as GCC:
 sudo dnf install clang
 ```
 
----
+</details>
 
-#### Debian and Ubuntu — untested
+<details>
+<summary><b>Debian and Ubuntu — untested</b></summary>
 
 Nobody has built the engine on a Debian-based distribution yet. What follows is a translation of the
 two lists above, not a tested recipe; corrections are welcome.
@@ -169,11 +178,15 @@ Optional, only if you want to build with Clang as well as GCC:
 sudo apt install clang
 ```
 
----
+</details>
 
-#### Other distributions
-Install the equivalents of those four package groups — they are the whole list, and the dropdown below
+<details>
+<summary><b>Other distributions</b></summary>
+
+Install the equivalents of those four package groups — they are the whole list, and the next dropdown
 says what each one is for.
+
+</details>
 
 <details>
 <summary><b>What those packages are for, what CMake fetches for you, and the CPU baseline</b></summary>
