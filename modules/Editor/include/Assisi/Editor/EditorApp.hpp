@@ -49,6 +49,7 @@
 #include <Assisi/Runtime/SceneRenderer.hpp>
 
 #include <Assisi/Editor/EditHistory.hpp>
+#include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
 
@@ -211,6 +212,15 @@ private:
     void DrawEntityListWindow();  // scene entity list: click selects, double-click focuses
     void DrawHistoryWindow();     // undo/redo stack view; click a row to jump
     void DrawTransformGizmo();    // ImGuizmo manipulator over the selected entity
+    /// @brief Draws the manipulator and applies whatever it produced this frame.
+    /// Returns whether the handles are held.
+    ///
+    /// Split out so the drag's release edge sits in the caller: this function early-
+    /// returns on four conditions a drag can end through — no scene, a dead or
+    /// non-editable entity, a missing Transform — and a release read at the bottom of
+    /// it was reachable from none of them (ENG-127). Every such return is "not held",
+    /// which is all the caller needs to close the drag.
+    [[nodiscard]] bool DrawTransformGizmoHandles();
     void DrawInstanceGizmo();     // …and over a selected blueprint instance, which moves as one
     /// @brief Writes @p world onto @p entity as a local TRS against @p parentWorld,
     /// and syncs any physics body to it. The tail of a gizmo drag, factored out
@@ -1302,10 +1312,12 @@ private:
     // --- Transform gizmo ---
     GizmoOp _gizmoOp        = GizmoOp::Translate;
     bool _gizmoLocalSpace = false;    // false = world axes
-    // Whether the gizmo was being dragged last frame, so its release edge can be
-    // detected: the gizmo force-commits its (shared) Transform gesture there, which
-    // is what keeps a drag its own undo entry rather than merged with a later edit.
-    bool _gizmoWasUsing = false;
+    // The drag in progress: which entities it grabbed and whether it is still going,
+    // so its release edge can be read from outside DrawTransformGizmoHandles and its
+    // early returns. The gizmo force-commits its (shared) Transform gestures on that
+    // edge, which is what keeps a drag its own undo entry rather than merged with a
+    // later edit. See GizmoDrag.hpp.
+    Assisi::Editor::GizmoDrag _gizmoDrag;
 
     // --- Undo/redo (editor-only) ---
     // Emplaced in OnStart once _scene exists. Captures scene edits (record-before-

@@ -890,10 +890,11 @@ void EditorApp::ReleaseSceneBookkeeping(std::string_view virtualPath)
     // now dangles, or worse, aliases a different entity.
     if (_history)
         _history->Clear();
-    // And the same for an instance drag the load caught mid-gesture: its snapshot
-    // names entities that just went away, so committing it would write a transaction
-    // against handles that now mean something else.
+    // And the same for a drag the load caught in progress — instance or gizmo. Both
+    // name entities that just went away, so committing either would write a
+    // transaction against handles that now mean something else.
     _instanceGesture.Abandon();
+    _gizmoDrag.Abandon();
     _pausedHistory.reset(); // a load ends any play session, scratch history included
     _savedStateToken = 0;   // freshly loaded scene == on disk (empty history, token 0)
 

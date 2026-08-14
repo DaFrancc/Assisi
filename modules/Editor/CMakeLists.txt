@@ -29,6 +29,7 @@ target_sources(Assisi-Editor
     "src/EditorOptionsPanel.hpp"
     "src/EditorPlay.cpp"
     "src/EditorWorlds.cpp"
+    "src/GizmoDrag.cpp"
     "src/InspectorFieldChrome.cpp"
     "src/InstanceGesture.cpp"
     "src/PrePlayState.cpp"
