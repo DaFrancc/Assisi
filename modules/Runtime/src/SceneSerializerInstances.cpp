@@ -223,7 +223,7 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
             // than refusing the file the way an unknown name would.
             staged.members.push_back(ECS::NullEntity);
             staged.resolved.emplace_back();
-            if (!s_context->nameToEntity.emplace(path, ECS::NullEntity).second)
+            if (!ScopedContext::Current()->nameToEntity.emplace(path, ECS::NullEntity).second)
             {
                 Core::Log::Error("SceneSerializer: '{}' is claimed twice.", path);
                 return std::unexpected(LevelError::DuplicateName);
@@ -250,7 +250,7 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
         staged.members.push_back(e);
         staged.resolved.push_back(desc);
 
-        if (!s_context->nameToEntity.emplace(path, e).second)
+        if (!ScopedContext::Current()->nameToEntity.emplace(path, e).second)
         {
             Core::Log::Error("SceneSerializer: '{}' is claimed twice.", path);
             return std::unexpected(LevelError::DuplicateName);
@@ -271,7 +271,7 @@ std::expected<void, LevelError> StageInstance(ECS::Scene &scene, InstanceTable &
     for (const std::string &removed : definition->removedMembers)
     {
         const std::string path = entry.name.empty() ? removed : entry.name + "/" + removed;
-        if (!s_context->nameToEntity.emplace(path, ECS::NullEntity).second)
+        if (!ScopedContext::Current()->nameToEntity.emplace(path, ECS::NullEntity).second)
         {
             Core::Log::Error("SceneSerializer: '{}' is claimed twice.", path);
             return std::unexpected(LevelError::DuplicateName);

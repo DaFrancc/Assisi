@@ -58,16 +58,11 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
 
     ECS::Scene scratch;
 
-    // Saved and restored rather than refused: definitions are built lazily, and the
-    // first caller to want one is usually a level load with its own name context
-    // already open. Nesting is safe because this one resolves against a scratch scene
-    // nothing else can see.
-    std::optional<SerializationContext> outer = std::exchange(s_context, SerializationContext{});
-    struct RestoreOuter
-    {
-        std::optional<SerializationContext> *outer;
-        ~RestoreOuter() { s_context = std::move(*outer); }
-    } const restore{&outer};
+    // Nested rather than refused: definitions are built lazily, and the first caller
+    // to want one is usually a level load with its own name context already open.
+    // Safe because this one resolves against a scratch scene nothing else can see,
+    // and the guard hands the outer context back on every exit path.
+    const ScopedContext scoped;
 
     // Every member first, so a reference can point forward — and in order, so
     // member i is entity {i, 0} and its packed handle *is* i.
@@ -77,7 +72,7 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
     {
         const ECS::Entity e = scratch.Create();
         scratchEntities.push_back(e);
-        s_context->nameToEntity.emplace(member.name, e);
+        scoped->nameToEntity.emplace(member.name, e);
     }
 
     // Declared, mapped at nothing: a member an in-file `removed` took out. A sibling
@@ -85,7 +80,7 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
     // file unusable — the same treatment a per-instance removal gets, and the reason
     // the two removal paths no longer disagree about how bad a removal is (§6).
     for (const std::string &removed : definition.removedMembers)
-        s_context->nameToEntity.emplace(removed, ECS::NullEntity);
+        scoped->nameToEntity.emplace(removed, ECS::NullEntity);
 
     for (std::size_t i = 0; i < definition.members.size(); ++i)
     {
@@ -111,12 +106,12 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
         }
     }
 
-    if (!s_context->unresolvedRefNames.empty())
+    if (!scoped->unresolvedRefNames.empty())
     {
         Core::Log::Error("Blueprint: '{}' has {} reference(s) naming an entity it does not declare; the first "
                          "is '{}'.",
-                         definition.source, s_context->unresolvedRefNames.size(),
-                         s_context->unresolvedRefNames.front());
+                         definition.source, scoped->unresolvedRefNames.size(),
+                         scoped->unresolvedRefNames.front());
         return false;
     }
 
@@ -156,7 +151,7 @@ std::expected<SceneSerializer::ExpandedInstance, LevelError>
 SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const LevelInstance &entry,
                                bool authored)
 {
-    if (s_context || s_rawContextScene != nullptr)
+    if (ScopedContext::Current() != nullptr || s_rawContextScene != nullptr)
     {
         Core::Log::Error("PlaceInstance: a serialization context is already active on this thread.");
         return std::unexpected(LevelError::ContextBusy);
@@ -188,8 +183,7 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
     // Its own name context, holding only this instance's members: a placement outside
     // a level load has no file around it, and lending it the whole scene's names would
     // let a blueprint silently wire itself to whatever happened to share one.
-    ScopedContextReset guard;
-    s_context = SerializationContext{};
+    const ScopedContext scoped;
 
     StagedInstance instance;
     const auto unwind = [&]
@@ -225,12 +219,12 @@ SceneSerializer::PlaceInstance(ECS::Scene &scene, InstanceTable &table, const Le
         return std::unexpected(LevelError::BlueprintUnusable);
     }
 
-    if (!s_context->unresolvedRefNames.empty())
+    if (!scoped->unresolvedRefNames.empty())
     {
         Core::Log::Error("Blueprint: '{}' has {} reference(s) naming a member it does not declare; the first "
                          "is '{}'.",
-                         entry.source, s_context->unresolvedRefNames.size(),
-                         s_context->unresolvedRefNames.front());
+                         entry.source, scoped->unresolvedRefNames.size(),
+                         scoped->unresolvedRefNames.front());
         unwind();
         return std::unexpected(LevelError::UnresolvedReference);
     }
@@ -255,7 +249,7 @@ std::expected<SceneSerializer::ReexpandedInstance, LevelError>
 SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::InstanceId instanceId,
                                   std::span<const std::string> previousMemberNames)
 {
-    if (s_context || s_rawContextScene != nullptr)
+    if (ScopedContext::Current() != nullptr || s_rawContextScene != nullptr)
     {
         Core::Log::Error("ReexpandInstance: a serialization context is already active on this thread.");
         return std::unexpected(LevelError::ContextBusy);
@@ -304,8 +298,7 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
                               .overrides = row.overrides,
                               .removed   = row.removed};
 
-    ScopedContextReset guard;
-    s_context = SerializationContext{};
+    const ScopedContext scoped;
 
     StagedInstance staged;
     try
@@ -332,12 +325,12 @@ SceneSerializer::ReexpandInstance(ECS::Scene &scene, InstanceTable &table, ECS::
         return std::unexpected(LevelError::BlueprintUnusable);
     }
 
-    if (!s_context->unresolvedRefNames.empty())
+    if (!scoped->unresolvedRefNames.empty())
     {
         Core::Log::Error("Blueprint: '{}' has {} reference(s) naming a member it does not declare; the first "
                          "is '{}'. They are null in instance {}.",
-                         row.source, s_context->unresolvedRefNames.size(),
-                         s_context->unresolvedRefNames.front(), instanceId);
+                         row.source, scoped->unresolvedRefNames.size(),
+                         scoped->unresolvedRefNames.front(), instanceId);
     }
 
     ReexpandedInstance out;

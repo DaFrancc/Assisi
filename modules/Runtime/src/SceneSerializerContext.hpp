@@ -6,15 +6,32 @@
 ///        entity packing its reference hooks use.
 ///
 /// State every serializer translation unit shares — the reference hooks, Save,
-/// Load and the instance paths all read and write it — so it is `inline` here,
-/// one copy per thread rather than one per TU.
+/// Load and the instance paths all read and write it — so it lives in one
+/// thread-local inside ScopedContext, one copy per thread rather than one per TU.
 ///
-/// Valid only between the entry point that engages it and that call's return: a
-/// scope guard (ScopedContextReset, ScopedRawEntityContext) clears it on every
-/// exit path, and outside that window the hooks see no context and resolve every
-/// ref to null. One at a time — the guards do not stack, so the entry points that
-/// can be reached re-entrantly (SaveEntitiesToFile, TransferEntities, the
-/// blueprint expansions) refuse to start while another context is live.
+/// Valid only between the entry point that engages it and that call's return:
+/// ScopedContext installs it and restores the previous one on every exit path,
+/// and outside that window the hooks see no context and resolve every ref to
+/// null. Engaging one is that guard's job alone — the storage is private to it,
+/// so no entry point can half-write the pattern.
+///
+/// Contexts stack, so an entry point reached from inside another one no longer
+/// destroys it. Whether it may *run* there is a separate question, and the line
+/// is what it does to the caller's scene:
+///
+///   - Save and PrepareBlueprint only read it, so they nest. The outer context
+///     comes back untouched.
+///   - Load clears it, so it refuses (ScopedContext::Current, then
+///     LevelError::ContextBusy): restoring would hand the outer context back its
+///     tables naming entities the clear destroyed.
+///   - TransferEntities, SaveEntitiesToFile and the blueprint expansions refuse
+///     too. Each already did before contexts stacked, and each says so in its own
+///     return type; nesting them is not a thing any caller has wanted.
+///
+/// The raw-entity context below is a separate axis and does not stack with
+/// anything: the hooks check it *first*, so an entry point reached inside one
+/// would resolve refs through it rather than through whatever it just installed.
+/// Every entry point refuses or reports when it is live.
 
 #include <Assisi/Runtime/SceneSerializer.hpp>
 
@@ -27,6 +44,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace Assisi::Runtime
@@ -61,12 +79,52 @@ struct SerializationContext
     std::vector<std::string> unresolvedRefNames;
 };
 
-inline thread_local std::optional<SerializationContext> s_context;
+/// The one way to engage a serialization context.
+///
+/// Installs @p ctx for the scope and puts the previous one back on every exit
+/// path — including a component serialize/deserialize throwing mid-pass, which
+/// malformed field data does through j.at(...)/_v[i].get<T>() in generated code.
+/// Without that, a throw used to leave a stale, half-populated context engaged
+/// for the next EntityToRef / RefToEntity to read.
+///
+/// Restoring rather than blanking is what makes nesting safe; which entry points
+/// may nest is the rule in this file's header comment.
+class ScopedContext
+{
+public:
+    explicit ScopedContext(SerializationContext ctx = {})
+        : _outer(std::exchange(s_current, std::move(ctx)))
+    {
+    }
+    ~ScopedContext() { s_current = std::move(_outer); }
+
+    ScopedContext(const ScopedContext &)            = delete;
+    ScopedContext &operator=(const ScopedContext &) = delete;
+    ScopedContext(ScopedContext &&)                 = delete;
+    ScopedContext &operator=(ScopedContext &&)      = delete;
+
+    /// The *innermost* live context, which is this guard's own only while no
+    /// inner one is engaged over it. Every use below is innermost where it runs.
+    /// Const on the guard, not on what it hands back: the context lives in
+    /// thread-local storage the guard merely owns the lifetime of, so a `const`
+    /// guard still writes through to it.
+    SerializationContext *operator->() const { return &*s_current; }
+
+    /// The live context, or null when none is engaged — what the reference hooks
+    /// ask, since they run under whichever entry point engaged one, and what an
+    /// entry point that refuses to nest checks before it starts.
+    [[nodiscard]] static SerializationContext *Current() { return s_current ? &*s_current : nullptr; }
+
+private:
+    static inline thread_local std::optional<SerializationContext> s_current;
+
+    std::optional<SerializationContext> _outer;
+};
 
 // Raw-entity (identity) context — engaged by ScopedRawEntityContext. When set,
 // EntityRef fields map through packed (slot, generation) keys against this scene
-// instead of the Save/Load remap tables. Mutually exclusive with s_context and
-// non-reentrant; ScopedRawEntityContext asserts both.
+// instead of the Save/Load remap tables. Mutually exclusive with a serialization
+// context and non-reentrant; ScopedRawEntityContext asserts both.
 inline thread_local ECS::Scene *s_rawContextScene = nullptr;
 
 inline uint64_t EntityKey(uint32_t idx, uint32_t gen)
@@ -133,15 +191,5 @@ void ForEachRefLeavingSet(ECS::Scene &scene, std::span<const ECS::Entity> entiti
         }
     }
 }
-
-// Clears s_context on every exit path, including a component
-// serialize/deserialize throwing mid-pass (malformed field data reaches
-// j.at(...)/_v[i].get<T>() in generated code). Without it a throw leaves the
-// context engaged and the next EntityToRef / RefToEntity resolves against a
-// stale, half-populated one.
-struct ScopedContextReset
-{
-    ~ScopedContextReset() { s_context.reset(); }
-};
 
 } // namespace Assisi::Runtime

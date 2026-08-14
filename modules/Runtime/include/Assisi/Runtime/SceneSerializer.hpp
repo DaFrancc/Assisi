@@ -187,8 +187,11 @@ public:
     /// a component's `addToScene` hook, which is generated code this only calls;
     /// LoadFromFile and LoadFromDisk catch that for the paths they own.
     ///
-    /// A version mismatch and a bad top-level shape are both refused *before* the
-    /// scene is cleared, so that caller keeps what it had; every other failure is
+    /// A version mismatch, a bad top-level shape, and a serialization context
+    /// already live on this thread (ContextBusy — a load cannot run inside another
+    /// one, because the clear below would strand the outer context's tables on
+    /// destroyed entities) are all refused *before* the scene is cleared, so that
+    /// caller keeps what it had; every other failure is
     /// a file this got partway through, and leaves an empty scene rather than a
     /// half-built one — LevelFailure::sceneReplaced is how a caller learns which
     /// of those it got.
