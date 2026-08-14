@@ -88,7 +88,7 @@ sleeping bodies (R5, body-state capture).
 
 ## 2. Code-review round 6 — cleared
 
-C1–C7 and every major are fixed (`code-review-2026-07-round6.md` has the
+C1–C7 and every major are fixed (`old/code-review-2026-07-round6.md` has the
 disposition per item). **This section is now clear** — M8, M12, and the whole
 minors list were resolved on 2026-07-22 (branch `hygiene/round6`), and the four
 round-6 items that had been waiting on a decision are resolved in §5.
