@@ -7,7 +7,7 @@
 > checked is everything whose DoD says "by eye" or needs two editor windows;
 > that list is §4a below, and it is the honest remainder of this plan.
 
-Status: **planned, not started**. This replaces `replication-authoring-plan.md`
+Status: **planned, not started**. This replaces `old/replication-authoring-plan.md`
 (v3.5), which stays in the tree as the historical record. v4 is written from
 scratch rather than amended into v3.5 because two of that plan's foundations
 were overturned by decision — mirrors are no longer passive, and joining is no
