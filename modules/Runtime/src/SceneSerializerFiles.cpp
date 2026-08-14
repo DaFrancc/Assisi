@@ -169,7 +169,7 @@ bool SceneSerializer::SaveEntitiesToFile(ECS::Scene &scene, std::span<const ECS:
 // ---------------------------------------------------------------------------
 
 bool SceneSerializer::SaveToFile(ECS::Scene &scene, const std::filesystem::path &path, const LevelHeader &header,
-                                 const InstanceTable *instances)
+                                 InstanceTable *instances)
 {
     // Binary, so the newlines written are the newlines that land on disk. Text mode
     // expands '\n' to "\r\n" on Windows only, which makes the same level two

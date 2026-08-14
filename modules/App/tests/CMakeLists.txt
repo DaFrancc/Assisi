@@ -53,6 +53,13 @@ target_include_directories(Assisi-App-Tests SYSTEM PRIVATE
   "${doctest_SOURCE_DIR}"
 )
 
+# LogCapture.hpp, for the tests here whose subject is a log line. Reached in the
+# Runtime tests rather than copied for the reason stated above about fixtures: a
+# second copy drifts, and both copies claim to be the one the logger installs.
+target_include_directories(Assisi-App-Tests PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../../Runtime/tests"
+)
+
 target_link_libraries(Assisi-App-Tests
   PRIVATE
     Assisi::App
