@@ -7,12 +7,14 @@ add_executable(Assisi-Editor-Tests
   main.cpp
   TestColliderPose.cpp
   TestEditHistory.cpp
+  TestGizmoDrag.cpp
   TestInspectorFieldChrome.cpp
   TestInstanceGesture.cpp
   TestInstanceHistory.cpp
   TestPrePlayState.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/GizmoDrag.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InspectorFieldChrome.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
