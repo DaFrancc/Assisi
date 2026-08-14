@@ -240,23 +240,36 @@ void EditorApp::DrawTransformGizmo()
     // changes, so no member overrides are recorded. Writing overrides here would
     // pin every member the first time somebody nudged an instance
     // (docs/blueprint-system-concept.md).
-    if (_selectedEntity == Assisi::ECS::NullEntity && _selectedInstance.IsValid())
-    {
-        DrawInstanceGizmo();
-        return;
-    }
+    const bool instanceMode = _selectedEntity == Assisi::ECS::NullEntity && _selectedInstance.IsValid();
 
+    // Held is the *only* thing the drawing below reports back, and the release edge
+    // is read here rather than at the bottom of it. Every early return in there —
+    // instance mode, a dead or non-editable entity, a Transform that went away — is
+    // a frame in which the handles are not held, so each of them ends the drag. Left
+    // inside, the commit was unreachable from all four, and the "was dragging" flag
+    // it never cleared was read a frame later against a different selection
+    // (ENG-127).
+    const bool held = !instanceMode && DrawTransformGizmoHandles();
+    if (!held)
+        _gizmoDrag.Release(_scene, ActiveHistory(), Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>());
+
+    if (instanceMode)
+        DrawInstanceGizmo();
+}
+
+bool EditorApp::DrawTransformGizmoHandles()
+{
     // No handles over an inspect-only world: the drag would move an entity whose
     // change can be neither undone nor saved.
     if (_scene == nullptr || _selectedEntity == Assisi::ECS::NullEntity || !_scene->IsAlive(_selectedEntity) ||
         !IsEditable(_selectedEntity))
     {
-        return;
+        return false;
     }
     const Rt::Transform *transform = _scene->Get<Rt::Transform>(_selectedEntity);
     if (transform == nullptr)
     {
-        return; // placement-less entity — nothing to manipulate
+        return false; // placement-less entity — nothing to manipulate
     }
 
     // Mode switches, ignored while a text field has the keyboard so typing a name
@@ -351,9 +364,9 @@ void EditorApp::DrawTransformGizmo()
 
     // A gizmo drag is a Transform edit, so it rides the *same* record-before-write
     // gesture and "Edit Transform" label as the inspector rather than duplicating the
-    // transaction code. It force-commits on release (at the end of this function) so
-    // that a drag is always its OWN undo entry, separate from any inspector Transform
-    // edit before or after it.
+    // transaction code. `_gizmoDrag` force-commits it on release — from the caller,
+    // out of reach of the early returns above — so that a drag is always its OWN undo
+    // entry, separate from any inspector Transform edit before or after it.
     //
     // RecordBefore runs every frame the gizmo is drawn, INCLUDING mid-drag. It is
     // idempotent for an open gesture — the pre-drag `before` is kept, only liveness is
@@ -374,13 +387,22 @@ void EditorApp::DrawTransformGizmo()
     // are five ComponentDeltas — but they all open and close on the same edges, so it
     // is still one gesture to the person dragging.
     //
+    // Mid-drag the candidates are the ones the drag grabbed at its press edge, not
+    // whatever is selected now: the selection is free to change under an open drag —
+    // a click in the entity list does not need the mouse to leave the handle — and a
+    // drag that then moved and committed the new selection would be naming entities
+    // it never touched.
+    //
     // An entity whose parent is also selected is left out: propagation already
     // carries it, and dragging it too would move it twice.
+    const std::span<const Assisi::ECS::Entity> riders =
+        _gizmoDrag.IsOpen() ? _gizmoDrag.Entities() : std::span<const Assisi::ECS::Entity>(_selection);
+
     std::vector<Assisi::ECS::Entity> alsoDragged;
-    if (_selection.size() > 1)
+    if (riders.size() > 1)
     {
-        alsoDragged.reserve(_selection.size() - 1);
-        for (const Assisi::ECS::Entity entity : _selection)
+        alsoDragged.reserve(riders.size() - 1);
+        for (const Assisi::ECS::Entity entity : riders)
         {
             if (entity == _selectedEntity || !_scene->IsAlive(entity) || !IsEditable(entity))
                 continue;
@@ -424,6 +446,10 @@ void EditorApp::DrawTransformGizmo()
         // not being raised, so ending the drag by any route — release, deselect, the
         // gizmo vanishing because the world selector moved — restores the body.
         RequestPhysicsFreeze();
+
+        // Opens the drag on the first frame it is held and fixes what it names;
+        // every frame after this one only re-asserts the hold.
+        _gizmoDrag.Hold(_selectedEntity, alsoDragged);
     }
 
     if (manipulated)
@@ -456,17 +482,9 @@ void EditorApp::DrawTransformGizmo()
         }
     }
 
-    // Commit on the release edge. A click with no drag leaves before == after and is
-    // dropped. Committing here rather than leaving it to the end-of-frame sweep is
-    // what makes the drag its own transaction: it closes the instant the drag ends,
-    // so a Transform edit that follows opens a fresh one.
-    if (history != nullptr && !nowUsing && _gizmoWasUsing)
-    {
-        history->CommitGesture(_selectedEntity, transformId);
-        for (const Assisi::ECS::Entity entity : alsoDragged)
-            history->CommitGesture(entity, transformId);
-    }
-    _gizmoWasUsing = nowUsing;
+    // The release edge belongs to the caller, which reads it whether or not this
+    // function ran at all. See DrawTransformGizmo.
+    return nowUsing;
 }
 
 void EditorApp::ApplyGizmoWorldMatrix(Assisi::ECS::Entity entity, const glm::mat4 &parentWorld,
