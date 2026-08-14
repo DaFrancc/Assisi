@@ -22,6 +22,7 @@
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Core/Reflect/ComponentRegistry.hpp>
 #include <Assisi/Core/ShortString.hpp>
+#include <Assisi/Editor/InspectorFieldChrome.hpp>
 #if defined(ASSISI_NETWORKING)
 #    include <Assisi/NetSync/NetComponents.hpp>
 #endif
@@ -63,13 +64,8 @@ constexpr const char *kWireGlyph = "\xef\x87\xa6"; // U+F1E6
 namespace
 {
 
-/// @brief Editor visibility of an AFIELD(radio) listener for the current data.
-enum class RadioVisibility
-{
-    Active, ///< Source enum is at one of the field's values — edit normally.
-    Greyed, ///< Not active; show disabled (radioBehavior = grey).
-    Hidden, ///< Not active; omit entirely (radioBehavior = vanish).
-};
+using Assisi::Editor::RadioVisibility;
+using Assisi::Editor::ScopedFieldChrome;
 
 const Assisi::Core::Reflect::FieldMeta *FindField(const Assisi::Core::Reflect::ComponentMeta &meta,
                                                   const std::string &name)
@@ -217,21 +213,18 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
             continue;
         anyEditable = true;
 
-        // AFIELD(norep): saved to disk like anything else, never sent. Dimmed
-        // rather than disabled — it is authored data and the author *should* be
-        // editing it; they only need to know it stays here.
-        const bool serverOnly = field.norep;
-        if (serverOnly)
-            ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyle().Colors[ImGuiCol_TextDisabled]);
-
         // Hide or grey an AFIELD(radio) listener whose sibling enum is not at one
-        // of its active values.
+        // of its active values, then scope the AFIELD(norep) dimming to what is
+        // actually drawn — the verdict first, so the `continue` below has no
+        // colour push to unwind.
         const RadioVisibility radio = EvaluateRadio(mut, meta, field);
-        if (radio == RadioVisibility::Hidden)
+        const bool serverOnly       = field.norep;
+        ScopedFieldChrome chrome{radio, serverOnly};
+        if (!chrome.Visible())
         {
             continue;
         }
-        const bool greyed = (radio == RadioVisibility::Greyed);
+        const bool greyed = chrome.Greyed();
 
         void *fp = static_cast<char *>(mut) + field.offset;
         ImGui::PushID(field.name.c_str());
@@ -523,7 +516,9 @@ bool EditorApp::EditComponentFields(void *mut, const Assisi::Core::Reflect::Comp
         }
         if (serverOnly)
         {
-            ImGui::PopStyleColor();
+            // Dropped here rather than at end of scope so the tag and its tooltip
+            // draw in their own colour, as they always have.
+            chrome.EndTint();
             ImGui::SameLine();
             ImGui::TextDisabled("(server-only)");
             if (ImGui::IsItemHovered())
