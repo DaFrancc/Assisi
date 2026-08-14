@@ -52,6 +52,7 @@
 #include <Assisi/Editor/GizmoDrag.hpp>
 #include <Assisi/Editor/InstanceGesture.hpp>
 #include <Assisi/Editor/PrePlayState.hpp>
+#include <Assisi/Editor/ScenePick.hpp>
 
 #include <nvrhi/nvrhi.h>
 
@@ -1028,17 +1029,8 @@ private:
     void AdvanceStaleQueue();
 
     // --- Picking ---
-    /// @brief A camera ray through a screen point, plus the camera basis the
-    /// billboards are oriented by — so what is clickable is exactly what is drawn.
-    struct PickRay
-    {
-        glm::vec3 origin{0.f};
-        glm::vec3 direction{0.f, 0.f, -1.f};
-        glm::vec3 cameraRight{1.f, 0.f, 0.f};
-        glm::vec3 cameraUp{0.f, 1.f, 0.f};
-        /// False for a zero-size framebuffer (minimized), where there is no ray.
-        bool valid = false;
-    };
+    // The ray, the volumes and the scene walk live in ScenePick.hpp; what stays
+    // here is the part that needs the camera and the framebuffer.
     [[nodiscard]] PickRay BuildPickRay(glm::vec2 mousePos);
 
     Assisi::ECS::Entity PickEntity(glm::vec2 mousePos);
