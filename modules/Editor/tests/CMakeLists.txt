@@ -7,11 +7,13 @@ add_executable(Assisi-Editor-Tests
   main.cpp
   TestColliderPose.cpp
   TestEditHistory.cpp
+  TestInspectorFieldChrome.cpp
   TestInstanceGesture.cpp
   TestInstanceHistory.cpp
   TestPrePlayState.cpp
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/InspectorFieldChrome.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
 )
@@ -45,6 +47,9 @@ target_link_libraries(Assisi-Editor-Tests
   PRIVATE
     Assisi::Runtime
     nlohmann_json::nlohmann_json
+    # InspectorFieldChrome scopes an ImGui colour push, so the suite needs core
+    # ImGui. Core only — the backends live in Assisi::App, which stays out.
+    imgui::imgui
 )
 
 # EditHistory walks ComponentRegistry, populated by the static initializers
