@@ -56,24 +56,18 @@ void LightingSystem::Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene
     _spotLights.clear();
     _dirLights.clear();
 
-    // World position lives in the propagated worldMatrix, not the local
-    // transform.position: a parented light's local position is relative to its
-    // parent, so reading it directly placed the light at the wrong spot. For a root
-    // (no parent) worldMatrix[3] equals position, so unparented lights are unchanged.
+    // World position comes from the propagated worldMatrix, not transform.position:
+    // a parented light's local position is relative to its parent. For a root,
+    // worldMatrix[3] equals position.
     //
-    // Round-6 M2 follow-on, decided 2026-07-22: a spot light's `direction` is
-    // LOCAL, and is rotated into world space by the same matrix. A spot mounted on
-    // a vehicle's headlight or held by a character has to aim where its parent
-    // faces; having position follow the parent while direction stayed world-fixed
-    // was the inconsistency. Note this also means an *unparented* light's own
-    // rotation now aims it — previously `direction` was effectively world-space and
-    // the entity's rotation was ignored, which surprised in the opposite direction.
-    // A direction is a vector, not a normal, so the plain upper-left 3x3 is the
-    // correct transform (no inverse-transpose needed); SafeDirection then
-    // renormalises, which also absorbs any scale in that matrix.
-    // One scope over all three queries rather than one each: they are the same
-    // CPU-side rebuild-the-staging-arrays work, and the per-type split is already
-    // visible in the counters below.
+    // A spot light's `direction` is LOCAL and is rotated into world space by the
+    // same matrix, so a headlight or a held torch aims where its parent faces — and
+    // an unparented light is aimed by its own rotation. A direction is a vector, not
+    // a normal, so the plain upper-left 3x3 is the correct transform (no
+    // inverse-transpose); SafeDirection renormalises, absorbing any scale.
+    //
+    // One scope over all three queries: same CPU-side staging-array rebuild, and the
+    // per-type split is already in the counters below.
     {
         ASSISI_PROFILE_SCOPE("light-gather");
 

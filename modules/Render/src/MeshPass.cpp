@@ -49,10 +49,9 @@ struct FrameConstants
     glm::uvec4 gridDim;           // xyz used, w unused
     glm::vec4 screenSizeNearFar;  // xy = screen size, z = nearZ, w = farZ
     glm::uvec4 lightCounts;       // x = directional light count, y = debug view, zw unused
-    /// World-space camera position, w unused. The fragment shader used to
-    /// recover this per fragment as -transpose(mat3(view)) * view[3] — a mat3
-    /// transpose plus a matrix-vector product, for a value constant across the
-    /// whole frame. Uniforms are not compile-time constants, so nothing hoisted it.
+    /// World-space camera position, w unused. Derived once here rather than per
+    /// fragment: it is constant across the frame, but view is a uniform, so the
+    /// shader compiler cannot hoist the -transpose(mat3(view)) * view[3] out.
     glm::vec4 cameraPosition;
     /// Froxel lookup scale/bias, so cube_min.frag's ClusterIndex() is FMAs and a
     /// single log instead of three divides and two logs (the Doom-2016 form):
@@ -61,11 +60,9 @@ struct FrameConstants
     ///   w  = -z * log(nearZ)                (matching bias)
     /// slice = log(|viewZ|) * z + w, which is gridDim.z * log(|viewZ|/nearZ) / log(farZ/nearZ).
     glm::vec4 clusterScale;
-    /// Uniform ambient term: rgb = linear colour, w = intensity. It used to be
-    /// `const float kAmbient = 0.03` in cube_min.frag, which is the right *value*
-    /// and the wrong place — a constant nothing can turn down is a scene you cannot
-    /// light for inspection. The default keeps every existing render byte-identical
-    /// (white × 0.03), so this is a knob, not a look change.
+    /// Uniform ambient term: rgb = linear colour, w = intensity. A frame constant
+    /// rather than a shader constant so a scene can be turned up for inspection;
+    /// the default is white × kDefaultAmbientIntensity.
     glm::vec4 ambient;
 };
 } // namespace
@@ -209,7 +206,6 @@ void MeshPass::UpdateFrameConstants(nvrhi::ICommandList *commandList, const glm:
 
     // View is a rigid transform (View = R | t, t = -R * cameraPos), so the camera
     // position is -R^-1 * t, and R^-1 == transpose(R) because R is orthonormal.
-    // Same derivation the shader used to run per fragment.
     constants.cameraPosition = glm::vec4(-glm::transpose(glm::mat3(view)) * glm::vec3(view[3]), 0.f);
 
     // Guard the logs: a zero/negative near or far plane would make these inf/NaN
@@ -293,10 +289,8 @@ MeshPass::SubmitStats MeshPass::Submit(const RenderFrame &frame, std::span<const
     // increments per item), so one instanced draw covers them. Material differs per
     // instance (read from the record), so it never splits a batch.
     //
-    // These are reused members, not locals: Submit runs every frame, and fresh
-    // vectors meant three heap allocations (and their growth reallocs) per frame,
-    // every frame. clear() keeps the capacity, so a steady-state scene settles
-    // into zero allocations here.
+    // Reused members, not locals: clear() keeps the capacity, so a steady-state
+    // scene allocates nothing here.
     std::vector<InstanceData> &instances   = _scratchInstances;
     std::vector<nvrhi::DrawIndexedIndirectArguments> &commands    = _scratchCommands;
     // Parallel to `commands`: the mesh each batch draws, for the arena vertex/index

@@ -183,8 +183,8 @@ bool ReadFloatArray(const nlohmann::json &j, const char *component, const char *
         Reject(component, field, std::format("an array of {} numbers", count), *value);
         return false;
     }
-    // Before a single element is read: indexing past the end is the other way the
-    // old generated code threw, on a hand-edited "scale": [1, 1].
+    // Before a single element is read, so a hand-edited "scale": [1, 1] is
+    // refused rather than indexed past the end.
     if (value->size() != count)
     {
         Reject(component, field, std::format("an array of {} numbers, not {}", count, value->size()),

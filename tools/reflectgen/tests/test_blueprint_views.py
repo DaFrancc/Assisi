@@ -154,20 +154,19 @@ class TestRefusals(ViewTestCase):
         self.assertRefused("bad.abp", "C++ keyword")
 
     def test_no_entry_in_the_table_is_unreachable(self):
-        # A hand-maintained list of 93 strings goes wrong by typo, and a typo'd
-        # entry is a hole of exactly B21's kind: it can never match a member
-        # name, so the word it was meant to ban walks straight through. Anything
-        # that is not an identifier could not have reached the keyword check.
+        # The table is hand-maintained, and a typo'd entry can never match a
+        # member name — so the word it was meant to ban walks straight through.
+        # Anything that is not an identifier could not have reached the keyword
+        # check in the first place.
         for name in sorted(blueprint_views._CXX_KEYWORDS):
             with self.subTest(keyword=name):
                 self.assertTrue(name.isidentifier(), f"'{name}' can never match a member name")
 
     def test_reserved_words_python_does_not_share(self):
-        # The B21 list. None of these is a Python keyword — 'case' is soft,
-        # 'true'/'false' are spelled capitalised there, and the alternative
-        # tokens and coroutine keywords have no Python counterpart at all — so
-        # every one of them fell through when `keyword.iskeyword` was the
-        # backstop.
+        # None of these is a Python keyword — 'case' is soft, 'true'/'false' are
+        # spelled capitalised there, and the alternative tokens and coroutine
+        # keywords have no Python counterpart at all. Only _CXX_KEYWORDS catches
+        # them, and a miss becomes `ECS::Entity case;` in a generated header.
         for name in ('case', 'true', 'false', 'xor', 'xor_eq', 'and_eq', 'or_eq',
                      'not_eq', 'bitand', 'bitor', 'compl',
                      'co_await', 'co_return', 'co_yield'):
@@ -176,10 +175,10 @@ class TestRefusals(ViewTestCase):
                 self.assertRefused("bad.abp", "C++ keyword")
 
     def test_reserved_words_python_happens_to_share(self):
-        # These were caught only because Python reserves them too, and reported
-        # as "not a valid C++ identifier" — true of Python, not of C++, where
-        # they are identifiers that happen to be taken. Pinned by the message
-        # they now get: drop them from the table and this goes red.
+        # Words Python reserves as well, but they are refused as C++ keywords,
+        # not as invalid identifiers — in C++ they are identifiers that happen to
+        # be taken. Pinned by that message: drop one from the table and nothing
+        # else catches it.
         for name in ('class', 'while', 'for', 'if', 'else', 'return', 'break',
                      'continue', 'try', 'and', 'or', 'not'):
             with self.subTest(keyword=name):
@@ -227,8 +226,8 @@ class TestRefusals(ViewTestCase):
         self.assertRefused("bad.abp", "not readable JSON")
 
     def test_the_opted_in_type_name_may_not_be_a_reserved_word(self):
-        # `--blueprint class=car.abp` emitted `struct class;`. The type name is
-        # checked by the same table as the member names, or the two drift again.
+        # The type name goes through the same table as the member names, or
+        # `--blueprint class=car.abp` emits `struct class;`.
         self.car()
         for name in ('class', 'case', 'true', 'co_await'):
             with self.subTest(type_name=name):

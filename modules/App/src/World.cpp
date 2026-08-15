@@ -70,17 +70,14 @@ World &WorldManager::Create(std::string_view label)
 
 bool WorldManager::ApplySystems(World &world, std::span<const std::string> names, std::string_view context)
 {
-    // **Resolve before destroying anything.** This used to clear first and find
-    // out afterwards, so a list with one bad name left the world running *no*
-    // systems — strictly worse than the state it was asked to replace, and worse
-    // than Install's own contract, which is already all-or-nothing. A failed call
-    // now leaves the running systems exactly as they were.
     // The level's request is recorded whether or not it could be honoured — it is
     // what a save round-trips, and a failed install must not rewrite the file.
-    // **Before** the guard below for exactly that reason: it records what the file
-    // asked for, which stays true no matter what could be installed.
+    // **Before** the resolve guard below for exactly that reason: it records what
+    // the file asked for, which stays true no matter what could be installed.
     world.systemNames.assign(names.begin(), names.end());
 
+    // Resolve before destroying anything: a refused list leaves the world running
+    // exactly what it was, rather than nothing at all.
     std::vector<const SystemDefinition *> resolved;
     if (!SystemCatalog::Instance().Resolve(names, resolved, context))
         return false;
@@ -89,8 +86,8 @@ bool WorldManager::ApplySystems(World &world, std::span<const std::string> names
     // blueprint spawned into the outgoing level has already asked for its systems;
     // drained after this, they would install into a level that never named them, a
     // frame later, with nothing left to connect them to the load. Deliberately
-    // after the Resolve guard above: a refused list leaves the world running
-    // exactly what it was, so its installs are still owed.
+    // after the Resolve guard above: a refused list keeps the outgoing content, so
+    // its installs are still owed.
     world.pendingSystems = {};
 
     // Never stack one list on another: Register is append-only and a repeated
@@ -244,12 +241,8 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     // swap: the moment it goes Active the frame loop will dispatch it.
     //
     // **A failed install fails the travel.** An unknown system name is a hard
-    // error by design (docs/blueprint-system-concept.md §8), and it was being
-    // discarded here — so a level naming a system this build does not declare
-    // loaded happily and then ran none of it. That is the "component whose
-    // system was never installed just does nothing" failure arriving through
-    // the very mechanism meant to prevent it, and it is silent: the level looks
-    // fine and simply has no behaviour.
+    // error by design (docs/blueprint-system-concept.md §8): a level that loads
+    // anyway looks fine and simply has no behaviour.
     if (!ApplySystems(incoming, header.systems, levelPath))
     {
         Core::Log::Error("Travel to '{}' failed: it names a system this build does not declare. Staying "
@@ -484,8 +477,9 @@ World *WorldManager::PromotePendingLoad()
     }
 
     // The worker parked the level's requested systems here; install them now that we
-    // are back on the main thread and the task is joined. Passing the field to a
-    // function that also writes it is safe — ApplySystems copies first.
+    // are back on the main thread and the task is joined. The explicit copy is
+    // required: ApplySystems assigns @p names into `world.systemNames`, so handing
+    // it that very field would be assigning a container from its own iterators.
     //
     // Hard error, as on the synchronous path: a level naming a system this build
     // does not declare must not be promoted to Active running none of it.

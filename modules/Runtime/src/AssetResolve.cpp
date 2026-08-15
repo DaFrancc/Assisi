@@ -12,11 +12,10 @@ void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &c
 {
     meshRenderer.meshBuffer = cache.ResolveMesh(meshRenderer.mesh);
 
-    // One resolved Material per mesh slot: the override when the slot has a
-    // non-nil entry, otherwise the mesh's default for that slot — the material
-    // GUID the glTF manifest recorded at import, read from the database rather
-    // than re-derived live. A primitive mesh has no slot table, so this leaves
-    // `materials` empty and the draw path uses the cache's fallback.
+    // One resolved Material per mesh slot: the override when that slot has a
+    // non-nil entry, otherwise the import manifest's default read from the
+    // database. A primitive mesh has no slot table, so `materials` stays empty
+    // and the draw path uses the cache's fallback.
     const std::size_t slotCount =
         meshRenderer.meshBuffer != nullptr ? meshRenderer.meshBuffer->Materials().size() : 0;
     meshRenderer.materials.clear();
@@ -28,8 +27,8 @@ void ResolveMeshRendererAssets(MeshRenderer &meshRenderer, Render::AssetCache &c
         const Core::AssetId materialId = hasOverride
                                              ? meshRenderer.materialOverrides[slot]
                                              : database.SlotMaterial(meshRenderer.mesh, static_cast<uint32_t>(slot));
-        // ResolveMaterial(nil) yields the fallback, so an unexploded mesh or an
-        // out-of-range slot still renders.
+        // ResolveMaterial(nil) yields the fallback, so a slot with no recorded
+        // material still renders.
         meshRenderer.materials.push_back(cache.ResolveMaterial(materialId));
     }
 }

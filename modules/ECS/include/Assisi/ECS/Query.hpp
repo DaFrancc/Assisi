@@ -71,9 +71,8 @@ struct MutAccess
 /// @brief Placeholder for the scene change-tick back-pointer in a RefAccess view.
 ///
 /// A plain Query has nothing to stamp, so it must not carry the pointer. Stored
-/// via [[no_unique_address]], this empty type costs the iterator zero bytes,
-/// keeping the non-stamping hot path exactly as wide as it was before QueryMut
-/// existed.
+/// via [[no_unique_address]], this empty type costs the iterator zero bytes, so
+/// the non-stamping hot path is no wider for QueryMut's sake.
 struct NoChangeTick
 {
 };

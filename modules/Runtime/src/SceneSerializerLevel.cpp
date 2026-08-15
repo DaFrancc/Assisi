@@ -251,8 +251,8 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
 
     // Read before the clear for the reason the instance entries below are: a file
     // has to prove it carries a scene before the caller's is destroyed for it.
-    // `size()` answers on an object and a string too, so an unchecked shape got
-    // as far as indexing one.
+    // `size()` answers on an object and a string too, so an unchecked shape
+    // reaches the indexing below on either.
     const auto entitiesIt = j.find("entities");
     if (entitiesIt == j.end() || !entitiesIt->is_array())
     {
@@ -438,9 +438,9 @@ LevelResult SceneSerializer::Load(ECS::Scene &scene, const nlohmann::json &j, co
             continue;
 
         // Shape, not just presence. `items()` over a primitive yields one entry
-        // under an empty key, so a `"components": "Transform"` used to look up the
-        // component named "" — missing it, warning about it, and loading the
-        // entity stripped of everything the file said it had.
+        // under an empty key, so an unchecked `"components": "Transform"` looks up
+        // the component named "" — misses it, warns about it, and loads the entity
+        // stripped of everything the file said it had.
         if (!componentsIt->is_object())
         {
             Core::Log::Error("SceneSerializer: entity '{}' has a 'components' that is {}, not an object.",

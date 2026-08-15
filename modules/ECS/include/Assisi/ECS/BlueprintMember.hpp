@@ -16,21 +16,19 @@ namespace Assisi::ECS
 /// @brief Says which spawned instance an entity belongs to, and which entry of
 /// that blueprint's member list it is.
 ///
-/// Eight bytes, and **no name**. Names are paths once nesting is involved —
-/// `parking_lot_a/car_3/wheel_fl` is 26 characters — so a fixed 32-byte inline
-/// string overflows at two ordinary levels of nesting, and truncation makes two
-/// members indistinguishable, which silently retargets overrides and FindMember.
-/// The name is recovered instead by a walk that has to exist anyway: instance
-/// table → source path → the cached member list → `[memberIndex].name`. That also
-/// makes FindMember *faster*, since the name resolves to an index once and the
-/// query then compares integers rather than strings per entity.
+/// Eight bytes, and **no name**. Names are paths once nesting is involved
+/// (`parking_lot_a/car_3/wheel_fl`), so a fixed inline string truncates at two
+/// ordinary levels of nesting and makes two members indistinguishable, silently
+/// retargeting overrides and FindMember. The name is recovered instead by a walk
+/// that has to exist anyway: instance table → source path → the cached member
+/// list → `[memberIndex].name`. That also makes FindMember faster — the name
+/// resolves to an index once, and the query then compares integers per entity.
 ///
 /// Derived at expansion and **never written to a file** — same tier as NetId:
 /// created at load, rebuilt on every load, authored nowhere. There is no root
 /// entity, no lineage tree and no stored member list; "the members of instance 7"
-/// is a query, computed when asked and discarded. That is the difference from
-/// Unity DOTS's LinkedEntityGroup, which stores the list on a root entity and
-/// goes stale the moment a member dies or is reparented.
+/// is a query, computed when asked and discarded, so nothing goes stale when a
+/// member dies or is reparented.
 ///
 /// ## The rule this type exists under
 ///
@@ -51,15 +49,13 @@ namespace Assisi::ECS
 ///
 /// ## Why it replicates
 ///
-/// Membership is state with a current value, and the house rule is that nothing
-/// with a current value becomes an event (docs/replication-plan-v4.md §5).
-/// Without it, a host that prunes a member leaves the client believing the wheel
-/// still belongs to the car, and no despawn record has a correct reading
-/// afterwards. `instanceId` is a per-world counter, so the wire carries the
-/// instance's baseNetId and the client maps it to its own local id on receipt —
-/// the same translation an EntityRef → NetId already performs. Sent once and not
-/// again unless a prune changes it (or a keyframe sweep resends full state, as it
-/// does for everything).
+/// Membership is state with a current value, and nothing with a current value
+/// becomes an event (docs/replication-plan-v4.md §5). Without it, a host that
+/// prunes a member leaves the client believing the wheel still belongs to the car.
+/// `instanceId` is a per-world counter, so the wire carries the instance's
+/// baseNetId and the client maps it to its own local id on receipt — the same
+/// translation an EntityRef → NetId performs. Sent once and not again unless a
+/// prune changes it (or a keyframe sweep resends full state).
 ///
 /// It lives in ECS rather than Runtime for the reason Transform does: NetSync has
 /// to read it with types, and NetSync deliberately does not link Runtime.

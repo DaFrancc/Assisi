@@ -25,9 +25,7 @@ NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, Replic
     if (_config.neverReplicate.empty())
         _config.neverReplicate = LoadNeverReplicateFromConfig();
 
-    // Same terms, same reason. Only when the caller has left it at the default,
-    // so an explicitly configured session — every test, and any embedder with
-    // its own policy source — is not silently overridden by game.json.
+    // Same terms, same reason: only when the caller has left it at the default.
     if (_config.relevancy.provider == RelevancyConfig::Provider::All)
         _config.relevancy = LoadRelevancyFromConfig();
 }

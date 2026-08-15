@@ -3,7 +3,7 @@
 #include <doctest/doctest.h>
 
 // doctest forward-declares std::ostream; stringifying a std::string_view in a
-// CHECK (an AssetPath View() comparison) needs the complete type.
+// CHECK (a Name's View() comparison) needs the complete type.
 #include <ostream>
 
 #include <filesystem>
@@ -423,12 +423,11 @@ TEST_CASE("SceneSerializer: a refusal after the clear says the scene was replace
 // A malformed *shape* is refused by value, not thrown (ENG-120).
 //
 // Load's contract is std::expected-shaped: every way a file can be wrong comes
-// back as a LevelError. The top-level reads used to reach nlohmann unguarded, so
-// a file whose `version` was a string, or that carried no `entities` array at
-// all, threw out of Load instead — and threw from *past* the clear, leaving the
-// caller an emptied scene and no error return. The disk paths hid it behind
-// their own try/catch; a caller handing Load an already-parsed json (as these
-// tests do) wore it.
+// back as a LevelError. Left unguarded, a `version` that is a string or a missing
+// `entities` array reaches nlohmann and throws from *past* the clear, leaving the
+// caller an emptied scene and no error return. The disk paths would hide that
+// behind their own try/catch; a caller handing Load an already-parsed json (as
+// these tests do) wears it.
 //
 // A throw here fails the test outright, which is the behaviour under test.
 // ---------------------------------------------------------------------------
@@ -477,12 +476,11 @@ TEST_CASE("SceneSerializer: a components key of the wrong shape is refused, not 
     const ECS::Entity doomed = scene.Create();
     REQUIRE(scene.Add(doomed, Transform{}) != nullptr);
 
-    // Presence was checked, shape was not. This one never threw: items() over a
-    // primitive yields a single empty key, so the lookup missed, every component
-    // the entity declared was dropped as "unknown", and the load reported
-    // success. Silent, which is worse than the throws above. Found in pass 3,
-    // which is past the clear by construction, so it reports the replacement
-    // rather than pretending the scene survived.
+    // Presence is not shape, and this one never throws: items() over a primitive
+    // yields a single empty key, so unguarded, every component the entity declares
+    // is dropped as "unknown" and the load reports success. Silent, which is worse
+    // than the throws above. Found in pass 3, past the clear by construction, so it
+    // reports the replacement rather than pretending the scene survived.
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", "body"}, {"components", "Transform"}}})}};
@@ -506,12 +504,11 @@ TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
         bad << "{ this is not valid json";
     }
     {
-        // Valid JSON, right version, no `entities`. This used to throw out of
-        // Load's own top-level read and get caught in LoadFromFile, whose catch
-        // cleared the scene on the way out — so a shape Load could see coming cost
-        // the caller its level. Load guards it now (ENG-120) and refuses before
-        // the clear, which is why this file is grouped with the parse failure
-        // rather than with the replacement below.
+        // Valid JSON, right version, no `entities`. Load guards its own top-level
+        // reads (ENG-120) and refuses before the clear, which is why this file is
+        // grouped with the parse failure rather than with the replacement below.
+        // Unguarded it throws instead, and LoadFromFile's catch clears the scene on
+        // the way out — a shape Load could see coming costing the caller its level.
         std::ofstream headless(root / "no_entities.alvl");
         headless << R"({"version": 2})";
     }
@@ -549,15 +546,14 @@ TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
 }
 
 // ---------------------------------------------------------------------------
-// Component field values. The generated deserializers used to read a field as
-// `j.at("f").get<float>()` behind a `contains()` guard — which proves the key is
-// there and says nothing about its type, so a mistyped field threw out of
-// nlohmann. Now the type is checked and the file is refused by name.
+// Component field values. A `contains()` guard proves the key is there and says
+// nothing about its type, so the generated deserializers check the type as well
+// and refuse the file by name — otherwise a mistyped field throws out of nlohmann.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("SceneSerializer: a field of the wrong type refuses the file rather than throwing")
 {
-    // The key is present, so the old contains() guard let it through.
+    // The key is present, so a contains()-only guard lets it through.
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities", nlohmann::json::array({{{"name", "eye"},
@@ -576,8 +572,8 @@ TEST_CASE("SceneSerializer: a field of the wrong type refuses the file rather th
 
 TEST_CASE("SceneSerializer: an array field of the wrong length refuses the file")
 {
-    // Two elements where three go. The old codegen walked off _v[2] rather than
-    // checking the size, so this threw from inside glm's initializer.
+    // Two elements where three go. Without the size check the codegen walks off
+    // _v[2] and throws from inside glm's initializer.
     const nlohmann::json fixture = {
         {"version", 2},
         {"entities",
@@ -615,9 +611,9 @@ TEST_CASE("SceneSerializer: an absent field is not a failure and keeps its defau
 
 TEST_CASE("SceneSerializer: a version mismatch through a file fails the load, not just the log")
 {
-    // It used to only log. LoadFromFile then returned true over an empty scene, so
-    // a level from a newer build read as a level with nothing in it — everywhere,
-    // all the way up to the server that announced it had loaded the world.
+    // Logging alone is not enough: LoadFromFile would return true over an empty
+    // scene, so a level from a newer build reads as a level with nothing in it —
+    // all the way up to the server announcing it had loaded the world.
     namespace fs        = std::filesystem;
     const fs::path root = fs::temp_directory_path() / "assisi_serializer_version_test";
     std::error_code ec;
@@ -785,12 +781,11 @@ TEST_CASE("SceneSerializer: WITHOUT a context an EntityRef collapses (the bug th
     CHECK(restored->parent == ECS::NullEntity);
 }
 
-// Round-6 review M11, FIXED: under ScopedRawEntityContext, EntityToRef now
-// packs (slot, generation) instead of returning the bare slot, and RefToEntity
-// only resolves when the slot's current occupant still carries that generation.
-// A ref captured to an entity that is later destroyed used to resolve to whatever
-// new entity reused the slot — and no liveness check could catch it, because the
-// recycled slot is perfectly alive. It now resolves to NullEntity.
+// Under ScopedRawEntityContext, EntityToRef packs (slot, generation) rather than
+// the bare slot, and RefToEntity resolves only while the slot's occupant still
+// carries that generation. A bare slot would resolve a ref captured to a
+// destroyed entity onto whatever entity reused the slot, and no liveness check
+// could catch it — the recycled slot is perfectly alive.
 // (Only one raw context per thread — non-reentrant — so each phase is scoped.)
 TEST_CASE("SceneSerializer: a raw ref to a recycled slot resolves to null, not its new occupant")
 {
@@ -979,9 +974,10 @@ TEST_CASE("SceneSerializer: nested contexts restore in order, and the outermost 
     CHECK(liveName().empty());
 }
 
-// Round-6 review C7: a single non-finite float must not make the whole level
-// file unloadable. Save writes NaN as JSON null; on load get<float>() on null
-// throws, LoadFromFile catches and Clear()s -> the entire scene loads empty.
+// A single non-finite float must not make the whole level file unloadable.
+// Unsanitized, NaN dumps as JSON null, get<float>() on null throws, and
+// LoadFromFile catches it and Clear()s -> the entire scene loads empty. Save
+// replaces non-finite values with 0 instead (SanitizeNonFinite).
 // (Only reproduces through the file path: in-memory Load carries NaN as a
 // number. This mirrors the real autosave-then-reload scenario.)
 TEST_CASE("SceneSerializer: one non-finite float does not brick the whole level file")

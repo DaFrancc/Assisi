@@ -109,8 +109,8 @@ struct LevelLoadOptions
 {
     AssetCacheReset reset = AssetCacheReset::ClearFirst;
 
-    /// Receives the level's non-entity metadata — notably the system profile it
-    /// asks for, which the caller applies to the world it loaded into
+    /// Receives the level's non-entity metadata — notably the list of systems it
+    /// names, which the caller applies to the world it loaded into
     /// (docs/world-system-binding-design-notes.md §3).
     Runtime::LevelHeader *header = nullptr;
 };
@@ -123,17 +123,15 @@ struct LevelLoadOptions
 /// was ever going to reach a person.
 ///
 /// Takes the whole World rather than its scene, physics and instance table
-/// separately because every caller was passing three parts of one world, and a
-/// signature that lets them come from three *different* worlds is a signature
-/// that has to be read carefully to see that they don't.
+/// separately: a signature that lets the three come from *different* worlds has to
+/// be read carefully to see that they don't.
 ///
-/// **A failure does not mean the scene is as you left it.** It said so here
-/// for a long time and it was only ever half true: the deserializer refuses an
-/// unreadable file or an unsupported version before touching anything, but every
-/// refusal *inside* the load — a duplicate name, an unreadable component, a
-/// reference to an entity the file never declares — happens after it has already
-/// emptied the scene. LevelFailure::sceneReplaced is which; the error kind alone
-/// cannot say, and a caller holding entity handles has to look (round-7 B20).
+/// **A failure does not mean the scene is as you left it.** The deserializer
+/// refuses an unreadable file or an unsupported version before touching anything,
+/// but every refusal *inside* the load — a duplicate name, an unreadable
+/// component, a reference to an entity the file never declares — happens after it
+/// has already emptied the scene. LevelFailure::sceneReplaced says which; the
+/// error kind alone cannot, and a caller holding entity handles has to look.
 /// Note that on the replaced path the physics bodies are *not* rebuilt either,
 /// since the rebind below never runs — the caller owns putting that right, e.g.
 /// with BuildSceneBodies over whatever it decides the scene now is.
@@ -207,11 +205,10 @@ void UpgradeStreamingAssets(ECS::Scene &scene, Render::AssetCache &cache, const 
 ///
 /// One spelling, in the engine, because this number is *compared between
 /// machines*: a host and a client that hash the same file differently refuse each
-/// other, and the difference need only be as subtle as whether CRLF is folded.
-/// That has happened here — a server hashing raw bytes against an editor folding
-/// newlines, refusing each other over the same file on the same machine. It was
-/// fixed by making two copies agree, which leaves the next copy free to disagree
-/// again.
+/// other, and the difference need only be as subtle as whether CRLF is folded. A
+/// server hashing raw bytes against an editor folding newlines refuses the same
+/// file on the same machine, so there is one implementation rather than a copy
+/// per caller.
 ///
 /// Lives here rather than in any app because every target needs it: the editor
 /// hosting, a dedicated server hosting, and whatever renders a shipped build.
@@ -267,8 +264,7 @@ struct StrippedEntities
 /// entity does, or the body outlives every handle to it. And a child of a stripped
 /// entity is left holding a dead parent, which transform propagation reads as a
 /// root and places at its local pose — visibly adrift in a windowed client,
-/// silently mis-simulated in a headless one. Both halves of that were previously
-/// copied per app and only one copy had them.
+/// silently mis-simulated in a headless one.
 StrippedEntities StripReplicatedEntities(ECS::Scene &scene, Physics::PhysicsWorld &physics);
 
 } // namespace Assisi::App

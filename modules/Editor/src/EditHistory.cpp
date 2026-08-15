@@ -607,8 +607,9 @@ void EditHistory::ApplyTransaction(const Transaction &txn, Direction dir)
                 {
                     // Add the whole set first, THEN rebind each, so every hook sees all
                     // its siblings restored rather than only those that sort before it.
-                    // Rebinding per component mid-restore dropped the Jolt body on
-                    // undo-of-delete.
+                    // Rebinding per component mid-restore drops the Jolt body on
+                    // undo-of-delete: the physics rebind needs a Transform that sorts
+                    // after RigidBodyDescriptor.
                     for (const ComponentSnapshot &snap : *state)
                         AddComponentForRestore(ed.handle, snap.id, snap.data);
                     for (const ComponentSnapshot &snap : *state)

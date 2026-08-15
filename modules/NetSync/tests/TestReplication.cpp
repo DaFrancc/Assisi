@@ -289,27 +289,18 @@ TEST_CASE("message framing is inside the handshake hash, not just the component 
 
 TEST_CASE("replication policy is part of the protocol description")
 {
-    // The successor to P0's hash pin, which has been retired now that it has
-    // done its job. That pin held one measured constant (6593563864785826454)
-    // across the ACOMP(replicated) -> ACOMP(replicable) rename, proving the
-    // rename did not disturb the *emitted* layout text and therefore could not
-    // repartition deployed builds into incompatible pairs. P2a then moved the
-    // hash deliberately, by giving `Replicated` its exclusion mask.
-    //
-    // Carrying the constant forward would have been worse than useless: it is
-    // sensitive to every reflected component in this binary, so any unrelated
-    // addition trips it, and the reflex that teaches is "bump the number" — the
-    // opposite of the scrutiny a protocol change deserves. What is worth pinning
-    // is the *property*, and it needs no magic number.
+    // The property is pinned, deliberately without a magic hash constant: a
+    // measured hash is sensitive to every reflected component in this binary, so
+    // any unrelated addition trips it and teaches the reflex "bump the number"
+    // rather than the scrutiny a protocol change deserves.
     const std::string description = Core::Reflect::ProtocolLayoutDescription();
 
     // The marker's policy field is inside the hash, so two builds that disagree
     // about what an entity may withhold refuse to pair rather than silently
     // sending each other different component sets.
     CHECK(description.find("excluded") != std::string::npos);
-    // ...and the capability flag still is too — the v4 R1 decision this all
-    // rests on. (TestBinaryCodec proves flipping it changes the hash; this
-    // proves the real registry actually carries it.)
+    // ...and the capability flag is in there too. (TestBinaryCodec proves
+    // flipping it changes the hash; this proves the real registry carries it.)
     CHECK(description.find(" replicated") != std::string::npos);
     CHECK(NetProtocolHash() == NetProtocolHash());
 }
@@ -361,10 +352,9 @@ TEST_CASE("a component type that is not ACOMP(replicable) never crosses the wire
     REQUIRE(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
     CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 42);
 
-    // ...and the unmarked one does not exist on the client at all. Before wire
-    // gating this was the other way round for *every* serializable component,
-    // which is how a marked entity shipped a Camera that could take over the
-    // receiving client's view.
+    // ...and the unmarked one does not exist on the client at all. Without wire
+    // gating every serializable component would travel, so a marked entity would
+    // ship a Camera that takes over the receiving client's view.
     CHECK(harness.clientScene.Get<Test::LocalOnly>(mirror) == nullptr);
 
     // Mutating it later is still nobody else's business.
@@ -437,9 +427,9 @@ TEST_CASE("a replicated component that never said `tracked` still deltas after s
     // ACOMP(replicable) implies ACOMP(tracked), and this is why: an untracked
     // pool has no change-tick lane, ChangeTickById returns 0, and 0 reads as
     // "unchanged" — so the component would transmit once at spawn and then go
-    // permanently silent no matter what the server did to it. MeshRenderer and
-    // Name were both live instances of that bug; Test::Health stands in for them
-    // here because NetSync deliberately does not link Runtime.
+    // permanently silent no matter what the server did to it. Test::Health
+    // stands in for the Runtime components with this shape, because NetSync
+    // deliberately does not link Runtime.
     Harness harness;
     harness.Step(4);
 
@@ -639,13 +629,12 @@ TEST_CASE("a world too big for one packet still converges, over several snapshot
 
 TEST_CASE("an entity whose final change lands in a budget-starved snapshot still converges")
 {
-    // The bug this pins: the in-flight record's *global* scene change tick used
-    // to become the connection's baseline when acked, including for entities the
-    // budget had skipped. Their pending changes were then older than the
-    // baseline, so "changed since" said no and they were never resent — stale
-    // until something happened to touch them again. A continuously-moving world
-    // re-stamps itself every tick, which is why nothing noticed; an entity whose
-    // *last* change lands in a starved snapshot has nothing to re-stamp it.
+    // An ack advances baselines per entity, not by the snapshot's global scene
+    // change tick: an entity the budget skipped would otherwise inherit a
+    // baseline newer than its pending change, so "changed since" says no and it
+    // is never resent. A continuously-moving world re-stamps itself every tick
+    // and hides that; an entity whose *last* change lands in a starved snapshot
+    // has nothing to re-stamp it.
     ReplicationConfig config;
     config.maxSnapshotBytes = 160; // room for a few transforms, not sixteen
     Harness harness(config);
@@ -906,8 +895,9 @@ TEST_CASE("the snapshot rate is clamped to a divisor of the tick rate")
     config.snapshotHz = 25; // 60/25 is not an integer
 
     Harness harness(config);
-    // 60/25 truncates to a divisor of 2, i.e. 30 Hz — every snapshot then lands
-    // on an exact tick instead of the interval alternating between 2 and 3.
+    // 60/25 = 2.4 truncates to a 2-tick interval, i.e. 30 Hz — every snapshot
+    // then lands on an exact tick instead of the interval alternating between
+    // 2 and 3.
     CHECK(harness.server.Config().snapshotHz == 30);
     CHECK(harness.server.IsSnapshotTick(0));
     CHECK(harness.server.IsSnapshotTick(2));

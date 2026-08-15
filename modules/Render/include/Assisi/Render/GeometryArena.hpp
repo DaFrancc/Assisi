@@ -73,7 +73,7 @@ public:
     /// shared upload list). The grow copy is recorded into the same list *before*
     /// the new-data writes, so linear ordering + nvrhi's auto-barriers keep it
     /// correct, and the old buffer stays alive via the list's referenced resources.
-    /// When null, a private command list is created and executed here as before.
+    /// When null, a private command list is created and executed here.
     Range Allocate(const void *vertexData, uint32_t vertexCount, const uint32_t *indexData, uint32_t indexCount,
                    nvrhi::ICommandList *sharedList = nullptr)
     {
@@ -167,11 +167,9 @@ public:
     nvrhi::IBuffer *IndexBuffer() const { return _indexBuffer; }
     uint32_t VertexStride() const { return _vertexStride; }
 
-    /// Occupancy, for the capture's memory counters. Used against capacity is
-    /// what says whether the next Allocate will trigger a Grow — and a Grow is a
-    /// reallocation plus a GPU copy of the whole prefix, which is exactly the
-    /// kind of cost that shows up in a later frame's garbage collection rather
-    /// than the frame that caused it.
+    /// Occupancy, for the capture's memory counters. Used against capacity says
+    /// whether the next Allocate triggers a Grow — a reallocation plus a GPU copy
+    /// of the whole prefix, charged to a later frame than the one that caused it.
     [[nodiscard]] uint64_t VertexUsedBytes() const { return _vertexUsed; }
     [[nodiscard]] uint64_t VertexCapacityBytes() const { return _vertexCapacity; }
     [[nodiscard]] uint64_t IndexUsedBytes() const { return _indexUsed; }

@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file Chiara.cpp
-/// @brief The capture runtime. Entirely excluded from the build unless
-///        ASSISI_ENABLE_CHIARA is on — see the CMakeLists.
+/// @brief The capture runtime. Compiles to nothing unless ASSISI_ENABLE_CHIARA
+///        is on — see the CMakeLists.
 
 #if defined(ASSISI_CHIARA_ENABLED)
 
@@ -489,12 +489,10 @@ CaptureStats GetCaptureStats()
 
         if (buffer->isMain && cursor > 0)
         {
-            // Approximate while recording, and knowingly so: the newest record
-            // cannot be racing anyone, but the oldest could in principle be
+            // Approximate while recording: the oldest record could be
             // overwritten mid-read if this thread were descheduled long enough
-            // for the producer to lap an entire ring. That is a wrong number on
-            // a debug readout, not a wrong capture — the serializer's read is
-            // the one that has to be exact, and it pauses recording first.
+            // for the producer to lap an entire ring. A wrong number on a debug
+            // readout, not a wrong capture — the serializer pauses first.
             const std::uint64_t begin  = buffer->ring.ReadableBegin(cursor);
             const std::uint64_t oldest = buffer->ring.At(begin).timestampTicks;
             const std::uint64_t newest = buffer->ring.At(cursor - 1u).timestampTicks;

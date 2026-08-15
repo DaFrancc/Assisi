@@ -6,13 +6,12 @@
 ///
 /// Jolt places bodies in world space, so PhysicsWorld::AddBodyFromDescriptor
 /// resolves a parented entity through its parent's world matrix before creating
-/// the body. The editor's wireframe used the entity's *local* pose instead, so a
-/// rigid body under a Parent — every physics-driven member of a blueprint
-/// instance — was outlined at its parent-relative offset while the mesh
-/// silhouette drawn in the same loop, which does use the world matrix, sat
-/// correctly on the mesh. The collider view is what someone turns on to find out
-/// where a body actually is, so the two disagreeing on screen is worse than
-/// either being wrong alone.
+/// the body. Tracing the entity's *local* pose instead would outline every rigid
+/// body under a Parent — every physics-driven member of a blueprint instance — at
+/// its parent-relative offset, while the mesh silhouette drawn in the same loop,
+/// which does use the world matrix, sits correctly on the mesh. The collider view
+/// is what someone turns on to find out where a body actually is, so the two
+/// disagreeing on screen is worse than either being wrong alone.
 ///
 /// The pose is also deliberately scale-free at both ends: a collider's dimensions
 /// are absolute world units, so neither the parent's scale nor the body's own may
@@ -110,7 +109,7 @@ TEST_CASE("ColliderBodyModel: a parented body is posed in world space")
     CHECK(NearlyEqual(RotationOf(model), expected.rotation));
 
     // The defect this file exists for: the local pose is a different place, and
-    // drawing there is what the wireframe used to do.
+    // drawing there is the mistake.
     CHECK_FALSE(NearlyEqual(TranslationOf(model), local.position));
     CHECK_FALSE(NearlyEqual(RotationOf(model), local.rotation));
 }

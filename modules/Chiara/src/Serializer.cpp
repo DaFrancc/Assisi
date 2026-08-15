@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file Serializer.cpp
-/// @brief Chrome JSON export. Excluded from the build unless ASSISI_ENABLE_CHIARA.
+/// @brief Chrome JSON export. Compiles to nothing unless ASSISI_ENABLE_CHIARA is on.
 ///
 /// The JSON emission at the bottom is the easy half. The real work is rebuilding
 /// which scope each arg belongs to: a scope is only written when it *ends*, so
@@ -503,11 +503,9 @@ void DrainLocked(Session &session)
         // its scope may simply still be running, in which case it will close in
         // a later chunk and claim it then. The shadow stack is what tells the
         // two cases apart — if the arg was emitted at or after the outermost
-        // still-open scope began, an open scope can still be its owner.
-        //
-        // Getting this wrong is silent: a first attempt carried args by "newer
-        // than any slice in this chunk", which drops every arg followed by
-        // shorter sibling work — exactly the common case.
+        // still-open scope began, an open scope can still be its owner. Carrying
+        // by "newer than any slice in this chunk" instead silently drops every
+        // arg followed by shorter sibling work, which is the common case.
         std::uint64_t oldestOpenBegin = UINT64_MAX;
         for (const OpenScope &open : snapshot.openScopes)
         {

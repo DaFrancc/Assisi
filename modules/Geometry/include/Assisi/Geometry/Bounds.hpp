@@ -5,12 +5,11 @@
 /// @brief Coarse bounding-volume types (sphere + AABB) for visibility tests.
 ///
 /// Lives in Geometry (not Render) because bounds are pure CPU math: the
-/// importer computes per-submesh bounds at import time, and physics/tools/
-/// tests can use them without linking the renderer. Render consumes these
-/// types for frustum culling (see Render/Frustum.hpp). The functions that fit
-/// bounds around mesh geometry live beside MeshData in MeshData.hpp — this
-/// header deliberately has no MeshData dependency so MeshData can embed these
-/// types per submesh.
+/// importer computes per-submesh bounds at import time, and tools/tests can use
+/// them without linking the renderer. Render consumes these types for frustum
+/// culling (see Render/Frustum.hpp). The functions that fit bounds around mesh
+/// geometry live beside MeshData in MeshData.hpp — this header deliberately has
+/// no MeshData dependency so MeshData can embed these types per submesh.
 
 #include <Assisi/Math/GLM.hpp>
 
@@ -30,12 +29,12 @@ struct BoundingSphere
     float radius = 0.f;     ///< 0 means "no geometry" (an empty mesh).
 };
 
-/// @brief An axis-aligned bounding box in the mesh's local space.
+/// @brief An axis-aligned bounding box. Mesh-fitted boxes are local-space;
+///        TransformedAabb re-fits one into world space.
 ///
 /// Tighter than the sphere for flat or elongated geometry (the sphere's
 /// isotropic radius swallows a large floor). Kept beside the sphere so culling
-/// can use the cheap sphere reject first and the box for refinement — and it is
-/// the screen-space depth bound the future HZB occlusion test projects.
+/// can use the cheap sphere reject first and the box for refinement.
 struct Aabb
 {
     glm::vec3 min{0.f, 0.f, 0.f};

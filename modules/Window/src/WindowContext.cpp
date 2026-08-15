@@ -16,7 +16,6 @@ WindowContext::WindowContext(const WindowConfiguration &configuration) : _glfwLi
     /* Vulkan owns presentation — GLFW must not create a client API context. */
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    /* Create the GLFW window. */
     _nativeWindowHandle =
         glfwCreateWindow(configuration.Width, configuration.Height, configuration.Title, nullptr, nullptr);
 
@@ -115,7 +114,6 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
 {
     if (this != &other)
     {
-        /* Destroy any currently owned window. */
         if (_nativeWindowHandle != nullptr)
         {
             glfwDestroyWindow(_nativeWindowHandle);

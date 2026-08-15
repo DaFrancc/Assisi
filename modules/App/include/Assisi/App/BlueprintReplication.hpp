@@ -61,10 +61,9 @@ void InstallInstanceExpander(NetSync::ReplicationClient &client, World &world,
 ///
 /// **The one call a session makes when the scan lands**, and one call rather than
 /// two on purpose. The hash and the manifest are the same fact — "this is the
-/// content both machines agreed on" — and a caller that set the hash without
-/// installing the manifest is how blueprint replication came to have no
-/// production caller at all (B15). Every session path runs this, windowed or
-/// headless; only the drawing differs.
+/// content both machines agreed on" — and a caller that sets the hash without
+/// installing the manifest leaves blueprint replication with no caller at all.
+/// Every session path runs this, windowed or headless; only the drawing differs.
 ///
 /// The hash goes across unconditionally — it is what releases a withheld hello,
 /// and refusing a join is not this function's call. The manifest is then subject

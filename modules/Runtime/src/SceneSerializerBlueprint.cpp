@@ -77,8 +77,8 @@ bool SceneSerializer::PrepareBlueprint(BlueprintDefinition &definition)
 
     // Declared, mapped at nothing: a member an in-file `removed` took out. A sibling
     // still naming it resolves to null with a warning rather than making the whole
-    // file unusable — the same treatment a per-instance removal gets, and the reason
-    // the two removal paths no longer disagree about how bad a removal is (§6).
+    // file unusable — the same treatment a per-instance removal gets, so the two
+    // removal paths agree about how bad a removal is (§6).
     for (const std::string &removed : definition.removedMembers)
         scoped->nameToEntity.emplace(removed, ECS::NullEntity);
 

@@ -103,10 +103,9 @@ std::size_t OrdinalOf(const std::type_info &type)
 }
 
 /// An entity carrying a Transform and a Health — two replicable components, so
-/// a test can exclude one and watch the other carry on. (Runtime's Name and
-/// MeshRenderer would make a richer fixture, but this suite deliberately does
-/// not link Runtime; two is enough to prove exclusion is per component rather
-/// than a switch on the entity.)
+/// a test can exclude one and watch the other carry on. Two is enough to prove
+/// exclusion is per component rather than a switch on the entity, and this
+/// suite does not link Runtime, whose components would be the richer fixture.
 ECS::Entity SpawnRich(ECS::Scene &scene, Core::Reflect::ComponentMask excluded = {})
 {
     const ECS::Entity entity = scene.Create();
@@ -343,9 +342,8 @@ TEST_CASE("excluding a component stops costing bandwidth for it")
 //
 // The gate between a type's capability and an entity's own exclusion mask: a
 // game says once that it never sends something, instead of saying it on every
-// entity that happens to carry it. This is the direct answer to the incident
-// that started the plan — an engine module marking Physics::Bounce replicable to
-// serve one test level, and thereby setting policy for every game.
+// entity that happens to carry it. Without it, an engine module marking one of
+// its own types replicable sets network policy for every game.
 
 TEST_CASE("a game-vetoed component never reaches any client")
 {

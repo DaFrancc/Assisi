@@ -11,14 +11,11 @@
 ///
 /// ## The listen server is just a host in a windowed process
 ///
-/// The design notes describe wiring a host's own client through
-/// `CreateLoopbackPair` so the local player travels the same path as a remote
-/// one. That is not what this does, and deliberately: the same notes also say
-/// **one scene, not two** — the host's scene *is* the server scene, and it
-/// renders it directly. Given one scene there is nothing for a local loopback
-/// client to do except copy state onto itself and add a frame of interpolation
-/// delay to the one player who does not need any. So `Host()` from a windowed
-/// process *is* the listen server. Remote clients connect to it over UDP.
+/// `Host()` from a windowed process *is* the listen server: one scene, not two,
+/// rendered directly. There is deliberately **no loopback client for the local
+/// player** — with a single scene it could only copy state onto itself and add a
+/// frame of interpolation delay to the one player who needs none. Remote clients
+/// connect over UDP.
 ///
 /// (`NetTransport::CreateLoopbackPair` still earns its keep: it is how the
 /// replication tests run both halves in one process, and how a soak runs under

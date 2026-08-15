@@ -224,7 +224,8 @@ public:
     /// @brief Drops every cached mesh, texture, and material, freeing their GPU
     /// resources, and rebuilds the fallback material. Any binding sets referencing
     /// those resources (see MeshPass) must be invalidated in the same breath.
-    /// Stable material ids are NOT reused across Clear().
+    /// Material ids restart from 1 (they are material-table rows, so they must stay
+    /// dense per asset set); mesh ids do not restart.
     void Clear();
 
 private:
@@ -252,8 +253,10 @@ private:
                             const Core::AssetPath &fallbackPrimitive, bool *outPresent = nullptr);
 
     /// @brief Ensures @p texture has a slot in the bindless descriptor table,
-    /// assigning and writing one on first call. Returns the slot. Growing the
-    /// table past its capacity resizes it (keeping existing entries).
+    /// assigning and writing one on first call. Returns the slot. The table's
+    /// capacity is fixed at creation and never grows, so once it is full every
+    /// further texture saturates onto slot 0 (wrong-looking but defined) after a
+    /// one-time warning.
     uint32_t RegisterBindlessTexture(Texture &texture);
 
     /// @brief Populates @p material's textures + constants from @p data, assigning
@@ -313,7 +316,7 @@ private:
 
     // One shared vertex/index buffer every mesh sub-allocates a range from
     // (GPU-driven stage C). MeshBuffers hold ranges into this, not their own
-    // buffers; Clear() resets it. Reset by Clear() (wholesale free).
+    // buffers. Reset by Clear() (wholesale free).
     GeometryArena _arena;
 
     // Bindless material-texture table (GPU-driven stage D). Every resolved
@@ -363,8 +366,7 @@ private:
     // Next material-table slot to hand out. Dense and RESET by Clear() (unlike the
     // mesh id): a material's id is now its row in the material table, so ids must
     // stay compact and start over with each asset set. Starts at 1; id 0 is the
-    // fallback material's row. The retired per-material binding-set cache was the
-    // only thing that needed ids to never repeat; the material table replaced it.
+    // fallback material's row.
     uint32_t _nextMaterialId = 1;
 
     // Latches once the table fills so MintMaterialId warns a single time instead
@@ -380,9 +382,9 @@ private:
     // --- Async loading (workers decode/import; the main thread publishes) -------
     // AssetCache is only mutated on the main thread: worker jobs run pure CPU
     // (ImportMesh / Texture::DecodeImage) over copied inputs and touch no cache
-    // state; their results publish back via _jobs->RunOnMain, so no locks are
-    // needed. Non-owning; the app (Application) owns the job system and outlives
-    // the cache.
+    // state; their results publish back on the main thread (`.Then(Pool::Main, …)`),
+    // so no locks are needed. Non-owning; the app (Application) owns the job system
+    // and outlives the cache.
     Core::JobSystem *_jobs = nullptr;
 
     // Bumped by Clear(). Every load captures the epoch at kick time; a publish
@@ -494,8 +496,9 @@ private:
     // Worker-recorded material upload lists collected during a pump (streaming P1):
     // each material's channel textures are created + recorded on its decode worker
     // and handed back closed. FlushUploads submits these together with the shared
-    // main-thread list in one executeCommandLists, then drops them (the lifetime
-    // tracker keeps them + their textures alive until the GPU retires the submit).
+    // main-thread list in one executeCommandLists, then returns them to
+    // _freeUploadLists (nvrhi keeps them + their textures alive until the GPU
+    // retires the submit).
     std::vector<nvrhi::CommandListHandle> _uploadBatch;
 
     // --- Transient upload resource pool ----------------------------------------
@@ -526,9 +529,7 @@ private:
         nvrhi::EventQueryHandle query;
         std::vector<nvrhi::BufferHandle> buffers;
         /// Links the frame that parked this batch to the later, unrelated frame
-        /// that reclaims it. This is the deferred-cost case the capture system
-        /// was built for: the upload is caused here and paid several frames on,
-        /// where nothing in the timeline would otherwise connect the two.
+        /// that reclaims it — nothing else in the timeline connects the two.
         std::uint64_t chiaraFlowId = 0;
     };
     std::vector<StagingInFlight> _stagingInFlight;

@@ -62,8 +62,8 @@ bool LinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
 bool LinePass::BuildPipelines(const nvrhi::FramebufferInfo &sceneFramebufferInfo)
 {
     // Shared state: line topology, no cull, alpha-blended composite into the scene
-    // target. The two pipelines differ only in depth-test enable — neither writes
-    // depth, so lines never occlude the scene or each other.
+    // target. The two pipelines differ only in depth-test enable and depth bias —
+    // neither writes depth, so lines never occlude the scene or each other.
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::LineList;
     pipelineDesc.VS       = _vertexShader;

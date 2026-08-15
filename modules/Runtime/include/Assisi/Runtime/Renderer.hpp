@@ -79,9 +79,10 @@ struct DrawSceneParams
 ///        entity in the scene, through the shared mesh pass.
 ///
 /// The producer half: each entity whose MeshRenderer is resolved is whole-mesh
-/// frustum-culled (conservative sphere test — nothing visible is ever culled),
-/// its LOD0 submeshes emitted as one DrawItem each (skipping slots with no
-/// resolved material), and — when `sortDraws` is true — the list is sorted by
+/// frustum-culled (a cheap sphere reject then an AABB refine, both conservative —
+/// nothing visible is ever culled), its LOD0 submeshes emitted as one DrawItem
+/// each (skipping slots with no resolved material), and — when `sortDraws` is
+/// true — the list is sorted by
 /// DrawItem::sortKey so MeshPass::Submit records it in material/mesh-major,
 /// front-to-back order. `frustumCulling` false submits every mesh; `sortDraws`
 /// false submits in query order — both for A/B comparing the seam (the image is

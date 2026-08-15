@@ -29,8 +29,9 @@
 
 namespace Assisi::Render
 {
-/// @brief Owner of an NVRHI vertex + index buffer pair for a single mesh,
-///        plus the submesh / LOD / material-slot tables that address it.
+/// @brief One mesh's range in a shared GeometryArena — which owns the NVRHI
+///        vertex/index buffers — plus the submesh / LOD / material-slot tables
+///        that address it.
 ///
 /// Vertex layout matches `Assisi::Geometry::Vertex`: Position, Normal,
 /// TextureCoordinates, Tangent. Draw submission addresses geometry as
@@ -188,7 +189,8 @@ public:
     /// @brief Local-space bounding sphere over the whole mesh, for frustum culling.
     const Geometry::BoundingSphere &LocalBounds() const { return _localBounds; }
 
-    /// @brief Local-space AABB over the whole mesh (GPU-driven stage 1's cull refine).
+    /// @brief Local-space AABB over the whole mesh (the cull pass's refine after
+    /// the bounding-sphere reject).
     const Geometry::Aabb &LocalAabb() const { return _localAabb; }
 
     /// @brief Drawable index ranges, grouped by LOD (LOD0 first). Never empty

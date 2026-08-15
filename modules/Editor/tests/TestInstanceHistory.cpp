@@ -210,8 +210,8 @@ TEST_CASE("EditHistory: editing a loose entity records no instance claim")
     const auto id = SceneSerializer::ExpandInstance(scene, table, "car.abp", {});
     REQUIRE(id.has_value());
 
-    // The rule the whole design rests on: a hand-built entity is indistinguishable
-    // from a member, so an edit to one must not touch anybody's record.
+    // A hand-built entity carries no BlueprintMember tag, so editing one must not
+    // touch anybody's record — however much it looks like a member in the panels.
     const ECS::Entity loose = scene.Create();
     REQUIRE(scene.Add(loose, Camera{}) != nullptr);
 

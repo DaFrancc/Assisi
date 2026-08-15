@@ -242,8 +242,8 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
     // Whether a gated system has anything to work on. Cheap enough to pay every
     // frame for every system: each id is an index into the scene's pool array,
     // so a system whose components are absent costs a load and a compare rather
-    // than a call. That is what makes it affordable for a profile to install
-    // systems a given world may never need.
+    // than a call. That is what makes it affordable for a level to name systems a
+    // given world may never need.
     const auto eligible = [&gateScene](const typename Phase<Ctx>::Entry &entry)
                           {
                               if (entry.requireAny.empty())

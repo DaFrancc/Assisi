@@ -26,7 +26,7 @@
 ///     });
 ///
 /// // Dispatch
-/// _systems.Run(SystemPhase::Update, {world, dt, &input, &actions, events, isActive});
+/// _systems.Run(SystemPhase::Update, {world, dt, simTick, &input, &actions, events, isActive});
 /// _systems.RunRender({ world.scene, 0.f, view, proj });
 /// @endcode
 ///
@@ -165,8 +165,8 @@ public:
         /// @brief Skip this system while the scene holds none of @p Ts.
         ///
         /// What makes it affordable to install a system that a given world may
-        /// never need — an open-world profile installs everything, and the
-        /// regions that stream in decide what actually runs
+        /// never need — an open-world level names everything, and the regions
+        /// that stream in decide what actually runs
         /// (docs/world-system-binding-design-notes.md §5). Idle cost is a couple
         /// of array loads per phase, so frame cost tracks resident entities
         /// rather than how many systems were registered.
@@ -240,7 +240,7 @@ private:
     /// the ordering graph (After()/Before() bind to the first entry of a name).
     /// So a world whose systems are being *re-targeted* — the editor opening a
     /// different level into the world it already edits — must clear before
-    /// applying the incoming level's profile, never stack one on the other.
+    /// applying the incoming level's system list, never stack one on the other.
     ///
     /// Handles returned by earlier Register() calls are dead afterwards: they
     /// address slots that no longer exist. Registering fresh systems hands back

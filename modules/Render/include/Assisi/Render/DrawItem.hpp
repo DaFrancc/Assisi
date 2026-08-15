@@ -8,10 +8,9 @@
 /// A runtime *producer* extracts one DrawItem per visible submesh (cull → LOD
 /// select → emit), sorts a span of them by `sortKey`, and hands that span to
 /// MeshPass::Submit — the *consumer*. Sorting by the key groups draws into
-/// pipeline / material / mesh runs so redundant GPU state binds collapse (NVRHI
-/// caches state across setGraphicsState calls), and orders front-to-back within
-/// a run for early-Z. Every later GPU-driven stage rewrites Submit's interior
-/// (sorted runs → instanced/indirect commands) without changing the producer.
+/// pipeline / material / mesh runs, and orders front-to-back within a run for
+/// early-Z. Submit turns those runs into instanced indirect commands;
+/// the producer knows nothing about how it does it.
 
 #include <algorithm>
 #include <cmath>
@@ -39,8 +38,8 @@ struct DrawItem
 // --- Opaque sort key: [pipeline:8 | materialId:20 | meshId:20 | depth:16] ----
 //
 // Material-major then mesh-major keeps binding-set and vertex/index-buffer
-// changes to the run boundaries (and puts same-mesh/same-material draws adjacent
-// for the future instancing pass); the low 16 depth bits break ties
+// changes to the run boundaries, and puts same-geometry draws adjacent so Submit
+// coalesces them into instanced commands; the low 16 depth bits break ties
 // front-to-back within a run for early-Z. The transparent pass will use a
 // separate depth-major key later (§5) — hence "opaque".
 inline constexpr uint32_t kSortPipelineBits = 8;

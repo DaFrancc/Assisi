@@ -192,10 +192,9 @@ TEST_CASE("ApplySystems refuses a name this build does not declare")
 
 TEST_CASE("ApplySystems leaves the running systems alone when it refuses")
 {
-    // The failure that made this worth fixing: it used to clear first and find
-    // out afterwards, so one bad name left the world running *nothing* — worse
-    // than the state it was asked to replace. A refused call must be a no-op on
-    // what is actually running.
+    // A refused call is a no-op on what is actually running: one bad name must
+    // not leave the world running *nothing*, which is worse than the state it
+    // was asked to replace.
     WorldManager worlds;
     World &world = worlds.Create("KeepsWhatItHas");
 
@@ -206,8 +205,8 @@ TEST_CASE("ApplySystems leaves the running systems alone when it refuses")
     const std::vector<std::string> bad{"Counter", "NoSuchSystemAnywhere"};
     CHECK_FALSE(worlds.ApplySystems(world, bad, "levels/Bad.alvl"));
 
-    // Still running what it had. Note the bad list *contains* Bounce — the point
-    // is not that Bounce survived by being re-installed, but that nothing was
+    // Still running what it had. Note the bad list *contains* Counter — the point
+    // is not that Counter survived by being re-installed, but that nothing was
     // torn down to begin with.
     CHECK(world.systems.Has("Counter"));
 }

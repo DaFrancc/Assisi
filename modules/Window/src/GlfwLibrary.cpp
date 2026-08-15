@@ -24,7 +24,6 @@ GlfwLibrary::GlfwLibrary()
     // without a callback GLFW discards all error detail silently.
     glfwSetErrorCallback(GlfwErrorCallback);
 
-    /* Initialize GLFW. */
     if (glfwInit() != GLFW_TRUE)
     {
         Assisi::Core::Log::Error("Failed to initialize GLFW.");
@@ -37,7 +36,6 @@ GlfwLibrary::GlfwLibrary()
 
 GlfwLibrary::~GlfwLibrary()
 {
-    /* Terminate GLFW. */
     if (_isValid)
     {
         glfwTerminate();

@@ -113,9 +113,8 @@ void libClose(LibHandle h)
 }
 #endif
 
-// Resolve `name`, then `name`+"_v2" preference: several NVML calls only exist as
-// versioned symbols on modern drivers, while a few are unversioned. Try the
-// versioned form first, then the plain one.
+// Resolve `base`+"_v2" first, falling back to plain `base`: several NVML calls
+// only exist as versioned symbols on modern drivers, while a few are unversioned.
 void *resolve(LibHandle lib, const char *base)
 {
     const std::string versioned = std::string(base) + "_v2";

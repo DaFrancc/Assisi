@@ -1,8 +1,8 @@
 # Editor unit tests. EditHistory is deliberately light (Core/ECS/Runtime +
-# nlohmann only), but the Editor *library* grows the whole App stack at E2
-# (ImGui, GLFW, Jolt via Assisi::App) — so the suite compiles the sources it
-# tests directly rather than linking Assisi::Editor, keeping the test binary
-# free of windowing/physics baggage.
+# nlohmann only), but the Editor *library* carries the whole App stack (ImGui,
+# GLFW, Jolt via Assisi::App) — so the suite compiles the sources it tests
+# directly rather than linking Assisi::Editor, keeping the test binary free of
+# windowing/physics baggage.
 add_executable(Assisi-Editor-Tests
   main.cpp
   TestColliderPose.cpp

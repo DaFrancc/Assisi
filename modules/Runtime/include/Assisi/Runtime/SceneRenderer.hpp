@@ -46,12 +46,11 @@ namespace Assisi::Runtime
 inline constexpr glm::vec3 kSelectionOutline{1.0f, 0.55f, 0.05f};
 
 /// @brief The same, for the **active** entity of a selection — the last one
-/// clicked, which is what the inspector shows and what the gizmo actually drives.
+/// clicked, which the inspector shows and the gizmo drives.
 ///
-/// Redder than the rest on purpose. With several things selected, every one of them
-/// moves and only one of them is being edited, and "which one is the inspector
-/// talking about" is otherwise a question the viewport cannot answer. A single
-/// selection is its own active entity, so this is the colour of an ordinary click.
+/// Redder than the rest so the viewport can answer "which one is the inspector
+/// talking about" while several entities move together. A single selection is its
+/// own active entity, so this is the colour of an ordinary click.
 inline constexpr glm::vec3 kActiveSelectionOutline{1.0f, 0.28f, 0.05f};
 
 class SceneRenderer
@@ -59,8 +58,7 @@ class SceneRenderer
 public:
     SceneRenderer() = default;
 
-    /// @brief Everything Initialize() needs, gathered so callers name what they
-    /// set (the positional list had reached eight parameters).
+    /// @brief Everything Initialize() needs, gathered so callers name what they set.
     struct InitParams
     {
         nvrhi::IDevice *device = nullptr;
@@ -166,10 +164,9 @@ public:
 
     /// @brief The uniform ambient term, in linear colour and intensity.
     ///
-    /// Defaults to white at Render::kDefaultAmbientIntensity, which is the constant
-    /// this replaced — so a game that never calls this renders exactly as before.
-    /// The blueprint editor turns it up: inspecting a model means seeing all of it,
-    /// and a scene lit only by a key light hides half of one in black.
+    /// Defaults to white at Render::kDefaultAmbientIntensity. The blueprint editor
+    /// turns it up: inspecting a model means seeing all of it, and a scene lit only
+    /// by a key light hides half of one in black.
     void SetAmbient(const glm::vec3 &color, float intensity)
     {
         _ambientColor     = color;
@@ -183,10 +180,11 @@ public:
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
 
     /// @brief Mark one entity to receive an always-on-top orange silhouette
-    /// outline (a selection highlight). Pass ECS::NullEntity to clear it. The
-    /// entity must carry a Transform and a MeshRenderer with a resolved mesh, or
-    /// the outline is silently skipped. Drawn each Render() after the scene.
-    /// No-op unless InitParams::enableEditorVisuals was set.
+    /// outline (a selection highlight). Pass ECS::NullEntity to clear it. The entity
+    /// must carry a Transform: a resolved mesh outlines its silhouette, an entity
+    /// drawn as an editor icon outlines that billboard, and anything else is
+    /// silently skipped. Drawn each Render() after the scene. No-op unless
+    /// InitParams::enableEditorVisuals was set.
     void SetHighlightedEntity(ECS::Entity entity)
     {
         _highlightedEntities.clear();
@@ -214,12 +212,10 @@ public:
     ///
     /// Set separately rather than read off the end of the list above, because the
     /// caller filters that list: an entity already outlined some other way (a
-    /// rigidbody, drawn by its collider) is dropped from it, and the last survivor
-    /// of that filtering is not the active entity — it just happens to be last.
+    /// rigidbody, drawn by its collider) is dropped from it, so its last survivor is
+    /// not the active entity — it just happens to be last.
     ///
-    /// Harmless if it names an entity that is not in the list, or none at all: with
-    /// exactly one thing selected it *is* the active one, so a single selection
-    /// carries the active colour.
+    /// Harmless if it names an entity that is not in the list, or none at all.
     void SetActiveHighlight(ECS::Entity entity) { _activeHighlight = entity; }
     [[nodiscard]] ECS::Entity ActiveHighlight() const { return _activeHighlight; }
     /// @brief The first highlighted entity, or NullEntity. Kept for callers that
@@ -296,10 +292,12 @@ private:
     void DrawHighlightOutlineFor(ECS::Entity entity, const Render::RenderFrame &frame,
                                  const glm::mat4 &viewProjection, const glm::mat4 &view, ECS::Scene &scene);
 
-    /// @brief Draw a world-space billboard for every entity with a Transform but no
-    /// MeshRenderer, using the camera basis from @p view to face them. Icons beyond
-    /// a fixed distance from @p cameraPosition are skipped (a simple render/don't
-    /// LOD). No-op when icons are hidden or the icon pass is unavailable.
+    /// @brief Draw world-space billboards facing the camera basis from @p view: one
+    /// per placement-only entity (Transform, no MeshRenderer), one per MeshRenderer
+    /// still waiting on its mesh, and the positions SubmitEditorIcons queued.
+    /// Placement icons beyond a fixed distance from @p cameraPosition are skipped (a
+    /// simple render/don't LOD). Hiding editor icons leaves only the loading-mesh
+    /// placeholders; no-op when the icon pass is unavailable.
     void DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::mat4 &view,
                          const glm::vec3 &cameraPosition, ECS::Scene &scene);
 
@@ -367,7 +365,7 @@ private:
     bool _gpuCulling     = false;      // GPU-driven cull path (stage F1); CPU path is the default reference
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
     glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
-    float _ambientIntensity = Render::kDefaultAmbientIntensity;             // == the constant this replaced
+    float _ambientIntensity = Render::kDefaultAmbientIntensity;             // raised by SetAmbient
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene

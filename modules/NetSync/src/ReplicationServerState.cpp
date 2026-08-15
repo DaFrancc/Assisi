@@ -25,10 +25,9 @@ void ReplicationServer::ReconcileNetIds()
     // **Before the assign pass, not after.** A blueprint member's id is
     // `base + memberIndex` off a block that outlives the member, so a member
     // destroyed and respawned is the one case where a live entity legitimately
-    // asks for an id a dead one still holds. Assigning first meant the newcomer
-    // met an id this pass had not retired yet, and was refused it for a tick it
-    // did not need to wait — and, before `_netIds` was one container, refused it
-    // in one direction only, which cost the entity its replication for good.
+    // asks for an id a dead one still holds. Assigning first would meet an id
+    // this pass has not retired yet and refuse the newcomer a tick it does not
+    // need to wait.
     for (auto it = _netIds.begin(); it != _netIds.end();)
     {
         const ECS::Entity entity = it->first;
@@ -249,10 +248,10 @@ void ReplicationServer::CaptureBodyStates()
         //  - it has just gone to sleep — the transition is the change;
         //  - it *moved while not simulating*, which nothing wakes a body for, so
         //    the active set says nothing about it: the editor gizmo and the
-        //    inspector both hold a body Static while it is being moved, gameplay
-        //    can reposition a sleeping body, and a static body is never active
-        //    at all — for a replicated wall, "record it when it stops being
-        //    active" fires once, at its load pose, and never again.
+        //    inspector both hold a *dynamic* body Static while it is being
+        //    moved, and gameplay can reposition a sleeping body. An
+        //    authored-static body never reaches here at all — ReplicatesAsBody
+        //    refuses it and its pose travels as a Transform.
         //
         // Hence polling the pose instead of trusting every mutation site to
         // announce itself: correctness that depends on every call site

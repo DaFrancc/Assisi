@@ -76,27 +76,26 @@ constexpr uint32_t kRetentionBackstop = 50;
 
 Application::Application()
 {
-    // Only infallible setup belongs in the constructor. Logging is wired up
-    // first so that any log lines emitted by derived-class member constructors
-    // (which run after this base ctor) are captured. All fallible engine
-    // bring-up lives in Initialize() so failures can unwind normally instead
-    // of std::exit()-ing past every destructor.
-    // Log and crash dump are writable runtime outputs — resolve them under the
-    // user root (defaults to the exe dir) so they don't depend on the CWD the
-    // process was launched from. The user root initializes lazily here, before
+    // Only infallible setup belongs in the constructor. Logging is wired up first
+    // so log lines from derived-class member constructors (which run after this
+    // base ctor) are captured; all fallible bring-up lives in Initialize(), so a
+    // failure unwinds normally instead of std::exit()-ing past every destructor.
+    //
+    // Log and crash report are writable runtime outputs, resolved under the user
+    // root (defaults to the exe dir) so they don't depend on the CWD the process
+    // was launched from. The user root initializes lazily here, before
     // AssetSystem::Initialize() discovers the read-only asset root.
-    // Only when there is somewhere for it to go. A shipped GUI build has no
-    // console, and an unconditional ConsoleSink would format every line and
-    // write it to a handle nothing can read — the log's real destination in
-    // that build is the file sink below.
+    //
+    // A console sink only when there is somewhere for it to go: a shipped GUI
+    // build has no console, and an unconditional one would format every line and
+    // write it to a handle nothing can read. The file sink below is the log's real
+    // destination there.
     if (Core::HasConsoleOutput())
     {
         Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
     }
-    // One file per launch, named for when the process started. The previous
-    // scheme truncated a single assisi.log every run, which meant a player
-    // relaunching after a crash destroyed the log that explained it before ever
-    // sending it.
+    // One file per launch, named for when the process started: a single truncated
+    // log is destroyed by the relaunch after the crash it explains.
     const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
     const std::filesystem::path logPath = Core::AssetSystem::ResolveUser(logName).value_or(logName);
 
@@ -107,10 +106,9 @@ Application::Application()
     // can never cut below anyone's configured value. InitializeCore prunes to
     // the real counts once they are known.
     //
-    // The point of doing it here rather than only there: this runs on every
-    // launch whatever fails afterwards. Pruning only in InitializeCore meant an
-    // install that failed asset init created a log every launch and never
-    // pruned one, growing without bound.
+    // Here as well as there because this runs on every launch whatever fails
+    // afterwards: an install that fails asset init would otherwise write a log
+    // every launch and prune none, growing without bound.
     const std::filesystem::path userRoot = logPath.parent_path();
     Core::PruneOldFiles(userRoot, "assisi-", ".log", kRetentionBackstop);
     Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), kRetentionBackstop);
@@ -311,11 +309,10 @@ constexpr double kSlowFrameMs = 8.0;
 /// it ratchets up fast when a sleep runs long and decays slowly otherwise, so it
 /// stays just big enough to avoid overshooting without over-reserving spin time.
 ///
-/// The old version reserved a fixed 2ms spin margin, so every capped frame
-/// busy-waited up to 2ms. On Linux (hi-res timers) the real overshoot is ~60us,
-/// so the margin converges there and the spin all but vanishes; on Windows (even
-/// with a 1ms timer period) it settles nearer 1ms. Static (not thread_local) is
-/// fine — only the main loop calls this.
+/// On Linux (hi-res timers) the real overshoot is ~60us, so the margin converges
+/// there and the spin all but vanishes; on Windows (even with a 1ms timer period)
+/// it settles nearer 1ms. Static (not thread_local) is fine — only the main loop
+/// calls this.
 void SleepUntil(Clock::time_point target)
 {
     static double marginSec = 1e-3; // conservative seed; converges within a few frames
@@ -352,9 +349,6 @@ void Application::Run()
     TimerResolutionScope timerResolution;
 #endif
 
-    // Clock and Seconds are both aliased at file scope; the local re-declaration
-    // that used to sit here shadowed the outer one and said in a comment that it
-    // did not.
     const double physicsStep = 1.0 / _config.physicsHz;
 
     OnStart();
@@ -383,16 +377,14 @@ void Application::Run()
         //
         // Two reasons, and the second is why it is here rather than just before
         // the render it paces. Input polled after the sleep is acted on
-        // immediately, where sleeping mid-frame left every input up to a whole
-        // pacing interval stale by the time it reached the screen — 5 ms of the
-        // 7 ms frame, on a 144 cap. And sitting above `now` puts the sleep
-        // outside the measured window entirely, so cpuMs no longer has to
-        // subtract it back out; one less term to keep in sync with the code,
-        // which is precisely how the unaccounted figure went wrong before.
+        // immediately, where sleeping mid-frame leaves every input up to a whole
+        // pacing interval stale by the time it reaches the screen — 5 ms of the
+        // 7 ms frame, on a 144 cap. And sitting above `now` puts the sleep outside
+        // the measured window entirely, so cpuMs does not have to subtract it back
+        // out; one less term to keep in sync with the rest of the loop.
         //
-        // The cost is that render start now jitters with however long input,
-        // fixed-update and update took. That is ~0.16 ms against ~5 ms of
-        // latency saved, so it is not a close call.
+        // The cost is that render start jitters with however long input,
+        // fixed-update and update took: ~0.16 ms against ~5 ms of latency saved.
         //
         // Pacing is exclusive with vsync: only cap in FpsLimit mode with a
         // finite limit. In VSync mode FIFO present paces us; with an unlimited
@@ -429,11 +421,10 @@ void Application::Run()
             sleepMs = Seconds(Clock::now() - sleepStart).count() * 1000.0;
 
             // Advance the target rather than restarting it from now. SleepUntil
-            // can only overshoot, so `= now + period` absorbed every overshoot
-            // permanently and the loop ran a hair under the cap forever — a
-            // measured 6.999 ms against a 6.944 ms period, 142.9 fps instead of
-            // 144. Accumulating the period corrects the overshoot on the next
-            // frame instead.
+            // can only overshoot, so `= now + period` absorbs every overshoot
+            // permanently and runs a hair under the cap forever — 6.999 ms against
+            // a 6.944 ms period, 142.9 fps instead of 144. Accumulating the period
+            // corrects the overshoot on the next frame instead.
             const Clock::duration period =
                 std::chrono::duration_cast<Clock::duration>(Seconds(1.0 / _options.fpsLimit));
             nextRenderTime += period;
@@ -535,11 +526,11 @@ void Application::Run()
             _headless ? nullptr : Render::RenderSystem::GetVulkanContext();
         if (vulkanContext)
         {
-            // Scoped because it is the other thing that used to sit between two
-            // scopes and show as a blank gap. Normally a compare and nothing
-            // else; when the user does flip the option it rebuilds the swapchain,
-            // and a multi-millisecond stall with no slice under it is exactly
-            // the kind of hole that sends you hunting in the wrong place.
+            // Scoped so it cannot show as a blank gap between two slices. Normally
+            // a compare and nothing else; when the user does flip the option it
+            // rebuilds the swapchain, and a multi-millisecond stall with no slice
+            // under it is exactly the kind of hole that sends you hunting in the
+            // wrong place.
             ASSISI_PROFILE_SCOPE("vsync-reconcile");
             vulkanContext->SetVSync(_options.frameSync == FrameSyncMode::VSync);
         }
@@ -565,12 +556,8 @@ void Application::Run()
         // it: the frames-in-flight throttle where BeginFrame() blocks on the GPU
         // (reported by the context). What's left is the real CPU cost, so
         // comparing it against the GPU timer-query time shows which side is
-        // bound.
-        //
-        // The pacing sleep used to need subtracting here too. It now happens
-        // above `now`, outside the window this measures, so there is nothing to
-        // correct for — the term that has to agree with code elsewhere in the
-        // loop is simply gone.
+        // bound. The pacing sleep happens above `now`, outside the window this
+        // measures, so it needs no correction here.
         const double gpuWaitMs = vulkanContext ? vulkanContext->GetLastGpuWaitMs() : 0.0;
         const double cpuMs     = std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - gpuWaitMs);
         const double gpuMs = vulkanContext ? static_cast<double>(vulkanContext->GetLastGpuFrameTimeMs()) : 0.0;
@@ -610,10 +597,9 @@ void Application::Run()
         ASSISI_PROFILE_COUNTER("jobs/main-queue-depth", static_cast<double>(_jobs.MainQueueDepth()));
         PumpChiaraCounters();
 
-        // The breakdown that used to be spelled out here is a capture now. What
-        // survives is the pointer to it: a spike you can see in the log but not
-        // explain is worse than useless, and the whole point of Chiara is that
-        // the explanation is one dump away.
+        // A pointer to the capture rather than the breakdown itself: a spike you
+        // can see in the log but not explain is worse than useless, and the
+        // explanation is one dump away.
         if (cpuMs >= kSlowFrameMs)
         {
             Core::Log::Info("Slow frame {} — {:.2f} ms cpu (gpu {:.2f}, wait {:.2f}, unaccounted {:.2f}); "
@@ -691,16 +677,16 @@ void Application::PumpChiaraCounters()
         }
     }
 
-    // Physics allocation *churn* per frame, differenced from running totals —
-    // Jolt's free hook takes no size, so residency is not knowable without a
-    // header on every block. Churn is the perf-relevant signal anyway: a frame
-    // that allocates is a frame that will pay to free.
     // Streams a running session's events to disk before the rings can wrap over
     // them. Returns immediately unless one is running, and even then only does
     // real work when a buffer is filling — so the cost of asking every frame is
     // a couple of atomic loads.
     Chiara::PumpSession();
 
+    // Physics allocation *churn* per frame, differenced from running totals —
+    // Jolt's free hook takes no size, so residency is not knowable without a
+    // header on every block. Churn is the perf-relevant signal anyway: a frame
+    // that allocates is a frame that will pay to free.
     const Physics::JoltAllocationStats jolt = Physics::GetJoltAllocationStats();
     ASSISI_PROFILE_COUNTER("physics/alloc-count-per-frame",
                            static_cast<double>(jolt.count - _lastJoltAllocCount));

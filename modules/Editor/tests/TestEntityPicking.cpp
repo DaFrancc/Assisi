@@ -3,12 +3,11 @@
 /// @file TestEntityPicking.cpp
 /// @brief A viewport click hits the mesh, not a stand-in cube around it (ENG-125).
 ///
-/// Picking tested every meshed entity against a unit cube — ±0.5 in model space —
-/// while the mesh's own bounds sat one member away on its MeshBuffer, and
-/// FocusCameraOn in the same file already framed with them. Anything not roughly
-/// unit-sized was picked wrong in both directions: a large mesh could not be
-/// clicked over most of its body, and a small one owned a click target far bigger
-/// than what is drawn.
+/// Testing every meshed entity against a unit cube — ±0.5 in model space — picks
+/// anything not roughly unit-sized wrong in both directions: a large mesh cannot
+/// be clicked over most of its body, and a small one owns a click target far
+/// bigger than what is drawn. The mesh's own bounds sit one member away on its
+/// MeshBuffer, which is what FocusCameraOn already frames with.
 ///
 /// So the assertions are about *which entity comes back*: a mesh whose local
 /// bounds are clearly not unit-sized, hit from a direction that misses the cube,
@@ -124,7 +123,7 @@ TEST_CASE("PickEntityInScene: a large mesh is clickable over its whole body")
 {
     Fixture fixture;
     // Half-extent 4, so the ray at y = 3 is well inside the mesh and well outside
-    // the ±0.5 cube the old test used.
+    // a ±0.5 cube.
     const ECS::Entity big = fixture.SpawnMeshed(glm::vec3(0.f), 4.f);
 
     float t = 0.f;
@@ -136,8 +135,8 @@ TEST_CASE("PickEntityInScene: a large mesh is clickable over its whole body")
 TEST_CASE("PickEntityInScene: a small mesh does not own the space around it")
 {
     Fixture fixture;
-    // Half-extent 0.05 — a click 0.3 above it lands inside the old unit cube and
-    // must still miss, or the entity is answering for space it does not occupy.
+    // Half-extent 0.05 — a click 0.3 above it lands inside a unit cube and must
+    // still miss, or the entity is answering for space it does not occupy.
     fixture.SpawnMeshed(glm::vec3(0.f), 0.05f);
 
     CHECK(fixture.Pick(RayAt(glm::vec3(0.f, 0.3f, 0.f))) == ECS::NullEntity);
@@ -222,7 +221,7 @@ TEST_CASE("PickableBounds: a mesh's own box is used as it is")
 TEST_CASE("PickableBounds: a flat mesh keeps a thickness to be clicked on")
 {
     // A ground quad has no extent on Y. Passed through unpadded it is a razor slab
-    // only an exactly edge-on ray can hit, which is worse than the cube it replaced.
+    // only an exactly edge-on ray can hit.
     const Geometry::Aabb quad{.min = glm::vec3(-5.f, 0.f, -5.f), .max = glm::vec3(5.f, 0.f, 5.f)};
     const Geometry::Aabb picked = PickableBounds(quad);
 

@@ -6,8 +6,8 @@
 ///
 /// NVRHI does not create the window surface, physical device, logical device, or
 /// swapchain — those are plain Vulkan API calls the application is responsible for.
-/// This class owns that bring-up (proven first in the standalone apps/vk_triangle
-/// spike) and hands NVRHI an already-created VkInstance/VkPhysicalDevice/VkDevice.
+/// This class owns that bring-up and hands NVRHI an already-created
+/// VkInstance/VkPhysicalDevice/VkDevice.
 
 #include <vulkan/vulkan.h>
 
@@ -80,12 +80,6 @@ public:
     /// frame-time figure; 0 when the CPU didn't have to wait (GPU-idle, i.e.
     /// CPU-bound).
     [[nodiscard]] double GetLastGpuWaitMs() const { return _lastGpuWaitMs; }
-
-    // GetLastGcMs() used to live here. Garbage collection is still real
-    // main-thread CPU work worth watching — a frame destroying a burst of
-    // streaming allocations pays for it after the present — but it is now a
-    // `gpu-gc` scope and a `render/gc-ms` counter in the capture. The accessor's
-    // only consumer was the slow-frame log line it fed.
 
     [[nodiscard]] nvrhi::IDevice *GetDevice() const { return _nvrhiDevice; }
 

@@ -445,10 +445,10 @@ void EditorApp::ReexpandInstancesOf(const std::string &source, std::vector<Pendi
         return;
 
     // One collection at a time: the prompt has one set of buttons, so a second save
-    // cannot ask. **This guard must stay below the invalidation above.** From the top
-    // of the function it returned before the cache was dropped — the file on disk,
-    // `GetBlueprintDefinition` still handing out the contents from before it, every
-    // later spawn building the old thing and the author told nothing.
+    // cannot ask. **This guard must stay below the invalidation above.** Returning
+    // ahead of it leaves the new file on disk while `GetBlueprintDefinition` still
+    // hands out the contents from before it, so every later spawn builds the old
+    // thing and nothing says so.
     //
     // Below it, the only thing left to skip is the live copies' catch-up: the "Leave
     // them" answer, given on the author's behalf because there was no way to ask. The

@@ -269,12 +269,11 @@ TEST_CASE("Blueprint over the wire: destroying the instance on the host takes th
     CHECK(fixture.client.InstanceRecords().empty());
 
     // ...and so is the row the expansion put in the guest's own table, which
-    // NetSync does not own and had no way to reach. Without a despawn
-    // counterpart to Expand this outlives every one of its members for the rest
-    // of the session: nothing in the entity list, which is member-driven, but a
-    // row is what the viewport draws an instance icon from and what
-    // PickInstance ray-tests — a ghost you can still click on (round-7 S5,
-    // corrected in §9.5).
+    // NetSync does not own and has no way to reach. Without a despawn counterpart
+    // to Expand the row outlives every one of its members for the rest of the
+    // session: nothing in the entity list, which is member-driven, but a row is
+    // what the viewport draws an instance icon from and what PickInstance
+    // ray-tests — a ghost you can still click on.
     CHECK(fixture.guest.instances.Size() == 0);
 }
 
@@ -316,16 +315,15 @@ std::uint64_t CarBytes(const std::vector<std::string> &manifest, const ECS::Tran
 ///
 /// A translation, deliberately without a rotation. The claim being defended is
 /// that a placement does not stop the client deriving its own members, and a
-/// translation states it in full: the composition is real, the comparison operand
-/// has to account for it, and a fix is *measurably* enough — with the placement
-/// composed onto the comparison operand these two cases go to 153 bytes against
-/// 233, the same saving the origin case gets.
+/// translation states it in full: the composition is real and the comparison
+/// operand has to account for it — these two cases send 153 bytes where a run
+/// with no manifest sends 233, the same saving the origin case gets.
 ///
 /// A rotated placement is a strictly harder case and does not belong here: the
 /// compose/inverse-compose pair is an exact inverse in arithmetic but not
 /// bit-for-bit in float, so whether a *byte* comparison can ever match under one
-/// is a question about B9's fix rather than about B9. Naming it here would assert
-/// something a correct fix might not be able to deliver.
+/// is an open question. Asserting it here would demand something the elision may
+/// not be able to deliver.
 ECS::Transform MovedPlacement()
 {
     ECS::Transform at;
@@ -355,10 +353,9 @@ TEST_CASE("Blueprint over the wire: an untouched member costs no component bytes
     CHECK(withEdit > derived);
 
     // Spawned at the origin, which is the one placement where comparing a live
-    // component against the *authored local* value is sound — composing the
-    // origin onto a member changes nothing. So this case cannot see B9 at all,
-    // and it passes whether or not B9 is fixed. The two below are the ones that
-    // measure it.
+    // component against the *authored local* value is sound — composing the origin
+    // onto a member changes nothing. So this case says nothing about elision under
+    // any other placement; the two below are the ones that measure that.
 }
 
 TEST_CASE("Blueprint over the wire: the saving survives a placement that is not the origin")
@@ -375,10 +372,9 @@ TEST_CASE("Blueprint over the wire: the saving survives a placement that is not 
     // the placement in the record and composes it onto the same file the host
     // expanded, so every member is still exactly what it would have built anyway.
     //
-    // The assertion that proves B9's fix did anything, since the origin case above
-    // passes either way: before it, the comparison operand was the authored *local*
-    // value against a live Compose(P, T), nothing matched, and the record was pure
-    // overhead — 277 bytes against 233 with no manifest at all.
+    // The assertion the origin case above cannot make, since that one passes either
+    // way: comparing the authored *local* against a live Compose(P, T) matches
+    // nothing away from the origin, and the record is then pure overhead.
     CHECK(derived < sent);
 }
 
@@ -414,11 +410,11 @@ TEST_CASE("Blueprint over the wire: a member reset to its authored value away fr
     const ECS::Transform *mirrored = fixture.guest.scene.Get<ECS::Transform>(mirror);
     REQUIRE(mirrored != nullptr);
 
-    // B9's silent half, and why the byte count above is not enough on its own: a
-    // fix could shrink the snapshot and still leave this mirror wrong. With the
-    // authored local as the operand the body now equals it exactly, so the
-    // Transform was elided — and the gate is `sinceChangeTick == 0 && !clientHasIt`
-    // (Replication.cpp:1951), the empty baseline, so elided once meant never
+    // Why the byte count above is not enough on its own: a change that shrinks the
+    // snapshot can still leave this mirror wrong. With the authored local as the
+    // comparison operand the body now equals it exactly, so the Transform is
+    // elided — and the gate is `sinceChangeTick == 0 && !clientHasIt`
+    // (ReplicationServerSnapshot.cpp), the empty baseline, so elided once is never
     // resent: guest x = 40 forever against a host at 0.
     CHECK(mirrored->position.x == doctest::Approx(0.f));
 }
@@ -505,8 +501,8 @@ TEST_CASE("Blueprint over the wire: a guest with no render services expands anyw
 
     // Managed worlds with no services installed — what a dedicated server is, and
     // what every headless process is. The expander resolves its placed members'
-    // assets (round-7 S14), and this is the shape that resolve has to survive:
-    // a manager it can reach, holding a cache and a database that are not there.
+    // assets, and this is the shape that resolve has to survive: a manager it can
+    // reach, holding a cache and a database that are not there.
     // The standalone world every other case here uses (`manager == nullptr`) is
     // the other half of the same guard.
     App::WorldManager worlds;
@@ -694,8 +690,7 @@ TEST_CASE("Join: stripping the host's copies takes their bodies out of the physi
     CHECK(stripped.orphans == 1);
 
     // The body goes with the entity. Destroying the entity alone leaves a body in
-    // the simulation that nothing holds a handle to — which is what the headless
-    // join did while the windowed one did not, the two having been written twice.
+    // the simulation that nothing holds a handle to.
     std::vector<Physics::PhysicsWorld::ActiveBodyState> after;
     world.physics.GetActiveBodyStates(after);
     CHECK(after.empty());

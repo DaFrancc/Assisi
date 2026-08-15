@@ -182,9 +182,9 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
 
 TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist")
 {
-    // What lets a profile install systems a world may never need: an open-world
-    // profile installs everything, and residency decides what runs. The gate has
-    // to open and close with the data, not just once at startup.
+    // What lets a level name systems a world may never need: an open-world level
+    // names everything, and residency decides what runs. The gate has to open and
+    // close with the data, not just once at startup.
     WorldManager worlds;
     World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
@@ -238,7 +238,7 @@ TEST_CASE("SystemRegistry: RequireAny runs when ANY of the listed components is 
 
 TEST_CASE("SystemRegistry: the activation gate is per world, not per registry")
 {
-    // Two worlds built from one profile share the system *set*; whether each
+    // Two worlds built from one system list share the system *set*; whether each
     // one runs it is decided by that world's own contents.
     WorldManager worlds;
     World &withData = worlds.Create("WithData");

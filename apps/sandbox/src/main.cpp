@@ -4,8 +4,8 @@
 ///
 /// The editor itself lives in modules/Editor (Assisi::Editor::EditorApp); this
 /// executable just parses arguments, builds an EditorConfig, and runs it. Its
-/// only "game" content is the demo systems below, which exist so the per-world
-/// system binding has something observable to run. (The Phase 2 template splits
+/// only "game" content is DemoSystems.hpp, which exists so the per-world system
+/// binding has something observable to run. (The Phase 2 template splits
 /// this into Game/GameEditor targets over a shared GameLib; see
 /// docs/editor-extraction-plan.md.)
 
@@ -57,9 +57,6 @@ constexpr const char *kUsage =
     "                          build)\n"
     "  -h, --help              show this help and exit\n";
 
-// Parses argv into the editor config inputs. Returns false with a message
-// printed when the arguments are malformed; sets shouldExit when --help was
-// handled (a clean early exit, not an error).
 // Parses "addr", "addr:port", or ":port" into its parts, leaving whichever it
 // does not find untouched. IPv6 literals are not handled here — --connect takes
 // the plain form, and anything more elaborate belongs in a server browser, not
@@ -87,6 +84,9 @@ bool ParseAddress(std::string_view text, std::string &outAddress, std::uint16_t 
     return true;
 }
 
+// Parses argv into the editor config inputs. Returns false with a message
+// printed when the arguments are malformed; sets shouldExit when --help was
+// handled (a clean early exit, not an error).
 bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &server,
                Sandbox::ServerOptions &serverOptions, bool &pieClient, bool &shouldExit)
 {

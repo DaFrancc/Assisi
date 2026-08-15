@@ -335,10 +335,8 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
     reads as "keep this off the wire" while nothing about the type is on the wire
     to begin with.
 
-    The retired `replicated` spelling is rejected here by name. It would
-    otherwise parse as an unknown flag and be ignored, silently un-replicating a
-    component that used to travel — the worst possible outcome for a rename whose
-    entire purpose was to stop conflating capability with policy.
+    `replicated` is rejected here by name rather than left to the unknown-flag
+    path, which would ignore it and take the component off the wire in silence.
     """
     for comp in components:
         where = f"{header_name}: {'asset' if comp.is_asset else 'component'} '{comp.name}'"
@@ -441,12 +439,10 @@ def _check_messages(messages: list, header_name: str) -> None:
         # An event that is not `independent` is scoped by the entity it is about:
         # relevancy sends it to whoever can see that entity, and holds it for
         # whoever has not been told about it yet. Which field names that entity is
-        # *marked*, never inferred — the engine used to take the first EntityRef
-        # field, which made declaration order silently decide the audience, and
-        # left an event whose first reference happened to be null
-        # indistinguishable from an independent one, i.e. broadcast to everyone.
-        # Marking it is the answer AFIELD(controlled) already gives on the intent
-        # side, for the same reason.
+        # *marked*, never inferred: inferring it from declaration order lets a
+        # reorder change the audience, and makes an event whose reference happens
+        # to be null indistinguishable from an independent one — broadcast to
+        # everyone. AFIELD(controlled) is the same answer on the intent side.
         if msg.direction == 'event' and not msg.args.has('independent'):
             if not any(f.cpp_type in _ENTITY_REF_TYPES for f in msg.fields):
                 raise ValueError(
@@ -653,10 +649,10 @@ const bool {var} = []() -> bool
 def gen_system_registration(system) -> str:
     """One ASYSTEM declaration's catalog entry.
 
-    The declaration *is* the registration, and it lands in the module's generated
-    OBJECT library — which cmake/AssisiReflect.cmake pulls fully into the final
-    link precisely so a static initializer nobody references still runs. That is
-    what replaces `registerGameSystems`: linking a module registers its systems.
+    The declaration *is* the registration: linking a module registers its
+    systems. It lands in the module's generated OBJECT library, which
+    cmake/AssisiReflect.cmake pulls fully into the final link precisely so a
+    static initializer nobody references still runs.
 
     The function is wrapped in a lambda with an explicit fully-qualified call
     rather than taken by address, for the same reason handler binding is: nothing

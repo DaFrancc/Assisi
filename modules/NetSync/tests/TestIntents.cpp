@@ -331,8 +331,7 @@ TEST_CASE("malformed and unknown intents are counted, and the connection lives")
 TEST_CASE("the host's own intent goes through the same door")
 {
     // A listen server's player is not a connection, so without this it would be
-    // the one participant whose intents skipped every check — and the one whose
-    // path no fuzz test ever covered.
+    // the one participant whose intents skipped every check.
     Harness harness;
     harness.Step(4);
 

@@ -11,8 +11,7 @@
 /// That is only worth anything if it holds under the conditions the server
 /// actually runs in — ordinary entities being created in between, members
 /// noticed in the wrong order, and an instance the provider cannot describe.
-/// Those are the cases here (docs/blueprint-implementation-plan.md, stage 7b,
-/// R5/R7).
+/// Those are the cases here (docs/blueprint-implementation-plan.md, stage 7b).
 
 #include <doctest/doctest.h>
 
@@ -585,8 +584,8 @@ TEST_CASE("Blueprint replication: a replicated tag names the client's instance, 
     const ECS::BlueprintMember *tag = clientScene.Get<ECS::BlueprintMember>(mirror);
     REQUIRE(tag != nullptr);
 
-    // The hole this closes: before the codec hooks, the tag arrived carrying the
-    // server's per-world counter, which names nothing here.
+    // Without the codec hooks the tag would arrive carrying the server's
+    // per-world counter, which names nothing here.
     CHECK(tag->instanceId != serverInstance);
     CHECK(tag->instanceId == ECS::InstanceId{101});
     CHECK(tag->memberIndex == 0);
@@ -749,9 +748,9 @@ TEST_CASE("Blueprint replication: an intent naming an instance arrives as the se
     REQUIRE(log.tagInstanceCalls == 1);
     CHECK(log.lastTagInstance.note == 3); // the ordinary field, to place the failure
 
-    // The hole this closes: with no hooks on the intent path the server's handler
-    // is handed the client's own per-world counter, which names an unrelated
-    // instance here — or nothing — and does it silently.
+    // With no hooks on the intent path the server's handler is handed the
+    // client's own per-world counter, which names an unrelated instance here —
+    // or nothing — and does it silently.
     CHECK(log.lastTagInstance.instance == InstanceSession::kServerInstance);
 }
 
@@ -851,8 +850,7 @@ TEST_CASE("Blueprint replication: leaving and re-entering resends the record")
 
     // Acks stop landing, so the server's knownInstances keeps saying the client
     // has the record. Without holding them the ordinary cumulative-set mechanism
-    // clears it anyway and this case never arises — an earlier version of this
-    // test passed with the rule deleted for exactly that reason.
+    // clears it anyway and this case never arises at all.
     fixture.holdAcks = true;
 
     // Out of the set: the client despawns the whole block as one run, which takes
@@ -1057,8 +1055,8 @@ TEST_CASE("Blueprint replication: a retired record collapses the instance the ex
     // Once, and naming the id the *expander* chose — 100-and-up here, deliberately
     // nothing like the server's InstanceId{2}, because the server's id means
     // nothing on this machine. Without this call the expander is never told, and
-    // whatever it recorded when it expanded outlives every member of the instance
-    // (round-7 S5).
+    // whatever it recorded when it expanded outlives every member of the
+    // instance.
     REQUIRE(expander->collapsed.size() == 1);
     CHECK(expander->collapsed[0].value == expander->expandedByBase[secondBase].value);
     CHECK(expander->collapsed[0].value != expander->expandedByBase[firstBase].value);
@@ -1086,18 +1084,12 @@ TEST_CASE("Blueprint replication: a block is allocated once and outlives the tic
 }
 
 // ── The instance-record lifecycle ─────────────────────────────────────────────
-// Round-7 findings B6, B7, B8 and B13 are all defects in what the record means
-// over time — who may see a member, when a record is thrown away, which members
-// a record implies exist, and which acks may reinstate one. Nothing covered any
-// of them, which is why the cases below landed before the fixes (§9.2's "Tests"
-// paragraph), each `should_fail` and naming the finding it documents.
-//
-// B7, B8 and B13 were one design change and their decorators are gone with it —
-// the record now carries which members exist, a record dies with its last
-// member, the record section pays the byte budget, and forgetting an instance
-// reaches the in-flight ring. B6's decorator is gone too: the ControllerOnly
-// filter is re-applied after block escalation, and the pair of cases below pins
-// both directions of it.
+// What a record means over time: who may see a member, when a record is thrown
+// away, which members a record implies exist, and which acks may reinstate one.
+// The record carries which members exist, dies with its last member, and pays
+// the snapshot byte budget; forgetting an instance reaches the in-flight ring;
+// and the ControllerOnly filter is re-applied after block escalation, which the
+// pair of cases below pins in both directions.
 
 namespace
 {
@@ -1139,11 +1131,11 @@ bool HasLiveMirror(Fixture &fixture, NetId netId)
 
 TEST_CASE("Blueprint replication: escalation does not hand out a ControllerOnly member")
 {
-    // B6, fixed. ControllerOnly used to be applied once, before block escalation,
-    // and escalation then re-added every member of any block a surviving sibling
-    // belongs to, re-intersecting only against the live set. The filter was never
-    // re-applied, so naming any wheel of the car bought the private member too.
-    // It now runs again over what escalation produced.
+    // ControllerOnly runs again over what escalation produced. Escalation
+    // re-adds every member of any block a surviving sibling belongs to,
+    // re-intersecting only against the live set, so with the filter applied only
+    // once — before escalation — naming any wheel of the car buys the private
+    // member too.
     Fixture fixture;
     fixture.instances->Add(ECS::InstanceId{1}, 3);
 
@@ -1213,7 +1205,7 @@ TEST_CASE("Blueprint replication: ControllerOnly is ignored when no relevancy pr
 
 TEST_CASE("Blueprint replication: escalation still delivers a ControllerOnly member to its controller")
 {
-    // The other half of B6, and the one that makes the fix a filter rather than a
+    // The other half, and the one that makes this a filter rather than a
     // ban: re-applying ControllerOnly after escalation must not cost the
     // controlling connection its own private member. Reversing the comparison in
     // the re-applied filter, or dropping every ControllerOnly member outright,
@@ -1247,14 +1239,14 @@ TEST_CASE("Blueprint replication: escalation still delivers a ControllerOnly mem
 
 TEST_CASE("Blueprint replication: escalation costs each relevant block its member count, once")
 {
-    // S10. Escalation used to push the whole block once per already-relevant
-    // member of it, so a car every one of whose members the provider named cost
-    // memberCount² pushes and a sort over the result. The shape is invisible at
-    // three members and ruinous at the scale the finding quotes — 100 cars × 20
-    // members is 40k pushes and a 40k sort, per connection, per snapshot.
+    // Escalation pushes a block once, not once per already-relevant member of
+    // it: the per-member form costs memberCount² pushes and a sort over the
+    // result, which is invisible at three members and ruinous at scale — 100
+    // cars × 20 members is 40k pushes and a 40k sort, per connection, per
+    // snapshot.
     //
-    // Pinned on the counter rather than on a clock: what the finding is about is
-    // the work done, and a timing assertion at test scale measures the machine.
+    // Pinned on the counter rather than on a clock: what matters is the work
+    // done, and a timing assertion at test scale measures the machine.
     Fixture fixture;
     fixture.instances->Add(ECS::InstanceId{1}, 4);
     fixture.instances->Add(ECS::InstanceId{2}, 4);
@@ -1277,9 +1269,9 @@ TEST_CASE("Blueprint replication: escalation costs each relevant block its membe
 
     auto owned    = std::make_unique<PickyProvider>();
     auto *provider = owned.get();
-    // The worst case for the old loop and the ordinary case in a real session:
-    // every member of two instances is independently relevant. The third is named
-    // by nothing, and must cost nothing.
+    // The worst case for a per-member loop, and the ordinary case in a real
+    // session: every member of two instances is independently relevant. The
+    // third is named by nothing, and must cost nothing.
     for (std::uint32_t index = 0; index < 4; ++index)
     {
         provider->named.push_back(NetId{firstBase.value + index});
@@ -1293,8 +1285,8 @@ TEST_CASE("Blueprint replication: escalation costs each relevant block its membe
     const ConnectionDiagnostics *diagnostics = fixture.server.Diagnostics(fixture.pair.first);
     REQUIRE(diagnostics != nullptr);
 
-    // Two blocks of four, each escalated once: eight. The old loop pushed each
-    // block once per member of it already in the set — 4² + 4² = 32.
+    // Two blocks of four, each escalated once: eight. A per-member loop would
+    // push each block once per member of it already in the set — 4² + 4² = 32.
     CHECK(diagnostics->escalationPushes == 8);
 
     // ...and the saving is in the work, not in the answer: both cars are still
@@ -1361,14 +1353,12 @@ TEST_CASE("Blueprint replication: skipping over an escalated block still sees th
 
 TEST_CASE("Blueprint replication: two adjacent instances leaving together take both records")
 {
-    // B7, fixed. Despawns are run-length encoded over the whole set and do not
-    // respect block boundaries, while the client used to erase a record only when
-    // a run started exactly at its base *and* its length equalled that record's
-    // memberCount. Two 3-member instances at adjacent bases leave as one run of 6:
-    // the first record's count disagreed, the second's base was never probed, and
-    // neither was erased. The entities were destroyed all the same. The predicate
-    // is now "the record has no member left", which is what the server's resend
-    // predicate has always meant.
+    // Despawns are run-length encoded over the whole set and do not respect block
+    // boundaries, so the client erases a record on "no member left" rather than
+    // on a run matching its base and memberCount. Two 3-member instances at
+    // adjacent bases leave as one run of 6: matching on the run would find the
+    // first record's count disagreeing and never probe the second's base, leaving
+    // both records behind entities that are destroyed all the same.
     Fixture fixture;
     fixture.instances->Add(ECS::InstanceId{1}, 3);
     fixture.instances->Add(ECS::InstanceId{2}, 3);
@@ -1426,12 +1416,12 @@ TEST_CASE("Blueprint replication: two adjacent instances leaving together take b
 
 TEST_CASE("Blueprint replication: a member pruned before a client joins is not resurrected on it")
 {
-    // B8, fixed. `InstanceInfo::memberCount` is the definition's count, captured
-    // once when the block is allocated, and nothing on the wire used to say which
-    // members still exist. The client expanded all of them and bound `base + i`
-    // for every i, so a member destroyed on the host before this connection
-    // existed became a live phantom here that no despawn named and no delta ever
-    // touched. The record now carries one presence bit per member.
+    // `InstanceInfo::memberCount` is the definition's count, captured once when
+    // the block is allocated, so the record carries one presence bit per member
+    // to say which of them still exist. Without those bits the client expands all
+    // of them and binds `base + i` for every i, and a member destroyed on the
+    // host before this connection existed becomes a live phantom here that no
+    // despawn names and no delta ever touches.
     Fixture fixture;
     fixture.instances->Add(ECS::InstanceId{1}, 3);
 
@@ -1464,13 +1454,12 @@ TEST_CASE("Blueprint replication: a member pruned before a client joins is not r
 
 TEST_CASE("Blueprint replication: a stale ack cannot reinstate an instance the client dropped")
 {
-    // B13, fixed. `ForgetAcked` scrubbed three of the four cumulative sets in the
-    // in-flight ring — `netIds`, `written`, `components` — but not
-    // `SentSnapshot::instances`, which `HandleAck` installs into `knownInstances`
-    // wholesale. An ack for a snapshot sent before the instance left put the
-    // instance back into `knownInstances`, so the record was never resent, while
-    // the client had thrown its copy away when the despawn landed.
-    // ForgetAckedInstance now scrubs the ring too.
+    // `HandleAck` installs `SentSnapshot::instances` into `knownInstances`
+    // wholesale, so forgetting an instance has to scrub the in-flight ring as
+    // well — `ForgetAckedInstance`'s job. Left unscrubbed, an ack for a snapshot
+    // sent before the instance left puts it back into `knownInstances`, the
+    // record is never resent, and the client threw its copy away when the
+    // despawn landed.
     Fixture fixture;
     fixture.instances->Add(ECS::InstanceId{1}, 3);
 
@@ -1494,7 +1483,7 @@ TEST_CASE("Blueprint replication: a stale ack cannot reinstate an instance the c
     REQUIRE(expander->calls == 1);
 
     // From here the acks are held, so the server's view of what this client has
-    // stops advancing on its own — the state B13 needs is one where an *old* ack
+    // stops advancing on its own — the state this needs is one where an *old* ack
     // arrives after the world has moved on, and an ack stream that keeps up
     // clears the set before it can do any damage.
     fixture.holdAcks = true;
@@ -1503,8 +1492,8 @@ TEST_CASE("Blueprint replication: a stale ack cannot reinstate an instance the c
     REQUIRE(preLeaveAcks >= 1); // at least one snapshot sent while the instance was known
 
     // Out of relevancy: the run covers the whole block, so the client destroys
-    // its members and — this instance is alone, so B7 does not interfere — erases
-    // the record.
+    // its members and — this instance is alone, so no neighbouring block shares
+    // the run — erases the record.
     provider->named.clear();
     fixture.Step(4);
     REQUIRE(fixture.client.InstanceRecords().empty());
@@ -1539,12 +1528,11 @@ TEST_CASE("Blueprint replication: a stale ack cannot reinstate an instance the c
 
 TEST_CASE("Blueprint replication: the record section pays the snapshot byte budget")
 {
-    // B11. The records were written before both budget checks and never consulted
-    // `maxSnapshotBytes`, so a join carrying more fresh instances than the budget
-    // allows produced one oversized packet per snapshot until it was acked — with
-    // the entity loop starved behind a section that had already spent everything.
-    // Paginated now: what fits goes, the rest waits, and no instance is left
-    // behind.
+    // The record section is paginated against `maxSnapshotBytes`: what fits goes,
+    // the rest waits, and no instance is left behind. Written without consulting
+    // the budget, a join carrying more fresh instances than it allows produces
+    // one oversized packet per snapshot until it is acked, with the entity loop
+    // starved behind a section that has already spent everything.
     Net::NetTransport transport;
     ECS::Scene serverScene;
     ECS::Scene clientScene;
@@ -1613,7 +1601,7 @@ TEST_CASE("Blueprint replication: the record section pays the snapshot byte budg
 
     // A soft cap, and the overshoot is bounded by what every other section is
     // already allowed: the last record written, the last entity block written,
-    // and the event allowance. Blowing past it by a *kilobyte* is the finding.
+    // and the event allowance. Blowing past it by a *kilobyte* is not.
     CHECK(largestSnapshot <= config.maxSnapshotBytes + 256);
 
     // ...and paginating is not dropping. Every instance is named and every member
@@ -1670,7 +1658,7 @@ TEST_CASE("Blueprint replication: a member the client never expanded is not elid
     REQUIRE(HasLiveMirror(fixture, NetId{base.value + 1}));
     const ECS::Entity mirror = fixture.client.EntityOf(NetId{base.value + 1});
     const ECS::Transform *const seen  = fixture.clientScene.Get<ECS::Transform>(mirror);
-    REQUIRE(seen != nullptr); // elided, and the mirror has no Transform at all
+    REQUIRE(seen != nullptr); // unguarded, the elision leaves the mirror with no Transform at all
     CHECK(seen->position.x == doctest::Approx(12.f));
 }
 
@@ -1776,10 +1764,10 @@ TEST_CASE("Blueprint replication: a member destroyed and respawned inside one ti
     // missing from it reads as a member that is gone.
     CHECK(fixture.server.InstanceBlockCount() == 1);
 
-    // Later ticks do not repair it, which is the half of the report that was
-    // still open. The assign pass writes the reverse map only where the forward
-    // map has no row, and the respawned member has one; the cleanup pass walks
-    // the reverse map, where it no longer appears. Neither pass can see it.
+    // Nothing later would repair a lost reverse row, so the reconcile has to get
+    // it right on the tick: the assign pass writes the reverse map only where the
+    // forward map has no row, and the respawned member has one; the cleanup pass
+    // walks the reverse map, where it no longer appears. Neither pass can see it.
     fixture.AssignIds();
     fixture.AssignIds();
     CHECK(fixture.server.EntityOf(base) == respawned);
@@ -2024,15 +2012,14 @@ ECS::Entity VictimAtNetIdOne(Fixture &fixture)
 
 TEST_CASE("Blueprint replication: a record whose block wraps the id space is refused")
 {
-    // B10. `base` comes off the wire and was only checked for `IsValid()`, then
-    // added to once per member — so `base = 0xFFFFFFFF` with three members bound
-    // 0xFFFFFFFF, then 0, then **1**, and that last one is a real entity's
-    // mapping overwritten by an instance member. Silent: every later delta for
-    // NetId 1 then lands on the wrong entity, and nothing on either side says so.
+    // `base` comes off the wire and is added to once per member, so a bound is
+    // needed rather than an `IsValid()` check: `base = 0xFFFFFFFF` with three
+    // members binds 0xFFFFFFFF, then 0, then **1**, and that last one is a real
+    // entity's mapping overwritten by an instance member. Silent — every later
+    // delta for NetId 1 lands on the wrong entity, and nothing says so.
     //
-    // 0xFFFFFFFF, not the 0xFFFFFFFE of the finding as written (§9.1): that one
-    // stops at NetId{0}, which the entity path already refuses, so it would pass
-    // with the guard deleted.
+    // 0xFFFFFFFF rather than 0xFFFFFFFE: that one stops at NetId{0}, which the
+    // entity path already refuses, so it would pass with the guard deleted.
     Fixture fixture;
     const ECS::Entity mirror   = VictimAtNetIdOne(fixture);
     FakeExpander *expander = InstallExpander(fixture);

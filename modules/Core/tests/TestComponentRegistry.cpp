@@ -17,8 +17,8 @@ using Assisi::Core::Reflect::kInvalidComponentId;
 namespace
 {
 // Distinctive names/types so the assertions hold regardless of whatever else is
-// linked into the test binary's registry. The registry is a process singleton,
-// so everything shares one TEST_CASE to register exactly once.
+// linked into the test binary's registry, which is a process singleton shared
+// with every other suite in this executable.
 struct RegAlpha
 {
 };
@@ -32,8 +32,7 @@ struct RegHidden
 {
 };
 
-// Round-6 review M4 fixtures. Distinctive names/types so the assertions hold
-// regardless of what else is linked into this binary's shared registry.
+// Fixtures for the late-registration and duplicate-name cases below.
 struct ZzzM4Late
 {
 };
@@ -50,9 +49,8 @@ struct M4DupB
 ComponentMeta Meta(const char *name, std::type_index type, bool serializable = true)
 {
     // Every member listed so -Wmissing-field-initializers stays quiet; the
-    // type-erased hooks are unused by these tests. Keep this exhaustive — the
-    // comment above was true when it was written and then two hooks were added
-    // without it, which is exactly the drift -Werror now catches.
+    // type-erased hooks are unused by these tests. Keep it exhaustive as
+    // ComponentMeta gains members.
     return ComponentMeta{.name            = name,
                          .typeIndex       = type,
                          .fields          = {},
@@ -68,10 +66,9 @@ ComponentMeta Meta(const char *name, std::type_index type, bool serializable = t
 
 // Registered from a static initializer, before main and therefore before any
 // test can query (and finalize) the registry — exactly how generated component
-// registrations behave. Registering lazily inside a TEST_CASE only worked while
-// a late Register silently renumbered; it is now refused (round-6 M4a), and the
-// order these arrive in is deliberately not alphabetical so the id-assignment
-// tests still prove the sort.
+// registrations behave, and the only window a Register is accepted in. The
+// arrival order is deliberately not alphabetical so the id-assignment tests
+// still prove the sort.
 const bool s_fixturesRegistered = []
                                   {
                                       auto &registry = ComponentRegistry::Instance();
@@ -185,13 +182,11 @@ TEST_CASE("ComponentRegistry assigns dense alphabetical ids")
     }
 }
 
-// Round-6 review M4 (a), FIXED: the registry is immutable once an id has been
-// issued. Ids are positions in the name-sorted list (the property that makes them
-// reproducible across builds), so honouring a late Register would renumber ids
-// that ComponentIdOf<T> has already memoised and that saved scenes already store
-// — and would reallocate _metas, dangling every pointer ById()/All() handed out.
-// Register therefore refuses: it asserts in debug and drops the component with an
-// error in release. Both are better than silent renumbering.
+// The registry is immutable once an id has been issued. Ids are positions in the
+// name-sorted list, so honouring a late Register would renumber ids that
+// ComponentIdOf<T> has memoised and that saved scenes store — and would
+// reallocate _metas, dangling every pointer ById()/All() handed out. Register
+// refuses instead: assert in debug, log and drop in release.
 TEST_CASE("ComponentRegistry: a late Register is refused and leaves issued ids stable")
 {
     auto &registry = ComponentRegistry::Instance();
@@ -220,9 +215,8 @@ TEST_CASE("ComponentRegistry: a late Register is refused and leaves issued ids s
     CHECK(registry.IdOf(std::string_view{"AaaM4_Early"}) == kInvalidComponentId);
 }
 
-// Round-6 review M4: Register performs no name-uniqueness check, so two metas with
-// the same name (different types) both survive into All() and every save/Find path.
-// A correct registry rejects or dedups the duplicate.
+// Two metas registered under one name would collide in every save/Find path, so
+// finalize keeps the first and drops the rest.
 TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both kept")
 {
     auto &registry = ComponentRegistry::Instance();
@@ -233,7 +227,7 @@ TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both k
         if (meta.name == "M4_DupName")
             ++count;
 
-    CHECK(count == 1); // no uniqueness check → both duplicates persist
+    CHECK(count == 1); // the duplicate was dropped, not kept alongside
 }
 
 // ---------------------------------------------------------------------------
@@ -241,19 +235,17 @@ TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both k
 // ---------------------------------------------------------------------------
 //
 // Finalization is lazy: the first ask sorts _metas, drops duplicates, assigns
-// every id and fills _serializable/_replicable/_replicableOrdinal. The first ask
-// can come from any thread — async travel deserializes on a worker and walks
-// this registry there while the main thread does too — so it is a one-time
-// initialization and needs to say so. It now does: an atomic flag with
-// acquire/release plus a double-checked lock.
+// every id and fills _serializable/_replicable/_replicableOrdinal. That ask can
+// come from any thread — async travel deserializes on a worker and walks this
+// registry there while the main thread does too — so it is guarded by an atomic
+// flag with acquire/release plus a double-checked lock.
 //
 // **This case cannot be compiled here.** It needs a registry that has *never*
 // been queried, and the only one this file can reach is Instance(), which
 // earlier cases in this binary have already finalized — every thread would take
-// the fast path and the case would pass whether or not the lock exists. That
-// exact vacuous version was written first and caught by removing the lock and
-// getting zero reports. A fresh registry is what makes it real, and
-// ComponentRegistry() is private on purpose (one registry per process).
+// the fast path and the case would pass whether or not the lock exists. A fresh
+// registry is what makes it real, and ComponentRegistry() is private on purpose
+// (one registry per process).
 //
 // It was run, by making that constructor public temporarily:
 //   * with the lock — clean under `make gcc-tsan`;
