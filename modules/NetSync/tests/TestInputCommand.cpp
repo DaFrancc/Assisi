@@ -243,6 +243,34 @@ TEST_CASE("InputCommandQueue refuses a command flood far in the future")
     CHECK(queue.Depth() == 1);
 }
 
+TEST_CASE("InputCommandQueue refuses a command flood before anything has been applied" *
+          doctest::should_fail())
+{
+    // ENG-117, open. InputCommand.cpp:164 computes the lookahead horizon as
+    //   horizon = _hasApplied ? _lastAppliedTick : command.tick
+    // so on a fresh connection every command is measured against *itself* and
+    // `command.tick > horizon + kMaxQueueLookahead` can never be true. The case
+    // above only proves the guard works once something has been consumed, which
+    // is what hid this: a client that floods before the server's first Consume
+    // buys unlimited queue depth, and the first packet also fixes the queue's
+    // tick base at whatever it claims.
+    //
+    // Note this is not merely "there is no reference point yet" — after the
+    // first Accept there plainly is one, and the second command below is still
+    // not checked against it.
+    //
+    // should_fail until the horizon is fixed; the fix removes this decorator.
+    InputCommandQueue queue;
+
+    CHECK(queue.Accept(MakeCommand(100)));
+
+    // Same rejection the applied-tick case gets, and against the same base: the
+    // queue already holds tick 100, so tick 10100 is far past any lookahead a
+    // legitimate client could need.
+    CHECK_FALSE(queue.Accept(MakeCommand(100 + 10000)));
+    CHECK(queue.Depth() == 1);
+}
+
 TEST_CASE("a cleared queue behaves like a fresh one")
 {
     InputCommandQueue queue;

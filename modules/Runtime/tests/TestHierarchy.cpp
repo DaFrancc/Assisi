@@ -265,6 +265,41 @@ TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the
     CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(11.f)); // 10 + 1
 }
 
+TEST_CASE("PropagateTransforms: detaching a Parent after propagation dirties the child" *
+          doctest::should_fail())
+{
+    // ENG-117, open, and the mirror of the attach case above. Attaching is caught
+    // because Parent is ACOMP(tracked) and Add stamps its change tick; detaching
+    // through Remove<Parent> stamps nothing and leaves no component behind to
+    // carry a tick, so Hierarchy.cpp:81's
+    //   Changed<Transform>(e, lastTick) || Changed<Parent>(e, lastTick)
+    // is false for the child on the next pass and it keeps the world matrix it
+    // had while it was still parented. The comment there already admits the gap
+    // and claims "no such site today"; that claim is what went unverified.
+    //
+    // The child below is left believing it sits at x = 11 after being detached
+    // from a parent at x = 10 — one full parent offset out, for as long as
+    // nothing else happens to move it.
+    //
+    // should_fail until detach dirties the child; the fix removes this decorator.
+    ECS::Scene scene;
+    const ECS::Entity parent = scene.Create();
+    const ECS::Entity child  = scene.Create();
+    REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Transform{.position = {1.f, 0.f, 0.f}}) != nullptr);
+    REQUIRE(scene.Add(child, Parent{.parent = parent}) != nullptr);
+
+    const uint64_t tick = PropagateTransforms(scene, 0);
+    REQUIRE(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(11.f)); // 10 + 1
+
+    // Detach without touching the child's Transform — the exact counterpart of
+    // the Add above.
+    scene.Remove<Parent>(child);
+    PropagateTransforms(scene, tick);
+
+    CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(1.f)); // a root again
+}
+
 // Reparenting an already-parented child — through the stamping GetMut<Parent>, the
 // way a real reparent must — has to follow the new parent. The child's own
 // Transform is never touched, so only the Parent change tick carries the move.

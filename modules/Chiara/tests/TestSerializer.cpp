@@ -490,4 +490,70 @@ TEST_CASE("Serializing while other threads emit stays consistent")
     CHECK(parsed.at("traceEvents").size() > 0);
 }
 
+// ---------------------------------------------------------------------------
+// PumpSession's unsynchronised read of session.active — ENG-117, open
+// ---------------------------------------------------------------------------
+//
+// PumpSession's fast path (Serializer.cpp:608) reads `session.active` without
+// holding `session.mutex`. `Session::active` (:425) is a plain `bool`, and
+// BeginSession (:601) and EndSession both write it under that lock. That is a
+// data race in the formal sense — not a benign one — and the header compounds
+// it by describing the fast path as costing "a few atomic loads", which is a
+// synchronisation the code does not have. The ENG-117 sweep corrected the
+// comment and left the race.
+//
+// **This case cannot be kept in the suite.** A race is only observable to the
+// thread sanitizer, and a tsan report fails the *process*, not a case — there is
+// no `doctest::should_fail()` for it, so keeping it would make
+// `make test-gcc-tsan-chiara` red for as long as the bug stands. Suppressing it
+// is not an option either: .tsan-suppressions may not name an Assisi symbol,
+// for exactly the reason that would defeat. So it lives here as a reproduction,
+// the way TestComponentRegistry.cpp's finalize-race case does.
+//
+// It HAS been run, and it reports. Verbatim from `gcc-tsan-chiara`:
+//
+//   WARNING: ThreadSanitizer: data race
+//     Read of size 1 by thread T1 'chiara-pump':
+//       Assisi::Chiara::PumpSession()   Serializer.cpp:608
+//     Previous write of size 1 by main thread (mutexes: write M0):
+//       Assisi::Chiara::BeginSession()  Serializer.cpp:601
+//     Location is global '(anonymous namespace)::TheSession()::session'
+//     Mutex M0 created at Serializer.cpp:555
+//
+// which is the claim exactly: the write is inside M0, the read is not, and the
+// object is the one global session.
+//
+// To re-run it: uncomment, add <atomic> (<thread> is already included above),
+// then `make test-gcc-tsan-chiara`. A clean run is the assertion — so once the
+// read is synchronised this becomes an ordinary case worth keeping live, and
+// uncommenting it is part of the fix rather than a follow-up to it.
+//
+// TEST_CASE("PumpSession's fast path is synchronised against BeginSession")
+// {
+//     EnsureInitialized();
+//     const TempTrace trace("session-race");
+//
+//     // One thread in the fast path continuously, so it is reading `active`
+//     // while the other is writing it under the lock.
+//     std::atomic<bool> keepPumping{true};
+//     std::thread pump([&keepPumping]
+//                      {
+//                          Chiara::RegisterCurrentThread("chiara-pump");
+//                          while (keepPumping.load(std::memory_order_relaxed))
+//                              Chiara::PumpSession();
+//                      });
+//
+//     // Enough begin/end cycles that the window is hit rather than raced past.
+//     for (std::int32_t round = 0; round < 200; ++round)
+//     {
+//         (void)Chiara::BeginSession(trace.Path());
+//         (void)Chiara::EndSession();
+//     }
+//
+//     keepPumping.store(false, std::memory_order_relaxed);
+//     pump.join();
+//
+//     // Nothing to assert: a clean tsan run is the assertion.
+// }
+
 #endif // ASSISI_CHIARA_ENABLED

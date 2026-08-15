@@ -57,6 +57,38 @@ TEST_CASE("RemoveBody refuses a default-constructed handle instead of passing it
     world.RemoveBody(unnamed);
 }
 
+TEST_CASE("GetBodyTransform refuses a handle that names nothing, like its sibling accessors")
+{
+    // ENG-117. PhysicsWorld.cpp:914 is the one accessor with no `IsAdded` guard —
+    // GetBodyVelocity (:930) and IsBodyCCDEnabled (:944) both check first, and
+    // RemoveBody checks `IsInvalid()`. This pins what the unguarded path actually
+    // does with the two handles a caller can hold by mistake, so the guard can be
+    // added without guessing at the behaviour it has to preserve.
+    Physics::PhysicsWorld world;
+
+    const Physics::RigidBody unnamed;
+    REQUIRE(unnamed.bodyId.IsInvalid());
+
+    const auto [position, rotation] = world.GetBodyTransform(unnamed);
+    CHECK(position == glm::vec3(0.f));
+    CHECK(rotation.w == doctest::Approx(1.f)); // identity, not garbage
+
+    // The other reachable shape: a handle that named a real body until it was
+    // removed. The velocity accessor answers zero for this one by contract.
+    const Physics::RigidBody removed =
+        world.AddBody({3.f, 4.f, 5.f}, glm::quat{1.f, 0.f, 0.f, 0.f}, kBall, Physics::BodyMotion::Dynamic);
+    REQUIRE_FALSE(removed.bodyId.IsInvalid());
+    world.RemoveBody(removed);
+
+    const auto [staleLinear, staleAngular] = world.GetBodyVelocity(removed);
+    CHECK(staleLinear == glm::vec3(0.f));
+    CHECK(staleAngular == glm::vec3(0.f));
+
+    const auto [stalePosition, staleRotation] = world.GetBodyTransform(removed);
+    CHECK(stalePosition == glm::vec3(0.f));
+    CHECK(staleRotation.w == doctest::Approx(1.f));
+}
+
 TEST_CASE("removing a handle that names nothing leaves the bodies that do alone")
 {
     // The half that matters in practice. `Reset()` walks a container of records

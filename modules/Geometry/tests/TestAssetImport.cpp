@@ -461,6 +461,7 @@ TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Remov
 
     // The reverse (one material exploded, source grows to two) reports slot 1
     // Added — the additive-safe case, no conflict.
+    // ENG-117, open: `root2` is not a second root — see the case below.
     const fs::path root2   = WriteMaterialAssets(MintAssetId());
     const auto resMat2 = [&root2](const AssetId &id) { return ResolveMaterialPathIn(root2, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
@@ -474,6 +475,36 @@ TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Remov
 
     fs::remove_all(root);
     fs::remove_all(root2);
+}
+
+TEST_CASE("WriteMaterialAssets hands out a root per call, not one shared directory" *
+          doctest::should_fail())
+{
+    // ENG-117, open, and a test-integrity finding rather than a product bug: the
+    // Added/Removed case above reads as running its two halves against two
+    // independent roots, and does not. WriteMaterialAssets pins the fixed
+    // directory `assisi_assetimport_test`, so its second call wipes and recreates
+    // the first call's root and returns the same path — the "reverse" half runs
+    // in the recreated first root, and both remove_all calls at the end target
+    // one directory.
+    //
+    // Nothing there asserts falsely today; what is missing is the isolation, so a
+    // future case that leaves state behind in the first half would silently
+    // change what the second half sees. Pinned here rather than by weakening the
+    // assertions in the case itself.
+    //
+    // should_fail until WriteMaterialAssets takes (or mints) a distinct
+    // directory per call; the fix removes this decorator.
+    const fs::path first  = WriteMaterialAssets(MintAssetId());
+    const fs::path second = WriteMaterialAssets(MintAssetId());
+
+    CHECK(first != second);
+    // ...and the first root still exists, rather than having been wiped from
+    // under the caller by the second call.
+    CHECK(fs::exists(first / "model.gltf"));
+
+    fs::remove_all(first);
+    fs::remove_all(second);
 }
 
 TEST_CASE("RegenerateGltfMaterials: overwrites the material from source, keeping its GUID")

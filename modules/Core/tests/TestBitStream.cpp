@@ -325,6 +325,39 @@ TEST_CASE("BitStream: quantized floats round-trip within their step size")
     }
 }
 
+TEST_CASE("BitStream: a 32-bit quantized float round-trips at the top of its range" *
+          doctest::should_fail())
+{
+    // ENG-117, open. At bits == 32 the level count is 0xFFFFFFFF, whose float
+    // conversion rounds *up* to 4294967296.0f. `scaled + 0.5f` at the top of the
+    // range therefore lands one past UINT32_MAX, and BitStream.cpp:138's
+    // static_cast<std::uint32_t> of it is undefined. On x86-64 the out-of-range
+    // cvttss2si yields 0x80000000, so the encoded value is not merely imprecise —
+    // the maximum encodes as the midpoint, and every other bit width is fine.
+    //
+    // 12 bits is checked alongside as the control: same code, same endpoints, and
+    // it round-trips, which is what makes 32 the outlier rather than the tolerance.
+    //
+    // should_fail until the conversion is fixed; the fix removes this decorator.
+    constexpr float kMin = -100.f;
+    constexpr float kMax = 100.f;
+
+    BitWriter control;
+    control.WriteFloatQuantized(kMax, kMin, kMax, 12);
+    BitReader controlReader(control.Data());
+    REQUIRE(controlReader.ReadFloatQuantized(kMin, kMax, 12) == doctest::Approx(kMax));
+
+    BitWriter writer;
+    writer.WriteFloatQuantized(kMax, kMin, kMax, 32);
+    writer.WriteFloatQuantized(kMin, kMin, kMax, 32);
+
+    BitReader reader(writer.Data());
+    // The step at 32 bits is ~5e-8 of the range, so both endpoints are exact to
+    // float precision under any correct encoding.
+    CHECK(reader.ReadFloatQuantized(kMin, kMax, 32) == doctest::Approx(kMax));
+    CHECK(reader.ReadFloatQuantized(kMin, kMax, 32) == doctest::Approx(kMin));
+}
+
 TEST_CASE("BitStream: Clear resets the stream but keeps the buffer")
 {
     BitWriter writer;

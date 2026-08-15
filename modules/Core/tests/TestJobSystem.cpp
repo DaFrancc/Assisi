@@ -399,11 +399,31 @@ TEST_CASE("Workers name themselves for the capture")
     }
 }
 
-TEST_CASE("A JobSystem built with the capture runtime down is harmless")
+TEST_CASE("A JobSystem built with the capture runtime down is harmless" * doctest::should_fail())
 {
     // The case that matters for every headless test and tool in the tree: no
     // Application, so no InitGuard, so worker registration happens with nothing
     // initialized. It must behave exactly as it does in a default build.
+    //
+    // ENG-117, open, and a test-integrity finding: the precondition is destroyed
+    // by the case above, which calls Chiara::Initialize() and never undoes it.
+    // Chiara::Shutdown() would not help — it only clears the recording flag
+    // (Chiara.cpp:370); g_initialized stays set and the registered thread
+    // buffers stay in the list, so Initialize is one-way within a process. In an
+    // in-order run the capture runtime is therefore *up* here and this case
+    // exercises nothing it names.
+    //
+    // The assertion below is the same "runtime down" marker TestPreInit.cpp uses.
+    // The fix is not to change it: it is to move this case into a binary that
+    // never calls Initialize — the Assisi-Chiara-PreInit-Tests pattern, which
+    // exists for exactly this problem — after which the assertion holds and this
+    // decorator comes off.
+    //
+    // Run this case on its own (`-tc="*capture runtime down*"`) and it goes red
+    // with "should have failed but didn't" — the case above never ran, so the
+    // precondition holds. That is the finding stated backwards, not a flaky test.
+    CHECK(Assisi::Chiara::SnapshotThreads().empty());
+
     JobSystem jobs(2);
 
     std::atomic<int32_t> ran{0};

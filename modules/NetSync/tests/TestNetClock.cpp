@@ -116,6 +116,45 @@ TEST_CASE("an overfull server queue shrinks the lead — gradually")
     CHECK(clock.TargetLead() >= 1);
 }
 
+TEST_CASE("a deeply overfull server queue shrinks the lead as readily as a barely overfull one" *
+          doctest::should_fail())
+{
+    // ENG-117, open. NetClock.cpp:45 guards the decrement with `target > excess`
+    // instead of a floor on `target`, so the deeper the overrun the less likely
+    // the shrink is to happen at all — the inverse of what the comment above it
+    // ("shrink one tick at a time") describes, and wrong in exactly the case
+    // that costs the most latency.
+    //
+    // The two halves below are identical but for the reported depth. RTT is zero
+    // so the arithmetic target is the smallest it can be (0 one-way + 1 command
+    // frame + 2 cushion = 3), which is what makes `excess` able to exceed it.
+    //
+    // should_fail until the shrink is fixed; the fix removes this decorator.
+    NetClockConfig config;
+    config.targetBufferDepth = 2;
+
+    const auto leadAfterOverfullReport = [&config](std::uint32_t depth)
+                                         {
+                                             NetClock clock(kTickRate, config);
+                                             clock.OnSnapshot(Healthy(100), 0); // first contact, adopts the target
+                                             for (int32_t i = 0; i < 10; ++i)
+                                                 clock.Tick();
+                                             clock.OnSnapshot(Healthy(110, depth), 0);
+                                             return clock.TargetLead();
+                                         };
+
+    // Barely over: excess (1) is below the arithmetic target, so the decrement runs.
+    const std::uint32_t barely = leadAfterOverfullReport(3);
+    // Deeply over: excess (18) is above it, so the decrement is skipped entirely.
+    const std::uint32_t deeply = leadAfterOverfullReport(20);
+
+    CAPTURE(barely);
+    CAPTURE(deeply);
+    // A queue holding ten times the cushion it was asked for cannot justify a
+    // *longer* lead than one holding one tick too many.
+    CHECK(deeply <= barely);
+}
+
 TEST_CASE("a stable connection tracks without snapping")
 {
     NetClock clock(kTickRate);

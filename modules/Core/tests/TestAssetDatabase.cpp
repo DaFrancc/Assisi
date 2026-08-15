@@ -133,6 +133,40 @@ TEST_CASE("AssetDatabase skips a malformed sidecar without clobbering it")
     CHECK(ReadFile(sidecar) == garbage);
 }
 
+TEST_CASE("AssetDatabase treats a zero-byte sidecar as malformed, not unreadable")
+{
+    // ENG-117 suspected that ReadWholeFile (AssetDatabase.cpp:30) rejects an
+    // empty file: `buffer << stream.rdbuf()` does set failbit when it inserts no
+    // characters, so a zero-byte sidecar looked like an I/O error. It sets that
+    // bit on `buffer` — the ostringstream being written to — and the guard at
+    // :39 tests `stream`, the ifstream, whose state the insertion never touches.
+    // The empty read therefore succeeds with an empty string and the sidecar
+    // falls through to DeserializeSidecar, which is where it belongs.
+    //
+    // Pinned rather than dropped: the behaviour is right, and it is right by an
+    // accident of which object carries the flag, so a tidy-up that moved the
+    // check onto `buffer` would silently turn a malformed sidecar into an
+    // unreadable one — same skip, wrong diagnosis, and a truncated write is a
+    // real way to produce this file.
+    const fs::path root = MakeTree();
+
+    const fs::path sidecar = root / "textures" / "crate.png.aast";
+    WriteFile(sidecar, "");
+    REQUIRE(fs::file_size(sidecar) == 0u);
+
+    REQUIRE(AssetSystem::SetRoot(root).has_value());
+    AssetDatabase db;
+    auto count = db.Rebuild();
+    REQUIRE(count.has_value());
+
+    // Same outcome as the malformed-sidecar case above: crate.png is skipped and
+    // its file is left untouched, rather than being re-minted over.
+    CHECK(*count == 1);
+    CHECK_FALSE(db.IdFor("textures/crate.png").has_value());
+    CHECK(db.IdFor("materials/checker.amat").has_value());
+    CHECK(fs::file_size(sidecar) == 0u);
+}
+
 TEST_CASE("AssetDatabase::Rebuild is idempotent")
 {
     const fs::path root = MakeTree();

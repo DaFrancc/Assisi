@@ -242,6 +242,25 @@ class TestRefusals(ViewTestCase):
             blueprint_views.generate(self.root, [("Car", "car.abp"), ("Car", "lot.abp")])
         self.assertIn("both opted in as", str(caught.exception))
 
+    @unittest.expectedFailure
+    def test_one_blueprint_opted_in_under_two_type_names(self):
+        # ENG-117, open. `generate` (blueprint_views.py:513) dedupes type names
+        # and nothing dedupes sources, so the reverse collision goes through.
+        # kGeneratedInstanceViews is keyed by *source* (:495), so both entries
+        # name the same .abp under different views and TestInstanceViews checks
+        # that one blueprint twice while believing it covered two.
+        #
+        # Low severity — nothing generated is wrong, the cross-check is merely
+        # weaker than it reads — but it is the same class of mistake the type-name
+        # check already exists to refuse, and it costs one dict.
+        #
+        # expectedFailure until the source check lands; the fix removes this
+        # decorator.
+        self.car()
+        with self.assertRaises(ViewError) as caught:
+            blueprint_views.generate(self.root, [("Car", "car.abp"), ("Vehicle", "car.abp")])
+        self.assertIn("car.abp", str(caught.exception))
+
 
 class TestLoaderRefusals(ViewTestCase):
     """Files Blueprint.cpp will not load, and files it will.
