@@ -1,0 +1,23 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "name": "gate",
+      "components": {
+        "Transform": {
+          "position": [0.0, 0.0, -10.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    }
+  ],
+  "instances": [
+    {
+      "name": "lot",
+      "source": "parking_lot.abp",
+      "transform": { "position": [0.0, 0.0, 20.0] },
+      "removed": ["car"]
+    }
+  ]
+}

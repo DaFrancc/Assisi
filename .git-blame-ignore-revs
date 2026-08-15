@@ -1,0 +1,8 @@
+# Revisions to skip when running `git blame`, so a whole-tree reformat does not
+# claim authorship of every line.
+#
+# Enable it once per clone:
+#   git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# style: format the tree Allman with uncrustify — Fixes ENG-132
+1d2bdc5042e1959428c72b9b643a57b5f8d3e84a

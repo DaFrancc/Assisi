@@ -1,10 +1,25 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
-#include <Assisi/Prelude.hpp>
+/// @file ShortNames.hpp
+/// @brief Opt-in short namespace aliases (`Core`, `Math`, `Render`, ...) for
+/// use inside a translation unit.
+///
+/// CPP ONLY. These aliases are injected at global scope, so including this from
+/// a header leaks them into every translation unit that transitively includes
+/// that header, producing global-namespace collisions far from their cause.
+/// Include it only from a .cpp, ideally after the other includes.
+///
+/// Enforced, not merely documented: `__INCLUDE_LEVEL__` — a GCC/Clang
+/// preprocessor builtin — is 1 when a file is included directly by a .cpp and
+/// >= 2 when reached through another header, so a stray header include trips the
+/// `#error` below. MSVC doesn't define the builtin, so the guard is a no-op
+/// there; the clang/gcc presets and CI catch the misuse instead.
+#if defined(__INCLUDE_LEVEL__) && (__INCLUDE_LEVEL__ > 1)
+#error "ShortNames.hpp is .cpp-only: it injects global namespace aliases, so including it from a header leaks them into every downstream translation unit. Include it directly from a .cpp instead."
+#endif
 
-/*
-    CPP ONLY!!! Never include in header files as it will pollute the global namespace and cause conflicts.
-*/
+#include <Assisi/Prelude.hpp>
 
 /* Short aliases (opt-in). */
 namespace A = Assisi;

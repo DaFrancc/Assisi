@@ -4,10 +4,12 @@
 
 #include <GLFW/glfw3.h>
 
+#include <cstdint>
+
 namespace Assisi::Window
 {
 
-InputContext::InputContext(const WindowContext &window) : _window(window.NativeHandle())
+InputContext::InputContext(WindowContext &window) : _window(window.NativeHandle())
 {
     /* Snapshot initial mouse position so the first MouseDelta() is (0,0). */
     double xPos = 0.0;
@@ -16,22 +18,27 @@ InputContext::InputContext(const WindowContext &window) : _window(window.NativeH
     _currMousePos = {static_cast<float>(xPos), static_cast<float>(yPos)};
     _prevMousePos = _currMousePos;
 
-    glfwSetWindowUserPointer(_window, this);
-    glfwSetScrollCallback(_window, ScrollCallback);
+    // Subscribe through the window rather than calling glfwSetScrollCallback
+    // directly: the window owns the GLFW callbacks and fans out to ImGui (which
+    // chains) and us both, instead of one clobbering the other.
+    window.OnScroll([this](double /*xOffset*/, double yOffset) { _scrollAccum += static_cast<float>(yOffset); });
 }
 
 void InputContext::Poll()
 {
     _prevKeys = _currKeys;
-    for (int k = 0; k < kKeyCount; ++k)
+    // GLFW key tokens start at Space (32, mirrored by Key::Space); querying
+    // codes below that raises GLFW_INVALID_ENUM on every poll. The skipped
+    // low entries stay false.
+    for (int32_t k = static_cast<int32_t>(Key::Space); k < kKeyCount; ++k)
     {
-        _currKeys[k] = glfwGetKey(_window, k) == GLFW_PRESS;
+        _currKeys[static_cast<std::size_t>(k)] = glfwGetKey(_window, k) == GLFW_PRESS;
     }
 
     _prevButtons = _currButtons;
-    for (int b = 0; b < kButtonCount; ++b)
+    for (int32_t b = 0; b < kButtonCount; ++b)
     {
-        _currButtons[b] = glfwGetMouseButton(_window, b) == GLFW_PRESS;
+        _currButtons[static_cast<std::size_t>(b)] = glfwGetMouseButton(_window, b) == GLFW_PRESS;
     }
 
     _prevMousePos = _currMousePos;
@@ -47,38 +54,38 @@ void InputContext::Poll()
 
 bool InputContext::IsKeyDown(Key key) const
 {
-    const int idx = static_cast<int>(key);
-    return idx >= 0 && idx < kKeyCount && _currKeys[idx];
+    const int32_t idx = static_cast<int32_t>(key);
+    return idx >= 0 && idx < kKeyCount && _currKeys[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsKeyPressed(Key key) const
 {
-    const int idx = static_cast<int>(key);
-    return idx >= 0 && idx < kKeyCount && _currKeys[idx] && !_prevKeys[idx];
+    const int32_t idx = static_cast<int32_t>(key);
+    return idx >= 0 && idx < kKeyCount && _currKeys[static_cast<std::size_t>(idx)] && !_prevKeys[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsKeyReleased(Key key) const
 {
-    const int idx = static_cast<int>(key);
-    return idx >= 0 && idx < kKeyCount && !_currKeys[idx] && _prevKeys[idx];
+    const int32_t idx = static_cast<int32_t>(key);
+    return idx >= 0 && idx < kKeyCount && !_currKeys[static_cast<std::size_t>(idx)] && _prevKeys[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsMouseButtonDown(MouseButton button) const
 {
-    const int idx = static_cast<int>(button);
-    return idx >= 0 && idx < kButtonCount && _currButtons[idx];
+    const int32_t idx = static_cast<int32_t>(button);
+    return idx >= 0 && idx < kButtonCount && _currButtons[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsMouseButtonPressed(MouseButton button) const
 {
-    const int idx = static_cast<int>(button);
-    return idx >= 0 && idx < kButtonCount && _currButtons[idx] && !_prevButtons[idx];
+    const int32_t idx = static_cast<int32_t>(button);
+    return idx >= 0 && idx < kButtonCount && _currButtons[static_cast<std::size_t>(idx)] && !_prevButtons[static_cast<std::size_t>(idx)];
 }
 
 bool InputContext::IsMouseButtonReleased(MouseButton button) const
 {
-    const int idx = static_cast<int>(button);
-    return idx >= 0 && idx < kButtonCount && !_currButtons[idx] && _prevButtons[idx];
+    const int32_t idx = static_cast<int32_t>(button);
+    return idx >= 0 && idx < kButtonCount && !_currButtons[static_cast<std::size_t>(idx)] && _prevButtons[static_cast<std::size_t>(idx)];
 }
 
 glm::vec2 InputContext::MousePosition() const
@@ -105,15 +112,6 @@ bool InputContext::IsMouseCaptured() const
 float InputContext::ScrollDelta() const
 {
     return _scrollDelta;
-}
-
-void InputContext::ScrollCallback(GLFWwindow *window, double /*xoffset*/, double yoffset)
-{
-    auto *ctx = static_cast<InputContext *>(glfwGetWindowUserPointer(window));
-    if (ctx != nullptr)
-    {
-        ctx->_scrollAccum += static_cast<float>(yoffset);
-    }
 }
 
 } // namespace Assisi::Window

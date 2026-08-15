@@ -1,31 +1,42 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file OptionsConfig.hpp
 /// @brief User-facing runtime options persisted to options.json.
 
+#include <Assisi/Render/PostProcess.hpp>
+
+#include <cstdint>
+
 namespace Assisi::App
 {
 
-/// @brief Anti-aliasing technique selection.
-enum class AaMode
+/// @brief How the frame rate is governed. The two modes are mutually exclusive —
+/// exactly one paces the loop at a time.
+enum class FrameSyncMode : std::uint8_t
 {
-    None,     ///< No anti-aliasing.
-    MSAA,     ///< Multisample AA (hardware, geometry edges only).
-    FXAA,     ///< Fast approximate AA (post-process, covers specular highlights).
-    MSAA_FXAA ///< MSAA resolved into an FXAA pass for best quality.
+    VSync,    ///< FIFO present mode — frame rate locked to the display refresh; fpsLimit is ignored.
+    FpsLimit, ///< IMMEDIATE present mode — frame rate governed by OptionsConfig::fpsLimit.
 };
 
-/// @brief User preferences loaded from and saved to options.json in the working directory.
+/// @brief User preferences loaded from and saved to options.json under the user root.
 struct OptionsConfig
 {
-    AaMode aaMode     = AaMode::None;
-    int    msaaSamples = 4; ///< MSAA sample count; valid values: 2, 4, 8.
+    Render::AaMode aaMode      = Render::AaMode::None;
+    int32_t msaaSamples = 4;        ///< MSAA sample count; valid values: 2, 4, 8.
 
-    /// @brief Reads options.json from the working directory.
+    FrameSyncMode frameSync = FrameSyncMode::VSync;
+
+    /// @brief Target frame rate, applied only when frameSync == FpsLimit. Sentinel
+    /// values: -1 means unlimited (no CPU-side cap); 0 is invalid and never stored.
+    /// Any positive value is the FPS cap the frame pacer targets.
+    std::int16_t fpsLimit = -1;
+
+    /// @brief Reads options.json from the user root.
     /// Returns defaults if the file is missing or malformed.
     static OptionsConfig LoadFromJson();
 
-    /// @brief Writes the current settings to options.json in the working directory.
+    /// @brief Writes the current settings to options.json under the user root.
     void SaveToJson() const;
 };
 

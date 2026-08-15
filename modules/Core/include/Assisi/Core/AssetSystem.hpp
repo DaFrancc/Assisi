@@ -2,15 +2,38 @@
 #pragma once
 
 /// @file AssetSystem.hpp
-/// @brief Virtual-path asset system for discovering and reading engine assets.
+/// @brief Virtual-path filesystem for engine assets and per-user writable data.
+///
+/// The engine has a single filesystem story with two mounts, both addressed by
+/// the same virtual-path scheme and both escape-protected:
+///
+///   - **Asset root** — read-only shipped content (models, textures, shaders,
+///     levels). Discovered by Initialize()/SetRoot(). Reached via Resolve(),
+///     ReadText(), ReadBinary(), Exists().
+///   - **User root** — read-write per-user data (saves, options, logs, crash
+///     dumps, screenshots). Reached via ResolveUser(), ReadUserText(),
+///     ReadUserBinary(), WriteText(), WriteBinary(), UserExists().
+///
+/// The split is deliberate: a shipped game's install directory is frequently
+/// not writable (Program Files, app bundles, read-only mounts), so runtime
+/// writes must not target the asset tree. The user root defaults to the
+/// executable's directory (deterministic and CWD-independent — see GetUserRoot)
+/// and can be redirected with ASSISI_USER_ROOT or SetUserRoot() (e.g. to a
+/// platform per-user data directory).
 ///
 /// All public functions are static; `AssetSystem` acts as a process-wide
-/// singleton service.  Call Initialize() (or SetRoot()) once before using
-/// Resolve(), ReadText(), or ReadBinary().
+/// singleton service. Call Initialize() (or SetRoot()) once before using the
+/// asset-root readers; the user root initializes lazily on first use, so the
+/// writable API is usable before Initialize() (the logger relies on this).
+///
+/// @note Intentional service-locator: each root is a single process-wide
+/// resource, and SetRoot()/SetUserRoot() keep them test-controllable (the Core
+/// tests point them at temp dirs).
 
 #include <cstddef>
 #include <expected>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,7 +44,7 @@ namespace Assisi::Core
 {
 class AssetSystem
 {
-  public:
+public:
     /**
      * @brief Initializes the asset system by discovering and caching the asset root.
      *
@@ -58,6 +81,32 @@ class AssetSystem
      * @warning Precondition: the system must be initialized (Initialize() or SetRoot()).
      */
     static const std::filesystem::path &GetRoot() noexcept;
+
+    /**
+     * @brief Sets the *authoring* root — the durable copy of the asset tree that
+     *        newly minted sidecars must also be written to.
+     *
+     * A dev build runs against a staged copy of the assets sitting next to the
+     * executable, because generated files (compiled `.spv`) only exist there. That
+     * copy is disposable: anything minted into it (an asset's `.aast` GUID) is lost
+     * on the next clean build and regenerated with a *different* GUID, so any
+     * reference stored by GUID silently stops resolving. Pointing this at the
+     * source asset tree makes minted sidecars durable and version-controllable.
+     *
+     * @param root Path to the durable asset tree, or empty to disable mirroring.
+     *
+     * @note Read paths are unaffected — Resolve/Read* always use GetRoot(). This
+     *       only adds a second destination when a sidecar is created.
+     * @note Leave unset for shipped builds, where the staged copy IS the durable
+     *       tree and there is no source tree to mirror into.
+     */
+    static void SetAuthoringRoot(const std::filesystem::path &root) noexcept;
+
+    /**
+     * @brief The authoring root set by SetAuthoringRoot, or an empty path if
+     *        sidecar mirroring is disabled (the default).
+     */
+    static const std::filesystem::path &GetAuthoringRoot() noexcept;
 
     /**
      * @brief Resolves a virtual asset path to an absolute filesystem path under the asset root.
@@ -110,7 +159,101 @@ class AssetSystem
      */
     static std::expected<std::vector<std::byte>, AssetError> ReadBinary(std::string_view vpath) noexcept;
 
-  private:
+    // --- Writable user root ---------------------------------------------------
+
+    /**
+     * @brief Sets the writable user-data root explicitly and marks it initialized.
+     *
+     * @param root Absolute or relative path to a per-user writable directory.
+     *
+     * @return std::expected<void, AssetError>
+     *   - Success: root is accepted and cached.
+     *   - Failure: AssetError::InvalidRoot if the path is not an existing directory.
+     *
+     * @note Overrides both the ASSISI_USER_ROOT default and any prior lazy
+     *   initialization. Use this to redirect writes to a platform per-user
+     *   location on a shipped game.
+     */
+    static std::expected<void, AssetError> SetUserRoot(const std::filesystem::path &root) noexcept;
+
+    /**
+     * @brief Returns the writable user-data root, initializing it on first use.
+     *
+     * Lazy initialization order: ASSISI_USER_ROOT (if it names a directory),
+     * else the executable's directory, else the current working directory. This
+     * does not require the asset root to be initialized.
+     *
+     * @return const std::filesystem::path& Reference to the cached user root.
+     */
+    static const std::filesystem::path &GetUserRoot() noexcept;
+
+    /**
+     * @brief Absolute path of the running executable, or nullopt if the
+     * platform would not say.
+     *
+     * For relaunching *this* build as a second process — the editor spawning
+     * play-in-editor clients. argv[0] is not a substitute: it is whatever the
+     * caller typed, which may be a bare name resolved through PATH, a relative
+     * path from a working directory that has since changed, or a symlink.
+     */
+    [[nodiscard]] static std::optional<std::filesystem::path> ExecutablePath() noexcept;
+
+    /**
+     * @brief Resolves a virtual path against the writable user root.
+     *
+     * Same normalization and escape protection as Resolve(); the target need
+     * not exist (e.g. a save file about to be written).
+     *
+     * @param vpath Virtual path relative to the user root (e.g. "saves/slot1.sav").
+     * @return std::expected<std::filesystem::path, AssetError> Absolute path, or a resolution error.
+     */
+    static std::expected<std::filesystem::path, AssetError> ResolveUser(std::string_view vpath) noexcept;
+
+    /**
+     * @brief Checks whether a virtual path under the user root exists.
+     */
+    static bool UserExists(std::string_view vpath) noexcept;
+
+    /**
+     * @brief Reads a file under the user root as UTF-8 text.
+     *
+     * @param vpath Virtual path relative to the user root.
+     * @return std::expected<std::string, AssetError> Contents, or a read/resolution error.
+     */
+    static std::expected<std::string, AssetError> ReadUserText(std::string_view vpath) noexcept;
+
+    /**
+     * @brief Reads a file under the user root as raw bytes.
+     *
+     * @param vpath Virtual path relative to the user root.
+     * @return std::expected<std::vector<std::byte>, AssetError> Contents, or a read/resolution error.
+     */
+    static std::expected<std::vector<std::byte>, AssetError> ReadUserBinary(std::string_view vpath) noexcept;
+
+    /**
+     * @brief Writes UTF-8 text to a file under the user root, creating parent directories.
+     *
+     * Any existing file is truncated. Written in binary mode to avoid newline translation.
+     *
+     * @param vpath Virtual path relative to the user root.
+     * @param data  Text to write.
+     * @return std::expected<void, AssetError> Success, or FileWriteFailed / a resolution error.
+     */
+    static std::expected<void, AssetError> WriteText(std::string_view vpath, std::string_view data) noexcept;
+
+    /**
+     * @brief Writes raw bytes to a file under the user root, creating parent directories.
+     *
+     * Any existing file is truncated.
+     *
+     * @param vpath Virtual path relative to the user root.
+     * @param data  Bytes to write.
+     * @return std::expected<void, AssetError> Success, or FileWriteFailed / a resolution error.
+     */
+    static std::expected<void, AssetError> WriteBinary(std::string_view vpath,
+                                                       std::span<const std::byte> data) noexcept;
+
+private:
     /**
      * @brief Returns whether the asset system has been initialized.
      *
@@ -150,5 +293,20 @@ class AssetSystem
      *   - Failure: AssetError::InvalidVirtualPath for invalid inputs.
      */
     static std::expected<std::filesystem::path, AssetError> NormalizeVirtualPath(std::string_view vpath) noexcept;
+
+    /**
+     * @brief Normalizes @p vpath and joins it under @p root, rejecting escapes.
+     *
+     * Shared spine of Resolve() and ResolveUser(): the only difference between
+     * the two mounts is which cached root they resolve against.
+     */
+    static std::expected<std::filesystem::path, AssetError> ResolveUnder(const std::filesystem::path &root,
+                                                                         std::string_view vpath) noexcept;
+
+    /**
+     * @brief Lazily initializes the writable user root (ASSISI_USER_ROOT, else
+     * the executable's directory, else the current working directory).
+     */
+    static void EnsureUserRoot() noexcept;
 };
 } // namespace Assisi::Core

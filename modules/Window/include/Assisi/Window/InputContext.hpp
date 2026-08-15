@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file InputContext.hpp
@@ -22,6 +23,7 @@
 /// @endcode
 
 #include <array>
+#include <cstdint>
 
 #include <glm/glm.hpp>
 
@@ -33,11 +35,11 @@ namespace Assisi::Window
 
 class InputContext
 {
-  public:
-    /// @brief Binds this InputContext to a window.
-    ///
-    /// The WindowContext must outlive the InputContext.
-    explicit InputContext(const WindowContext &window);
+public:
+    /// @brief Binds this InputContext to a window and subscribes to its scroll
+    /// events. The WindowContext must outlive the InputContext (see
+    /// WindowContext's subscriber-lifetime warning).
+    explicit InputContext(WindowContext &window);
 
     /// @brief Snapshots the current input state.
     ///
@@ -98,11 +100,11 @@ class InputContext
     /// @brief Returns true if the cursor is currently captured.
     [[nodiscard]] bool IsMouseCaptured() const;
 
-  private:
+private:
     /* GLFW_KEY_LAST = 348; one slot per key code index. */
-    static constexpr int kKeyCount = 349;
+    static constexpr int32_t kKeyCount = 349;
     /* GLFW_MOUSE_BUTTON_LAST = 7; one slot per button index. */
-    static constexpr int kButtonCount = 8;
+    static constexpr int32_t kButtonCount = 8;
 
     NativeWindowHandle *_window = nullptr;
 
@@ -120,8 +122,6 @@ class InputContext
 
     float _scrollDelta = 0.f;
     float _scrollAccum = 0.f;
-
-    static void ScrollCallback(GLFWwindow *window, double xoffset, double yoffset);
 };
 
 } // namespace Assisi::Window

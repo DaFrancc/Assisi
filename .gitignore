@@ -3,10 +3,17 @@ out/
 build/
 CMakeFiles/
 CMakeCache.txt
+
+# Local convenience symlinks to the built executables (see shortcuts/)
+shortcuts/
 cmake_install.cmake
 
 # Conan
 .conan/
+
+# Python (reflectgen tooling)
+__pycache__/
+*.pyc
 
 # Compiled output
 *.exe
@@ -20,6 +27,10 @@ cmake_install.cmake
 *.ilk
 *.exp
 
+# clangd LSP config — per-machine (points at the local build's compile DB).
+# Copy .clangd.example to .clangd and repoint CompilationDatabase for your OS.
+.clangd
+
 # VS / Rider / CLion
 .vs/
 .idea/
@@ -30,9 +41,31 @@ cmake_install.cmake
 *.VC.opendb
 *.cache
 
-# Logs
+# Logs and crash artifacts. Both are written under the user root, which is the
+# exe directory by default — so running from the repo root leaves them here.
 *.log
-assisi.log
+crash-*.txt
+*.dmp
+
+# Runtime-generated user state (written under the user root at runtime; the
+# repo-root copies are artifacts of running the app from the repo root). The
+# app falls back to defaults when these are absent.
+imgui.ini
+options.json
 
 # Scratch / experiments
 sample/
+
+# AI
+CLAUDE.md
+.claude/
+
+# Art
+logo/
+
+# Model assets — heavy binary art (glTF .bin + textures), kept local only.
+assets/models/
+# RenderDoc captures (scripts/rdc-capture.sh) and the reports rdc-analyze.py
+# writes beside them. Large binaries, machine-specific, never worth committing.
+captures-rdc/
+*.rdc

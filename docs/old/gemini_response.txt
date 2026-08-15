@@ -1,0 +1,88 @@
+This is an exceptionally strong, highly disciplined architecture plan. It reads exactly like the kind of battle-tested, data-oriented design you want for a scalable, systems-level game engine. The explicit focus on what you *aren't* building is just as valuable as what you are.
+
+Here is a breakdown of why this plan works so well for the Assisi engine, along with a few areas to watch out for as you move into implementation.
+
+### The Triumphs: Discipline and Constraints
+
+* **Aggressive Scope Management:** Explicitly rejecting Nanite-style virtualized geometry and automated LOD generation is exactly the right call for this scale. By pushing triangle-count responsibilities to external DCC tools and focusing Assisi purely on instance-count scaling, you avoid an enormous baseline cost and keep the pipeline lean.
+
+
+* **Data-Oriented Transparency:** The memory layouts are incredibly well thought out. Packing the opaque sort key into a 64-bit integer (`[pipeline:8 | materialId:20 | meshId:20 | depth:16]`) to ensure identical material and mesh runs sit adjacent in memory is textbook efficiency. Moving from an ECS iteration loop to a shared geometry arena and a GPU structured buffer of instance data will dissolve your CPU bottlenecks.
+
+
+* **Incremental Shippability:** The roadmap is the standout feature here. By structuring the GPU-driven rollout into stages that each leave a complete, pixel-correct renderer (Stages A1 through G), you mitigate the massive risk of "going dark" for months while rewriting the backend.
+
+
+* **Killing the Cache Hazard:** Tying the `Material::Id` to generation semantics so it survives `AssetCache::Clear()` is a brilliant move. Combined with bounding binding sets by material count, this elegantly solves the raw-pointer aliasing hazard and structurally guarantees safe hot-reloading in the editor.
+
+
+* **Deferring the Right Things:** Holding off on texture upload batching until the spatial streaming layer natively supports it prevents throwaway work.
+
+
+
+### The Friction Points: Where It Might Bite You
+
+While the architecture is rock-solid, the translation from systems-design to runtime reality has a few classic traps:
+
+* **The Bindless Transition (Stage D):** You’ve correctly identified Vulkan descriptor indexing as a necessary "spike" before stage D. Variable-count semantics and bindless layouts can be notoriously finicky across different hardware vendors. Make sure your device selector is extremely rigid about the required Vulkan 1.2 feature flags early on to avoid driver-specific headaches.
+
+
+* **Two-Phase HZB Complexity:** Implementing hierarchical Z-buffer occlusion culling (Stage G) is the ultimate dense-scene unlock. However, two-phase occlusion has nasty temporal edge cases. Catching geometry disoccluded by rapid camera motion often introduces sync hazards and frame-delay artifacts that are notoriously painful to debug.
+
+
+* **JSON at Scale:** Using `.amat` reflection-driven JSON files is fantastic for the sandbox editor and rapid iteration. But as the asset library grows, deserializing thousands of JSON files during a level load might start fighting your background worker threads. You may eventually need a binary cooking step for shipped builds to keep the async loader fed.
+
+
+* **Refcounting Across Threads:** You noted that per-asset eviction requires strict refcounts on the Material-to-Texture edges. Once the job system lands to support the async loader, managing those atomic refcounts between the main thread (rendering UI) and background worker threads without introducing lock contention is going to test your concurrency model.
+
+
+
+### The Verdict
+
+You have a fantastic roadmap that respects data layout, hardware realities, and developer sanity. The explicit decoupling of data extraction (Runtime) from draw submission (Render) creates the perfect seam to swap internals without rewriting producers.
+
+Given that the entire async streaming and GPU-driven pipeline hinges on it, how are you planning to structure the underlying job and threading system to avoid contention?
+
+For a custom engine design targeting high performance without getting trapped in multi-year R&D mud, this plan earns a highly disciplined **9.2 / 10**.
+
+It represents an elite tier of pragmatic production engineering—highly data-oriented, fully aware of hardware realities, and ruthlessly protective of developer time.
+
+Here is the structured scorecard breakdown:
+
+### Architecture Scorecard
+
+| Category | Rating | Core Justification |
+| --- | --- | --- |
+| **Scope & Pragmatism** | **9.5 / 10** | Explicitly rejecting runtime meshlet culling and automated LOD generation keeps the runtime lean. Relying on authored DCC assets instead of building a complex virtualized geometry system avoids an enormous baseline performance overhead.
+
+ |
+| **Data Layout & API Alignment** | **9.5 / 10** | Moving to shared geometry arenas and a structured GPU instance buffer perfectly leverages modern graphics APIs. The 64-bit bit-packed sort key (`[pipeline:8
+
+ |
+| **Execution Strategy** | **9.0 / 10** | The multi-stage rollout roadmap (Stages A1 through G) guarantees a shippable, pixel-correct renderer at every milestone. Deferring texture upload batching until spatial streaming naturally absorbs it prevents throwaway work.
+
+ |
+| **Robustness & Integrity** | **8.8 / 10** | Minting a new `Material::Id` on texture changes solves the dangerous raw-pointer validation hazard, ensuring stable hot-reloading. The drop in score reflects the inherent complexity of the unbuilt asynchronous job system and Vulkan bindless driver quirks.
+
+ |
+
+---
+
+### Why the Plan Succeeds
+
+* **The Seam is Future-Proof:** Separating component data extraction (Runtime module) from the actual draw list submission (Render module) is highly elegant. When you eventually transition to compute culling and multi-draw indirect submissions, your data producers won't need a single line of code rewritten.
+
+
+* **Smart Resource Defaults:** Forcing the material system to substitute fallback textures (like a $1 \times 1$ flat normal map) for empty channels ensures the fragment shader never has to branch on null descriptors.
+
+
+* **Strict Material Mutation Contract:** Treating binding sets as completely immutable for the lifetime of their generational `Material::Id` means dead entries are merely memory to be cleaned up later, never active rendering errors.
+
+
+
+### Minor Structural Caveats
+
+* **The Phase-2 HZB Sync Risk:** Bounding spheres are great for cheap frustum rejects, but two-phase occlusion culling using the previous frame's HZB introduces nasty temporal edge cases. High-velocity camera movements or rapid door openings can cause visible object popping or complex sync hazards that are brutal to debug in compute passes.
+
+
+* **JSON Streaming Bottlenecks:** Relying on `.amat` reflection-driven JSON files is fantastic for sandbox tool iteration. However, once you cross the spatial streaming threshold into loading hundreds of chunks on worker threads, parsing raw text strings will compete heavily for CPU cycles. You will almost certainly need to introduce a binary cooking phase for assets before layer 3 streaming goes live.

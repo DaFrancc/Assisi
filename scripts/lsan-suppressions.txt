@@ -1,0 +1,42 @@
+# LeakSanitizer suppressions for the ASan sandbox run.
+#
+# The desktop stack (Vulkan ICD, GLFW's Wayland backend, GTK modules the
+# compositor injects, dbus, glib) allocates at init and intentionally never
+# frees. Those reports would bury a real engine leak, so they are suppressed by
+# library/function name — narrowly, so anything allocated by engine code is
+# still reported. Verified against the 2026-07-22 run, whose 46 leaked
+# allocations were entirely from these sources.
+#
+# NOTE: this file is for LSAN_OPTIONS only. ASAN_OPTIONS takes a different
+# suppression grammar (interceptor_name, odr_violation, ...) and hard-fails at
+# startup if handed these `leak:` entries.
+
+# Vulkan / GPU driver
+leak:libvulkan
+leak:libVkLayer
+leak:nvidia
+leak:radeonsi
+leak:swrast
+leak:libGLX
+leak:libEGL
+
+# Windowing: GLFW's Wayland/X11 backends and the compositor's GTK modules
+leak:_glfwInitWayland
+leak:_glfwInitX11
+leak:gtk_module_init
+leak:libgtk
+leak:libgdk
+leak:libwayland
+leak:libX11
+leak:libxcb
+
+# Desktop IPC and glib, reached through the above
+leak:libdbus
+leak:dbus_
+leak:_dbus_
+leak:libglib
+leak:g_malloc
+
+# Fonts
+leak:libfontconfig
+leak:libfreetype

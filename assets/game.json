@@ -8,7 +8,45 @@
         "clearColor": [0.15, 0.15, 0.18, 1.0]
     },
     "timing": {
-        "physicsHz": 60,
-        "renderHz": 144
+        "physicsHz": 60
+    },
+    "diagnostics": {
+        "_comment": "How many past runs' logs and crash reports to keep. Each launch writes its own file named for when it started, so a player who relaunches after a crash no longer overwrites the run that explains it — the old truncate-per-run scheme lost exactly the artifact worth having. Pruning happens at startup, oldest first, and only touches files this engine wrote. The current run's own files are never pruned, so 0 means 'keep only this run'.",
+        "keepLogs": 5,
+        "keepDumps": 5
+    },
+    "networking": {
+        "_comment": "How body-state corrections are packed. Both ends must agree — these are inside the handshake hash, so a mismatched pair refuses to connect rather than silently decoding each other's bytes into the wrong numbers. Round-to-nearest cannot accumulate across corrections, so this is a bandwidth/quality knob, not a correctness one.",
+        "_neverReplicateComment": "Component types this game never sends, whatever the engine says they are capable of. The middle gate: the type's ACOMP(replicable) grants a capability, this narrows it once for the whole game, and each entity's Replicated.excluded narrows it again per instance. Names, because component ids are alphabetical and dense and would rot the moment anything is added; a name nobody registered warns and is ignored. NOT in the handshake hash — unlike quantization above, this only changes which self-describing blocks are sent, never how bytes decode, so two builds that differ here still pair and the server's list governs. Takes effect on the next hosted session, no restart.",
+        "neverReplicate": [],
+        "positionExtent": 256.0,
+        "positionBits": 18,
+        "linearVelocityMax": 128.0,
+        "linearVelocityBits": 12,
+        "angularVelocityMax": 64.0,
+        "angularVelocityBits": 11
+    },
+    "smoothing": {
+        "_comment": "How a client hides the jump when a correction snaps its simulation. Purely local — two machines that smooth differently still agree about every byte, so this is NOT in the handshake hash and can be tuned by eye without a rebuild. Convergence is a deadline, not a rate: the offset is gone within positionCorrectionTime of each correction, which is what stops a body that diverges every interval from rendering permanently behind. Shorter = tracks the truth more closely but shows more of each correction; longer = smoother but laggier.",
+        "positionCorrectionTime": 0.1,
+        "positionCorrectionTimeFast": 0.1,
+        "smallErrorDistance": 0.25,
+        "largeErrorDistance": 1.0,
+        "rotationCorrectionTime": 0.05,
+        "snapBelowDistance": 0.02,
+        "hardSnapDistance": 2.5
+    },
+    "input": {
+        "actions": {
+            "MoveForward":  [{"key": "W"}, {"key": "Up"}],
+            "MoveBackward": [{"key": "S"}, {"key": "Down"}],
+            "MoveLeft":     [{"key": "A"}, {"key": "Left"}],
+            "MoveRight":    [{"key": "D"}, {"key": "Right"}],
+            "MoveUp":       [{"key": "Space"}],
+            "MoveDown":     [{"key": "LeftControl"}],
+            "Sprint":       [{"key": "LeftShift"}],
+            "LookMode":     [{"button": "Right"}],
+            "Select":       [{"button": "Left"}]
+        }
     }
 }

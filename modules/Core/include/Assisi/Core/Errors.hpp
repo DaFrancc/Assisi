@@ -4,10 +4,12 @@
 /// @file Errors.hpp
 /// @brief Error codes used throughout the Assisi::Core asset pipeline.
 
+#include <cstdint>
+
 namespace Assisi::Core
 {
 /// @brief Describes why an AssetSystem operation failed.
-enum class AssetError
+enum class AssetError : std::uint8_t
 {
     NotInitialized,     ///< AssetSystem::Initialize() has not been called yet.
     RootNotFound,       ///< Automatic root discovery found no `assets/` directory.
@@ -15,6 +17,8 @@ enum class AssetError
     InvalidVirtualPath, ///< The virtual path is empty, absolute, or contains `..` traversal.
     RootEscape,         ///< The resolved path would escape the asset root directory.
     FileOpenFailed,     ///< The file exists but could not be opened.
-    FileReadFailed      ///< The file was opened but reading its contents failed.
+    FileReadFailed,     ///< The file was opened but reading its contents failed.
+    FileWriteFailed,    ///< The file could not be created or written (writable user root).
+    UnknownAssetId      ///< An AssetProvider was asked for an id it does not serve.
 };
 } // namespace Assisi::Core

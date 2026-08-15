@@ -1,0 +1,475 @@
+{
+  "systems": [
+    "BouncerSpawn",
+    "Bounce"
+  ],
+  "entities": [
+    {
+      "components": {
+        "DirectionalLight": {
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "direction": [
+            -0.4,
+            -1.0,
+            -0.5
+          ],
+          "intensity": 0.6
+        }
+      },
+      "name": "Entity"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            8.0,
+            0.25,
+            8.0
+          ],
+          "isStatic": true
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            16.0,
+            0.5,
+            16.0
+          ]
+        }
+      },
+      "name": "Floor"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            4.0,
+            0.5,
+            0.25
+          ],
+          "isStatic": true
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.5,
+            -3.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            8.0,
+            1.0,
+            0.5
+          ]
+        }
+      },
+      "name": "Wall0"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            4.0,
+            0.5,
+            0.25
+          ],
+          "isStatic": true
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            0.5,
+            3.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            8.0,
+            1.0,
+            0.5
+          ]
+        }
+      },
+      "name": "Wall1"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            1.2,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Crate0"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            0.12,
+            2.3499999999999996,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Crate1"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            0.24,
+            3.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Crate2"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            0.36,
+            4.6499999999999995,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Crate3"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            0.48,
+            5.8,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Crate4"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Replicated": {
+          "priority": 1.0
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            0.6,
+            6.95,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Crate5"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            4.0,
+            2.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "CosmeticCrate"
+    }
+  ],
+  "version": 2
+}

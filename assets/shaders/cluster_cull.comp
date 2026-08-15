@@ -1,0 +1,250 @@
+#version 460 core
+
+/// cluster_cull.comp
+/// Tests every light against every cluster AABB (sphere-vs-AABB test) and
+/// writes per-cluster light index lists into a shared flat buffer.
+/// Dispatch: ceil(clusterCount / 64) workgroups of local_size_x = 64, one
+/// cluster per thread. Run every frame, after uploading light data to the SSBOs.
+///
+/// This used to dispatch (gridDim.x, gridDim.y, gridDim.z) workgroups of
+/// local_size (1,1,1) — one thread per workgroup. A warp is 32 lanes wide, so
+/// that used one lane in 32 and left the rest idle; it also re-transformed every
+/// light into view space once per cluster per pass (3 456 clusters x ~658
+/// transforms = ~2.3M mat4xvec4 per frame, for 329 distinct lights). Measured
+/// 0.236 ms of a 0.585 ms frame on an RTX 3070 — 40% of all GPU time, for a
+/// scene of 300 lights. Both problems are fixed below: 64 clusters per
+/// workgroup, and each light transformed once per workgroup into shared memory
+/// where all 64 threads read it. mesh_cull.comp already had this shape.
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// Lights are streamed through shared memory in batches of one per thread, so a
+// batch is exactly the workgroup size. 64 x vec4 = 1 KiB of the 48 KiB budget.
+#define CULL_BATCH 64u
+
+// Flat buffer offset where spot light indices start, and the per-type capacity
+// of the shared index list. Must match Render::ClusterGrid::kMaxLightIndices
+// and cube_min.frag's kSpotIndexBase.
+#define MAX_LIGHT_INDICES 262144
+
+// ---- Structs (must match ClusterGrid GPU structs) ----
+
+struct AABB        { vec4 minPoint; vec4 maxPoint; };
+
+struct PointLight  { vec4 positionRadius; vec4 colorIntensity; };
+
+struct SpotLight
+{
+    vec4  positionRadius;
+    vec4  directionInner;
+    vec4  colorIntensity;
+    float outerCutoff;
+    float _p0, _p1, _p2;
+};
+
+struct LightGrid
+{
+    uint pointOffset;
+    uint pointCount;
+    uint spotOffset;
+    uint spotCount;
+};
+
+// ---- SSBOs ----
+// NVRHI's Vulkan backend keeps SRV and UAV structured buffers in separate
+// binding spaces (+0 and +384 respectively — VulkanBindingOffsets), so the
+// two groups below don't collide even though their NVRHI slots overlap.
+
+layout(std430, binding = 0) readonly  buffer ClusterAABBs   { AABB       clusterAABBs[];   };
+layout(std430, binding = 1) readonly  buffer PointLights    { PointLight  pointLights[];    };
+layout(std430, binding = 2) readonly  buffer SpotLights     { SpotLight   spotLights[];     };
+
+layout(std430, binding = 384) writeonly buffer LightIndexList { uint        lightIndexList[];  };
+layout(std430, binding = 385) writeonly buffer LightGrids     { LightGrid   lightGrids[];     };
+layout(std430, binding = 386) coherent  buffer GlobalCount    { uint globalPointCount; uint globalSpotCount; };
+
+layout(push_constant) uniform PushConstants
+{
+    mat4  view;         // world-space light positions -> view space
+    uvec4 gridDim;       // xyz used, w unused
+    uvec4 lightCounts;   // x = point light count, y = spot light count, zw unused
+} pc;
+
+// ---- Helpers ----
+
+bool sphereVsAABB(vec3 center, float radius, vec3 aabbMin, vec3 aabbMax)
+{
+    vec3 closest = clamp(center, aabbMin, aabbMax);
+    vec3 d       = closest - center;
+    return dot(d, d) <= radius * radius;
+}
+
+// One batch of lights, already in view space: xyz = position, w = radius. Both
+// light types use it — the culling test only needs a bounding sphere, and the
+// leading barrier() of each batch loop makes the reuse safe.
+shared vec4 sLights[CULL_BATCH];
+
+void main()
+{
+    uvec3 gridDim      = pc.gridDim.xyz;
+    uint  clusterCount = gridDim.x * gridDim.y * gridDim.z;
+
+    // One cluster per thread, in the same linear order cube_min.frag's
+    // ClusterIndex() reconstructs (x + y*nx + z*nx*ny).
+    uint clusterIdx = gl_GlobalInvocationID.x;
+    uint tid        = gl_LocalInvocationID.x;
+
+    // The last workgroup can run past the end of the grid. Those threads must
+    // NOT return: every barrier() below has to be reached by the whole
+    // workgroup, and a thread that exited early would leave the rest waiting
+    // forever (undefined behaviour, in practice a GPU hang). They stay in the
+    // loops and skip only the work and the writes.
+    bool valid = clusterIdx < clusterCount;
+
+    vec3 cMin = vec3(0.0);
+    vec3 cMax = vec3(0.0);
+    if (valid)
+    {
+        cMin = clusterAABBs[clusterIdx].minPoint.xyz;
+        cMax = clusterAABBs[clusterIdx].maxPoint.xyz;
+    }
+
+    uint pointLightCount = pc.lightCounts.x;
+    uint spotLightCount  = pc.lightCounts.y;
+
+    // Two passes per light type — count intersections, atomically reserve that
+    // many slots, then re-test and write the indices straight into the shared
+    // flat list. There is deliberately NO fixed-size per-cluster scratch array:
+    // an earlier version collected into a 64-entry local array and dropped every
+    // light past the 64th, which a dense scene overflowed in its large distant /
+    // wide-FOV froxels (each such froxel's AABB overlaps far more than 64 light
+    // spheres). The dropped lights showed up as lights blinking in and out along
+    // visible froxel borders, worsening with distance and FOV. Now the only bound
+    // is the shared buffer's capacity, clamped below.
+
+    // Both sweeps below walk the lights in batches. The loop bound is a push
+    // constant, so every thread runs the same number of iterations and the
+    // barriers stay uniform — the per-thread early-outs live strictly inside
+    // the `if (valid)` bodies, never around a barrier.
+
+    // ---- Point lights: count ----
+    uint pointCount = 0u;
+    for (uint base = 0u; base < pointLightCount; base += CULL_BATCH)
+    {
+        uint n = min(CULL_BATCH, pointLightCount - base);
+
+        barrier(); // previous batch's readers are done before we overwrite
+        if (tid < n)
+        {
+            vec4 pr      = pointLights[base + tid].positionRadius;
+            sLights[tid] = vec4(vec3(pc.view * vec4(pr.xyz, 1.0)), pr.w);
+        }
+        barrier(); // batch is staged and visible to the whole workgroup
+
+        if (valid)
+        {
+            for (uint j = 0u; j < n; j++)
+            {
+                if (sphereVsAABB(sLights[j].xyz, sLights[j].w, cMin, cMax))
+                    pointCount++;
+            }
+        }
+    }
+
+    uint pointOffset = 0u;
+    if (valid && pointCount > 0u) pointOffset = atomicAdd(globalPointCount, pointCount);
+
+    // The reservation counter is unbounded (worst case: every cluster reserves
+    // many lights, more than the flat buffer holds), so clamp this cluster's
+    // slice to its region — a reservation landing past the end stores fewer (or
+    // zero) indices instead of writing out of bounds into the other half.
+    pointOffset = min(pointOffset, MAX_LIGHT_INDICES);
+    pointCount  = min(pointCount,  MAX_LIGHT_INDICES - pointOffset);
+
+    // ---- Point lights: write ----
+    uint pointWritten = 0u;
+    for (uint base = 0u; base < pointLightCount; base += CULL_BATCH)
+    {
+        uint n = min(CULL_BATCH, pointLightCount - base);
+
+        barrier();
+        if (tid < n)
+        {
+            vec4 pr      = pointLights[base + tid].positionRadius;
+            sLights[tid] = vec4(vec3(pc.view * vec4(pr.xyz, 1.0)), pr.w);
+        }
+        barrier();
+
+        if (valid)
+        {
+            for (uint j = 0u; j < n && pointWritten < pointCount; j++)
+            {
+                if (sphereVsAABB(sLights[j].xyz, sLights[j].w, cMin, cMax))
+                    lightIndexList[pointOffset + pointWritten++] = base + j;
+            }
+        }
+    }
+
+    // ---- Spot lights: count (culled by bounding sphere for simplicity) ----
+    uint spotCount = 0u;
+    for (uint base = 0u; base < spotLightCount; base += CULL_BATCH)
+    {
+        uint n = min(CULL_BATCH, spotLightCount - base);
+
+        barrier();
+        if (tid < n)
+        {
+            vec4 pr      = spotLights[base + tid].positionRadius;
+            sLights[tid] = vec4(vec3(pc.view * vec4(pr.xyz, 1.0)), pr.w);
+        }
+        barrier();
+
+        if (valid)
+        {
+            for (uint j = 0u; j < n; j++)
+            {
+                if (sphereVsAABB(sLights[j].xyz, sLights[j].w, cMin, cMax))
+                    spotCount++;
+            }
+        }
+    }
+
+    uint spotOffset = 0u;
+    if (valid && spotCount > 0u) spotOffset = atomicAdd(globalSpotCount, spotCount);
+
+    spotOffset = min(spotOffset, MAX_LIGHT_INDICES);
+    spotCount  = min(spotCount,  MAX_LIGHT_INDICES - spotOffset);
+
+    // ---- Spot lights: write ----
+    // Point indices occupy [0, MAX_LIGHT_INDICES); spot indices start at MAX_LIGHT_INDICES.
+    uint spotWritten = 0u;
+    for (uint base = 0u; base < spotLightCount; base += CULL_BATCH)
+    {
+        uint n = min(CULL_BATCH, spotLightCount - base);
+
+        barrier();
+        if (tid < n)
+        {
+            vec4 pr      = spotLights[base + tid].positionRadius;
+            sLights[tid] = vec4(vec3(pc.view * vec4(pr.xyz, 1.0)), pr.w);
+        }
+        barrier();
+
+        if (valid)
+        {
+            for (uint j = 0u; j < n && spotWritten < spotCount; j++)
+            {
+                if (sphereVsAABB(sLights[j].xyz, sLights[j].w, cMin, cMax))
+                    lightIndexList[MAX_LIGHT_INDICES + spotOffset + spotWritten++] = base + j;
+            }
+        }
+    }
+
+    // ---- Write light grid entry for this cluster ----
+    if (valid)
+    {
+        lightGrids[clusterIdx].pointOffset = pointOffset;
+        lightGrids[clusterIdx].pointCount  = pointCount;
+        lightGrids[clusterIdx].spotOffset  = spotOffset;
+        lightGrids[clusterIdx].spotCount   = spotCount;
+    }
+}

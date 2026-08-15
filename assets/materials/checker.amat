@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "type": "MaterialData",
+  "BaseColorFactor": [
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "BaseColorTexture": {
+    "guid": "1c7fa8f9-bd8e-4f5d-b402-edadb14dc57d",
+    "path": "textures/checker.png"
+  },
+  "MetallicFactor": 0.0,
+  "RoughnessFactor": 0.6,
+  "NormalScale": 1.0,
+  "OcclusionStrength": 1.0,
+  "EmissiveFactor": [
+    0.0,
+    0.0,
+    0.0
+  ]
+}

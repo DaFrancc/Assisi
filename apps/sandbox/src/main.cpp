@@ -1,266 +1,294 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file main.cpp
-/// @brief Assisi Sandbox — physics demo built on the Application layer.
+/// @brief Assisi Sandbox entry point — a thin consumer of the editor library.
+///
+/// The editor itself lives in modules/Editor (Assisi::Editor::EditorApp); this
+/// executable just parses arguments, builds an EditorConfig, and runs it. Its
+/// only "game" content is DemoSystems.hpp, which exists so the per-world system
+/// binding has something observable to run. (The Phase 2 template splits
+/// this into Game/GameEditor targets over a shared GameLib; see
+/// docs/editor-extraction-plan.md.)
 
-#include <Assisi/App/Application.hpp>
+#include "ServerApp.hpp"
 
+#include <Assisi/Editor/EditorApp.hpp>
+
+#include <Assisi/App/SystemRegistry.hpp>
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/ECS/SceneRegistry.hpp>
+#include <Assisi/App/PhysicsSystems.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
-#include <Assisi/Physics/PhysicsWorld.hpp>
-#include <Assisi/Render/DefaultMeshes.hpp>
-#include <Assisi/Render/OpenGL/MeshBuffer.hpp>
-#include <Assisi/Render/Shader.hpp>
-#include <Assisi/Runtime/Camera.hpp>
-#include <Assisi/Runtime/Components.hpp>
-#include <Assisi/Runtime/Renderer.hpp>
-#include <Assisi/Window/Key.hpp>
+#include <Assisi/Window/InputContext.hpp>
 
-#include <imgui.h>
+#include <glm/gtc/quaternion.hpp>
 
+#include <charconv>
+#include <cstdint>
+
+#include <cstdio>
 #include <cstdlib>
-#include <tuple>
+#include <optional>
+#include <string>
+#include <string_view>
 
-// ---------------------------------------------------------------------------
-// SandboxApp
-// ---------------------------------------------------------------------------
-
-class SandboxApp : public Assisi::App::Application
+namespace
 {
-  public:
-    void OnStart();
-    void OnFixedUpdate(float dt);
-    void OnUpdate(float dt);
-    void OnRender();
-    void OnImGui();
-    void OnResize(int w, int h) override;
+constexpr const char *kUsage =
+    "Usage: Assisi-Sandbox [options]\n"
+    "  -l, --load-level <lvl>  virtual path of a level to open at startup,\n"
+    "                          e.g. levels/Materials.alvl\n"
+    "  --no-editor-visuals     don't build the renderer's editor overlay passes\n"
+    "                          (selection outline, entity icons, wireframes) —\n"
+    "                          runs the render path a Game build gets\n"
+    "  --server                run headless: no window, renderer, input or debug\n"
+    "                          UI — just the fixed-step simulation (see ServerApp)\n"
+    "  --host [port]           --server + replicate to clients (default port 27015)\n"
+    "  --connect <addr[:port]> join a host and mirror its world. Headless by\n"
+    "                          default; with --pie-client it is a windowed editor\n"
+    "  --pie-client            play-in-editor client: a windowed editor that joins\n"
+    "                          --connect at startup and writes nothing the editor\n"
+    "                          that spawned it also owns. Launched by \"Host + N\"\n"
+    "  --spawn <n>             --host only: spawn n moving replicated entities\n"
+    "  --ticks <n>             --server only: stop after n fixed ticks (0 = run\n"
+    "                          until interrupted, the default)\n"
+    "  --verbosity <level>     lowest level to log: trace, debug, info, warn,\n"
+    "                          error, fatal (default trace; info in a shipping\n"
+    "                          build)\n"
+    "  -h, --help              show this help and exit\n";
 
-  private:
-    Assisi::ECS::SceneRegistry    _scenes;
-    Assisi::ECS::Scene           *_scene = nullptr;
-    Assisi::Physics::PhysicsWorld _physics;
-
-    Assisi::Render::OpenGL::MeshBuffer _cubeMesh;
-    Assisi::Render::Shader             _shader;
-    Assisi::Runtime::Camera            _camera;
-    glm::mat4                          _projection{1.f};
-
-    // Camera control state
-    float _yaw         = -116.6f; // initialised in OnStart from camera direction
-    float _pitch       =  -24.1f;
-    float _fovDegrees  =   60.f;
-
-    static constexpr float kMoveSpeed        = 8.f;   // units/s
-    static constexpr float kMouseSensitivity = 0.1f;  // degrees/pixel
-
-    Assisi::Physics::RigidBodyComponent _cubeRb{};
-    glm::quat                           _cornerRot{1.f, 0.f, 0.f, 0.f};
-    glm::vec3                           _spawnPos{0.f, 6.f, 0.f};
-    int                                 _spawnCount = 0;
-};
-
-// ---------------------------------------------------------------------------
-
-void SandboxApp::OnStart()
+// Parses "addr", "addr:port", or ":port" into its parts, leaving whichever it
+// does not find untouched. IPv6 literals are not handled here — --connect takes
+// the plain form, and anything more elaborate belongs in a server browser, not
+// in argv parsing.
+bool ParseAddress(std::string_view text, std::string &outAddress, std::uint16_t &outPort)
 {
-    // Logger examples
-    // Assisi::Core::Log::Trace("Trace: verbose internal detail, {} items", 3);
-    // Assisi::Core::Log::Debug("Debug: useful during development");
-    // Assisi::Core::Log::Info("Info:  general status messages");
-    // Assisi::Core::Log::Warn("Warn:  something unexpected but recoverable");
-    // Assisi::Core::Log::Error("Error: something failed");
-    // Assisi::Core::Log::Fatal("Fatal: unrecoverable, shutting down");
-
-    _scene = _scenes.Create("Main").value();
-
-    _cubeMesh = Assisi::Render::OpenGL::MeshBuffer(Assisi::Render::CreateUnitCubeMesh());
-
-    _shader = Assisi::Render::Shader("shaders/mesh.vert", "shaders/mesh.frag");
-    if (!_shader.IsValid())
+    const std::size_t colon = text.rfind(':');
+    if (colon == std::string_view::npos)
     {
-        Assisi::Core::Log::Error("Failed to load mesh shader.");
-        RequestClose();
-        return;
+        outAddress = std::string(text);
+        return !outAddress.empty();
     }
 
-    _camera = Assisi::Runtime::Camera({5.f, 5.f, 10.f}, {0.f, 0.f, 0.f});
+    const std::string_view host = text.substr(0, colon);
+    const std::string_view port = text.substr(colon + 1);
+    if (!host.empty())
+        outAddress = std::string(host);
 
-    // Derive initial yaw/pitch from camera direction so mouse control is consistent.
-    const glm::vec3 forward = _camera.ForwardDirection();
-    _pitch = glm::degrees(glm::asin(forward.y));
-    _yaw   = glm::degrees(glm::atan(forward.z, forward.x));
-
-    _projection = MakeProjection(_fovDegrees);
-
-    // Floor — static box
-    {
-        Assisi::ECS::Entity floor = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            floor, {.position = {0.f, -0.25f, 0.f}, .rotation = {1.f, 0.f, 0.f, 0.f}, .scale = {10.f, 0.5f, 10.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(floor, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(
-            floor, _physics.AddBox({0.f, -0.25f, 0.f}, {1.f, 0.f, 0.f, 0.f}, {5.f, 0.25f, 5.f},
-                                   Assisi::Physics::BodyMotion::Static));
-    }
-
-    // Dynamic cube — tilted to land on a corner
-    _cornerRot = glm::normalize(
-        glm::angleAxis(glm::radians(45.f), glm::vec3(0.f, 0.f, 1.f)) *
-        glm::angleAxis(glm::radians(45.f), glm::vec3(1.f, 0.f, 0.f)));
-    {
-        Assisi::ECS::Entity cube = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            cube, {.position = _spawnPos, .rotation = _cornerRot, .scale = {1.f, 1.f, 1.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(cube, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
-        _cubeRb = _physics.AddBox(_spawnPos, _cornerRot, {0.5f, 0.5f, 0.5f}, Assisi::Physics::BodyMotion::Dynamic);
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(cube, _cubeRb);
-    }
+    std::uint32_t parsedPort = 0;
+    const auto parsed = std::from_chars(port.data(), port.data() + port.size(), parsedPort);
+    if (parsed.ec != std::errc{} || parsed.ptr != port.data() + port.size() || parsedPort == 0 ||
+        parsedPort > 65535u)
+        return false;
+    outPort = static_cast<std::uint16_t>(parsedPort);
+    return true;
 }
 
-void SandboxApp::OnResize(int /*w*/, int /*h*/)
+// Parses argv into the editor config inputs. Returns false with a message
+// printed when the arguments are malformed; sets shouldExit when --help was
+// handled (a clean early exit, not an error).
+bool ParseArgs(int argc, char **argv, std::string_view &startupLevel, bool &editorVisuals, bool &server,
+               Sandbox::ServerOptions &serverOptions, bool &pieClient, bool &shouldExit)
 {
-    _projection = MakeProjection(_fovDegrees);
-}
-
-void SandboxApp::OnFixedUpdate(float dt)
-{
-    _physics.Update(dt);
-    _physics.SyncTransforms(*_scene);
-}
-
-void SandboxApp::OnUpdate(float dt)
-{
-    auto &input = GetInput();
-
-    if (input.IsMouseButtonPressed(Assisi::Window::MouseButton::Left) &&
-        !input.IsMouseCaptured() && !ImGui::GetIO().WantCaptureMouse)
+    for (int i = 1; i < argc; ++i)
     {
-        input.SetMouseCaptured(true);
-    }
-
-    if (input.IsKeyPressed(Assisi::Window::Key::Escape))
-    {
-        if (input.IsMouseCaptured())
+        const std::string_view arg = argv[i];
+        if (arg == "-h" || arg == "--help")
         {
-            input.SetMouseCaptured(false);
+            std::fputs(kUsage, stdout);
+            shouldExit = true;
+            return true;
+        }
+        if (arg == "--verbosity")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--verbosity requires a level name\n\n%s", kUsage);
+                return false;
+            }
+            const std::string_view value = argv[++i];
+            const std::optional<Assisi::Core::LogLevel> level = Assisi::Core::ParseLogLevel(value);
+            if (!level)
+            {
+                std::fprintf(stderr, "--verbosity: '%.*s' is not a level name. Valid names are:",
+                             static_cast<int>(value.size()), value.data());
+                for (const std::string_view name : Assisi::Core::LogLevelNames())
+                {
+                    std::fprintf(stderr, " %.*s", static_cast<int>(name.size()), name.data());
+                }
+                std::fprintf(stderr, "\n\n%s", kUsage);
+                return false;
+            }
+            // Applied here rather than stored: this runs before the Application
+            // exists, so it takes effect for every line the engine emits,
+            // including the ones from bring-up.
+            Assisi::Core::GetLogger().SetMinLevel(*level);
+            continue;
+        }
+        if (arg == "-l" || arg == "--load-level")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "%.*s requires a level path\n\n%s", static_cast<int>(arg.size()), arg.data(),
+                             kUsage);
+                return false;
+            }
+            startupLevel = argv[++i];
+        }
+        else if (arg == "--no-editor-visuals")
+        {
+            editorVisuals = false;
+        }
+        else if (arg == "--server")
+        {
+            server = true;
+        }
+        else if (arg == "--host")
+        {
+            server             = true;
+            serverOptions.role = Sandbox::ServerRole::Host;
+            // The port is optional, so only consume the next argument when it
+            // does not look like another flag.
+            if (i + 1 < argc && argv[i + 1][0] != '-')
+            {
+                const std::string_view value = argv[++i];
+                std::uint32_t port  = 0;
+                const auto parsed = std::from_chars(value.data(), value.data() + value.size(), port);
+                if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size() || port == 0 ||
+                    port > 65535u)
+                {
+                    std::fprintf(stderr, "--host expects a port in 1-65535, got '%.*s'\n\n%s",
+                                 static_cast<int>(value.size()), value.data(), kUsage);
+                    return false;
+                }
+                serverOptions.port = static_cast<std::uint16_t>(port);
+            }
+        }
+        else if (arg == "--pie-client")
+        {
+            pieClient = true;
+        }
+        else if (arg == "--connect")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--connect requires an address\n\n%s", kUsage);
+                return false;
+            }
+            serverOptions.role = Sandbox::ServerRole::Client;
+            if (!ParseAddress(argv[++i], serverOptions.address, serverOptions.port))
+            {
+                std::fprintf(stderr, "--connect could not parse the address\n\n%s", kUsage);
+                return false;
+            }
+        }
+        else if (arg == "--spawn")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "--spawn requires a count\n\n%s", kUsage);
+                return false;
+            }
+            const std::string_view value = argv[++i];
+            const auto parsed = std::from_chars(value.data(), value.data() + value.size(), serverOptions.spawnCount);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+            {
+                std::fprintf(stderr, "--spawn expects a non-negative integer, got '%.*s'\n\n%s",
+                             static_cast<int>(value.size()), value.data(), kUsage);
+                return false;
+            }
+        }
+        else if (arg == "--ticks")
+        {
+            if (i + 1 >= argc)
+            {
+                std::fprintf(stderr, "%.*s requires a tick count\n\n%s", static_cast<int>(arg.size()), arg.data(),
+                             kUsage);
+                return false;
+            }
+            const std::string_view value = argv[++i];
+            const auto parsed =
+                std::from_chars(value.data(), value.data() + value.size(), serverOptions.tickLimit);
+            if (parsed.ec != std::errc{} || parsed.ptr != value.data() + value.size())
+            {
+                std::fprintf(stderr, "--ticks expects a non-negative integer, got '%.*s'\n\n%s",
+                             static_cast<int>(value.size()), value.data(), kUsage);
+                return false;
+            }
         }
         else
         {
-            RequestClose();
+            std::fprintf(stderr, "Unknown argument '%.*s'\n\n%s", static_cast<int>(arg.size()), arg.data(), kUsage);
+            return false;
         }
     }
+    return true;
+}
 
-    if (input.IsMouseCaptured())
+} // namespace
+
+int main(int argc, char **argv)
+{
+    std::string_view startupLevel;
+    bool editorVisuals = true;
+    bool server        = false;
+    bool pieClient     = false;
+    bool shouldExit    = false;
+    Sandbox::ServerOptions serverOptions;
+    if (!ParseArgs(argc, argv, startupLevel, editorVisuals, server, serverOptions, pieClient, shouldExit))
     {
-        // --- Mouse rotation ---
-        const glm::vec2 delta = input.MouseDelta();
-        _yaw   += delta.x * kMouseSensitivity;
-        _pitch -= delta.y * kMouseSensitivity;
-        _pitch  = glm::clamp(_pitch, -89.f, 89.f);
+        return EXIT_FAILURE;
+    }
+    if (shouldExit)
+    {
+        return EXIT_SUCCESS;
+    }
 
-        const glm::vec3 forward = {
-            glm::cos(glm::radians(_pitch)) * glm::cos(glm::radians(_yaw)),
-            glm::sin(glm::radians(_pitch)),
-            glm::cos(glm::radians(_pitch)) * glm::sin(glm::radians(_yaw))};
-
-        // --- WASD + Space/Ctrl movement ---
-        const glm::vec3 right = _camera.RightDirection();
-        glm::vec3 move{0.f};
-        if (input.IsKeyDown(Assisi::Window::Key::W))           { move += forward; }
-        if (input.IsKeyDown(Assisi::Window::Key::S))           { move -= forward; }
-        if (input.IsKeyDown(Assisi::Window::Key::D))           { move += right; }
-        if (input.IsKeyDown(Assisi::Window::Key::A))           { move -= right; }
-        if (input.IsKeyDown(Assisi::Window::Key::Space))       { move.y += 1.f; }
-        if (input.IsKeyDown(Assisi::Window::Key::LeftControl)) { move.y -= 1.f; }
-
-        glm::vec3 pos = _camera.WorldPosition();
-        if (glm::length(move) > 0.f)
+    // --connect on its own means the headless test client; --connect with
+    // --pie-client means a windowed editor that joins. The flag rather than a
+    // separate verb, because everything else about a PIE client is an ordinary
+    // editor, and giving it its own entry point would make it a different
+    // program that only resembles the one it is meant to exercise.
+    std::string autoJoinEndpoint;
+    if (pieClient)
+    {
+        if (serverOptions.role != Sandbox::ServerRole::Client)
         {
-            pos += glm::normalize(move) * (kMoveSpeed * dt);
+            std::fprintf(stderr, "--pie-client requires --connect <addr[:port]>\n\n%s", kUsage);
+            return EXIT_FAILURE;
         }
-
-        _camera.SetWorldPosition(pos);
-        _camera.SetLookAtTarget(pos + forward);
+        autoJoinEndpoint = serverOptions.address + ":" + std::to_string(serverOptions.port);
+    }
+    else if (serverOptions.role == Sandbox::ServerRole::Client)
+    {
+        server = true;
     }
 
-    // --- Scroll to adjust FOV ---
-    if (!ImGui::GetIO().WantCaptureMouse)
+    // The dedicated server is a different program, not the editor with its
+    // window hidden: it brings up only the simulation half of Application and
+    // never constructs an editor, a renderer, or a window.
+    if (server)
     {
-        const float scroll = input.ScrollDelta();
-        if (scroll != 0.f)
+        serverOptions.level = std::string(startupLevel);
+        Sandbox::ServerApp serverApp(serverOptions);
+        if (!serverApp.Initialize())
         {
-            _fovDegrees = glm::clamp(_fovDegrees - (scroll * 5.f), 10.f, 120.f);
-            _projection = MakeProjection(_fovDegrees);
+            return EXIT_FAILURE;
         }
+        serverApp.Run();
+        // A server that refused to start must say so in its exit code, or a
+        // supervisor reads the clean shutdown as a normal one.
+        return serverApp.StartupFailed() ? EXIT_FAILURE : EXIT_SUCCESS;
     }
-}
 
-void SandboxApp::OnRender()
-{
-    _shader.Use();
-    _shader.SetVec3("uViewPos",             _camera.WorldPosition());
-    _shader.SetVec3("uDirLight.direction",  {-0.4f, -1.0f, -0.5f});
-    _shader.SetVec3("uDirLight.color",      {1.0f,  1.0f,  1.0f });
-    _shader.SetFloat("uDirLight.intensity", 3.0f);
-    _shader.SetVec3("uAmbient",             {0.03f, 0.03f, 0.03f});
-
-    Assisi::Runtime::DrawScene(*_scene, _camera, _projection, _shader);
-}
-
-void SandboxApp::OnImGui()
-{
-    ImGui::Begin("World");
-
-    ImGui::Text("FPS: %d", GetFps());
-    ImGui::Text("Sleep resolution: %.2f ms", GetSleepResolutionMs());
-    ImGui::Separator();
-
-    auto [cubePos, cubeRot] = _physics.GetBodyTransform(_cubeRb);
-    ImGui::SeparatorText("Dynamic Cube");
-    ImGui::Text("Position  %.2f  %.2f  %.2f", static_cast<double>(cubePos.x), static_cast<double>(cubePos.y), static_cast<double>(cubePos.z));
-    if (ImGui::Button("Reset Cube"))
+    Assisi::Editor::EditorApp app({.startupLevel        = std::string(startupLevel),
+                                   .autoJoinEndpoint    = autoJoinEndpoint,
+                                   .restrictedViewer    = pieClient,
+                                   .enableEditorVisuals = editorVisuals});
+    if (!app.Initialize())
     {
-        _physics.SetBodyTransform(_cubeRb, _spawnPos, _cornerRot);
+        return EXIT_FAILURE;
     }
-
-    ImGui::SeparatorText("Physics");
-    glm::vec3 gravity = _physics.GetGravity();
-    if (ImGui::SliderFloat("Gravity Y", &gravity.y, -20.f, 0.f))
-    {
-        _physics.SetGravity(gravity);
-    }
-
-    ImGui::SeparatorText("Spawn");
-    if (ImGui::Button("Spawn Cube"))
-    {
-        const float offsetX = static_cast<float>((_spawnCount % 5) - 2) * 1.5f;
-        const float offsetZ = static_cast<float>((_spawnCount / 5 % 5) - 2) * 1.5f;
-        const glm::vec3 spawnPos = {offsetX, 8.f, offsetZ};
-
-        Assisi::ECS::Entity newCube = _scene->Create();
-        std::ignore = _scene->Add<Assisi::Runtime::TransformComponent>(
-            newCube, {.position = spawnPos, .rotation = _cornerRot, .scale = {1.f, 1.f, 1.f}});
-        std::ignore = _scene->Add<Assisi::Runtime::MeshRendererComponent>(
-            newCube, {.mesh = &_cubeMesh, .albedoTextureId = 0u});
-        const auto newRb = _physics.AddBox(spawnPos, _cornerRot, {0.5f, 0.5f, 0.5f},
-                                           Assisi::Physics::BodyMotion::Dynamic);
-        std::ignore = _scene->Add<Assisi::Physics::RigidBodyComponent>(newCube, newRb);
-        ++_spawnCount;
-    }
-    ImGui::SameLine();
-    ImGui::Text("(%d spawned)", _spawnCount);
-
-    ImGui::SeparatorText("Hint");
-    ImGui::TextDisabled("LMB: capture  |  WASD: move  |  Space/Ctrl: up/down");
-    ImGui::TextDisabled("Mouse: look  |  Scroll: FOV  |  Esc: release / quit");
-
-    ImGui::End();
-}
-
-// ---------------------------------------------------------------------------
-
-int main()
-{
-    SandboxApp app;
     app.Run();
     return EXIT_SUCCESS;
 }

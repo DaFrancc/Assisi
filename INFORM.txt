@@ -1,0 +1,35 @@
+INFORM — deferred work & deliberate omissions
+==============================================
+
+This note tracks things that were consciously *deferred*, not forgotten. If you
+are new to the repo (or future me), read this before "fixing" something that
+looks missing — it may be parked on purpose. Source of the audit is
+docs/code-review-2026-07-round4.md.
+
+Deferred by decision
+--------------------
+- No CI pipeline. Single-contributor project; local build + ctest is the gate
+  (see the "Verify before commit" habit). Add CI when a second contributor or a
+  release cadence makes green-on-push worth the setup.
+
+- Assimp is a dependency but unused. Model loading currently goes through the
+  engine's own path; Assimp was pulled in for a future importer that hasn't
+  landed. Either wire it up or drop it from the build by the next review round —
+  don't leave it linked-but-dead indefinitely.
+
+Folded into the GPU-driven rendering roadmap (see docs/ for that design)
+------------------------------------------------------------------------
+- MeshPass binding-set cache is unbounded within a level. Dissolves once the
+  renderer moves to bindless descriptors, so not worth a stopgap eviction pass.
+
+- Single hardcoded pass sequence. Subsumed by the GPU-driven pass ordering; no
+  point generalizing the current fixed sequence first.
+
+Closed (for context — these WERE round-4 items, now done)
+---------------------------------------------------------
+- Draw-submission culling  -> frustum culling shipped.
+- PropagateTransforms rebuilding every world matrix every frame -> ECS change
+  ticks + dirty-skip propagation shipped.
+
+Rule of thumb: before removing or "completing" any of the above, check the
+round-4 doc and the GPU-driven design doc so you don't undo a deliberate defer.

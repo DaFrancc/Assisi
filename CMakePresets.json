@@ -1,4 +1,4 @@
-﻿{
+{
   "version": 6,
   "cmakeMinimumRequired": {
     "major": 3,
@@ -11,9 +11,15 @@
       "hidden": true,
       "generator": "Ninja",
       "binaryDir": "${sourceDir}/out/build/${presetName}",
+      "warnings": {
+        "dev": false,
+        "deprecated": false
+      },
       "cacheVariables": {
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "ASSISI_WARNINGS_AS_ERRORS": "OFF",
+        "CMAKE_C_COMPILER_LAUNCHER": "ccache",
+        "CMAKE_CXX_COMPILER_LAUNCHER": "ccache",
+        "ASSISI_WARNINGS_AS_ERRORS": "ON",
         "ASSISI_ENABLE_FAST_MATH": "ON",
         "ASSISI_ENABLE_SANITIZERS": "OFF",
         "ASSISI_SANITIZER_SET": "address;undefined"
@@ -23,52 +29,47 @@
     {
       "name": "msvc-debug",
       "inherits": "base",
-      "description": "Windows + MSVC + Debug",
+      "description": "Windows + MSVC + Debug (unoptimized, full symbols)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-debug/conan_toolchain.cmake"
+        "CMAKE_BUILD_TYPE": "Debug"
       }
     },
     {
-      "name": "msvc-release",
+      "name": "msvc-dev",
       "inherits": "base",
-      "description": "Windows + MSVC + Release",
+      "description": "Windows + MSVC + Development (optimized, partial symbols)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-release/conan_toolchain.cmake"
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo"
       }
     },
     {
-      "name": "msvc-sanitize",
+      "name": "msvc-ship",
       "inherits": "base",
-      "description": "Windows + MSVC + Sanitized (best-effort ASan; Linux is the primary sanitizer platform)",
+      "description": "Windows + MSVC + Shipping (fully optimized, no debug info)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
         "rhs": "Windows"
       },
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "ASSISI_ENABLE_SANITIZERS": "ON",
-        "ASSISI_SANITIZER_SET": "address",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/msvc-sanitize/conan_toolchain.cmake"
+        "CMAKE_BUILD_TYPE": "Release"
       }
     },
 
     {
       "name": "gcc-debug",
       "inherits": "base",
-      "description": "Linux + GCC + Debug",
+      "description": "Linux + GCC + Debug (unoptimized, full symbols)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -77,14 +78,28 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-debug/conan_toolchain.cmake"
+        "CMAKE_CXX_COMPILER": "g++"
       }
     },
     {
-      "name": "gcc-release",
+      "name": "gcc-dev",
       "inherits": "base",
-      "description": "Linux + GCC + Release",
+      "description": "Linux + GCC + Development (optimized, partial symbols)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "gcc",
+        "CMAKE_CXX_COMPILER": "g++"
+      }
+    },
+    {
+      "name": "gcc-ship",
+      "inherits": "base",
+      "description": "Linux + GCC + Shipping (fully optimized, no debug info)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -93,33 +108,14 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-release/conan_toolchain.cmake"
-      }
-    },
-    {
-      "name": "gcc-sanitize",
-      "inherits": "base",
-      "description": "Linux + GCC + Sanitized (ASan+UBSan default)",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      },
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "gcc",
-        "CMAKE_CXX_COMPILER": "g++",
-        "ASSISI_ENABLE_SANITIZERS": "ON",
-        "ASSISI_SANITIZER_SET": "address;undefined",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/gcc-sanitize/conan_toolchain.cmake"
+        "CMAKE_CXX_COMPILER": "g++"
       }
     },
 
     {
       "name": "clang-debug",
       "inherits": "base",
-      "description": "Linux + Clang + Debug",
+      "description": "Linux + Clang + Debug (unoptimized, full symbols)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -128,14 +124,28 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug",
         "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-debug/conan_toolchain.cmake"
+        "CMAKE_CXX_COMPILER": "clang++"
       }
     },
     {
-      "name": "clang-release",
+      "name": "clang-dev",
       "inherits": "base",
-      "description": "Linux + Clang + Release",
+      "description": "Linux + Clang + Development (optimized, partial symbols)",
+      "condition": {
+        "type": "equals",
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux"
+      },
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+    {
+      "name": "clang-ship",
+      "inherits": "base",
+      "description": "Linux + Clang + Shipping (fully optimized, no debug info)",
       "condition": {
         "type": "equals",
         "lhs": "${hostSystemName}",
@@ -144,67 +154,197 @@
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-release/conan_toolchain.cmake"
+        "CMAKE_CXX_COMPILER": "clang++"
+      }
+    },
+
+    {
+      "name": "msvc-asan",
+      "inherits": "msvc-debug",
+      "description": "Windows + MSVC + Debug + AddressSanitizer (MSVC supports ASan only)",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON"
       }
     },
     {
-      "name": "clang-sanitize",
-      "inherits": "base",
-      "description": "Linux + Clang + Sanitized (ASan+UBSan default)",
-      "condition": {
-        "type": "equals",
-        "lhs": "${hostSystemName}",
-        "rhs": "Linux"
-      },
+      "name": "gcc-asan",
+      "inherits": "gcc-debug",
+      "description": "Linux + GCC + Debug + Address/UndefinedBehaviorSanitizer",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "ASSISI_ENABLE_SANITIZERS": "ON",
-        "ASSISI_SANITIZER_SET": "address;undefined",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/out/build/clang-sanitize/conan_toolchain.cmake"
+        "ASSISI_ENABLE_SANITIZERS": "ON"
       }
+    },
+    {
+      "name": "gcc-tsan",
+      "inherits": "gcc-debug",
+      "description": "Linux + GCC + Debug + ThreadSanitizer (mutually exclusive with ASan)",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON",
+        "ASSISI_SANITIZER_SET": "thread"
+      }
+    },
+    {
+      "name": "clang-asan",
+      "inherits": "clang-debug",
+      "description": "Linux + Clang + Debug + Address/UndefinedBehaviorSanitizer",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON"
+      }
+    },
+    {
+      "name": "clang-tsan",
+      "inherits": "clang-debug",
+      "description": "Linux + Clang + Debug + ThreadSanitizer (mutually exclusive with ASan)",
+      "cacheVariables": {
+        "ASSISI_ENABLE_SANITIZERS": "ON",
+        "ASSISI_SANITIZER_SET": "thread"
+      }
+    },
+
+    {
+      "name": "msvc-debug-chiara",
+      "inherits": "msvc-debug",
+      "description": "Windows + MSVC + Debug + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "msvc-dev-chiara",
+      "inherits": "msvc-dev",
+      "description": "Windows + MSVC + Development + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "msvc-ship-chiara",
+      "inherits": "msvc-ship",
+      "description": "Windows + MSVC + Shipping + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+
+    {
+      "name": "gcc-debug-chiara",
+      "inherits": "gcc-debug",
+      "description": "Linux + GCC + Debug + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "gcc-dev-chiara",
+      "inherits": "gcc-dev",
+      "description": "Linux + GCC + Development + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "gcc-ship-chiara",
+      "inherits": "gcc-ship",
+      "description": "Linux + GCC + Shipping + Chiara capture compiled in (the build worth profiling)",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+
+    {
+      "name": "clang-debug-chiara",
+      "inherits": "clang-debug",
+      "description": "Linux + Clang + Debug + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "clang-dev-chiara",
+      "inherits": "clang-dev",
+      "description": "Linux + Clang + Development + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+    {
+      "name": "clang-ship-chiara",
+      "inherits": "clang-ship",
+      "description": "Linux + Clang + Shipping + Chiara capture compiled in",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
+    },
+
+    {
+      "name": "gcc-tsan-chiara",
+      "inherits": "gcc-tsan",
+      "description": "Linux + GCC + ThreadSanitizer + Chiara compiled in — the ring and shadow-stack race tests",
+      "cacheVariables": { "ASSISI_ENABLE_CHIARA": "ON" }
     }
   ],
   "buildPresets": [
+    { "name": "msvc-debug",  "configurePreset": "msvc-debug"  },
+    { "name": "msvc-dev",    "configurePreset": "msvc-dev"    },
+    { "name": "msvc-ship",   "configurePreset": "msvc-ship"   },
+
+    { "name": "gcc-debug",   "configurePreset": "gcc-debug"   },
+    { "name": "gcc-dev",     "configurePreset": "gcc-dev"     },
+    { "name": "gcc-ship",    "configurePreset": "gcc-ship"    },
+
+    { "name": "clang-debug", "configurePreset": "clang-debug" },
+    { "name": "clang-dev",   "configurePreset": "clang-dev"   },
+    { "name": "clang-ship",  "configurePreset": "clang-ship"  },
+
+    { "name": "msvc-asan",   "configurePreset": "msvc-asan"   },
+    { "name": "gcc-asan",    "configurePreset": "gcc-asan"    },
+    { "name": "gcc-tsan",    "configurePreset": "gcc-tsan"    },
+    { "name": "clang-asan",  "configurePreset": "clang-asan"  },
+    { "name": "clang-tsan",  "configurePreset": "clang-tsan"  },
+
+    { "name": "msvc-debug-chiara",  "configurePreset": "msvc-debug-chiara"  },
+    { "name": "msvc-dev-chiara",    "configurePreset": "msvc-dev-chiara"    },
+    { "name": "msvc-ship-chiara",   "configurePreset": "msvc-ship-chiara"   },
+
+    { "name": "gcc-debug-chiara",   "configurePreset": "gcc-debug-chiara"   },
+    { "name": "gcc-dev-chiara",     "configurePreset": "gcc-dev-chiara"     },
+    { "name": "gcc-ship-chiara",    "configurePreset": "gcc-ship-chiara"    },
+
+    { "name": "clang-debug-chiara", "configurePreset": "clang-debug-chiara" },
+    { "name": "clang-dev-chiara",   "configurePreset": "clang-dev-chiara"   },
+    { "name": "clang-ship-chiara",  "configurePreset": "clang-ship-chiara"  },
+
+    { "name": "gcc-tsan-chiara",    "configurePreset": "gcc-tsan-chiara"    }
+  ],
+  "testPresets": [
     {
-      "name": "msvc-debug",
-      "configurePreset": "msvc-debug"
-    },
-    {
-      "name": "msvc-release",
-      "configurePreset": "msvc-release"
-    },
-    {
-      "name": "msvc-sanitize",
-      "configurePreset": "msvc-sanitize"
+      "name": "test-base",
+      "hidden": true,
+      "output": { "outputOnFailure": true },
+      "execution": { "noTestsAction": "error", "stopOnFailure": false }
     },
 
     {
-      "name": "gcc-debug",
-      "configurePreset": "gcc-debug"
-    },
-    {
-      "name": "gcc-release",
-      "configurePreset": "gcc-release"
-    },
-    {
-      "name": "gcc-sanitize",
-      "configurePreset": "gcc-sanitize"
+      "name": "tsan-base",
+      "hidden": true,
+      "inherits": "test-base",
+      "environment": {
+        "TSAN_OPTIONS": "suppressions=${sourceDir}/.tsan-suppressions detect_deadlocks=0 halt_on_error=0"
+      }
     },
 
-    {
-      "name": "clang-debug",
-      "configurePreset": "clang-debug"
-    },
-    {
-      "name": "clang-release",
-      "configurePreset": "clang-release"
-    },
-    {
-      "name": "clang-sanitize",
-      "configurePreset": "clang-sanitize"
-    }
+    { "name": "msvc-debug",  "inherits": "test-base", "configurePreset": "msvc-debug"  },
+    { "name": "msvc-dev",    "inherits": "test-base", "configurePreset": "msvc-dev"    },
+    { "name": "msvc-ship",   "inherits": "test-base", "configurePreset": "msvc-ship"   },
+
+    { "name": "gcc-debug",   "inherits": "test-base", "configurePreset": "gcc-debug"   },
+    { "name": "gcc-dev",     "inherits": "test-base", "configurePreset": "gcc-dev"     },
+    { "name": "gcc-ship",    "inherits": "test-base", "configurePreset": "gcc-ship"    },
+
+    { "name": "clang-debug", "inherits": "test-base", "configurePreset": "clang-debug" },
+    { "name": "clang-dev",   "inherits": "test-base", "configurePreset": "clang-dev"   },
+    { "name": "clang-ship",  "inherits": "test-base", "configurePreset": "clang-ship"  },
+
+    { "name": "msvc-asan",   "inherits": "test-base", "configurePreset": "msvc-asan"   },
+    { "name": "gcc-asan",    "inherits": "test-base", "configurePreset": "gcc-asan"    },
+    { "name": "gcc-tsan",    "inherits": "tsan-base", "configurePreset": "gcc-tsan"    },
+    { "name": "clang-asan",  "inherits": "test-base", "configurePreset": "clang-asan"  },
+    { "name": "clang-tsan",  "inherits": "tsan-base", "configurePreset": "clang-tsan"  },
+
+    { "name": "msvc-debug-chiara",  "inherits": "test-base", "configurePreset": "msvc-debug-chiara"  },
+    { "name": "msvc-dev-chiara",    "inherits": "test-base", "configurePreset": "msvc-dev-chiara"    },
+    { "name": "msvc-ship-chiara",   "inherits": "test-base", "configurePreset": "msvc-ship-chiara"   },
+
+    { "name": "gcc-debug-chiara",   "inherits": "test-base", "configurePreset": "gcc-debug-chiara"   },
+    { "name": "gcc-dev-chiara",     "inherits": "test-base", "configurePreset": "gcc-dev-chiara"     },
+    { "name": "gcc-ship-chiara",    "inherits": "test-base", "configurePreset": "gcc-ship-chiara"    },
+
+    { "name": "clang-debug-chiara", "inherits": "test-base", "configurePreset": "clang-debug-chiara" },
+    { "name": "clang-dev-chiara",   "inherits": "test-base", "configurePreset": "clang-dev-chiara"   },
+    { "name": "clang-ship-chiara",  "inherits": "test-base", "configurePreset": "clang-ship-chiara"  },
+
+    { "name": "gcc-tsan-chiara",    "inherits": "tsan-base", "configurePreset": "gcc-tsan-chiara"    }
   ]
 }

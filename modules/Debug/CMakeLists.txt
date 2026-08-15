@@ -7,8 +7,8 @@ target_sources(Assisi-Debug
   PRIVATE
     "src/DebugUI.cpp"
     # Dear ImGui platform/renderer backends (compiled as part of this module)
-    "${ASSISI_IMGUI_ROOT}/res/bindings/imgui_impl_glfw.cpp"
-    "${ASSISI_IMGUI_ROOT}/res/bindings/imgui_impl_opengl3.cpp"
+    "${ASSISI_IMGUI_ROOT}/backends/imgui_impl_glfw.cpp"
+    "${ASSISI_IMGUI_ROOT}/backends/imgui_impl_vulkan.cpp"
 )
 
 target_include_directories(Assisi-Debug
@@ -16,15 +16,34 @@ target_include_directories(Assisi-Debug
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
   PRIVATE
     # Backend headers live alongside their source files
-    "${ASSISI_IMGUI_ROOT}/res/bindings"
+    "${ASSISI_IMGUI_ROOT}/backends"
+)
+
+# The ImGui backends above are vendored third-party sources that happen to be
+# compiled into one of our targets, so they inherit Assisi::Warnings and emit
+# ~55 conversion warnings we cannot fix without patching upstream. Silence them
+# per-source rather than weakening the warning set for DebugUI.cpp, which is
+# ours and should stay strict.
+set_source_files_properties(
+  "${ASSISI_IMGUI_ROOT}/backends/imgui_impl_glfw.cpp"
+  "${ASSISI_IMGUI_ROOT}/backends/imgui_impl_vulkan.cpp"
+  TARGET_DIRECTORY Assisi-Debug
+  PROPERTIES COMPILE_OPTIONS "$<IF:$<CXX_COMPILER_ID:MSVC>,/w,-w>"
 )
 
 target_link_libraries(Assisi-Debug
   PUBLIC
     imgui::imgui
+    implot::implot
     Assisi::Window
+    Assisi::Render
   PRIVATE
     Assisi::Deps
 )
+
+# No Vulkan SDK in this dev environment — imgui_impl_vulkan.cpp must load its
+# own Vulkan function pointers rather than link a static import lib. Applies to
+# the whole target since both imgui_impl_vulkan.cpp and DebugUI.cpp need it.
+target_compile_definitions(Assisi-Debug PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES)
 
 add_library(Assisi::Debug ALIAS Assisi-Debug)

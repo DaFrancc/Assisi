@@ -1,14 +1,11 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file Sinks.hpp
 /// @brief Built-in log sinks for the Assisi logging system.
 ///
-/// Available sinks:
-///   - ConsoleSink  — writes colored output to stdout/stderr
-///   - FileSink     — appends to a file
-///
-/// Future sinks (not yet implemented):
-///   - ScreenSink   — in-game console overlay
+///   - ConsoleSink — stdout, colored when stdout is a terminal
+///   - FileSink    — timestamped lines, flushed per line
 
 #include <filesystem>
 #include <fstream>
@@ -18,27 +15,43 @@
 namespace Assisi::Core
 {
 
-/// @brief Writes colored log messages to stdout/stderr.
+/// @brief Whether the process has anywhere for console output to go.
 ///
-/// Enables ANSI virtual terminal processing on Windows automatically.
-/// Error and Fatal go to stderr; all other levels go to stdout.
+/// False in a shipped GUI build on Windows, which has no console: a ConsoleSink
+/// there formats every line for a handle nobody can read. On POSIX stdout
+/// essentially always exists, redirects included. Gate ConsoleSink on this.
+[[nodiscard]] bool HasConsoleOutput();
+
+/// @brief Writes to stdout, colored when stdout is a terminal.
+///
+/// Enables ANSI virtual terminal processing on Windows. Every level goes to
+/// stdout, Error and Fatal included — two streams reorder against each other,
+/// and color already marks severity. Color is suppressed when stdout is not a
+/// terminal, so a redirect collects text rather than escape sequences.
 struct ConsoleSink : Sink
 {
-    /// @brief Enables ANSI color support on Windows.
+    /// @brief Detects terminal support and enables ANSI color on Windows.
     ConsoleSink();
 
     void Write(LogLevel level, std::string_view message) override;
+
+private:
+    bool _color = false;
 };
 
-/// @brief Appends log messages to a file.
+/// @brief Writes timestamped log messages to a file.
+///
+/// Each line is flushed immediately: the log's job is post-mortem, and an
+/// unflushed tail is what a hard crash loses. One file per launch — Application
+/// names it from Core::LaunchStamp() and prunes old ones.
 struct FileSink : Sink
 {
-    /// @brief Opens (or creates) the file at the given path in append mode.
+    /// @brief Opens the file at the given path, truncating any previous contents.
     explicit FileSink(const std::filesystem::path &path);
 
     void Write(LogLevel level, std::string_view message) override;
 
-  private:
+private:
     std::ofstream _file;
 };
 

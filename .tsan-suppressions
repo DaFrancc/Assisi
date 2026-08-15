@@ -1,0 +1,50 @@
+# ThreadSanitizer suppressions.
+#
+# Third-party only. Nothing in here may name an Assisi symbol or file: the point
+# of the tsan target is to fail when *we* introduce a race, and a suppression
+# that reaches our code turns the gate off without anyone noticing. If a report
+# can be fixed in our source, fix it instead of adding a line here.
+#
+# Jolt is deliberately absent. Its solver's races were removed rather than
+# suppressed — a sanitized build steps physics on Jolt's single-threaded job
+# system (modules/Physics/src/PhysicsWorld.cpp, ASSISI_PHYSICS_TSAN).
+
+# --- GameNetworkingSockets -------------------------------------------------
+#
+# Not suppressed here — the deadlock detector is off instead, in the tsan test
+# presets (`detect_deadlocks=0`, CMakePresets.json). This block records why,
+# because turning a detector off deserves an argument.
+#
+# Every inversion the suite produces is between GNS's global lock and its
+# per-connection locks. The hierarchy is GNS's own and deliberate: its source
+# states that holding the global lock while taking a connection lock is
+# intended. We reach both sides only through its public API —
+# Connect()/CreateLoopbackPair() call ConnectByIPAddress, and Adopt() calls
+# SetConnectionPollGroup/ConfigureConnectionLanes from inside a GNS status
+# callback that already holds the global lock. Neither mutex is ours and
+# neither order is ours to choose. (tsan is also known to report inversions
+# against correct code when timed locks are involved — llvm#57955,
+# google/sanitizers#814 — and GNS's global lock is a recursive_timed_mutex;
+# every one of these traces goes through pthread_mutex_clocklock.)
+#
+# A suppression scoped to GNS was tried and does not work: tsan's deadlock
+# detector unwinds lock stacks with the fast unwinder and drops GNS's frames
+# entirely, leaving `recursive_timed_mutex::lock` sitting directly under *our*
+# call site. Building GNS with `-g -fno-omit-frame-pointer` was tried too
+# (verified applied, verified rebuilt) and does not bring them back. So the
+# only symbol a `deadlock:` line could match is Assisi code, which would blind
+# the detector in exactly the files that do the most locking.
+#
+# What is lost: inversions among our own mutexes, of which we have very few
+# (Blueprint.cpp's cache lock, NetTransport's g_libraryMutex). What is kept:
+# the data-race detector, which is what actually finds our bugs. Drop
+# `detect_deadlocks=0` for a deliberate lock-ordering audit and read past the
+# GNS noise by hand.
+
+# --- doctest ---------------------------------------------------------------
+#
+# doctest's crash handler builds a message with std::string and operator new
+# while inside the signal handler. Its own reporting path, reached only when a
+# test has already failed hard.
+signal:doctest::
+signal:handleSignal

@@ -1,0 +1,244 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
+
+#include <doctest/doctest.h>
+
+#include <cstdint>
+#include <type_traits>
+
+#include <Assisi/ECS/Scene.hpp>
+#include <Assisi/ECS/TestComponents.hpp>
+#include <Assisi/Testing/ThrowOnContractViolation.hpp>
+
+using namespace Assisi::ECS;
+
+// Scene owns its component pools as raw pointers and frees them in ~Scene, so
+// copying or moving one would double-free (or dangle) those pools. These guard
+// the deleted special members — a regression here is a compile error, not a
+// runtime crash to chase down later.
+static_assert(!std::is_copy_constructible_v<Scene>, "Scene must not be copy-constructible");
+static_assert(!std::is_copy_assignable_v<Scene>, "Scene must not be copy-assignable");
+static_assert(!std::is_move_constructible_v<Scene>, "Scene must not be move-constructible");
+static_assert(!std::is_move_assignable_v<Scene>, "Scene must not be move-assignable");
+
+TEST_CASE("Scene: add / has / get / remove single-component lifecycle")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+
+    CHECK_FALSE(scene.Has<Position>(e));
+    CHECK(scene.Get<Position>(e) == nullptr);
+
+    REQUIRE(scene.Add<Position>(e, {3.0f}) != nullptr);
+    CHECK(scene.Has<Position>(e));
+    REQUIRE(scene.Get<Position>(e) != nullptr);
+    CHECK(scene.Get<Position>(e)->x == doctest::Approx(3.0f));
+
+    scene.Remove<Position>(e);
+    CHECK_FALSE(scene.Has<Position>(e));
+    CHECK(scene.Get<Position>(e) == nullptr);
+}
+
+TEST_CASE("Scene: querying or removing a never-created pool is safe")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+
+    CHECK_FALSE(scene.Has<Position>(e)); // pool never created
+    CHECK(scene.Get<Position>(e) == nullptr);
+    scene.Remove<Position>(e); // must not crash
+}
+
+TEST_CASE("Scene: RemoveById removes a component by ComponentId")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<Position>(e, {5.0f}) != nullptr);
+    REQUIRE(scene.Has<Position>(e));
+
+    const Assisi::Core::Reflect::ComponentId id = Assisi::Core::Reflect::ComponentIdOf<Position>();
+    scene.RemoveById(e, id);
+    CHECK_FALSE(scene.Has<Position>(e));
+
+    // Idempotent, and safe on an id whose pool exists but the entity lacks it,
+    // and on an out-of-range id.
+    scene.RemoveById(e, id);
+    scene.RemoveById(e, Assisi::Core::Reflect::kInvalidComponentId);
+    CHECK_FALSE(scene.Has<Position>(e));
+}
+
+TEST_CASE("Scene: destroy is deferred until FlushDestroyed")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
+    REQUIRE(scene.Add<Velocity>(e, {2.0f}) != nullptr);
+
+    scene.Destroy(e);
+    // Deferred: the entity stays fully alive and present in every pool until the
+    // flush, so a Query still yields it this frame.
+    CHECK(scene.IsAlive(e));
+    CHECK(scene.Has<Position>(e));
+    CHECK(scene.Has<Velocity>(e));
+
+    scene.FlushDestroyed();
+    // Now it is gone from the registry and every pool it belonged to.
+    CHECK_FALSE(scene.IsAlive(e));
+    CHECK_FALSE(scene.Has<Position>(e));
+    CHECK_FALSE(scene.Has<Velocity>(e));
+}
+
+TEST_CASE("Scene: clear resets entity ids and leaves pools reusable")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<Position>(e, {5.0f}) != nullptr);
+
+    scene.Clear();
+    CHECK(scene.AliveCount() == 0);
+
+    const Entity fresh = scene.Create();
+    CHECK(fresh.index == 0);
+    CHECK(fresh.generation == 0);
+    CHECK(scene.Get<Position>(fresh) == nullptr); // old data was cleared
+
+    REQUIRE(scene.Add<Position>(fresh, {7.0f}) != nullptr); // pool still usable
+    CHECK(scene.Get<Position>(fresh)->x == doctest::Approx(7.0f));
+}
+
+// A stale handle must never add a component, even when the reused slot is still
+// empty in that pool — the SparseSet-level check alone can't catch this (it only
+// fires once the live occupant populates the same pool), so Scene::Add gates on
+// liveness. Regression for the "Scene::Add does not check IsAlive" gap.
+TEST_CASE("Scene: a stale handle cannot add to a reused slot")
+{
+    Scene scene;
+    const Entity a = scene.Create();
+    REQUIRE(scene.Add<Position>(a, {1.0f}) != nullptr);
+
+    scene.Destroy(a);
+    scene.FlushDestroyed(); // apply the deferred destroy so the slot is freed for reuse
+    const Entity b = scene.Create(); // reuses a's slot, newer generation
+    REQUIRE(b.index == a.index);
+    REQUIRE(b.generation != a.generation);
+
+    // b has not populated the Position pool yet, so a's old slot is free there.
+    CHECK(scene.Add<Position>(a, {9.0f}) == nullptr); // rejected: a is dead
+
+    CHECK_FALSE(scene.Has<Position>(b));
+    REQUIRE(scene.Add<Position>(b, {5.0f}) != nullptr); // b adds cleanly
+    CHECK(scene.Get<Position>(b)->x == doctest::Approx(5.0f));
+}
+
+TEST_CASE("Scene: adding a component twice is rejected, original kept")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+    REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
+    CHECK(scene.Add<Position>(e, {2.0f}) == nullptr);
+    CHECK(scene.Get<Position>(e)->x == doctest::Approx(1.0f));
+}
+
+TEST_CASE("Scene: ReviveAt restores an exact handle and lets components be re-added")
+{
+    Scene scene;
+    const Entity a = scene.Create();
+    scene.Create(); // keep the scene non-trivial
+    REQUIRE(scene.Add<Position>(a, {7.0f}) != nullptr);
+
+    // Fully destroy a (flush applies it to the registry + clears its Position).
+    scene.Destroy(a);
+    scene.FlushDestroyed();
+    REQUIRE_FALSE(scene.IsAlive(a));
+    CHECK_FALSE(scene.Has<Position>(a));
+
+    // Revive the exact handle; it comes back with no components, ready to refill.
+    scene.ReviveAt(a);
+    CHECK(scene.IsAlive(a));
+    CHECK(scene.EntityAt(a.index) == a);
+    CHECK_FALSE(scene.Has<Position>(a)); // revived bare
+    REQUIRE(scene.Add<Position>(a, {4.0f}) != nullptr);
+    CHECK(scene.Get<Position>(a)->x == doctest::Approx(4.0f));
+}
+
+TEST_CASE("Scene: ReviveAt restores exact handles across a Clear")
+{
+    // The play/stop restore spans a level load once a joining editor builds the
+    // host's world in the play scene, and a load Clears — which leaves the
+    // registry with no slots at all. The snapshot's handles must still land
+    // exactly, or every stored handle in the undo history dangles.
+    Scene scene;
+    const Entity first  = scene.Create();
+    scene.Create();
+    scene.Create();
+    const Entity fourth = scene.Create();
+    REQUIRE(scene.Add<Position>(fourth, {3.0f}) != nullptr);
+
+    scene.Clear();
+    REQUIRE(scene.AliveCount() == 0);
+    REQUIRE_FALSE(scene.IsAlive(fourth));
+
+    // Out of order, and past the end of a table that no longer exists.
+    scene.ReviveAt(fourth);
+    scene.ReviveAt(first);
+
+    CHECK(scene.IsAlive(fourth));
+    CHECK(scene.IsAlive(first));
+    CHECK(scene.EntityAt(fourth.index) == fourth);
+    CHECK(scene.AliveCount() == 2);
+    REQUIRE(scene.Add<Position>(fourth, {9.0f}) != nullptr);
+    CHECK(scene.Get<Position>(fourth)->x == doctest::Approx(9.0f));
+
+    // The slots skipped on the way are free, not lost: the next Create fills one
+    // of them rather than allocating past the whole range.
+    const Entity next = scene.Create();
+    CHECK(next.index < fourth.index);
+    CHECK(next != first);
+}
+
+TEST_CASE("Scene: ReviveAt cancels a pending deferred Destroy")
+{
+    Scene scene;
+    const Entity a = scene.Create();
+
+    // Queue the destroy but revive before the flush runs (undo in the same frame
+    // as the delete). The pending entry must be dropped so the flush does not
+    // immediately re-kill the resurrected entity.
+    scene.Destroy(a);
+    scene.ReviveAt(a);
+    scene.FlushDestroyed();
+
+    CHECK(scene.IsAlive(a));
+    CHECK(scene.AliveCount() == 1);
+}
+
+#ifndef NDEBUG
+// Scene indexes pools by Core::Reflect::ComponentId, so a component type must be
+// registered with the reflection system (ACOMP). Adding an unreflected type is a
+// programming error caught by a debug contract assert (compiled out in release).
+namespace
+{
+struct Unreflected
+{
+    int32_t v = 0;
+};
+} // namespace
+
+TEST_CASE("Scene: adding an unreflected component trips a contract assert")
+{
+    Assisi::Testing::ThrowOnContractViolation guard;
+    Scene scene;
+    const Entity e = scene.Create();
+
+    CHECK_THROWS_AS((void)scene.Add<Unreflected>(e), Assisi::Core::ContractViolation);
+}
+
+// Read-side lookups treat an unreflected type as simply absent — no assert, no
+// crash — so defensive Has/Get on a never-added type stays safe.
+TEST_CASE("Scene: reads of an unreflected component are safe and empty")
+{
+    Scene scene;
+    const Entity e = scene.Create();
+    CHECK_FALSE(scene.Has<Unreflected>(e));
+    CHECK(scene.Get<Unreflected>(e) == nullptr);
+}
+#endif // !NDEBUG

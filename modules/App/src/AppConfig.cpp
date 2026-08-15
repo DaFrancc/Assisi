@@ -7,6 +7,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <fstream>
 
 namespace Assisi::App
@@ -38,8 +39,8 @@ AppConfig AppConfig::LoadFromJson()
         {
             const auto &w = json.at("window");
             if (w.contains("title"))  cfg.title  = w.at("title").get<std::string>();
-            if (w.contains("width"))  cfg.width  = w.at("width").get<int>();
-            if (w.contains("height")) cfg.height = w.at("height").get<int>();
+            if (w.contains("width"))  cfg.width  = w.at("width").get<int32_t>();
+            if (w.contains("height")) cfg.height = w.at("height").get<int32_t>();
         }
 
         if (json.contains("render"))
@@ -56,16 +57,35 @@ AppConfig AppConfig::LoadFromJson()
             }
         }
 
+        if (json.contains("headless")) cfg.headless = json.at("headless").get<bool>();
+
         if (json.contains("timing"))
         {
             const auto &t = json.at("timing");
             if (t.contains("physicsHz")) cfg.physicsHz = t.at("physicsHz").get<double>();
-            if (t.contains("renderHz"))  cfg.renderHz  = t.at("renderHz").get<double>();
+        }
+
+        if (json.contains("diagnostics"))
+        {
+            const auto &d = json.at("diagnostics");
+            if (d.contains("keepLogs"))  cfg.keepLogs  = d.at("keepLogs").get<uint32_t>();
+            if (d.contains("keepDumps")) cfg.keepDumps = d.at("keepDumps").get<uint32_t>();
         }
     }
     catch (const nlohmann::json::exception &e)
     {
         Core::Log::Warn("Failed to parse game.json: {} — using defaults.", e.what());
+    }
+
+    // A zero rate silently disables fixed update (step = inf) and a negative
+    // one makes the accumulator loop in Application::Run non-terminating, so
+    // reject both here rather than trusting the config file.
+    if (cfg.physicsHz <= 0.0)
+    {
+        const double fallbackHz = AppConfig{}.physicsHz;
+        Core::Log::Warn("game.json timing.physicsHz = {} is invalid (must be > 0) — using {} Hz.",
+                        cfg.physicsHz, fallbackHz);
+        cfg.physicsHz = fallbackHz;
     }
 
     return cfg;

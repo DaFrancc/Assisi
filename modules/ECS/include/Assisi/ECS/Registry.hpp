@@ -1,3 +1,4 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file Registry.hpp
@@ -25,6 +26,18 @@ struct PoolEntry
 
 struct Registry
 {
+    Registry() = default;
+
+    // Non-copyable and non-movable: _pools holds non-owning pointers back to
+    // pools that a Scene owns and registers. A shallow copy would share those
+    // raw pointers between two registries, and a move would not re-seat them,
+    // so either leaves a registry pointing at pools it does not coherently own.
+    // A Registry only ever lives as a Scene member, which is itself pinned.
+    Registry(const Registry &)            = delete;
+    Registry &operator=(const Registry &) = delete;
+    Registry(Registry &&)                 = delete;
+    Registry &operator=(Registry &&)      = delete;
+
     /// @brief Allocates a new entity, reusing a free slot if one is available.
     Entity Create();
 
@@ -35,8 +48,49 @@ struct Registry
     /// already dead.
     void Destroy(Entity entity);
 
+    /// @brief Restores a freed slot to an *exact* prior (index, generation).
+    ///
+    /// Unlike Create(), which allocates whatever slot/generation is next, this
+    /// resurrects a specific handle so every reference to it stays valid with no
+    /// scanning or patching (undo of delete, redo of create, prefab instantiation,
+    /// netcode rollback). Valid *only* when no other live handle exists for the
+    /// slot — i.e. under a strictly linear history where the slot was freed
+    /// newest-first; asserts the slot is currently free. The generation is set
+    /// exactly as given and so may *decrease*, the one sanctioned break of the
+    /// engine-wide monotonic-generation assumption. Scrubs the slot from the free
+    /// list (else the next Create() would hand out a duplicate live handle) and
+    /// re-flags it live. The entity is added to no component pool; the caller
+    /// repopulates components separately.
+    ///
+    /// Grows the slot table if the target index is past its end, creating the
+    /// skipped slots free — a Clear()ed scene reports no slots at all, and a
+    /// snapshot taken before the clear must still restore at exact identity.
+    void ReviveAt(Entity entity);
+
     /// @brief Returns true if the entity handle is still valid.
     [[nodiscard]] bool IsAlive(Entity entity) const;
+
+    /// @brief Returns the live entity currently occupying a slot index.
+    ///
+    /// Resolves a bare slot index (as an inspector or tool would hold it) to a
+    /// full handle carrying the slot's current generation.  Returns NullEntity
+    /// if the index is out of range or the slot is free (no live occupant).
+    [[nodiscard]] Entity EntityAt(uint32_t index) const;
+
+    /// @brief Invokes fn(Entity) for every live entity, in ascending slot order.
+    ///
+    /// Skips free slots.  Intended for tooling (entity pickers, inspectors);
+    /// O(n) over every slot ever allocated, so still prefer Query in the frame
+    /// loop, which only visits live component storage.
+    template <typename Fn> void ForEachLive(Fn &&fn) const
+    {
+        for (uint32_t i = 0; i < static_cast<uint32_t>(_generations.size()); ++i)
+        {
+            const Entity e = EntityAt(i);
+            if (e != NullEntity)
+                fn(e);
+        }
+    }
 
     /// @brief Returns the number of currently live entities.
     [[nodiscard]] std::size_t AliveCount() const;
@@ -48,7 +102,20 @@ struct Registry
     /// @brief Unregisters a previously registered pool.
     void UnregisterPool(void *pool);
 
-  private:
+    /// @brief Resets all entity counters to zero.
+    ///
+    /// Clears the generation table and the free-slot list so the next Create()
+    /// returns Entity{0, 0} again.  Caller is responsible for clearing all
+    /// component pools before calling this (Scene::Clear() does both).
+    void Reset()
+    {
+        _generations.clear();
+        _freeSlots.clear();
+        _alive.clear();
+        _aliveCount = 0;
+    }
+
+private:
     template <typename T> static void RemoveFn(void *pool, Entity entity)
     {
         static_cast<SparseSet<T> *>(pool)->Remove(entity);
@@ -56,6 +123,11 @@ struct Registry
 
     std::vector<uint32_t> _generations; ///< One generation counter per slot.
     std::vector<uint32_t> _freeSlots;   ///< Slots available for reuse.
+    std::vector<bool>     _alive;       ///< Live flag per slot: O(1) liveness for
+                                        ///< IsAlive/EntityAt without scanning the
+                                        ///< free list, and the only thing that
+                                        ///< rejects a handle carrying a freed
+                                        ///< slot's current generation.
     std::vector<PoolEntry> _pools;      ///< Registered component pools.
 
     std::size_t _aliveCount = 0;

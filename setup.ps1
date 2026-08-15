@@ -101,7 +101,18 @@ int main()
 
 Write-Ok "Created apps/$gameName with a starter CMakeLists.txt and main.cpp"
 
-# 3) Create/update CMakeUserPresets.json to select app without editing committed presets
+# 3) Register app in root CMakeLists.txt
+$rootCMake = Join-Path $repoRoot "CMakeLists.txt"
+$entry = "add_subdirectory(apps/$gameName)"
+$content = Get-Content $rootCMake -Raw
+if ($content -notmatch [regex]::Escape($entry)) {
+  Add-Content -Path $rootCMake -Value "`n$entry"
+  Write-Ok "Registered apps/$gameName in CMakeLists.txt"
+} else {
+  Write-Warn "apps/$gameName already registered in CMakeLists.txt"
+}
+
+# 4) Create/update CMakeUserPresets.json to select app without editing committed presets
 Write-Heading "User Presets"
 $userPresetsPath = Join-Path $repoRoot "CMakeUserPresets.json"
 
@@ -114,47 +125,28 @@ $userPresets = @{
       cacheVariables = @{ ASSISI_APP = $gameName }
     },
     @{
-      name = "msvc-release-user"
-      inherits = "msvc-release"
+      name = "msvc-dev-user"
+      inherits = "msvc-dev"
       cacheVariables = @{ ASSISI_APP = $gameName }
     },
     @{
-      name = "msvc-sanitize-user"
-      inherits = "msvc-sanitize"
+      name = "msvc-ship-user"
+      inherits = "msvc-ship"
       cacheVariables = @{ ASSISI_APP = $gameName }
     }
   )
   buildPresets = @(
     @{ name = "msvc-debug-user"; configurePreset = "msvc-debug-user" },
-    @{ name = "msvc-release-user"; configurePreset = "msvc-release-user" },
-    @{ name = "msvc-sanitize-user"; configurePreset = "msvc-sanitize-user" }
+    @{ name = "msvc-dev-user";   configurePreset = "msvc-dev-user"   },
+    @{ name = "msvc-ship-user";  configurePreset = "msvc-ship-user"  }
   )
 }
 
 ($userPresets | ConvertTo-Json -Depth 10) | Set-Content -Encoding UTF8 $userPresetsPath
 Write-Ok "Wrote CMakeUserPresets.json (selects ASSISI_APP=$gameName)"
 
-# 4) Conan installs (sequential, no jobs/threads)
-Write-Heading "Dependencies (Conan via Make)"
-
-# Ensure make exists
-if (-not (Get-Command make -ErrorAction SilentlyContinue)) {
-  throw "make not found in PATH. Install MSYS2 make, Ninja, or another make implementation."
-}
-
-# Run the Makefile target that performs the conan installs sequentially
-Write-Info "Running: make conan-msvc"
-& make conan-msvc
-if ($LASTEXITCODE -ne 0) {
-  throw "make conan-msvc failed (exit $LASTEXITCODE)"
-}
-
-Write-Ok "All Conan installs completed successfully."
-
-
 Write-Host ""
-Write-Info "You can configure/build now with:"
-Write-Host "  cmake --preset msvc-debug-user" -ForegroundColor White
+Write-Info "Run 'make configure-msvc' to configure, then build with:"
 Write-Host "  cmake --build --preset msvc-debug-user" -ForegroundColor White
 
 Write-Heading "Done"

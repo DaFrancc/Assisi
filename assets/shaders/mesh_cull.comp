@@ -1,0 +1,174 @@
+#version 460 core
+
+/// mesh_cull.comp
+/// GPU-driven draw-list build (mesh-material stages F1 + F2a). One thread per
+/// scene object: whole-mesh frustum cull (bounding-sphere reject, then AABB
+/// refine — the same two-level test the CPU path runs), and, for each surviving
+/// LOD0 submesh, one *instanced* draw command is grown by one and one
+/// per-instance record is scattered into that command's reserved region.
+///
+/// F2a — GPU instance coalescing (single pass, no sort). Every distinct
+/// (mesh, submesh) is one batch: its draw command was pre-built on the CPU with
+/// instanceCount=0 and a reserved contiguous instance region (firstInstance +
+/// per-mesh object count). Here each survivor does
+/// `old = atomicAdd(outDraws[g].instanceCount, 1)` and writes its record at
+/// `firstInstance + old` — so identical (mesh, submesh) instances collapse into
+/// one instanced draw (restoring stage E's batching that F1 gave up). Materials
+/// stay per-instance (read from the record), so a batch may mix materials; only
+/// the geometry range must match. The CPU issues one drawIndexedIndirect over
+/// all batch commands — empty ones draw 0 instances (a no-op).
+///
+/// F1 scope carried forward: frustum only (no occlusion), LOD0 only (no
+/// screen-size selection). Those are stage F2b/G.
+///
+/// Dispatch: ceil(objectCount / 64) workgroups of local_size_x = 64.
+
+layout(local_size_x = 64, local_size_y = 1, local_size_z = 1) in;
+
+// ---- GPU structs (must match Render::MeshCuller's Gpu* structs) ----
+
+struct Object
+{
+    mat4 model;
+    uint meshDescIndex;
+    uint materialBase;  // into objectMaterials[]
+    uint materialCount; // == the mesh's material-slot count
+    uint _pad0;
+};
+
+struct MeshDesc
+{
+    vec4 sphere;
+    vec4 aabbMin;
+    vec4 aabbMax;
+    uint vertexBase;
+    uint indexBase;
+    uint firstSubmesh; // into subMeshes[] (== the global batch index of submesh 0)
+    uint submeshCount;
+};
+
+struct SubMesh
+{
+    uint indexOffset;
+    uint indexCount;
+    uint materialSlot;
+    uint _pad0;
+};
+
+struct InstanceData
+{
+    mat4 model;
+    uint materialIndex;
+    uint _pad0, _pad1, _pad2;
+};
+
+// Matches VkDrawIndexedIndirectCommand / nvrhi::DrawIndexedIndirectArguments.
+// The CPU uploads these each frame as templates (instanceCount = 0, firstInstance
+// = the batch's reserved instance base); this pass grows instanceCount atomically.
+struct DrawArgs
+{
+    uint indexCount;
+    uint instanceCount;
+    uint firstIndex;
+    int  vertexOffset;
+    uint firstInstance;
+};
+
+#define NO_MATERIAL 0xFFFFFFFFu
+
+// ---- SSBOs ---- (SRV +0, UAV +384; see cluster_cull.comp)
+
+layout(std430, binding = 0) readonly buffer Objects         { Object       objects[];         };
+layout(std430, binding = 1) readonly buffer MeshDescs       { MeshDesc     meshDescs[];       };
+layout(std430, binding = 2) readonly buffer SubMeshes       { SubMesh      subMeshes[];       };
+layout(std430, binding = 3) readonly buffer ObjectMaterials { uint         objectMaterials[]; };
+
+layout(std430, binding = 384) writeonly buffer OutInstances { InstanceData outInstances[]; };
+layout(std430, binding = 385) coherent  buffer OutDraws     { DrawArgs     outDraws[];     };
+layout(std430, binding = 386) coherent  buffer Stats        { uint statsInstances; uint statsBatches; };
+
+layout(push_constant) uniform PushConstants
+{
+    vec4  planes[6];    // frustum planes (nx,ny,nz,d), inward normals, normalised
+    uvec4 counts;       // x = object count, y = cull enabled (0/1), zw unused
+} pc;
+
+// ---- Culling helpers (mirror Render::Frustum + Geometry bounds transforms) ----
+
+bool sphereCulled(vec3 center, float radius)
+{
+    for (uint i = 0u; i < 6u; ++i)
+        if (dot(pc.planes[i].xyz, center) + pc.planes[i].w < -radius)
+            return true;
+    return false;
+}
+
+bool aabbCulled(vec3 aabbMin, vec3 aabbMax)
+{
+    for (uint i = 0u; i < 6u; ++i)
+    {
+        vec3 n = pc.planes[i].xyz;
+        vec3 positiveVertex = vec3(n.x >= 0.0 ? aabbMax.x : aabbMin.x,
+                                   n.y >= 0.0 ? aabbMax.y : aabbMin.y,
+                                   n.z >= 0.0 ? aabbMax.z : aabbMin.z);
+        if (dot(n, positiveVertex) + pc.planes[i].w < 0.0)
+            return true;
+    }
+    return false;
+}
+
+void main()
+{
+    uint objectIndex = gl_GlobalInvocationID.x;
+    if (objectIndex >= pc.counts.x)
+        return;
+
+    Object   obj   = objects[objectIndex];
+    MeshDesc mesh  = meshDescs[obj.meshDescIndex];
+    mat4     model = obj.model;
+
+    if (pc.counts.y != 0u)
+    {
+        vec3  center   = vec3(model * vec4(mesh.sphere.xyz, 1.0));
+        float maxScale = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
+        if (sphereCulled(center, mesh.sphere.w * maxScale))
+            return;
+
+        vec3 localCenter = 0.5 * (mesh.aabbMin.xyz + mesh.aabbMax.xyz);
+        vec3 localExtent = 0.5 * (mesh.aabbMax.xyz - mesh.aabbMin.xyz);
+        vec3 worldCenter = vec3(model * vec4(localCenter, 1.0));
+        mat3 absBasis    = mat3(abs(model[0].xyz), abs(model[1].xyz), abs(model[2].xyz));
+        vec3 worldExtent = absBasis * localExtent;
+        if (aabbCulled(worldCenter - worldExtent, worldCenter + worldExtent))
+            return;
+    }
+
+    // Survivor: append this instance to each of its LOD0 submeshes' batch. The
+    // batch index IS the global submesh index (meshDesc.firstSubmesh + s), the
+    // slot into the pre-built draw-command / batch tables. A submesh whose slot
+    // has no resolved material is skipped (mirrors the CPU path).
+    for (uint s = 0u; s < mesh.submeshCount; ++s)
+    {
+        uint g = mesh.firstSubmesh + s;
+
+        uint materialIndex = NO_MATERIAL;
+        if (subMeshes[g].materialSlot < obj.materialCount)
+            materialIndex = objectMaterials[obj.materialBase + subMeshes[g].materialSlot];
+        if (materialIndex == NO_MATERIAL)
+            continue;
+
+        // Grow this batch's instance count and take the old value as our index
+        // within its reserved region [firstInstance, firstInstance + maxInstances).
+        // maxInstances (set by the CPU) == the object count of this mesh, so the
+        // region never overflows: every object of the mesh draws the same submesh.
+        uint old  = atomicAdd(outDraws[g].instanceCount, 1u);
+        uint slot = outDraws[g].firstInstance + old;
+
+        outInstances[slot].model         = model;
+        outInstances[slot].materialIndex = materialIndex;
+
+        atomicAdd(statsInstances, 1u);
+        if (old == 0u)
+            atomicAdd(statsBatches, 1u); // first instance of this batch — one live draw
+    }
+}

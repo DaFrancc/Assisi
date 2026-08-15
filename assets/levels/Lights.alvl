@@ -1,0 +1,10483 @@
+{
+  "entities": [
+    {
+      "components": {
+        "DirectionalLight": {
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "direction": [
+            -0.3,
+            -1.0,
+            -0.4
+          ],
+          "intensity": 0.4
+        }
+      },
+      "name": "Entity"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            30.0,
+            0.5,
+            30.0
+          ],
+          "isStatic": true
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.5,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            60.0,
+            1.0,
+            60.0
+          ]
+        }
+      },
+      "name": "Entity_1"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            -14,
+            1.5,
+            -14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_2"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            -6,
+            2,
+            -16
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_3"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            4,
+            1,
+            -18
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_4"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            12,
+            2.5,
+            -12
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_5"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            18,
+            1.5,
+            -4
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_6"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.8,
+            0.8,
+            0.8
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            16,
+            3,
+            7
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.6,
+            1.6,
+            1.6
+          ]
+        }
+      },
+      "name": "Entity_7"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            8,
+            1,
+            13
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_8"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            -2,
+            2,
+            17
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_9"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            -12,
+            1.5,
+            11
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_10"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            -17,
+            2.5,
+            3
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_11"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            -17,
+            1,
+            -6
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_12"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.8,
+            0.8,
+            0.8
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            0,
+            4,
+            0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.6,
+            1.6,
+            1.6
+          ]
+        }
+      },
+      "name": "Entity_13"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            6,
+            1,
+            -4
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_14"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "isStatic": false
+        },
+        "Transform": {
+          "position": [
+            -6,
+            1,
+            5
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1,
+            1,
+            1
+          ]
+        }
+      },
+      "name": "Entity_15"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_16"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_17"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_18"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_19"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_20"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_21"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_22"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_23"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_24"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_25"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_26"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_27"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_28"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_29"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_30"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_31"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_32"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            -27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_33"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_34"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_35"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_36"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_37"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_38"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_39"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_40"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_41"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_42"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_43"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_44"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_45"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_46"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_47"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_48"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_49"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_50"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            -23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_51"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_52"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_53"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_54"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_55"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_56"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_57"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_58"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_59"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_60"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_61"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_62"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_63"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_64"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_65"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_66"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_67"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_68"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            -19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_69"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_70"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_71"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_72"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_73"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_74"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_75"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_76"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_77"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_78"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_79"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_80"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_81"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_82"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_83"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_84"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_85"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_86"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            -15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_87"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_88"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_89"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_90"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_91"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_92"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_93"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_94"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_95"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_96"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_97"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_98"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_99"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_100"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_101"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_102"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_103"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_104"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            -11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_105"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_106"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_107"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_108"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_109"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_110"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_111"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_112"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_113"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_114"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_115"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_116"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_117"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_118"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_119"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_120"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_121"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_122"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            -7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_123"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_124"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_125"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_126"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_127"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_128"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_129"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_130"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_131"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_132"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_133"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_134"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_135"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_136"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_137"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_138"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_139"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_140"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            -3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_141"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_142"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_143"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_144"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_145"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_146"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_147"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_148"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_149"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_150"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_151"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_152"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_153"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_154"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_155"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_156"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_157"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_158"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_159"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_160"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_161"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_162"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_163"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_164"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_165"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_166"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_167"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_168"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_169"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_170"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_171"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_172"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_173"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_174"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_175"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_176"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            3.86
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_177"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_178"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_179"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_180"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_181"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_182"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_183"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_184"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_185"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_186"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_187"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_188"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_189"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_190"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_191"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_192"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_193"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_194"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            7.71
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_195"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_196"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_197"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_198"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_199"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_200"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_201"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_202"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_203"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_204"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_205"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_206"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_207"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_208"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_209"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_210"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_211"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_212"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            11.57
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_213"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_214"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_215"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_216"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_217"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_218"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_219"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_220"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_221"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_222"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_223"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_224"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_225"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_226"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_227"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_228"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_229"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_230"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            15.43
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_231"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_232"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_233"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_234"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_235"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_236"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_237"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_238"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_239"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_240"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_241"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_242"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_243"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_244"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_245"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_246"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_247"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_248"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            19.29
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_249"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_250"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_251"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_252"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_253"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_254"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_255"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_256"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_257"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_258"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_259"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_260"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_261"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_262"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_263"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_264"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_265"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_266"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            23.14
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_267"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -27.0,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_268"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -23.82,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_269"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -20.65,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_270"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -17.47,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_271"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -14.29,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_272"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -11.12,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_273"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -7.94,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_274"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -4.76,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_275"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            -1.59,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_276"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            1.59,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_277"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            4.76,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_278"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            7.94,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_279"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            11.12,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_280"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            14.29,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_281"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            17.47,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_282"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            20.65,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_283"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            23.82,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_284"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "intensity": 150.0,
+          "radius": 7.0
+        },
+        "Transform": {
+          "position": [
+            27.0,
+            4.0,
+            27.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_285"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "direction": [
+            -0.4,
+            -1.0,
+            0.0
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            28.0,
+            9.0,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_286"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "direction": [
+            -0.39,
+            -1.0,
+            -0.09
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            27.35,
+            9.0,
+            6.02
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_287"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "direction": [
+            -0.36,
+            -1.0,
+            -0.17
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            25.41,
+            9.0,
+            11.76
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_288"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "direction": [
+            -0.32,
+            -1.0,
+            -0.24
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            22.29,
+            9.0,
+            16.94
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_289"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "direction": [
+            -0.26,
+            -1.0,
+            -0.3
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            18.13,
+            9.0,
+            21.34
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_290"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "direction": [
+            -0.19,
+            -1.0,
+            -0.35
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            13.12,
+            9.0,
+            24.74
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_291"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "direction": [
+            -0.11,
+            -1.0,
+            -0.39
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            7.49,
+            9.0,
+            26.98
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_292"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "direction": [
+            -0.02,
+            -1.0,
+            -0.4
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            1.52,
+            9.0,
+            27.96
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_293"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "direction": [
+            0.06,
+            -1.0,
+            -0.39
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -4.53,
+            9.0,
+            27.63
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_294"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "direction": [
+            0.15,
+            -1.0,
+            -0.37
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -10.36,
+            9.0,
+            26.01
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_295"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "direction": [
+            0.22,
+            -1.0,
+            -0.33
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -15.71,
+            9.0,
+            23.18
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_296"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "direction": [
+            0.29,
+            -1.0,
+            -0.28
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -20.33,
+            9.0,
+            19.26
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_297"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "direction": [
+            0.34,
+            -1.0,
+            -0.21
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -23.99,
+            9.0,
+            14.44
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_298"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "direction": [
+            0.38,
+            -1.0,
+            -0.13
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -26.53,
+            9.0,
+            8.94
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_299"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "direction": [
+            0.4,
+            -1.0,
+            -0.04
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -27.84,
+            9.0,
+            3.03
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_300"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "direction": [
+            0.4,
+            -1.0,
+            0.04
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -27.84,
+            9.0,
+            -3.03
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_301"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "direction": [
+            0.38,
+            -1.0,
+            0.13
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -26.53,
+            9.0,
+            -8.94
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_302"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "direction": [
+            0.34,
+            -1.0,
+            0.21
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -23.99,
+            9.0,
+            -14.44
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_303"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "direction": [
+            0.29,
+            -1.0,
+            0.28
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -20.33,
+            9.0,
+            -19.26
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_304"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "direction": [
+            0.22,
+            -1.0,
+            0.33
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -15.71,
+            9.0,
+            -23.18
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_305"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "direction": [
+            0.15,
+            -1.0,
+            0.37
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -10.36,
+            9.0,
+            -26.01
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_306"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.2,
+            0.9
+          ],
+          "direction": [
+            0.06,
+            -1.0,
+            0.39
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            -4.53,
+            9.0,
+            -27.63
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_307"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.1,
+            0.9,
+            1
+          ],
+          "direction": [
+            -0.02,
+            -1.0,
+            0.4
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            1.52,
+            9.0,
+            -27.96
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_308"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.5,
+            0.1
+          ],
+          "direction": [
+            -0.11,
+            -1.0,
+            0.39
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            7.49,
+            9.0,
+            -26.98
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_309"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            1,
+            1
+          ],
+          "direction": [
+            -0.19,
+            -1.0,
+            0.35
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            13.12,
+            9.0,
+            -24.74
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_310"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.15,
+            0.15
+          ],
+          "direction": [
+            -0.26,
+            -1.0,
+            0.3
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            18.13,
+            9.0,
+            -21.34
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_311"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.15,
+            1,
+            0.2
+          ],
+          "direction": [
+            -0.32,
+            -1.0,
+            0.24
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            22.29,
+            9.0,
+            -16.94
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_312"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.2,
+            0.4,
+            1
+          ],
+          "direction": [
+            -0.36,
+            -1.0,
+            0.17
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            25.41,
+            9.0,
+            -11.76
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_313"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            1,
+            0.9,
+            0.1
+          ],
+          "direction": [
+            -0.39,
+            -1.0,
+            0.09
+          ],
+          "innerAngle": 12.0,
+          "intensity": 230.0,
+          "outerAngle": 28.0,
+          "radius": 16.0
+        },
+        "Transform": {
+          "position": [
+            27.35,
+            9.0,
+            -6.02
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_314"
+    },
+    {
+      "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "fovDegrees": 65.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            14.0,
+            30.0
+          ],
+          "rotation": [
+            0.976,
+            -0.216,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Entity_315"
+    }
+  ],
+  "version": 2
+}

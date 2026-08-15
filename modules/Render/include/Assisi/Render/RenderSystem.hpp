@@ -1,32 +1,37 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file RenderSystem.hpp
-/// @brief Entry point for initializing the graphics backend.
+/// @brief Entry point for initializing the Vulkan/NVRHI graphics backend.
 
 #include <Assisi/Core/Logger.hpp>
-#include <Assisi/Render/Backend/GraphicsBackend.hpp>
+#include <Assisi/Render/Vulkan/VulkanContext.hpp>
 #include <Assisi/Window/WindowContext.hpp>
+
+#include <memory>
 
 namespace Assisi::Render
 {
-/// @brief Static service that initializes and owns the graphics backend.
+/// @brief Static service that initializes and owns the Vulkan/NVRHI device.
 ///
-/// Call Initialize() once after creating a WindowContext.  Only OpenGL is
-/// currently implemented; Vulkan returns false immediately.
+/// Call Initialize() once after creating a WindowContext.
+///
+/// @note Intentional service-locator: there is exactly one GPU device per
+/// process, created once and torn down at exit, and it underpins nearly every
+/// render call site. Threading it through as a member everywhere buys little
+/// over an owned-by-service singleton. If it ever needs to be swappable (e.g.
+/// for a headless test device), promote GetVulkanContext() to an injected
+/// reference then; today it is deliberately a global.
 class RenderSystem
 {
-  public:
+public:
     RenderSystem() = delete;
 
-    /// @brief Initializes the chosen graphics backend against the given window.
+    /// @brief Initializes the Vulkan/NVRHI backend against the given window.
     ///
-    /// Validates that the window is live and that a supported backend was
-    /// requested, then delegates to the appropriate backend initializer.
-    ///
-    /// @param graphicsBackend  The backend to initialize.
-    /// @param window           A valid, current WindowContext.
+    /// @param window  A valid, current WindowContext.
     /// @return true on success, false on any error.
-    static bool Initialize(Backend::GraphicsBackend graphicsBackend, const Assisi::Window::WindowContext &window)
+    [[nodiscard]] static bool Initialize(const Assisi::Window::WindowContext &window)
     {
         if (!window.IsValid())
         {
@@ -34,37 +39,21 @@ class RenderSystem
             return false;
         }
 
-        if (graphicsBackend == Backend::GraphicsBackend::None)
-        {
-            Assisi::Core::Log::Error("RenderSystem: No graphics backend selected.");
-            return false;
-        }
-
-        if (graphicsBackend == Backend::GraphicsBackend::OpenGL)
-        {
-            return InitializeOpenGL(window);
-        }
-
-        if (graphicsBackend == Backend::GraphicsBackend::Vulkan)
-        {
-            return InitializeVulkan(window);
-        }
-
-        Assisi::Core::Log::Error("RenderSystem: Unsupported graphics backend.");
-        return false;
+        s_vulkanContext = Vulkan::VulkanContext::Create(window);
+        return s_vulkanContext != nullptr;
     }
 
-  private:
-    /// @brief Loads OpenGL function pointers via Glad and configures initial state.
-    static bool InitializeOpenGL(const Assisi::Window::WindowContext &window);
+    /// @brief Returns the Vulkan context created by Initialize(), or nullptr if
+    /// initialization hasn't happened (or failed).
+    static Vulkan::VulkanContext *GetVulkanContext() { return s_vulkanContext.get(); }
 
-    /// @brief Stub — Vulkan support is not yet implemented.
-    static bool InitializeVulkan(const Assisi::Window::WindowContext &window)
-    {
-        /* Vulkan initialization will live in Assisi::Render::Vulkan later. */
-        Assisi::Core::Log::Warn("RenderSystem: Vulkan backend is not implemented yet.");
-        (void)window;
-        return false;
-    }
+    /// @brief Destroys the Vulkan/NVRHI device. Must be called explicitly before
+    /// main() returns, once all render resources are released — never left to
+    /// static teardown, which races the dynamic loader that owns vulkan-1.dll
+    /// (tearing the device down through an unloaded DLL is an access violation).
+    static void Shutdown() { s_vulkanContext.reset(); }
+
+private:
+    static inline std::unique_ptr<Vulkan::VulkanContext> s_vulkanContext;
 };
 } /* namespace Assisi::Render */

@@ -1,42 +1,89 @@
+/* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
 /// @file Components.hpp
 /// @brief ECS component types for rendering and world placement.
 ///
-/// All types satisfy std::is_trivially_copyable so they can be stored in
-/// SparseSet<T>. Use TransformComponent for position/rotation/scale and
-/// MeshRendererComponent to associate a mesh and texture with an entity.
+/// Components are stored in SparseSet<T>, which holds them in a std::vector and
+/// moves them on insert/remove — so any movable type works; trivial-copyability
+/// is not required. Transform/Camera stay trivially copyable (plain data), but
+/// MeshRenderer deliberately spends that property: its material lists are
+/// std::vectors (variable slot count), so it is movable but not trivially
+/// copyable — see docs/mesh-material-architecture.md §4.
+/// Use Transform for position/rotation/scale and MeshRenderer
+/// to associate a mesh and its materials with an entity.
+///
+/// Transform itself is defined one layer down in Assisi/ECS/Transform.hpp so
+/// renderer-free modules (Physics, hierarchy) can use it without dragging in
+/// nvrhi; it is re-exported below as Runtime::Transform for the render-facing
+/// code that names it that way.
 
+#include <vector>
+
+#include <Assisi/Prelude.hpp>
+#include <Assisi/Core/AssetId.hpp>
+#include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Math/GLM.hpp>
-#include <Assisi/Render/OpenGL/MeshBuffer.hpp>
+#include <Assisi/Render/Material.hpp>
+#include <Assisi/Render/MeshBuffer.hpp>
+#include <Assisi/Render/Texture.hpp>
 
 namespace Assisi::Runtime
 {
 
-/// @brief World-space TRS stored as plain data — required to be trivially copyable.
-struct TransformComponent
+/// @brief The foundational TRS component, defined in the ECS layer.
+/// Re-exported here so `Runtime::Transform` keeps naming it; see ECS/Transform.hpp.
+using ECS::Transform;
+
+/// @brief Associates a GPU mesh and its per-slot materials with an entity.
+///
+/// Two layers, by design:
+///   - `mesh` / `materialOverrides` are the **durable** references — stable
+///     GUIDs (`AssetId`) that persist in the level file. `mesh` selects the
+///     geometry (a reserved built-in like `prim://cube`, or a mesh file's id);
+///     nil → the unit cube. `materialOverrides` is a sparse, per-material-slot
+///     list of `.amat` GUIDs: entry `i` overrides slot `i`; a nil or absent
+///     entry means "use the material the mesh imported for that slot". Shorter
+///     than the mesh's slot count is fine.
+///   - `meshBuffer` / `materials` are **transient** non-owning pointers resolved
+///     from those GUIDs by the asset cache at load time; the referenced GPU
+///     resources must outlive the component. `materials` holds one resolved
+///     Material per mesh slot (override or mesh default); a slot with no entry
+///     draws with the cache's fallback material.
+///
+/// Replicable: a mirror with no mesh reference draws nothing. Only the durable
+/// GUID layer travels — a resolved pointer is local to the process that owns it,
+/// and every machine resolves its own from the same ids.
+ACOMP(replicable)
+struct MeshRenderer
 {
-    glm::vec3 position{0.f, 0.f, 0.f};
-    glm::quat rotation{1.f, 0.f, 0.f, 0.f}; ///< Identity quaternion.
-    glm::vec3 scale{1.f, 1.f, 1.f};
+    AFIELD() Assisi::Core::AssetId mesh;
+    AFIELD() std::vector<Assisi::Core::AssetId> materialOverrides;
+
+    AFIELD(transient) const Assisi::Render::MeshBuffer *meshBuffer = nullptr;
+    AFIELD(transient) std::vector<const Assisi::Render::Material *> materials;
 };
 
-/// @brief Associates a GPU mesh and PBR material textures with an entity.
+/// @brief Projection and activation parameters for a camera entity.
 ///
-/// `mesh` is a non-owning pointer — the MeshBuffer must outlive the component.
-/// Each texture ID is an OpenGL texture object; 0 falls back to an appropriate
-/// engine default:
-///   - albedoTextureId   → 1×1 white texture
-///   - normalTextureId   → 1×1 flat normal (0, 0, 1) in tangent space
-///   - metallicTextureId → 1×1 black (metallic = 0, fully dielectric)
-///   - roughnessTextureId → 1×1 mid-grey (roughness ≈ 0.5)
-struct MeshRendererComponent
+/// Pair with Transform to form a complete camera: the Transform
+/// provides world-space position and orientation; this component stores projection
+/// settings and identifies which camera is active.
+///
+/// Call Runtime::ViewMatrix(transform) and Runtime::ProjectionMatrix(camera, aspect)
+/// to obtain the matrices needed for rendering.
+///
+/// Deliberately **not** ACOMP(replicable), and the founding case for opt-in wire
+/// gating: an arriving `isActive` would let the host hand a client a different
+/// view than the one that client chose. Which camera a machine looks through is
+/// that machine's business.
+ACOMP()
+struct Camera
 {
-    const Assisi::Render::OpenGL::MeshBuffer *mesh = nullptr;
-    unsigned int albedoTextureId   = 0u;
-    unsigned int normalTextureId   = 0u;
-    unsigned int metallicTextureId = 0u;
-    unsigned int roughnessTextureId = 0u;
+    AFIELD() float fovDegrees = 60.f;  ///< Vertical field of view in degrees.
+    AFIELD() float nearZ      = 0.1f;  ///< Near clip plane distance.
+    AFIELD() float farZ       = 200.f; ///< Far clip plane distance.
+    AFIELD() bool isActive   = false;  ///< True for the scene's active camera.
 };
 
 } // namespace Assisi::Runtime

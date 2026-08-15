@@ -117,8 +117,18 @@ EOF
 
 ok "Created apps/$GAME_NAME with a starter CMakeLists.txt and main.cpp"
 
+# 3) Register app in root CMakeLists.txt
+ROOT_CMAKE="$REPO_ROOT/CMakeLists.txt"
+ENTRY="add_subdirectory(apps/$GAME_NAME)"
+if ! grep -qF "$ENTRY" "$ROOT_CMAKE"; then
+  printf '\n%s\n' "$ENTRY" >> "$ROOT_CMAKE"
+  ok "Registered apps/$GAME_NAME in CMakeLists.txt"
+else
+  warn "apps/$GAME_NAME already registered in CMakeLists.txt"
+fi
+
 # -----------------------
-# 3) CMakeUserPresets.json
+# 4) CMakeUserPresets.json
 # -----------------------
 heading "User Presets"
 USER_PRESETS_PATH="$REPO_ROOT/CMakeUserPresets.json"
@@ -129,51 +139,32 @@ cat > "$USER_PRESETS_PATH" <<EOF
   "configurePresets": [
     {
       "name": "${COMPILER}-debug-user",
-      "inherits": "${COMPILER}-debug",
-      "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
+      "inherits": "${COMPILER}-debug"
     },
     {
-      "name": "${COMPILER}-release-user",
-      "inherits": "${COMPILER}-release",
-      "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
+      "name": "${COMPILER}-dev-user",
+      "inherits": "${COMPILER}-dev"
     },
     {
-      "name": "${COMPILER}-sanitize-user",
-      "inherits": "${COMPILER}-sanitize",
-      "cacheVariables": { "ASSISI_APP": "${GAME_NAME}" }
+      "name": "${COMPILER}-ship-user",
+      "inherits": "${COMPILER}-ship"
     }
   ],
   "buildPresets": [
-    { "name": "${COMPILER}-debug-user",    "configurePreset": "${COMPILER}-debug-user" },
-    { "name": "${COMPILER}-release-user",  "configurePreset": "${COMPILER}-release-user" },
-    { "name": "${COMPILER}-sanitize-user", "configurePreset": "${COMPILER}-sanitize-user" }
+    { "name": "${COMPILER}-debug-user", "configurePreset": "${COMPILER}-debug-user" },
+    { "name": "${COMPILER}-dev-user",   "configurePreset": "${COMPILER}-dev-user"   },
+    { "name": "${COMPILER}-ship-user",  "configurePreset": "${COMPILER}-ship-user"  }
   ]
 }
 EOF
 
-ok "Wrote CMakeUserPresets.json (compiler=$COMPILER, ASSISI_APP=$GAME_NAME)"
-
-# -----------------------
-# 4) Conan installs
-# -----------------------
-heading "Dependencies (Conan via Make)"
-
-if ! command -v make &>/dev/null; then
-  err "make not found in PATH."
-  exit 1
-fi
-
-info "Running: make conan-${COMPILER}"
-make "conan-${COMPILER}"
-
-ok "All Conan installs completed successfully."
+ok "Wrote CMakeUserPresets.json (compiler=$COMPILER, app=$GAME_NAME)"
 
 # -----------------------
 # Done
 # -----------------------
 echo ""
-info "You can configure/build now with:"
-printf '  cmake --preset %s-debug-user\n' "$COMPILER"
+info "Run 'make configure-${COMPILER}' to configure, then build with:"
 printf '  cmake --build --preset %s-debug-user\n' "$COMPILER"
 
 heading "Done"

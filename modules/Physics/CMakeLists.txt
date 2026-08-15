@@ -18,8 +18,17 @@ target_link_libraries(Assisi-Physics
   PUBLIC
     Assisi::Core
     Assisi::ECS
-    Assisi::Runtime
     Jolt::Jolt
 )
 
+assisi_reflect(
+  TARGET Assisi-Physics
+  HEADERS
+    include/Assisi/Physics/PhysicsComponents.hpp
+)
+
 add_library(Assisi::Physics ALIAS Assisi-Physics)
+
+if (ASSISI_BUILD_TESTS)
+  add_subdirectory(tests)
+endif()
