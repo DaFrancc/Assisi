@@ -49,6 +49,11 @@ const std::string &LaunchStamp();
 /// SIGSEGV arrives with no usable stack, so a worker that overflows faults again
 /// inside the handler and produces no report at all.
 ///
+/// A thread that already has an alt stack keeps it: a sanitizer runtime installs
+/// its own and frees it at thread exit by asking the kernel which one is
+/// current, so replacing it makes the sanitizer unmap our buffer and abort. The
+/// stack it installed does this job just as well.
+///
 /// No-op on Windows, which has no equivalent concept (structured exception
 /// handling gets its own stack from the OS).
 ///
