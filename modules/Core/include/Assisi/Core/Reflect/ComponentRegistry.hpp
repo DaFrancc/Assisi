@@ -13,6 +13,7 @@
 /// table is also immutable after startup and read-only at runtime, so shared
 /// process-wide state carries no ordering or test-isolation hazard.
 
+#include <atomic>
 #include <span>
 #include <string_view>
 #include <typeindex>
@@ -27,7 +28,7 @@ namespace Assisi::Core::Reflect
 
 class ComponentRegistry
 {
-  public:
+public:
     static ComponentRegistry &Instance();
 
     /// @brief Register a component type.  Called by generated code at startup.
@@ -90,7 +91,7 @@ class ComponentRegistry
     /// component.
     static constexpr std::size_t kInvalidOrdinal = static_cast<std::size_t>(-1);
 
-  private:
+private:
     ComponentRegistry() = default;
 
     /// @brief Sort by name, assign dense ids, and rebuild the type→id map.
@@ -107,7 +108,10 @@ class ComponentRegistry
     /// the whole table so the hot lookup is an index rather than a search.
     mutable std::vector<std::size_t>                          _replicableOrdinal;
     mutable std::unordered_map<std::type_index, ComponentId>  _idByType;
-    mutable bool                                              _finalized = false;
+    /// Atomic because finalization is lazy and the first ask can come from any
+    /// thread: async travel deserializes on a worker and walks this registry
+    /// there, while the main thread is doing the same. See EnsureFinalized.
+    mutable std::atomic<bool>                                 _finalized{false};
 };
 
 } // namespace Assisi::Core::Reflect

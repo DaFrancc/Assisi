@@ -139,7 +139,7 @@ TEST_CASE("InputCommandBuffer repeats the last N commands in every packet")
     buffer.WritePacket(writer);
 
     std::vector<InputCommand> received;
-    Core::BitReader           reader(writer.Data());
+    Core::BitReader reader(writer.Data());
     REQUIRE(InputCommandBuffer::ReadPacket(reader, received));
     REQUIRE(received.size() == 3);
     // Oldest first: the receiver feeds them to the queue in tick order.
@@ -150,11 +150,11 @@ TEST_CASE("InputCommandBuffer repeats the last N commands in every packet")
 TEST_CASE("an empty buffer still writes a parseable packet")
 {
     const InputCommandBuffer buffer;
-    Core::BitWriter          writer;
+    Core::BitWriter writer;
     buffer.WritePacket(writer);
 
     std::vector<InputCommand> received;
-    Core::BitReader           reader(writer.Data());
+    Core::BitReader reader(writer.Data());
     CHECK(InputCommandBuffer::ReadPacket(reader, received));
     CHECK(received.empty());
 }
@@ -165,7 +165,7 @@ TEST_CASE("a packet claiming an absurd command count is rejected without allocat
     writer.WriteVarUInt32(1000000u); // far past the per-packet cap
 
     std::vector<InputCommand> received;
-    Core::BitReader           reader(writer.Data());
+    Core::BitReader reader(writer.Data());
     CHECK_FALSE(InputCommandBuffer::ReadPacket(reader, received));
     CHECK(received.empty());
     // The reader must latch failure so a caller cannot keep parsing past it.
@@ -183,7 +183,7 @@ TEST_CASE("a truncated packet leaves the output vector untouched")
 
     // Keep the count but cut the commands short.
     std::vector<InputCommand> received;
-    Core::BitReader           reader(writer.Data().subspan(0, 6));
+    Core::BitReader reader(writer.Data().subspan(0, 6));
     CHECK_FALSE(InputCommandBuffer::ReadPacket(reader, received));
     CHECK(received.empty());
 }

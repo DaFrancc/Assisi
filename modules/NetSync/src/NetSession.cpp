@@ -25,9 +25,7 @@ NetSession::NetSession(ECS::Scene &scene, Physics::PhysicsWorld *physics, Replic
     if (_config.neverReplicate.empty())
         _config.neverReplicate = LoadNeverReplicateFromConfig();
 
-    // Same terms, same reason. Only when the caller has left it at the default,
-    // so an explicitly configured session — every test, and any embedder with
-    // its own policy source — is not silently overridden by game.json.
+    // Same terms, same reason: only when the caller has left it at the default.
     if (_config.relevancy.provider == RelevancyConfig::Provider::All)
         _config.relevancy = LoadRelevancyFromConfig();
 }
@@ -101,6 +99,23 @@ void NetSession::ConfirmLevelReady()
 {
     if (_client)
         _client->ConfirmLevelReady();
+}
+
+void NetSession::SetContentSetHash(std::uint64_t hash)
+{
+    if (_server)
+        _server->SetContentSetHash(hash);
+    if (_client)
+        _client->SetContentSetHash(hash);
+}
+
+bool NetSession::HasContentSetHash() const
+{
+    if (_server)
+        return _server->HasContentSetHash();
+    if (_client)
+        return _client->HasContentSetHash();
+    return true; // offline: there is no handshake to gate
 }
 
 void NetSession::AbortJoin(std::string reason)
@@ -197,7 +212,7 @@ void NetSession::Tick(std::uint64_t simTick, const InputCommand *localInput)
     _clock->Tick();
 
     Net::ConnectionStats transportStats;
-    const std::int32_t   pingMs =
+    const std::int32_t pingMs =
         _transport->GetConnectionStats(_connection, transportStats) ? transportStats.pingMs : 0;
     _clock->OnSnapshot(_client->Feedback(), pingMs);
 

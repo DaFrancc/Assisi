@@ -14,13 +14,16 @@ add_executable(Assisi-Core-Tests
   TestAssetIdJson.cpp
   TestAssetPath.cpp
   TestAssetSystem.cpp
+  TestBiMap.cpp
   TestBinaryCodec.cpp
   TestComponentMask.cpp
   TestBitStream.cpp
   TestComponentRegistry.cpp
   TestContentHash.cpp
+  TestDiagnostics.cpp
   TestEventQueue.cpp
   TestJobSystem.cpp
+  TestLogger.cpp
   TestTrivialString.cpp
 )
 

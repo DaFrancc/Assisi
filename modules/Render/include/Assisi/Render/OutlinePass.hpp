@@ -2,8 +2,8 @@
 #pragma once
 
 /// @file OutlinePass.hpp
-/// @brief Coloured always-on-top / depth-tested silhouette outline via
-/// screen-space edge detection.
+/// @brief Coloured always-on-top silhouette outline via screen-space edge
+/// detection.
 
 #include <cstdint>
 #include <span>
@@ -25,8 +25,7 @@ class MeshBuffer;
 /// Technique — the same screen-space edge detect Unreal uses, which (unlike a
 /// normal-extruded "hull" outline) is clean on any topology, boxes included:
 ///   1. Mask pass — render each silhouette into a single-channel offscreen
-///      coverage mask. Depth test off ("always on top"), or tested against the
-///      scene depth so occluded parts of the silhouette drop out.
+///      coverage mask, depth test off, so occluded parts still count.
 ///   2. Edge pass — a fullscreen triangle reads that mask and paints the caller's
 ///      colour on pixels just OUTSIDE the covered region.
 ///
@@ -38,12 +37,12 @@ class MeshBuffer;
 /// way editor selection outlines conventionally behave.
 class OutlinePass
 {
-  public:
+public:
     /// @brief One silhouette to stamp into the mask: a mesh at a world transform.
     struct OutlineItem
     {
         const MeshBuffer *mesh;
-        glm::mat4         model;
+        glm::mat4 model;
     };
 
     /// @param sceneFramebufferInfo  Format/samples of the framebuffer the edge
@@ -92,7 +91,7 @@ class OutlinePass
                        const glm::vec3 &cameraRight, const glm::vec3 &cameraUp, float halfSize,
                        nvrhi::ITexture *iconTexture, const glm::vec3 &color);
 
-  private:
+private:
     [[nodiscard]] bool BuildEdgePipeline(const nvrhi::FramebufferInfo &sceneFramebufferInfo);
     /// @brief (Re)create the coverage mask target + its (depth-less) framebuffer and
     /// the edge pass's binding set for a new viewport size. No-op when already that
@@ -109,11 +108,11 @@ class OutlinePass
     nvrhi::IDevice *_device = nullptr;
 
     // Mask pass: renders the silhouette into the R8 coverage target.
-    nvrhi::ShaderHandle           _maskVertexShader;
-    nvrhi::ShaderHandle           _maskPixelShader;
-    nvrhi::InputLayoutHandle      _maskInputLayout;
-    nvrhi::BindingLayoutHandle    _maskBindingLayout;
-    nvrhi::BindingSetHandle       _maskBindingSet; // push constants only
+    nvrhi::ShaderHandle _maskVertexShader;
+    nvrhi::ShaderHandle _maskPixelShader;
+    nvrhi::InputLayoutHandle _maskInputLayout;
+    nvrhi::BindingLayoutHandle _maskBindingLayout;
+    nvrhi::BindingSetHandle _maskBindingSet;       // push constants only
     nvrhi::GraphicsPipelineHandle _maskPipeline;   // depth off (always on top)
 
     // Billboard mask variant: stamps a meshless entity's icon into the same
@@ -121,27 +120,27 @@ class OutlinePass
     // edge pass outlines the icon's shape. Shares the coverage target and edge
     // pass; has its own quad vertex stage, icon-sampling pixel stage, sampler, and
     // a binding set rebuilt only when the icon texture changes.
-    nvrhi::ShaderHandle           _billboardMaskVertexShader;
-    nvrhi::ShaderHandle           _billboardMaskPixelShader;
-    nvrhi::BindingLayoutHandle    _billboardMaskBindingLayout;
-    nvrhi::SamplerHandle          _billboardSampler;
-    nvrhi::BindingSetHandle       _billboardMaskBindingSet; // push constants + icon texture + sampler
-    nvrhi::ITexture              *_billboardTexture = nullptr; // non-owning; identifies the current binding set
+    nvrhi::ShaderHandle _billboardMaskVertexShader;
+    nvrhi::ShaderHandle _billboardMaskPixelShader;
+    nvrhi::BindingLayoutHandle _billboardMaskBindingLayout;
+    nvrhi::SamplerHandle _billboardSampler;
+    nvrhi::BindingSetHandle _billboardMaskBindingSet;       // push constants + icon texture + sampler
+    nvrhi::ITexture *_billboardTexture = nullptr;              // non-owning; identifies the current binding set
     nvrhi::GraphicsPipelineHandle _billboardMaskPipeline;
 
     // Edge pass: fullscreen edge detect that composites the coloured border.
-    nvrhi::ShaderHandle           _edgeVertexShader;
-    nvrhi::ShaderHandle           _edgePixelShader;
-    nvrhi::BindingLayoutHandle    _edgeBindingLayout;
-    nvrhi::SamplerHandle          _sampler;
+    nvrhi::ShaderHandle _edgeVertexShader;
+    nvrhi::ShaderHandle _edgePixelShader;
+    nvrhi::BindingLayoutHandle _edgeBindingLayout;
+    nvrhi::SamplerHandle _sampler;
     nvrhi::GraphicsPipelineHandle _edgePipeline;
-    nvrhi::BindingSetHandle       _edgeBindingSet; // depends on the mask texture
+    nvrhi::BindingSetHandle _edgeBindingSet;       // depends on the mask texture
 
     // The offscreen coverage mask, sized to the viewport and recreated on resize.
-    nvrhi::TextureHandle     _maskTexture;
+    nvrhi::TextureHandle _maskTexture;
     nvrhi::FramebufferHandle _maskFramebuffer;
-    uint32_t                 _maskWidth  = 0;
-    uint32_t                 _maskHeight = 0;
+    uint32_t _maskWidth  = 0;
+    uint32_t _maskHeight = 0;
 };
 
 } // namespace Assisi::Render

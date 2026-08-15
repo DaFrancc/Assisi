@@ -9,10 +9,9 @@
 /// lifecycle as events. Replication lives one layer up, in Assisi::NetSync.
 ///
 /// Every third-party type is hidden behind a pimpl, so nothing downstream ever
-/// includes a GNS header. That is not tidiness for its own sake — it is what
-/// keeps the transport genuinely swappable (the design notes name enet6+DTLS as
-/// the fallback if the GNS build chain ever becomes untenable) and what keeps
-/// our strict warning set from having to tolerate a vendored header.
+/// includes a GNS header. That keeps the transport swappable (the design notes
+/// name enet6+DTLS as the fallback) and keeps our strict warning set from having
+/// to tolerate a vendored header.
 ///
 /// Usage, per frame (client) or per tick (server):
 /// @code
@@ -24,6 +23,8 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <format>
+#include <functional>
 #include <memory>
 #include <span>
 #include <string>
@@ -40,11 +41,29 @@ namespace Assisi::Net
 /// handle space so the wire library never leaks into a caller's type. Handles
 /// are never recycled within a NetTransport's lifetime, so a stale id is always
 /// detected rather than silently aliasing a new connection.
-using ConnectionId = std::uint32_t;
+///
+/// An aggregate, matching `NetSync::ClientId`/`NetSync::NetId` — aggregate
+/// initialization (`ConnectionId{7}`) is the only way in, which is what blocks
+/// the implicit conversion in both directions. Deliberately no arithmetic: a
+/// dense handle is never added to or subtracted from, only allocated, compared,
+/// and looked up.
+///
+/// `NetSync::ClientId` is a wrapper type so the compiler keeps the two apart
+/// (see `NetProtocol.hpp`); ConnectionId must be one too, or it converts freely
+/// into any uint32_t slot, a ClientId's included.
+struct ConnectionId
+{
+    std::uint32_t value = 0;
+
+    [[nodiscard]] constexpr bool IsValid() const { return value != 0; }
+
+    friend constexpr bool operator==(ConnectionId, ConnectionId)  = default;
+    friend constexpr auto operator<=>(ConnectionId, ConnectionId) = default;
+};
 
 /// @brief The never-valid connection handle. Zero, so a value-initialized
 /// ConnectionId is invalid by construction.
-inline constexpr ConnectionId InvalidConnection = 0;
+inline constexpr ConnectionId InvalidConnection{0};
 
 /// @brief Delivery guarantee for one message.
 enum class SendMode : std::uint8_t
@@ -62,9 +81,8 @@ enum class SendMode : std::uint8_t
 /// Reliable delivery is ordered *within* a lane and independent *between*
 /// lanes, which is the whole point: a large reliable transfer on Bulk (a
 /// late-joining client's world baseline) must never head-of-line-block the
-/// per-tick snapshot stream behind it. Priorities are assigned in
-/// NetTransport's constructor-time lane configuration, lowest value = highest
-/// priority.
+/// per-tick snapshot stream behind it. Priorities are configured per connection
+/// as it is adopted, lowest value = highest priority.
 enum class Lane : std::uint8_t
 {
     Control  = 0, ///< Connection handshake, spawns/despawns, anything that must arrive.
@@ -85,14 +103,14 @@ struct NetEvent
         Message,      ///< A payload arrived.
     };
 
-    Type                   type       = Type::Message;
-    ConnectionId           connection = InvalidConnection;
+    Type type       = Type::Message;
+    ConnectionId connection = InvalidConnection;
     std::vector<std::byte> payload;              ///< Message only; empty otherwise.
-    Lane                   lane = Lane::Control; ///< Message only.
+    Lane lane = Lane::Control;                   ///< Message only.
     /// Disconnected only: GNS's end reason plus its debug string, for logging a
     /// diagnosable cause rather than "the client went away".
     std::int32_t closeReason = 0;
-    std::string  closeDebug;
+    std::string closeDebug;
 };
 
 /// @brief A connection's current health, for debug overlays and the adaptive
@@ -100,12 +118,12 @@ struct NetEvent
 struct ConnectionStats
 {
     std::int32_t pingMs                  = 0;
-    float        connectionQualityLocal  = 0.f; ///< 0..1, fraction delivered end-to-end in order.
-    float        connectionQualityRemote = 0.f; ///< The same, as the peer observes it.
-    float        outPacketsPerSec        = 0.f;
-    float        outBytesPerSec          = 0.f;
-    float        inPacketsPerSec         = 0.f;
-    float        inBytesPerSec           = 0.f;
+    float connectionQualityLocal  = 0.f;        ///< 0..1, fraction delivered end-to-end in order.
+    float connectionQualityRemote = 0.f;        ///< The same, as the peer observes it.
+    float outPacketsPerSec        = 0.f;
+    float outBytesPerSec          = 0.f;
+    float inPacketsPerSec         = 0.f;
+    float inBytesPerSec           = 0.f;
     std::int32_t sendRateBytesPerSec     = 0; ///< Estimated channel capacity, not current usage.
     std::int32_t pendingUnreliableBytes  = 0;
     std::int32_t pendingReliableBytes    = 0;
@@ -115,15 +133,14 @@ struct ConnectionStats
 /// @brief Artificial network impairment, applied process-wide.
 ///
 /// GNS applies these inside its own send/receive path, so a test can reproduce
-/// a bad connection without a real network, a second machine, or root. This is
-/// the soak harness every later stage's convergence test runs under. Note the
+/// a bad connection without a real network, a second machine, or root. Note the
 /// scope: these are *global* config values in GNS, not per-connection, and they
 /// do not apply to a socket pair created in its default in-process mode — see
 /// NetTransport::CreateLoopbackPair.
 struct SimulatedConditions
 {
-    float        sendLossPercent = 0.f; ///< 0..100, packets dropped on send.
-    float        recvLossPercent = 0.f; ///< 0..100, packets dropped on receive.
+    float sendLossPercent = 0.f;        ///< 0..100, packets dropped on send.
+    float recvLossPercent = 0.f;        ///< 0..100, packets dropped on receive.
     std::int32_t sendLagMs       = 0;   ///< Added one-way delay on send.
     std::int32_t recvLagMs       = 0;   ///< Added one-way delay on receive.
     std::int32_t sendJitterMs    = 0;   ///< Max extra random delay on send.
@@ -141,7 +158,7 @@ struct SimulatedConditions
 /// single call site, not this interface.
 class NetTransport
 {
-  public:
+public:
     /// Initializes the GNS library on first construction (refcounted across
     /// instances, mirroring how PhysicsWorld owns Jolt's globals).
     NetTransport();
@@ -155,7 +172,7 @@ class NetTransport
     /// @brief Bind a listen socket on @p port (all interfaces, IPv6 with IPv4
     /// mapping). Incoming connections are accepted automatically and surface as
     /// NetEvent::Type::Connected once their handshake completes.
-    /// @return false if the port could not be bound; call ListenError() for why.
+    /// @return false if the port could not be bound; call LastError() for why.
     bool Listen(std::uint16_t port);
 
     /// @brief Connect to @p address (an IPv4/IPv6 literal, no DNS) on @p port.
@@ -235,9 +252,27 @@ class NetTransport
     };
     static void SetDebugLevel(DebugLevel level);
 
-  private:
+private:
     struct Impl;
     std::unique_ptr<Impl> _impl;
 };
 
 } // namespace Assisi::Net
+
+/// Prints as the bare number, so a log line reads "connection 7" without every
+/// call site spelling `.value`.
+template <> struct std::formatter<Assisi::Net::ConnectionId> : std::formatter<std::uint32_t>
+{
+    auto format(Assisi::Net::ConnectionId id, std::format_context &ctx) const
+    {
+        return std::formatter<std::uint32_t>::format(id.value, ctx);
+    }
+};
+
+template <> struct std::hash<Assisi::Net::ConnectionId>
+{
+    [[nodiscard]] std::size_t operator()(Assisi::Net::ConnectionId id) const noexcept
+    {
+        return std::hash<std::uint32_t>{}(id.value);
+    }
+};

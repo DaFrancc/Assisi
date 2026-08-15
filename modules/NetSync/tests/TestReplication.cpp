@@ -22,7 +22,10 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
 
 #include <chrono>
@@ -43,8 +46,8 @@ namespace
 struct Harness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     /// Both ends of the in-process pair. Created in the member init list
     /// because ReplicationClient takes its connection handle at construction —
@@ -61,11 +64,16 @@ struct Harness
     /// it may answer — the editor's join. Off by default, which is every other
     /// case here.
     explicit Harness(ReplicationConfig config = {}, bool deferHandshake = false, LevelIdentity level = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
-          client(transport, clientScene, pair.second)
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
+        client(transport, clientScene, pair.second)
     {
         client.SetDeferHandshake(deferHandshake);
         server.SetLevelIdentity(std::move(level));
+        // Neither hello goes out until each side knows its content set. These
+        // tests are about replication rather than about what is on disk, so both
+        // are handed the empty set's hash and agree trivially.
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
         server.AddConnection(pair.first);
     }
 
@@ -129,7 +137,7 @@ struct Harness
 ECS::Entity SpawnReplicated(ECS::Scene &scene, glm::vec3 position)
 {
     const ECS::Entity entity = scene.Create();
-    ECS::Transform    transform;
+    ECS::Transform transform;
     transform.position = position;
     (void)scene.Add<ECS::Transform>(entity, transform);
     (void)scene.Add<Replicated>(entity, Replicated{});
@@ -219,7 +227,7 @@ TEST_CASE("the handshake carries which level the host is running, and its conten
     level.path        = "levels/Materials.alvl";
     level.contentHash = 0xFEEDFACECAFEBEEDull;
 
-    Harness harness(ReplicationConfig{}, /*deferHandshake=*/true, level);
+    Harness harness(ReplicationConfig{}, /*deferHandshake=*/ true, level);
     harness.Step(4);
 
     // Deferred: connected, told which level, and deliberately not synchronized.
@@ -252,7 +260,7 @@ TEST_CASE("the handshake carries which level the host is running, and its conten
 
 TEST_CASE("a host with no level advertises none, and an aborted join says why")
 {
-    Harness harness(ReplicationConfig{}, /*deferHandshake=*/true);
+    Harness harness(ReplicationConfig{}, /*deferHandshake=*/ true);
     harness.Step(4);
 
     REQUIRE(harness.client.IsAwaitingLevel());
@@ -281,27 +289,18 @@ TEST_CASE("message framing is inside the handshake hash, not just the component 
 
 TEST_CASE("replication policy is part of the protocol description")
 {
-    // The successor to P0's hash pin, which has been retired now that it has
-    // done its job. That pin held one measured constant (6593563864785826454)
-    // across the ACOMP(replicated) -> ACOMP(replicable) rename, proving the
-    // rename did not disturb the *emitted* layout text and therefore could not
-    // repartition deployed builds into incompatible pairs. P2a then moved the
-    // hash deliberately, by giving `Replicated` its exclusion mask.
-    //
-    // Carrying the constant forward would have been worse than useless: it is
-    // sensitive to every reflected component in this binary, so any unrelated
-    // addition trips it, and the reflex that teaches is "bump the number" — the
-    // opposite of the scrutiny a protocol change deserves. What is worth pinning
-    // is the *property*, and it needs no magic number.
+    // The property is pinned, deliberately without a magic hash constant: a
+    // measured hash is sensitive to every reflected component in this binary, so
+    // any unrelated addition trips it and teaches the reflex "bump the number"
+    // rather than the scrutiny a protocol change deserves.
     const std::string description = Core::Reflect::ProtocolLayoutDescription();
 
     // The marker's policy field is inside the hash, so two builds that disagree
     // about what an entity may withhold refuse to pair rather than silently
     // sending each other different component sets.
     CHECK(description.find("excluded") != std::string::npos);
-    // ...and the capability flag still is too — the v4 R1 decision this all
-    // rests on. (TestBinaryCodec proves flipping it changes the hash; this
-    // proves the real registry actually carries it.)
+    // ...and the capability flag is in there too. (TestBinaryCodec proves
+    // flipping it changes the hash; this proves the real registry carries it.)
     CHECK(description.find(" replicated") != std::string::npos);
     CHECK(NetProtocolHash() == NetProtocolHash());
 }
@@ -353,10 +352,9 @@ TEST_CASE("a component type that is not ACOMP(replicable) never crosses the wire
     REQUIRE(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
     CHECK(harness.clientScene.Get<Test::Health>(mirror)->value == 42);
 
-    // ...and the unmarked one does not exist on the client at all. Before wire
-    // gating this was the other way round for *every* serializable component,
-    // which is how a marked entity shipped a Camera that could take over the
-    // receiving client's view.
+    // ...and the unmarked one does not exist on the client at all. Without wire
+    // gating every serializable component would travel, so a marked entity would
+    // ship a Camera that takes over the receiving client's view.
     CHECK(harness.clientScene.Get<Test::LocalOnly>(mirror) == nullptr);
 
     // Mutating it later is still nobody else's business.
@@ -409,12 +407,12 @@ TEST_CASE("a norep field still round-trips to disk")
     REQUIRE(meta != nullptr);
     REQUIRE(meta->replicable);
 
-    const Test::Health   source{55, 8888};
+    const Test::Health source{55, 8888};
     const nlohmann::json json = meta->serialize(&source);
     CHECK(json.contains("value"));
     CHECK(json.contains("secret"));
 
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity entity = scene.Create();
     meta->addToScene(&scene, entity.index, entity.generation, json);
 
@@ -429,9 +427,9 @@ TEST_CASE("a replicated component that never said `tracked` still deltas after s
     // ACOMP(replicable) implies ACOMP(tracked), and this is why: an untracked
     // pool has no change-tick lane, ChangeTickById returns 0, and 0 reads as
     // "unchanged" — so the component would transmit once at spawn and then go
-    // permanently silent no matter what the server did to it. MeshRenderer and
-    // Name were both live instances of that bug; Test::Health stands in for them
-    // here because NetSync deliberately does not link Runtime.
+    // permanently silent no matter what the server did to it. Test::Health
+    // stands in for the Runtime components with this shape, because NetSync
+    // deliberately does not link Runtime.
     Harness harness;
     harness.Step(4);
 
@@ -578,9 +576,10 @@ TEST_CASE("a late-joining client converges on a world already in motion")
     // A second client shows up long after the world was built. Its baseline is
     // the empty one, which is the same code path as any other delta — that
     // unification is the reason late join needs no special message.
-    ECS::Scene       lateScene;
-    const auto       latePair = harness.transport.CreateLoopbackPair();
+    ECS::Scene lateScene;
+    const auto latePair = harness.transport.CreateLoopbackPair();
     ReplicationClient lateClient(harness.transport, lateScene, latePair.second);
+    lateClient.SetContentSetHash(0);
     harness.server.AddConnection(latePair.first);
 
     for (std::uint32_t i = 0; i < 20; ++i)
@@ -630,13 +629,12 @@ TEST_CASE("a world too big for one packet still converges, over several snapshot
 
 TEST_CASE("an entity whose final change lands in a budget-starved snapshot still converges")
 {
-    // The bug this pins: the in-flight record's *global* scene change tick used
-    // to become the connection's baseline when acked, including for entities the
-    // budget had skipped. Their pending changes were then older than the
-    // baseline, so "changed since" said no and they were never resent — stale
-    // until something happened to touch them again. A continuously-moving world
-    // re-stamps itself every tick, which is why nothing noticed; an entity whose
-    // *last* change lands in a starved snapshot has nothing to re-stamp it.
+    // An ack advances baselines per entity, not by the snapshot's global scene
+    // change tick: an entity the budget skipped would otherwise inherit a
+    // baseline newer than its pending change, so "changed since" says no and it
+    // is never resent. A continuously-moving world re-stamps itself every tick
+    // and hides that; an entity whose *last* change lands in a starved snapshot
+    // has nothing to re-stamp it.
     ReplicationConfig config;
     config.maxSnapshotBytes = 160; // room for a few transforms, not sixteen
     Harness harness(config);
@@ -865,7 +863,7 @@ TEST_CASE("input flows the other way and is bounded on arrival")
     REQUIRE(harness.client.IsSynchronized());
 
     InputCommandBuffer buffer;
-    InputCommand       command;
+    InputCommand command;
     command.tick  = harness.tick + 4;
     command.moveX = 5.f; // well past any legal stick deflection
     command.moveY = 5.f;
@@ -897,8 +895,9 @@ TEST_CASE("the snapshot rate is clamped to a divisor of the tick rate")
     config.snapshotHz = 25; // 60/25 is not an integer
 
     Harness harness(config);
-    // 60/25 truncates to a divisor of 2, i.e. 30 Hz — every snapshot then lands
-    // on an exact tick instead of the interval alternating between 2 and 3.
+    // 60/25 = 2.4 truncates to a 2-tick interval, i.e. 30 Hz — every snapshot
+    // then lands on an exact tick instead of the interval alternating between
+    // 2 and 3.
     CHECK(harness.server.Config().snapshotHz == 30);
     CHECK(harness.server.IsSnapshotTick(0));
     CHECK(harness.server.IsSnapshotTick(2));
@@ -914,7 +913,7 @@ TEST_CASE("a component removed on the server is removed on the client")
     (void)harness.serverScene.Add<Test::Health>(entity, Test::Health{42});
     harness.Step(12);
 
-    const NetId       netId  = harness.server.NetIdOf(entity);
+    const NetId netId  = harness.server.NetIdOf(entity);
     const ECS::Entity mirror = harness.client.EntityOf(netId);
     REQUIRE(mirror != ECS::NullEntity);
     REQUIRE(harness.clientScene.Get<Test::Health>(mirror) != nullptr);
@@ -1038,7 +1037,7 @@ TEST_CASE("interpolation renders between snapshots rather than stepping at the s
         harness.Step(1);
 
         const std::uint64_t applied = harness.client.LastAppliedTick();
-        const float         shown   = harness.clientScene.Get<ECS::Transform>(mirror)->position.x;
+        const float shown   = harness.clientScene.Get<ECS::Transform>(mirror)->position.x;
         if (samples.empty() || samples.back().first != applied)
             samples.emplace_back(applied, shown);
     }
@@ -1117,8 +1116,8 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     // is nothing to configure until the library has been initialized by at
     // least one live NetTransport.
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     Net::SimulatedConditions conditions;
     conditions.sendLossPercent = 5.f;
@@ -1127,9 +1126,11 @@ TEST_CASE("the world converges through 150 ms of latency and 5% packet loss")
     conditions.recvLagMs       = 75;
     REQUIRE(Net::NetTransport::SetSimulatedConditions(conditions));
 
-    const auto        pair = transport.CreateLoopbackPair(true);
-    ReplicationServer server(transport, serverScene, /*physics=*/nullptr, ReplicationConfig{});
+    const auto pair = transport.CreateLoopbackPair(true);
+    ReplicationServer server(transport, serverScene, /*physics=*/ nullptr, ReplicationConfig{});
     ReplicationClient client(transport, clientScene, pair.second);
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
     server.AddConnection(pair.first);
 
     std::vector<ECS::Entity> entities;
@@ -1226,4 +1227,29 @@ TEST_CASE("Reset drops the mirrored world, which is how v1 reconnects")
     CHECK(harness.client.ReplicatedEntityCount() == 0);
     CHECK_FALSE(harness.client.IsSynchronized());
     CHECK(harness.client.LastAppliedTick() == 0);
+}
+
+TEST_CASE("Reset clears the level-ready gate, so a hash does not join on its own")
+{
+    // A join needs both halves — the content-set hash and the application's word
+    // that its world is built — and completes on whichever lands second. Reset
+    // puts the second half back to "not said", so the next attempt waits for the
+    // application again. The case is the editor's join, where the world takes
+    // frames to load and the hash lands whenever the content scan finishes.
+    Harness harness{{}, /*deferHandshake=*/ true};
+    harness.client.ConfirmLevelReady();
+    harness.Step(6);
+    REQUIRE(harness.client.IsSynchronized());
+
+    harness.client.Reset();
+    harness.clientScene.FlushDestroyed();
+    REQUIRE_FALSE(harness.client.IsSynchronized());
+
+    // A hash arriving before the world is built must not be enough on its own.
+    harness.client.SetContentSetHash(0);
+    CHECK_FALSE(harness.client.IsSynchronized());
+
+    // The application saying so still is.
+    harness.client.ConfirmLevelReady();
+    CHECK(harness.client.IsSynchronized());
 }

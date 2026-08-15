@@ -38,7 +38,7 @@ template <std::size_t Capacity = kDefaultTrivialStringCapacity> class TrivialStr
     static_assert(Capacity <= 0xFFFFu,
                   "TrivialString capacity must fit in its uint16_t length prefix");
 
-  public:
+public:
     static constexpr std::size_t kCapacity = Capacity;
 
     TrivialString() = default;
@@ -49,7 +49,7 @@ template <std::size_t Capacity = kDefaultTrivialStringCapacity> class TrivialStr
     ///         (so a caller can log/reject); true otherwise.
     bool Assign(std::string_view text)
     {
-        const bool  truncated = text.size() > Capacity;
+        const bool truncated = text.size() > Capacity;
         std::size_t count     = truncated ? Capacity : text.size();
 
         // On truncation, don't slice through a multi-byte UTF-8 code point: back
@@ -88,10 +88,25 @@ template <std::size_t Capacity = kDefaultTrivialStringCapacity> class TrivialStr
 
     bool operator==(const TrivialString &other) const { return View() == other.View(); }
 
-  private:
+private:
     std::array<char, Capacity> _data{};
-    std::uint16_t              _length = 0;
+    std::uint16_t _length = 0;
 };
+
+/// @brief Maximum number of bytes an EntityName can hold (64).
+///
+/// Separate from ShortString's 32 so a name can be long without widening every
+/// short label. Runtime/Naming.hpp sizes its refusals and its uniquing suffix
+/// from here.
+inline constexpr std::size_t kEntityNameMax = 64;
+
+/// @brief The name of an entity: heap-free, fixed-capacity, inline.
+///
+/// reflectgen keys on the spelled type name `Assisi::Core::EntityName`, so a
+/// field must be declared with the alias — a bare `TrivialString<64>` is a type
+/// the generator does not know. Serializes as a plain string; the editor draws
+/// it as a text box (FieldType::EntityName).
+using EntityName = TrivialString<kEntityNameMax>;
 
 } // namespace Assisi::Core
 

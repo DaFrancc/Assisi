@@ -1,12 +1,25 @@
 # Editor unit tests. EditHistory is deliberately light (Core/ECS/Runtime +
-# nlohmann only), but the Editor *library* grows the whole App stack at E2
-# (ImGui, GLFW, Jolt via Assisi::App) — so the suite compiles the sources it
-# tests directly rather than linking Assisi::Editor, keeping the test binary
-# free of windowing/physics baggage.
+# nlohmann only), but the Editor *library* carries the whole App stack (ImGui,
+# GLFW, Jolt via Assisi::App) — so the suite compiles the sources it tests
+# directly rather than linking Assisi::Editor, keeping the test binary free of
+# windowing/physics baggage.
 add_executable(Assisi-Editor-Tests
   main.cpp
+  TestColliderPose.cpp
   TestEditHistory.cpp
+  TestEntityPicking.cpp
+  TestGizmoDrag.cpp
+  TestInspectorFieldChrome.cpp
+  TestInstanceGesture.cpp
+  TestInstanceHistory.cpp
+  TestPrePlayState.cpp
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/ColliderPose.cpp"
   "${CMAKE_CURRENT_SOURCE_DIR}/../src/EditHistory.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/GizmoDrag.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/InspectorFieldChrome.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/InstanceGesture.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/PrePlayState.cpp"
+  "${CMAKE_CURRENT_SOURCE_DIR}/../src/ScenePick.cpp"
 )
 
 Assisi_apply_test_defaults(Assisi-Editor-Tests)
@@ -38,6 +51,9 @@ target_link_libraries(Assisi-Editor-Tests
   PRIVATE
     Assisi::Runtime
     nlohmann_json::nlohmann_json
+    # InspectorFieldChrome scopes an ImGui colour push, so the suite needs core
+    # ImGui. Core only — the backends live in Assisi::App, which stays out.
+    imgui::imgui
 )
 
 # EditHistory walks ComponentRegistry, populated by the static initializers

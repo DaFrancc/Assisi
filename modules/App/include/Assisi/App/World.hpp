@@ -2,26 +2,21 @@
 #pragma once
 
 /// @file World.hpp
-/// @brief A level at runtime — scene + physics + the per-level state that used
-///        to live as scattered members of the app — and the manager that owns
-///        them. Design: docs/multi-scene-design-notes.md.
+/// @brief A level at runtime — scene + physics + the state that is per-level
+///        rather than per-app — and the manager that owns every resident one.
+///        Design: docs/multi-scene-design-notes.md.
 ///
-/// An app used to hold "the" scene and "the" physics world as members. That
-/// works exactly as long as one level is resident, which is not long: a game
-/// changing level mid-play needs the outgoing and incoming levels alive at the
-/// same time, and a game running two levels at once (different players in
-/// different places) needs both simulating. Both are just "more than one
-/// World".
-///
-/// Stage S1 introduces the bundle and moves the app onto it without changing
-/// behaviour: exactly one world exists, and it is both the active and the
-/// edited world. Multiple residents (S2) and in-play level change (S3) build on
-/// this without touching the panels.
+/// Several worlds can be resident at once, because one "the scene" plus one
+/// "the physics world" only carries a host that never has two levels alive: a
+/// game changing level mid-play needs the outgoing and incoming levels alive at
+/// the same time, and a game running two levels at once (different players in
+/// different places) needs both simulating.
 
 #include <Assisi/App/SystemRegistry.hpp>
 #include <Assisi/Core/JobSystem.hpp>
 #include <Assisi/ECS/Scene.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
+#include <Assisi/Runtime/Blueprint.hpp>
 
 #include <atomic>
 #include <cstddef>
@@ -29,6 +24,7 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <utility>
@@ -73,34 +69,65 @@ enum class WorldState : std::uint8_t
 /// components point into, and ECS::Scene is likewise pinned.
 struct World
 {
-    World() = default;
+    World()  = default;
+    ~World() = default;
+
     World(const World &)            = delete;
     World &operator=(const World &) = delete;
+    World(World &&)                 = delete;
+    World &operator=(World &&)      = delete;
 
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld physics;
 
-    /// This world's game systems, installed once by its profile (see
-    /// WorldManager::RegisterProfile). Per world rather than per app because a
+    /// One row per live blueprint instance in this world: which file it is of,
+    /// where it was placed, and where the level file put it.
+    ///
+    /// The world owns it, not the scene, because it is not entity data — the only
+    /// thing a blueprint leaves on the entities is the ECS::BlueprintMember tag,
+    /// which says *which* instance an entity belongs to and never *what* that
+    /// instance is. Ids are per world and restart at 1 on every load, because the
+    /// table is discarded with the world (docs/blueprint-system-concept.md §2).
+    Runtime::InstanceTable instances;
+
+    /// This world's game systems, installed once from its level's list (see
+    /// WorldManager::ApplySystems). Per world rather than per app because a
     /// system's cross-frame state lives in its registered lambda's captures: one
     /// shared instance running over several worlds would advance that state N×
-    /// too fast (docs/multi-scene-design-notes.md §1). Empty until a profile is
-    /// applied, which is deliberate — Create() installs nothing.
-    SystemRegistry        systems;
+    /// too fast (docs/multi-scene-design-notes.md §1). Empty until the level's
+    /// list is applied, which is deliberate — Create() installs nothing.
+    SystemRegistry systems;
 
-    /// The profile name the **level asked for**, or "" if it named none. This is
-    /// what a save writes back, so it is preserved verbatim even when it could
-    /// not be honoured: rewriting it with whatever was actually installed would
-    /// silently destroy the author's choice in any host that happens not to
-    /// register that profile — a game-build level opened in a tools build, or a
-    /// name whose typo is about to be fixed.
-    std::string           profile;
+    /// The system names the **level asked for**, in file order. What a save
+    /// writes back, so it is preserved verbatim: rewriting it with whatever was
+    /// actually installed would silently destroy the author's choice in a host
+    /// that happens not to declare one of them.
+    ///
+    /// A blueprint spawned into this world adds its own names to the registry
+    /// without touching this list — those belong to the blueprint's file, not to
+    /// the level's.
+    std::vector<std::string> systemNames;
 
-    /// The profile that actually populated @ref systems, or "" if none ran.
-    /// Differs from @ref profile only when the request could not be honoured and
-    /// ApplyProfile fell back — that difference is the diagnostic, and it is
-    /// deliberately not persisted.
-    std::string           installedProfile;
+    /// Systems a blueprint spawned into this world has asked for, waiting for the
+    /// frame's safe point (App::QueueSystemInstall / App::DrainSystemInstalls).
+    ///
+    /// **A member, not a process-global list keyed by `World*`.** The frame loop
+    /// drains one line after the marshalled work where deferred level loads land,
+    /// which is exactly what frees worlds — so an entry held outside the world
+    /// could name freed memory. Owned by the world, the queue cannot outlive it,
+    /// and replacing the world's content (ApplySystems) drops it with the rest of
+    /// what that content owned.
+    struct PendingSystems
+    {
+        /// A union, not a concatenation — a hundred bullets spawned in one frame
+        /// leave one name, not a hundred.
+        std::vector<std::string> names;
+        /// Named in the error if one of them turns out to be undeclared: the
+        /// blueprint that asked first. Whichever spawn opened the queue owns the
+        /// message, which is arbitrary only when several are equally to blame.
+        std::string context;
+    };
+    PendingSystems pendingSystems;
 
     /// Unique key within the manager. Deliberately NOT the level path: travel
     /// A→B→A leaves two worlds of one path resident, so names are generated.
@@ -126,6 +153,18 @@ struct World
     /// renderer: one renderer serving two worlds would skip propagation in
     /// whichever it drew second.
     std::uint64_t propagationTick = 0;
+
+    /// The manager that created this world, or null for one built standalone (a
+    /// test, or a headless process with no manager). Set by WorldManager::Create
+    /// and never by anything else — a world belongs to exactly one manager for
+    /// its whole life.
+    ///
+    /// It exists so a call that has only a World can still reach the engine
+    /// services a spawn needs: App::SpawnBlueprint resolves the new members'
+    /// assets through them, which is what keeps a spawned car from arriving with
+    /// unresolved meshes. Null simply means no asset resolve, which is correct for
+    /// a headless host and for a test.
+    class WorldManager *manager = nullptr;
 };
 
 /// @brief Owns every resident world and tracks the two roles the app cares
@@ -140,7 +179,7 @@ struct World
 /// is simply unset.
 class WorldManager
 {
-  public:
+public:
     WorldManager() = default;
 
     /// Waits out any in-flight background load before the worlds are destroyed —
@@ -149,55 +188,50 @@ class WorldManager
 
     WorldManager(const WorldManager &)            = delete;
     WorldManager &operator=(const WorldManager &) = delete;
+    // Every world it owns holds a `manager` back-pointer to it, so relocating one
+    // dangles all of them.
+    WorldManager(WorldManager &&)            = delete;
+    WorldManager &operator=(WorldManager &&) = delete;
 
     /// @brief Creates a world and returns it. The name is generated from
     /// @p label plus a monotonic counter, so callers never collide and two
     /// worlds of the same level are distinguishable.
     ///
     /// The new world starts Loading, unsimulated, holds no role, and has an
-    /// **empty system registry** — profiles are applied at the commit points
-    /// below, never here, so a world is never at risk of being installed into
-    /// twice (see ApplyProfile).
+    /// **empty system registry** — the level's list is applied at the commit
+    /// points below, never here, so a world is never at risk of being installed
+    /// into twice (see ApplySystems).
     World &Create(std::string_view label = "World");
 
-    // --- System profiles -----------------------------------------------------
+    // --- Systems -------------------------------------------------------------
     //
     // Which systems a world runs is decided once, when its content is committed,
-    // by a named *profile*: an installer function the game registers at startup.
-    // Code defines the profiles (systems are C++ functions, so data cannot create
-    // them); level files merely select one by name. See
-    // docs/world-system-binding-design-notes.md §3.
-    //
-    // Profiles are expected to compose out of smaller installer functions, so a
-    // level that wants "the usual set plus water" costs one line rather than a
-    // re-declaration. Composition is additive only: removing a system from a set
-    // breaks any After()/Before() constraint naming it.
+    // by the *list of names* its file carries. Code defines the systems — they
+    // are C++ functions, so data cannot create them — and declares them with
+    // ASYSTEM, which is what puts them in the catalog; a file merely names them.
 
-    /// @brief Populates a freshly committed world with its systems. Called once
-    /// per world, on the main thread — so an installer must not carry one-time
-    /// side effects, and any cross-frame state it needs belongs in its
-    /// registered lambdas' captures (which is what makes that state per world).
-    using ProfileInstaller = std::function<void(World &)>;
-
-    /// @brief Registers @p installer under @p name. Re-registering a name
-    /// replaces the previous installer (worlds already built keep their
-    /// systems).
-    void RegisterProfile(std::string_view name, ProfileInstaller installer);
-
-    /// @brief Sets the profile applied to worlds whose level names none — the
-    /// common case, so most levels never mention a profile at all.
-    void SetDefaultProfile(std::string_view name) { _defaultProfile = name; }
-
-    /// @brief Installs @p name's systems into @p world, replacing whatever it
-    /// had (see SystemRegistry::Clear — re-registering over an existing set
-    /// would corrupt the ordering graph).
+    /// @brief Installs @p names into @p world, replacing whatever it had.
     ///
-    /// An empty @p name selects the default profile. An **unknown** name is an
-    /// error that falls back to the default rather than leaving the world
-    /// systemless: a typo in a level file must not ship a world where physics
-    /// steps and no game logic runs, which is silent and looks like a gameplay
-    /// bug rather than a load error.
-    void ApplyProfile(World &world, std::string_view name);
+    /// Resolves every name first, then clears (see SystemRegistry::Clear —
+    /// re-registering over an existing set corrupts the ordering graph, because
+    /// After()/Before() bind to the first entry of a name) and installs from
+    /// SystemCatalog. The clear also takes @p world's **queued** installs
+    /// (`World::pendingSystems`): systems asked for by a blueprint the outgoing
+    /// level spawned belong to content this call is replacing, and draining them
+    /// afterwards would install them into the incoming level.
+    ///
+    /// @param context Named in the error when a name is unknown — the level path.
+    /// @return false if any name is unknown, in which case **nothing changed** —
+    ///         not the registry, not the queue. A half-installed world runs and
+    ///         looks nearly right, which is the failure mode worth avoiding; the
+    ///         caller refuses the load. (`world.systemNames` is the exception: it
+    ///         records what the file asked for either way, since that is what a
+    ///         save round-trips.)
+    /// `[[nodiscard]]`: silently discarding the result loads a level that runs
+    /// none of its systems. Write the discard down where it is genuinely
+    /// meaningless (an empty list).
+    [[nodiscard]] bool ApplySystems(World &world, std::span<const std::string> names,
+                                    std::string_view context);
 
     /// @brief Destroys the named world.
     ///
@@ -206,7 +240,7 @@ class WorldManager
     /// first, since the app dereferences them unconditionally.
     bool Destroy(std::string_view name);
 
-    [[nodiscard]] World       *Find(std::string_view name);
+    [[nodiscard]] World *Find(std::string_view name);
     [[nodiscard]] const World *Find(std::string_view name) const;
 
     /// @brief The world being rendered and driven by input. Null only before
@@ -259,14 +293,19 @@ class WorldManager
     /// assets resolved.
     struct Services
     {
-        Render::AssetCache        *cache    = nullptr;
+        Render::AssetCache *cache    = nullptr;
         const Core::AssetDatabase *database = nullptr;
-        Runtime::SceneRenderer    *renderer = nullptr;
+        Runtime::SceneRenderer *renderer = nullptr;
         /// The scheduler async travel loads on. Null → BeginLoadLevel falls back
         /// to a synchronous load (still correct, just hitches).
-        Core::JobSystem           *jobs = nullptr;
+        Core::JobSystem *jobs = nullptr;
     };
     void SetServices(const Services &services) { _services = services; }
+
+    /// @brief The installed services. For code that has a World and needs the
+    /// engine-wide pieces a load would use — App::SpawnBlueprint resolving a
+    /// freshly spawned instance's assets, notably.
+    [[nodiscard]] const Services &GetServices() const { return _services; }
 
     /// @brief **Travel**: loads @p levelPath into a new world, makes it the
     /// active one, and retires the world that was active.
@@ -430,26 +469,21 @@ class WorldManager
     /// @return how many worlds were destroyed.
     std::size_t DestroyAllExcept(World &keep);
 
-  private:
+private:
     // A vector, not a map: worlds number in the handful, so the O(n) name lookup
     // is cheaper than hashing, and creation order gives deterministic iteration.
     // unique_ptr elements keep addresses stable across insert/erase, which the
     // references held by EditHistory and the panels depend on.
     std::vector<std::unique_ptr<World>> _worlds;
-    World        *_active = nullptr;
-    World        *_edited = nullptr;
+    World *_active = nullptr;
+    World *_edited = nullptr;
     std::uint32_t _nextId = 1;
-    Services      _services;
-
-    // Profiles number in the handful and are looked up once per world load, so a
-    // vector scan beats hashing and keeps registration order for diagnostics.
-    std::vector<std::pair<std::string, ProfileInstaller>> _profiles;
-    std::string                                          _defaultProfile;
+    Services _services;
 
     // Non-zero while a ForEach is walking _worlds; the mutating operations refuse
     // rather than invalidate it. A counter, not a flag, so nested iteration
     // unwinds correctly.
-    std::uint32_t              _iterationDepth = 0;
+    std::uint32_t _iterationDepth = 0;
     std::optional<std::string> _travelRequest;
 
     // Logs and returns false when @p what would mutate the world list mid-walk.
@@ -461,9 +495,9 @@ class WorldManager
     // invalid task. At most one at a time.
     struct PendingLoad
     {
-        World                 *world = nullptr;
+        World *world = nullptr;
         Core::Task<bool>       task;                 ///< Invalid in the sync path.
-        std::string            path;
+        std::string path;
         std::optional<bool>    syncResult = std::nullopt; ///< Set (only) by the sync fallback.
 
         // Phase-1 (deserialize) progress in [0,1], written by the worker, read by
@@ -473,12 +507,12 @@ class WorldManager
 
         // Phase-2 (asset streaming) state, all main-thread only, advanced by
         // PumpPendingLoad once the worker is done.
-        bool        workerDone     = false; ///< Worker finished (or sync path); scene now safe to touch.
-        bool        workerOk       = false; ///< ...and it succeeded.
-        bool        resolveStarted = false; ///< ResolveSceneAssets has kicked off the streams.
+        bool workerDone     = false;        ///< Worker finished (or sync path); scene now safe to touch.
+        bool workerOk       = false;        ///< ...and it succeeded.
+        bool resolveStarted = false;        ///< ResolveSceneAssets has kicked off the streams.
         std::size_t resolveInitialPending = 0; ///< Cache pending-count captured when resolve began.
-        float       assetProgress  = 0.f;   ///< [0,1] fraction of the streams landed.
-        bool        ready          = false; ///< Deserialized AND assets resident (or a failed load).
+        float assetProgress  = 0.f;         ///< [0,1] fraction of the streams landed.
+        bool ready          = false;        ///< Deserialized AND assets resident (or a failed load).
     };
     std::optional<PendingLoad> _pending;
 
@@ -493,6 +527,23 @@ class WorldManager
     void EraseWorld(World &world);
 };
 
+/// @brief Resolves the MeshRenderer of every entity in @p entities from @p
+/// world's render services — the step that makes freshly created entities
+/// *drawable* rather than merely present.
+///
+/// Serialized and prepared component data holds durable asset **ids**; the draw
+/// path reads the transient GPU pointers Runtime::ResolveMeshRendererAssets
+/// derives from them. A level load resolves its whole scene at once
+/// (RebindSceneAssetsAndPhysics); entities that appear afterwards — a spawn, a
+/// migration, a blueprint instance arriving over the wire — have to be resolved
+/// as they are created, or they draw nothing at all.
+///
+/// **A no-op when the world has no manager, or its manager has no cache and
+/// database.** That is the headless case and it is correct rather than merely
+/// tolerated: a dedicated server holds the same entities and has no GPU to
+/// resolve them onto.
+void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities);
+
 /// @brief Brings a simulated-but-unrendered world's Transforms up to date, in the
 /// order that actually works: **poses first, matrices second**.
 ///
@@ -503,5 +554,37 @@ class WorldManager
 /// matrices of stale spawn poses. Call once per frame, after the fixed-step loop,
 /// for every simulated world that is not the one being rendered.
 void SyncUnrenderedWorld(World &world);
+
+/// @brief Builds the parent-world lookup physics needs to place and read back a
+/// parented entity's pose (Physics::PhysicsWorld::ParentWorldFn).
+///
+/// Every path that creates bodies from a scene or writes physics poses into
+/// Transforms must pass this, or a parented body is created at its local pose and
+/// then drifts by its parent's transform every frame afterwards. Blueprint
+/// instances make parented bodies ordinary rather than exotic — a car's wheels
+/// are under its body (docs/blueprint-system-concept.md §12).
+///
+/// The lookup reads `Transform::worldMatrix`, which is transient and computed by
+/// Runtime::PropagateTransforms, so **propagate before building bodies** from a
+/// freshly loaded or restored scene. App::BuildSceneBodies does that in the right
+/// order; prefer it over calling RebuildSceneBodies directly.
+///
+/// The returned callable borrows @p scene and is valid for as long as it is.
+[[nodiscard]] Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene);
+
+/// @brief Rebuilds a scene's physics bodies in the order that works: **propagate
+/// first, then create bodies**.
+///
+/// A body is created in world space and a parented entity's Transform is an
+/// offset from its parent, so the parent's world matrix has to exist before the
+/// body can be placed. World matrices are transient — never serialized — so a
+/// freshly loaded or restored scene has none until propagation runs. Doing it the
+/// other way round places every parented body at its local pose.
+///
+/// @param propagationTick The caller's propagation bookmark, or 0 to recompute
+///        every matrix (correct for a scene whose entities were just replaced).
+/// @return The scene's change tick after propagating; store it if the caller
+///         keeps a bookmark, discard it to simply lose one frame of skipping.
+uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick = 0);
 
 } // namespace Assisi::App

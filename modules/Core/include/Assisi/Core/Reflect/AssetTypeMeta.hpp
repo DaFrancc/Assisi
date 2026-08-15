@@ -23,8 +23,8 @@ namespace Assisi::Core::Reflect
 
 struct AssetTypeMeta
 {
-    std::string            name;
-    std::type_index        typeIndex;
+    std::string name;
+    std::type_index typeIndex;
     std::vector<FieldMeta> fields;
 
     /// @brief Serialize an asset instance to a JSON object of its fields.
@@ -40,7 +40,13 @@ struct AssetTypeMeta
     /// as fields are added. Pass a default-constructed instance for a clean load.
     ///   j            — JSON object holding the asset's fields.
     ///   instance_ptr — pointer to a mutable asset of this type.
-    std::function<void(const nlohmann::json &j, void *instance_ptr)> deserialize;
+    ///
+    /// @return false when a field is present but unreadable, having logged which
+    ///         one. Unlike the component path this writes straight into the
+    ///         caller's instance, so fields before the bad one may already be
+    ///         applied — the caller owns that instance and should drop it.
+    ///         Absent keys are not failures.
+    std::function<bool(const nlohmann::json &j, void *instance_ptr)> deserialize;
 };
 
 } // namespace Assisi::Core::Reflect

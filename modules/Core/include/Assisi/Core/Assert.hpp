@@ -12,17 +12,15 @@
 /// Why not the standard `assert()`: in a windowed app its stderr output is
 /// invisible, so a failure just vanishes the process. This routes the condition,
 /// file, line, and message through Core::Log (Fatal) first — so the violation is
-/// recorded in the log/crash report that ships with the abort handler in
-/// Application — and only then aborts. It also gives real message ergonomics
-/// (`ASSISI_ASSERT(cond, "why")`) instead of the `assert(cond && "why")` hack, so
-/// it is meant as the engine-wide invariant check, not a one-off for this module.
+/// recorded in the log and crash report — and only then aborts. It also takes a
+/// real message (`ASSISI_ASSERT(cond, "why")`) instead of the
+/// `assert(cond && "why")` hack.
 ///
-/// The behavior is a swappable handler (the pattern used by GSL fail_fast, the
-/// C++26 contracts MVP, and engine `check`/`ensure` macros). One thing that
-/// buys us: tests can install a handler that throws ContractViolation instead of
-/// aborting, so the fatal path is verifiable in-process with doctest's
-/// CHECK_THROWS_AS — no subprocess, no killed runner. The handler is debug-only
-/// global state and is not thread-safe; it is for single-threaded test setup.
+/// The behavior is a swappable handler: tests install one that throws
+/// ContractViolation instead of aborting, so the fatal path is verifiable
+/// in-process with doctest's CHECK_THROWS_AS — no subprocess, no killed runner.
+/// The handler is debug-only global state and is not thread-safe; it is for
+/// single-threaded test setup.
 ///
 /// Caveat for the throwing test handler: the throw unwinds through the code that
 /// fired the assert. An ASSISI_ASSERT placed in a destructor or a `noexcept`
@@ -44,7 +42,7 @@ struct ContractViolation
     const char *condition; ///< Stringized failing expression.
     const char *message;   ///< Human-readable detail passed to the macro.
     const char *file;      ///< __FILE__ of the check.
-    int32_t     line;      ///< __LINE__ of the check.
+    int32_t line;          ///< __LINE__ of the check.
 };
 
 /// @brief Handler invoked when an ASSISI_ASSERT fails. Must not return normally
@@ -71,7 +69,7 @@ void ReportContractViolation(const ContractViolation &violation);
 #    define ASSISI_ASSERT(cond, msg)                                                                          \
         ((cond) ? (void)0                                                                                     \
                 : ::Assisi::Core::ReportContractViolation(                                                    \
-                      ::Assisi::Core::ContractViolation{#cond, (msg), __FILE__, __LINE__}))
+             ::Assisi::Core::ContractViolation{#cond, (msg), __FILE__, __LINE__}))
 #else
 // Both operands sit under sizeof, so nothing is evaluated and no code is
 // emitted — but the expressions are still parsed and type-checked. A typo in

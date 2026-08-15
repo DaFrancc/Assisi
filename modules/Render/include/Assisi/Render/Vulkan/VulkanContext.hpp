@@ -6,8 +6,8 @@
 ///
 /// NVRHI does not create the window surface, physical device, logical device, or
 /// swapchain — those are plain Vulkan API calls the application is responsible for.
-/// This class owns that bring-up (proven first in the standalone apps/vk_triangle
-/// spike) and hands NVRHI an already-created VkInstance/VkPhysicalDevice/VkDevice.
+/// This class owns that bring-up and hands NVRHI an already-created
+/// VkInstance/VkPhysicalDevice/VkDevice.
 
 #include <vulkan/vulkan.h>
 
@@ -36,7 +36,7 @@ namespace Assisi::Render::Vulkan
 /// Create(), which returns nullptr on any failure (logging the reason).
 class VulkanContext
 {
-  public:
+public:
     /// @brief Creates the Vulkan instance, device, and swapchain for the given window.
     /// @return nullptr on failure.
     static std::unique_ptr<VulkanContext> Create(const Assisi::Window::WindowContext &window);
@@ -81,12 +81,6 @@ class VulkanContext
     /// CPU-bound).
     [[nodiscard]] double GetLastGpuWaitMs() const { return _lastGpuWaitMs; }
 
-    // GetLastGcMs() used to live here. Garbage collection is still real
-    // main-thread CPU work worth watching — a frame destroying a burst of
-    // streaming allocations pays for it after the present — but it is now a
-    // `gpu-gc` scope and a `render/gc-ms` counter in the capture. The accessor's
-    // only consumer was the slow-frame log line it fed.
-
     [[nodiscard]] nvrhi::IDevice *GetDevice() const { return _nvrhiDevice; }
 
     /// @brief Max anisotropy to request when creating samplers: >1 when the
@@ -130,7 +124,7 @@ class VulkanContext
     /// the requested count — and msaaSamples comes from user-editable JSON.
     [[nodiscard]] uint32_t GetMaxUsableSampleCount() const;
 
-  private:
+private:
     VulkanContext() = default;
 
     void DestroySwapchainResources();
@@ -153,34 +147,34 @@ class VulkanContext
     /// release and when the debug-utils extension wasn't enabled.
     void CreateDebugMessenger();
 
-    VkInstance       _instance = VK_NULL_HANDLE;
-    VkSurfaceKHR     _surface = VK_NULL_HANDLE;
+    VkInstance _instance = VK_NULL_HANDLE;
+    VkSurfaceKHR _surface = VK_NULL_HANDLE;
     VkPhysicalDevice _physicalDevice = VK_NULL_HANDLE;
-    VkDevice         _device = VK_NULL_HANDLE;
-    VkQueue          _graphicsQueue = VK_NULL_HANDLE;
-    uint32_t         _graphicsQueueFamily = 0;
+    VkDevice _device = VK_NULL_HANDLE;
+    VkQueue _graphicsQueue = VK_NULL_HANDLE;
+    uint32_t _graphicsQueueFamily = 0;
 
-    VkSwapchainKHR        _swapchain = VK_NULL_HANDLE;
-    VkFormat              _swapchainFormat = VK_FORMAT_UNDEFINED;
-    VkFormat              _depthFormat = VK_FORMAT_UNDEFINED;
-    bool                  _vsyncEnabled = true; // FIFO by default; see ChoosePresentMode()
+    VkSwapchainKHR _swapchain = VK_NULL_HANDLE;
+    VkFormat _swapchainFormat = VK_FORMAT_UNDEFINED;
+    VkFormat _depthFormat = VK_FORMAT_UNDEFINED;
+    bool _vsyncEnabled = true;                  // FIFO by default; see ChoosePresentMode()
     // Set when acquire/present reports VK_ERROR_OUT_OF_DATE_KHR. The window resize
     // callback only fires on a dimension change, so a *same-size* stale event
     // (display-mode / refresh-rate change, monitor hot-plug, compositor restart)
     // would otherwise never rebuild the swapchain and rendering would freeze
     // forever. BeginFrame() rebuilds at the top of the next frame when this is set.
     // Touched only on the render thread (BeginFrame/EndFrame), so a plain bool.
-    bool                  _swapchainStale = false;
-    float                 _maxAnisotropy = 1.0f; // >1 once anisotropic filtering is enabled; see GetMaxAnisotropy()
+    bool _swapchainStale = false;
+    float _maxAnisotropy = 1.0f;                 // >1 once anisotropic filtering is enabled; see GetMaxAnisotropy()
 
     VkDebugUtilsMessengerEXT _debugMessenger = VK_NULL_HANDLE;
-    VkExtent2D            _swapchainExtent{};
+    VkExtent2D _swapchainExtent{};
     std::vector<VkImage>  _swapchainImages;
 
-    nvrhi::vulkan::DeviceHandle            _nvrhiDeviceHandle;
-    nvrhi::vulkan::IDevice                *_nvrhiDevice = nullptr;
+    nvrhi::vulkan::DeviceHandle _nvrhiDeviceHandle;
+    nvrhi::vulkan::IDevice *_nvrhiDevice = nullptr;
     std::vector<nvrhi::TextureHandle>      _swapchainTextures;
-    nvrhi::TextureHandle                   _depthTexture;
+    nvrhi::TextureHandle _depthTexture;
     std::vector<nvrhi::FramebufferHandle>  _framebuffers;
 
     // Frames-in-flight synchronization. BeginFrame() throttles to kFramesInFlight
@@ -202,7 +196,7 @@ class VulkanContext
     std::array<nvrhi::EventQueryHandle, kFramesInFlight> _frameQueries;
     std::array<bool, kFramesInFlight>                   _frameQueryPending{};
     std::vector<VkSemaphore>                            _renderFinishedSemaphores;
-    uint64_t                                            _frameCounter = 0;
+    uint64_t _frameCounter = 0;
 
     // Per-slot GPU timer queries bracketing the whole command list, for the
     // debug frame-time readout. Read in BeginFrame() once the slot's event
@@ -213,8 +207,8 @@ class VulkanContext
     // subtract it from the CPU frame time so those idle waits (which under
     // vsync/back-pressure spike to a couple ms) aren't mislabeled as CPU work.
     std::array<nvrhi::TimerQueryHandle, kFramesInFlight> _timerQueries;
-    float                                               _lastGpuFrameMs = 0.0f;
-    double                                              _lastGpuWaitMs = 0.0;
+    float _lastGpuFrameMs = 0.0f;
+    double _lastGpuWaitMs = 0.0;
 
     nvrhi::CommandListHandle _commandList;
 

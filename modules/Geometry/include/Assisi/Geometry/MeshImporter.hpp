@@ -4,10 +4,10 @@
 /// @file MeshImporter.hpp
 /// @brief Extension-routed mesh-file loader: virtual asset path -> CPU MeshData.
 ///
-/// This is the seam the engine loads model files through. Today the only backend
-/// is fastgltf (`.gltf` / `.glb`); other extensions return UnsupportedFormat,
-/// which is the slot a future multi-format catch-all (Assimp) plugs into without
-/// touching any caller.
+/// This is the seam the engine loads model files through. The only backend is
+/// fastgltf (`.gltf` / `.glb`); other extensions return UnsupportedFormat, the
+/// slot a multi-format catch-all (Assimp, see ASSISI_ENABLE_ASSIMP) plugs into
+/// without touching any caller.
 ///
 /// Every byte read — the file itself *and* any external glTF buffers it
 /// references — goes through Core::AssetSystem, so the asset-root escape
@@ -19,6 +19,7 @@
 /// relative to the file); embedded images are NOT decoded — unpack .glb to
 /// separate files (see docs/mesh-material-architecture.md §3).
 
+#include <cstdint>
 #include <expected>
 #include <functional>
 #include <string_view>
@@ -34,10 +35,10 @@ namespace Assisi::Geometry
 ///        resolver, in which case every texture channel imports nil (factor-
 ///        only). Kept as an injected callback so Geometry never depends on the
 ///        editor-only database directly.
-using AssetIdResolver = std::function<Core::AssetId(std::string_view virtualPath)>;
+using AssetIdResolver = std::function<Core::AssetId (std::string_view virtualPath)>;
 
 /// @brief Why an ImportMesh call failed.
-enum class MeshImportError
+enum class MeshImportError : std::uint8_t
 {
     UnsupportedFormat,  ///< The extension has no registered backend (e.g. `.fbx`).
     ReadFailed,         ///< AssetSystem could not read the file (missing / escaped root).

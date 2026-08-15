@@ -20,7 +20,11 @@ set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 # ------------------------------------------------------------
 # Project-wide knobs (driven by presets/CI, not hand-edited cache)
 # ------------------------------------------------------------
-option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors (recommended for CI)" OFF)
+# ON by default, not just in the presets: a warning that only breaks CI is a
+# warning that gets committed. Turning it off is a deliberate, local act
+# (-DASSISI_WARNINGS_AS_ERRORS=OFF) for the rare case of bisecting through an
+# old commit or building with a compiler whose new diagnostics we haven't met.
+option(ASSISI_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 
 # Sanitizers: primarily valuable on Linux; MSVC support is limited.
 option(ASSISI_ENABLE_SANITIZERS "Enable sanitizers for this build" OFF)
@@ -103,6 +107,17 @@ endfunction()
 function(Assisi_apply_test_defaults target_name)
   Assisi_apply_defaults("${target_name}")
 
+  # By default doctest forward-declares std::basic_ostream instead of including
+  # <ostream>, so stringifying a failed CHECK only compiles if something else in
+  # the TU already dragged the real definition in. Under MSVC that is a coin
+  # flip: <string_view>'s operator<< is a template, so an assertion comparing two
+  # string_views instantiates it against the incomplete forward declaration and
+  # the error lands inside <__msvc_string_view.hpp>. libc++ turns this option on
+  # for itself and libstdc++ happens to include <ostream> anyway, which is why
+  # only msvc-ship ever saw it. Asking doctest for the real headers is the
+  # supported fix and costs one already-included header per test TU.
+  target_compile_definitions("${target_name}" PRIVATE DOCTEST_CONFIG_USE_STD_HEADERS)
+
   # Clang-only: gcc does not diagnose either case, so it needs no opt-out and
   # would only warn about an unrecognized option.
   if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
@@ -111,6 +126,25 @@ function(Assisi_apply_test_defaults target_name)
       set_source_files_properties(${_test_sources}
         TARGET_DIRECTORY "${target_name}"
         PROPERTIES COMPILE_OPTIONS "-Wno-c2y-extensions;-Wno-double-promotion;-Wno-#warnings")
+    endif()
+  endif()
+
+  # GCC-only, optimized configs only: -Warray-bounds mis-models an object made by
+  # std::make_shared whose derived part holds a container, and reports the
+  # container as "partly outside" an allocation of exactly the object's own size.
+  # It fires from inside <bits/stl_vector.h>, attributed to our .cpp, and only
+  # once inlining has run — which is why debug never sees it and ship does.
+  #
+  # Suppressed rather than worked around: the alternative is contorting a test
+  # fixture (a shared_ptr-held Sink with a std::vector<std::string> member) to
+  # dodge a diagnostic that is wrong about it. Scoped to test sources so a real
+  # out-of-bounds in engine code is still an error.
+  if (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    get_target_property(_test_sources_gcc "${target_name}" SOURCES)
+    if (_test_sources_gcc)
+      set_source_files_properties(${_test_sources_gcc}
+        TARGET_DIRECTORY "${target_name}"
+        PROPERTIES COMPILE_OPTIONS "$<$<NOT:$<CONFIG:Debug>>:-Wno-array-bounds>")
     endif()
   endif()
 endfunction()
@@ -147,6 +181,22 @@ else()
       -mbmi   # provides TZCNT
     )
   endif()
+endif()
+
+# ---- Feature macros visible to source
+#
+# ASSISI_NETWORKING mirrors the CMake option into the preprocessor. Most of the
+# tree needs no guard — networking code lives in its own translation units, which
+# the option simply leaves out of the build (see App's BlueprintReplication.cpp).
+# The macro is for the two places that cannot do that: EditorApp holds a
+# NetSession by value-owning pointer in a *public header*, and Sandbox's
+# ServerApp has a headless mode that exists with or without sockets.
+#
+# On Assisi-Options rather than a single target, because it has to agree
+# everywhere — a header compiled with the macro in one target and without it in
+# another is an ODR violation with a different class layout on each side.
+if (ASSISI_ENABLE_NETWORKING)
+  target_compile_definitions(Assisi-Options INTERFACE ASSISI_NETWORKING)
 endif()
 
 # ---- Warnings (always ON; warnings-as-errors is a separate switch)
@@ -212,6 +262,14 @@ endif()
 # build has no source tree, and its staged assets are the durable copy.
 target_compile_definitions(Assisi-Options INTERFACE
   $<$<NOT:$<CONFIG:Release>>:ASSISI_SOURCE_ASSET_ROOT="${CMAKE_SOURCE_DIR}/assets">
+)
+
+# ---- Shipping marker. Release is the ship preset; Debug and RelWithDebInfo are
+# the debug and dev ones. NDEBUG cannot stand in for this — dev defines it too,
+# and dev wants developer defaults. Currently read only by Logger.cpp, to pick
+# the default minimum log level, so it is not on any header's ABI.
+target_compile_definitions(Assisi-Options INTERFACE
+  $<$<CONFIG:Release>:ASSISI_SHIPPING_BUILD>
 )
 
 # ---- Sanitizers: enabled only when ASSISI_ENABLE_SANITIZERS=ON (via presets)
@@ -331,6 +389,13 @@ FetchContent_Declare(glfw3
     SYSTEM
 )
 FetchContent_MakeAvailable(glfw3)
+# glfw3.h includes <GL/gl.h> unless told not to. We are a Vulkan renderer and
+# never touch GL, but the include still has to resolve, so a machine without
+# the GL development headers installed fails to compile — a dependency on
+# something we don't use. Set on the target rather than per-file: it was
+# per-file before, three of the five includers forgot it, and which ones
+# forgot is invisible until you build on such a machine.
+target_compile_definitions(glfw INTERFACE GLFW_INCLUDE_NONE)
 
 # --- GLM (header-only)
 set(GLM_BUILD_TESTS   OFF CACHE BOOL "" FORCE)
@@ -719,6 +784,27 @@ if (ASSISI_ENABLE_NETWORKING)
     )
     FetchContent_MakeAvailable(protobuf)
 
+    # protobuf v35 deprecates its own FieldOptions::weak() and ParseInfoTree
+    # accessors and then keeps calling them from ~30 places in its own sources,
+    # so building it emits ~30 -Wdeprecated-declarations. SYSTEM only demotes
+    # diagnostics attributed to protobuf's *headers* when we include them; these
+    # come from compiling protobuf's own .cc files, which SYSTEM does not touch.
+    # Nothing here is actionable short of patching a vendored tree — the same
+    # situation as assimp's -Werror above — and the noise buries first-party
+    # warnings, which is the whole point of the warning flags.
+    foreach(_pb_target IN ITEMS libprotobuf libprotobuf-lite libprotoc protoc)
+        if (TARGET "${_pb_target}")
+            if (MSVC)
+                target_compile_options("${_pb_target}" PRIVATE /wd4996)
+            else()
+                target_compile_options("${_pb_target}" PRIVATE
+                    -Wno-deprecated-declarations
+                    -Wno-deprecated
+                )
+            endif()
+        endif()
+    endforeach()
+
     # protobuf_generate_cpp() lives in protobuf's *installed* config package
     # (cmake/protobuf-module.cmake.in), which a FetchContent/add_subdirectory
     # consumer never gets — the source tree only defines the modern
@@ -905,6 +991,25 @@ assisi_generate_replicable_limits()
 if (ASSISI_ENABLE_NETWORKING)
     assisi_generate_message_traits()
     assisi_check_message_handlers()
+endif()
+
+# Typed views for the blueprints this project opts in. Here rather than in a
+# module for a different reason than the passes above: it attaches to Assisi-App,
+# so App must already exist — and the list is a *project* statement about which
+# content is allowed to reach into the build graph, which is not a thing a module
+# should be deciding on a project's behalf.
+#
+# The two below are the App test suite's fixtures, and they are the opted-in set
+# on purpose: they are what proves the generated field names and the runtime
+# member names agree. A game adds its own here.
+if (ASSISI_BUILD_TESTS)
+    assisi_generate_instance_views(
+        ASSET_ROOT "${CMAKE_SOURCE_DIR}/modules/App/tests/blueprints"
+        BLUEPRINTS
+            "Car=car.abp"
+            "ParkingLot=parking_lot.abp"
+            "Depot=depot.abp"
+    )
 endif()
 
 # Notes for module CMakeLists:

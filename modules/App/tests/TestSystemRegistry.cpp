@@ -33,8 +33,8 @@ RenderContext MakeCtx(Assisi::ECS::Scene &scene)
 // pointers there: an InputContext cannot exist without a window.
 SystemContext MakeGameCtx(World &world, Assisi::Core::EventQueue &events, bool isActiveWorld)
 {
-    return SystemContext{world,  0.016f, /*simTick=*/0, /*input=*/nullptr,
-                         /*actions=*/nullptr, events, isActiveWorld};
+    return SystemContext{world,  0.016f, /*simTick=*/ 0, /*input=*/ nullptr,
+                         /*actions=*/ nullptr, events, isActiveWorld};
 }
 
 std::size_t IndexOf(const std::vector<std::string> &order, const std::string &name)
@@ -50,8 +50,8 @@ TEST_CASE("SystemRegistry: After/Before constraints determine execution order")
     std::vector<std::string> order;
 
     auto record = [&order](const char *name) {
-        return [&order, name](RenderContext &) { order.emplace_back(name); };
-    };
+                      return [&order, name](RenderContext &) { order.emplace_back(name); };
+                  };
 
     // Registration order is deliberately "wrong"; constraints must fix it.
     systems.RegisterRender("Draw", record("Draw")).After("Cull");
@@ -72,8 +72,8 @@ TEST_CASE("SystemRegistry: Before is honored symmetrically with After")
     std::vector<std::string> order;
 
     auto record = [&order](const char *name) {
-        return [&order, name](RenderContext &) { order.emplace_back(name); };
-    };
+                      return [&order, name](RenderContext &) { order.emplace_back(name); };
+                  };
 
     systems.RegisterRender("Late", record("Late"));
     systems.RegisterRender("Early", record("Early")).Before("Late");
@@ -93,7 +93,7 @@ TEST_CASE("SystemRegistry: a dependency on an unregistered system still runs eve
 
     systems.RegisterRender("Solo",
                            [&order](RenderContext &) { order.emplace_back("Solo"); })
-        .After("GhostThatWasNeverRegistered");
+    .After("GhostThatWasNeverRegistered");
 
     systems.RunRender(MakeCtx(scene));
 
@@ -104,24 +104,24 @@ TEST_CASE("SystemRegistry: game phases run headlessly, with the world in the con
 {
     // No window, so no InputContext — a dedicated server and these tests share
     // that shape. Systems reach entities through ctx.world.scene.
-    WorldManager             worlds;
-    World                   &world = worlds.Create("Test");
+    WorldManager worlds;
+    World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
-    SystemRegistry           systems;
+    SystemRegistry systems;
 
     const Assisi::ECS::Entity entity = world.scene.Create();
 
-    World      *seenWorld  = nullptr;
+    World *seenWorld  = nullptr;
     std::size_t seenAlive  = 0;
     systems.Register(SystemPhase::Update, "Inspect",
                      [&](SystemContext &ctx)
-                     {
-                         seenWorld = &ctx.world;
-                         seenAlive = ctx.world.scene.IsAlive(entity) ? 1u : 0u;
-                         CHECK(ctx.input == nullptr);
-                     });
+    {
+        seenWorld = &ctx.world;
+        seenAlive = ctx.world.scene.IsAlive(entity) ? 1u : 0u;
+        CHECK(ctx.input == nullptr);
+    });
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ true));
 
     CHECK(seenWorld == &world);
     CHECK(seenAlive == 1u);
@@ -131,23 +131,23 @@ TEST_CASE("SystemRegistry: ActiveWorldOnly systems run only in the active world"
 {
     // One InputContext, N resident worlds: a controller system must not apply the
     // same keypresses in every world (docs/multi-scene-design-notes.md §1).
-    WorldManager             worlds;
-    World                   &world = worlds.Create("Test");
+    WorldManager worlds;
+    World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
-    SystemRegistry           systems;
+    SystemRegistry systems;
 
     int32_t everywhere = 0;
     int32_t activeOnly = 0;
 
     systems.Register(SystemPhase::Update, "Everywhere", [&](SystemContext &) { ++everywhere; });
     systems.Register(SystemPhase::Update, "ActiveOnly", [&](SystemContext &) { ++activeOnly; })
-        .ActiveWorldOnly();
+    .ActiveWorldOnly();
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/true));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ true));
     CHECK(everywhere == 1);
     CHECK(activeOnly == 1);
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/false));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ false));
     CHECK(everywhere == 2); // world-agnostic system still ticks
     CHECK(activeOnly == 1); // ...the input-consuming one does not
 }
@@ -156,14 +156,14 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
 {
     // The gate is a dispatch-time skip, not a re-sort: the surviving systems must
     // keep the order their After()/Before() constraints define.
-    WorldManager             worlds;
-    World                   &world = worlds.Create("Test");
+    WorldManager worlds;
+    World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
-    SystemRegistry           systems;
+    SystemRegistry systems;
     std::vector<std::string> order;
 
     auto record = [&order](const char *name)
-    { return [&order, name](SystemContext &) { order.emplace_back(name); }; };
+                  { return [&order, name](SystemContext &) { order.emplace_back(name); }; };
 
     systems.Register(SystemPhase::Update, "Last", record("Last")).After("Middle");
     systems.Register(SystemPhase::Update, "Middle", record("Middle")).After("First");
@@ -172,7 +172,7 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
     // declares no constraints — its absence must not disturb the others.
     systems.Register(SystemPhase::Update, "Gated", record("Gated")).ActiveWorldOnly();
 
-    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/false));
+    systems.Run(SystemPhase::Update, MakeGameCtx(world, events, /*isActiveWorld=*/ false));
 
     REQUIRE(order.size() == 3);
     CHECK(order[0] == "First");
@@ -182,19 +182,19 @@ TEST_CASE("SystemRegistry: skipping an ActiveWorldOnly system preserves the orde
 
 TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist")
 {
-    // What lets a profile install systems a world may never need: an open-world
-    // profile installs everything, and residency decides what runs. The gate has
-    // to open and close with the data, not just once at startup.
-    WorldManager             worlds;
-    World                   &world = worlds.Create("Test");
+    // What lets a level name systems a world may never need: an open-world level
+    // names everything, and residency decides what runs. The gate has to open and
+    // close with the data, not just once at startup.
+    WorldManager worlds;
+    World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
-    SystemRegistry           systems;
+    SystemRegistry systems;
 
     int32_t gated   = 0;
     int32_t ungated = 0;
     systems.Register(SystemPhase::Update, "Ungated", [&](SystemContext &) { ++ungated; });
     systems.Register(SystemPhase::Update, "Gated", [&](SystemContext &) { ++gated; })
-        .RequireAny<Assisi::ECS::Transform>();
+    .RequireAny<Assisi::ECS::Transform>();
 
     // Empty scene: the gated system has nothing to work on.
     systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
@@ -217,14 +217,14 @@ TEST_CASE("SystemRegistry: RequireAny skips a system until its components exist"
 
 TEST_CASE("SystemRegistry: RequireAny runs when ANY of the listed components is present")
 {
-    WorldManager             worlds;
-    World                   &world = worlds.Create("Test");
+    WorldManager worlds;
+    World &world = worlds.Create("Test");
     Assisi::Core::EventQueue events;
-    SystemRegistry           systems;
+    SystemRegistry systems;
 
     int32_t ticks = 0;
     systems.Register(SystemPhase::Update, "EitherOr", [&](SystemContext &) { ++ticks; })
-        .RequireAny<Assisi::ECS::Transform, Assisi::Physics::RigidBodyDescriptor>();
+    .RequireAny<Assisi::ECS::Transform, Assisi::Physics::RigidBodyDescriptor>();
 
     systems.Run(SystemPhase::Update, MakeGameCtx(world, events, true));
     CHECK(ticks == 0);
@@ -238,17 +238,17 @@ TEST_CASE("SystemRegistry: RequireAny runs when ANY of the listed components is 
 
 TEST_CASE("SystemRegistry: the activation gate is per world, not per registry")
 {
-    // Two worlds built from one profile share the system *set*; whether each
+    // Two worlds built from one system list share the system *set*; whether each
     // one runs it is decided by that world's own contents.
-    WorldManager             worlds;
-    World                   &withData = worlds.Create("WithData");
-    World                   &empty    = worlds.Create("Empty");
+    WorldManager worlds;
+    World &withData = worlds.Create("WithData");
+    World &empty    = worlds.Create("Empty");
     Assisi::Core::EventQueue events;
-    SystemRegistry           systems;
+    SystemRegistry systems;
 
     int32_t ticks = 0;
     systems.Register(SystemPhase::Update, "Gated", [&](SystemContext &) { ++ticks; })
-        .RequireAny<Assisi::ECS::Transform>();
+    .RequireAny<Assisi::ECS::Transform>();
 
     (void)withData.scene.Add<Assisi::ECS::Transform>(withData.scene.Create());
 
@@ -265,8 +265,8 @@ TEST_CASE("SystemRegistry: a dependency cycle falls back to running all systems"
     std::vector<std::string> order;
 
     auto record = [&order](const char *name) {
-        return [&order, name](RenderContext &) { order.emplace_back(name); };
-    };
+                      return [&order, name](RenderContext &) { order.emplace_back(name); };
+                  };
 
     // A <-> B mutual dependency: unschedulable, must not silently drop systems.
     systems.RegisterRender("A", record("A")).After("B");
@@ -291,7 +291,7 @@ TEST_CASE("RunPhase profiles the phase and every system it runs")
     Assisi::Chiara::Initialize(config);
 
     Assisi::ECS::Scene scene;
-    SystemRegistry     systems;
+    SystemRegistry systems;
     systems.RegisterRender("first-render-system", [](RenderContext &) {});
     systems.RegisterRender("second-render-system", [](RenderContext &) {});
 
@@ -325,7 +325,7 @@ TEST_CASE("RunPhase profiles the phase and every system it runs")
     }
 
     const auto contains = [&scopeNames](std::string_view wanted)
-    { return std::ranges::find(scopeNames, wanted) != scopeNames.end(); };
+                          { return std::ranges::find(scopeNames, wanted) != scopeNames.end(); };
 
     CHECK(contains("Render"));
     CHECK(contains("first-render-system"));

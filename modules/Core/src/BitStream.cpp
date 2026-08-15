@@ -44,11 +44,10 @@ void BitWriter::WriteBits64(std::uint64_t value, std::uint32_t bitCount)
     // underlying width, a masked field id).
     value &= LowBitMask(bitCount);
 
-    // Straight-line loop over at most nine partial-byte writes. Deliberately not
-    // a 64-bit scratch register: this keeps Data() trivially const (no pending
-    // flush) and the whole thing auditable, and snapshot assembly is dominated by
-    // the pool walks above it, not by these shifts. Revisit only if a profile
-    // says so.
+    // Straight-line loop over at most nine partial-byte writes. No 64-bit
+    // scratch register: bits land in the buffer immediately, so Data() has no
+    // pending flush to worry about, and snapshot assembly is dominated by the
+    // pool walks above this, not by these shifts.
     std::uint32_t remaining = bitCount;
     while (remaining > 0)
     {
@@ -106,7 +105,8 @@ void BitWriter::WriteVarUInt64(std::uint64_t value)
         const std::uint32_t group = static_cast<std::uint32_t>(value & 0x7Fu);
         value >>= 7;
         WriteBits(group | (value != 0 ? 0x80u : 0u), 8);
-    } while (value != 0);
+    }
+    while (value != 0);
 }
 
 void BitWriter::WriteBytes(std::span<const std::byte> bytes)
@@ -129,8 +129,8 @@ void BitWriter::WriteFloatQuantized(float value, float min, float max, std::uint
         return;
 
     const std::uint32_t levels = static_cast<std::uint32_t>(LowBitMask(bits)); // 2^bits - 1
-    const float         span   = max - min;
-    const float         t      = std::clamp((value - min) / span, 0.f, 1.f);
+    const float span   = max - min;
+    const float t      = std::clamp((value - min) / span, 0.f, 1.f);
 
     // Round-to-nearest, so the quantization error is symmetric (±half a step)
     // rather than always biased toward min the way truncation would be.
@@ -171,7 +171,7 @@ std::uint64_t BitReader::ReadBits64(std::uint32_t bitCount)
     std::uint32_t remaining = bitCount;
     while (remaining > 0)
     {
-        const std::size_t   byteIndex = _bitPos / 8u;
+        const std::size_t byteIndex = _bitPos / 8u;
         const std::uint32_t bitInByte = static_cast<std::uint32_t>(_bitPos % 8u);
         const std::uint32_t take      = std::min(8u - bitInByte, remaining);
 

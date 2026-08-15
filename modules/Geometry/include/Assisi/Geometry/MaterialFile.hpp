@@ -10,6 +10,7 @@
 /// text-in/text-out — no filesystem — so callers choose how the bytes are read
 /// or written (editor via AssetSystem, tests via a string).
 
+#include <cstdint>
 #include <expected>
 #include <string>
 #include <string_view>
@@ -20,7 +21,7 @@ namespace Assisi::Geometry
 {
 
 /// @brief Why a .amat (de)serialize failed.
-enum class MaterialFileError
+enum class MaterialFileError : std::uint8_t
 {
     NotRegistered, ///< MaterialData's reflection isn't linked (generated object missing).
     ParseFailed,   ///< The text is not valid JSON.

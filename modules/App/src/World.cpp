@@ -2,6 +2,7 @@
 #include <Assisi/App/World.hpp>
 
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Runtime/AssetResolve.hpp>
@@ -47,8 +48,8 @@ World *WorldManager::ProcessTravelRequest()
     if (!_travelRequest)
         return nullptr;
 
-    // Take the request before travelling: LoadLevel can run game code (a profile
-    // installer), and a request it makes belongs to the next frame, not this one.
+    // Take the request before travelling: LoadLevel can run game code, and a
+    // request it makes belongs to the next frame, not this one.
     const std::string path = *std::exchange(_travelRequest, std::nullopt);
     return LoadLevel(path);
 }
@@ -60,94 +61,52 @@ World &WorldManager::Create(std::string_view label)
     // LoadLevel (which calls this) is already guarded at its own entry.
     std::unique_ptr<World> world = std::make_unique<World>();
     world->name.assign(label).append("#").append(std::to_string(_nextId++));
+    world->manager = this;
 
     World &ref = *world;
     _worlds.push_back(std::move(world));
     return ref;
 }
 
-void WorldManager::RegisterProfile(std::string_view name, ProfileInstaller installer)
+bool WorldManager::ApplySystems(World &world, std::span<const std::string> names, std::string_view context)
 {
-    if (name.empty() || !installer)
-    {
-        Core::Log::Error("WorldManager: RegisterProfile ignored — a profile needs both a name and "
-                         "an installer.");
-        return;
-    }
+    // The level's request is recorded whether or not it could be honoured — it is
+    // what a save round-trips, and a failed install must not rewrite the file.
+    // **Before** the resolve guard below for exactly that reason: it records what
+    // the file asked for, which stays true no matter what could be installed.
+    world.systemNames.assign(names.begin(), names.end());
 
-    for (std::pair<std::string, ProfileInstaller> &profile : _profiles)
-    {
-        if (profile.first == name)
-        {
-            profile.second = std::move(installer);
-            return;
-        }
-    }
-    _profiles.emplace_back(std::string(name), std::move(installer));
-}
+    // Resolve before destroying anything: a refused list leaves the world running
+    // exactly what it was, rather than nothing at all.
+    std::vector<const SystemDefinition *> resolved;
+    if (!SystemCatalog::Instance().Resolve(names, resolved, context))
+        return false;
 
-void WorldManager::ApplyProfile(World &world, std::string_view name)
-{
-    const auto find = [this](std::string_view wanted) -> const ProfileInstaller *
-    {
-        for (const std::pair<std::string, ProfileInstaller> &profile : _profiles)
-        {
-            if (profile.first == wanted)
-                return &profile.second;
-        }
-        return nullptr;
-    };
+    // The queue belongs to the content being replaced, so it goes with it. A
+    // blueprint spawned into the outgoing level has already asked for its systems;
+    // drained after this, they would install into a level that never named them, a
+    // frame later, with nothing left to connect them to the load. Deliberately
+    // after the Resolve guard above: a refused list keeps the outgoing content, so
+    // its installs are still owed.
+    world.pendingSystems = {};
 
-    // Both names are owned before anything is written: `name` may view
-    // world.profile itself (the async path parks the level's request there until
-    // promotion), and the assignments below would otherwise read a string while
-    // overwriting it.
-    const std::string       requested = std::string(name);
-    std::string             chosen    = requested.empty() ? _defaultProfile : requested;
-    const ProfileInstaller *installer = chosen.empty() ? nullptr : find(chosen);
-
-    if (installer == nullptr && !chosen.empty())
-    {
-        // Fall back to the default rather than leaving the world systemless: a
-        // world that physics-steps but runs no game logic looks like a gameplay
-        // bug, not the load error it is.
-        Core::Log::Error("World '{}': unknown system profile '{}' — falling back to the default "
-                         "profile ('{}').",
-                         world.name, chosen,
-                         _defaultProfile.empty() ? std::string_view{"(none set)"}
-                                                 : std::string_view{_defaultProfile});
-        chosen    = _defaultProfile;
-        installer = chosen.empty() ? nullptr : find(chosen);
-    }
-
-    // Never stack one profile on another: Register is append-only and a repeated
+    // Never stack one list on another: Register is append-only and a repeated
     // name binds every After()/Before() edge to the first entry, so re-targeting a
     // world (the editor opening another level into the one it edits) must start
     // from empty.
     world.systems.Clear();
 
-    // Same reasoning as the Clear above, for the other per-world switch an
-    // installer can throw: a profile that wants contact reporting turns it on, so
-    // re-targeting a world to a profile that does not want it must find it off.
-    // Otherwise the first bouncy level opened in a session would leave every level
-    // opened after it paying for a contact log nothing reads.
+    // Same reasoning, for the other per-world switch a system can throw: a system
+    // that wants contact reporting turns it on for itself, so re-targeting a world
+    // to a list that does not want it must find it off. Otherwise the first bouncy
+    // level opened in a session would leave every level after it paying for a
+    // contact log nothing reads.
     world.physics.SetContactReporting(false);
 
-    // The level's request is recorded whether or not it could be honoured — it is
-    // what a save round-trips, and a fallback must not rewrite the file with the
-    // name of whatever ran instead.
-    world.profile = requested;
-    world.installedProfile.clear();
-
-    if (installer == nullptr)
-    {
-        // No profile at all is the normal state for a host that registered none
-        // (the editor with no game module, the tests) — not worth a warning.
-        return;
-    }
-
-    (*installer)(world);
-    world.installedProfile = std::move(chosen);
+    // An empty list is the normal case, not a warning: the clear above is the
+    // whole job.
+    SystemCatalog::Instance().ApplyResolved(world, resolved);
+    return true;
 }
 
 void WorldManager::EraseWorld(World &world)
@@ -248,23 +207,24 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
     incoming.state  = WorldState::Loading;
 
     Runtime::LevelHeader header;
-    bool                 loaded = false;
+    bool loaded = false;
     if (_services.cache != nullptr && _services.database != nullptr && _services.renderer != nullptr)
     {
         // Keep, never ClearFirst: the outgoing world is still alive (and still
         // being drawn) until the swap below.
-        loaded = App::LoadLevel(incoming.scene, levelPath, *_services.cache, *_services.database,
-                                incoming.physics, *_services.renderer, AssetCacheReset::Keep,
-                                &header);
+        loaded = App::LoadLevel(incoming, levelPath, {*_services.cache, *_services.database, *_services.renderer},
+                                {.reset = AssetCacheReset::Keep, .header = &header})
+                 .has_value();
     }
     else
     {
         // No render services (a headless server): the scene and its bodies are
         // all that matter.
         loaded = Runtime::SceneSerializer::LoadFromFile(incoming.scene, levelPath,
-                                                        /*onProgress=*/{}, &header);
+                                                        {.header = &header, .instances = &incoming.instances})
+                 .has_value();
         if (loaded)
-            incoming.physics.RebuildSceneBodies(incoming.scene);
+            incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
     }
 
     if (!loaded)
@@ -279,7 +239,18 @@ World *WorldManager::LoadLevel(std::string_view levelPath)
 
     // Content is committed, so the world can be given its systems. Before the
     // swap: the moment it goes Active the frame loop will dispatch it.
-    ApplyProfile(incoming, header.profile);
+    //
+    // **A failed install fails the travel.** An unknown system name is a hard
+    // error by design (docs/blueprint-system-concept.md §8): a level that loads
+    // anyway looks fine and simply has no behaviour.
+    if (!ApplySystems(incoming, header.systems, levelPath))
+    {
+        Core::Log::Error("Travel to '{}' failed: it names a system this build does not declare. Staying "
+                         "in '{}'.",
+                         levelPath, outgoing != nullptr ? outgoing->name : std::string_view{"(none)"});
+        EraseWorld(incoming);
+        return nullptr;
+    }
 
     World *const result = SwapToActive(incoming, std::string(levelPath));
     Core::Log::Info("Travel: now in '{}' ({}), {} world(s) resident.", result->name, levelPath,
@@ -316,12 +287,13 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
         // async travel exists to avoid. Asset streaming (phase 2) still happens
         // across frames via PumpPendingLoad.
         Runtime::LevelHeader header;
-        const bool ok = Runtime::SceneSerializer::LoadFromFile(incoming.scene, path,
-                                                               /*onProgress=*/{}, &header);
+        const bool ok = Runtime::SceneSerializer::LoadFromFile(
+            incoming.scene, path, {.header = &header, .instances = &incoming.instances})
+                        .has_value();
         if (ok)
         {
-            incoming.physics.RebuildSceneBodies(incoming.scene);
-            incoming.profile = std::move(header.profile);
+            incoming.propagationTick = BuildSceneBodies(incoming.scene, incoming.physics);
+            incoming.systemNames     = std::move(header.systems);
         }
         deserProgress->store(1.f);
         _pending                = PendingLoad{.world = &incoming, .task = {}, .path = path, .syncResult = ok};
@@ -333,10 +305,15 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
 
     // The worker touches ONLY this world's scene and physics — both untouched by
     // anything else while Loading — plus a copied path and the shared progress
-    // atomic. No cache, no renderer, no manager state (asset resolution is GPU
-    // work and stays on the main thread, in PumpPendingLoad). The world address is
-    // stable, so capturing it is safe across any _worlds reallocation the main
-    // thread may do meanwhile.
+    // atomic. No renderer, no manager state (asset resolution is GPU work and stays
+    // on the main thread, in PumpPendingLoad). The world address is stable, so
+    // capturing it is safe across any _worlds reallocation the main thread may do
+    // meanwhile.
+    //
+    // The one shared thing it *does* reach is the blueprint definition cache:
+    // staging an instance asks for a definition, and the editor asks for the same
+    // ones per frame on the main thread. That cache is synchronised and hands out
+    // shared ownership for exactly this reason — see Runtime::GetBlueprintDefinition.
     World *const w = &incoming;
     Core::Task<bool> task = _services.jobs->Run(
         Core::Pool::Worker,
@@ -345,16 +322,20 @@ World *WorldManager::BeginLoadLevel(std::string_view levelPath)
             // Deserialize drives phase-1 progress 0 -> ~0.9 (the entity-scaling
             // cost); building bodies is the cheap tail to 1.0.
             Runtime::LevelHeader header;
-            const bool           ok = Runtime::SceneSerializer::LoadFromFile(
-                w->scene, path, [deserProgress](float f) { deserProgress->store(f * 0.9f); },
-                &header);
+            const bool ok =
+                Runtime::SceneSerializer::LoadFromFile(
+                    w->scene, path,
+                    {.onProgress = [deserProgress](float f) { deserProgress->store(f * 0.9f); },
+                     .header     = &header,
+                     .instances  = &w->instances})
+                .has_value();
             if (!ok)
                 return false;
-            w->physics.RebuildSceneBodies(w->scene);
+            w->propagationTick = BuildSceneBodies(w->scene, w->physics);
             // Park the level's choice on the world itself; installing it is main-
             // thread work (an installer may touch anything) and happens at
             // promotion, after this task is joined.
-            w->profile = std::move(header.profile);
+            w->systemNames = std::move(header.systems);
             deserProgress->store(1.f);
             return true;
         });
@@ -423,7 +404,7 @@ void WorldManager::PumpPendingLoad()
     else
     {
         const float landed = 1.f - static_cast<float>(pending) /
-                                       static_cast<float>(_pending->resolveInitialPending);
+                             static_cast<float>(_pending->resolveInitialPending);
         _pending->assetProgress = std::clamp(landed, 0.f, 1.f);
     }
 
@@ -473,10 +454,10 @@ World *WorldManager::PromotePendingLoad()
         PumpPendingLoad(); // latches workerDone/workerOk, and kicks off resolve
     }
 
-    const bool        ok       = _pending->workerOk;
-    World *const      incoming = _pending->world;
+    const bool ok       = _pending->workerOk;
+    World *const incoming = _pending->world;
     const std::string path     = _pending->path;
-    const bool        resolved = _pending->resolveStarted;
+    const bool resolved = _pending->resolveStarted;
     _pending.reset();
 
     if (!ok)
@@ -495,10 +476,22 @@ World *WorldManager::PromotePendingLoad()
         incoming->streamingPending = true;
     }
 
-    // The worker parked the level's requested profile here; install it now that we
-    // are back on the main thread and the task is joined. Passing the field to a
-    // function that also writes it is safe — ApplyProfile owns its copy first.
-    ApplyProfile(*incoming, incoming->profile);
+    // The worker parked the level's requested systems here; install them now that we
+    // are back on the main thread and the task is joined. The explicit copy is
+    // required: ApplySystems assigns @p names into `world.systemNames`, so handing
+    // it that very field would be assigning a container from its own iterators.
+    //
+    // Hard error, as on the synchronous path: a level naming a system this build
+    // does not declare must not be promoted to Active running none of it.
+    // The path from the load, not the world's: SwapToActive sets levelPath and runs
+    // below, so the field is still empty here and the catalog's refusal would name
+    // no file — the one thing that refusal exists to say.
+    if (!ApplySystems(*incoming, std::vector<std::string>(incoming->systemNames), path))
+    {
+        Core::Log::Error("Preload of '{}' names a system this build does not declare; discarding it.", path);
+        EraseWorld(*incoming);
+        return nullptr;
+    }
 
     World *const result = SwapToActive(*incoming, path);
     Core::Log::Info("Preload promoted: now in '{}' ({}), {} world(s) resident.", result->name, path,
@@ -558,21 +551,28 @@ ECS::Entity WorldManager::MigrateEntity(World &src, World &dst, ECS::Entity root
         Runtime::SceneSerializer::TransferEntities(src.scene, dst.scene, subtree);
     src.scene.FlushDestroyed();
 
+    // Before the bodies below, and for the same reason App::BuildSceneBodies
+    // propagates first: a migrated subtree is parented by definition, and a body
+    // is placed in world space from a parent matrix the destination has not
+    // computed for these entities yet.
+    dst.propagationTick = Runtime::PropagateTransforms(dst.scene, dst.propagationTick);
+    const Physics::PhysicsWorld::ParentWorldFn parentWorld = ParentWorldResolver(dst.scene);
+
     // Rebuild transients in the DESTINATION world. RigidBody and the MeshRenderer
     // pointers are transient (never serialized), so the arrived entities have the
     // durable RigidBodyDescriptor/mesh ids but no live body or resolved GPU
     // pointers yet.
     for (const ECS::Entity e : arrived)
     {
-        const Runtime::Transform          *transform = dst.scene.Get<Runtime::Transform>(e);
+        const Runtime::Transform *transform = dst.scene.Get<Runtime::Transform>(e);
         const Physics::RigidBodyDescriptor *desc      = dst.scene.Get<Physics::RigidBodyDescriptor>(e);
         if (transform != nullptr && desc != nullptr && dst.scene.Get<Physics::RigidBody>(e) == nullptr)
-            dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc);
-
-        if (Runtime::MeshRenderer *mesh = dst.scene.Get<Runtime::MeshRenderer>(e);
-            mesh != nullptr && _services.cache != nullptr && _services.database != nullptr)
-            Runtime::ResolveMeshRendererAssets(*mesh, *_services.cache, *_services.database);
+            dst.physics.AddBodyFromDescriptor(dst.scene, e, *transform, *desc, parentWorld);
     }
+
+    // The other transient, through the shared path: dst is one of this manager's
+    // worlds (checked above), so its back-pointer reaches these same services.
+    ResolveEntityAssets(dst, arrived);
 
     // arrived is parallel to subtree, and subtree[0] is the root (GatherSubtree is
     // root-first), so arrived[0] is the destination handle of the root.
@@ -657,12 +657,55 @@ void WorldManager::SetEdited(World &world)
     _edited = &world;
 }
 
+void ResolveEntityAssets(World &world, std::span<const ECS::Entity> entities)
+{
+    // Both halves are needed and neither is guaranteed: a world built standalone
+    // has no manager at all, and a manager in a headless process has services
+    // whose render members are null. Either way there is nothing to resolve onto,
+    // which is why this is a quiet return rather than a complaint.
+    if (world.manager == nullptr)
+        return;
+
+    const WorldManager::Services &services = world.manager->GetServices();
+    if (services.cache == nullptr || services.database == nullptr)
+        return;
+
+    for (const ECS::Entity entity : entities)
+    {
+        if (Runtime::MeshRenderer *mesh = world.scene.Get<Runtime::MeshRenderer>(entity))
+            Runtime::ResolveMeshRendererAssets(*mesh, *services.cache, *services.database);
+    }
+}
+
 void SyncUnrenderedWorld(World &world)
 {
     // Poses first: without this the propagation below would compute correct
     // matrices for positions the bodies left behind at spawn.
-    world.physics.SyncTransforms(world.scene);
+    world.physics.SyncTransforms(world.scene, ParentWorldResolver(world.scene));
     world.propagationTick = Runtime::PropagateTransforms(world.scene, world.propagationTick);
+}
+
+Physics::PhysicsWorld::ParentWorldFn ParentWorldResolver(ECS::Scene &scene)
+{
+    // Physics reasons in world space, a parented Transform is an offset from its
+    // parent, and Physics sits below the layer that owns the parent link — so the
+    // answer is handed down rather than looked up there.
+    return [&scene](ECS::Entity entity) -> const glm::mat4 *
+           {
+               const Runtime::Parent *parent = scene.Get<Runtime::Parent>(entity);
+               if (parent == nullptr || parent->parent == ECS::NullEntity)
+                   return nullptr;
+
+               const ECS::Transform *parentTransform = scene.Get<ECS::Transform>(parent->parent);
+               return parentTransform != nullptr ? &parentTransform->worldMatrix : nullptr;
+           };
+}
+
+uint64_t BuildSceneBodies(ECS::Scene &scene, Physics::PhysicsWorld &physics, uint64_t propagationTick)
+{
+    const uint64_t tick = Runtime::PropagateTransforms(scene, propagationTick);
+    physics.RebuildSceneBodies(scene, ParentWorldResolver(scene));
+    return tick;
 }
 
 } // namespace Assisi::App

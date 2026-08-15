@@ -8,3 +8,12 @@ add_test(
     NAME reflectgen
     COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_reflectgen.py"
 )
+
+# Its own test rather than more cases in the one above: this covers a different
+# input language (.abp files, not C++ headers) and a different failure — a field
+# name that is not a real member resolves to NullEntity at runtime instead of
+# failing the build.
+add_test(
+    NAME blueprint-views
+    COMMAND Python3::Interpreter "${CMAKE_CURRENT_SOURCE_DIR}/tests/test_blueprint_views.py"
+)

@@ -33,22 +33,22 @@ constexpr float kStep = 1.f / 60.f;
 Assisi::ECS::Entity BuildDropScene(World &world, glm::vec3 dropFrom)
 {
     const auto spawn = [&world](glm::vec3 at, bool isStatic, glm::vec3 halfExtents)
-    {
-        const Assisi::ECS::Entity entity = world.scene.Create();
-        Assisi::ECS::Transform   *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
-        transform->position                 = at;
+                       {
+                           const Assisi::ECS::Entity entity = world.scene.Create();
+                           Assisi::ECS::Transform *transform = world.scene.Add<Assisi::ECS::Transform>(entity);
+                           transform->position                 = at;
 
-        Assisi::Physics::RigidBodyDescriptor descriptor{};
-        descriptor.halfExtents = halfExtents;
-        descriptor.isStatic    = isStatic;
-        (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity, descriptor);
+                           Assisi::Physics::RigidBodyDescriptor descriptor{};
+                           descriptor.halfExtents = halfExtents;
+                           descriptor.isStatic    = isStatic;
+                           (void)world.scene.Add<Assisi::Physics::RigidBodyDescriptor>(entity, descriptor);
 
-        (void)world.physics.AddBodyFromDescriptor(world.scene, entity, *transform, descriptor);
-        return entity;
-    };
+                           (void)world.physics.AddBodyFromDescriptor(world.scene, entity, *transform, descriptor);
+                           return entity;
+                       };
 
-    (void)spawn({0.f, 0.f, 0.f}, /*isStatic=*/true, {10.f, 0.25f, 10.f});
-    return spawn(dropFrom, /*isStatic=*/false, {0.5f, 0.5f, 0.5f});
+    (void)spawn({0.f, 0.f, 0.f}, /*isStatic=*/ true, {10.f, 0.25f, 10.f});
+    return spawn(dropFrom, /*isStatic=*/ false, {0.5f, 0.5f, 0.5f});
 }
 
 /// Steps physics until the contact log is non-empty, then returns the log for
@@ -73,7 +73,7 @@ TEST_CASE("Contact reporting is off by default and records nothing")
     // The whole point of the opt-in: a world nobody asked for contacts in must
     // not pay for a log, and must not quietly accumulate one either.
     WorldManager worlds;
-    World       &world = worlds.Create("Quiet");
+    World &world = worlds.Create("Quiet");
     CHECK_FALSE(world.physics.IsContactReporting());
 
     (void)BuildDropScene(world, {0.f, 3.f, 0.f});
@@ -89,7 +89,7 @@ TEST_CASE("Contact reporting is off by default and records nothing")
 TEST_CASE("A landing body reports a contact from both sides, before the solver runs")
 {
     WorldManager worlds;
-    World       &world = worlds.Create("Drop");
+    World &world = worlds.Create("Drop");
     world.physics.SetContactReporting(true);
     CHECK(world.physics.IsContactReporting());
 
@@ -130,7 +130,7 @@ TEST_CASE("The contact log describes exactly one step")
     // twice — which is what clearing at the top of Update() buys, and what a log
     // that merely appended would get wrong.
     WorldManager worlds;
-    World       &world = worlds.Create("Once");
+    World &world = worlds.Create("Once");
     world.physics.SetContactReporting(true);
     (void)BuildDropScene(world, {0.f, 3.f, 0.f});
 
@@ -145,7 +145,7 @@ TEST_CASE("The contact log describes exactly one step")
 TEST_CASE("Turning contact reporting off stops recording and drops the log")
 {
     WorldManager worlds;
-    World       &world = worlds.Create("Hush");
+    World &world = worlds.Create("Hush");
     world.physics.SetContactReporting(true);
     (void)BuildDropScene(world, {0.f, 3.f, 0.f});
 
@@ -157,22 +157,58 @@ TEST_CASE("Turning contact reporting off stops recording and drops the log")
     CHECK(world.physics.Contacts().empty());
 }
 
-TEST_CASE("ApplyProfile resets contact reporting so it cannot leak between levels")
+TEST_CASE("ApplySystems resets contact reporting so it cannot leak between levels")
 {
-    // Contact reporting is part of what a profile configures, so re-targeting a
-    // world at a profile that does not want it must switch it back off. Otherwise
-    // the first bouncy level opened in a session taxes every level after it.
+    // A system that wants contact reporting turns it on for itself, so
+    // re-targeting a world at a list that does not want it must switch it back
+    // off. Otherwise the first bouncy level opened in a session taxes every level
+    // after it with a contact log nothing reads.
     WorldManager worlds;
-    worlds.RegisterProfile("Bouncy", [](World &world) { world.physics.SetContactReporting(true); });
-    worlds.RegisterProfile("Plain", [](World &) {});
-
     World &world = worlds.Create("Reused");
 
-    worlds.ApplyProfile(world, "Bouncy");
+    world.physics.SetContactReporting(true);
     CHECK(world.physics.IsContactReporting());
 
-    worlds.ApplyProfile(world, "Plain");
+    // Any re-target clears it, including to the empty list.
+    CHECK(worlds.ApplySystems(world, {}, "(test)"));
     CHECK_FALSE(world.physics.IsContactReporting());
+}
+
+TEST_CASE("ApplySystems refuses a name this build does not declare")
+{
+    // A level naming a system that is not here is a level that will run without
+    // it — the silent failure the whole design opens with. So the load fails
+    // rather than the world quietly running short.
+    WorldManager worlds;
+    World &world = worlds.Create("Typo");
+    const std::vector<std::string> names{"NoSuchSystemAnywhere"};
+
+    CHECK_FALSE(worlds.ApplySystems(world, names, "levels/Test.alvl"));
+
+    // Recorded verbatim even so: a save must not rewrite the author's list with
+    // whatever happened to install.
+    CHECK(world.systemNames == names);
+}
+
+TEST_CASE("ApplySystems leaves the running systems alone when it refuses")
+{
+    // A refused call is a no-op on what is actually running: one bad name must
+    // not leave the world running *nothing*, which is worse than the state it
+    // was asked to replace.
+    WorldManager worlds;
+    World &world = worlds.Create("KeepsWhatItHas");
+
+    const std::vector<std::string> good{"Counter"};
+    REQUIRE(worlds.ApplySystems(world, good, "levels/Good.alvl"));
+    REQUIRE(world.systems.Has("Counter"));
+
+    const std::vector<std::string> bad{"Counter", "NoSuchSystemAnywhere"};
+    CHECK_FALSE(worlds.ApplySystems(world, bad, "levels/Bad.alvl"));
+
+    // Still running what it had. Note the bad list *contains* Counter — the point
+    // is not that Counter survived by being re-installed, but that nothing was
+    // torn down to begin with.
+    CHECK(world.systems.Has("Counter"));
 }
 
 TEST_CASE("BounceSystem sends a landing body back up, scaled by rebound")
@@ -181,7 +217,7 @@ TEST_CASE("BounceSystem sends a landing body back up, scaled by rebound")
     // FixedUpdate registration would (before the step), and check it leaves going
     // up rather than staying put.
     WorldManager worlds;
-    World       &world = worlds.Create("Bouncy");
+    World &world = worlds.Create("Bouncy");
     world.physics.SetContactReporting(true);
 
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
@@ -197,7 +233,7 @@ TEST_CASE("BounceSystem sends a landing body back up, scaled by rebound")
     {
         // Systems first, then the step — the order OnFixedUpdate uses, so the
         // velocity the system writes is the one the next step simulates.
-        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
 
         const std::span<const Assisi::Physics::Contact> contacts = world.physics.Contacts();
         for (const Assisi::Physics::Contact &contact : contacts)
@@ -232,21 +268,21 @@ TEST_CASE("rebound of zero stops a body dead, and a negative one is clamped to t
     for (const float rebound : {0.f, -2.f})
     {
         WorldManager worlds;
-        World       &world = worlds.Create("Dead");
+        World &world = worlds.Create("Dead");
         world.physics.SetContactReporting(true);
 
         const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
         (void)world.scene.Add<Assisi::Physics::Bounce>(ball, Assisi::Physics::Bounce{.rebound = rebound});
 
-        Assisi::Core::EventQueue  events;
+        Assisi::Core::EventQueue events;
         Assisi::Window::ActionMap actions;
 
-        bool  bounced      = false;
+        bool bounced      = false;
         float afterContact = 1.f;
 
         for (int32_t i = 0; i < 240 && !bounced; ++i)
         {
-            SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
+            SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
 
             const bool hadContact = !world.physics.Contacts().empty();
             BounceSystem(ctx);
@@ -279,7 +315,7 @@ TEST_CASE("A body already at rest never launches itself, even at rebound > 1")
     // nowhere. Starting from rest is the whole point of the case — there is no
     // impact here to respond to.
     WorldManager worlds;
-    World       &world = worlds.Create("Jittery");
+    World &world = worlds.Create("Jittery");
     world.physics.SetContactReporting(true);
 
     // Floor top is at y = 0.25 and the box's half-extent is 0.5, so this is its
@@ -287,13 +323,13 @@ TEST_CASE("A body already at rest never launches itself, even at rebound > 1")
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 0.75f, 0.f});
     (void)world.scene.Add<Assisi::Physics::Bounce>(ball, Assisi::Physics::Bounce{.rebound = 2.f});
 
-    Assisi::Core::EventQueue  events;
+    Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
 
     float highest = 0.f;
     for (int32_t i = 0; i < 600; ++i) // ten seconds of lying still
     {
-        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
         BounceSystem(ctx);
         world.physics.Update(kStep);
         world.physics.CaptureState();
@@ -321,13 +357,13 @@ TEST_CASE("What a settling nudge does at rebound > 1 depends on kMinBounceSpeed"
     // Either way this fails loudly if the *mechanism* changes, and it means the
     // consequence of retuning the constant is written down in a place that runs.
     WorldManager worlds;
-    World       &world = worlds.Create("Runaway");
+    World &world = worlds.Create("Runaway");
     world.physics.SetContactReporting(true);
 
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 0.84f, 0.f});
     (void)world.scene.Add<Assisi::Physics::Bounce>(ball, Assisi::Physics::Bounce{.rebound = 1.5f});
 
-    Assisi::Core::EventQueue  events;
+    Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
 
     float firstClosingSpeed = 0.f;
@@ -335,7 +371,7 @@ TEST_CASE("What a settling nudge does at rebound > 1 depends on kMinBounceSpeed"
 
     for (int32_t i = 0; i < 600; ++i) // ten seconds — long enough for a runaway to be obvious
     {
-        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
 
         for (const Assisi::Physics::Contact &contact : world.physics.Contacts())
         {
@@ -376,13 +412,13 @@ TEST_CASE("A real impact still bounces at rebound > 1, and gains speed")
     // proper height the box arrives well over the minimum and leaves faster than
     // it came in, which is what rebound above 1 is for.
     WorldManager worlds;
-    World       &world = worlds.Create("Hot");
+    World &world = worlds.Create("Hot");
     world.physics.SetContactReporting(true);
 
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
     (void)world.scene.Add<Assisi::Physics::Bounce>(ball, Assisi::Physics::Bounce{.rebound = 1.5f});
 
-    Assisi::Core::EventQueue  events;
+    Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
 
     float impactSpeed = 0.f;
@@ -390,7 +426,7 @@ TEST_CASE("A real impact still bounces at rebound > 1, and gains speed")
 
     for (int32_t i = 0; i < 240 && launchSpeed == 0.f; ++i)
     {
-        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
 
         for (const Assisi::Physics::Contact &contact : world.physics.Contacts())
         {
@@ -421,20 +457,20 @@ TEST_CASE("A body with no Bounce component is left alone")
     // The system's gate is the component, not the contact: everything else in a
     // world collides too, and none of it should be relaunched.
     WorldManager worlds;
-    World       &world = worlds.Create("Inert");
+    World &world = worlds.Create("Inert");
     world.physics.SetContactReporting(true);
 
     const Assisi::ECS::Entity ball = BuildDropScene(world, {0.f, 3.f, 0.f});
 
-    Assisi::Core::EventQueue  events;
+    Assisi::Core::EventQueue events;
     Assisi::Window::ActionMap actions;
 
     float highestAfterLanding = -100.f;
-    bool  landed              = false;
+    bool landed              = false;
 
     for (int32_t i = 0; i < 240; ++i)
     {
-        SystemContext ctx{world, kStep, /*simTick=*/0, nullptr, &actions, events, true, &worlds};
+        SystemContext ctx{world, kStep, /*simTick=*/ 0, nullptr, &actions, events, true, &worlds};
         if (!world.physics.Contacts().empty())
             landed = true;
         BounceSystem(ctx);

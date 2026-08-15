@@ -47,9 +47,9 @@ struct Event
 {
     std::uint64_t timestampTicks = 0; ///< Raw hardware ticks; converted to time at dump.
     std::uint64_t payload        = 0; ///< Meaning depends on `type`.
-    const char   *name           = nullptr; ///< Interned; not owned.
-    EventType     type           = EventType::Instant;
-    std::uint8_t  reserved0      = 0;
+    const char *name           = nullptr;   ///< Interned; not owned.
+    EventType type           = EventType::Instant;
+    std::uint8_t reserved0      = 0;
     std::uint16_t reserved1      = 0;
     std::uint32_t reserved2      = 0;
 };
@@ -63,7 +63,7 @@ static_assert(std::is_trivially_copyable_v<Event>, "Ring slots are overwritten i
 /// when it ends (§4: the hang case).
 struct OpenScope
 {
-    const char   *name       = nullptr;
+    const char *name       = nullptr;
     std::uint64_t beginTicks = 0;
 };
 
@@ -89,10 +89,9 @@ namespace Detail
 ///    `C - capacity` — the oldest live record. Reading it would race a partial
 ///    write. Sacrificing that one slot removes the only unsynchronized read.
 ///
-/// Point 2 costs one event per ring and is invisible in any other framing; it is
-/// wrong only on the full-ring "dump everything" path, which is exactly the path
-/// that matters. Producers must be stopped (recording paused) before a read, so
-/// each can complete at most one straggler past the observed cursor.
+/// Point 2 costs one event per ring, visible only on the full-ring "dump
+/// everything" path. Producers must be stopped (recording paused) before a read,
+/// so each can complete at most one straggler past the observed cursor.
 class EventRing
 {
 public:
@@ -151,9 +150,9 @@ public:
     [[nodiscard]] const Event &At(std::uint64_t index) const noexcept { return _storage[index & _mask]; }
 
 private:
-    Event                     *_storage  = nullptr;
-    std::uint64_t              _capacity = 0;
-    std::uint64_t              _mask     = 0;
+    Event *_storage  = nullptr;
+    std::uint64_t _capacity = 0;
+    std::uint64_t _mask     = 0;
     std::atomic<std::uint64_t> _writeCursor{0};
 };
 

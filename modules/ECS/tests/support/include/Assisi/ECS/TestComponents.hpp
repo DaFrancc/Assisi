@@ -6,9 +6,8 @@
 ///
 /// Scene indexes its pools by Core::Reflect::ComponentId, so every component a
 /// Scene stores must be registered with the reflection system (ACOMP). These
-/// stand in for the ad-hoc structs the tests used before that requirement,
-/// exercising the real reflected-component path. They are compiled only into
-/// the test binary (see modules/ECS/tests/CMakeLists.txt).
+/// exercise the real reflected-component path and are compiled only into the
+/// test binary (see modules/ECS/tests/CMakeLists.txt).
 
 #include <Assisi/Prelude.hpp>
 

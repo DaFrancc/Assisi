@@ -3,6 +3,7 @@
 #include <Assisi/Core/JobSystem.hpp>
 
 #include <Assisi/Chiara/Chiara.hpp>
+#include <Assisi/Core/Diagnostics.hpp>
 
 #include <algorithm>
 #include <iterator>
@@ -46,14 +47,17 @@ JobSystem::~JobSystem()
 
 void JobSystem::WorkerLoop(uint32_t workerIndex)
 {
-    // This is the only place a worker's identity exists, so it is where the
-    // capture learns the name — and it names the thread for the OS debugger at
-    // the same time, which the engine had never done for any of its threads.
+    // The only place a worker's index exists, so the only place that can name
+    // the thread for the capture and the OS debugger.
     //
     // Safe with the capture runtime down: headless tests and tools build a
     // JobSystem with no Application and therefore no InitGuard, and every Chiara
     // entry point is a no-op before Initialize.
     Chiara::RegisterCurrentThread(("worker-" + std::to_string(workerIndex)).c_str());
+
+    // sigaltstack is per-thread. Without this a worker that overflows its stack
+    // faults again inside the crash handler and leaves no report at all.
+    InstallSignalStackForThisThread();
 
     while (true)
     {
@@ -159,9 +163,9 @@ void JobSystem::ParallelFor(uint32_t count, uint32_t grain,
         const uint32_t begin = chunk * grain;
         const uint32_t end = std::min(begin + grain, count);
         EnqueueTo(Pool::Worker, [&body, begin, end, remaining] {
-            body(begin, end);
-            remaining->fetch_sub(1u, std::memory_order_acq_rel);
-        });
+                body(begin, end);
+                remaining->fetch_sub(1u, std::memory_order_acq_rel);
+            });
     }
 
     HelpUntil([&remaining] { return remaining->load(std::memory_order_acquire) == 0u; });

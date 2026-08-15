@@ -24,7 +24,7 @@ namespace Assisi::App
 
 template <typename Entry>
 std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entries,
-                                                   std::string_view          phaseName)
+                                                  std::string_view phaseName)
 {
     const std::size_t n = entries.size();
 
@@ -49,13 +49,13 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
     std::set<std::pair<std::size_t, std::size_t>> seen;
 
     auto addEdge = [&](std::size_t from, std::size_t to)
-    {
-        if (seen.insert({from, to}).second)
-        {
-            adj[from].push_back(to);
-            ++inDegree[to];
-        }
-    };
+                   {
+                       if (seen.insert({from, to}).second)
+                       {
+                           adj[from].push_back(to);
+                           ++inDegree[to];
+                       }
+                   };
 
     for (std::size_t i = 0; i < n; ++i)
     {
@@ -129,13 +129,13 @@ std::vector<std::size_t> SystemRegistry::TopoSort(const std::vector<Entry> &entr
 
 SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::After(std::string_view name)
 {
-    _addDependency(/*before=*/false, name);
+    _addDependency(/*before=*/ false, name);
     return *this;
 }
 
 SystemRegistry::SystemHandle &SystemRegistry::SystemHandle::Before(std::string_view name)
 {
-    _addDependency(/*before=*/true, name);
+    _addDependency(/*before=*/ true, name);
     return *this;
 }
 
@@ -173,10 +173,10 @@ void SystemRegistry::SystemHandle::Require(Core::Reflect::ComponentId id)
 // ---------------------------------------------------------------------------
 
 template <typename Ctx>
-SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase,
-                                                 std::string_view          name,
+SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx> &phase,
+                                                 std::string_view name,
                                                  std::function<void(Ctx &)> fn,
-                                                 bool                      supportsActiveOnly)
+                                                 bool supportsActiveOnly)
 {
     // Duplicate names make After()/Before() ambiguous: TopoSort's nameToIndex
     // keeps only the first entry per name, so every edge targeting this name binds
@@ -197,7 +197,7 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
     }
 
     const std::size_t entryIndex = phase.entries.size();
-    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/false, {},
+    phase.entries.push_back({std::string(name), std::move(fn), {}, {}, /*activeOnly=*/ false, {},
                              Chiara::InternString(name)});
     phase.dirty = true;
 
@@ -212,8 +212,8 @@ SystemRegistry::SystemHandle SystemRegistry::Add(Phase<Ctx>               &phase
             phasePtr->dirty = true;
         },
         supportsActiveOnly ? SystemHandle::SetActiveOnly(
-                                 [phasePtr, entryIndex]
-                                 { phasePtr->entries[entryIndex].activeOnly = true; })
+            [phasePtr, entryIndex]
+            { phasePtr->entries[entryIndex].activeOnly = true; })
                            : SystemHandle::SetActiveOnly{},
         [phasePtr, entryIndex](Core::Reflect::ComponentId id)
         { phasePtr->entries[entryIndex].requireAny.push_back(id); });
@@ -242,19 +242,19 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
     // Whether a gated system has anything to work on. Cheap enough to pay every
     // frame for every system: each id is an index into the scene's pool array,
     // so a system whose components are absent costs a load and a compare rather
-    // than a call. That is what makes it affordable for a profile to install
-    // systems a given world may never need.
+    // than a call. That is what makes it affordable for a level to name systems a
+    // given world may never need.
     const auto eligible = [&gateScene](const typename Phase<Ctx>::Entry &entry)
-    {
-        if (entry.requireAny.empty())
-            return true;
-        for (const Core::Reflect::ComponentId id : entry.requireAny)
-        {
-            if (gateScene.ComponentCount(id) > 0)
-                return true;
-        }
-        return false;
-    };
+                          {
+                              if (entry.requireAny.empty())
+                                  return true;
+                              for (const Core::Reflect::ComponentId id : entry.requireAny)
+                              {
+                                  if (gateScene.ComponentCount(id) > 0)
+                                      return true;
+                              }
+                              return false;
+                          };
 
     for (std::size_t i : phase.sorted)
     {
@@ -276,7 +276,7 @@ void SystemRegistry::RunPhase(Phase<Ctx> &phase, std::string_view phaseName, con
 std::string_view SystemRegistry::PhaseName(std::size_t gamePhaseIndex)
 {
     static constexpr std::string_view kNames[] = {"PreUpdate", "FixedUpdate", "Update",
-                                                   "PostUpdate"};
+                                                  "PostUpdate"};
     return kNames[gamePhaseIndex];
 }
 
@@ -286,17 +286,17 @@ const char *SystemRegistry::PhaseProfileName(std::size_t gamePhaseIndex)
     return kNames[gamePhaseIndex];
 }
 
-SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase                          phase,
-                                                      std::string_view                     name,
+SystemRegistry::SystemHandle SystemRegistry::Register(SystemPhase phase,
+                                                      std::string_view name,
                                                       std::function<void(SystemContext &)> fn)
 {
-    return Add(_gamePhases[Index(phase)], name, std::move(fn), /*supportsActiveOnly=*/true);
+    return Add(_gamePhases[Index(phase)], name, std::move(fn), /*supportsActiveOnly=*/ true);
 }
 
 SystemRegistry::SystemHandle SystemRegistry::RegisterRender(std::string_view name,
                                                             std::function<void(RenderContext &)> fn)
 {
-    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/false);
+    return Add(_renderPhase, name, std::move(fn), /*supportsActiveOnly=*/ false);
 }
 
 void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
@@ -317,15 +317,15 @@ void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
         const std::span<const Core::Reflect::ComponentMeta> metas =
             Core::Reflect::ComponentRegistry::Instance().All();
         static const std::vector<const char *> kCounterNames = [&metas]
-        {
-            std::vector<const char *> names;
-            names.reserve(metas.size());
-            for (const Core::Reflect::ComponentMeta &meta : metas)
-            {
-                names.push_back(Chiara::InternString("ecs/components/" + meta.name));
-            }
-            return names;
-        }();
+                                                               {
+                                                                   std::vector<const char *> names;
+                                                                   names.reserve(metas.size());
+                                                                   for (const Core::Reflect::ComponentMeta &meta : metas)
+                                                                   {
+                                                                       names.push_back(Chiara::InternString("ecs/components/" + meta.name));
+                                                                   }
+                                                                   return names;
+                                                               }();
 
         // Guard rather than assume: a component registered after the first frame
         // would leave the cached table short, and a mismatched index here would
@@ -339,12 +339,30 @@ void SystemRegistry::Run(SystemPhase phase, SystemContext ctx)
     }
 
     RunPhase(_gamePhases[Index(phase)], PhaseName(Index(phase)), PhaseProfileName(Index(phase)), ctx,
-             /*skipActiveOnly=*/!ctx.isActiveWorld, ctx.world.scene);
+             /*skipActiveOnly=*/ !ctx.isActiveWorld, ctx.world.scene);
 }
 
 void SystemRegistry::RunRender(RenderContext ctx)
 {
-    RunPhase(_renderPhase, "Render", "Render", ctx, /*skipActiveOnly=*/false, ctx.scene);
+    RunPhase(_renderPhase, "Render", "Render", ctx, /*skipActiveOnly=*/ false, ctx.scene);
+}
+
+bool SystemRegistry::Has(std::string_view name) const
+{
+    for (const Phase<SystemContext> &phase : _gamePhases)
+    {
+        for (const auto &entry : phase.entries)
+        {
+            if (entry.name == name)
+                return true;
+        }
+    }
+    for (const auto &entry : _renderPhase.entries)
+    {
+        if (entry.name == name)
+            return true;
+    }
+    return false;
 }
 
 void SystemRegistry::Clear()

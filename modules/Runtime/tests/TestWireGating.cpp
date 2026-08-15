@@ -43,17 +43,15 @@ TEST_CASE("the components a mirror needs to exist and to draw are replicated")
         CHECK(meta->replicable);
         // ACOMP(replicable) implies ACOMP(tracked). Without it the pool has no
         // change-tick lane, every query reports "unchanged", and the component
-        // would be sent once at spawn and then never again — which is exactly
-        // what MeshRenderer and Name did before they were marked.
+        // goes out once at spawn and then never again.
         CHECK(meta->tracksChanges);
     }
 }
 
 TEST_CASE("Camera does not replicate")
 {
-    // The poster child for opt-in. Under "everything serializable travels" a
-    // marked entity shipped its Camera, and `isActive` on the receiving side
-    // meant the host could hand a client a different view than the one it chose.
+    // The poster child for opt-in: an arriving `isActive` would let the host hand
+    // a client a different view than the one that client chose.
     const Assisi::Core::Reflect::ComponentMeta *meta = MetaOf(typeid(Assisi::Runtime::Camera));
     REQUIRE(meta != nullptr);
     CHECK_FALSE(meta->replicable);

@@ -23,7 +23,10 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Physics/PhysicsWorld.hpp>
 
@@ -47,9 +50,9 @@ constexpr float kFixedStep = 1.f / 60.f;
 /// agreement by corrections.
 struct PhysicsHarness
 {
-    Net::NetTransport     transport;
-    ECS::Scene            serverScene;
-    ECS::Scene            clientScene;
+    Net::NetTransport transport;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
     Physics::PhysicsWorld serverPhysics;
     Physics::PhysicsWorld clientPhysics;
 
@@ -61,15 +64,19 @@ struct PhysicsHarness
     std::uint64_t tick = 0;
 
     /// Set to emulate a *windowed* host: the render-side writeback stamps every
-    /// dynamic body's Transform every frame, sleeping ones included. That used
-    /// to mean a settled world never stopped costing bandwidth; body state is
-    /// read from the physics world instead, so it must now be irrelevant.
+    /// dynamic body's Transform every frame, sleeping ones included. Body state
+    /// is read from the physics world rather than that Transform, so what goes
+    /// on the wire must not depend on this.
     bool runRenderWriteback = false;
 
     explicit PhysicsHarness(ReplicationConfig config = {})
         : pair(transport.CreateLoopbackPair()), server(transport, serverScene, &serverPhysics, config),
-          client(transport, clientScene, pair.second, &clientPhysics)
+        client(transport, clientScene, pair.second, &clientPhysics)
     {
+        // Neither hello goes out until each side knows its content set; these
+        // tests are about bodies, so both take the empty set's hash.
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
         server.AddConnection(pair.first);
     }
 
@@ -143,10 +150,10 @@ ECS::Entity SpawnBox(ECS::Scene &scene, Physics::PhysicsWorld &physics, glm::vec
 /// The floor, on both machines, exactly as a level file would put it there.
 void SpawnSharedFloor(PhysicsHarness &harness)
 {
-    SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, -1.f, 0.f}, /*isStatic=*/true, {20.f, 1.f, 20.f},
-             /*replicated=*/false);
-    SpawnBox(harness.clientScene, harness.clientPhysics, {0.f, -1.f, 0.f}, /*isStatic=*/true, {20.f, 1.f, 20.f},
-             /*replicated=*/false);
+    SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, -1.f, 0.f}, /*isStatic=*/ true, {20.f, 1.f, 20.f},
+             /*replicated=*/ false);
+    SpawnBox(harness.clientScene, harness.clientPhysics, {0.f, -1.f, 0.f}, /*isStatic=*/ true, {20.f, 1.f, 20.f},
+             /*replicated=*/ false);
 }
 
 /// The mirror of @p entity, or NullEntity.
@@ -180,7 +187,7 @@ TEST_CASE("a pile settles on the server, and the client's own bodies settle to t
 {
     PhysicsHarness harness;
     // A windowed host, so the render writeback stamps every Transform every
-    // frame — the condition that used to make a settled world replicate forever.
+    // frame — the condition a settled world has to stay quiet under.
     harness.runRenderWriteback = true;
     harness.Step(4);
     SpawnSharedFloor(harness);
@@ -189,7 +196,7 @@ TEST_CASE("a pile settles on the server, and the client's own bodies settle to t
     for (int32_t i = 0; i < 5; ++i)
         pile.push_back(SpawnBox(harness.serverScene, harness.serverPhysics,
                                 {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.2f, 0.f},
-                                /*isStatic=*/false));
+                                /*isStatic=*/ false));
 
     // Long enough for a five-box pile to fall, bounce, and be put to sleep.
     harness.Step(600);
@@ -221,11 +228,10 @@ TEST_CASE("a pile settles on the server, and the client's own bodies settle to t
 
 TEST_CASE("a settled world stops costing bandwidth, with physics running")
 {
-    // The sentence the design notes celebrated and §2 of the plan showed to be
-    // false: idle snapshots carry headers only. It was false because replication
-    // read the render-side Transform, which the writeback re-stamps every frame
-    // for every dynamic body, sleeping ones included. Reading the physics world
-    // instead is what makes it true — so the writeback runs here on purpose.
+    // Idle snapshots carry headers only. That holds because replication reads
+    // the physics world rather than the render-side Transform, which the
+    // writeback re-stamps every frame for every dynamic body, sleeping ones
+    // included — so the writeback runs here on purpose.
     PhysicsHarness harness;
     harness.runRenderWriteback = true;
     harness.Step(4);
@@ -233,7 +239,7 @@ TEST_CASE("a settled world stops costing bandwidth, with physics running")
 
     for (int32_t i = 0; i < 5; ++i)
         SpawnBox(harness.serverScene, harness.serverPhysics,
-                 {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.2f, 0.f}, /*isStatic=*/false);
+                 {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.2f, 0.f}, /*isStatic=*/ false);
 
     harness.Step(600); // fall, settle, sleep
 
@@ -251,15 +257,14 @@ TEST_CASE("a settled world stops costing bandwidth, with physics running")
 
 TEST_CASE("a quantized body record is at least 2.5x smaller than the whole-value one")
 {
-    // The measurement R8 exists to make, against the encoding R5 actually
-    // shipped: a varint id, the at-rest bit, and then every value as a raw
-    // 32-bit float — three for the position, *four* for the quaternion, and six
-    // more for the velocities when awake.
+    // Measured against a whole-value encoding: a varint id, the at-rest bit, and
+    // then every value as a raw 32-bit float — three for the position, *four*
+    // for the quaternion, and six more for the velocities when awake.
     const auto wholeValueBits = [](bool asleep, std::size_t netIdBits)
-    { return netIdBits + 1 + 32 * 3 + 32 * 4 + (asleep ? 0 : 32 * 6); };
+                                { return netIdBits + 1 + 32 * 3 + 32 * 4 + (asleep ? 0 : 32 * 6); };
 
     BodyState awake;
-    awake.netId           = 7; // one varint byte, same on both sides of the ratio
+    awake.netId           = NetId{7}; // one varint byte, same on both sides of the ratio
     awake.position        = {12.5f, -3.25f, 100.125f};
     awake.rotation        = glm::normalize(glm::quat{0.3f, 0.5f, -0.2f, 0.8f});
     awake.linearVelocity  = {-4.5f, 12.25f, 0.f};
@@ -287,9 +292,9 @@ TEST_CASE("the correction stream shrinks with the encoding")
     // The record-level ratio above is exact; this is the one that matters in
     // practice, where the stream also carries framing and ids. Two runs of the
     // same falling pile, one at the shipping resolution and one at 32 bits a
-    // component. (The quaternion is smallest-three in both — there is no way to
-    // ask for the old four-float form any more — so this ratio is *lower* than
-    // the record-level one by construction, not a contradiction of it.)
+    // component. (The quaternion is smallest-three in both, so this ratio is
+    // *lower* than the record-level one by construction, not a contradiction
+    // of it.)
     const BodyQuantization defaults = Quantization();
 
     BodyQuantization wide    = defaults;
@@ -298,24 +303,24 @@ TEST_CASE("the correction stream shrinks with the encoding")
     wide.angularVelocityBits = 32;
 
     const auto run = [](const BodyQuantization &quantization)
-    {
-        SetQuantization(quantization);
+                     {
+                         SetQuantization(quantization);
 
-        PhysicsHarness harness;
-        harness.Step(4);
-        SpawnSharedFloor(harness);
-        for (int32_t i = 0; i < 6; ++i)
-            SpawnBox(harness.serverScene, harness.serverPhysics,
-                     {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.15f, 0.f},
-                     /*isStatic=*/false);
+                         PhysicsHarness harness;
+                         harness.Step(4);
+                         SpawnSharedFloor(harness);
+                         for (int32_t i = 0; i < 6; ++i)
+                             SpawnBox(harness.serverScene, harness.serverPhysics,
+                                      {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.15f, 0.f},
+                                      /*isStatic=*/ false);
 
-        // While it is falling: the correction stream is the whole cost, and a
-        // settled world would measure nothing.
-        harness.Step(30);
-        const std::uint64_t before = harness.client.Corrections().bytesApplied;
-        harness.Step(150);
-        return harness.client.Corrections().bytesApplied - before;
-    };
+                         // While it is falling: the correction stream is the whole cost, and a
+                         // settled world would measure nothing.
+                         harness.Step(30);
+                         const std::uint64_t before = harness.client.Corrections().bytesApplied;
+                         harness.Step(150);
+                         return harness.client.Corrections().bytesApplied - before;
+                     };
 
     const std::uint64_t wideBytes      = run(wide);
     const std::uint64_t quantizedBytes = run(defaults);
@@ -337,7 +342,7 @@ TEST_CASE("quantized body state round-trips within a quantum")
     const BodyQuantization &q = Quantization();
 
     BodyState source;
-    source.netId           = 42;
+    source.netId           = NetId{42};
     source.position        = {12.5f, -3.25f, 100.125f};
     source.rotation        = glm::normalize(glm::quat{0.3f, 0.5f, -0.2f, 0.8f});
     source.linearVelocity  = {-4.5f, 12.25f, 0.f};
@@ -347,7 +352,7 @@ TEST_CASE("quantized body state round-trips within a quantum")
     Core::BitWriter writer;
     WriteBodyState(source, writer);
 
-    BodyState       decoded;
+    BodyState decoded;
     Core::BitReader reader(writer.Data());
     REQUIRE(ReadBodyState(reader, decoded));
 
@@ -379,13 +384,13 @@ TEST_CASE("two builds that quantize differently refuse to pair, and the summary 
     // identical framing, and every position silently decoded into the wrong
     // number because one side thought the world was twice as wide.
     const BodyQuantization defaults = Quantization();
-    const std::uint64_t    baseline = NetProtocolHash();
+    const std::uint64_t baseline = NetProtocolHash();
 
     BodyQuantization wider  = defaults;
     wider.positionExtent    = defaults.positionExtent * 2.f;
     SetQuantization(wider);
     const std::uint64_t widerHash    = NetProtocolHash();
-    const std::string   widerSummary = NetProtocolSummary();
+    const std::string widerSummary = NetProtocolSummary();
 
     BodyQuantization coarser    = defaults;
     coarser.positionBits        = defaults.positionBits - 1;
@@ -416,7 +421,7 @@ TEST_CASE("a client body woken by something the server never saw is put back to 
     SpawnSharedFloor(harness);
 
     const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
-                                        /*isStatic=*/false);
+                                        /*isStatic=*/ false);
     harness.Step(400);
 
     const ECS::Entity mirror = MirrorOf(harness, entity);
@@ -456,7 +461,7 @@ TEST_CASE("a body moved while it is not simulating still reaches clients")
     SpawnSharedFloor(harness);
 
     const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
-                                        /*isStatic=*/false);
+                                        /*isStatic=*/ false);
     harness.Step(400);
 
     const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
@@ -500,7 +505,7 @@ TEST_CASE("a static replicated body moved by an author reaches clients")
     SpawnSharedFloor(harness);
 
     const ECS::Entity wall = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 0.5f, -2.f},
-                                      /*isStatic=*/true, {2.f, 0.5f, 0.25f});
+                                      /*isStatic=*/ true, {2.f, 0.5f, 0.25f});
     harness.Step(60);
     REQUIRE(MirrorOf(harness, wall) != ECS::NullEntity);
     REQUIRE(PoseError(harness, wall) < 0.01f);
@@ -543,7 +548,7 @@ TEST_CASE("a mirror destroyed by client-side gameplay comes back, and says so")
     SpawnSharedFloor(harness);
 
     const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 3.f, 0.f},
-                                        /*isStatic=*/false);
+                                        /*isStatic=*/ false);
     harness.Step(30);
 
     const ECS::Entity mirror = MirrorOf(harness, entity);
@@ -562,9 +567,8 @@ TEST_CASE("a mirror destroyed by client-side gameplay comes back, and says so")
     // The entity is back at the next update, counted rather than silent. Its
     // *state* is not: the server has no idea anything happened, so its delta
     // still says "nothing changed since you acked" and the resurrected mirror is
-    // an empty shell until the sweep re-anchors it. That is the client-write
-    // rule of §3.5 at its most extreme, and it is why the sweep's off position
-    // carries a warning.
+    // an empty shell until the sweep re-anchors it — the client-write rule at
+    // its most extreme, and why disabling the sweep carries a warning.
     const ECS::Entity restored = MirrorOf(harness, entity);
     REQUIRE(restored != ECS::NullEntity);
     CHECK(restored != mirror);
@@ -582,15 +586,14 @@ TEST_CASE("a mirror destroyed by client-side gameplay comes back, and says so")
 TEST_CASE("an unmarked dynamic body is simulated locally and never corrected")
 {
     // Cosmetic local physics: the level's own dynamics run on both machines and
-    // are nobody's business but the machine they are on. The warning R7 shows
-    // exists because they *will* settle differently; what this pins is that they
-    // do not travel.
+    // are nobody's business but the machine they are on. They *will* settle
+    // differently; what this pins is that they do not travel.
     PhysicsHarness harness;
     harness.Step(4);
     SpawnSharedFloor(harness);
 
-    SpawnBox(harness.serverScene, harness.serverPhysics, {3.f, 2.f, 0.f}, /*isStatic=*/false, {0.5f, 0.5f, 0.5f},
-             /*replicated=*/false);
+    SpawnBox(harness.serverScene, harness.serverPhysics, {3.f, 2.f, 0.f}, /*isStatic=*/ false, {0.5f, 0.5f, 0.5f},
+             /*replicated=*/ false);
     harness.Step(200);
 
     CHECK(harness.client.ReplicatedEntityCount() == 0);
@@ -609,7 +612,7 @@ TEST_CASE("a client joining a world that settled before it connected gets the re
     for (int32_t i = 0; i < 4; ++i)
         pile.push_back(SpawnBox(harness.serverScene, harness.serverPhysics,
                                 {static_cast<float>(i) * 0.05f, 1.5f + static_cast<float>(i) * 1.2f, 0.f},
-                                /*isStatic=*/false));
+                                /*isStatic=*/ false));
 
     // Let it settle with nobody connected: the server ticks, the client is not
     // yet ready, so no snapshot describes any of this.
@@ -642,9 +645,9 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     // in-process socket pair shares buffers and bypasses the packet layer, so
     // simulated lag and loss would not apply and the test would quietly prove
     // nothing.
-    Net::NetTransport     transport;
-    ECS::Scene            serverScene;
-    ECS::Scene            clientScene;
+    Net::NetTransport transport;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
     Physics::PhysicsWorld serverPhysics;
     Physics::PhysicsWorld clientPhysics;
 
@@ -655,9 +658,11 @@ TEST_CASE("bodies converge through 150 ms of latency and 5% packet loss")
     conditions.recvLagMs       = 75;
     REQUIRE(Net::NetTransport::SetSimulatedConditions(conditions));
 
-    const auto        pair = transport.CreateLoopbackPair(true);
+    const auto pair = transport.CreateLoopbackPair(true);
     ReplicationServer server(transport, serverScene, &serverPhysics, ReplicationConfig{});
     ReplicationClient client(transport, clientScene, pair.second, &clientPhysics);
+    server.SetContentSetHash(0);
+    client.SetContentSetHash(0);
     server.AddConnection(pair.first);
 
     // Floor on both, as a level would put it.
@@ -736,7 +741,7 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     SpawnSharedFloor(harness);
 
     const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
-                                        /*isStatic=*/false);
+                                        /*isStatic=*/ false);
     harness.Step(400);
 
     const ECS::Entity mirror = MirrorOf(harness, entity);
@@ -752,7 +757,7 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     // say. Exactly what the editor's "corrupt selected mirror" poke does.
     const glm::vec3 displaced = restPosition + glm::vec3{0.f, 0.f, 1.f};
     harness.clientPhysics.ApplyBodyState(*replica, displaced, restRotation, glm::vec3{0.f}, glm::vec3{0.f},
-                                         /*activate=*/false);
+                                         /*activate=*/ false);
     harness.clientPhysics.InterpolateTransforms(harness.clientScene, 1.f);
     harness.client.SmoothView(0.0, kFixedStep);
     REQUIRE(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - displaced) < 1e-3f);
@@ -775,8 +780,8 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
     // at 60 Hz is about 17 cm — versus the whole metre a correction without
     // smoothing would have jumped.
     const glm::vec3 renderedAtCorrection = harness.clientScene.Get<ECS::Transform>(mirror)->position;
-    const float     movedInOneFrame      = glm::length(renderedAtCorrection - displaced);
-    const float     onFrameShare         = 1.f * (kFixedStep / Smoothing().positionCorrectionTime);
+    const float movedInOneFrame      = glm::length(renderedAtCorrection - displaced);
+    const float onFrameShare         = 1.f * (kFixedStep / Smoothing().positionCorrectionTime);
     CAPTURE(movedInOneFrame);
     CHECK(movedInOneFrame < onFrameShare * 1.5f);
     CHECK(movedInOneFrame < 0.35f); // nowhere near the metre it would have popped
@@ -792,18 +797,14 @@ TEST_CASE("a correction moves the simulation at once and the picture gradually")
 
 TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicating the rule fixes it")
 {
-    // `Test.alvl`'s bouncing cube, and the bug it exposed. `Bounce` was left
-    // unreplicated on the reasoning that "a client-side bounce is a local guess
-    // at what the server's bounce also did" — true, but only if the client *has*
-    // one. Under local simulation the client builds a body and steps it, and a
-    // mirror missing the component simply does not bounce: it falls, rests, and
-    // every correction hauls it back up.
+    // Under local simulation the client builds a body and steps it, so a mirror
+    // missing a gameplay component simply does not run that rule: an unbounced
+    // cube falls, rests, and every correction hauls it back up.
     //
-    // The corrections keep the *simulation* right, which is why it looked fine
-    // in isolation. What they cannot fix is that the error arrives again every
-    // interval, so the visual offset hiding it never decays to zero — the body
-    // renders steadily behind its own authoritative position. That is the
-    // "simulation is perfect, just severely behind" this reproduces.
+    // Corrections keep the *simulation* right, which is why this looks fine in
+    // isolation. What they cannot fix is that the error arrives again every
+    // interval, so the visual offset hiding it never decays to zero and the body
+    // renders steadily behind its own authoritative position.
     //
     // Modelled by applying the rule on one side or both. An impulse is essential:
     // a *constant* push proves nothing, because the client extrapolates a
@@ -821,59 +822,59 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
     };
 
     const auto run = [](bool clientRunsTheRule)
-    {
-        PhysicsHarness harness;
-        harness.Step(4);
-        SpawnSharedFloor(harness);
+                     {
+                         PhysicsHarness harness;
+                         harness.Step(4);
+                         SpawnSharedFloor(harness);
 
-        const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
-                                            /*isStatic=*/false);
-        harness.Step(60);
+                         const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
+                                                             /*isStatic=*/ false);
+                         harness.Step(60);
 
-        const ECS::Entity         mirror        = MirrorOf(harness, entity);
-        const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
-        const Physics::RigidBody *replica       = harness.clientScene.Get<Physics::RigidBody>(mirror);
-        REQUIRE(authoritative != nullptr);
-        REQUIRE(replica != nullptr);
+                         const ECS::Entity mirror        = MirrorOf(harness, entity);
+                         const Physics::RigidBody *authoritative = harness.serverScene.Get<Physics::RigidBody>(entity);
+                         const Physics::RigidBody *replica       = harness.clientScene.Get<Physics::RigidBody>(mirror);
+                         REQUIRE(authoritative != nullptr);
+                         REQUIRE(replica != nullptr);
 
-        Result result;
-        double  lagSum     = 0.0;
-        int32_t lagSamples = 0;
-        for (int32_t step = 0; step < 240; ++step)
-        {
-            const auto bounce = [](Physics::PhysicsWorld &world, const Physics::RigidBody &body)
-            {
-                const auto [pose, rotation] = world.GetBodyTransform(body);
-                (void)rotation;
-                if (pose.y < 0.7f)
-                    world.SetBodyLinearVelocity(body, {0.f, 7.f, 0.f});
-            };
+                         Result result;
+                         double lagSum     = 0.0;
+                         int32_t lagSamples = 0;
+                         for (int32_t step = 0; step < 240; ++step)
+                         {
+                             const auto bounce = [](Physics::PhysicsWorld &world, const Physics::RigidBody &body)
+                                                 {
+                                                     const auto [pose, rotation] = world.GetBodyTransform(body);
+                                                     (void)rotation;
+                                                     if (pose.y < 0.7f)
+                                                         world.SetBodyLinearVelocity(body, {0.f, 7.f, 0.f});
+                                                 };
 
-            bounce(harness.serverPhysics, *authoritative);
-            if (clientRunsTheRule)
-                bounce(harness.clientPhysics, *replica);
+                             bounce(harness.serverPhysics, *authoritative);
+                             if (clientRunsTheRule)
+                                 bounce(harness.clientPhysics, *replica);
 
-            harness.Step();
+                             harness.Step();
 
-            // The rendered pose against the client's own simulated one: their
-            // difference *is* the visual offset, since the writeback wrote the
-            // physics pose and the smoothing then added the offset on top of it.
-            const auto [simulated, simulatedRotation] = harness.clientPhysics.GetBodyTransform(*replica);
-            (void)simulatedRotation;
-            const glm::vec3 rendered = harness.clientScene.Get<ECS::Transform>(mirror)->position;
-            const float     lag      = glm::length(rendered - simulated);
-            result.worstLag          = std::max(result.worstLag, lag);
-            lagSum += static_cast<double>(lag);
-            ++lagSamples;
-        }
+                             // The rendered pose against the client's own simulated one: their
+                             // difference *is* the visual offset, since the writeback wrote the
+                             // physics pose and the smoothing then added the offset on top of it.
+                             const auto [simulated, simulatedRotation] = harness.clientPhysics.GetBodyTransform(*replica);
+                             (void)simulatedRotation;
+                             const glm::vec3 rendered = harness.clientScene.Get<ECS::Transform>(mirror)->position;
+                             const float lag      = glm::length(rendered - simulated);
+                             result.worstLag          = std::max(result.worstLag, lag);
+                             lagSum += static_cast<double>(lag);
+                             ++lagSamples;
+                         }
 
-        result.meanLag        = static_cast<float>(lagSum / static_cast<double>(lagSamples));
-        result.meanDivergence = harness.client.Corrections().divergenceMean();
-        return result;
-    };
+                         result.meanLag        = static_cast<float>(lagSum / static_cast<double>(lagSamples));
+                         result.meanDivergence = harness.client.Corrections().divergenceMean();
+                         return result;
+                     };
 
-    const Result serverOnly = run(/*clientRunsTheRule=*/false);
-    const Result bothSides  = run(/*clientRunsTheRule=*/true);
+    const Result serverOnly = run(/*clientRunsTheRule=*/ false);
+    const Result bothSides  = run(/*clientRunsTheRule=*/ true);
 
     CAPTURE(serverOnly.meanDivergence);
     CAPTURE(serverOnly.worstLag);
@@ -887,8 +888,8 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
     // as a collapse, because it is not one. A threshold (or contact) rule fires
     // at a slightly different instant on each side, since the client's body sits
     // wherever the last correction left it, and from there the trajectories
-    // separate again. This is exactly the amplification §3.1 warns about, and it
-    // is why the design refuses to lean on same-binary determinism.
+    // separate again — the amplification that is why the design refuses to lean
+    // on same-binary determinism.
     CHECK(bothSides.meanDivergence < serverOnly.meanDivergence * 0.8f);
     CHECK(bothSides.worstLag < serverOnly.worstLag * 0.8f);
 
@@ -899,10 +900,9 @@ TEST_CASE("a gameplay rule only the server runs makes its mirror trail; replicat
     //
     // Stated against the window rather than as an absolute distance, because it
     // is the window that bounds it: a body moving at speed v is at most ~v·T
-    // behind while a correction is being paid off. Under the pre-fix per-frame
-    // decay this was ~7x the per-correction error and stayed there indefinitely;
-    // the assertion is deliberately loose because the exact figure depends on
-    // how fast the body happens to be moving.
+    // behind while a correction is being paid off. The assertion is deliberately
+    // loose because the exact figure depends on how fast the body happens to be
+    // moving.
     CHECK(bothSides.meanLag < bothSides.worstLag * 0.6f);
 }
 
@@ -926,17 +926,17 @@ TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
     SpawnSharedFloor(harness);
 
     const ECS::Entity entity = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 1.f, 0.f},
-                                        /*isStatic=*/false);
+                                        /*isStatic=*/ false);
     harness.Step(400);
 
-    const ECS::Entity         mirror  = MirrorOf(harness, entity);
+    const ECS::Entity mirror  = MirrorOf(harness, entity);
     const Physics::RigidBody *replica = harness.clientScene.Get<Physics::RigidBody>(mirror);
     REQUIRE(replica != nullptr);
     const auto [restPosition, restRotation] = harness.clientPhysics.GetBodyTransform(*replica);
 
     // Well past the 2.5 m bound.
     harness.clientPhysics.ApplyBodyState(*replica, restPosition + glm::vec3{0.f, 0.f, 8.f}, restRotation,
-                                         glm::vec3{0.f}, glm::vec3{0.f}, /*activate=*/false);
+                                         glm::vec3{0.f}, glm::vec3{0.f}, /*activate=*/ false);
 
     const std::uint64_t correctionsBefore = harness.client.Corrections().applied;
     harness.client.RequestKeyframe();
@@ -948,7 +948,7 @@ TEST_CASE("a correction past the snap bound is admitted rather than smoothed")
     CHECK(glm::length(harness.clientScene.Get<ECS::Transform>(mirror)->position - restPosition) < 0.01f);
 }
 
-// ── Per-entity policy and the body channel (P2b) ─────────────────────────────
+// ── Per-entity policy and the body channel ───────────────────────────────────
 //
 // Excluding RigidBodyDescriptor means "replicate this as a visual, don't
 // simulate it on clients": no body state, no client-side Jolt body, and the
@@ -982,7 +982,7 @@ TEST_CASE("a descriptor-excluded entity becomes a visual-only mirror")
     SpawnSharedFloor(harness);
 
     const ECS::Entity falling = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 6.f, 0.f},
-                                         /*isStatic=*/false);
+                                         /*isStatic=*/ false);
     ExcludeDescriptor(harness.serverScene, falling);
 
     harness.Step(40);
@@ -1009,7 +1009,7 @@ TEST_CASE("a descriptor-excluded entity costs no body-state bytes")
     SpawnSharedFloor(harness);
 
     const ECS::Entity falling = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 6.f, 0.f},
-                                         /*isStatic=*/false);
+                                         /*isStatic=*/ false);
     ExcludeDescriptor(harness.serverScene, falling);
 
     harness.Step(60);
@@ -1020,18 +1020,16 @@ TEST_CASE("a descriptor-excluded entity costs no body-state bytes")
 
 TEST_CASE("a resting visual-only mirror stops costing bandwidth")
 {
-    // The cost model D6 has to honour. On a windowed host the writeback used to
-    // stamp every dynamic body's Transform every frame, sleeping ones included —
-    // so a visual-only mirror, which has no body channel and travels by Transform
-    // delta, would have resent its pose forever. Suppressing the no-op write at
-    // the source fixes it for this case and removes a false dirty for every
-    // resting body engine-wide.
+    // A visual-only mirror has no body channel and travels by Transform delta,
+    // so on a windowed host it is the writeback that decides whether a resting
+    // one keeps costing bandwidth: the writeback suppresses no-op writes, so a
+    // sleeping body stops dirtying its Transform.
     PhysicsHarness harness;
     harness.runRenderWriteback = true;
     SpawnSharedFloor(harness);
 
     const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 2.f, 0.f},
-                                       /*isStatic=*/false);
+                                       /*isStatic=*/ false);
     ExcludeDescriptor(harness.serverScene, crate);
 
     harness.Step(240); // fall, land, settle, sleep
@@ -1064,7 +1062,7 @@ TEST_CASE("excluding a descriptor mid-session tears the mirror's body down")
     SpawnSharedFloor(harness);
 
     const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 3.f, 0.f},
-                                       /*isStatic=*/false);
+                                       /*isStatic=*/ false);
     harness.Step(30);
 
     const ECS::Entity mirror = MirrorOf(harness, crate);
@@ -1083,15 +1081,15 @@ TEST_CASE("excluding a descriptor mid-session tears the mirror's body down")
 
 TEST_CASE("re-including a descriptor rebuilds the body at the authoritative pose")
 {
-    // Rides D11: policy moved, the descriptor did not, so its change tick still
-    // predates the baseline and only the force-send delivers it.
+    // Policy moved, the descriptor did not, so its change tick still predates
+    // the baseline and only the force-send delivers it.
     ReplicationConfig config;
     config.keyframeIntervalTicks = 0; // no sweep to rescue it
     PhysicsHarness harness(config);
     SpawnSharedFloor(harness);
 
     const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 3.f, 0.f},
-                                       /*isStatic=*/false);
+                                       /*isStatic=*/ false);
     ExcludeDescriptor(harness.serverScene, crate);
     harness.Step(40);
 
@@ -1123,7 +1121,7 @@ TEST_CASE("a stale body record cannot outlive the exclusion that ended it")
     SpawnSharedFloor(harness);
 
     const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 3.f, 0.f},
-                                       /*isStatic=*/false);
+                                       /*isStatic=*/ false);
     harness.Step(40);
     ExcludeDescriptor(harness.serverScene, crate);
     harness.Step(60); // several sweeps
@@ -1135,14 +1133,14 @@ TEST_CASE("a stale body record cannot outlive the exclusion that ended it")
 
 TEST_CASE("a bodied entity that withholds its Transform sends no body state either")
 {
-    // D9. Both client-side body builders require a Transform, so one can never be
+    // Both client-side body builders require a Transform, so no body can ever be
     // built — and body states it must drop on arrival are pure waste. The editor
     // warns about this shape; the server simply does not spend bandwidth on it.
     PhysicsHarness harness;
     SpawnSharedFloor(harness);
 
     const ECS::Entity crate = SpawnBox(harness.serverScene, harness.serverPhysics, {0.f, 4.f, 0.f},
-                                       /*isStatic=*/false);
+                                       /*isStatic=*/ false);
     {
         Replicated *marker = harness.serverScene.GetMut<Replicated>(crate);
         REQUIRE(marker != nullptr);

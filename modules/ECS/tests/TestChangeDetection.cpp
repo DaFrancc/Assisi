@@ -27,7 +27,7 @@ TEST_CASE("ChangeDetection: Add stamps a tracked component, and the tick advance
 
 TEST_CASE("ChangeDetection: GetMut stamps, Get does not")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Tracked>(e) != nullptr);
 
@@ -48,7 +48,7 @@ TEST_CASE("ChangeDetection: GetMut stamps, Get does not")
 
 TEST_CASE("ChangeDetection: Changed(entity, since) tracks a consumer bookmark")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Tracked>(e) != nullptr);
 
@@ -66,7 +66,7 @@ TEST_CASE("ChangeDetection: Changed(entity, since) tracks a consumer bookmark")
 
 TEST_CASE("ChangeDetection: MarkChanged stamps by ComponentId (type-erased path)")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Tracked>(e) != nullptr);
 
@@ -79,7 +79,7 @@ TEST_CASE("ChangeDetection: MarkChanged stamps by ComponentId (type-erased path)
 
 TEST_CASE("ChangeDetection: untracked components never stamp")
 {
-    Scene        scene;
+    Scene scene;
     const Entity e = scene.Create();
     REQUIRE(scene.Add<Position>(e, {1.0f}) != nullptr);
 
@@ -97,7 +97,7 @@ TEST_CASE("ChangeDetection: untracked components never stamp")
 
 TEST_CASE("ChangeDetection: swap-remove keeps ticks aligned with their components")
 {
-    Scene        scene;
+    Scene scene;
     const Entity a = scene.Create();
     const Entity b = scene.Create();
     REQUIRE(scene.Add<Tracked>(a, {1}) != nullptr);

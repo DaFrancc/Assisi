@@ -29,8 +29,9 @@
 
 namespace Assisi::Render
 {
-/// @brief Owner of an NVRHI vertex + index buffer pair for a single mesh,
-///        plus the submesh / LOD / material-slot tables that address it.
+/// @brief One mesh's range in a shared GeometryArena — which owns the NVRHI
+///        vertex/index buffers — plus the submesh / LOD / material-slot tables
+///        that address it.
 ///
 /// Vertex layout matches `Assisi::Geometry::Vertex`: Position, Normal,
 /// TextureCoordinates, Tangent. Draw submission addresses geometry as
@@ -40,7 +41,7 @@ namespace Assisi::Render
 /// draw time and never rewrite index data.
 class MeshBuffer
 {
-  public:
+public:
     MeshBuffer() = default;
 
     /// @brief Sub-allocates a range in @p arena and uploads `meshData` into it.
@@ -188,7 +189,8 @@ class MeshBuffer
     /// @brief Local-space bounding sphere over the whole mesh, for frustum culling.
     const Geometry::BoundingSphere &LocalBounds() const { return _localBounds; }
 
-    /// @brief Local-space AABB over the whole mesh (GPU-driven stage 1's cull refine).
+    /// @brief Local-space AABB over the whole mesh (the cull pass's refine after
+    /// the bounding-sphere reject).
     const Geometry::Aabb &LocalAabb() const { return _localAabb; }
 
     /// @brief Drawable index ranges, grouped by LOD (LOD0 first). Never empty
@@ -202,17 +204,17 @@ class MeshBuffer
     ///        materials). Indexed by SubMesh::MaterialSlot.
     const std::vector<Geometry::MaterialData> &Materials() const { return _materials; }
 
-  private:
+private:
     // The arena that owns this mesh's geometry, and where the mesh landed in it.
     // A pointer (not a raw buffer handle) so an arena grow/compaction that swaps
     // the underlying buffer is picked up automatically. Null until Upload().
     const GeometryArena *_arena = nullptr;
-    uint32_t             _vertexBase = 0; ///< Base offset into the arena, in vertices.
-    uint32_t             _indexBase = 0;  ///< Base offset into the arena, in indices.
-    uint32_t             _indexCount = 0;
-    uint32_t             _id = 0; ///< Assigned by AssetCache; 0 until then.
+    uint32_t _vertexBase = 0;             ///< Base offset into the arena, in vertices.
+    uint32_t _indexBase = 0;              ///< Base offset into the arena, in indices.
+    uint32_t _indexCount = 0;
+    uint32_t _id = 0;             ///< Assigned by AssetCache; 0 until then.
     Geometry::BoundingSphere _localBounds;
-    Geometry::Aabb           _localAabb;
+    Geometry::Aabb _localAabb;
     std::vector<Geometry::SubMesh>      _subMeshes;
     std::vector<Geometry::LodRange>     _lods;
     std::vector<Geometry::MaterialData> _materials;

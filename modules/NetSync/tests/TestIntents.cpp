@@ -24,7 +24,10 @@
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/MessageDispatch.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/NetSync/TestMessageHandlers.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
 
@@ -41,8 +44,8 @@ namespace
 struct Harness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
 
@@ -52,9 +55,11 @@ struct Harness
     std::uint64_t tick = 0;
 
     explicit Harness(ReplicationConfig config = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
-          client(transport, clientScene, pair.second)
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
+        client(transport, clientScene, pair.second)
     {
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
         server.AddConnection(pair.first);
         HandlerLog::Instance().Clear();
     }
@@ -112,7 +117,7 @@ TEST_CASE("an intent reaches its handler with the sender the wire says it came f
     harness.Step(4);
     REQUIRE(harness.client.IsSynchronized());
 
-    harness.Send(TestPlaceMarker{/*target=*/17, /*slot=*/3});
+    harness.Send(TestPlaceMarker{ /*target=*/ 17, /*slot=*/ 3});
 
     CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
     CHECK(HandlerLog::Instance().lastPlaceMarker.target == 17);
@@ -131,7 +136,7 @@ TEST_CASE("an unreliable intent takes the same door as a reliable one")
     Harness harness;
     harness.Step(4);
 
-    harness.Send(TestPing{/*x=*/1.f, /*y=*/2.f});
+    harness.Send(TestPing{ /*x=*/ 1.f, /*y=*/ 2.f});
 
     CHECK(HandlerLog::Instance().pingCalls == 1);
     CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(1.f));
@@ -147,7 +152,7 @@ TEST_CASE("an out-of-range field is rejected, not clamped")
     Harness harness;
     harness.Step(4);
 
-    harness.Send(TestPing{/*x=*/5000.f, /*y=*/0.f});
+    harness.Send(TestPing{ /*x=*/ 5000.f, /*y=*/ 0.f});
 
     CHECK(HandlerLog::Instance().pingCalls == 0);
     CHECK(harness.Diagnostics().intentsOutOfRange == 1);
@@ -156,7 +161,7 @@ TEST_CASE("an out-of-range field is rejected, not clamped")
     CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(0.f));
 
     // The connection survives: a rejected intent is a refusal, not a fault.
-    harness.Send(TestPing{/*x=*/1.f, /*y=*/1.f});
+    harness.Send(TestPing{ /*x=*/ 1.f, /*y=*/ 1.f});
     CHECK(HandlerLog::Instance().pingCalls == 1);
 }
 
@@ -168,19 +173,19 @@ TEST_CASE("an intent about an entity the sender does not control is dropped and 
     const ECS::Entity pawn = SpawnReplicated(harness.serverScene);
     harness.Step(8);
 
-    const NetId       netId  = harness.server.NetIdOf(pawn);
+    const NetId netId  = harness.server.NetIdOf(pawn);
     const ECS::Entity mirror = harness.client.EntityOf(netId);
     REQUIRE(mirror != ECS::NullEntity);
 
     // Nobody controls it yet, so the claim is false.
-    harness.Send(TestMovePawn{mirror, ECS::NullEntity, /*mode=*/1});
+    harness.Send(TestMovePawn{mirror, ECS::NullEntity, /*mode=*/ 1});
     CHECK(HandlerLog::Instance().movePawnCalls == 0);
     CHECK(harness.Diagnostics().intentsNotYours == 1);
 
     // Now it is theirs, and the same message goes through.
     harness.server.SetControl(pawn, harness.server.ClientIdOf(harness.serverSide()));
     harness.Step(4);
-    harness.Send(TestMovePawn{mirror, ECS::NullEntity, /*mode=*/1});
+    harness.Send(TestMovePawn{mirror, ECS::NullEntity, /*mode=*/ 1});
     CHECK(HandlerLog::Instance().movePawnCalls == 1);
     CHECK(harness.Diagnostics().intentsNotYours == 1); // unchanged
 }
@@ -207,7 +212,7 @@ TEST_CASE("only the field marked as the intent's subject is control-checked")
     REQUIRE(myMirror != ECS::NullEntity);
     REQUIRE(theirMirror != ECS::NullEntity);
 
-    harness.Send(TestMovePawn{myMirror, theirMirror, /*mode=*/2});
+    harness.Send(TestMovePawn{myMirror, theirMirror, /*mode=*/ 2});
 
     CHECK(HandlerLog::Instance().movePawnCalls == 1);
     CHECK(harness.Diagnostics().intentsNotYours == 0);
@@ -226,11 +231,11 @@ TEST_CASE("an event sent as an intent is turned away at the direction check")
     harness.Step(4);
 
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
-    const Core::Reflect::MessageMeta     *announce = registry.Find("TestAnnounce");
+    const Core::Reflect::MessageMeta *announce = registry.Find("TestAnnounce");
     REQUIRE(announce != nullptr);
 
-    const TestAnnounce forged{/*round=*/7};
-    Core::BitWriter    writer;
+    const TestAnnounce forged{ /*round=*/ 7};
+    Core::BitWriter writer;
     WriteMessageType(MessageType::Intent, writer);
     writer.WriteVarUInt64(harness.tick);
     REQUIRE(Core::Reflect::WriteMessage(*announce, &forged, writer));
@@ -275,7 +280,7 @@ TEST_CASE("a stale or future-dated intent is dropped by the tick window")
 
     // Far in the past: a late unreliable intent must not time-travel into a
     // world that has moved on.
-    REQUIRE(harness.client.SendIntent(TestPing{}, /*clientTick=*/1));
+    REQUIRE(harness.client.SendIntent(TestPing{}, /*clientTick=*/ 1));
     harness.Step(2);
     CHECK(HandlerLog::Instance().pingCalls == 0);
     CHECK(harness.Diagnostics().intentsStale == 1);
@@ -326,12 +331,11 @@ TEST_CASE("malformed and unknown intents are counted, and the connection lives")
 TEST_CASE("the host's own intent goes through the same door")
 {
     // A listen server's player is not a connection, so without this it would be
-    // the one participant whose intents skipped every check — and the one whose
-    // path no fuzz test ever covered.
+    // the one participant whose intents skipped every check.
     Harness harness;
     harness.Step(4);
 
-    harness.server.SubmitLocalIntent(TestPlaceMarker{/*target=*/5, /*slot=*/9});
+    harness.server.SubmitLocalIntent(TestPlaceMarker{ /*target=*/ 5, /*slot=*/ 9});
 
     CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
     CHECK(HandlerLog::Instance().lastPlaceMarker.target == 5);
@@ -349,7 +353,7 @@ TEST_CASE("the host is not exempt from validation")
     Harness harness;
     harness.Step(4);
 
-    harness.server.SubmitLocalIntent(TestPing{/*x=*/9999.f, /*y=*/0.f});
+    harness.server.SubmitLocalIntent(TestPing{ /*x=*/ 9999.f, /*y=*/ 0.f});
 
     CHECK(HandlerLog::Instance().pingCalls == 0);
     CHECK(harness.server.HostDiagnostics().intentsOutOfRange == 1);
@@ -385,7 +389,7 @@ TEST_CASE("an intent nobody handles is dropped and counted")
     Harness harness;
     harness.Step(4);
 
-    harness.Send(TestUnhandled{/*value=*/1});
+    harness.Send(TestUnhandled{ /*value=*/ 1});
 
     CHECK(harness.Diagnostics().intentsUnhandled == 1);
     CHECK(harness.Diagnostics().intentsAccepted == 0);

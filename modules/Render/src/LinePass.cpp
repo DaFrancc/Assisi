@@ -34,15 +34,15 @@ bool LinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
 
     const nvrhi::VertexAttributeDesc attributes[] = {
         nvrhi::VertexAttributeDesc()
-            .setName("POSITION")
-            .setFormat(nvrhi::Format::RGB32_FLOAT)
-            .setOffset(offsetof(LineVertex, position))
-            .setElementStride(sizeof(LineVertex)),
+        .setName("POSITION")
+        .setFormat(nvrhi::Format::RGB32_FLOAT)
+        .setOffset(offsetof(LineVertex, position))
+        .setElementStride(sizeof(LineVertex)),
         nvrhi::VertexAttributeDesc()
-            .setName("COLOR")
-            .setFormat(nvrhi::Format::RGBA32_FLOAT)
-            .setOffset(offsetof(LineVertex, color))
-            .setElementStride(sizeof(LineVertex)),
+        .setName("COLOR")
+        .setFormat(nvrhi::Format::RGBA32_FLOAT)
+        .setOffset(offsetof(LineVertex, color))
+        .setElementStride(sizeof(LineVertex)),
     };
     _inputLayout = device->createInputLayout(attributes, static_cast<uint32_t>(std::size(attributes)), _vertexShader);
 
@@ -62,8 +62,8 @@ bool LinePass::Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &
 bool LinePass::BuildPipelines(const nvrhi::FramebufferInfo &sceneFramebufferInfo)
 {
     // Shared state: line topology, no cull, alpha-blended composite into the scene
-    // target. The two pipelines differ only in depth-test enable — neither writes
-    // depth, so lines never occlude the scene or each other.
+    // target. The two pipelines differ only in depth-test enable and depth bias —
+    // neither writes depth, so lines never occlude the scene or each other.
     nvrhi::GraphicsPipelineDesc pipelineDesc;
     pipelineDesc.primType = nvrhi::PrimitiveType::LineList;
     pipelineDesc.VS       = _vertexShader;

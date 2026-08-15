@@ -56,9 +56,9 @@ fs::path WriteTriangleAssets()
         gltf.write(kTriangleGltf.data(), static_cast<std::streamsize>(kTriangleGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
-        std::ofstream  bin(root / "triangle.bin", std::ios::binary);
+        std::ofstream bin(root / "triangle.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
     }
@@ -96,8 +96,7 @@ TEST_CASE("ImportMesh: a single-material mesh degenerates to one full-range subm
     const std::expected<MeshData, MeshImportError> result = ImportMesh("triangle.gltf");
     REQUIRE(result.has_value());
 
-    // One submesh spanning the whole index range, one LOD, one material slot —
-    // the shape the flat importer's output maps onto with no behaviour change.
+    // One submesh spanning the whole index range, one LOD, one material slot.
     REQUIRE(result->SubMeshes.size() == 1);
     CHECK(result->SubMeshes[0].IndexOffset == 0);
     CHECK(result->SubMeshes[0].IndexCount == result->Indices.size());
@@ -186,11 +185,11 @@ fs::path WriteTwoMaterialAssets()
     }
     {
         // Layout: pos0 (z=0), pos1 (z=1), idx0, idx1 — matching the bufferViews.
-        const float    pos0[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
-        const float    pos1[9] = {0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f};
+        const float pos0[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float pos1[9] = {0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f};
         const uint16_t idx0[3] = {0, 1, 2};
         const uint16_t idx1[3] = {0, 1, 2};
-        std::ofstream  bin(root / "two.bin", std::ios::binary);
+        std::ofstream bin(root / "two.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(pos0), sizeof(pos0));
         bin.write(reinterpret_cast<const char *>(pos1), sizeof(pos1));
         bin.write(reinterpret_cast<const char *>(idx0), sizeof(idx0));
@@ -209,16 +208,16 @@ TEST_CASE("ImportMesh: two materials become two submeshes with extracted materia
     // A resolver stands in for the editor's AssetDatabase: it maps the texture's
     // resolved virtual path to a known id, and records the path it was asked for.
     const Assisi::Core::AssetId kGreenId = *Assisi::Core::AssetId::Parse("11111111-1111-4111-8111-111111111111");
-    std::string                 seenPath;
-    const auto                  resolveId = [&](std::string_view vpath) -> Assisi::Core::AssetId
-    {
-        if (vpath == "textures/green.png")
-        {
-            seenPath = std::string(vpath);
-            return kGreenId;
-        }
-        return {};
-    };
+    std::string seenPath;
+    const auto resolveId = [&](std::string_view vpath) -> Assisi::Core::AssetId
+                           {
+                               if (vpath == "textures/green.png")
+                               {
+                                   seenPath = std::string(vpath);
+                                   return kGreenId;
+                               }
+                               return {};
+                           };
 
     const std::expected<MeshData, MeshImportError> result = ImportMesh("two.gltf", resolveId);
     REQUIRE(result.has_value());
@@ -301,9 +300,9 @@ fs::path WriteLodAssets()
         gltf.write(kLodGltf.data(), static_cast<std::streamsize>(kLodGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
-        std::ofstream  bin(root / "lod.bin", std::ios::binary);
+        std::ofstream bin(root / "lod.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
     }
@@ -345,8 +344,8 @@ namespace
 {
 // Round-6 review C6: LOD0's node has a mesh whose only primitive lacks POSITION
 // (non-drawable), while LOD1's node is drawable. The importer skips LOD0's empty
-// bucket without pushing a LodRange, then pushes LOD1's — but increments
-// Lods[lod=1] on a size-1 vector, an out-of-bounds write.
+// bucket, so the LOD table has to be pre-sized by distinct LOD count — indexing
+// it by the dense lod value is otherwise an out-of-bounds write.
 constexpr std::string_view kLodOobGltf = R"({
   "asset": { "version": "2.0" },
   "scene": 0,
@@ -383,11 +382,11 @@ fs::path WriteLodOobAssets()
         gltf.write(kLodOobGltf.data(), static_cast<std::streamsize>(kLodOobGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
         const uint16_t pad          = 0;
-        const float    normals[9]   = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
-        std::ofstream  bin(root / "lodoob.bin", std::ios::binary);
+        const float normals[9]   = {0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f};
+        std::ofstream bin(root / "lodoob.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
         bin.write(reinterpret_cast<const char *>(&pad), sizeof(pad));
@@ -452,9 +451,9 @@ fs::path WriteMirroredAssets()
         gltf.write(kMirroredGltf.data(), static_cast<std::streamsize>(kMirroredGltf.size()));
     }
     {
-        const float    positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
+        const float positions[9] = {0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f};
         const uint16_t indices[3]   = {0, 1, 2};
-        std::ofstream  bin(root / "mirror.bin", std::ios::binary);
+        std::ofstream bin(root / "mirror.bin", std::ios::binary);
         bin.write(reinterpret_cast<const char *>(positions), sizeof(positions));
         bin.write(reinterpret_cast<const char *>(indices), sizeof(indices));
     }
@@ -479,7 +478,7 @@ TEST_CASE("ImportMesh: a mirrored (negative-scale) node flips winding back to CC
     // Under back-face culling with a CCW front face, the importer must swap two
     // indices per triangle to restore CCW-front in world space -> {0, 2, 1}.
     CHECK(result->Indices[0] == 0);
-    CHECK(result->Indices[1] == 2); // importer leaves the reversed winding {0,1,2}
+    CHECK(result->Indices[1] == 2);
     CHECK(result->Indices[2] == 1);
 
     fs::remove_all(root);

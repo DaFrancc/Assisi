@@ -11,23 +11,201 @@ codebase or engine in your own projects or forks is 100% welcome and free of cha
 with the license. I kindly ask that you credit the engine and myself
 (Francisco Vivas Puerto aka "DaFrancc") in both the repo and any games you make with this engine. Credit is not required, but it would be greatly appreciated.
 
-## Getting Started
-### 1. Clone the repo.
+# Getting Started
+## 1. Clone the repo.
 ```bash
 git clone https://github.com/DaFrancc/Assisi.git
 ```
 
-### 2. Install Tools
+## 2. Install Tools
 - [Make](https://www.gnu.org/software/make/)
 - [CMake](https://cmake.org/) 3.28+
 - [Ninja](https://ninja-build.org/)
+- [Python 3](https://www.python.org/) — runs `reflectgen` during the build (standard library only)
 
 The following compilers have been tested:
 - Windows — [MSVC](https://visualstudio.microsoft.com/) (Visual Studio 2022+)
 - Linux — [GCC](https://gcc.gnu.org/), [Clang](https://clang.llvm.org/)
 
-**Everything below is fetched and built automatically by CMake on first configure** — there is no
-separate package manager step, and nothing to install by hand:
+Every third-party C++ library the engine uses is fetched and built by CMake on first configure — none
+of them is a package you install. What your package manager *does* have to provide is the toolchain
+above plus a short list of system development packages: OpenSSL, and the Wayland/X11 headers GLFW
+builds its two backends against.
+
+<details>
+<summary><b>Windows</b></summary>
+
+Install [Visual Studio 2022+](https://visualstudio.microsoft.com/) with the **Desktop development with
+C++** workload (which brings MSVC, CMake, and Ninja), plus [Python 3](https://www.python.org/) if you
+do not already have it on `PATH`. Build from a *Developer Command Prompt* so the MSVC environment is
+set up.
+
+</details>
+
+### Linux
+
+<details>
+<summary><b>Arch</b></summary>
+
+```bash
+sudo pacman -S --needed base-devel git cmake ninja python \
+                        openssl \
+                        wayland libxkbcommon \
+                        libxcursor libxi libxinerama libxrandr \
+                        vulkan-icd-loader
+```
+
+Plus a Vulkan driver for your GPU.
+
+AMD:
+```bash
+sudo pacman -S vulkan-radeon
+```
+
+Intel:
+```bash
+sudo pacman -S vulkan-intel
+```
+
+NVIDIA (proprietary; brings its own Vulkan driver, so the Mesa packages above are not what you want):
+```bash
+sudo pacman -S nvidia nvidia-utils
+```
+
+`nvidia` builds against the stock `linux` kernel — on `linux-lts` or any other kernel, install
+`nvidia-dkms` in its place.
+
+Optional, only if you want to build with Clang as well as GCC:
+```bash
+sudo pacman -S clang
+```
+
+</details>
+
+<details>
+<summary><b>Fedora and other RHEL-based distributions (RHEL, Rocky, Alma)</b></summary>
+
+```bash
+sudo dnf install gcc-c++ make git cmake ninja-build python3 pkgconf-pkg-config \
+                 openssl-devel \
+                 wayland-devel libxkbcommon-devel \
+                 libXcursor-devel libXi-devel libXinerama-devel libXrandr-devel \
+                 vulkan-loader
+```
+
+Plus a Vulkan driver for your GPU.
+
+AMD and Intel (Mesa covers both):
+```bash
+sudo dnf install mesa-vulkan-drivers
+```
+
+NVIDIA: the proprietary driver brings its own Vulkan driver, and it comes from RPM Fusion rather than
+Fedora's own repositories. Enable those first:
+```bash
+sudo dnf install https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm \
+                 https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm
+```
+
+Then install the driver:
+```bash
+sudo dnf install akmod-nvidia xorg-x11-drv-nvidia
+```
+
+**Do not reboot yet.** The kernel module is built in the background and takes a few minutes; rebooting
+before it finishes leaves you with a broken driver. This prints the driver version once the module is
+ready, and nothing until then:
+```bash
+modinfo -F version nvidia
+```
+
+Reboot once it answers.
+
+`mesa-vulkan-drivers` is not what you want on this card — it carries Mesa's open-source drivers, and
+`xorg-x11-drv-nvidia` is what supplies the Vulkan driver your GPU actually runs.
+
+Those two URLs are Fedora's. On RHEL and its rebuilds the equivalent repositories are listed at
+[rpmfusion.org/Configuration](https://rpmfusion.org/Configuration).
+
+Optional, only if you want to build with Clang as well as GCC:
+```bash
+sudo dnf install clang
+```
+
+</details>
+
+<details>
+<summary><b>Debian and Ubuntu — untested</b></summary>
+
+Nobody has built the engine on a Debian-based distribution yet. What follows is a translation of the
+two lists above, not a tested recipe; corrections are welcome.
+
+It needs **Debian 13 (trixie) or newer**, or **Ubuntu 24.04 or newer**. Debian 12 (bookworm) is too
+old at both ends: the engine is C++23 and asks for CMake 3.28+, while bookworm ships GCC 12 and CMake
+3.25 — and `std::expected`, which this codebase returns its errors through, arrived in GCC 13.
+
+```bash
+sudo apt install build-essential git cmake ninja-build python3 pkg-config \
+                 libssl-dev \
+                 libwayland-dev libwayland-bin libxkbcommon-dev \
+                 libxcursor-dev libxi-dev libxinerama-dev libxrandr-dev \
+                 libvulkan1
+```
+
+Plus a Vulkan driver for your GPU.
+
+AMD and Intel (Mesa covers both):
+```bash
+sudo apt install mesa-vulkan-drivers
+```
+
+NVIDIA (proprietary; brings its own Vulkan driver).
+
+On Ubuntu, this picks the version that matches your card — use it rather than the Debian command
+below:
+```bash
+sudo ubuntu-drivers install
+```
+
+On Debian, the driver lives in the `contrib` and `non-free` components, which are not enabled by
+default:
+```bash
+sudo apt install nvidia-driver
+```
+
+Optional, only if you want to build with Clang as well as GCC:
+```bash
+sudo apt install clang
+```
+
+</details>
+
+<details>
+<summary><b>Other distributions</b></summary>
+
+Install the equivalents of those four package groups — they are the whole list, and the next dropdown
+says what each one is for.
+
+</details>
+
+<details>
+<summary><b>What those packages are for, what CMake fetches for you, and the CPU baseline</b></summary>
+
+| System packages | Why they are needed |
+|---|---|
+| OpenSSL headers | GameNetworkingSockets' crypto backend on Linux. This is a deliberate, documented exception to the tree's self-contained rule. Not needed at all with `ASSISI_ENABLE_NETWORKING=OFF`. |
+| Wayland + libxkbcommon | GLFW builds its Wayland backend by default and requires `wayland-client`, `wayland-cursor`, `wayland-egl`, and `xkbcommon` at configure time. GLFW vendors the protocol XML files, so `wayland-protocols` is *not* required — only `wayland-scanner`, which ships with the Wayland dev package. |
+| Xcursor, Xi, Xinerama, Xrandr | GLFW also builds its X11 backend by default; these pull in `libX11` and the Xorg protocol headers. Both backends are selected at runtime, so build both even if you only ever run one. |
+| Vulkan loader + GPU driver | **Runtime only.** The engine loads Vulkan dynamically, so no Vulkan SDK is needed to build — but nothing will render without a loader and an ICD. |
+
+Optionally, installing `simdjson` (Arch) or `simdjson-devel` (Fedora) makes fastgltf link the system
+copy instead of compiling its own bundled amalgamation. Both work. The system copy trims a little off
+the first build but leaves the resulting binary with a runtime dependency on that shared library; pass
+`-DCMAKE_DISABLE_FIND_PACKAGE_simdjson=TRUE` to force the self-contained build regardless of what is
+installed.
+
+**Everything in the next table is fetched and built automatically by CMake on first configure** —
+nothing in it is a package to install, pin, or vendor, on any platform:
 
 | Dependency | What it does |
 |---|---|
@@ -62,34 +240,36 @@ extensions that ship alongside it). This is a deliberate baseline — the engine
 instruction sets enabled globally for SIMD performance, so binaries will crash with an
 illegal-instruction fault on older CPUs.
 
-### 3. Configure
-#### Windows (from a Visual Studio Developer Command Prompt):
+</details>
+
+## 3. Configure
+### Windows (from a Visual Studio Developer Command Prompt):
 ```bash
 make configure-msvc
 ```
-#### Linux:
+### Linux (identical on every distribution):
 ```bash
 make configure-gcc    # GCC
 make configure-clang  # Clang
 ```
 - Note: The first configure will download and build all dependencies. This takes several minutes. Subsequent runs are fast.
-#### MacOS:
+### MacOS:
 - Currently unsupported, but you are free to fiddle around with it and submit a pull request.
 
-### 3b. (Optional) Create a New App
+## 3b. (Optional) Create a New App
 The setup scripts scaffold a new app under `apps/` and generate a `CMakeUserPresets.json` for it:
-#### Windows:
+### Windows:
 ```bash
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
 ```
-#### Linux:
+### Linux:
 ```bash
 chmod +x ./setup.sh && ./setup.sh
 ```
 
-### 4. Configure & Build
+## 4. Configure & Build
 
-#### Which build should I use?
+### Which build should I use?
 
 There are five build *variants*. They differ in how much the compiler optimizes, how much debug
 information is kept, and whether extra runtime checking is compiled in.
@@ -149,7 +329,7 @@ report to a log file, so a diagnostic survives even if the window dies.
 
 </details>
 
-#### Building
+### Building
 
 After initialization, you can build individual presets or use the all-in-one Makefile targets:
 
@@ -192,7 +372,7 @@ cmake --build --preset msvc-debug
 ./out/build/msvc-debug/apps/sandbox/Assisi-Sandbox.exe
 ```
 
-### 5. Run the Tests (optional)
+## 5. Run the Tests (optional)
 The unit tests (doctest) and the `reflectgen` golden-file tests run through CTest presets that
 mirror the build presets:
 
@@ -201,10 +381,10 @@ ctest --preset msvc-debug   # build first, then run all suites
 ctest --preset msvc-debug -R ECS   # a single suite
 ```
 
-## Understanding Assisi's Module Layout
+# Understanding Assisi's Module Layout
 Assisi is organized into several modules, each responsible for a specific aspect of the engine. All modules compile as static libraries under the `Assisi::` CMake namespace. Below is an overview of each module and its responsibilities:
 
-### Core
+## Core
 Core holds the pieces every other module needs. `Logger` writes to the console and to a file.
 `AssetSystem` is a small virtual filesystem: a read-only root for the assets the game ships with, a
 writable one for per-user files like saves and settings, and `std::expected` returns instead of
@@ -220,19 +400,19 @@ Extra tags adjust that — `ACOMP(replicable)` lets a component travel over the 
 keeps one field off the wire (see NetSync). `ComponentRegistry` is the runtime table of everything that
 was generated.
 
-### Math
+## Math
 Math is the vectors, matrices and quaternions everything else is written in terms of. Today it is mostly
 a thin wrapper around [GLM](https://github.com/g-truc/glm); the wrapper exists so engine-specific
 utilities and optimizations can be added later without every call site changing.
 
-### Window
+## Window
 Window creates the operating-system window and reads input from it. It manages GLFW's lifetime
 (`GlfwLibrary` is shared, so GLFW is initialised once and shut down when the last user of it goes away),
 and exposes `WindowContext` for the window itself and `InputContext` for polling the keyboard and mouse.
 `ActionMap` sits on top of that: it maps a name like `"Jump"` to a key or mouse button, loaded from
 `game.json`, so game code asks about actions rather than hardcoding keys.
 
-### Geometry
+## Geometry
 Geometry owns mesh and material *data* with no GPU involved, which is what lets importers and
 command-line tools use it without a Vulkan device. It provides `MeshData` / `Vertex` / `SubMesh` /
 `LodRange` for the geometry itself, `Bounds` (the bounding spheres and boxes that culling uses to decide
@@ -240,7 +420,7 @@ whether something is on screen), `DefaultMeshes` (the built-in cube, sphere and 
 `MaterialData` / `MaterialFile` — `.amat`, the on-disk material format. `MeshImporter` and `AssetImport`
 load glTF files through fastgltf, splitting a file's materials into separate assets as they import.
 
-### Render
+## Render
 Render draws the scene with **Vulkan**, through NVIDIA's
 [NVRHI](https://github.com/NVIDIA-RTX/NVRHI) hardware-abstraction layer. Windows and Linux; you do not
 need the Vulkan SDK to build, only a Vulkan-capable driver to run. `RenderSystem` and `VulkanContext`
@@ -263,7 +443,7 @@ turns asset paths into GPU meshes and textures, reusing anything already loaded 
 `GpuMarker.hpp` labels command buffers so RenderDoc and Nsight captures are readable; see
 [`docs/gpu-profiling-guide.md`](docs/gpu-profiling-guide.md).
 
-### ECS
+## ECS
 ECS (Entity-Component-System) is how game objects are represented: an entity is just an ID, its data
 lives in components attached to that ID, and systems run over every entity that has a particular set of
 components. This module is that machinery — `Scene` (the container it all lives in), `Registry` and
@@ -272,7 +452,7 @@ components and can skip the ones that also hold something else (`Without<>`). En
 generation counter, so a handle to an entity that has since been destroyed is caught as stale instead of
 quietly pointing at whatever reused its slot.
 
-### Runtime
+## Runtime
 Runtime is the ready-made components and systems most games need, built on ECS. The components are
 `Transform` (position, rotation and scale, with parenting through `Parent` and `PropagateTransforms`),
 `MeshRenderer`, `Camera`, and point/spot/directional lights. The systems are `SceneRenderer`, the default
@@ -283,7 +463,7 @@ references stored on components into loaded assets; and `Lifecycle`, whose `Dest
 pair defers entity destruction to the end of the frame so nothing is deleted out from under a system
 that is still iterating.
 
-### Physics
+## Physics
 Physics wraps [Jolt Physics](https://github.com/jrouwe/JoltPhysics) for rigid-body simulation.
 `PhysicsWorld` owns the simulation — creating bodies, stepping it forward, gravity. A simulated entity
 carries two components: `RigidBodyDescriptor`, the saved description of the body (its shape, and whether
@@ -291,7 +471,7 @@ it is static or dynamic), and `RigidBody`, the live handle to Jolt's copy of tha
 on load and never written to disk. Call `PhysicsWorld::Clear()` before loading a new level, or the
 previous level's bodies stay in the simulation.
 
-### Net
+## Net
 Net moves bytes between two machines and has no idea what they mean — it knows nothing about entities or
 components. It wraps [GameNetworkingSockets](https://github.com/ValveSoftware/GameNetworkingSockets)
 behind `NetTransport`, which opens and closes connections and sends each message either **reliable**
@@ -302,7 +482,7 @@ behind it.
 `CreateLoopbackPair()` hands back both ends of a connection living inside a single process. That is how
 the replication tests run: the real code path, without a network and without a test-only fake.
 
-### NetSync
+## NetSync
 NetSync is the layer that keeps two machines' scenes looking the same. Net moves the bytes; NetSync
 decides which bytes to move.
 
@@ -348,13 +528,13 @@ shows the same choices as a checklist. Design notes and the reasoning behind all
 [`docs/replication-optin-plan-v1.md`](docs/replication-optin-plan-v1.md) and
 [`docs/replication-plan-v4.md`](docs/replication-plan-v4.md).
 
-### Debug
+## Debug
 Debug is the developer UI: [Dear ImGui](https://github.com/ocornut/imgui) and
 [ImPlot](https://github.com/epezent/implot) wired up to a GLFW + **Vulkan** backend.
 `DebugUI::Initialize(window, vulkanContext)` has to be called after the Vulkan context exists. Override
 `OnImGui()` in your application class to draw your own panels and overlays.
 
-### App
+## App
 App is the framework that ties the lower modules together. `Application` is the base class you derive
 from: it runs physics on a fixed timestep (60 Hz by default, `AppConfig::physicsHz`) and paces rendering
 either to the display's refresh rate or to an optional FPS cap, switchable at runtime. You override
@@ -379,7 +559,7 @@ with: window setup, clear colour, physics rate. `OptionsConfig`, saved to `optio
 player changes: anti-aliasing mode, MSAA sample count, VSync and FPS limit, all editable in-app through
 the **F11** options window.
 
-### Editor
+## Editor
 The Editor is the level editor, built **as a library** instead of as an executable, so a game and its
 editor come out as two thin targets over the same code. `EditorApp` derives from `App::Application` and
 adds the fly camera, entity list, inspector (generated from reflection, so your own components show up in
@@ -391,7 +571,7 @@ networked session does not mean starting binaries by hand. `apps/sandbox` is a f
 of all this. The editor's overlays are opt-in at the renderer level (`enableEditorVisuals`), so a shipped
 game never creates those pipelines or loads editor assets.
 
-### Chiara
+## Chiara
 Chiara is the performance and memory analyzer — a frame profiler that is always on whenever it is
 compiled in. `ASSISI_PROFILE_SCOPE` and `ASSISI_PROFILE_COUNTER` record named scopes and counters into a
 lock-free ring buffer per thread, which is exported as Chrome Trace JSON and opens in
@@ -405,7 +585,7 @@ above it. Design notes are in [`docs/chiara-design-notes.md`](docs/chiara-design
 [`scripts/chiara-analyze.py`](scripts/chiara-analyze.py) reads a capture from the terminal when you want
 numbers rather than a flame chart.
 
-## Documentation
+# Documentation
 Per-module overviews are in the section above, and the public API is documented with Doxygen-style
 comments in the headers. Design notes and the rolling code-review docket live in [`docs/`](docs/) —
 including the architecture notes for [clustered lighting](docs/light-culling-design-notes.md),
@@ -426,10 +606,10 @@ Two practical guides:
   pitfalls, which are not guessable.
 - [`docs/remaining-work.md`](docs/remaining-work.md) — the running list of known gaps.
 
-## Useful Links
+# Useful Links
 - [Issue Tracker](https://github.com/DaFrancc/Assisi/issues)
 
-## AI Notice
+# AI Notice
 This project uses AI to help develop this project for the main purpose of education alongside some code generation, documentation,
 bug spotting, bug fixing, and temporary art creation (i.e. placeholders for the sake of development, but never to end
 up in full releases).

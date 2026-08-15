@@ -1,26 +1,46 @@
 {
-  "version": 1,
-  "profile": "Static",
   "entities": [
     {
       "components": {
         "DirectionalLight": {
-          "direction": [
-            -0.4,
-            -1.0,
-            -0.5
-          ],
           "color": [
             1.0,
             1.0,
             1.0
           ],
+          "direction": [
+            -0.4,
+            -1.0,
+            -0.5
+          ],
           "intensity": 0.5
         }
-      }
+      },
+      "name": "Entity"
     },
     {
       "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            5.0,
+            0.25,
+            5.0
+          ],
+          "isStatic": true
+        },
         "Transform": {
           "position": [
             0.0,
@@ -38,32 +58,33 @@
             0.5,
             10.0
           ]
-        },
+        }
+      },
+      "name": "Entity_1"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
         },
         "RigidBodyDescriptor": {
+          "enableCCD": true,
           "halfExtents": [
-            5.0,
-            0.25,
-            5.0
+            0.5,
+            0.5,
+            0.5
           ],
-          "isStatic": true,
-          "enableCCD": true
-        }
-      }
-    },
-    {
-      "components": {
+          "isStatic": false
+        },
         "Transform": {
           "position": [
             0.0,
@@ -81,18 +102,23 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Entity_2"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -100,13 +126,8 @@
             0.5,
             0.5
           ],
-          "isStatic": false,
-          "enableCCD": true
-        }
-      }
-    },
-    {
-      "components": {
+          "isStatic": false
+        },
         "Transform": {
           "position": [
             -3.0,
@@ -124,18 +145,23 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Entity_3"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -144,11 +170,7 @@
             0.5
           ],
           "isStatic": false
-        }
-      }
-    },
-    {
-      "components": {
+        },
         "Transform": {
           "position": [
             0.0,
@@ -166,18 +188,23 @@
             1.0,
             1.0
           ]
-        },
+        }
+      },
+      "name": "Entity_4"
+    },
+    {
+      "components": {
         "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
           "materialOverrides": [
             {
               "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
               "path": "materials/checker.amat"
             }
-          ]
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
         },
         "RigidBodyDescriptor": {
           "halfExtents": [
@@ -186,11 +213,7 @@
             0.5
           ],
           "isStatic": false
-        }
-      }
-    },
-    {
-      "components": {
+        },
         "Transform": {
           "position": [
             3.0,
@@ -208,31 +231,21 @@
             1.0,
             1.0
           ]
-        },
-        "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
-          "materialOverrides": [
-            {
-              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
-              "path": "materials/checker.amat"
-            }
-          ]
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.5,
-            0.5,
-            0.5
-          ],
-          "isStatic": false
         }
-      }
+      },
+      "name": "Entity_5"
     },
     {
       "components": {
+        "PointLight": {
+          "color": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "intensity": 150.0,
+          "radius": 8.0
+        },
         "Transform": {
           "position": [
             0.0,
@@ -250,20 +263,21 @@
             1.0,
             1.0
           ]
-        },
-        "PointLight": {
-          "color": [
-            1.0,
-            1.0,
-            1.0
-          ],
-          "intensity": 150.0,
-          "radius": 8.0
         }
-      }
+      },
+      "name": "Entity_6"
     },
     {
       "components": {
+        "PointLight": {
+          "color": [
+            0.2,
+            0.4,
+            1.0
+          ],
+          "intensity": 200.0,
+          "radius": 50.0
+        },
         "Transform": {
           "position": [
             -1.0,
@@ -281,20 +295,21 @@
             1.0,
             1.0
           ]
-        },
-        "PointLight": {
-          "color": [
-            0.2,
-            0.4,
-            1.0
-          ],
-          "intensity": 200.0,
-          "radius": 50.0
         }
-      }
+      },
+      "name": "Entity_7"
     },
     {
       "components": {
+        "PointLight": {
+          "color": [
+            1.0,
+            0.1,
+            0.1
+          ],
+          "intensity": 200.0,
+          "radius": 30.0
+        },
         "Transform": {
           "position": [
             5.0,
@@ -312,20 +327,27 @@
             1.0,
             1.0
           ]
-        },
-        "PointLight": {
-          "color": [
-            1.0,
-            0.1,
-            0.1
-          ],
-          "intensity": 200.0,
-          "radius": 30.0
         }
-      }
+      },
+      "name": "Entity_8"
     },
     {
       "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Parent": {
+          "parent": "Entity_4"
+        },
         "Transform": {
           "position": [
             0.0,
@@ -343,26 +365,18 @@
             0.5,
             0.5
           ]
-        },
-        "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
-          "materialOverrides": [
-            {
-              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
-              "path": "materials/checker.amat"
-            }
-          ]
-        },
-        "Parent": {
-          "parent": 4
         }
-      }
+      },
+      "name": "Entity_9"
     },
     {
       "components": {
+        "Camera": {
+          "farZ": 200.0,
+          "fovDegrees": 60.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
         "Transform": {
           "position": [
             0.0,
@@ -380,17 +394,36 @@
             1.0,
             1.0
           ]
-        },
-        "Camera": {
-          "fovDegrees": 60.0,
-          "nearZ": 0.1,
-          "farZ": 200.0,
-          "isActive": true
         }
-      }
+      },
+      "name": "Entity_10"
     },
     {
       "components": {
+        "Bounce": {
+          "rebound": 0.8
+        },
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "RigidBodyDescriptor": {
+          "enableCCD": true,
+          "halfExtents": [
+            0.3,
+            0.3,
+            0.3
+          ],
+          "isStatic": false
+        },
         "Transform": {
           "position": [
             2.5,
@@ -408,32 +441,14 @@
             0.6,
             0.6
           ]
-        },
-        "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
-          "materialOverrides": [
-            {
-              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
-              "path": "materials/checker.amat"
-            }
-          ]
-        },
-        "RigidBodyDescriptor": {
-          "halfExtents": [
-            0.3,
-            0.3,
-            0.3
-          ],
-          "isStatic": false,
-          "enableCCD": true
-        },
-        "Bounce": {
-          "rebound": 0.8
         }
-      }
+      },
+      "name": "Entity_11"
     }
-  ]
+  ],
+  "systems": [
+    "Bounce",
+    "InputDemo"
+  ],
+  "version": 2
 }

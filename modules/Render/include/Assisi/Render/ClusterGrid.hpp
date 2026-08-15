@@ -44,8 +44,8 @@ struct SpotLightGPU
     glm::vec4 positionRadius; ///< xyz = world position,       w = influence radius
     glm::vec4 directionInner; ///< xyz = direction (unit vec),  w = cos(innerAngle)
     glm::vec4 colorIntensity; ///< xyz = linear-RGB colour,     w = intensity
-    float     outerCutoff;    ///< cos(outerAngle)
-    float     _pad[3]{};
+    float outerCutoff;        ///< cos(outerAngle)
+    float _pad[3]{};
 };
 static_assert(sizeof(SpotLightGPU) == 64);
 
@@ -61,7 +61,7 @@ static_assert(sizeof(DirLightGPU) == 32);
 /// @brief Manages all buffers and compute shaders for clustered forward lighting.
 class ClusterGrid
 {
-  public:
+public:
     // ----- Grid constants --------------------------------------------------
     static constexpr uint32_t kNumX        = 16u;
     static constexpr uint32_t kNumY        = 9u;
@@ -85,17 +85,16 @@ class ClusterGrid
     /// [kMaxLightIndices, 2 * kMaxLightIndices) in the same buffer. Must match
     /// cluster_cull.comp's MAX_LIGHT_INDICES and cube_min.frag's kSpotIndexBase.
     ///
-    /// Sized generously: with the per-cluster cap removed (cluster_cull.comp
-    /// writes every intersecting light, not a fixed 64), the total across all
-    /// clusters is the only bound. A cluster whose reservation lands past the
-    /// end is clamped in the shader, so an overflow degrades gracefully (a few
-    /// distant lights drop) rather than writing out of bounds.
+    /// Sized generously: cluster_cull.comp writes every intersecting light with no
+    /// per-cluster cap, so the total across all clusters is the only bound. A
+    /// cluster whose reservation lands past the end is clamped in the shader, so an
+    /// overflow degrades gracefully (a few distant lights drop) rather than writing
+    /// out of bounds.
     static constexpr uint32_t kMaxLightIndices = 262144u;
 
-    /// Fixed light-data buffer capacities. Lights beyond these caps are
-    /// silently dropped by Buffer::Upload — generous enough for any scene
-    /// this engine currently loads, and avoids reallocating buffers every
-    /// frame the way the old OpenGL SSBOs did.
+    /// Fixed light-data buffer capacities, sized past any scene this engine loads
+    /// so the buffers never resize. Lights beyond a cap are dropped by
+    /// Buffer::Upload, which warns once per buffer when it truncates.
     static constexpr uint32_t kMaxPointLights = 1024u;
     static constexpr uint32_t kMaxSpotLights  = 1024u;
     static constexpr uint32_t kMaxDirLights   = 16u;
@@ -129,7 +128,7 @@ class ClusterGrid
     const Buffer &LightGridBuffer()   const { return _lightGridBuffer; }
     ///@}
 
-  private:
+private:
     nvrhi::IDevice *_device = nullptr;
 
     ComputeShader _buildShader;

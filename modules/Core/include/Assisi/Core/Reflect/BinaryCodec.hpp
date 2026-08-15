@@ -40,9 +40,9 @@
 /// field offset — 2/3/4/4/16 floats — and `EntityRef` as the raw 64 bits of
 /// `ECS::Entity` (`uint32 index` then `uint32 generation`, verified against
 /// modules/ECS/include/Assisi/ECS/Entity.hpp). Both choices keep Core's
-/// dependency surface exactly where it is; the cost is that this file owns two
-/// hardcoded layout facts, and the static asserts plus the protocol hash are what
-/// keep them honest.
+/// dependency surface exactly where it is; the cost is two hardcoded layout
+/// facts in this file, which TestBinaryCodec.cpp pins by redeclaring the entity
+/// handle and the glm arrays it expects.
 
 #include <cstddef>
 #include <cstdint>
@@ -80,7 +80,7 @@ using FieldMask = std::uint64_t;
 /// baseline). Bits past the component's field count are ignored.
 inline constexpr FieldMask kAllFields = ~FieldMask{0};
 
-/// @brief Maximum non-transient fields a component may have to be network-encodable.
+/// @brief Maximum wire fields a component may have to be network-encodable.
 ///
 /// The mask is one machine word, which keeps the per-block overhead at one
 /// bitfield read. No engine component is close to this; a component that grows
@@ -102,18 +102,18 @@ inline constexpr std::uint32_t kEntityRefBits = 64;
 ///
 /// The count prefix is attacker-controlled. The reader additionally checks the
 /// count against the bits actually remaining, which is the tighter bound for
-/// AssetId vectors (128 bits each); this cap is the belt to that's suspenders,
-/// and bounds the pathological case where the buffer really is that large.
+/// AssetId vectors (128 bits each); this cap bounds the pathological case where
+/// the buffer really is that large.
 inline constexpr std::size_t kMaxVectorElements = 4096;
 
 /// @brief Optional per-call hooks the codec routes reference-typed fields through.
 ///
-/// Today its only job is `EntityRef` translation. The codec deliberately does
-/// *not* know about NetIds: local `(index, generation)` handles are not stable
-/// across machines, but the map that fixes that is replication state (Stage 5),
-/// not codec state. Threading it as a hook means Stage 5 substitutes NetIds
-/// without this file changing at all — and leaves the codec independently
-/// testable with no replication session in scope.
+/// Two jobs: `EntityRef` and `InstanceRef` translation. The codec deliberately
+/// does *not* know about NetIds: local `(index, generation)` handles and local
+/// instance ids are not stable across machines, but the map that fixes that is
+/// replication state (Stage 5), not codec state. Threading it as a hook means
+/// Stage 5 substitutes NetIds without this file changing at all — and leaves the
+/// codec independently testable with no replication session in scope.
 ///
 /// A null hook (or a null context) writes the raw handle bits through unchanged,
 /// which is exactly what a same-process round trip — save games, tests, the
@@ -124,10 +124,17 @@ struct CodecContext
     std::function<std::uint64_t(std::uint64_t)> entityToWire;
     /// Decode side: wire id → local packed handle. The inverse of entityToWire.
     std::function<std::uint64_t(std::uint64_t)> entityFromWire;
+
+    /// Encode side: local blueprint instance id → the instance's `baseNetId`.
+    /// Applied to `AFIELD(instanceRef)` UInt32 fields, for the same reason
+    /// entityToWire exists: the local number names nothing on the other machine.
+    std::function<std::uint32_t(std::uint32_t)> instanceToWire;
+    /// Decode side: `baseNetId` → local instance id. The inverse.
+    std::function<std::uint32_t(std::uint32_t)> instanceFromWire;
 };
 
-/// @brief Number of fields the codec encodes for @p meta — its non-transient
-/// fields, which is also the bitmask's width.
+/// @brief Number of fields the codec encodes for @p meta — the fields that pass
+/// IsWireField, which is also the bitmask's width.
 [[nodiscard]] std::size_t CountCodecFields(const ComponentMeta &meta);
 
 /// @brief Mask with only field @p codecIndex set. Returns 0 for an out-of-range
@@ -194,9 +201,8 @@ bool ReadComponent(const ComponentMeta &meta, void *component, BitReader &reader
 // different message set would step over the right number of bytes and then
 // dispatch the wrong type for every id after the divergence. Real forward and
 // backward tolerance needs stable, name-derived ids and a handshake policy that
-// permits the mismatch in the first place; the prefix is what keeps that a
-// policy change rather than a format rewrite, for the day a title ships with
-// independent client and server patch cadences.
+// permits the mismatch in the first place; the prefix keeps that a policy change
+// rather than a format rewrite.
 
 /// @brief Writes a complete message block: id varint, byte length, then every
 /// field.
@@ -256,8 +262,8 @@ bool SkipMessageBody(BitReader &reader);
 inline constexpr std::uint8_t kCodecVersion = 1;
 
 /// @brief The canonical protocol layout text: codec version, then every
-/// component in id order with its non-transient fields' name, type, and
-/// quantization parameters.
+/// component in id order with its replication policy and its wire fields' name,
+/// type, and quantization parameters.
 ///
 /// This is what gets hashed, and it is deliberately readable — when two builds
 /// disagree, diffing the two descriptions names the offending field, which a
@@ -269,7 +275,7 @@ inline constexpr std::uint8_t kCodecVersion = 1;
 [[nodiscard]] std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components);
 
 /// @brief The message half of the same text: every registered `AMSG` in id
-/// order, with its direction, reliability, and wire fields.
+/// order, with its direction, reliability, independence, and wire fields.
 [[nodiscard]] std::string MessageLayoutDescription(std::span<const MessageMeta> messages);
 
 /// @brief ProtocolLayoutDescription over the whole ComponentRegistry *and* the
@@ -278,10 +284,7 @@ inline constexpr std::uint8_t kCodecVersion = 1;
 /// Messages are in here because that is what makes declaring one a versioning
 /// event: add a message, reorder its fields, or flip it from unreliable to
 /// reliable, and the hash moves, so a mismatched pair refuses to connect rather
-/// than misparsing each other. It is the story Unity built deliberately
-/// (RpcCollectionVersion), Godot approximates with an undiagnosable whole-set
-/// checksum, and Mirror gets wrong at sixteen bits — and here it falls out of
-/// messages being reflected structs.
+/// than misparsing each other.
 [[nodiscard]] std::string ProtocolLayoutDescription();
 
 /// @brief FNV-1a 64 of ProtocolLayoutDescription — the value exchanged at

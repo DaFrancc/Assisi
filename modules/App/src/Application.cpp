@@ -4,14 +4,15 @@
 // --- Platform timer (must come before other Windows headers) ----------------
 #ifdef _WIN32
 #    include <windows.h>
-#    include <dbghelp.h>
 #    include <timeapi.h>
-#    pragma comment(lib, "dbghelp.lib")
 #    pragma comment(lib, "winmm.lib")
 #endif
 
 // --- Engine headers ---------------------------------------------------------
 #include <Assisi/App/Application.hpp>
+#include <Assisi/App/CrashReport.hpp>
+#include <Assisi/Core/Diagnostics.hpp>
+
 #include <Assisi/Chiara/Profile.hpp>
 #include <Assisi/Chiara/Serializer.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
@@ -32,64 +33,6 @@
 #include <cstdlib>
 #include <optional>
 #include <thread>
-
-#ifdef _WIN32
-
-// Absolute crash-dump path, resolved under the writable user root at startup so
-// the write target is fixed before a crash (doing filesystem resolution inside
-// the handler, on a possibly-corrupt heap, is best avoided). Empty until the
-// Application constructor sets it; the handler falls back to a bare name.
-static std::string gCrashDumpPath;
-
-static LONG WINAPI CrashHandler(EXCEPTION_POINTERS *info)
-{
-    /* Write the minidump FIRST: Log::Fatal heap-allocates (std::format) and
-       takes the logger mutex, either of which can deadlock or re-fault on a
-       corrupted heap — losing the dump exactly when it matters. The dump path
-       below is Win32-only, no CRT heap. */
-    const char *dumpPath    = gCrashDumpPath.empty() ? "crash.dmp" : gCrashDumpPath.c_str();
-    bool        dumpWritten = false;
-    HANDLE hFile = CreateFileA(dumpPath, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (hFile != INVALID_HANDLE_VALUE)
-    {
-        MINIDUMP_EXCEPTION_INFORMATION mei{};
-        mei.ThreadId          = GetCurrentThreadId();
-        mei.ExceptionPointers = info;
-        mei.ClientPointers    = FALSE;
-        dumpWritten = MiniDumpWriteDump(GetCurrentProcess(), GetCurrentProcessId(), hFile, MiniDumpNormal, &mei,
-                                        nullptr, nullptr) != FALSE;
-        CloseHandle(hFile);
-    }
-
-    const DWORD code = info->ExceptionRecord->ExceptionCode;
-
-    const char *name = "UNKNOWN";
-    switch (code)
-    {
-    case EXCEPTION_ACCESS_VIOLATION:    name = "ACCESS_VIOLATION";    break;
-    case EXCEPTION_ILLEGAL_INSTRUCTION: name = "ILLEGAL_INSTRUCTION"; break;
-    case EXCEPTION_STACK_OVERFLOW:      name = "STACK_OVERFLOW";      break;
-    case EXCEPTION_INT_DIVIDE_BY_ZERO:  name = "INT_DIVIDE_BY_ZERO";  break;
-    case EXCEPTION_FLT_DIVIDE_BY_ZERO:  name = "FLT_DIVIDE_BY_ZERO";  break;
-    case EXCEPTION_IN_PAGE_ERROR:       name = "IN_PAGE_ERROR";       break;
-    default:                            break;
-    }
-
-    Assisi::Core::Log::Fatal("Crash: unhandled exception 0x{:08X} ({})", static_cast<uint32_t>(code), name);
-    if (dumpWritten)
-    {
-        Assisi::Core::Log::Fatal("Crash: minidump written to {}", dumpPath);
-    }
-
-    return EXCEPTION_EXECUTE_HANDLER;
-}
-
-static void AbortHandler(int)
-{
-    Assisi::Core::Log::Fatal("Crash: abort() called (assertion failure or std::terminate).");
-}
-
-#endif // _WIN32
 
 namespace Assisi::App
 {
@@ -126,30 +69,58 @@ struct TimerResolutionScope
 
 // ---------------------------------------------------------------------------
 
+// Ceiling applied before game.json is available. High enough that it can never
+// trim below a configured keepLogs/keepDumps, low enough to bound a directory
+// on a build that never reaches InitializeCore.
+constexpr uint32_t kRetentionBackstop = 50;
+
 Application::Application()
 {
-    // Only infallible setup belongs in the constructor. Logging is wired up
-    // first so that any log lines emitted by derived-class member constructors
-    // (which run after this base ctor) are captured. All fallible engine
-    // bring-up lives in Initialize() so failures can unwind normally instead
-    // of std::exit()-ing past every destructor.
-    // Log and crash dump are writable runtime outputs — resolve them under the
-    // user root (defaults to the exe dir) so they don't depend on the CWD the
-    // process was launched from. The user root initializes lazily here, before
+    // Only infallible setup belongs in the constructor. Logging is wired up first
+    // so log lines from derived-class member constructors (which run after this
+    // base ctor) are captured; all fallible bring-up lives in Initialize(), so a
+    // failure unwinds normally instead of std::exit()-ing past every destructor.
+    //
+    // Log and crash report are writable runtime outputs, resolved under the user
+    // root (defaults to the exe dir) so they don't depend on the CWD the process
+    // was launched from. The user root initializes lazily here, before
     // AssetSystem::Initialize() discovers the read-only asset root.
-    Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
-    const std::filesystem::path logPath = Core::AssetSystem::ResolveUser("assisi.log").value_or("assisi.log");
+    //
+    // A console sink only when there is somewhere for it to go: a shipped GUI
+    // build has no console, and an unconditional one would format every line and
+    // write it to a handle nothing can read. The file sink below is the log's real
+    // destination there.
+    if (Core::HasConsoleOutput())
+    {
+        Core::GetLogger().AddSink(std::make_shared<Core::ConsoleSink>());
+    }
+    // One file per launch, named for when the process started: a single truncated
+    // log is destroyed by the relaunch after the crash it explains.
+    const std::string logName = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::filesystem::path logPath = Core::AssetSystem::ResolveUser(logName).value_or(logName);
+
+    // Backstop retention, deliberately *before* this run's log exists — the one
+    // file that must never be deleted cannot be, because there is nothing to
+    // delete yet. game.json has not been read (it needs the asset system), so
+    // this cannot use keepLogs; the cap is fixed and generous precisely so it
+    // can never cut below anyone's configured value. InitializeCore prunes to
+    // the real counts once they are known.
+    //
+    // Here as well as there because this runs on every launch whatever fails
+    // afterwards: an install that fails asset init would otherwise write a log
+    // every launch and prune none, growing without bound.
+    const std::filesystem::path userRoot = logPath.parent_path();
+    Core::PruneOldFiles(userRoot, "assisi-", ".log", kRetentionBackstop);
+    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), kRetentionBackstop);
+
     Core::GetLogger().AddSink(std::make_shared<Core::FileSink>(logPath));
 
-#ifdef _WIN32
-    const std::expected<std::filesystem::path, Core::AssetError> dumpPath = Core::AssetSystem::ResolveUser("crash.dmp");
-    if (dumpPath)
-    {
-        gCrashDumpPath = dumpPath->string();
-    }
-    SetUnhandledExceptionFilter(CrashHandler);
-    std::signal(SIGABRT, AbortHandler);
-#endif
+    // Named with the same launch stamp as the log, so a report and the log that
+    // led up to it pair by name. Resolved now, before anything can crash: doing
+    // filesystem resolution inside a handler, on a possibly-corrupt heap, is
+    // exactly what the handler cannot afford.
+    const std::string crashName = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
+    InstallCrashHandlers(Core::AssetSystem::ResolveUser(crashName).value_or(crashName));
 }
 
 bool Application::Initialize()
@@ -197,6 +168,25 @@ bool Application::InitializeCore()
     _config  = AppConfig::LoadFromJson();
     _options = OptionsConfig::LoadFromJson();
 
+    // Retention runs here rather than in the constructor because it is game.json
+    // that says how many to keep. The counts are totals including this run.
+    //
+    // Both calls name this run's own artifact as protected. Relying on it
+    // sorting newest is not enough: LaunchStamp() is local time, so a DST
+    // fall-back or an NTP step backwards makes it sort oldest and it is deleted
+    // first — the log while its descriptor is still open.
+    //
+    // Crash reports are pruned at startup, not at crash time — the crash handler
+    // has no business enumerating a directory. This run's report does not exist
+    // yet, so a run that does crash ends with keepDumps + 1 on disk until the
+    // next launch trims it. Overshooting by one beats doing directory work with
+    // a corrupt heap.
+    const std::filesystem::path &userRoot   = Core::AssetSystem::GetUserRoot();
+    const std::string logName    = std::format("assisi-{}.log", Core::LaunchStamp());
+    const std::string crashName  = std::format("crash-{}{}", Core::LaunchStamp(), CrashReportExtension());
+    Core::PruneOldFiles(userRoot, "assisi-", ".log", _config.keepLogs, logName);
+    Core::PruneOldFiles(userRoot, "crash-", CrashReportExtension(), _config.keepDumps, crashName);
+
     // Either source turns it on; a --server flag must not be undone by a config
     // file that says nothing about headless mode.
     _headless = _headless || _config.headless;
@@ -231,7 +221,7 @@ bool Application::InitializePresentation()
     }
 
     Debug::DebugUI::Initialize(*_window, *Render::RenderSystem::GetVulkanContext(),
-                               /*persistLayout=*/!_restrictedViewer);
+                               /*persistLayout=*/ !_restrictedViewer);
 
     _input = std::make_unique<Window::InputContext>(*_window);
 
@@ -253,14 +243,14 @@ bool Application::InitializePresentation()
 Window::WindowContext &Application::GetWindow() const
 {
     ASSISI_ASSERT(_window != nullptr, "GetWindow() in a headless process — there is no window. Guard with "
-                                      "IsHeadless()/HasPresentation().");
+                  "IsHeadless()/HasPresentation().");
     return *_window;
 }
 
 Window::InputContext &Application::GetInput() const
 {
     ASSISI_ASSERT(_input != nullptr, "GetInput() in a headless process — there are no input devices. Guard with "
-                                     "IsHeadless()/HasPresentation().");
+                  "IsHeadless()/HasPresentation().");
     return *_input;
 }
 
@@ -319,11 +309,10 @@ constexpr double kSlowFrameMs = 8.0;
 /// it ratchets up fast when a sleep runs long and decays slowly otherwise, so it
 /// stays just big enough to avoid overshooting without over-reserving spin time.
 ///
-/// The old version reserved a fixed 2ms spin margin, so every capped frame
-/// busy-waited up to 2ms. On Linux (hi-res timers) the real overshoot is ~60us,
-/// so the margin converges there and the spin all but vanishes; on Windows (even
-/// with a 1ms timer period) it settles nearer 1ms. Static (not thread_local) is
-/// fine — only the main loop calls this.
+/// On Linux (hi-res timers) the real overshoot is ~60us, so the margin converges
+/// there and the spin all but vanishes; on Windows (even with a 1ms timer period)
+/// it settles nearer 1ms. Static (not thread_local) is fine — only the main loop
+/// calls this.
 void SleepUntil(Clock::time_point target)
 {
     static double marginSec = 1e-3; // conservative seed; converges within a few frames
@@ -331,7 +320,7 @@ void SleepUntil(Clock::time_point target)
     const double remainingSec = Seconds(target - Clock::now()).count();
     if (remainingSec > marginSec)
     {
-        const double           requestSec = remainingSec - marginSec;
+        const double requestSec = remainingSec - marginSec;
         const Clock::time_point before     = Clock::now();
         std::this_thread::sleep_for(Seconds(requestSec));
         const double overshootSec = std::max(0.0, Seconds(Clock::now() - before).count() - requestSec);
@@ -360,21 +349,18 @@ void Application::Run()
     TimerResolutionScope timerResolution;
 #endif
 
-    // Clock is already aliased at file scope; only Seconds is local.
-    using Seconds = std::chrono::duration<double>;
-
     const double physicsStep = 1.0 / _config.physicsHz;
 
     OnStart();
 
     Clock::time_point prevTime       = Clock::now();
     Clock::time_point nextRenderTime = Clock::now();
-    double            accumulator    = 0.0;
+    double accumulator    = 0.0;
 
-    double  fpsAccum       = 0.0;
+    double fpsAccum       = 0.0;
     int32_t fpsFrameCount  = 0;
-    double  cpuMsAccum     = 0.0;
-    double  gpuMsAccum     = 0.0;
+    double cpuMsAccum     = 0.0;
+    double gpuMsAccum     = 0.0;
 
     // Headless pacing target: the next fixed tick. A windowed process paces on
     // frames (vsync or the FPS cap); a server has no frames, so without this it
@@ -391,16 +377,14 @@ void Application::Run()
         //
         // Two reasons, and the second is why it is here rather than just before
         // the render it paces. Input polled after the sleep is acted on
-        // immediately, where sleeping mid-frame left every input up to a whole
-        // pacing interval stale by the time it reached the screen — 5 ms of the
-        // 7 ms frame, on a 144 cap. And sitting above `now` puts the sleep
-        // outside the measured window entirely, so cpuMs no longer has to
-        // subtract it back out; one less term to keep in sync with the code,
-        // which is precisely how the unaccounted figure went wrong before.
+        // immediately, where sleeping mid-frame leaves every input up to a whole
+        // pacing interval stale by the time it reaches the screen — 5 ms of the
+        // 7 ms frame, on a 144 cap. And sitting above `now` puts the sleep outside
+        // the measured window entirely, so cpuMs does not have to subtract it back
+        // out; one less term to keep in sync with the rest of the loop.
         //
-        // The cost is that render start now jitters with however long input,
-        // fixed-update and update took. That is ~0.16 ms against ~5 ms of
-        // latency saved, so it is not a close call.
+        // The cost is that render start jitters with however long input,
+        // fixed-update and update took: ~0.16 ms against ~5 ms of latency saved.
         //
         // Pacing is exclusive with vsync: only cap in FpsLimit mode with a
         // finite limit. In VSync mode FIFO present paces us; with an unlimited
@@ -437,11 +421,10 @@ void Application::Run()
             sleepMs = Seconds(Clock::now() - sleepStart).count() * 1000.0;
 
             // Advance the target rather than restarting it from now. SleepUntil
-            // can only overshoot, so `= now + period` absorbed every overshoot
-            // permanently and the loop ran a hair under the cap forever — a
-            // measured 6.999 ms against a 6.944 ms period, 142.9 fps instead of
-            // 144. Accumulating the period corrects the overshoot on the next
-            // frame instead.
+            // can only overshoot, so `= now + period` absorbs every overshoot
+            // permanently and runs a hair under the cap forever — 6.999 ms against
+            // a 6.944 ms period, 142.9 fps instead of 144. Accumulating the period
+            // corrects the overshoot on the next frame instead.
             const Clock::duration period =
                 std::chrono::duration_cast<Clock::duration>(Seconds(1.0 / _options.fpsLimit));
             nextRenderTime += period;
@@ -458,14 +441,14 @@ void Application::Run()
         }
 
         const Clock::time_point now   = Clock::now();
-        const double            rawDt = Seconds(now - prevTime).count();
-        const double            dt    = std::min(rawDt, 0.25);
+        const double rawDt = Seconds(now - prevTime).count();
+        const double dt    = std::min(rawDt, 0.25);
         prevTime                      = now;
 
         // Per-phase stopwatches for the slow-frame diagnostic below. Cheap
         // (steady_clock reads), and only reported when a frame actually spikes.
         const auto phaseMs = [](Clock::time_point from, Clock::time_point to)
-        { return Seconds(to - from).count() * 1000.0; };
+                             { return Seconds(to - from).count() * 1000.0; };
 
         const Clock::time_point inputStart = Clock::now();
         {
@@ -515,6 +498,15 @@ void Application::Run()
         {
             ASSISI_PROFILE_SCOPE("drain-main");
             _jobs.DrainMain(_mainThreadTaskBudget);
+
+            // System installs queued by a blueprint spawn land here too, and for
+            // the same reason the loads above do: spawning usually happens inside
+            // a system, and SystemRegistry invalidates its cached execution order
+            // on every registration — so registering mid-walk mutates what is
+            // being iterated. Before OnUpdate, so a spawn made last frame is
+            // running this one. Through the app, which is what owns the worlds the
+            // queues live on.
+            InstallQueuedSystems();
         }
         const Clock::time_point drainEnd = Clock::now();
 
@@ -534,11 +526,11 @@ void Application::Run()
             _headless ? nullptr : Render::RenderSystem::GetVulkanContext();
         if (vulkanContext)
         {
-            // Scoped because it is the other thing that used to sit between two
-            // scopes and show as a blank gap. Normally a compare and nothing
-            // else; when the user does flip the option it rebuilds the swapchain,
-            // and a multi-millisecond stall with no slice under it is exactly
-            // the kind of hole that sends you hunting in the wrong place.
+            // Scoped so it cannot show as a blank gap between two slices. Normally
+            // a compare and nothing else; when the user does flip the option it
+            // rebuilds the swapchain, and a multi-millisecond stall with no slice
+            // under it is exactly the kind of hole that sends you hunting in the
+            // wrong place.
             ASSISI_PROFILE_SCOPE("vsync-reconcile");
             vulkanContext->SetVSync(_options.frameSync == FrameSyncMode::VSync);
         }
@@ -564,12 +556,8 @@ void Application::Run()
         // it: the frames-in-flight throttle where BeginFrame() blocks on the GPU
         // (reported by the context). What's left is the real CPU cost, so
         // comparing it against the GPU timer-query time shows which side is
-        // bound.
-        //
-        // The pacing sleep used to need subtracting here too. It now happens
-        // above `now`, outside the window this measures, so there is nothing to
-        // correct for — the term that has to agree with code elsewhere in the
-        // loop is simply gone.
+        // bound. The pacing sleep happens above `now`, outside the window this
+        // measures, so it needs no correction here.
         const double gpuWaitMs = vulkanContext ? vulkanContext->GetLastGpuWaitMs() : 0.0;
         const double cpuMs     = std::max(0.0, Seconds(Clock::now() - now).count() * 1000.0 - gpuWaitMs);
         const double gpuMs = vulkanContext ? static_cast<double>(vulkanContext->GetLastGpuFrameTimeMs()) : 0.0;
@@ -609,10 +597,9 @@ void Application::Run()
         ASSISI_PROFILE_COUNTER("jobs/main-queue-depth", static_cast<double>(_jobs.MainQueueDepth()));
         PumpChiaraCounters();
 
-        // The breakdown that used to be spelled out here is a capture now. What
-        // survives is the pointer to it: a spike you can see in the log but not
-        // explain is worse than useless, and the whole point of Chiara is that
-        // the explanation is one dump away.
+        // A pointer to the capture rather than the breakdown itself: a spike you
+        // can see in the log but not explain is worse than useless, and the
+        // explanation is one dump away.
         if (cpuMs >= kSlowFrameMs)
         {
             Core::Log::Info("Slow frame {} — {:.2f} ms cpu (gpu {:.2f}, wait {:.2f}, unaccounted {:.2f}); "
@@ -690,16 +677,16 @@ void Application::PumpChiaraCounters()
         }
     }
 
-    // Physics allocation *churn* per frame, differenced from running totals —
-    // Jolt's free hook takes no size, so residency is not knowable without a
-    // header on every block. Churn is the perf-relevant signal anyway: a frame
-    // that allocates is a frame that will pay to free.
     // Streams a running session's events to disk before the rings can wrap over
     // them. Returns immediately unless one is running, and even then only does
     // real work when a buffer is filling — so the cost of asking every frame is
     // a couple of atomic loads.
     Chiara::PumpSession();
 
+    // Physics allocation *churn* per frame, differenced from running totals —
+    // Jolt's free hook takes no size, so residency is not knowable without a
+    // header on every block. Churn is the perf-relevant signal anyway: a frame
+    // that allocates is a frame that will pay to free.
     const Physics::JoltAllocationStats jolt = Physics::GetJoltAllocationStats();
     ASSISI_PROFILE_COUNTER("physics/alloc-count-per-frame",
                            static_cast<double>(jolt.count - _lastJoltAllocCount));

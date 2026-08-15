@@ -47,7 +47,7 @@ namespace Assisi::App
 ///   - OnShutdown()              — called after the loop exits
 class Application
 {
-  public:
+public:
     Application();
     virtual ~Application();
 
@@ -58,11 +58,11 @@ class Application
     /// server mode. Must be called before Initialize(); after that the split has
     /// already happened.
     ///
-    /// This is a flag on Application rather than a separate headless class on
-    /// purpose: the simulation hooks, the SystemRegistry, and (later) the
-    /// listen server embedding a server inside a client process all want the
-    /// two modes to be the *same* object with one of its halves not brought up.
-    /// `game.json` may also set it; Initialize() takes either.
+    /// A flag on Application rather than a separate headless class: the simulation
+    /// hooks, the SystemRegistry, and a listen server embedding a server inside a
+    /// client process all want the two modes to be the *same* object with one of
+    /// its halves not brought up. `game.json` may also set it; Initialize() takes
+    /// either.
     void SetHeadless(bool headless) { _headless = headless; }
 
     /// @brief Whether this process runs without presentation. Valid before
@@ -100,7 +100,7 @@ class Application
 
     void Run();
 
-  protected:
+protected:
     virtual void OnStart()               = 0;
     virtual void OnFixedUpdate(float dt) = 0;
     virtual void OnUpdate(float dt)      = 0;
@@ -123,6 +123,18 @@ class Application
     /// entity destruction is applied so it never mutates pools mid-Query. Default
     /// is a no-op: Application owns no scene, so the app must opt in.
     virtual void FlushDeferred() {}
+
+    /// @brief Called once per frame at the main-thread safe point — after the
+    /// marshalled work where deferred level loads land, before OnUpdate — to apply
+    /// the system installs a blueprint spawn queued (App::DrainSystemInstalls, once
+    /// per resident world). Default is a no-op, for the same reason FlushDeferred's
+    /// is: Application owns no worlds, so the app must opt in.
+    ///
+    /// Ordering is the whole point. Spawning a blueprint usually happens *inside* a
+    /// system, and SystemRegistry invalidates its cached execution order on every
+    /// registration — so installing mid-walk mutates what is being iterated. Doing
+    /// it here costs one frame: the car exists immediately and drives from the next.
+    virtual void InstallQueuedSystems() {}
 
     /// @warning Both assert in a headless process, which has neither. Guard with
     /// IsHeadless() (or HasPresentation()) in code that runs in both modes.
@@ -216,8 +228,8 @@ class Application
         std::span<const float> cpuMs;
         std::span<const float> gpuMs;
         std::span<const float> frameDeltaMs;
-        int32_t                offset;
-        int32_t                sampleCount;
+        int32_t offset;
+        int32_t sampleCount;
     };
     FrameStatsView GetFrameStats() const
     {
@@ -225,7 +237,7 @@ class Application
     }
     static constexpr int32_t FrameHistory() { return kFrameHistory; }
 
-  private:
+private:
     /// Everything a dedicated server needs: assets, config, options, jobs.
     [[nodiscard]] bool InitializeCore();
     /// Everything only a windowed process needs: window, renderer, debug UI,
@@ -243,7 +255,7 @@ class Application
     /// -c (see docs/chiara-design-notes.md).
     Chiara::InitGuard _chiara;
 
-    AppConfig     _config;
+    AppConfig _config;
     OptionsConfig _options;
 
     std::unique_ptr<Window::WindowContext> _window;
@@ -256,8 +268,8 @@ class Application
     Core::JobSystem _jobs;
 
     Render::PostProcess _postProcess;
-    Core::EventQueue    _events;
-    bool                _initialized = false;
+    Core::EventQueue _events;
+    bool _initialized = false;
 
     bool _headless = false;
     bool _restrictedViewer = false;
@@ -275,8 +287,8 @@ class Application
     std::uint64_t _simTick = 0;
 
     int32_t _fps = 0;
-    double  _cpuFrameMs = 0.0;
-    double  _gpuFrameMs = 0.0;
+    double _cpuFrameMs = 0.0;
+    double _gpuFrameMs = 0.0;
 
     // Leftover accumulator as a fraction of a physics step, in [0, 1). Set once
     // per frame after the fixed-update loop; read by OnRender via
@@ -293,19 +305,19 @@ class Application
     // slot to overwrite, which is also the oldest sample — the values_offset
     // ImGui::PlotLines() wants. _frameSampleCount saturates at kFrameHistory so
     // the stats ignore the zero-filled slots before the buffer first fills.
-    static constexpr int32_t          kFrameHistory = 360;
+    static constexpr int32_t kFrameHistory = 360;
     std::array<float, kFrameHistory>  _cpuHistory{};
     std::array<float, kFrameHistory>  _gpuHistory{};
     std::array<float, kFrameHistory>  _frameTimeHistory{}; // full frame delta, for 1%-low etc.
-    int32_t                           _frameHistoryOffset = 0;
-    int32_t                           _frameSampleCount = 0;
+    int32_t _frameHistoryOffset = 0;
+    int32_t _frameSampleCount = 0;
 
     /// @brief Samples the once-a-frame memory and subsystem counters into the
     /// capture. Cheap by construction — everything here is an atomic read or a
     /// scheduled syscall, never a walk of anything.
     void PumpChiaraCounters();
 
-  public:
+public:
     /// @brief Draws the capture control panel — recording toggle, ring coverage,
     /// and the dump buttons. Call it from OnImGui inside a window of your own;
     /// it draws contents, not a window, so a game can put it wherever it likes.
@@ -332,17 +344,12 @@ class Application
     /// @brief Ends the session and closes its file. Harmless if none is running.
     void StopChiaraSession();
 
-  private:
+private:
 
     /// Running Jolt allocation totals as of the previous frame, so the counters
     /// can report a per-frame rate rather than an ever-climbing total.
     uint64_t _lastJoltAllocCount = 0;
     uint64_t _lastJoltAllocBytes = 0;
-
-    // RenderFrame's sub-phase breakdown used to live here as a struct of doubles
-    // scraped into the slow-frame log line. It is now profile scopes inside
-    // RenderFrame — same numbers, but scrubbable, nested under the frame, and
-    // costing nothing in a build without capture.
 };
 
 } // namespace Assisi::App

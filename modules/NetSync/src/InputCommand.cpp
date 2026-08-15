@@ -58,13 +58,13 @@ bool ClampInputCommand(InputCommand &command, const InputLimits &limits)
     // it would slip past a naive clamp and then poison whatever it is added to.
     // Treat it as the absence of input.
     const auto sanitize = [&clean](float &value)
-    {
-        if (!std::isfinite(value))
-        {
-            value = 0.f;
-            clean = false;
-        }
-    };
+                          {
+                              if (!std::isfinite(value))
+                              {
+                                  value = 0.f;
+                                  clean = false;
+                              }
+                          };
     sanitize(command.moveX);
     sanitize(command.moveY);
     sanitize(command.lookYaw);
@@ -83,14 +83,14 @@ bool ClampInputCommand(InputCommand &command, const InputLimits &limits)
     }
 
     const auto clampAbs = [&clean](float &value, float limit)
-    {
-        const float clamped = std::clamp(value, -limit, limit);
-        if (clamped != value)
-        {
-            value = clamped;
-            clean = false;
-        }
-    };
+                          {
+                              const float clamped = std::clamp(value, -limit, limit);
+                              if (clamped != value)
+                              {
+                                  value = clamped;
+                                  clean = false;
+                              }
+                          };
     clampAbs(command.lookYaw, limits.maxLookYaw);
     clampAbs(command.lookPitch, limits.maxLookPitch);
 

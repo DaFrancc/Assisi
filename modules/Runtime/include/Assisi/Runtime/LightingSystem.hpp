@@ -26,7 +26,7 @@ namespace Assisi::Runtime
 
 class LightingSystem
 {
-  public:
+public:
     LightingSystem() = default;
 
     /// @brief Load compute shaders, allocate buffers, and build initial cluster AABBs.
@@ -39,7 +39,7 @@ class LightingSystem
 
     /// @brief Rebuild cluster AABBs after a viewport or projection change.
     void Resize(nvrhi::ICommandList *commandList, int32_t width, int32_t height, float nearZ, float farZ,
-               const glm::mat4 &projection);
+                const glm::mat4 &projection);
 
     /// @brief Collect lights from the scene, upload to GPU, and run the cull pass.
     void Update(nvrhi::ICommandList *commandList, Assisi::ECS::Scene &scene, const glm::mat4 &view);
@@ -47,10 +47,9 @@ class LightingSystem
     /// @brief A spot light's aim in world space: its LOCAL direction rotated by the
     /// entity's propagated world matrix, normalized.
     ///
-    /// Split out of Update so the rule is testable without a device — Update needs a
-    /// command list, which is why nothing here was covered before. See the round-6
-    /// M2 follow-on: a spot mounted on a parent (a vehicle headlight, a held torch)
-    /// must aim where the parent faces, and its position already did.
+    /// Split out of Update so the rule is testable without a device (Update needs a
+    /// command list). A spot mounted on a parent — a vehicle headlight, a held torch
+    /// — must aim where the parent faces, as its position already does.
     ///
     /// A direction is a vector rather than a normal, so the upper-left 3x3 is the
     /// right transform — no inverse-transpose. Normalizing afterwards absorbs any
@@ -63,9 +62,9 @@ class LightingSystem
 
     const Assisi::Render::ClusterGrid &Grid() const { return _grid; }
 
-  private:
+private:
     Assisi::Render::ClusterGrid _grid;
-    uint32_t                    _dirLightCount = 0u;
+    uint32_t _dirLightCount = 0u;
 
     // Per-frame light staging buffers, kept as members so Update() reuses their
     // capacity instead of allocating three vectors every frame (clear() retains

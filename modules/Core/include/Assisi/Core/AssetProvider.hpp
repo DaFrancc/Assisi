@@ -32,7 +32,7 @@ namespace Assisi::Core
 /// @brief Abstract source of asset bytes, addressed by stable id.
 class AssetProvider
 {
-  public:
+public:
     virtual ~AssetProvider() = default;
 
     /// @brief Read the full byte payload of the asset with this id.

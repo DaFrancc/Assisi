@@ -19,6 +19,7 @@
 #include <Assisi/Physics/PhysicsComponents.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <memory>
 #include <span>
 #include <utility>
@@ -28,7 +29,7 @@ namespace Assisi::Physics
 {
 
 /// @brief Motion type for newly created bodies.
-enum class BodyMotion
+enum class BodyMotion : std::uint8_t
 {
     Static,  ///< Immovable; collides but is never moved by the simulation.
     Dynamic, ///< Fully simulated; affected by gravity and collisions.
@@ -68,7 +69,7 @@ struct Contact
 /// Destruction cleans up all bodies and unregisters Jolt types.
 class PhysicsWorld
 {
-  public:
+public:
     PhysicsWorld();
     ~PhysicsWorld();
 
@@ -81,9 +82,9 @@ class PhysicsWorld
     struct ColliderShapeDesc
     {
         ColliderShape shape = ColliderShape::Box;
-        glm::vec3     halfExtents{0.5f, 0.5f, 0.5f}; ///< Box.
-        float         radius     = 0.5f;             ///< Sphere/Capsule/Cylinder.
-        float         halfHeight = 0.5f;             ///< Capsule/Cylinder cylindrical half-height.
+        glm::vec3 halfExtents{0.5f, 0.5f, 0.5f};     ///< Box.
+        float radius     = 0.5f;                     ///< Sphere/Capsule/Cylinder.
+        float halfHeight = 0.5f;                     ///< Capsule/Cylinder cylindrical half-height.
     };
 
     /// @brief Creates a rigid body with the given collider and returns its component.
@@ -94,6 +95,27 @@ class PhysicsWorld
     /// @param motion     Static bodies never move; dynamic bodies fall under gravity.
     RigidBody AddBody(glm::vec3 position, glm::quat rotation, const ColliderShapeDesc &shape, BodyMotion motion);
 
+    /// @brief Answers "what world matrix is this entity's Transform relative to?"
+    /// — its parent's, or null if it has none.
+    ///
+    /// Physics reasons in world space; a Transform under a parent is an offset
+    /// *from* that parent. Nothing here knows that on its own, and the two
+    /// disagree silently: a body spawns at its local pose, and the world pose
+    /// written back is multiplied by the parent again by whatever propagates
+    /// transforms. A parented body therefore both starts in the wrong place and
+    /// drifts by its parent's transform every frame.
+    ///
+    /// Supplied by the caller rather than read here because the parent link lives
+    /// a layer up (Runtime::Parent) while Physics sits below it — Physics links
+    /// Core + ECS + Jolt and deliberately not Runtime, which links Render and
+    /// would poison the headless server's link. App provides one via
+    /// App::ParentWorldResolver. An empty function means "nothing in this scene
+    /// is parented", the common case, and costs a single branch.
+    ///
+    /// The parent's world matrix must be current, so propagate transforms before
+    /// building bodies from a freshly loaded scene.
+    using ParentWorldFn = std::function<const glm::mat4 *(Assisi::ECS::Entity entity)>;
+
     /// @brief Creates a Jolt body for @p entity from its authored descriptor at
     /// @p transform's pose, and attaches the transient RigidBody component.
     ///
@@ -101,8 +123,11 @@ class PhysicsWorld
     /// place that turns it into live simulation state (motion type from
     /// `isStatic`, collider from the shape fields, CCD flag). Used by level
     /// load, play/stop scene restores, and live component-add in the editor.
+    ///
+    /// @param parentWorld Optional; see ParentWorldFn. Pass it whenever the
+    ///                    entity might be parented.
     RigidBody AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
-                                    const RigidBodyDescriptor &descriptor);
+                                    const RigidBodyDescriptor &descriptor, const ParentWorldFn &parentWorld = {});
 
     /// @brief Rebuilds every body from the scene's descriptors: Clear(), then
     /// AddBodyFromDescriptor for each entity with a Transform + RigidBodyDescriptor.
@@ -111,7 +136,10 @@ class PhysicsWorld
     /// play-session restore) and every live body is stale. Entities are expected
     /// not to carry a RigidBody component yet — it is transient and never
     /// serialized, so a freshly loaded/restored scene never has one.
-    void RebuildSceneBodies(ECS::Scene &scene);
+    ///
+    /// @param parentWorld Optional; see ParentWorldFn. The world matrices it
+    ///                    reads must already be propagated.
+    void RebuildSceneBodies(ECS::Scene &scene, const ParentWorldFn &parentWorld = {});
 
     /// @brief Advances the simulation by `deltaTime` seconds.
     void Update(float deltaTime);
@@ -120,9 +148,9 @@ class PhysicsWorld
     //
     // Off by default, and off costs nothing: with reporting disabled the world
     // installs no Jolt contact listener at all, so the simulation never makes the
-    // call. Switch it on per world — a profile installer is the natural place,
-    // since "this level has bouncy things in it" is exactly the kind of decision a
-    // profile encodes (docs/world-system-binding-design-notes.md §3).
+    // call. It is per world, and a system that needs contacts switches it on for
+    // itself when it runs — so a world whose level named no such system never pays
+    // for it (docs/world-system-binding-design-notes.md §3).
 
     /// @brief Starts or stops recording new contacts during Update().
     /// Turning it off also drops whatever is currently logged.
@@ -170,7 +198,11 @@ class PhysicsWorld
     /// and a RigidBody are touched; static bodies are skipped, so their
     /// authored Transform is left intact. The written Transform is the *render*
     /// pose — the authoritative physics state is the current snapshot.
-    void InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha);
+    ///
+    /// @param parentWorld Optional; see ParentWorldFn. Pass it whenever a body
+    ///                    might be parented — members of a blueprint instance
+    ///                    routinely are (docs/blueprint-system-concept.md §12).
+    void InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha, const ParentWorldFn &parentWorld = {});
 
     /// @brief Writes each dynamic body's *last stepped* pose into its Transform,
     /// with no blend.
@@ -182,26 +214,27 @@ class PhysicsWorld
     /// InterpolateTransforms never runs for these worlds — so without this their
     /// Transforms would sit at spawn pose forever no matter how much the bodies
     /// move. Call once per frame after the fixed-step loop, before propagating.
-    void SyncTransforms(Assisi::ECS::Scene &scene) { InterpolateTransforms(scene, 1.f); }
+    void SyncTransforms(Assisi::ECS::Scene &scene, const ParentWorldFn &parentWorld = {})
+    {
+        InterpolateTransforms(scene, 1.f, parentWorld);
+    }
 
     // --- Authoritative body state (replication) -------------------------------
     //
-    // Replication used to read the render-side Transform, which is wrong twice
-    // over: a headless host never runs the writeback at all (so its
-    // physics-driven entities replicate their load pose forever), and the
-    // writeback stamps *every* body every frame including sleeping ones (so a
-    // settled world never stops costing bandwidth). Both are the same root
-    // cause — the render pose is not the physics truth — and reading the world
-    // directly removes it rather than patching it twice.
+    // Replication reads the simulation directly, not the render-side Transform:
+    // the render pose is not the physics truth. A headless host never runs the
+    // writeback at all (its physics-driven entities would replicate their load
+    // pose forever), and the writeback covers every body every frame including
+    // sleeping ones (a settled world would never stop costing bandwidth).
 
     /// @brief One active body's authoritative motion state.
     struct ActiveBodyState
     {
         ECS::Entity entity;
-        glm::vec3   position;
-        glm::quat   rotation;
-        glm::vec3   linearVelocity;
-        glm::vec3   angularVelocity;
+        glm::vec3 position;
+        glm::quat rotation;
+        glm::vec3 linearVelocity;
+        glm::vec3 angularVelocity;
     };
 
     /// @brief Every currently-awake dynamic body, with its pose and velocities.
@@ -223,8 +256,8 @@ class PhysicsWorld
     ///
     /// Deliberately not composed from the pieces above, because those have the
     /// wrong semantics for a correction three times over: SetBodyTransform
-    /// reactivates unconditionally (so an "asleep" correction applied through it
-    /// would wake the body), it zeroes the velocities, and there is no
+    /// reactivates every non-static body (so an "asleep" correction applied through
+    /// it would wake the body), it zeroes the velocities, and there is no
     /// angular-velocity setter at all.
     ///
     /// Like SetBodyTransform it collapses both render-interpolation snapshots
@@ -298,7 +331,7 @@ class PhysicsWorld
     /// @brief Returns the current gravity vector.
     glm::vec3 GetGravity() const;
 
-  private:
+private:
     struct Impl;
     std::unique_ptr<Impl> _impl;
 };

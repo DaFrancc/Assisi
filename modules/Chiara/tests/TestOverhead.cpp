@@ -2,10 +2,8 @@
 /// @file TestOverhead.cpp
 /// @brief What a scope actually costs.
 ///
-/// The design notes carried an *estimate* through every stage. An estimate is
-/// how a profiler ends up lying about the one number it has no excuse to guess,
-/// so this measures it and prints the result — the self-measurement caveat
-/// carried over from the deferred frame-profiler notes, discharged.
+/// The one number a profiler has no excuse to guess, so it is measured and
+/// printed rather than estimated.
 ///
 /// This is a measurement, not a threshold. It asserts only that instrumentation
 /// is *cheap*, with a bound loose enough that a loaded CI machine or a debug
@@ -69,24 +67,24 @@ TEST_CASE("A scope costs what the notes claim it does")
     Assisi::Chiara::SetRecording(false);
     const double disabledNanos = NanosPerIteration(kIterations,
                                                    []
-                                                   {
-                                                       ASSISI_PROFILE_SCOPE("overhead-disabled");
-                                                   });
+    {
+        ASSISI_PROFILE_SCOPE("overhead-disabled");
+    });
 
     // Recording on: two clock reads, the shadow-stack seqlock, and a 32-byte
     // ring store.
     Assisi::Chiara::SetRecording(true);
     const double enabledNanos = NanosPerIteration(kIterations,
                                                   []
-                                                  {
-                                                      ASSISI_PROFILE_SCOPE("overhead-enabled");
-                                                  });
+    {
+        ASSISI_PROFILE_SCOPE("overhead-enabled");
+    });
 
     const double counterNanos = NanosPerIteration(kIterations,
                                                   []
-                                                  {
-                                                      ASSISI_PROFILE_COUNTER("overhead/counter", 1.0);
-                                                  });
+    {
+        ASSISI_PROFILE_COUNTER("overhead/counter", 1.0);
+    });
 
     std::printf("\n[chiara] measured overhead, %d iterations each:\n"
                 "         scope, not recording : %6.2f ns\n"

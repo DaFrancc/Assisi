@@ -23,7 +23,7 @@ namespace Assisi::Render
 /// (positive inside).
 class Frustum
 {
-  public:
+public:
     Frustum() = default;
 
     /// @brief Extracts the six frustum planes from a view-projection matrix.
@@ -41,8 +41,8 @@ class Frustum
         // Outside iff the sphere is fully behind any one plane (its centre farther
         // than the radius on the plane's outward side); otherwise potentially visible.
         return std::ranges::none_of(_planes, [&sphere](const glm::vec4 &plane) {
-            return glm::dot(glm::vec3(plane), sphere.center) + plane.w < -sphere.radius;
-        });
+                return glm::dot(glm::vec3(plane), sphere.center) + plane.w < -sphere.radius;
+            });
     }
 
     /// @brief True if any part of the (world-space) AABB lies inside the frustum.
@@ -57,12 +57,12 @@ class Frustum
         // "positive vertex" — the corner furthest along the plane's inward normal:
         // if even that corner is behind the plane, every corner is.
         return std::ranges::none_of(_planes, [&aabb](const glm::vec4 &plane) {
-            const glm::vec3 normal(plane);
-            const glm::vec3 positiveVertex(normal.x >= 0.f ? aabb.max.x : aabb.min.x,
-                                           normal.y >= 0.f ? aabb.max.y : aabb.min.y,
-                                           normal.z >= 0.f ? aabb.max.z : aabb.min.z);
-            return glm::dot(normal, positiveVertex) + plane.w < 0.f;
-        });
+                const glm::vec3 normal(plane);
+                const glm::vec3 positiveVertex(normal.x >= 0.f ? aabb.max.x : aabb.min.x,
+                                               normal.y >= 0.f ? aabb.max.y : aabb.min.y,
+                                               normal.z >= 0.f ? aabb.max.z : aabb.min.z);
+                return glm::dot(normal, positiveVertex) + plane.w < 0.f;
+            });
     }
 
     /// @brief The six planes, `vec4(nx, ny, nz, d)` with inward normals (see the
@@ -70,7 +70,7 @@ class Frustum
     /// the same sphere/AABB tests as IntersectsSphere/IntersectsAabb.
     [[nodiscard]] const std::array<glm::vec4, 6> &Planes() const { return _planes; }
 
-  private:
+private:
     std::array<glm::vec4, 6> _planes{};
 };
 

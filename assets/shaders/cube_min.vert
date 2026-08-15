@@ -46,6 +46,7 @@ layout(binding = 256) uniform FrameConstants
     // the middle silently shifts every following offset.
     vec4  cameraPosition;
     vec4  clusterScale;
+    vec4  ambient;
 } uFrame;
 
 void main()

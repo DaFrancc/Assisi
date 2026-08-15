@@ -7,9 +7,9 @@
 /// Built by AssetCache::ResolveMaterial from a Geometry::MaterialData. Channels
 /// are bindless-table slots (empty ones resolve to the cache's `prim://` default
 /// textures — white / flat normal — so the shader always samples a valid index
-/// and never branches on null). The material no longer owns a GPU buffer: it
-/// holds its `MaterialConstants` as a plain value and AssetCache writes it into
-/// one row of the shared material table (stage D), indexed by the material's id.
+/// and never branches on null). The material owns no GPU buffer: it holds its
+/// `MaterialConstants` as a plain value and AssetCache writes it into one row of
+/// the shared material table (stage D), indexed by the material's id.
 
 #include <cstdint>
 
@@ -26,9 +26,9 @@ namespace Assisi::Render
 /// are each channel's slot in the bindless descriptor table (stage D).
 struct MaterialConstants
 {
-    glm::vec4  baseColorFactor{1.f, 1.f, 1.f, 1.f};
-    glm::vec4  emissiveFactorNormalScale{0.f, 0.f, 0.f, 1.f}; ///< xyz = emissive, w = normalScale.
-    glm::vec4  metalRoughOcclusion{1.f, 1.f, 1.f, 0.f};       ///< x = metallic, y = roughness, z = occlusion, w = pad.
+    glm::vec4 baseColorFactor{1.f, 1.f, 1.f, 1.f};
+    glm::vec4 emissiveFactorNormalScale{0.f, 0.f, 0.f, 1.f};  ///< xyz = emissive, w = normalScale.
+    glm::vec4 metalRoughOcclusion{1.f, 1.f, 1.f, 0.f};        ///< x = metallic, y = roughness, z = occlusion, w = pad.
     glm::uvec4 flags{0u, 0u, 0u, 0u};                          ///< bit0 = has normal texture; rest reserved.
     glm::uvec4 texIndices{0u, 0u, 0u, 0u};        ///< bindless slots: x=baseColor y=normal z=metalRough w=occlusion.
     glm::uvec4 texIndicesEmissive{0u, 0u, 0u, 0u}; ///< x = emissive bindless slot; yzw reserved.
@@ -45,12 +45,12 @@ struct MaterialTextures
     uint32_t metallicRoughness = 0;
     uint32_t occlusion = 0;
     uint32_t emissive = 0;
-    bool     hasNormalTexture = false; ///< False when the normal channel is the flat default.
+    bool hasNormalTexture = false;     ///< False when the normal channel is the flat default.
 };
 
 class Material
 {
-  public:
+public:
     Material() = default;
 
     /// @brief Compute the constants row and store the resolved textures.
@@ -76,12 +76,12 @@ class Material
 
     bool IsValid() const { return _created; }
 
-  private:
-    uint32_t               _id = 0;
+private:
+    uint32_t _id = 0;
     Geometry::MaterialData _source;
-    MaterialTextures       _textures;
-    MaterialConstants      _constants; ///< The table row; written to the GPU by AssetCache.
-    bool                   _created = false;
+    MaterialTextures _textures;
+    MaterialConstants _constants;      ///< The table row; written to the GPU by AssetCache.
+    bool _created = false;
 };
 
 } /* namespace Assisi::Render */

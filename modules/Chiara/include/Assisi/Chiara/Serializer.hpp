@@ -29,16 +29,16 @@ namespace Assisi::Chiara
 /// @brief What a dump produced. `error` is empty on success.
 struct SerializeResult
 {
-    bool          success            = false;
+    bool success            = false;
     std::uint64_t eventsRead         = 0; ///< Records examined across every ring.
     std::uint64_t eventsWritten      = 0; ///< Trace events emitted (one scope can add args, not events).
     std::uint64_t slicesSynthesized  = 0; ///< Scopes still open at dump time, recovered from shadow stacks.
     std::uint64_t orphanedArgs       = 0; ///< Args with no enclosing scope — dropped, never silently.
     std::uint64_t threadsWritten     = 0;
     std::uint64_t bytesWritten       = 0;
-    double        windowSeconds      = 0.0; ///< Span actually written.
-    double        ticksPerSecond     = 0.0; ///< After refinement against the clock snapshots.
-    std::string   error;
+    double windowSeconds      = 0.0;        ///< Span actually written.
+    double ticksPerSecond     = 0.0;        ///< After refinement against the clock snapshots.
+    std::string error;
 };
 
 /// @brief Writes the most recent `lastSeconds` of capture to `path`.
@@ -64,13 +64,13 @@ struct SerializeResult
 /// @brief Progress of a running session.
 struct SessionStats
 {
-    bool          active         = false;
-    double        elapsedSeconds = 0.0;
+    bool active         = false;
+    double elapsedSeconds = 0.0;
     std::uint64_t eventsWritten  = 0;
     std::uint64_t bytesWritten   = 0;
     std::uint64_t drains         = 0; ///< Times the rings have been emptied to disk.
     std::uint64_t eventsLost     = 0; ///< Overwritten before a drain reached them — see below.
-    std::string   path;
+    std::string path;
 };
 
 /// @name Session recording — capture for as long as you like
@@ -96,9 +96,10 @@ struct SessionStats
 
 /// @brief Drains whatever the rings hold into the open session file.
 ///
-/// Call once per frame — it returns immediately unless a ring is filling up, so
-/// the cost of asking is a few atomic loads. This is what keeps a session from
-/// losing events; nothing else calls it.
+/// Call once per frame — it returns immediately unless enough events or enough
+/// time have piled up since the last drain, so the cost of asking is a couple of
+/// loads. This is what keeps a session from losing events; nothing else drains
+/// the rings mid-session.
 void PumpSession();
 
 /// @brief Final drain, then closes the file. Safe to call when none is running.

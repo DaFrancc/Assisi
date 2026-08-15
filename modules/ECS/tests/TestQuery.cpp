@@ -242,64 +242,64 @@ void FillWithPositions(Scene &scene, int32_t count)
 TEST_CASE("Query guard: adding a queried component mid-iteration is caught")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    Scene                    scene;
+    Scene scene;
     FillWithPositions(scene, 8);
 
     CHECK_THROWS_AS(([&]
-                     {
-                         for (auto [e, pos] : scene.Query<Position>())
-                         {
-                             (void)e;
-                             (void)pos;
-                             const Entity fresh = scene.Create();
-                             (void)scene.Add<Position>(fresh, {0.0f}); // grows the queried pool
-                         }
-                     }()),
+    {
+        for (auto [e, pos] : scene.Query<Position>())
+        {
+            (void)e;
+            (void)pos;
+            const Entity fresh = scene.Create();
+            (void)scene.Add<Position>(fresh, {0.0f});                  // grows the queried pool
+        }
+    }()),
                     Assisi::Core::ContractViolation);
 }
 
 TEST_CASE("Query guard: removing a queried component mid-iteration is caught")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    Scene                    scene;
+    Scene scene;
     FillWithPositions(scene, 8);
 
     CHECK_THROWS_AS(([&]
-                     {
-                         for (auto [e, pos] : scene.Query<Position>())
-                         {
-                             (void)pos;
-                             scene.Remove<Position>(e); // swap-removes from the queried pool
-                         }
-                     }()),
+    {
+        for (auto [e, pos] : scene.Query<Position>())
+        {
+            (void)pos;
+            scene.Remove<Position>(e);                  // swap-removes from the queried pool
+        }
+    }()),
                     Assisi::Core::ContractViolation);
 }
 
 TEST_CASE("Query guard: mutating a non-queried pool mid-iteration is allowed")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    Scene                    scene;
+    Scene scene;
     FillWithPositions(scene, 8);
 
     int32_t seen = 0;
     // Adding Velocity is not a change to the Position pool being iterated, so it
     // must not trip the guard.
     CHECK_NOTHROW(([&]
-                   {
-                       for (auto [e, pos] : scene.Query<Position>())
-                       {
-                           (void)pos;
-                           ++seen;
-                           (void)scene.Add<Velocity>(e, {1.0f});
-                       }
-                   }()));
+    {
+        for (auto [e, pos] : scene.Query<Position>())
+        {
+            (void)pos;
+            ++seen;
+            (void)scene.Add<Velocity>(e, {1.0f});
+        }
+    }()));
     CHECK(seen == 8);
 }
 
 TEST_CASE("Query guard: mutating an excluded pool mid-iteration is allowed")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    Scene                    scene;
+    Scene scene;
     FillWithPositions(scene, 8);
 
     // Pre-create the Tag pool (and capture a non-null excluded pointer) with an
@@ -309,37 +309,37 @@ TEST_CASE("Query guard: mutating an excluded pool mid-iteration is allowed")
 
     int32_t seen = 0;
     // Query<Position>(Without<Tag>): the excluded Tag pool is re-probed each step
-    // through its stable address, so growing it mid-iteration is safe. This is a
-    // regression guard — the check once summed excluded pools and would abort here.
+    // through its stable address, so growing it mid-iteration is safe. Regression
+    // guard — a version check that summed excluded pools would abort here.
     CHECK_NOTHROW(([&]
-                   {
-                       for (auto [e, pos] : scene.Query<Position>(Without<Tag>{}))
-                       {
-                           (void)pos;
-                           ++seen;
-                           (void)scene.Add<Tag>(e, {}); // mutates the excluded pool
-                       }
-                   }()));
+    {
+        for (auto [e, pos] : scene.Query<Position>(Without<Tag>{}))
+        {
+            (void)pos;
+            ++seen;
+            (void)scene.Add<Tag>(e, {});                // mutates the excluded pool
+        }
+    }()));
     CHECK(seen == 8);
 }
 
 TEST_CASE("Query guard: destroying entities mid-iteration is allowed (deferred)")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    Scene                    scene;
+    Scene scene;
     FillWithPositions(scene, 64);
 
     int32_t seen = 0;
     // Destroy is deferred, so it never touches the pool mid-loop — must not trip.
     CHECK_NOTHROW(([&]
-                   {
-                       for (auto [e, pos] : scene.Query<Position>())
-                       {
-                           (void)pos;
-                           ++seen;
-                           scene.Destroy(e);
-                       }
-                   }()));
+    {
+        for (auto [e, pos] : scene.Query<Position>())
+        {
+            (void)pos;
+            ++seen;
+            scene.Destroy(e);
+        }
+    }()));
     CHECK(seen == 64);
     CHECK(scene.AliveCount() == 64); // still deferred
     scene.FlushDestroyed();
@@ -349,18 +349,18 @@ TEST_CASE("Query guard: destroying entities mid-iteration is allowed (deferred)"
 TEST_CASE("Query guard: a normal full iteration never trips")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    Scene                    scene;
+    Scene scene;
     FillWithPositions(scene, 100);
 
     float sum = 0.0f;
     CHECK_NOTHROW(([&]
-                   {
-                       for (auto [e, pos] : scene.Query<Position>())
-                       {
-                           (void)e;
-                           sum += pos.x;
-                       }
-                   }()));
+    {
+        for (auto [e, pos] : scene.Query<Position>())
+        {
+            (void)e;
+            sum += pos.x;
+        }
+    }()));
     CHECK(sum == doctest::Approx(100.0f * 99.0f / 2.0f)); // 0 + 1 + ... + 99
 }
 #endif // !NDEBUG

@@ -329,7 +329,7 @@ TEST_CASE("An unregistered thread registers itself on its first record")
     std::thread anonymous(
         []
         {
-            ASSISI_PROFILE_SCOPE("from-an-unnamed-thread");
+        ASSISI_PROFILE_SCOPE("from-an-unnamed-thread");
         });
     anonymous.join();
 

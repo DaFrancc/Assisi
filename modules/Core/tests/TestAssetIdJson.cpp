@@ -26,7 +26,7 @@ TEST_CASE("SerializeAssetId writes guid only when no hint resolver is set")
     HintResolverGuard guard;
     SetAssetIdHintResolver({});
 
-    const AssetId  id   = *AssetId::Parse("12345678-9abc-4def-8123-456789abcdef");
+    const AssetId id   = *AssetId::Parse("12345678-9abc-4def-8123-456789abcdef");
     const nlohmann::json j = SerializeAssetId(id);
 
     REQUIRE(j.is_object());
@@ -51,7 +51,7 @@ TEST_CASE("DeserializeAssetId reads the guid and ignores the hint")
 {
     HintResolverGuard guard;
     const nlohmann::json obj = {{"guid", "aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"}, {"path", "stale/old/path.png"}};
-    const AssetId        id  = DeserializeAssetId(obj);
+    const AssetId id  = DeserializeAssetId(obj);
     CHECK(id == *AssetId::Parse("aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee"));
 }
 
@@ -79,11 +79,11 @@ TEST_CASE("DeserializeAssetId yields nil on malformed input")
 
 TEST_CASE("DeserializeAssetId does not throw on an object with a wrong-typed 'guid' (round-6 C2)")
 {
-    // { "guid": 42 } — value("guid", std::string{}) throws json::type_error
-    // because the key is present with the wrong type; a hand-edited level file
-    // must degrade to nil, not crash the loader.
+    // { "guid": 42 } — the key is present with the wrong type, which
+    // `value("guid", std::string{})` would throw json::type_error on. A
+    // hand-edited level file must degrade to nil, not crash the loader.
     const nlohmann::json obj = {{"guid", 42}};
-    AssetId              id;
+    AssetId id;
     CHECK_NOTHROW(id = DeserializeAssetId(obj));
     CHECK(id.IsNil());
 }

@@ -4,10 +4,11 @@
 
 reflectgen is a regex-based C++ parser that emits engine-critical registration
 code. These tests defend it against silent regex regressions: a checked-in
-golden output for a fixture header that exercises every supported field type
-and edge case, plus targeted behavioural cases (comment stripping, namespace
-capture, transient exclusion, the unsupported-type hard fail, EntityRef include
-emission).
+golden output for a fixture header covering the scalar, glm, enum, string and
+path field types plus the annotation edge cases, and targeted behavioural cases
+for everything the fixture does not reach (comment stripping, namespace capture,
+transient exclusion, the unsupported-type hard fail, EntityRef include emission,
+AssetId, messages, handlers, systems).
 
 Run directly (`python test_reflectgen.py`) or via ctest. To adopt a deliberate
 change to the generated output, regenerate the golden:
@@ -25,6 +26,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE.parent))  # tools/reflectgen (so `import reflectgen` works)
 
 import reflectgen  # noqa: E402
+import reflect_parser  # noqa: E402
 
 FIXTURES = HERE / "fixtures"
 GOLDEN = HERE / "golden"
@@ -125,7 +127,7 @@ class CodegenTest(unittest.TestCase):
     def test_asset_path_vector_serializes_as_a_string_array(self):
         components = reflectgen.parse_header(FIXTURES / "Sample.hpp")
         cpp = reflectgen.generate_cpp(components, SAMPLE_INCLUDE)
-        # Field metadata carries the new enum value.
+        # Field metadata carries the vector's own FieldType.
         self.assertIn('"paths", Assisi::Core::Reflect::FieldType::AssetPathVector', cpp)
         # Serialize builds a JSON array from each path's View().
         self.assertIn("nlohmann::json::array()", cpp)
@@ -143,7 +145,23 @@ class CodegenTest(unittest.TestCase):
         cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
         self.assertIn('"label", Assisi::Core::Reflect::FieldType::String', cpp)
         self.assertIn("std::string(c.label.View())", cpp)          # serialize
-        self.assertIn('comp.label.Assign(j.at("label").get<std::string>())', cpp)  # deserialize
+        self.assertIn('ReadString(j, _comp, "label", _s)', cpp)       # deserialize, type-checked
+        self.assertIn('comp.label.Assign(_s)', cpp)                    # ...then assigned
+
+    def test_entity_name_is_its_own_field_type(self):
+        # Same codegen as ShortString, different FieldType: a name decoded as a
+        # String would truncate at 32 instead of 64. Both are TrivialStrings, so
+        # the generator is what keeps them apart.
+        comps = _parse_source(
+            "namespace N {\nACOMP()\nstruct C {\n"
+            "  AFIELD() Assisi::Core::EntityName name;\n"
+            "};\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(comps, "N/C.hpp")
+        self.assertIn('"name", Assisi::Core::Reflect::FieldType::EntityName', cpp)
+        self.assertIn("std::string(c.name.View())", cpp)           # serialize
+        self.assertIn('ReadString(j, _comp, "name", _s)', cpp)     # deserialize, type-checked
+        self.assertIn("comp.name.Assign(_s)", cpp)                 # ...then assigned
 
     def test_asset_id_serializes_via_the_core_helpers(self):
         comps = _parse_source(
@@ -153,7 +171,7 @@ class CodegenTest(unittest.TestCase):
             "};\n}\n"
         )
         cpp = reflectgen.generate_cpp(comps, "N/Ref.hpp")
-        # Field metadata carries the new enum values.
+        # Field metadata carries the scalar and vector FieldTypes.
         self.assertIn('"mesh", Assisi::Core::Reflect::FieldType::AssetId', cpp)
         self.assertIn('"slots", Assisi::Core::Reflect::FieldType::AssetIdVector', cpp)
         # Serialize/deserialize route through the Core AssetId JSON helpers.
@@ -348,6 +366,186 @@ class ParserEdgeCaseTest(unittest.TestCase):
         self.assertIn("Assisi::Core::Reflect::FieldType::Unknown", cpp)  # in the meta table
         self.assertNotIn("c.data", cpp)  # but never (de)serialized
 
+    def test_an_instance_view_field_is_a_hard_error(self):
+        # A stored view is a member list that goes stale — the failure the
+        # blueprint design exists to prevent, so this has no escape hatch.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD() Runtime::InstanceView<Car> car = {}; };\n}\n"
+        )
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn("may not hold an InstanceView", str(caught.exception))
+
+    def test_a_transient_instance_view_field_is_still_a_hard_error(self):
+        # A field spelling InstanceView<> outright, marked AFIELD(transient):
+        # generate_cpp still raises. The spelling is literal, so the plain
+        # substring check is what fires; the exception is not matched, so this
+        # does not pin *which* check refused it.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD(transient) InstanceView<Car> car = {}; "
+            "AFIELD() int32_t a = 0; };\n}\n"
+        )
+        with self.assertRaises(ValueError):
+            reflectgen.generate_cpp(components, "N/C.hpp")
+
+    def test_an_instance_id_field_is_the_supported_way(self):
+        # The id is what may be kept, so the ban above has a legal alternative to
+        # point at. Pins only that generate_cpp accepts the field: "instance"
+        # matches the field name, not FieldType::InstanceRef.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD() ECS::InstanceId instance = {}; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")  # must not raise
+        self.assertIn("instance", cpp)
+
+
+class InstanceViewStorageBanTest(unittest.TestCase):
+    """The ban is on *storing a view*, not on spelling one.
+
+    Every spelling of the same type is refused — an alias, an alias of an alias,
+    a struct that holds one — and neither `AFIELD(transient)` nor
+    `ACOMP(transient)` is a way through, though both excuse an unknown type at
+    the serialization check.
+
+    Two layers enforce it. The generator resolves the spellings it can see, in
+    the header it is reading; and the generated file asserts the ban to the
+    compiler, which is the only party that can see through a spelling declared
+    somewhere else.
+    """
+
+    def _reject(self, source: str, *expected: str) -> None:
+        components = _parse_source(source)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(components, "N/C.hpp")
+        message = str(caught.exception)
+        self.assertIn("may not hold an InstanceView", message)
+        for fragment in expected:
+            self.assertIn(fragment, message)
+
+    def test_an_alias_to_a_view_is_a_hard_error(self):
+        # An alias is the shortest way to store a view without naming one.
+        self._reject(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Assisi::Blueprints::Car>;\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) CarView car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "CarView",
+        )
+
+    def test_an_alias_chain_to_a_view_is_a_hard_error(self):
+        # One level of indirection is not the rule; the rule is that no spelling
+        # the generator can resolve reaches a view.
+        self._reject(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
+            "using CarHandle = CarView;\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) CarHandle car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "CarHandle",
+        )
+
+    def test_a_typedef_to_a_view_is_a_hard_error(self):
+        self._reject(
+            "namespace N {\n"
+            "typedef Assisi::Runtime::InstanceView<Car> CarView;\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) CarView car = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "CarView",
+        )
+
+    def test_a_transient_component_may_not_hold_a_view_either(self):
+        # ACOMP(transient) skips _check_unsupported for the whole struct, so it
+        # is the widest annotation the ban has to hold against.
+        self._reject(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
+            "ACOMP(transient)\n"
+            "struct C { AFIELD() CarView car = {}; };\n}\n",
+            "CarView",
+        )
+
+    def test_a_struct_that_holds_a_view_may_not_be_a_field(self):
+        # A member of a member is still a stored member list; the wrapper only
+        # moves it one struct further from the annotation.
+        self._reject(
+            "namespace N {\n"
+            "struct Holder { Assisi::Runtime::InstanceView<Car> v; };\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) Holder held = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "Holder",
+        )
+
+    def test_a_holder_declared_before_what_it_holds_is_still_caught(self):
+        # Declaration order does not decide it: `Outer` is refused for holding
+        # `Inner`, which is only known to hold a view after `Outer` is read.
+        self._reject(
+            "namespace N {\n"
+            "struct Inner;\n"
+            "struct Outer { Inner i; };\n"
+            "struct Inner { Assisi::Runtime::InstanceView<Car> v; };\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) Outer o = {}; AFIELD() int32_t a = 0; };\n}\n",
+            "Outer",
+            "Inner",
+        )
+
+    def test_a_container_of_aliased_views_is_a_hard_error(self):
+        # The ban reads the whole spelling, so a view reached through a template
+        # argument is refused in that position too.
+        self._reject(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) std::vector<CarView> cars = {}; "
+            "AFIELD() int32_t a = 0; };\n}\n",
+            "CarView",
+        )
+
+    def test_a_message_may_not_hold_a_view_by_alias(self):
+        # Messages run the same check, and a view on the wire is the same
+        # stale-handle problem with a network in the middle.
+        _, messages, _ = _parse_full(
+            "namespace N {\n"
+            "using CarView = Assisi::Runtime::InstanceView<Car>;\n"
+            "AMSG(event, reliable)\n"
+            "struct Boom { AFIELD(transient) CarView car = {}; AFIELD() uint32_t t = 0; };\n}\n"
+        )
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("may not hold an InstanceView", str(caught.exception))
+
+    def test_a_lookalike_name_is_not_banned(self):
+        # The ban must not become a substring superstition: a type whose name
+        # merely starts the same way is an ordinary transient field, and an
+        # unrelated alias stays an unrelated alias.
+        components = _parse_source(
+            "namespace N {\n"
+            "using Meters = float;\n"
+            "struct InstanceViewport { int32_t w = 0; };\n"
+            "ACOMP()\n"
+            "struct C { AFIELD(transient) InstanceViewport vp = {}; "
+            "AFIELD(transient) Meters depth = 0.f; AFIELD() int32_t a = 0; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")  # must not raise
+        self.assertIn("vp", cpp)
+
+    def test_generated_code_asserts_the_ban_at_compile_time(self):
+        # The layer that closes the spellings a regex cannot see. An alias
+        # declared in another header reaches the generator as an ordinary word,
+        # so the generated file hands the question to the compiler — for
+        # transient fields too, because the objection is to storing it at all.
+        components = _parse_source(
+            "namespace N {\nACOMP()\n"
+            "struct C { AFIELD() int32_t a = 0; AFIELD(transient) Opaque cache = {}; };\n}\n"
+        )
+        cpp = reflectgen.generate_cpp(components, "N/C.hpp")
+        self.assertIn("struct InstanceView;", cpp)  # declared, never defined
+        self.assertIn("decltype(N::C::a)", cpp)
+        self.assertIn("decltype(N::C::cache)", cpp)
+
 
 class UnsupportedTypeTest(unittest.TestCase):
     """The UNSUPPORTED_TYPES guard must hard-fail rather than silently skip."""
@@ -414,7 +612,7 @@ class AssetTypeTest(unittest.TestCase):
         # Deserialize writes into the caller's instance, not a scene.
         self.assertIn("void* out_ptr", cpp)
         self.assertIn("auto& a = *static_cast<T*>(out_ptr)", cpp)
-        self.assertIn("a.MetallicFactor = j.at(\"MetallicFactor\")", cpp)
+        self.assertIn('ReadFloat(j, _comp, "MetallicFactor", a.MetallicFactor)', cpp)
         # Transient field is in the meta table but never (de)serialized.
         self.assertIn('"cache", Assisi::Core::Reflect::FieldType::Int32', cpp)
         self.assertNotIn("a.cache", cpp)
@@ -474,7 +672,7 @@ class ReplicationAnnotationTest(unittest.TestCase):
 
     def test_the_retired_replicated_spelling_is_rejected_by_name(self):
         # It would otherwise parse as an unknown flag and be silently ignored,
-        # un-replicating a component that used to travel.
+        # taking the component off the wire without a word.
         src = "namespace N {\nACOMP(replicated)\nstruct C { AFIELD() int32_t a = 0; };\n}\n"
         with self.assertRaises(ValueError) as caught:
             reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
@@ -542,7 +740,8 @@ class EnumTest(unittest.TestCase):
         self.assertIn("FieldType::Enum", cpp)
         self.assertIn('{ "Capsule", 5 }', cpp)
         self.assertIn("static_cast<std::int64_t>(c.shape)", cpp)
-        self.assertIn("static_cast<N::Shape>(j.at(\"shape\").get<std::int64_t>())", cpp)
+        self.assertIn('ReadInt64(j, _comp, "shape", _n)', cpp)
+        self.assertIn("comp.shape = static_cast<N::Shape>(_n)", cpp)
         self.assertIn("#include <cstdint>", cpp)
 
     def test_non_integer_enumerator_is_rejected(self):
@@ -661,8 +860,8 @@ class RadioTest(unittest.TestCase):
             "Assisi::Core::Reflect::RadioBehavior::Grey",
             cpp,
         )
-        # The broadcaster enum stays an ordinary enum field (no radio members),
-        # now carrying its width (default int -> 4, signed).
+        # The broadcaster enum stays an ordinary enum field (no radio members)
+        # and carries its width (default int -> 4, signed).
         self.assertIn(
             'offsetof(T, mode), false, false, false, false, 0.f, 0.f, '
             '{ { "Off", 0 }, { "Low", 1 }, { "High", 2 } }, 4, true }',
@@ -955,6 +1154,96 @@ class ControlledFieldTest(unittest.TestCase):
         self.assertIn("a component has no sender", str(caught.exception))
 
 
+class SubjectFieldTest(unittest.TestCase):
+    """AFIELD(subject): "relevancy scopes this event by the entity this field
+    names".
+
+    The event-side counterpart to AFIELD(controlled), and it exists for the same
+    reason: which entity the engine acts on is marked rather than inferred.
+    Inferring it from declaration order would let a reorder change who receives
+    the message, and would make an event whose reference happens to be null
+    indistinguishable from an independent one — broadcast to everyone, past
+    relevancy.
+    """
+
+    def test_subject_reaches_the_field_metadata(self):
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Boom { AFIELD(subject) Assisi::ECS::Entity what; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        # Last in FieldMeta's positional tail, one past `controlled` — so an
+        # event's subject field carries a false for controlled and a true for
+        # itself, and the send site reads the trailing one.
+        self.assertIn('offsetof(T, what), false, false, false, false, 0.f, 0.f, {}, 0, false, "", {}, '
+                      'Assisi::Core::Reflect::RadioBehavior::None, false, true', cpp)
+
+    def test_an_event_with_an_entity_must_mark_its_subject(self):
+        # An unmarked EntityRef is not a subject by default: the alternative is
+        # routing by whichever field happens to come first.
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Boom { AFIELD() Assisi::ECS::Entity what; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("marks none of its EntityRef fields", str(caught.exception))
+
+    def test_two_subjects_are_rejected(self):
+        # Relevancy filtering, queue holding, and eviction each take one entity,
+        # and none of the three has an answer for two.
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Hit { AFIELD(subject) Assisi::ECS::Entity victim; "
+               "AFIELD(subject) Assisi::ECS::Entity shooter; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Hit.hpp", messages)
+        self.assertIn("exactly one subject", str(caught.exception))
+
+    def test_a_second_entity_field_is_fine_unmarked(self):
+        # "Mentions two entities" is ordinary and stays legal; only *routing* by
+        # two is refused. The unmarked one still travels and still translates.
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Hit { AFIELD(subject) Assisi::ECS::Entity victim; "
+               "AFIELD() Assisi::ECS::Entity shooter; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        cpp = reflectgen.generate_cpp([], "N/Hit.hpp", messages)
+        self.assertIn("MessageDirection::Event", cpp)
+
+    def test_subject_on_an_intent_is_rejected(self):
+        # An intent has exactly one recipient — the server — so there is nothing
+        # for relevancy to scope.
+        src = ("namespace N {\nAMSG(intent, reliable)\n"
+               "struct Go { AFIELD(subject) Assisi::ECS::Entity pawn; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Go.hpp", messages)
+        self.assertIn("is an intent", str(caught.exception))
+
+    def test_subject_on_an_independent_event_is_rejected(self):
+        src = ("namespace N {\nAMSG(event, reliable, independent)\n"
+               "struct Chat { AFIELD(subject) Assisi::ECS::Entity who; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Chat.hpp", messages)
+        self.assertIn("marked independent", str(caught.exception))
+
+    def test_subject_on_a_non_entity_field_is_rejected(self):
+        src = ("namespace N {\nAMSG(event, unreliable)\n"
+               "struct Boom { AFIELD(subject) int32_t what = 0; };\n}\n")
+        _, messages, _ = _parse_full(src)
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp([], "N/Boom.hpp", messages)
+        self.assertIn("Only an EntityRef field", str(caught.exception))
+
+    def test_subject_on_a_component_is_rejected(self):
+        # A component is not delivered to anyone — it travels as part of the
+        # entity that owns it — so there is no delivery for a subject to scope.
+        src = ("namespace N {\nACOMP()\n"
+               "struct C { AFIELD(subject) Assisi::ECS::Entity e; };\n}\n")
+        with self.assertRaises(ValueError) as caught:
+            reflectgen.generate_cpp(_parse_source(src), "N/C.hpp")
+        self.assertIn("is not a message", str(caught.exception))
+
+
 class MessageTraitsTest(unittest.TestCase):
     """The compile-time facts that make a wrong-direction send a build error."""
 
@@ -1089,6 +1378,97 @@ class MessageHandlerTest(unittest.TestCase):
             summary = reflectgen.check_message_handlers([path])
             self.assertIn("A::Fire -> A::HandleFire", summary)
             self.assertIn("B::Fire -> (no handler)", summary)
+
+
+class SystemTest(unittest.TestCase):
+    """ASYSTEM: the grammar, and the three whole-tree checks.
+
+    All three checks are only answerable across the tree, because a name is what
+    a *file* says: two modules claiming it collide no matter which one a level
+    loads, and an `after` naming a system this build did not link is a level that
+    installs a system which never runs.
+    """
+
+    SOURCE = (
+        "namespace Game {\n"
+        "ASYSTEM(FixedUpdate) void BounceSystem(SystemContext &ctx);\n"
+        "ASYSTEM(Update, name = \"Spin\", after = Bounce, activeWorldOnly)\n"
+        "void SpinDemoSystem(SystemContext &ctx);\n"
+        "}\n")
+
+    def _systems(self, text):
+        return reflect_parser.find_systems(reflect_parser.strip_comments(text), Path("T.hpp"))
+
+    def test_grammar_reaches_the_definition(self):
+        found = {s.name: s for s in self._systems(self.SOURCE)}
+        self.assertEqual(set(found), {"Bounce", "Spin"})
+        # The default name drops a trailing "System": BounceSystem in code is
+        # Bounce in a file.
+        self.assertEqual(found["Bounce"].phase, "FixedUpdate")
+        self.assertFalse(found["Bounce"].active_world_only)
+        self.assertEqual(found["Spin"].after, ["Bounce"])
+        self.assertTrue(found["Spin"].active_world_only)
+        self.assertEqual(found["Spin"].fqn, "::Game::SpinDemoSystem")
+
+    def test_the_phase_decides_the_context_type(self):
+        # The check the manual Register/RegisterRender split leaves to the caller.
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Render) void DrawSystem(SystemContext &ctx);\n")
+        self.assertIn("RenderContext", str(caught.exception))
+
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Update) void TickSystem(RenderContext &ctx);\n")
+        self.assertIn("SystemContext", str(caught.exception))
+
+    def test_require_any_is_refused_with_the_reason(self):
+        # Deliberately not part of ASYSTEM: reflectgen reads a declaration, not a
+        # body, so it cannot verify a gate — and too tight a one is a system that
+        # silently never runs.
+        with self.assertRaises(ValueError) as caught:
+            self._systems("ASYSTEM(Update, requireAny) void TickSystem(SystemContext &ctx);\n")
+        self.assertIn("RequireAny", str(caught.exception))
+
+    def test_duplicate_names_are_a_build_error_naming_both(self):
+        with tempfile.TemporaryDirectory() as d:
+            first = Path(d) / "A.hpp"
+            first.write_text("ASYSTEM(Update) void BounceSystem(SystemContext &ctx);\n", encoding="utf-8")
+            second = Path(d) / "B.hpp"
+            second.write_text("namespace Other {\n"
+                              "ASYSTEM(Update, name = \"Bounce\") void OtherSystem(SystemContext &ctx);\n"
+                              "}\n", encoding="utf-8")
+
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_systems([first, second])
+            message = str(caught.exception)
+            self.assertIn("two systems are named", message)
+            self.assertIn("BounceSystem", message)
+            self.assertIn("OtherSystem", message)
+
+    def test_an_after_naming_nothing_is_a_build_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text("ASYSTEM(Update, after = Ghost) void TickSystem(SystemContext &ctx);\n",
+                            encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_systems([path])
+            self.assertIn("Ghost", str(caught.exception))
+
+    def test_an_ordering_cycle_is_a_build_error(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text("ASYSTEM(Update, after = B) void ASystem(SystemContext &ctx);\n"
+                            "ASYSTEM(Update, after = A) void BSystem(SystemContext &ctx);\n",
+                            encoding="utf-8")
+            with self.assertRaises(ValueError) as caught:
+                reflectgen.check_systems([path])
+            self.assertIn("cycle", str(caught.exception))
+
+    def test_a_valid_set_lists_what_it_found(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "A.hpp"
+            path.write_text(self.SOURCE, encoding="utf-8")
+            lines = reflectgen.check_systems([path])
+            self.assertIn("2 system(s)", lines[0])
 
 
 class IncludePathTest(unittest.TestCase):

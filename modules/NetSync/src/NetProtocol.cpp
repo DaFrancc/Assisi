@@ -154,12 +154,14 @@ bool ReadServerHello(Core::BitReader &reader, ServerHello &outHello)
 void WriteClientHello(const ClientHello &hello, Core::BitWriter &writer)
 {
     writer.WriteUInt64(hello.protocolHash);
+    writer.WriteUInt64(hello.contentSetHash);
 }
 
 bool ReadClientHello(Core::BitReader &reader, ClientHello &outHello)
 {
     ClientHello hello;
-    hello.protocolHash = reader.ReadUInt64();
+    hello.protocolHash   = reader.ReadUInt64();
+    hello.contentSetHash = reader.ReadUInt64();
     if (!reader.Ok())
         return false;
 

@@ -23,7 +23,7 @@ namespace
 struct KeyEntry
 {
     std::string_view name;
-    Key              key;
+    Key key;
 };
 
 static constexpr std::array kKeyTable{
@@ -104,7 +104,7 @@ static constexpr std::array kKeyTable{
 struct ButtonEntry
 {
     std::string_view name;
-    MouseButton      button;
+    MouseButton button;
 };
 
 static constexpr std::array kButtonTable{

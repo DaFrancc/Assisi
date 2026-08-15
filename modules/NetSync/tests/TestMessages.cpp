@@ -98,11 +98,14 @@ TEST_CASE("message ids are dense, alphabetical, and never zero")
     const MessageRegistry &registry = MessageRegistry::Instance();
     REQUIRE(registry.Count() >= 4);
 
-    MessageId expected = 1;
+    // A raw counter rather than a MessageId, for the reason MessageId has no
+    // arithmetic: what this walks is the sequence 1, 2, 3…, and the claim under
+    // test is that the ids happen to be it.
+    std::uint32_t expected = 1;
     std::string previousName;
     for (const MessageMeta &meta : registry.All())
     {
-        CHECK(meta.id == expected);
+        CHECK(meta.id == MessageId{expected});
         // Zero has to stay invalid so a value-initialized id claims nothing,
         // matching every other id in the engine.
         CHECK(meta.id != kInvalidMessageId);
@@ -117,19 +120,19 @@ TEST_CASE("message ids are dense, alphabetical, and never zero")
     }
 
     CHECK(registry.ById(kInvalidMessageId) == nullptr);
-    CHECK(registry.ById(static_cast<MessageId>(registry.Count() + 1)) == nullptr);
+    CHECK(registry.ById(MessageId{static_cast<std::uint32_t>(registry.Count() + 1)}) == nullptr);
     CHECK(registry.IdOf(typeid(NotAMessage)) == kInvalidMessageId);
 }
 
 TEST_CASE("a message round-trips through the binary codec")
 {
-    const TestPlaceMarker sent{/*target=*/4242, /*slot=*/-7};
+    const TestPlaceMarker sent{ /*target=*/ 4242, /*slot=*/ -7};
 
     Core::BitWriter writer;
     REQUIRE(WriteMessageValue(sent, writer));
 
-    Core::BitReader   reader(writer.Data());
-    const MessageId   id   = ReadMessageId(reader);
+    Core::BitReader reader(writer.Data());
+    const MessageId id   = ReadMessageId(reader);
     const MessageMeta *meta = MessageRegistry::Instance().ById(id);
     REQUIRE(meta != nullptr);
     CHECK(meta->name == "TestPlaceMarker");
@@ -148,7 +151,7 @@ TEST_CASE("a message round-trips through JSON")
     REQUIRE(meta->serialize != nullptr);
     REQUIRE(meta->deserialize != nullptr);
 
-    const TestBurst sent{ECS::Entity{9, 1}, /*intensity=*/33};
+    const TestBurst sent{ECS::Entity{9, 1}, /*intensity=*/ 33};
     const nlohmann::json json = meta->serialize(&sent);
 
     TestBurst received;
@@ -163,13 +166,13 @@ TEST_CASE("an unknown message id can be stepped over, not merely failed on")
     // still find the second — which is the entire purpose of the length prefix.
     Core::BitWriter writer;
     REQUIRE(WriteMessageValue(TestPing{1.5f, -2.5f}, writer));
-    REQUIRE(WriteMessageValue(TestAnnounce{/*round=*/12}, writer));
+    REQUIRE(WriteMessageValue(TestAnnounce{ /*round=*/ 12}, writer));
 
     Core::BitReader reader(writer.Data());
     (void)ReadMessageId(reader);       // pretend this build does not know it
     REQUIRE(SkipMessageBody(reader));
 
-    const MessageId    secondId = ReadMessageId(reader);
+    const MessageId secondId = ReadMessageId(reader);
     const MessageMeta *meta     = MessageRegistry::Instance().ById(secondId);
     REQUIRE(meta != nullptr);
     CHECK(meta->name == "TestAnnounce");
@@ -200,7 +203,7 @@ TEST_CASE("a truncated message body fails rather than reading past the buffer")
             continue;
 
         TestPlaceMarker received;
-        const bool      ok = ReadMessage(*meta, &received, reader);
+        const bool ok = ReadMessage(*meta, &received, reader);
         CHECK_FALSE(ok); // a short buffer cannot yield a whole message
     }
 }
@@ -276,16 +279,16 @@ TEST_CASE("the generated table binds every handler, and binds each to its own ty
     NetContext context{ClientId{7}, nullptr, &scene};
 
     const auto deliver = [&](const auto &message)
-    {
-        Core::BitWriter writer;
-        REQUIRE(WriteMessageValue(message, writer));
-        Core::BitReader    reader(writer.Data());
-        const MessageMeta *meta = MessageRegistry::Instance().ById(ReadMessageId(reader));
-        REQUIRE(meta != nullptr);
-        return dispatch.Dispatch(*meta, context, reader);
-    };
+                         {
+                             Core::BitWriter writer;
+                             REQUIRE(WriteMessageValue(message, writer));
+                             Core::BitReader reader(writer.Data());
+                             const MessageMeta *meta = MessageRegistry::Instance().ById(ReadMessageId(reader));
+                             REQUIRE(meta != nullptr);
+                             return dispatch.Dispatch(*meta, context, reader);
+                         };
 
-    CHECK(deliver(TestPlaceMarker{/*target=*/11, /*slot=*/2}));
+    CHECK(deliver(TestPlaceMarker{ /*target=*/ 11, /*slot=*/ 2}));
     CHECK(HandlerLog::Instance().placeMarkerCalls == 1);
     CHECK(HandlerLog::Instance().pingCalls == 0);
     CHECK(HandlerLog::Instance().lastPlaceMarker.target == 11);
@@ -295,16 +298,16 @@ TEST_CASE("the generated table binds every handler, and binds each to its own ty
     // may trust.
     CHECK(HandlerLog::Instance().lastSender == ClientId{7});
 
-    CHECK(deliver(TestPing{/*x=*/3.5f, /*y=*/-1.25f}));
+    CHECK(deliver(TestPing{ /*x=*/ 3.5f, /*y=*/ -1.25f}));
     CHECK(HandlerLog::Instance().pingCalls == 1);
     CHECK(HandlerLog::Instance().placeMarkerCalls == 1); // the same-named handler did not fire
     CHECK(HandlerLog::Instance().lastPing.x == doctest::Approx(3.5f));
     CHECK(HandlerLog::Instance().lastPing.y == doctest::Approx(-1.25f));
 
-    CHECK(deliver(TestBurst{ECS::NullEntity, /*intensity=*/9}));
+    CHECK(deliver(TestBurst{ECS::NullEntity, /*intensity=*/ 9}));
     CHECK(HandlerLog::Instance().burstCalls == 1);
 
-    CHECK(deliver(TestAnnounce{/*round=*/3}));
+    CHECK(deliver(TestAnnounce{ /*round=*/ 3}));
     CHECK(HandlerLog::Instance().announceCalls == 1);
     CHECK(HandlerLog::Instance().lastAnnounce.round == 3);
 }
@@ -320,16 +323,16 @@ TEST_CASE("a message value fills in from nothing, not from the last one")
     NetContext context{ClientId{2}, nullptr, &scene};
 
     const auto deliver = [&](const auto &message)
-    {
-        Core::BitWriter writer;
-        REQUIRE(WriteMessageValue(message, writer));
-        Core::BitReader    reader(writer.Data());
-        const MessageMeta *meta = MessageRegistry::Instance().ById(ReadMessageId(reader));
-        REQUIRE(meta != nullptr);
-        return MessageDispatch::Instance().Dispatch(*meta, context, reader);
-    };
+                         {
+                             Core::BitWriter writer;
+                             REQUIRE(WriteMessageValue(message, writer));
+                             Core::BitReader reader(writer.Data());
+                             const MessageMeta *meta = MessageRegistry::Instance().ById(ReadMessageId(reader));
+                             REQUIRE(meta != nullptr);
+                             return MessageDispatch::Instance().Dispatch(*meta, context, reader);
+                         };
 
-    CHECK(deliver(TestBurst{ECS::NullEntity, /*intensity=*/42}));
+    CHECK(deliver(TestBurst{ECS::NullEntity, /*intensity=*/ 42}));
     CHECK(HandlerLog::Instance().lastBurst.intensity == 42);
 
     CHECK(deliver(TestBurst{}));
@@ -347,7 +350,7 @@ TEST_CASE("an unhandled message is reported rather than silently swallowed")
                        .direction   = MessageDirection::Event,
                        .reliability = MessageReliability::Unreliable,
                        .independent = true,
-                       .id          = 999,
+                       .id          = MessageId{999},
                        .serialize   = nullptr,
                        .deserialize = nullptr};
 

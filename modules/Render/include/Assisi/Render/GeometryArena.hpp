@@ -30,7 +30,7 @@ namespace Assisi::Render
 {
 class GeometryArena
 {
-  public:
+public:
     /// @brief A mesh's sub-allocation: base offsets into the shared buffers.
     /// `vertexBase` feeds drawIndexed's startVertexLocation (baseVertex, added to
     /// every index); `indexBase` + a submesh's IndexOffset feeds startIndexLocation.
@@ -73,7 +73,7 @@ class GeometryArena
     /// shared upload list). The grow copy is recorded into the same list *before*
     /// the new-data writes, so linear ordering + nvrhi's auto-barriers keep it
     /// correct, and the old buffer stays alive via the list's referenced resources.
-    /// When null, a private command list is created and executed here as before.
+    /// When null, a private command list is created and executed here.
     Range Allocate(const void *vertexData, uint32_t vertexCount, const uint32_t *indexData, uint32_t indexCount,
                    nvrhi::ICommandList *sharedList = nullptr)
     {
@@ -90,7 +90,7 @@ class GeometryArena
         range.indexCount = indexCount;
 
         nvrhi::CommandListHandle ownList;
-        nvrhi::ICommandList     *commandList = sharedList;
+        nvrhi::ICommandList *commandList = sharedList;
         if (commandList == nullptr)
         {
             ownList = _device->createCommandList();
@@ -167,17 +167,15 @@ class GeometryArena
     nvrhi::IBuffer *IndexBuffer() const { return _indexBuffer; }
     uint32_t VertexStride() const { return _vertexStride; }
 
-    /// Occupancy, for the capture's memory counters. Used against capacity is
-    /// what says whether the next Allocate will trigger a Grow — and a Grow is a
-    /// reallocation plus a GPU copy of the whole prefix, which is exactly the
-    /// kind of cost that shows up in a later frame's garbage collection rather
-    /// than the frame that caused it.
+    /// Occupancy, for the capture's memory counters. Used against capacity says
+    /// whether the next Allocate triggers a Grow — a reallocation plus a GPU copy
+    /// of the whole prefix, charged to a later frame than the one that caused it.
     [[nodiscard]] uint64_t VertexUsedBytes() const { return _vertexUsed; }
     [[nodiscard]] uint64_t VertexCapacityBytes() const { return _vertexCapacity; }
     [[nodiscard]] uint64_t IndexUsedBytes() const { return _indexUsed; }
     [[nodiscard]] uint64_t IndexCapacityBytes() const { return _indexCapacity; }
 
-  private:
+private:
     void EnsureVertexCapacity(uint64_t needed, nvrhi::ICommandList *sharedList = nullptr)
     {
         Grow(_vertexBuffer, _vertexCapacity, _vertexUsed, needed, true, sharedList);
@@ -212,7 +210,7 @@ class GeometryArena
         if (used > 0)
         {
             nvrhi::CommandListHandle ownList;
-            nvrhi::ICommandList     *commandList = sharedList;
+            nvrhi::ICommandList *commandList = sharedList;
             if (commandList == nullptr)
             {
                 ownList = _device->createCommandList();
@@ -231,13 +229,13 @@ class GeometryArena
         capacity = newCapacity;
     }
 
-    nvrhi::IDevice     *_device = nullptr;
-    uint32_t            _vertexStride = 0;
+    nvrhi::IDevice *_device = nullptr;
+    uint32_t _vertexStride = 0;
     nvrhi::BufferHandle _vertexBuffer;
     nvrhi::BufferHandle _indexBuffer;
-    uint64_t            _vertexCapacity = 0;
-    uint64_t            _indexCapacity = 0;
-    uint64_t            _vertexUsed = 0;
-    uint64_t            _indexUsed = 0;
+    uint64_t _vertexCapacity = 0;
+    uint64_t _indexCapacity = 0;
+    uint64_t _vertexUsed = 0;
+    uint64_t _indexUsed = 0;
 };
 } /* namespace Assisi::Render */

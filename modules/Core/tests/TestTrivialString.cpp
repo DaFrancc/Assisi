@@ -89,7 +89,7 @@ TEST_CASE("TrivialString: capacities beyond a byte work (uint16_t length prefix)
 {
     // The length prefix is a flat uint16_t, so capacities past 255 hold fine.
     TrivialString<300> big;
-    const std::string   text(300, 'z');
+    const std::string text(300, 'z');
     CHECK(big.Assign(text));
     CHECK(big.Size() == 300);
     CHECK(big.View() == text);

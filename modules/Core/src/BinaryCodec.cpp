@@ -138,7 +138,7 @@ void UnpackEntity(std::byte *address, std::uint64_t packed)
 
 template <std::size_t Capacity> void ReadTrivialString(BitReader &reader, TrivialString<Capacity> &out)
 {
-    char              buffer[Capacity];
+    char buffer[Capacity];
     const std::size_t length = reader.ReadStringInto(buffer, Capacity);
     if (reader.Failed())
         return; // sticky failure already latched; leave the destination alone
@@ -189,6 +189,17 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     case FieldType::UInt32:
         writer.WriteUInt32(LoadPod<std::uint32_t>(address));
         return true;
+    case FieldType::InstanceRef:
+    {
+        // A local instance id, translated to the instance's baseNetId by the
+        // caller's hook — the same shape EntityRef gets below, for the same reason:
+        // the number means nothing on the other machine. A null hook writes it
+        // through, which is right for every same-process round trip.
+        const std::uint32_t local = LoadPod<std::uint32_t>(address);
+        writer.WriteUInt32(context != nullptr && context->instanceToWire ? context->instanceToWire(local)
+                                                                        : local);
+        return true;
+    }
     case FieldType::Int64:
         writer.WriteInt64(LoadPod<std::int64_t>(address));
         return true;
@@ -228,6 +239,9 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
     case FieldType::String:
         writer.WriteString(reinterpret_cast<const ShortString *>(address)->View());
         return true;
+    case FieldType::EntityName:
+        writer.WriteString(reinterpret_cast<const EntityName *>(address)->View());
+        return true;
     case FieldType::EntityRef:
     {
         // The raw handle, optionally translated by the caller's hook. The codec
@@ -257,7 +271,7 @@ bool WriteField(const FieldMeta &field, const std::byte *address, BitWriter &wri
         // builds can hash equal and still number their ordinals differently —
         // one id-only registration apart is enough. Raw bits would silently
         // re-aim; names cannot.
-        const auto                                 &mask       = *reinterpret_cast<const ComponentMask *>(address);
+        const auto &mask       = *reinterpret_cast<const ComponentMask *>(address);
         const std::span<const ComponentMeta *const> replicable = ComponentRegistry::Instance().ReplicableComponents();
 
         std::size_t count = 0;
@@ -307,6 +321,13 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
     case FieldType::UInt32:
         StorePod(address, reader.ReadUInt32());
         return true;
+    case FieldType::InstanceRef:
+    {
+        const std::uint32_t wire = reader.ReadUInt32();
+        StorePod(address, context != nullptr && context->instanceFromWire ? context->instanceFromWire(wire)
+                                                                         : wire);
+        return true;
+    }
     case FieldType::Int64:
         StorePod(address, reader.ReadInt64());
         return true;
@@ -340,6 +361,9 @@ bool ReadField(const FieldMeta &field, std::byte *address, BitReader &reader, co
     }
     case FieldType::String:
         ReadTrivialString(reader, *reinterpret_cast<ShortString *>(address));
+        return true;
+    case FieldType::EntityName:
+        ReadTrivialString(reader, *reinterpret_cast<EntityName *>(address));
         return true;
     case FieldType::EntityRef:
     {
@@ -443,6 +467,13 @@ const char *FieldTypeName(FieldType type)
     case FieldType::AssetId: return "assetid";
     case FieldType::AssetIdVector: return "assetid[]";
     case FieldType::ComponentMask: return "compmask";
+    // Distinct from "uint32" on purpose: the bytes are the same width and mean
+    // different things — one is a number, the other is a baseNetId a peer has to
+    // translate. This name is hashed, so two builds that disagree refuse to pair.
+    case FieldType::InstanceRef: return "instance";
+    // Distinct from "str": same bytes on the wire, different buffer capacity, so
+    // a build that swapped one for the other would truncate rather than fail.
+    case FieldType::EntityName: return "ename";
     case FieldType::Unknown: break;
     }
     return "unknown";
@@ -528,7 +559,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     if (meta.id == kInvalidComponentId)
     {
         ASSISI_ASSERT(false, "WriteComponent: component id is not finalized — the registry finalizes "
-                             "lazily on first query, so call this only after startup registration.");
+                      "lazily on first query, so call this only after startup registration.");
         Log::Error("BinaryCodec: refusing to encode '{}' — its ComponentId is not finalized", meta.name);
         return false;
     }
@@ -547,7 +578,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
     // reconstructs, which the round-trip tests depend on.
     mask &= LowFieldMask(fieldCount);
 
-    writer.WriteVarUInt32(meta.id);
+    writer.WriteVarUInt32(meta.id.value); // wire write
     writer.WriteBits64(mask, static_cast<std::uint32_t>(fieldCount));
 
     std::size_t codecIndex = 0;
@@ -565,7 +596,7 @@ bool WriteComponent(const ComponentMeta &meta, const void *component, BitWriter 
                 // component (and a log line naming the field) than a stream that
                 // decodes into garbage.
                 ASSISI_ASSERT(false, "WriteComponent: unencodable field type (FieldType::Unknown, or an enum "
-                                     "with a width that is not 1/2/4/8 bytes)");
+                              "with a width that is not 1/2/4/8 bytes)");
                 Log::Error("BinaryCodec: cannot encode field '{}::{}' (type {}, enumSize {})", meta.name, field.name,
                            FieldTypeName(field.type), field.enumSize);
                 return false;
@@ -582,7 +613,7 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
     if (meta.id == kInvalidMessageId)
     {
         ASSISI_ASSERT(false, "WriteMessage: message id is not finalized — the registry finalizes lazily on "
-                             "first query, so call this only after startup registration.");
+                      "first query, so call this only after startup registration.");
         Log::Error("BinaryCodec: refusing to encode message '{}' — its MessageId is not finalized", meta.name);
         return false;
     }
@@ -610,10 +641,10 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
     // wherever the previous one ended, so byte-aligning it to make the prefix
     // prettier would cost up to seven bits per message for nothing.
     const std::size_t bodyBits = body.BitsWritten();
-    writer.WriteVarUInt32(meta.id);
+    writer.WriteVarUInt32(meta.id.value); // wire write
     writer.WriteVarUInt32(static_cast<std::uint32_t>(bodyBits));
 
-    BitReader   copy(body.Data());
+    BitReader copy(body.Data());
     std::size_t remaining = bodyBits;
     while (remaining > 0)
     {
@@ -626,7 +657,7 @@ bool WriteMessage(const MessageMeta &meta, const void *message, BitWriter &write
 
 MessageId ReadMessageId(BitReader &reader)
 {
-    const MessageId id = reader.ReadVarUInt32();
+    const MessageId id{reader.ReadVarUInt32()}; // wire read
     return reader.Failed() ? kInvalidMessageId : id;
 }
 
@@ -693,7 +724,10 @@ bool FieldsWithinBounds(std::span<const FieldMeta> fields, const void *object, s
         const void *address = FieldAddress(object, field.offset);
         switch (field.type)
         {
-        case FieldType::Float:  value = *static_cast<const float *>(address); break;
+        // Explicit, like the 64-bit cases below: the widening is intended — the
+        // whole comparison runs in double — and saying so is what keeps
+        // -Wdouble-promotion (clang) from reading it as an accident.
+        case FieldType::Float:  value = static_cast<double>(*static_cast<const float *>(address)); break;
         case FieldType::Double: value = *static_cast<const double *>(address); break;
         case FieldType::Int32:  value = *static_cast<const std::int32_t *>(address); break;
         case FieldType::UInt32: value = *static_cast<const std::uint32_t *>(address); break;
@@ -737,7 +771,7 @@ bool SkipMessageBody(BitReader &reader)
 
 ComponentId ReadComponentId(BitReader &reader)
 {
-    const ComponentId id = reader.ReadVarUInt32();
+    const ComponentId id{reader.ReadVarUInt32()}; // wire read
     return reader.Failed() ? kInvalidComponentId : id;
 }
 
@@ -800,18 +834,17 @@ std::string ProtocolLayoutDescription(std::span<const ComponentMeta> components)
 
     for (const ComponentMeta &meta : components)
     {
-        text += std::to_string(meta.id);
+        text += std::to_string(meta.id.value); // hashed layout text
         text += ' ';
         text += meta.name;
         // Whether the component replicates at all is wire semantics, not layout:
         // two builds that disagree about it exchange different component sets
         // while every field description matches, so nothing else here would
         // catch it.
-        // The emitted spelling is deliberately *not* renamed alongside the flag:
-        // this text is hashed, and changing a word here would repartition every
-        // deployed build into incompatible pairs for no semantic reason. The
-        // flag is `replicable` in C++; the wire calls it what it always called
-        // it. TestReplication pins the hash across the rename to prove it.
+        // The emitted word stays `replicated` even though the C++ flag is
+        // `replicable`: this text is hashed, so changing a word here would
+        // repartition every deployed build into incompatible pairs for no
+        // semantic reason.
         text += meta.replicable ? " replicated" : " local";
         text += '\n';
 
@@ -834,7 +867,7 @@ std::string MessageLayoutDescription(std::span<const MessageMeta> messages)
 
     for (const MessageMeta &meta : messages)
     {
-        text += std::to_string(meta.id);
+        text += std::to_string(meta.id.value); // hashed layout text
         text += ' ';
         text += meta.name;
 

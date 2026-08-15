@@ -2,20 +2,23 @@
 
 #include "ServerApp.hpp"
 
+#include <Assisi/App/BlueprintReplication.hpp>
 #include <Assisi/App/LevelRuntime.hpp>
+#include <Assisi/App/SystemCatalog.hpp>
+#include <Assisi/App/World.hpp>
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/ContentHash.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
-#include <Assisi/NetSync/NetComponents.hpp>
+#if defined(ASSISI_NETWORKING)
+#    include <Assisi/NetSync/NetComponents.hpp>
+#endif
 
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <format>
-#include <fstream>
 #include <optional>
-#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -25,8 +28,10 @@ namespace Sandbox
 namespace
 {
 
+#if defined(ASSISI_NETWORKING)
 namespace Net     = Assisi::Net;
 namespace NetSync = Assisi::NetSync;
+#endif
 namespace ECS     = Assisi::ECS;
 namespace Log     = Assisi::Core::Log;
 
@@ -41,24 +46,6 @@ double NowSeconds()
 
 /// How often a headless process prints a "still alive, here is the rate" line.
 constexpr double kReportIntervalSeconds = 5.0;
-
-/// FNV-1a over a level file's raw bytes, or nullopt if it cannot be read.
-/// Binary, not text, and the same on both ends: a text-mode read would translate
-/// line endings on one platform and not the other, turning a matched pair of
-/// files into a refused join.
-std::optional<std::uint64_t> HashLevelFile(const std::string &virtualPath)
-{
-    const auto resolved = Assisi::Core::AssetSystem::Resolve(virtualPath);
-    if (!resolved)
-        return std::nullopt;
-
-    std::ifstream file(*resolved, std::ios::binary);
-    if (!file.is_open())
-        return std::nullopt;
-
-    const std::string bytes((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
-    return Assisi::Core::ContentHash64(std::as_bytes(std::span{bytes.data(), bytes.size()}));
-}
 
 } // namespace
 
@@ -80,19 +67,37 @@ void ServerApp::OnStart()
     Log::Info("Server: headless {}, {} Hz fixed step{}.", roleName, GetConfig().physicsHz,
               _options.tickLimit > 0 ? std::format(", stopping after {} ticks", _options.tickLimit) : std::string{});
 
+#if defined(ASSISI_NETWORKING)
     // Before any session can exist: the quantization is inside the handshake
     // hash, so it has to be settled before the first hello is written.
     NetSync::LoadQuantizationFromConfig();
     NetSync::LoadSmoothingFromConfig();
+#endif
 
     if (!_options.level.empty())
     {
         // LoadLevelSim, not LoadLevel: no asset cache, no scene renderer,
         // nothing GPU-owned to evict. Mesh and material GUIDs stay in the scene
         // as authored data for replication; the server never resolves them.
-        if (!Assisi::App::LoadLevelSim(_scene, _options.level, _physics))
+        //
+        // The declaration check runs even though a headless server installs no
+        // systems: a level naming a system this build does not declare is a
+        // broken file, and serving it hands every client a level the host
+        // itself is not running — worse than refusing, because it looks like it
+        // worked.
+        if (!Assisi::App::LevelSystemsAreDeclared(_options.level))
+        {
+            Log::Error("Server: refusing '{}' — it names a system this build does not declare.",
+                       _options.level);
+            _startupFailed = true;
+            RequestClose();
+            return;
+        }
+
+        if (!Assisi::App::LoadLevelSim(_world, _options.level))
         {
             Log::Error("Server: failed to load level '{}'.", _options.level);
+            _startupFailed = true;
             RequestClose();
             return;
         }
@@ -106,9 +111,24 @@ void ServerApp::OnStart()
         return;
     }
 
+#if !defined(ASSISI_NETWORKING)
+    // A networked role in a build configured without networking. Refused out
+    // loud rather than quietly degraded to Offline: a --host that hosts nothing
+    // is a worse outcome than one that says it cannot.
+    Log::Error("Server: this build was configured with ASSISI_ENABLE_NETWORKING=OFF, so --host and "
+               "--connect do nothing. Reconfigure with networking on, or use --server for headless "
+               "simulation.");
+    _startupFailed = true;
+    RequestClose();
+    return;
+#else
     NetSync::ReplicationConfig config;
     config.tickRateHz = static_cast<std::uint32_t>(GetConfig().physicsHz);
-    _session          = std::make_unique<NetSync::NetSession>(_scene, &_physics, config);
+    _session          = std::make_unique<NetSync::NetSession>(_world.scene, &_world.physics, config);
+
+    // Triggered by hosting or joining, never by the level load above: a process
+    // that only simulates has nothing to compare with anybody.
+    _contentSetHash.Start(Jobs());
 
     if (_options.role == ServerRole::Host)
     {
@@ -118,7 +138,7 @@ void ServerApp::OnStart()
         NetSync::LevelIdentity level;
         if (!_options.level.empty())
         {
-            if (const std::optional<std::uint64_t> hash = HashLevelFile(_options.level))
+            if (const std::optional<std::uint64_t> hash = Assisi::App::HashLevelFile(_options.level))
             {
                 level.addressing  = NetSync::LevelAddressing::Virtual;
                 level.path        = _options.level;
@@ -126,8 +146,12 @@ void ServerApp::OnStart()
             }
         }
 
+        // Host logs its own reason (the port is taken, the transport would not come
+        // up). What it cannot do is reach the exit code, and a supervisor restarting
+        // a server that cannot bind is watching for exactly this.
         if (!_session->Host(_options.port, std::move(level)))
         {
+            _startupFailed = true;
             RequestClose();
             return;
         }
@@ -137,11 +161,11 @@ void ServerApp::OnStart()
         // proves nothing for the rest of the run.
         for (std::uint32_t i = 0; i < _options.spawnCount; ++i)
         {
-            const ECS::Entity entity = _scene.Create();
-            ECS::Transform    transform;
+            const ECS::Entity entity = _world.scene.Create();
+            ECS::Transform transform;
             transform.position = {static_cast<float>(i) * 2.f, 0.f, 0.f};
-            (void)_scene.Add<ECS::Transform>(entity, transform);
-            (void)_scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
+            (void)_world.scene.Add<ECS::Transform>(entity, transform);
+            (void)_world.scene.Add<NetSync::Replicated>(entity, NetSync::Replicated{});
             _moving.push_back(entity);
         }
 
@@ -149,53 +173,43 @@ void ServerApp::OnStart()
     }
     // Deferred, exactly like the editor's join: this process has a level to load
     // before a NetId has anywhere to land.
-    else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/true))
+    else if (!_session->Join(_options.address, _options.port, /*deferHandshake=*/ true))
     {
+        _startupFailed = true;
         RequestClose();
     }
+#endif // ASSISI_NETWORKING
 }
 
 void ServerApp::BuildJoinedWorld()
 {
+#if defined(ASSISI_NETWORKING)
     const NetSync::ServerHello *hello = _session->Handshake();
     if (hello == nullptr)
         return;
 
+    // Every way a join can be refused funnels through here, so the exit code is
+    // set once rather than at each caller. A client that could not join never
+    // started, whatever the reason.
     const auto fail = [this](std::string reason)
-    {
-        Log::Error("Client: join failed — {}", reason);
-        _session->AbortJoin(std::move(reason));
-        RequestClose();
-    };
+                      {
+                          Log::Error("Client: join failed — {}", reason);
+                          _session->AbortJoin(std::move(reason));
+                          _startupFailed = true;
+                          RequestClose();
+                      };
 
-    if (hello->level.addressing == NetSync::LevelAddressing::None)
+    // Every question a join has to answer before touching the scene, asked in the
+    // one place every target asks it.
+    const std::expected<std::filesystem::path, Assisi::App::JoinLevelError> file =
+        Assisi::App::ResolveJoinLevel(hello->level);
+    if (!file)
     {
-        fail("the host is not running a level file, so there is no world to build here.");
-        return;
-    }
-    // The headless client only speaks virtual paths: an absolute one is a
-    // play-in-editor temp snapshot, which belongs to the process that wrote it.
-    if (hello->level.addressing != NetSync::LevelAddressing::Virtual)
-    {
-        fail("the host advertised a path this process cannot resolve.");
+        fail(Assisi::App::JoinLevelErrorMessage(file.error(), hello->level.path));
         return;
     }
 
-    const std::optional<std::uint64_t> localHash = HashLevelFile(hello->level.path);
-    if (!localHash)
-    {
-        fail("this build has no '" + hello->level.path + "'.");
-        return;
-    }
-    if (*localHash != hello->level.contentHash)
-    {
-        Log::Error("Client: level content hash mismatch for '{}' — host {}, local {}.", hello->level.path,
-                   Assisi::Core::ToHex64(hello->level.contentHash), Assisi::Core::ToHex64(*localHash));
-        fail("your copy of '" + hello->level.path + "' differs from the host's; sync it and retry.");
-        return;
-    }
-
-    if (!Assisi::App::LoadLevelSim(_scene, hello->level.path, _physics))
+    if (!Assisi::App::LoadLevelSim(_world, hello->level.path))
     {
         fail("'" + hello->level.path + "' failed to load.");
         return;
@@ -203,29 +217,37 @@ void ServerApp::BuildJoinedWorld()
 
     // The host owns these; they arrive as mirrors. The file's copies are the
     // host's authored originals, and keeping both would double the world.
-    std::vector<ECS::Entity> doomed;
-    _scene.ForEachEntity(
-        [&](ECS::Entity entity)
-        {
-            if (_scene.Has<NetSync::Replicated>(entity))
-                doomed.push_back(entity);
-        });
-    for (const ECS::Entity entity : doomed)
-        _scene.Destroy(entity);
-    _scene.FlushDestroyed();
-    _physics.RebuildSceneBodies(_scene);
+    // LoadLevelSim already built their bodies, which is why the shared strip has
+    // to take them out of the physics world rather than only ending the entities.
+    const Assisi::App::StrippedEntities stripped =
+        Assisi::App::StripReplicatedEntities(_world.scene, _world.physics);
 
     _session->ConfirmLevelReady();
-    Log::Info("Client: built '{}' ({} replicated entities stripped) and answered the handshake.",
-              hello->level.path, doomed.size());
+    Log::Info("Client: built '{}' ({} replicated entities stripped, {} orphan links dropped) and answered the "
+              "handshake.",
+              hello->level.path, stripped.entities, stripped.orphans);
+#endif // ASSISI_NETWORKING
 }
 
 void ServerApp::OnFixedUpdate(float dt)
 {
     // Take input and acks before simulating, so a command that arrived for this
     // tick is applied on this tick rather than the next one.
+#if defined(ASSISI_NETWORKING)
     if (_session)
     {
+        // Before Poll, so a hello that has been waiting on the scan goes out on
+        // the same tick the scan finished rather than the next one.
+        if (Assisi::App::ContentSet content; _contentSetHash.Poll(content))
+        {
+            Assisi::Core::Log::Info("Content set hashed: {} ({} files).", Assisi::Core::ToHex64(content.hash),
+                                    content.paths.size());
+            // The same call the windowed path makes, for the same reason: a
+            // dedicated server is where instances most want to arrive as
+            // instances. Nothing here is presentation.
+            Assisi::App::ApplyContentSet(*_session, _world, std::move(content));
+        }
+
         _session->Poll();
 
         // The handshake named a level; build it before answering. Nothing here
@@ -243,13 +265,16 @@ void ServerApp::OnFixedUpdate(float dt)
             return;
         }
     }
+#endif // ASSISI_NETWORKING
 
-    _physics.Update(dt);
+    _world.physics.Update(dt);
 
     // Immediately after the step, before the snapshot below: a mirror woken by a
     // contact the server never had has to be put back before anything reads it.
+#if defined(ASSISI_NETWORKING)
     if (_session)
         _session->AfterPhysicsStep();
+#endif
 
     // Move the demo world. Writes go through GetMut because that is what stamps
     // the change tick the delta is computed from — a write through a plain
@@ -257,7 +282,7 @@ void ServerApp::OnFixedUpdate(float dt)
     const auto phase = static_cast<float>(GetSimTick()) * 0.02f;
     for (std::size_t i = 0; i < _moving.size(); ++i)
     {
-        if (ECS::Transform *transform = _scene.GetMut<ECS::Transform>(_moving[i]))
+        if (ECS::Transform *transform = _world.scene.GetMut<ECS::Transform>(_moving[i]))
             transform->position.y = std::sin(phase + static_cast<float>(i));
     }
 
@@ -265,14 +290,16 @@ void ServerApp::OnFixedUpdate(float dt)
     // tick it is stamped with. A headless client has no devices to sample, so
     // it sends an empty command — enough to exercise the input path and give
     // the server something to measure its buffer depth against.
+#if defined(ASSISI_NETWORKING)
     if (_session)
         _session->Tick(GetSimTick());
+#endif
 
     if (_options.tickLimit > 0 && GetSimTick() >= _options.tickLimit)
         RequestClose();
 }
 
-void ServerApp::OnUpdate(float dt)
+void ServerApp::OnUpdate([[maybe_unused]] float dt)
 {
     // Write the render pose for remote entities. A headless client renders
     // nothing, but running it here keeps this loop the same shape as a windowed
@@ -281,8 +308,10 @@ void ServerApp::OnUpdate(float dt)
     // Its *convergence* assertions must never read these Transforms, though:
     // for a bodied mirror this adds a decaying cosmetic offset on top of the
     // physics pose, and the physics pose is the one that is authoritative.
+#if defined(ASSISI_NETWORKING)
     if (_session)
         _session->SmoothView(dt);
+#endif
 
     ReportStatus();
 }
@@ -296,11 +325,12 @@ void ServerApp::ReportStatus()
     // Measured, not configured: this line exists to show whether the loop is
     // actually holding its tick rate.
     const std::uint64_t tick     = GetSimTick();
-    const double        elapsed  = now - _lastReportSeconds;
-    const double        tickRate = elapsed > 0.0 ? static_cast<double>(tick - _lastReportTick) / elapsed : 0.0;
+    const double elapsed  = now - _lastReportSeconds;
+    const double tickRate = elapsed > 0.0 ? static_cast<double>(tick - _lastReportTick) / elapsed : 0.0;
     _lastReportSeconds           = now;
     _lastReportTick              = tick;
 
+#if defined(ASSISI_NETWORKING)
     if (!_session || !_session->IsActive())
     {
         Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
@@ -319,6 +349,10 @@ void ServerApp::ReportStatus()
                   tickRate, _session->StatusText(), stats.replicatedEntities, stats.snapshotsApplied,
                   stats.snapshotsRejected, stats.serverTick);
     }
+#else
+    // Offline is the only role this build has, so there is one line to print.
+    Log::Info("Server: tick {} ({:.1f} Hz measured)", tick, tickRate);
+#endif
 }
 
 void ServerApp::FlushDeferred()
@@ -326,11 +360,21 @@ void ServerApp::FlushDeferred()
     // End of frame: apply entities queued by Scene::Destroy() this tick. The
     // windowed path does this too — deferred destruction is a scene invariant,
     // not a rendering one.
-    _scene.FlushDestroyed();
+    _world.scene.FlushDestroyed();
+}
+
+void ServerApp::InstallQueuedSystems()
+{
+    // Same reason, same frame position as the windowed path: a blueprint arriving
+    // from the wire asks for the systems its file names, and they have to be
+    // registered at the safe point rather than mid-walk. A headless process runs
+    // that behaviour — it just does not draw it.
+    Assisi::App::DrainSystemInstalls(_world);
 }
 
 void ServerApp::OnShutdown()
 {
+#if defined(ASSISI_NETWORKING)
     if (_session && _session->IsClient())
     {
         const NetSync::SessionStats stats = _session->Stats();
@@ -338,12 +382,15 @@ void ServerApp::OnShutdown()
                   GetSimTick(), stats.snapshotsApplied, stats.snapshotsRejected, stats.replicatedEntities);
     }
     else
+#endif
     {
         Log::Info("Server: stopped after {} ticks.", GetSimTick());
     }
 
+#if defined(ASSISI_NETWORKING)
     // Before the scene and physics world it holds a reference to.
     _session.reset();
+#endif
 }
 
 } // namespace Sandbox

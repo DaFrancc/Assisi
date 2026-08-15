@@ -11,8 +11,7 @@
 /// sidecar, with a freshly minted GUID) per material next to the model, and
 /// records the `slot → material GUID` binding into the glTF's own `.aast`
 /// manifest. After this pass the mesh→material default is a *stored fact* the
-/// database reads back (retiring the live `AssetCache::MeshDefaultMaterial`
-/// derivation — D4), instead of being re-derived from the glTF every load.
+/// database reads back, instead of being re-derived from the glTF every load.
 /// See docs/asset-database-architecture.md §4 (step 3), §5, D4.
 ///
 /// Editor-only tooling. It lives in Geometry (not Core) because it needs the
@@ -71,8 +70,8 @@ enum class ReconcileOutcome : std::uint8_t
 struct ReconcileResult
 {
     ReconcileOutcome outcome     = ReconcileOutcome::Failed;
-    std::size_t      addedSlots  = 0;     ///< Slots newly materialized (AdditiveSlots).
-    bool             changedDisk = false; ///< Whether any file was written (caller rescans).
+    std::size_t addedSlots  = 0;          ///< Slots newly materialized (AdditiveSlots).
+    bool changedDisk = false;             ///< Whether any file was written (caller rescans).
 };
 
 /// @brief Reconcile an already-exploded glTF (one carrying a manifest) against
@@ -124,8 +123,8 @@ enum class SlotChange : std::uint8_t
 struct SlotDiff
 {
     std::uint32_t slot   = 0;
-    SlotChange    change = SlotChange::Unchanged;
-    std::string   name;             ///< Source material name (empty for a Removed slot; may be empty if unnamed).
+    SlotChange change = SlotChange::Unchanged;
+    std::string name;               ///< Source material name (empty for a Removed slot; may be empty if unnamed).
     Core::AssetId existing;         ///< The stored `.amat` GUID for this slot (nil for Added).
 };
 
@@ -134,7 +133,7 @@ struct SlotDiff
 ///        the union of old and new slots.
 struct MaterialDiff
 {
-    bool                  valid = false; ///< False if the glTF/sidecar/import could not be read.
+    bool valid = false;                  ///< False if the glTF/sidecar/import could not be read.
     std::vector<SlotDiff> slots;
 
     /// @brief Whether any slot is a Changed or Removed conflict. (Added alone is

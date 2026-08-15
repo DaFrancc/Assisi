@@ -16,11 +16,28 @@
 #include <Assisi/Core/BitStream.hpp>
 
 #include <cstdint>
+#include <format>
+#include <functional>
+#include <limits>
 #include <string>
 #include <vector>
 
 namespace Assisi::NetSync
 {
+
+/// @brief The integer a NetId is made of, and the one place its width is
+/// decided.
+///
+/// Everything that reads, writes, allocates or bounds a NetId is keyed to this
+/// name rather than spelling `std::uint32_t` again — `BitReader::ReadVarId`
+/// takes the wire width from it, `NetIdRangeFits` takes the end of the id space
+/// from it, and `ReplicationServer::_nextNetId` is declared with it. Widening
+/// the id space is then this line plus a `kNetProtocolVersion` bump, not a sweep
+/// over forty sites where a missed one truncates in silence.
+///
+/// One thing does **not** follow, deliberately, and the static_assert below is
+/// what says so out loud: see `CodecContext::instanceToWire`.
+using NetIdValue = std::uint32_t;
 
 /// @brief Server-assigned, session-scoped identity for a replicated entity.
 ///
@@ -28,12 +45,66 @@ namespace Assisi::NetSync
 /// depend on each machine's own allocation history, so they are meaningless
 /// across a connection. NetId is the only entity identity on the wire.
 ///
-/// Never recycled within a session: at this scale 32 bits will not run out, and
-/// reuse would let a stale reference silently address a different entity.
-using NetId = std::uint32_t;
+/// Never recycled within a session: reuse would let a stale reference silently
+/// address a different entity, so the counter only climbs and the space is
+/// spent rather than reclaimed. At `NetIdValue`'s current width that budget is
+/// total spawns per session, not live entities — a distinction that matters for
+/// a server meant to stay up indefinitely, and the reason the width is a typedef
+/// rather than a literal.
+///
+/// An aggregate, matching `ClientId` below — aggregate initialization
+/// (`NetId{7}`) is the only way in, which is what blocks the implicit conversion
+/// in both directions.
+///
+/// Deliberately no arithmetic. Allocating from a counter, and deriving a member
+/// block's ids as `base + index`, are both real operations — but they belong at
+/// the two or three sites that do them, spelled out, rather than baked into the
+/// type where every other use inherits them for free. `base + index` is only
+/// *sometimes* a member's NetId, and that is a seam worth having to look at.
+struct NetId
+{
+    NetIdValue value = 0;
+
+    [[nodiscard]] constexpr bool IsValid() const { return value != 0; }
+
+    friend constexpr bool operator==(NetId, NetId)  = default;
+    friend constexpr auto operator<=>(NetId, NetId) = default;
+};
 
 /// @brief The never-valid NetId. Zero, so a value-initialized NetId is invalid.
-inline constexpr NetId InvalidNetId = 0;
+inline constexpr NetId InvalidNetId{0};
+
+// The one place a NetId's width is committed to outside this header, and the
+// reason it cannot simply follow the typedef: `CodecContext::instanceToWire`
+// hands a base NetId through a `std::uint32_t` channel, and the codec applies it
+// to `AFIELD(instanceRef)` fields, which are `FieldType::UInt32` in the
+// reflected schema. Widening that channel's signature alone would move the
+// truncation *inside* the codec, where it would be silent — the exact shape of
+// B10.
+//
+// So widening NetIdValue is gated on a real decision: widen the instanceRef
+// field type through the schema and the generator, or keep instance references
+// 32-bit and accept that a base above the ceiling cannot be named in a
+// component field. This fires at the line being edited rather than letting
+// either choice be made by accident.
+static_assert(sizeof(NetIdValue) <= sizeof(std::uint32_t),
+              "NetIdValue no longer fits the instanceRef codec channel: CodecContext::instanceToWire and "
+              "AFIELD(instanceRef) are 32-bit by declaration. Widen the instanceRef field type through "
+              "Reflect and reflectgen, or keep instance references 32-bit — but decide it here.");
+
+/// @brief Does a block of @p count ids starting at @p base fit the id space?
+///
+/// The bound behind every `base + i` derived on this wire. Written as a
+/// subtraction rather than a widened sum on purpose: a sum can only be checked
+/// by computing it in something wider, which stops working the moment NetIdValue
+/// is as wide as the arithmetic. This form holds at every width, which is the
+/// whole point of the typedef above.
+[[nodiscard]] constexpr bool NetIdRangeFits(NetId base, std::uint64_t count)
+{
+    if (count == 0)
+        return true; // an empty range fits anywhere, including past the end
+    return count - 1u <= static_cast<std::uint64_t>(std::numeric_limits<NetIdValue>::max()) - base.value;
+}
 
 /// @brief Session-scoped identity for a *participant*: the thing `ControlledBy`
 /// names, directed messages address, and logs blame.
@@ -130,6 +201,15 @@ enum class RejectReason : std::uint8_t
 {
     ProtocolMismatch = 1, ///< The two builds do not agree on component layout.
     ServerFull       = 2,
+    /// The two machines do not hold the same set of level and blueprint files.
+    ///
+    /// Deliberately strict: *any* difference refuses, including files neither
+    /// machine ever loads, because a stray experimental `.abp` is indistinguishable
+    /// from a car whose wheels moved. That is a development-time cost and never a
+    /// shipping one, and it buys the property blueprint replication depends on —
+    /// after a successful join, both machines are known to expand any blueprint
+    /// identically (docs/blueprint-system-concept.md §9).
+    ContentMismatch = 3,
 };
 
 /// @brief Framing version for the messages in this file.
@@ -150,7 +230,19 @@ enum class RejectReason : std::uint8_t
 ///  - 4 → 5: `MessageType::Intent` and its envelope (same plan, M4).
 ///  - 5 → 6: the snapshot's message section, and `MessageType::Announcement`
 ///    (same plan, M5).
-inline constexpr std::uint32_t kNetProtocolVersion = 6;
+///  - 6 → 7: `ClientHello.contentSetHash` and `RejectReason::ContentMismatch`
+///    (docs/blueprint-system-concept.md §9).
+///  - 7 → 8: the snapshot gained an instance-record section, ahead of despawns.
+///    A v7 client reads that count as its despawn count and desyncs the whole
+///    stream, so this is a refuse-to-join change, not a tolerable one.
+///  - 8 → 9: an instance record carries **which of its members exist** — one bit
+///    for "all of them", and one bit per member when they do not
+///    (docs/blueprint-review-round7-findings.md B8). Nothing on the wire said so
+///    before, so a member pruned on the host was expanded and bound by every
+///    later joiner and no despawn ever named it. Same section, one bit wider in
+///    the common case, and a v8 client would read the presence bit as the first
+///    byte of the placement.
+inline constexpr std::uint32_t kNetProtocolVersion = 9;
 
 /// @brief The hash exchanged at handshake: the reflection protocol hash with
 /// this module's framing version folded in.
@@ -188,7 +280,7 @@ enum class LevelAddressing : std::uint8_t
 struct LevelIdentity
 {
     LevelAddressing addressing = LevelAddressing::None;
-    std::string     path; ///< Interpreted per `addressing`; empty when None.
+    std::string path;     ///< Interpreted per `addressing`; empty when None.
     /// `Core::ContentHash64` of the level file as saved. A client that resolves
     /// the path to different bytes refuses the join: everything downstream —
     /// static geometry, unmarked dynamics, the entities that get stripped —
@@ -229,6 +321,21 @@ struct ServerHello
 struct ClientHello
 {
     std::uint64_t protocolHash = 0;
+
+    /// One hash over **every** `.alvl` and `.abp` this build can resolve, each
+    /// content-normalised, combined in sorted virtual-path order.
+    ///
+    /// The level's own `contentHash` names *which* level; this names the whole
+    /// content set, and it has to, because a blueprint spawned from C++ is named
+    /// by no level and would never be hashed — while blueprint replication makes
+    /// every blueprint's content load-bearing across the wire. Once the sets are
+    /// known equal, a blueprint can be named on the wire by its index in the
+    /// sorted list: two bytes, no path string, no per-file hash.
+    ///
+    /// **The client sends it; the server decides.** The server owns who joins,
+    /// which is where a content check belongs, and it matches how the protocol
+    /// hash already works.
+    std::uint64_t contentSetHash = 0;
 };
 
 /// @brief The fixed part of a snapshot, before the entity data.
@@ -268,4 +375,50 @@ bool ReadClientHello(Core::BitReader &reader, ClientHello &outHello);
 void WriteSnapshotHeader(const SnapshotHeader &header, Core::BitWriter &writer);
 bool ReadSnapshotHeader(Core::BitReader &reader, SnapshotHeader &outHeader);
 
+// A NetId on the wire is `writer.WriteVarId(id)` / `reader.ReadVarId<NetId>()`,
+// written out at each site like every other scalar id here. Both take their
+// width from NetIdValue's declaration, including the read-side range check — so
+// a value too wide for the id is refused rather than truncated into one naming a
+// different entity, which is B10's failure arrived at by another route.
+
 } // namespace Assisi::NetSync
+
+namespace Assisi::Core
+{
+/// Encodes as a varint, at whatever width NetIdValue is — which is the whole
+/// reason this opt-in is worth having: `ReadVarId<NetId>` takes its range check
+/// from the declaration, so the width is stated once and enforced everywhere.
+template <> struct IsStrongId<NetSync::NetId> : std::true_type
+{
+};
+static_assert(StrongId<NetSync::NetId>);
+
+/// Reaches a peer inside a component (`ControlledBy`) and, as a bare field, in
+/// `ServerHello.clientId` — which encodes it as a plain `WriteVarUInt32` of the
+/// value rather than through `WriteVarId`. Declaring the opt-in here is what
+/// keeps that a decision rather than an oversight.
+template <> struct IsStrongId<NetSync::ClientId> : std::true_type
+{
+};
+static_assert(StrongId<NetSync::ClientId>);
+} // namespace Assisi::Core
+
+/// Prints as the bare number, so a log line reads "netId 7" rather than making
+/// every call site spell `.value`. Without this the type would be strictly worse
+/// to hold than the integer it replaces, which is how a good rule gets worked
+/// around.
+template <> struct std::formatter<Assisi::NetSync::NetId> : std::formatter<Assisi::NetSync::NetIdValue>
+{
+    auto format(Assisi::NetSync::NetId id, std::format_context &ctx) const
+    {
+        return std::formatter<Assisi::NetSync::NetIdValue>::format(id.value, ctx);
+    }
+};
+
+template <> struct std::hash<Assisi::NetSync::NetId>
+{
+    [[nodiscard]] std::size_t operator()(Assisi::NetSync::NetId id) const noexcept
+    {
+        return std::hash<Assisi::NetSync::NetIdValue>{}(id.value);
+    }
+};

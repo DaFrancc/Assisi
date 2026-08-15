@@ -4,10 +4,12 @@
 /// @file Errors.hpp
 /// @brief Error codes used throughout the Assisi::Core asset pipeline.
 
+#include <cstdint>
+
 namespace Assisi::Core
 {
 /// @brief Describes why an AssetSystem operation failed.
-enum class AssetError
+enum class AssetError : std::uint8_t
 {
     NotInitialized,     ///< AssetSystem::Initialize() has not been called yet.
     RootNotFound,       ///< Automatic root discovery found no `assets/` directory.

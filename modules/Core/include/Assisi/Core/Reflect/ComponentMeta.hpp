@@ -24,8 +24,8 @@ namespace Assisi::Core::Reflect
 
 struct ComponentMeta
 {
-    std::string            name;
-    std::type_index        typeIndex;
+    std::string name;
+    std::type_index typeIndex;
     std::vector<FieldMeta> fields;
 
     /// @brief Serialize a component instance to JSON.
@@ -39,9 +39,18 @@ struct ComponentMeta
     ///   entity_index — Entity::index of the target entity.
     ///   entity_gen   — Entity::generation of the target entity.
     ///   j            — JSON object for this component.
-    std::function<void(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen,
+    ///
+    /// @return false when a field is *present and unreadable* — a string where a
+    ///         number goes, an array of the wrong length. Nothing is added to the
+    ///         scene in that case: every field lands on a local instance first, so
+    ///         the entity never receives a half-applied component. The specific
+    ///         component, field and mismatch are logged before it returns.
+    ///         An **absent** key is not a failure; it leaves the field at its C++
+    ///         default, which is what lets a component gain a field without
+    ///         refusing every level saved before it.
+    std::function<bool(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen,
                        const nlohmann::json &j)>
-        addToScene;
+    addToScene;
 
     /// @brief Iterate all entities in a scene that have this component type.
     ///
@@ -49,7 +58,7 @@ struct ComponentMeta
     ///   scene_ptr — pointer to an ECS::Scene, cast to void*.
     ///   cb        — called once per entity: (entity_index, entity_gen, component_ptr).
     std::function<void(void *scene_ptr, std::function<void(uint32_t, uint32_t, const void *)>)>
-        iterateEntities;
+    iterateEntities;
 
     /// @brief Direct O(1) lookup of one entity's component, or nullptr if absent.
     ///
@@ -60,7 +69,7 @@ struct ComponentMeta
     ///   entity_index — Entity::index of the target entity.
     ///   entity_gen   — Entity::generation of the target entity.
     std::function<const void *(void *scene_ptr, uint32_t entity_index, uint32_t entity_gen)>
-        getByEntity;
+    getByEntity;
 
     /// @brief Default-construct this component on an entity and return a
     /// writable pointer to it, replacing any existing one.
@@ -89,8 +98,9 @@ struct ComponentMeta
     /// True for normal ACOMP components. False for ACOMP(transient) components,
     /// which register only to receive a stable ComponentId (so a Scene can store
     /// them) but carry no serialize/addToScene/iterateEntities/getByEntity/
-    /// construct/getMutable hooks — those are all null. This is the explicit gate consumers must check
-    /// before invoking a hook; do not probe the hooks for null yourself.
+    /// construct/getMutable hooks — those are all null. This is the explicit
+    /// gate consumers must check before invoking a hook; do not probe the hooks
+    /// for null yourself.
     /// Examples: Physics::RigidBody (wraps a live Jolt handle that must never be
     /// saved), Runtime::DestroyTag (a transient per-frame lifecycle marker).
     bool serializable = true;
@@ -112,15 +122,12 @@ struct ComponentMeta
     /// flag says the type has a defined wire form; whether any particular entity
     /// actually sends it is decided elsewhere — by the `Replicated` marker's
     /// exclusion mask (per entity) and the game's `neverReplicate` list (per
-    /// game). Fusing the two is what let a one-word edit inside a *physics*
-    /// module become network policy for every game built on this engine; an
-    /// engine module cannot know a game's policy, so it is no longer able to set
-    /// one. See docs/replication-optin-plan-v1.md.
+    /// game). Keeping them apart is what stops an engine module setting network
+    /// policy for every game built on it. See docs/replication-optin-plan-v1.md.
     ///
-    /// Opt-in, and deliberately so: replication is the one consumer that pays for
-    /// a component by default rather than by request, and "everything
-    /// serializable travels" shipped a `Camera` whose `isActive` could hijack the
-    /// receiving client's view.
+    /// Opt-in: a type must not acquire a wire form by accident. "Everything
+    /// serializable travels" replicates things like a `Camera` whose `isActive`
+    /// would hijack the receiving client's view.
     ///
     /// A replicable component is always also tracked — reflectgen implies
     /// `tracked` from `replicable`, because an untracked component's change tick

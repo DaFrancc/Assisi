@@ -32,7 +32,7 @@ inline constexpr float kEntityIconWorldSize = 0.5f;
 /// depth. The caller decides when to draw it (the editor skips it during play).
 class IconPass
 {
-  public:
+public:
     /// @param sceneFramebufferInfo  Format/samples of the scene framebuffer the
     ///        billboards composite into (must include the scene depth target).
     /// @param iconAssetPath  Virtual path of the icon image; a magenta placeholder
@@ -60,16 +60,16 @@ class IconPass
     void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, const glm::vec3 &cameraRight,
               const glm::vec3 &cameraUp, std::span<const glm::vec3> positions);
 
-  private:
+private:
     [[nodiscard]] bool BuildPipeline(const nvrhi::FramebufferInfo &sceneFramebufferInfo);
 
     nvrhi::IDevice *_device = nullptr;
 
-    nvrhi::ShaderHandle           _vertexShader;
-    nvrhi::ShaderHandle           _pixelShader;
-    nvrhi::BindingLayoutHandle    _bindingLayout;
-    nvrhi::SamplerHandle          _sampler;
-    nvrhi::BindingSetHandle       _bindingSet; // the icon texture + sampler
+    nvrhi::ShaderHandle _vertexShader;
+    nvrhi::ShaderHandle _pixelShader;
+    nvrhi::BindingLayoutHandle _bindingLayout;
+    nvrhi::SamplerHandle _sampler;
+    nvrhi::BindingSetHandle _bindingSet;       // the icon texture + sampler
     nvrhi::GraphicsPipelineHandle _pipeline;
 
     Texture _icon;

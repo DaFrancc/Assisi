@@ -8,10 +8,9 @@
 /// A runtime *producer* extracts one DrawItem per visible submesh (cull → LOD
 /// select → emit), sorts a span of them by `sortKey`, and hands that span to
 /// MeshPass::Submit — the *consumer*. Sorting by the key groups draws into
-/// pipeline / material / mesh runs so redundant GPU state binds collapse (NVRHI
-/// caches state across setGraphicsState calls), and orders front-to-back within
-/// a run for early-Z. Every later GPU-driven stage rewrites Submit's interior
-/// (sorted runs → instanced/indirect commands) without changing the producer.
+/// pipeline / material / mesh runs, and orders front-to-back within a run for
+/// early-Z. Submit turns those runs into instanced indirect commands;
+/// the producer knows nothing about how it does it.
 
 #include <algorithm>
 #include <cmath>
@@ -29,18 +28,18 @@ class Material;
 /// `model` is the entity's world matrix (the MVP is derived in Submit).
 struct DrawItem
 {
-    uint64_t          sortKey      = 0;
+    uint64_t sortKey      = 0;
     const MeshBuffer *mesh         = nullptr;
-    uint32_t          submeshIndex = 0; ///< Index into mesh->SubMeshes().
-    const Material   *material     = nullptr;
-    glm::mat4         model{1.f};
+    uint32_t submeshIndex = 0;          ///< Index into mesh->SubMeshes().
+    const Material *material     = nullptr;
+    glm::mat4 model{1.f};
 };
 
 // --- Opaque sort key: [pipeline:8 | materialId:20 | meshId:20 | depth:16] ----
 //
 // Material-major then mesh-major keeps binding-set and vertex/index-buffer
-// changes to the run boundaries (and puts same-mesh/same-material draws adjacent
-// for the future instancing pass); the low 16 depth bits break ties
+// changes to the run boundaries, and puts same-geometry draws adjacent so Submit
+// coalesces them into instanced commands; the low 16 depth bits break ties
 // front-to-back within a run for early-Z. The transparent pass will use a
 // separate depth-major key later (§5) — hence "opaque".
 inline constexpr uint32_t kSortPipelineBits = 8;
@@ -73,7 +72,7 @@ inline constexpr uint32_t kSortMeshMax     = (1u << kSortMeshBits) - 1;     ///<
 [[nodiscard]] inline uint16_t QuantizeDepthFrontToBack(float viewDistance, float nearZ, float farZ)
 {
     constexpr float kDepthMax = 65535.f;
-    const float     span      = farZ - nearZ;
+    const float span      = farZ - nearZ;
     if (span <= 0.f)
     {
         return 0;

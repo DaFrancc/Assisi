@@ -5,10 +5,21 @@
 #include <Assisi/Chiara/Chiara.hpp>
 #include <Assisi/Core/Logger.hpp>
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/ECS/TransformPose.hpp>
 
 #include <Jolt/Jolt.h>
 
+// A sanitized build steps physics on one thread — see kSanitized below for why.
+#if defined(__SANITIZE_THREAD__)
+#    define ASSISI_PHYSICS_TSAN 1
+#elif defined(__has_feature)
+#    if __has_feature(thread_sanitizer)
+#        define ASSISI_PHYSICS_TSAN 1
+#    endif
+#endif
+
 #include <Jolt/Core/Factory.h>
+#include <Jolt/Core/JobSystemSingleThreaded.h>
 #include <Jolt/Core/JobSystemThreadPool.h>
 #include <Jolt/Core/TempAllocator.h>
 #include <Jolt/Physics/Body/BodyActivationListener.h>
@@ -43,8 +54,6 @@ namespace Layers
 {
 static constexpr JPH::ObjectLayer kStatic = 0;
 static constexpr JPH::ObjectLayer kDynamic = 1;
-// (no kCount here: the broad-phase layer count is BPLayers::kCount, which Jolt
-// actually queries; an object-layer count had no reader.)
 } // namespace Layers
 
 namespace BPLayers
@@ -57,7 +66,7 @@ static constexpr unsigned int kCount = 2;
 // Maps object layers → broad-phase layers.
 class BPLayerInterface final : public JPH::BroadPhaseLayerInterface
 {
-  public:
+public:
     unsigned int GetNumBroadPhaseLayers() const override { return BPLayers::kCount; }
 
     JPH::BroadPhaseLayer GetBroadPhaseLayer(JPH::ObjectLayer layer) const override
@@ -76,7 +85,7 @@ class BPLayerInterface final : public JPH::BroadPhaseLayerInterface
 // Decides whether an object layer should be tested against a broad-phase layer.
 class ObjVsBPFilter final : public JPH::ObjectVsBroadPhaseLayerFilter
 {
-  public:
+public:
     bool ShouldCollide(JPH::ObjectLayer layer, JPH::BroadPhaseLayer bpLayer) const override
     {
         switch (layer)
@@ -94,7 +103,7 @@ class ObjVsBPFilter final : public JPH::ObjectVsBroadPhaseLayerFilter
 // Decides whether two object layers should collide at all.
 class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
 {
-  public:
+public:
     bool ShouldCollide(JPH::ObjectLayer layerA, JPH::ObjectLayer layerB) const override
     {
         switch (layerA)
@@ -133,14 +142,28 @@ class ObjLayerFilter final : public JPH::ObjectLayerPairFilter
    The scratch allocator is deliberately NOT here — it is per-world (see Impl).
    TempAllocatorImpl is a stack, used throughout a step by the pool workers a
    single Update() dispatches; two worlds' Update()s sharing one would interleave
-   their frames. Sharing it was only ever "safe" while worlds stepped strictly
-   sequentially, and even then the accesses cross pool-worker threads without a
-   happens-before edge (a real data race ThreadSanitizer flags). A per-world
-   allocator is 10 MiB of scratch each — cheap — and makes stepping safe whether
-   worlds run sequentially or (later) in parallel. The pool stays shared; Jolt is
-   built for many PhysicsSystems on one JobSystem. */
+   their frames, and the accesses cross pool-worker threads with no happens-before
+   edge (a data race ThreadSanitizer flags). A per-world allocator is 10 MiB of
+   scratch each — cheap — and makes stepping safe whether worlds run sequentially
+   or in parallel. The pool stays shared; Jolt is built for many PhysicsSystems on
+   one JobSystem. */
+/* Under ThreadSanitizer the pool is replaced by Jolt's single-threaded job
+   system. Jolt's solver coordinates its workers through its own barriers and
+   atomics rather than anything tsan models as a happens-before edge, so a
+   threaded step reports races inside `JobSystem.h` and `TempAllocator.h` — Jolt's
+   own headers, instrumented only because they are inlined into this TU (the Jolt
+   library does not link Assisi::Sanitize). Those reports cannot be fixed here and
+   bury any real race in noise. Stepping on one thread removes them at the source
+   rather than hiding them behind a suppression, and costs only speed: Jolt's
+   results do not depend on worker count, and everything around physics still runs
+   threaded. */
 struct JoltRuntime
 {
+#if defined(ASSISI_PHYSICS_TSAN)
+    JPH::JobSystemSingleThreaded jobSystem;
+
+    JoltRuntime() { jobSystem.Init(JPH::cMaxPhysicsJobs); }
+#else
     // Default-constructed and then Init'd in the body rather than built by the
     // thread-starting constructor: Jolt requires the thread-init function to be
     // set *before* Init, and setting it afterwards compiles fine while silently
@@ -156,6 +179,7 @@ struct JoltRuntime
         jobSystem.Init(JPH::cMaxPhysicsJobs, JPH::cMaxPhysicsBarriers,
                        static_cast<int>(std::thread::hardware_concurrency()) - 1);
     }
+#endif
 };
 
 /// Jolt allocation counters. Churn per frame, not residency: JPH::FreeFunction
@@ -212,13 +236,13 @@ void CountingAlignedFree(void *block)
 }
 
 std::atomic<int32_t> gJoltRefCount{0};
-JoltRuntime         *gJoltRuntime = nullptr;
+JoltRuntime *gJoltRuntime = nullptr;
 
 /// @brief RAII handle to the shared runtime. The first one constructed brings
 /// Jolt up; the last one destroyed tears it down.
 class JoltRuntimeRef
 {
-  public:
+public:
     JoltRuntimeRef()
     {
         if (gJoltRefCount++ == 0)
@@ -235,8 +259,14 @@ class JoltRuntimeRef
             JPH::Factory::sInstance = new JPH::Factory();
             JPH::RegisterTypes();
             gJoltRuntime = new JoltRuntime();
-            Assisi::Core::Log::Info("Jolt: runtime up ({} worker threads, shared by every physics world).",
-                                    gJoltRuntime->jobSystem.GetMaxConcurrency());
+            Assisi::Core::Log::Info("Jolt: runtime up ({} worker thread(s), shared by every physics world){}.",
+                                    gJoltRuntime->jobSystem.GetMaxConcurrency(),
+#if defined(ASSISI_PHYSICS_TSAN)
+                                    " — single-threaded, this is a ThreadSanitizer build"
+#else
+                                    ""
+#endif
+                                    );
         }
     }
 
@@ -255,7 +285,9 @@ class JoltRuntimeRef
     JoltRuntimeRef(const JoltRuntimeRef &) = delete;
     JoltRuntimeRef &operator=(const JoltRuntimeRef &) = delete;
 
-    JPH::JobSystemThreadPool &JobSystem() const { return gJoltRuntime->jobSystem; }
+    // The base type, so the tsan build's single-threaded job system substitutes
+    // without every caller caring which one it got.
+    JPH::JobSystem &JobSystem() const { return gJoltRuntime->jobSystem; }
 };
 
 } // anonymous namespace
@@ -326,7 +358,7 @@ struct PhysicsWorld::Impl
     /// between steps. The mutex only guards the append: contacts are rare relative
     /// to the collision work that produced them, so this never becomes the
     /// bottleneck, and per-thread buffers would cost more to merge than they save.
-    std::mutex           contactMutex;
+    std::mutex contactMutex;
     std::vector<Contact> contacts;
 
     ECS::Entity EntityFor(const JPH::BodyID &id) const
@@ -344,7 +376,7 @@ struct PhysicsWorld::Impl
     /// on, so a world that does not want contacts never even pays the virtual call.
     class ContactCollector final : public JPH::ContactListener
     {
-      public:
+public:
         explicit ContactCollector(Impl &owner) : _owner(owner) {}
 
         void OnContactAdded(const JPH::Body &body1, const JPH::Body &body2, const JPH::ContactManifold &manifold,
@@ -359,7 +391,7 @@ struct PhysicsWorld::Impl
         // contact-driven response (a bounce) re-fire forever into something that
         // is simply lying still.
 
-      private:
+private:
         Impl &_owner;
     };
 
@@ -382,12 +414,12 @@ void PhysicsWorld::Impl::RecordContact(const JPH::Body &body1, const JPH::Body &
 
     // Body::GetLinearVelocity asserts on a static body (no motion state to read).
     const auto linearVelocity = [](const JPH::Body &body)
-    {
-        if (body.IsStatic())
-            return glm::vec3(0.f);
-        const JPH::Vec3 v = body.GetLinearVelocity();
-        return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
-    };
+                                {
+                                    if (body.IsStatic())
+                                        return glm::vec3(0.f);
+                                    const JPH::Vec3 v = body.GetLinearVelocity();
+                                    return glm::vec3(v.GetX(), v.GetY(), v.GetZ());
+                                };
 
     const std::lock_guard<std::mutex> lock(contactMutex);
     if (e1 != ECS::NullEntity)
@@ -524,14 +556,32 @@ RigidBody PhysicsWorld::AddBody(glm::vec3 position, glm::quat rotation, const Co
 }
 
 RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity entity, const ECS::Transform &transform,
-                                              const RigidBodyDescriptor &descriptor)
+                                              const RigidBodyDescriptor &descriptor, const ParentWorldFn &parentWorld)
 {
     const BodyMotion motion = descriptor.isStatic ? BodyMotion::Static : BodyMotion::Dynamic;
     const ColliderShapeDesc shape{.shape       = descriptor.shape,
                                   .halfExtents = descriptor.halfExtents,
                                   .radius      = descriptor.radius,
                                   .halfHeight  = descriptor.halfHeight};
-    const RigidBody body = AddBody(transform.position, transform.rotation, shape, motion);
+
+    // Jolt places bodies in world space, and a parented Transform is an offset
+    // from its parent — the same mismatch InterpolateTransforms undoes on the way
+    // back out. Without this a parented body spawns at its *local* pose and stays
+    // there, which for a blueprint member means the instance's placement is
+    // simply ignored.
+    glm::vec3 position = transform.position;
+    glm::quat rotation = transform.rotation;
+    if (parentWorld)
+    {
+        if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
+        {
+            const ECS::Transform pose = ECS::PoseUnderParent(transform, *parent);
+            position                  = pose.position;
+            rotation                  = pose.rotation;
+        }
+    }
+
+    const RigidBody body = AddBody(position, rotation, shape, motion);
     if (descriptor.enableCCD)
         SetBodyCCD(body, true);
     (void)scene.Add<RigidBody>(entity, body);
@@ -546,11 +596,11 @@ RigidBody PhysicsWorld::AddBodyFromDescriptor(ECS::Scene &scene, ECS::Entity ent
     return body;
 }
 
-void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene)
+void PhysicsWorld::RebuildSceneBodies(ECS::Scene &scene, const ParentWorldFn &parentWorld)
 {
     Clear();
     for (auto [entity, transform, descriptor] : scene.Query<ECS::Transform, RigidBodyDescriptor>())
-        AddBodyFromDescriptor(scene, entity, transform, descriptor);
+        AddBodyFromDescriptor(scene, entity, transform, descriptor, parentWorld);
 }
 
 void PhysicsWorld::Clear()
@@ -672,7 +722,7 @@ void PhysicsWorld::CaptureState()
         }
 
         const JPH::RVec3 pos = bodies.GetPosition(id);
-        const JPH::Quat  rot = bodies.GetRotation(id);
+        const JPH::Quat rot = bodies.GetRotation(id);
 
         // Retire the previous current, then record this step's pose as current.
         it->second.prevPosition = it->second.curPosition;
@@ -682,7 +732,7 @@ void PhysicsWorld::CaptureState()
     }
 }
 
-void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
+void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha, const ParentWorldFn &parentWorld)
 {
     JPH::BodyInterface &bodies = _impl->physicsSystem.GetBodyInterface();
 
@@ -696,8 +746,7 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
     // dirty-skip and network delta replication both filter on that tick, and a
     // write through a plain Query's `Transform&` stamps nothing — the body would
     // move with both consumers still reporting it unchanged. The proxy stamps
-    // exactly like Scene::GetMut, which is what the old explicit MarkChanged-by-id
-    // call here was standing in for.
+    // exactly like Scene::GetMut.
     //
     // RigidBody comes along as a Mut proxy because QueryMut wraps every type, but
     // it is only read — through the const Get(), which never stamps (and RigidBody
@@ -725,34 +774,42 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha)
         // so it renders stable. Snapping still tracks a slow creep exactly (it
         // writes curPosition/curRotation every frame) — it only drops the blend.
         const glm::vec3 positionDelta = s.curPosition - s.prevPosition;
-        const glm::vec3 targetPosition = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
+        glm::vec3 targetPosition = glm::dot(positionDelta, positionDelta) < kRestPositionDeltaSq
                                              ? s.curPosition
                                              : glm::mix(s.prevPosition, s.curPosition, alpha);
 
         // 1 - |dot(prev, cur)| is ~0 for near-identical orientations; abs folds the
         // quaternion q/-q double cover. slerp keeps angular speed constant across
         // the blend and is renormalised since the result feeds the render matrix.
-        const float     rotationDelta  = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
-        const glm::quat targetRotation = rotationDelta < kRestRotationDelta
-                                             ? s.curRotation
-                                             : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
+        const float rotationDelta  = 1.f - glm::abs(glm::dot(s.prevRotation, s.curRotation));
+        glm::quat targetRotation = rotationDelta < kRestRotationDelta
+                                         ? s.curRotation
+                                         : glm::normalize(glm::slerp(s.prevRotation, s.curRotation, alpha));
 
-        // Nothing moved: skip the write entirely rather than stamp a change tick
-        // for a pose identical to the one already there.
+        // Jolt reports world space; a Transform under a parent is an offset *from*
+        // that parent. Writing one into the other and letting PropagateTransforms
+        // multiply by the parent again applies the parent twice — silently, and
+        // once more every frame. Convert instead.
+        if (parentWorld)
+        {
+            if (const glm::mat4 *parent = parentWorld(entity); parent != nullptr)
+            {
+                targetPosition = glm::vec3(glm::inverse(*parent) * glm::vec4(targetPosition, 1.f));
+                targetRotation = glm::normalize(glm::inverse(ECS::WorldRotationOf(*parent)) * targetRotation);
+            }
+        }
+
+        // Nothing moved: skip the write rather than stamp a change tick for a pose
+        // identical to the one already there. Every mutable access through the
+        // proxy stamps, so a resting body would otherwise read as changed every
+        // frame for the rest of the session — dirty-subtree work for
+        // PropagateTransforms, and bandwidth for a visual-only mirror, which has
+        // no body channel and travels by Transform delta.
         //
-        // Every mutable access through the proxy stamps, and a resting body would
-        // otherwise be marked changed on every single frame for the rest of the
-        // session — a permanent false positive that PropagateTransforms pays for
-        // in dirty-subtree work and that replication pays for in bandwidth, since
-        // a visual-only mirror (one whose descriptor its entity declines to send)
-        // has no body channel and travels by Transform delta.
-        //
-        // Exact comparison is right here rather than epsilon'd: a resting body's
-        // snapshot poses are frozen — nothing integrates them — so the computed
-        // target is bit-identical frame to frame, and the rest-snap branches above
-        // already absorbed the near-rest jitter that would otherwise need a
-        // tolerance. Anything genuinely in motion differs in the low bits and is
-        // written.
+        // Exact comparison rather than epsilon'd: a resting body's snapshot poses
+        // are frozen, so the computed target is bit-identical frame to frame, and
+        // the rest-snap branches above already absorbed the near-rest jitter.
+        // Anything genuinely in motion differs in the low bits and is written.
         const Assisi::ECS::Transform &current = transform.Get();
         if (current.position == targetPosition && current.rotation == targetRotation)
             continue;
@@ -783,17 +840,17 @@ void PhysicsWorld::GetActiveBodyStates(std::vector<ActiveBodyState> &out) const
             continue; // a raw AddBody body: nothing a caller could name it by
 
         const JPH::RVec3 position = bodies.GetPosition(id);
-        const JPH::Quat  rotation = bodies.GetRotation(id);
-        const JPH::Vec3  linear   = bodies.GetLinearVelocity(id);
-        const JPH::Vec3  angular  = bodies.GetAngularVelocity(id);
+        const JPH::Quat rotation = bodies.GetRotation(id);
+        const JPH::Vec3 linear   = bodies.GetLinearVelocity(id);
+        const JPH::Vec3 angular  = bodies.GetAngularVelocity(id);
 
         out.push_back(ActiveBodyState{
-            entity,
-            glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
-            glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
-            glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
-            glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
-        });
+                entity,
+                glm::vec3(position.GetX(), position.GetY(), position.GetZ()),
+                glm::quat(rotation.GetW(), rotation.GetX(), rotation.GetY(), rotation.GetZ()),
+                glm::vec3(linear.GetX(), linear.GetY(), linear.GetZ()),
+                glm::vec3(angular.GetX(), angular.GetY(), angular.GetZ()),
+            });
     }
 }
 
@@ -942,7 +999,7 @@ void PhysicsWorld::ReshapeBody(const RigidBody &body, const ColliderShapeDesc &s
     if (!bodies.IsAdded(body.bodyId))
         return;
 
-    bodies.SetShape(body.bodyId, MakeShape(shape), /*inUpdateMassProperties=*/true,
+    bodies.SetShape(body.bodyId, MakeShape(shape), /*inUpdateMassProperties=*/ true,
                     JPH::EActivation::DontActivate);
 }
 
@@ -952,13 +1009,12 @@ void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
     if (!bodies.IsAdded(body.bodyId))
         return;
 
-    // Set motion quality even when the body is currently Static. Motion quality
-    // is a stored property (our bodies always have motion properties, since
+    // Set motion quality even when the body is currently Static, rather than
+    // guarding on Dynamic: the inspector freezes the selected body to Static while
+    // a widget is active, so a guard would silently drop the CCD checkbox. Motion
+    // quality is a stored property (our bodies always have motion properties, since
     // AddBody sets mAllowDynamicOrKinematic), so it sticks and takes effect once
-    // the body is Dynamic again. Guarding on Dynamic here used to make this a
-    // silent no-op: the inspector freezes the selected body to Static while a
-    // widget is active, so the CCD checkbox toggled on a frozen body and never
-    // applied. Jolt no-ops safely if a body genuinely has no motion properties.
+    // the body is Dynamic again. Jolt no-ops safely if a body genuinely has none.
     const JPH::EMotionQuality quality =
         enable ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
     bodies.SetMotionQuality(body.bodyId, quality);

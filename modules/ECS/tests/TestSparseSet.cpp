@@ -212,8 +212,8 @@ TEST_CASE("SparseSet: adding the null/sentinel index is rejected, not UB")
 TEST_CASE("SparseSet: StructureVersion increments on exactly the structural changes")
 {
     SparseSet<int32_t> set;
-    const Entity    a{.index = 0, .generation = 0};
-    const Entity    b{.index = 1, .generation = 0};
+    const Entity a{.index = 0, .generation = 0};
+    const Entity b{.index = 1, .generation = 0};
 
     const uint32_t v0 = set.StructureVersion();
 
@@ -237,8 +237,8 @@ TEST_CASE("SparseSet: StructureVersion increments on exactly the structural chan
 TEST_CASE("SparseSet: read-only operations never bump StructureVersion")
 {
     SparseSet<int32_t> set;
-    const Entity    a{.index = 0, .generation = 0};
-    const Entity    b{.index = 1, .generation = 0};
+    const Entity a{.index = 0, .generation = 0};
+    const Entity b{.index = 1, .generation = 0};
     REQUIRE(set.Add(a, 10) != nullptr);
 
     const uint32_t before = set.StructureVersion();
@@ -259,8 +259,8 @@ TEST_CASE("SparseSet: read-only operations never bump StructureVersion")
 TEST_CASE("SparseSet: rejected/no-op mutations do not bump StructureVersion")
 {
     SparseSet<int32_t> set;
-    const Entity    a{.index = 0, .generation = 0};
-    const Entity    absent{.index = 7, .generation = 0};
+    const Entity a{.index = 0, .generation = 0};
+    const Entity absent{.index = 7, .generation = 0};
     REQUIRE(set.Add(a, 10) != nullptr);
 
     const uint32_t before = set.StructureVersion();

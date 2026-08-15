@@ -11,12 +11,12 @@
 ///
 /// Most call sites want Profile.hpp (the macros) rather than this header. This
 /// one is for the glue: starting the runtime, naming threads, pumping counters,
-/// and — from Stage 2 on — reading the rings back out.
+/// and reading the rings back out.
 ///
 /// **Compiled out unless asked.** `ASSISI_ENABLE_CHIARA` defaults OFF on every
 /// configuration; the `-c` make targets (`gd-c`, `gs-c`, …) turn it on. When it
 /// is off every entry point below is an inline no-op, so glue code never needs
-/// an `#ifdef`, and the whole .cpp is excluded from the build.
+/// an `#ifdef`, and the .cpp compiles to nothing.
 ///
 /// **Before Initialize, every entry point is a safe no-op.** That is
 /// load-bearing rather than defensive: Core's JobSystem runs in headless tests
@@ -58,20 +58,20 @@ struct CaptureStats
     std::uint64_t totalEventsWritten = 0;
     std::uint64_t bufferWrapCount    = 0;   ///< Records lost to overwrite, all rings.
     std::uint32_t threadCount        = 0;
-    double        mainWindowSeconds  = 0.0; ///< Time span the main ring currently covers.
+    double mainWindowSeconds  = 0.0;        ///< Time span the main ring currently covers.
 };
 
 /// @brief One thread's readable window, taken under a paused capture. The index
 /// range is already narrowed to what is safe to read (Event.hpp, EventRing).
 struct ThreadSnapshot
 {
-    const char             *name       = nullptr;
-    std::uint64_t           osThreadId = 0;
+    const char *name       = nullptr;
+    std::uint64_t osThreadId = 0;
     const Detail::EventRing *ring      = nullptr;
-    std::uint64_t           beginIndex = 0; ///< Inclusive.
-    std::uint64_t           endIndex   = 0; ///< Exclusive.
-    std::uint64_t           lostEvents = 0;
-    bool                    isMain     = false;
+    std::uint64_t beginIndex = 0;           ///< Inclusive.
+    std::uint64_t endIndex   = 0;           ///< Exclusive.
+    std::uint64_t lostEvents = 0;
+    bool isMain     = false;
     std::vector<OpenScope>  openScopes;     ///< Still open at snapshot time (§4, the hang case).
 };
 
@@ -97,27 +97,22 @@ extern bool g_useHardwareTicks;
 struct ThreadBuffer
 {
     EventRing ring;
-    Event    *storage = nullptr;
+    Event *storage = nullptr;
 
     // The shadow stack of currently-open scopes. A scope only reaches the ring
     // when it ends, so without this a capture taken during a hang shows nothing
     // for the very scope that is hanging.
     //
-    // It is read by the serializer while this thread keeps pushing and popping
-    // — destructors run whether or not recording is paused, or the stack
-    // desyncs — so it is a seqlock: the generation is odd while the stack is
-    // being mutated, and a reader that sees an odd or changed generation
-    // retries. Entries are atomics rather than plain fields so the concurrent
-    // read is well-defined instead of a race that merely happens to work.
+    // The serializer reads it while this thread keeps pushing and popping, so
+    // it is a seqlock: the generation is odd while the stack is being mutated,
+    // and a reader that sees an odd or changed generation retries. Entries are
+    // atomics rather than plain fields so that concurrent read is well-defined
+    // instead of a race that merely happens to work.
     //
-    // The ordering is carried by acquire/release on the entries themselves
-    // rather than by the two standalone fences a textbook seqlock uses. Same
-    // guarantees — a release store cannot let the odd-generation store sink
-    // past it, and an acquire load cannot let the closing generation load be
-    // hoisted above the data — but GCC's ThreadSanitizer does not model
-    // atomic_thread_fence at all (-Wtsan says so out loud), so a fenced version
-    // is invisible to the one tool that can check it. On x86-64 both forms
-    // compile to plain movs, so this costs nothing to prefer.
+    // Ordering rides on the entries' own acquire/release rather than the two
+    // standalone fences a textbook seqlock uses: same guarantees, but GCC's
+    // ThreadSanitizer does not model atomic_thread_fence at all, so a fenced
+    // version is invisible to the one tool that can check it.
     std::atomic<std::uint32_t> shadowGeneration{0};
     std::atomic<std::uint32_t> shadowDepth{0};
     std::atomic<const char *>  shadowNames[kMaxShadowDepth]{};
@@ -130,7 +125,7 @@ struct ThreadBuffer
 
     std::uint64_t osThreadId        = 0;
     std::uint32_t registrationIndex = 0;
-    bool          isMain            = false;
+    bool isMain            = false;
     ThreadBuffer *next              = nullptr;
 
     /// @brief Records a scope as open. Owner thread only.
@@ -209,7 +204,7 @@ ThreadBuffer *RegisterThreadBuffer(const char *name) noexcept;
     if (Detail::g_useHardwareTicks)
     {
         std::uint64_t counter = 0;
-        __asm__ volatile("mrs %0, cntvct_el0" : "=r"(counter));
+        __asm__ volatile ("mrs %0, cntvct_el0" : "=r" (counter));
         return counter;
     }
 #endif
@@ -329,8 +324,7 @@ inline void EmitArgStringInterned(const char *key, const char *value) noexcept
 
 /// @brief Opens a span for work that will finish on another thread — a job
 /// continuation, a streaming load. Distinct from ScopeTimer because these are
-/// not stack-disciplined; forcing them into a thread's scope stack is a mistake
-/// every profiler that tried it had to undo. Returns the id to close it with.
+/// not stack-disciplined. Returns the id to close it with.
 [[nodiscard]] std::uint64_t BeginAsync(const char *name);
 
 void EndAsync(const char *name, std::uint64_t asyncId);
@@ -403,8 +397,8 @@ public:
 
 private:
     Detail::ThreadBuffer *_buffer     = nullptr;
-    const char           *_name       = nullptr;
-    std::uint64_t         _beginTicks = 0;
+    const char *_name       = nullptr;
+    std::uint64_t _beginTicks = 0;
 };
 
 /// @brief Initialize on construction, Shutdown on destruction. Declared as
@@ -440,7 +434,7 @@ inline std::uint64_t               MarkFrame() { return 0; }
 [[nodiscard]] inline std::uint64_t CurrentFrame() { return 0; }
 inline void                        EmitClockSnapshot() {}
 
-[[nodiscard]] inline const char   *InternString(std::string_view) { return ""; }
+[[nodiscard]] inline const char *InternString(std::string_view) { return ""; }
 [[nodiscard]] inline std::uint64_t NewFlowId() { return 1; }
 
 inline void EmitCounter(const char *, double) noexcept {}

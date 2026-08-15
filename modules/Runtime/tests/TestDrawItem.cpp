@@ -63,15 +63,15 @@ TEST_CASE("QuantizeDepthFrontToBack maps near->0, far->max, and clamps")
 
 TEST_CASE("Sorting DrawItems by sortKey groups by material then mesh, front-to-back")
 {
-    // Three materials (1,2), two meshes (10,11), assorted depths, deliberately
+    // Two materials (1,2), two meshes (10,11), assorted depths, deliberately
     // shuffled. After sorting by sortKey the order must be material-major.
     std::vector<DrawItem> items;
     const auto add = [&items](uint32_t material, uint32_t mesh, uint16_t depth)
-    {
-        DrawItem item;
-        item.sortKey = MakeOpaqueSortKey(0, material, mesh, depth);
-        items.push_back(item);
-    };
+                     {
+                         DrawItem item;
+                         item.sortKey = MakeOpaqueSortKey(0, material, mesh, depth);
+                         items.push_back(item);
+                     };
     add(2, 11, 100);
     add(1, 10, 200);
     add(1, 10, 50);

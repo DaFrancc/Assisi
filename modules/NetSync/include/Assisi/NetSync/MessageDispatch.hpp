@@ -30,8 +30,9 @@
 ///
 /// ## The binding is generated, and unambiguous by construction
 ///
-/// reflectgen's whole-tree pass writes one translation unit that binds every
-/// handler. Three layers keep it from ever calling the wrong function:
+/// reflectgen emits each handler's binding beside its own header's component
+/// registrations, in that module's generated OBJECT library. Three layers keep
+/// it from ever calling the wrong function:
 ///
 ///  1. every name is spelled fully qualified and anchored at global scope
 ///     (`::MyGame::Chat::HandleChatSend`), so no `using` directive, ADL, or
@@ -39,12 +40,14 @@
 ///  2. the address is taken through an explicit signature cast, so an overload
 ///     set resolves to exactly the declared shape at compile time;
 ///  3. two handlers for one message type is a build error naming both
-///     declaration sites — not first-wins, not link-order.
+///     declaration sites — not first-wins, not link-order. Only a whole-tree
+///     pass can see that, so it gets one: reflectgen.py --check-handlers.
 ///
-/// Codegen rather than static-init registrars, and that is a linkage argument
-/// rather than a taste one: modules are static libraries, and linkers strip
-/// registrar objects nobody references, so handlers would silently vanish by
-/// link order. The generated table names every handler, which forces linkage.
+/// Generated rather than hand-written, and that is a linkage argument rather
+/// than a taste one: modules are static libraries and linkers strip registrar
+/// objects nobody references, but an OBJECT library is always pulled whole into
+/// the final link (cmake/AssisiReflect.cmake), so a generated binding cannot
+/// vanish by link order.
 ///
 /// ## Handlers are ordinary gameplay code
 ///
@@ -72,7 +75,10 @@
 
 namespace Assisi::ECS
 {
-class Scene;
+// `struct`, matching the definition in ECS/Scene.hpp. The tags have to agree:
+// under the Microsoft C++ ABI the class-key is part of the decorated name, so a
+// mismatched forward declaration is a link error there and nothing at all here.
+struct Scene;
 }
 
 namespace Assisi::NetSync
@@ -102,14 +108,15 @@ struct NetContext
     ECS::Scene *scene = nullptr;
 };
 
-/// @brief The generated table: message type → the one function that handles it.
+/// @brief Where the generated bindings land: message type → the one function
+/// that handles it.
 ///
 /// A service locator for the same reason ComponentRegistry is one: binding
 /// happens in a static initializer, before main() and before any owner object
 /// could exist. Immutable once startup is over.
 class MessageDispatch
 {
-  public:
+public:
     static MessageDispatch &Instance();
 
     /// @brief Erased function-pointer storage.
@@ -166,7 +173,7 @@ class MessageDispatch
     /// generated code, and never unbinds.
     void Clear() { _bindings.clear(); }
 
-  private:
+private:
     MessageDispatch() = default;
 
     using InvokeFn = void (*)(NetContext &, Core::BitReader &, const Core::Reflect::MessageMeta &,
@@ -195,8 +202,8 @@ class MessageDispatch
     struct Binding
     {
         std::type_index type;
-        InvokeFn        invoke  = nullptr;
-        ErasedFn        handler = nullptr;
+        InvokeFn invoke  = nullptr;
+        ErasedFn handler = nullptr;
     };
 
     void BindErased(std::type_index type, InvokeFn invoke, ErasedFn handler);
@@ -219,8 +226,8 @@ bool WriteMessageValue(const T &message, Core::BitWriter &writer,
                        const Core::Reflect::CodecContext *codec = nullptr)
 {
     const Core::Reflect::MessageRegistry &registry = Core::Reflect::MessageRegistry::Instance();
-    const Core::Reflect::MessageId        id       = registry.IdOf(typeid(T));
-    const Core::Reflect::MessageMeta     *meta     = registry.ById(id);
+    const Core::Reflect::MessageId id       = registry.IdOf(typeid(T));
+    const Core::Reflect::MessageMeta *meta     = registry.ById(id);
     if (meta == nullptr)
         return false;
     return Core::Reflect::WriteMessage(*meta, &message, writer, codec);

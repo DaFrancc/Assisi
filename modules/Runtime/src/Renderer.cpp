@@ -25,14 +25,13 @@ namespace
 // removes this gather too is stage F2. @p frustum's planes drive the GPU test.
 DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frustum &frustum)
 {
-    Assisi::ECS::Scene              &scene   = params.scene;
+    Assisi::ECS::Scene &scene   = params.scene;
     Assisi::Render::CullTableBuilder &builder = *params.cullBuilder;
 
     DrawStats stats;
 
-    // The ECS walk that stage F2 exists to delete. Keeping it under its own name
-    // is the point: when the dirty-tracked mirror lands, this slice is the
-    // before/after measurement.
+    // The ECS walk stage F2 exists to delete; its own profile slice is the
+    // before/after measurement for the dirty-tracked mirror.
     const Assisi::Render::MeshBuffer *anyMesh = nullptr;
     {
         ASSISI_PROFILE_SCOPE("cull-gather");
@@ -47,7 +46,7 @@ DrawStats DrawSceneGpu(const DrawSceneParams &params, const Assisi::Render::Frus
             anyMesh = mesh; // any mesh identifies the shared arena's vertex/index buffers (single arena, F1)
             builder.AddInstance(mesh, transform.worldMatrix,
                                 std::span<const Assisi::Render::Material *const>(meshRenderer.materials.data(),
-                                                                                meshRenderer.materials.size()));
+                                                                                 meshRenderer.materials.size()));
         }
     }
 
@@ -100,9 +99,9 @@ DrawStats DrawScene(const DrawSceneParams &params)
 {
     ASSISI_PROFILE_GPU_SCOPE(params.frame.commandList, "draw-scene");
 
-    Assisi::ECS::Scene            &scene    = params.scene;
+    Assisi::ECS::Scene &scene    = params.scene;
     const Assisi::Render::MeshPass &meshPass = params.meshPass;
-    const glm::mat4                &view     = params.view;
+    const glm::mat4 &view     = params.view;
 
     const glm::mat4 viewProjection = params.projection * view;
 
@@ -118,7 +117,7 @@ DrawStats DrawScene(const DrawSceneParams &params)
         return DrawSceneGpu(params, frustum);
     }
 
-    DrawStats                          stats;
+    DrawStats stats;
     std::vector<Assisi::Render::DrawItem> items;
 
     // The CPU cull + emit. Read against render/culled-meshes: this walks every
@@ -161,22 +160,22 @@ DrawStats DrawScene(const DrawSceneParams &params)
             // only orders distinct meshes front-to-back within a material run.
             const glm::vec3 centerWorld =
                 glm::vec3(transform.worldMatrix * glm::vec4(mesh->LocalBounds().center, 1.f));
-            const float    viewDistance = -(view * glm::vec4(centerWorld, 1.f)).z; // camera looks down -Z
+            const float viewDistance = -(view * glm::vec4(centerWorld, 1.f)).z;    // camera looks down -Z
             const uint16_t depth = Assisi::Render::QuantizeDepthFrontToBack(viewDistance, params.nearZ, params.farZ);
 
             // LOD0 only for now (screen-size LOD selection is a later stage; the seam is
             // ready for it). EnsureSubMeshTables guarantees at least one LOD/submesh.
-            const std::vector<Assisi::Geometry::SubMesh>  &subMeshes = mesh->SubMeshes();
+            const std::vector<Assisi::Geometry::SubMesh> &subMeshes = mesh->SubMeshes();
             const std::vector<Assisi::Geometry::LodRange> &lods      = mesh->Lods();
-            const Assisi::Geometry::LodRange               lod0 =
+            const Assisi::Geometry::LodRange lod0 =
                 !lods.empty() ? lods.front()
                               : Assisi::Geometry::LodRange{0, static_cast<uint32_t>(subMeshes.size())};
 
             for (uint32_t i = 0; i < lod0.SubMeshCount; ++i)
             {
-                const uint32_t                     submeshIndex = lod0.FirstSubMesh + i;
-                const Assisi::Geometry::SubMesh   &subMesh      = subMeshes[submeshIndex];
-                const Assisi::Render::Material    *material =
+                const uint32_t submeshIndex = lod0.FirstSubMesh + i;
+                const Assisi::Geometry::SubMesh &subMesh      = subMeshes[submeshIndex];
+                const Assisi::Render::Material *material =
                     subMesh.MaterialSlot < meshRenderer.materials.size() ? meshRenderer.materials[subMesh.MaterialSlot]
                                                                             : nullptr;
                 if (material == nullptr)
@@ -200,9 +199,8 @@ DrawStats DrawScene(const DrawSceneParams &params)
     // sort key is a total order over what matters, so stability is irrelevant.
     if (params.sortDraws)
     {
-        // Scoped rather than folded into draw-extract precisely because it is the
-        // half the `sortDraws` toggle turns off — the A/B is a slice appearing or
-        // not, with no arithmetic.
+        // Its own slice, not folded into draw-extract: `sortDraws` turns exactly
+        // this half off, so the A/B reads as a slice appearing or not.
         ASSISI_PROFILE_SCOPE("draw-sort");
         std::sort(items.begin(), items.end(),
                   [](const Assisi::Render::DrawItem &lhs, const Assisi::Render::DrawItem &rhs)
