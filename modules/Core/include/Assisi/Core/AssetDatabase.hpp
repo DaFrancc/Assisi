@@ -15,9 +15,9 @@
 ///
 /// This is **editor-only**. A shipped build never scans an asset tree or mints
 /// ids — it consumes a baked pak index (PakProvider, S5). See
-/// docs/asset-database-architecture.md §3a, §4. When a shipped/editor build
-/// split exists it moves behind that gate; for now it lives in Core, unbuilt in
-/// no configuration because nothing ships yet.
+/// docs/asset-database-architecture.md §3a, §4. It moves behind that gate once a
+/// shipped/editor build split exists; until then it lives in Core and builds in
+/// every configuration.
 ///
 /// Reconcile-not-clobber (D3): an existing sidecar is never rewritten or
 /// validated during the scan; only its id is read. A missing sidecar is
@@ -102,9 +102,9 @@ public:
     [[nodiscard]] bool HasManifest(AssetId meshId) const;
 
     /// @brief The default material bound to @p slot of composite @p meshId,
-    ///        from the mesh's `.aast` manifest — the stored replacement for the
-    ///        retired live `MeshDefaultMaterial` derivation (D4). Nil when the
-    ///        mesh has no manifest, or the slot is unlisted.
+    ///        from the mesh's `.aast` manifest — the stored binding the renderer
+    ///        uses instead of deriving it live (D4). Nil when the mesh has no
+    ///        manifest, or the slot is unlisted.
     [[nodiscard]] AssetId SlotMaterial(AssetId meshId, std::uint32_t slot) const;
 
 private:

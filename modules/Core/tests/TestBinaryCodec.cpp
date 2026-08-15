@@ -782,9 +782,8 @@ TEST_CASE("BinaryCodec: random noise decoded as a component block stays in bound
 TEST_CASE("BinaryCodec: an instanceRef field survives the whole fuzz corpus with its hook installed")
 {
     // The three cases above never decode a FieldType::InstanceRef: the hand-built
-    // AllTypes meta declares none, so the one field type whose decode hands an
-    // attacker-chosen integer to caller-supplied code was the one type never
-    // fuzzed — the gap the plan's risk 4 named.
+    // AllTypes meta declares none, which would leave the one field type whose
+    // decode hands an attacker-chosen integer to caller-supplied code unfuzzed.
     ComponentMeta meta = MakeAllTypesMeta();
     for (FieldMeta &field : meta.fields)
     {

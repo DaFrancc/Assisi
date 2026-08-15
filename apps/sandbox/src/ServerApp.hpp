@@ -14,9 +14,7 @@
 /// A different *program*, not different behaviour. Everything below the drawing
 /// is shared code rather than a headless retelling of it: the world is an
 /// App::World, the frame hooks are Application's, and joining goes through the
-/// same App:: calls the windowed path uses. The two were written twice once, and
-/// the copies had already drifted — the headless join destroyed the host's
-/// entities without taking their bodies out of the physics world.
+/// same App:: calls the windowed path uses.
 ///
 /// The client mode here is headless too, which makes it a *test* client rather
 /// than a playable one: it proves the protocol works between two processes and
@@ -72,10 +70,9 @@ public:
     /// @brief True when the server closed because it could not start, rather
     /// than because it finished.
     ///
-    /// OnStart is void, so a refusal there cannot return a code — but a
-    /// dedicated server exiting 0 after refusing its level is worse than the
-    /// refusal it is reporting: systemd, Docker and CI all read that as a clean
-    /// shutdown and either ignore it or restart-loop in silence.
+    /// OnStart is void, so a refusal there cannot return a code; main() maps
+    /// this to EXIT_FAILURE instead. systemd, Docker and CI all read a 0 exit
+    /// as a clean shutdown and either ignore it or restart-loop in silence.
     [[nodiscard]] bool StartupFailed() const { return _startupFailed; }
 
 protected:
@@ -103,11 +100,10 @@ private:
     /// Scene, physics, instance table and system registry, in the one aggregate
     /// the rest of App is written against.
     ///
-    /// It held those loose for a while, on the grounds that a headless process has
-    /// no use for the rest of a World. Blueprint replication is the use: its
-    /// provider and expander need the instance table, the scene and the pending
-    /// system installs *together*, and a dedicated server is exactly the case
-    /// where instances should arrive as instances rather than as loose entities.
+    /// The whole World, not a headless subset: blueprint replication's provider
+    /// and expander need the instance table, the scene and the pending system
+    /// installs *together*, and a dedicated server is exactly the case where
+    /// instances should arrive as instances rather than as loose entities.
     Assisi::App::World _world;
 
     /// The content-set scan, kicked when this process starts hosting or joining.
@@ -115,10 +111,9 @@ private:
     /// ClientHello — see NetSession::SetContentSetHash.
     Assisi::App::ContentSetHashJob _contentSetHash;
 
-    /// Constructed only in a networked role, so the offline mode never
-    /// initializes GameNetworkingSockets at all — and without networking built
-    /// there is no role that would, so the member goes too. Offline (headless
-    /// simulation) is not a networking feature and keeps working.
+    /// Constructed only in a networked role, so offline mode never initializes
+    /// GameNetworkingSockets — and without networking built there is no such
+    /// role, so the member goes too. Offline headless simulation still works.
 #if defined(ASSISI_NETWORKING)
     std::unique_ptr<Assisi::NetSync::NetSession> _session;
 #endif

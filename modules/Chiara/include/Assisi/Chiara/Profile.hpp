@@ -17,11 +17,11 @@
 /// **Names are aggregation keys, so context belongs in an arg, never in the
 /// name.** `ASSISI_PROFILE_SCOPE("publish-mesh")` with the asset path attached
 /// via ASSISI_PROFILE_ARG_STR aggregates across frames; folding the path into
-/// the name shatters that into thousands of one-shot buckets, which is the
-/// single most common way this kind of system is ruined. It is also what makes
-/// "click a slice, see which asset" work in the viewer with no tooling of ours.
+/// the name shatters that into thousands of one-shot buckets. It is also what
+/// makes "click a slice, see which asset" work in the viewer with no tooling of
+/// ours.
 ///
-/// In a default build (Chiara off) every macro expands to the same
+/// In a default build (Chiara off) the macros expand to the
 /// `((void)sizeof(...))` pattern Assert.hpp uses: the arguments are parsed and
 /// type-checked but never evaluated, and no code is emitted. Instrumentation
 /// cannot bit-rot until someone next builds with `-c`, and a variable used only

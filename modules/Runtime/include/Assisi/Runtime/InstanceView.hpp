@@ -14,9 +14,8 @@
 /// ```
 ///
 /// A member typo does not compile, and renaming a member breaks the build at
-/// every call site — which is not a new tax, because member names are *already*
-/// stringly coupled through FindMember and through author-time wiring. The
-/// codegen moves an existing failure from runtime to compile time.
+/// every call site — the same coupling FindMember already has through strings,
+/// moved from runtime to compile time.
 ///
 /// Nesting stays visible even though the runtime member list is flat: a nested
 /// instance becomes a nested struct, so `car.body` in code and `car/body` at
@@ -45,8 +44,7 @@
 ///
 /// Undefined on purpose, the same idiom as `Core::Reflect::MessageTraits<T>`
 /// (MessageMeta.hpp) — so a `T` that was never opted in fails with an incomplete
-/// type at the spawn site rather than silently producing nothing. It is the
-/// second use of a pattern the engine already has, not a new one.
+/// type at the spawn site rather than silently producing nothing.
 
 namespace Assisi::Runtime
 {

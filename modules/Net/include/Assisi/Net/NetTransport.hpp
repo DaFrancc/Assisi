@@ -9,10 +9,9 @@
 /// lifecycle as events. Replication lives one layer up, in Assisi::NetSync.
 ///
 /// Every third-party type is hidden behind a pimpl, so nothing downstream ever
-/// includes a GNS header. That is not tidiness for its own sake — it is what
-/// keeps the transport genuinely swappable (the design notes name enet6+DTLS as
-/// the fallback if the GNS build chain ever becomes untenable) and what keeps
-/// our strict warning set from having to tolerate a vendored header.
+/// includes a GNS header. That keeps the transport swappable (the design notes
+/// name enet6+DTLS as the fallback) and keeps our strict warning set from having
+/// to tolerate a vendored header.
 ///
 /// Usage, per frame (client) or per tick (server):
 /// @code
@@ -49,13 +48,9 @@ namespace Assisi::Net
 /// dense handle is never added to or subtracted from, only allocated, compared,
 /// and looked up.
 ///
-/// `NetProtocol.hpp` already claims `ClientId` is "distinct from
-/// Net::ConnectionId on purpose, and a wrapper type rather than an alias so the
-/// compiler enforces it" — but while ConnectionId was a bare `std::uint32_t`,
-/// that enforcement only ran one way: a ClientId could never silently become a
-/// ConnectionId, but a ConnectionId still converted freely into any uint32_t
-/// slot, including a ClientId's. Making ConnectionId its own type the same way
-/// closes the other half.
+/// `NetSync::ClientId` is a wrapper type so the compiler keeps the two apart
+/// (see `NetProtocol.hpp`); ConnectionId must be one too, or it converts freely
+/// into any uint32_t slot, a ClientId's included.
 struct ConnectionId
 {
     std::uint32_t value = 0;
@@ -86,9 +81,8 @@ enum class SendMode : std::uint8_t
 /// Reliable delivery is ordered *within* a lane and independent *between*
 /// lanes, which is the whole point: a large reliable transfer on Bulk (a
 /// late-joining client's world baseline) must never head-of-line-block the
-/// per-tick snapshot stream behind it. Priorities are assigned in
-/// NetTransport's constructor-time lane configuration, lowest value = highest
-/// priority.
+/// per-tick snapshot stream behind it. Priorities are configured per connection
+/// as it is adopted, lowest value = highest priority.
 enum class Lane : std::uint8_t
 {
     Control  = 0, ///< Connection handshake, spawns/despawns, anything that must arrive.
@@ -139,8 +133,7 @@ struct ConnectionStats
 /// @brief Artificial network impairment, applied process-wide.
 ///
 /// GNS applies these inside its own send/receive path, so a test can reproduce
-/// a bad connection without a real network, a second machine, or root. This is
-/// the soak harness every later stage's convergence test runs under. Note the
+/// a bad connection without a real network, a second machine, or root. Note the
 /// scope: these are *global* config values in GNS, not per-connection, and they
 /// do not apply to a socket pair created in its default in-process mode — see
 /// NetTransport::CreateLoopbackPair.
@@ -179,7 +172,7 @@ public:
     /// @brief Bind a listen socket on @p port (all interfaces, IPv6 with IPv4
     /// mapping). Incoming connections are accepted automatically and surface as
     /// NetEvent::Type::Connected once their handshake completes.
-    /// @return false if the port could not be bound; call ListenError() for why.
+    /// @return false if the port could not be bound; call LastError() for why.
     bool Listen(std::uint16_t port);
 
     /// @brief Connect to @p address (an IPv4/IPv6 literal, no DNS) on @p port.
@@ -266,10 +259,8 @@ private:
 
 } // namespace Assisi::Net
 
-/// Prints as the bare number, so a log line reads "connection 7" rather than
-/// making every call site spell `.value`. Without this the type would be
-/// strictly worse to hold than the integer it replaces, which is how a good
-/// rule gets worked around.
+/// Prints as the bare number, so a log line reads "connection 7" without every
+/// call site spelling `.value`.
 template <> struct std::formatter<Assisi::Net::ConnectionId> : std::formatter<std::uint32_t>
 {
     auto format(Assisi::Net::ConnectionId id, std::format_context &ctx) const

@@ -12,9 +12,8 @@
 /// writeback stores a world pose that transform propagation then multiplies by the
 /// parent again — a body that drifts by its parent's transform, forever.
 ///
-/// Nothing was ever both parented and physics-driven before blueprints, which is
-/// why this went unnoticed; a car's wheels are exactly that
-/// (docs/blueprint-system-concept.md §12).
+/// Blueprint members are routinely both parented and physics-driven — a car's
+/// wheels are exactly that (docs/blueprint-system-concept.md §12).
 ///
 /// The tests supply their own resolver rather than a Runtime::Parent chain, which
 /// is the honest scope: the contract PhysicsWorld has is with the callable, and
@@ -90,10 +89,9 @@ TEST_CASE("AddBodyFromDescriptor: without a resolver the local pose is taken as 
     ECS::Scene scene;
     Physics::PhysicsWorld world;
 
-    // The bug this whole file is about, pinned as behaviour: with nothing to ask,
-    // Physics can only read the Transform as world space. That is correct for the
-    // unparented entity it assumes, and is why the resolver has to be passed at
-    // every site that might see a parented one.
+    // With nothing to ask, Physics can only read the Transform as world space.
+    // Correct for the unparented entity it assumes, and why the resolver has to be
+    // passed at every site that might see a parented one.
     const ECS::Transform local{.position = {1.f, 0.f, 0.f}};
 
     const ECS::Entity entity = scene.Create();

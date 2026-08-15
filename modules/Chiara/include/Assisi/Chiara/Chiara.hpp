@@ -11,12 +11,12 @@
 ///
 /// Most call sites want Profile.hpp (the macros) rather than this header. This
 /// one is for the glue: starting the runtime, naming threads, pumping counters,
-/// and — from Stage 2 on — reading the rings back out.
+/// and reading the rings back out.
 ///
 /// **Compiled out unless asked.** `ASSISI_ENABLE_CHIARA` defaults OFF on every
 /// configuration; the `-c` make targets (`gd-c`, `gs-c`, …) turn it on. When it
 /// is off every entry point below is an inline no-op, so glue code never needs
-/// an `#ifdef`, and the whole .cpp is excluded from the build.
+/// an `#ifdef`, and the .cpp compiles to nothing.
 ///
 /// **Before Initialize, every entry point is a safe no-op.** That is
 /// load-bearing rather than defensive: Core's JobSystem runs in headless tests
@@ -103,21 +103,16 @@ struct ThreadBuffer
     // when it ends, so without this a capture taken during a hang shows nothing
     // for the very scope that is hanging.
     //
-    // It is read by the serializer while this thread keeps pushing and popping
-    // — destructors run whether or not recording is paused, or the stack
-    // desyncs — so it is a seqlock: the generation is odd while the stack is
-    // being mutated, and a reader that sees an odd or changed generation
-    // retries. Entries are atomics rather than plain fields so the concurrent
-    // read is well-defined instead of a race that merely happens to work.
+    // The serializer reads it while this thread keeps pushing and popping, so
+    // it is a seqlock: the generation is odd while the stack is being mutated,
+    // and a reader that sees an odd or changed generation retries. Entries are
+    // atomics rather than plain fields so that concurrent read is well-defined
+    // instead of a race that merely happens to work.
     //
-    // The ordering is carried by acquire/release on the entries themselves
-    // rather than by the two standalone fences a textbook seqlock uses. Same
-    // guarantees — a release store cannot let the odd-generation store sink
-    // past it, and an acquire load cannot let the closing generation load be
-    // hoisted above the data — but GCC's ThreadSanitizer does not model
-    // atomic_thread_fence at all (-Wtsan says so out loud), so a fenced version
-    // is invisible to the one tool that can check it. On x86-64 both forms
-    // compile to plain movs, so this costs nothing to prefer.
+    // Ordering rides on the entries' own acquire/release rather than the two
+    // standalone fences a textbook seqlock uses: same guarantees, but GCC's
+    // ThreadSanitizer does not model atomic_thread_fence at all, so a fenced
+    // version is invisible to the one tool that can check it.
     std::atomic<std::uint32_t> shadowGeneration{0};
     std::atomic<std::uint32_t> shadowDepth{0};
     std::atomic<const char *>  shadowNames[kMaxShadowDepth]{};
@@ -329,8 +324,7 @@ inline void EmitArgStringInterned(const char *key, const char *value) noexcept
 
 /// @brief Opens a span for work that will finish on another thread — a job
 /// continuation, a streaming load. Distinct from ScopeTimer because these are
-/// not stack-disciplined; forcing them into a thread's scope stack is a mistake
-/// every profiler that tried it had to undo. Returns the id to close it with.
+/// not stack-disciplined. Returns the id to close it with.
 [[nodiscard]] std::uint64_t BeginAsync(const char *name);
 
 void EndAsync(const char *name, std::uint64_t asyncId);

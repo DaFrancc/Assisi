@@ -12,8 +12,8 @@ void Material::Create(nvrhi::IDevice * /*device*/, uint32_t id, const Geometry::
     _textures = textures;
 
     // Pack the PBR factors + resolved bindless slots into the table row. No GPU
-    // upload here — the material doesn't own a buffer any more; AssetCache writes
-    // this value into row `id` of the shared material table (stage D).
+    // upload here — AssetCache writes this value into row `id` of the shared
+    // material table (stage D).
     _constants.baseColorFactor = source.BaseColorFactor;
     _constants.emissiveFactorNormalScale = glm::vec4(source.EmissiveFactor, source.NormalScale);
     _constants.metalRoughOcclusion =

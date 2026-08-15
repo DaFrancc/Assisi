@@ -10,19 +10,19 @@
 ///
 /// @par Frame ordering
 /// @code
-/// // One render frame:
+/// // One render frame, as Application::Run drives it (system names below are
+/// // illustrative — the phases are the real thing):
 ///
-///   glfwPollEvents()    ← GLFW dispatches window/input callbacks
+///   PollEvents()        ← window/input callbacks dispatched
 ///   _input->Poll()      ← InputContext updated; input state is now fresh
 ///
 ///   OnFixedUpdate (may run N times):
-///     PhysicsStep     → Push(CollisionEvent{a, b})
-///     PhysicsSyncTransforms
+///     FixedUpdate     → e.g. Push(CollisionEvent{a, b})
 ///
 ///   OnUpdate:
 ///     PreUpdate       → input is available; first chance to react this frame
-///     Update          → DamageSystem: Read<CollisionEvent>()  ← visible, same frame as FixedUpdate
-///     PostUpdate      → CleanupSystem: Read<DestroyRequestEvent>()  ← visible, pushed in Update
+///     Update          → Read<CollisionEvent>()  ← visible, same frame as FixedUpdate
+///     PostUpdate      → reads whatever Update pushed
 ///
 ///   RenderFrame + OnImGui
 ///     (events pushed here are NOT visible to systems this frame —

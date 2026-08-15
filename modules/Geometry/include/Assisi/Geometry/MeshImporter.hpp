@@ -4,10 +4,10 @@
 /// @file MeshImporter.hpp
 /// @brief Extension-routed mesh-file loader: virtual asset path -> CPU MeshData.
 ///
-/// This is the seam the engine loads model files through. Today the only backend
-/// is fastgltf (`.gltf` / `.glb`); other extensions return UnsupportedFormat,
-/// which is the slot a future multi-format catch-all (Assimp) plugs into without
-/// touching any caller.
+/// This is the seam the engine loads model files through. The only backend is
+/// fastgltf (`.gltf` / `.glb`); other extensions return UnsupportedFormat, the
+/// slot a multi-format catch-all (Assimp, see ASSISI_ENABLE_ASSIMP) plugs into
+/// without touching any caller.
 ///
 /// Every byte read — the file itself *and* any external glTF buffers it
 /// references — goes through Core::AssetSystem, so the asset-root escape

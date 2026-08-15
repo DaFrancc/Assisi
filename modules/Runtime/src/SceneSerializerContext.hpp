@@ -25,8 +25,8 @@
 ///     LevelError::ContextBusy): restoring would hand the outer context back its
 ///     tables naming entities the clear destroyed.
 ///   - TransferEntities, SaveEntitiesToFile and the blueprint expansions refuse
-///     too. Each already did before contexts stacked, and each says so in its own
-///     return type; nesting them is not a thing any caller has wanted.
+///     too, each through its own return type. Nesting them is not a thing any
+///     caller has wanted.
 ///
 /// The raw-entity context below is a separate axis and does not stack with
 /// anything: the hooks check it *first*, so an entry point reached inside one
@@ -84,8 +84,8 @@ struct SerializationContext
 /// Installs @p ctx for the scope and puts the previous one back on every exit
 /// path — including a component serialize/deserialize throwing mid-pass, which
 /// malformed field data does through j.at(...)/_v[i].get<T>() in generated code.
-/// Without that, a throw used to leave a stale, half-populated context engaged
-/// for the next EntityToRef / RefToEntity to read.
+/// Anything less leaves a stale, half-populated context engaged for the next
+/// EntityToRef / RefToEntity to read.
 ///
 /// Restoring rather than blanking is what makes nesting safe; which entry points
 /// may nest is the rule in this file's header comment.
@@ -145,7 +145,7 @@ constexpr uint64_t PackEntity(ECS::Entity entity)
 ///
 /// Both writers that take a *subset* of a scene — migration and "create blueprint
 /// from selection" — null those references, because neither destination can name
-/// something it does not contain. Silently is the one thing they must not do it:
+/// something it does not contain. What they must not do is null them silently:
 /// the gesture is made on a subset of a wired-up level, so cutting wires is the
 /// normal case rather than the exceptional one, and nothing about the result shows
 /// which ones were cut. Found here rather than in the reference hook, which runs

@@ -158,20 +158,15 @@ struct FieldMeta
     /// the subject is what relevancy filters on, what the recipient's queue holds
     /// the message for until it has been told about that entity, and what evicts
     /// the message when the entity dies. None of those three has an answer for
-    /// two subjects — intersection starves the message, union leaks it — and
-    /// every engine that scopes messages this way (an Unreal actor, a Mirror
-    /// NetworkIdentity, a Godot node) allows exactly one for the same reason.
+    /// two subjects — intersection starves the message, union leaks it.
     ///
     /// Other `EntityRef` fields on the same event are ordinary: they travel and
     /// translate like any reference, they simply do not decide who is told. A
     /// recipient that has never heard of one of them decodes it as `NullEntity`,
     /// since a message — unlike a component — has no deferred-reference patch-up.
     ///
-    /// This replaced an inference: the subject used to be whichever `EntityRef`
-    /// field was declared first, which made reordering two fields silently change
-    /// the audience, and made an event whose first reference happened to be null
-    /// indistinguishable from an independent one — so it was broadcast to
-    /// everyone, which is exactly what relevancy exists to prevent.
+    /// Marked rather than inferred from declaration order: an inferred subject
+    /// would let reordering two fields silently change the audience.
     ///
     /// Deliberately **not** in the protocol hash, for the same reason as
     /// `controlled`: it changes who a message is sent to, never how its bytes

@@ -376,9 +376,8 @@ TEST_CASE("a client cannot give itself control by writing the component")
 
     CHECK(harness.server.ControllerOf(pawn) == InvalidClientId);
     CHECK(harness.server.ControlledEntities(id).empty());
-    // ...and the next authoritative word on the subject overwrites the lie.
-    // (Nothing sends it today because the server has nothing to say; the point
-    // is that the server's view never moved.)
+    // ...and the server's own view never moved: the forgery exists nowhere but
+    // the client's copy.
     CHECK(harness.serverScene.Get<ControlledBy>(pawn) == nullptr);
 }
 

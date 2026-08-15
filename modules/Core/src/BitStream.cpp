@@ -44,11 +44,10 @@ void BitWriter::WriteBits64(std::uint64_t value, std::uint32_t bitCount)
     // underlying width, a masked field id).
     value &= LowBitMask(bitCount);
 
-    // Straight-line loop over at most nine partial-byte writes. Deliberately not
-    // a 64-bit scratch register: this keeps Data() trivially const (no pending
-    // flush) and the whole thing auditable, and snapshot assembly is dominated by
-    // the pool walks above it, not by these shifts. Revisit only if a profile
-    // says so.
+    // Straight-line loop over at most nine partial-byte writes. No 64-bit
+    // scratch register: bits land in the buffer immediately, so Data() has no
+    // pending flush to worry about, and snapshot assembly is dominated by the
+    // pool walks above this, not by these shifts.
     std::uint32_t remaining = bitCount;
     while (remaining > 0)
     {

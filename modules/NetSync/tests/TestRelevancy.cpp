@@ -5,23 +5,20 @@
 /// nothing at all.
 ///
 /// Relevancy is one set per connection, intersected with the live set before
-/// anything else runs. Almost every interesting property is a lifecycle one, and
-/// three of them are only reachable in the window between a revoke and its
-/// acknowledgement:
+/// anything else runs. Three properties are only reachable in the window
+/// between a revoke and its acknowledgement:
 ///
-///  - the body-state pass is a *fourth* independent walk of the live set with
-///    its own acked-based gate, so an entity that has left the set keeps
-///    shipping motion for a whole round trip unless that pass filters too;
+///  - the body-state pass is an independent walk with its own acked-based gate,
+///    and acked does not imply relevant, so an entity that has left the set
+///    keeps shipping motion for a whole round trip unless that pass filters too;
 ///  - an entity that leaves and comes back inside one round trip has an unacked
 ///    despawn in flight, so the ordinary path would send it a delta against a
 ///    baseline the client destroyed;
 ///  - a late ack for a pre-revoke snapshot can put that entity straight back
 ///    into the acked set unless the in-flight ring is cleaned too.
 ///
-/// The fourth property is the one that costs nothing: with no provider
-/// installed, the wire bytes must be *identical* to the pre-relevancy path.
-/// That is the performance-first contract, and it is checked against an
-/// identity-filter run rather than asserted.
+/// The zero-cost contract is separate: with no provider installed the wire
+/// bytes must be *identical* to an identity-filter run.
 ///
 /// See docs/replication-messaging-relevancy-plan-v1.md M1.
 
@@ -49,16 +46,14 @@ using namespace Assisi::NetSync;
 namespace
 {
 
-/// A provider that returns exactly what a test tells it to.
-///
-/// Standing in for M2's Distance provider, and better than it for this purpose:
-/// every membership change here is a decision the test made on a named tick,
-/// not a consequence of geometry.
+/// A provider that returns exactly what a test tells it to, so every membership
+/// change is a decision the test made on a named tick rather than a consequence
+/// of geometry.
 class ScriptedProvider final : public RelevancyProvider
 {
 public:
-    /// Nothing is relevant until something is added. The harshest default, so a
-    /// test that forgets to grant sees an empty world rather than a full one.
+    /// Replaces the membership set. Nothing is relevant until a test grants it,
+    /// so a test that forgets sees an empty world rather than a full one.
     void Set(std::vector<NetId> members)
     {
         _members = std::move(members);
@@ -115,21 +110,17 @@ struct Harness
 
     std::uint64_t tick = 0;
 
-    /// Every snapshot payload the server sent, in order. The subject of the
-    /// byte-identical test and of every "did anything about that entity go out"
-    /// question below.
+    /// Every snapshot payload the server sent, in order — the subject of the
+    /// byte-identical test.
     std::vector<std::vector<std::byte>> sent;
 
     /// While set, server→client traffic is recorded but not delivered.
     bool dropServerMessages = false;
 
-    /// While set, client→server traffic is dropped — which is how an
-    /// acknowledgement is kept *out* of the server's hands while the client
-    /// itself carries on applying what arrives.
-    ///
-    /// That asymmetry is the whole exit window: the server still believes the
-    /// client holds an entity the client has already destroyed, and every rule
-    /// about re-entry and about the body-state pass lives inside it.
+    /// While set, client→server traffic is dropped, keeping acknowledgements out
+    /// of the server's hands while the client carries on applying what arrives.
+    /// That asymmetry is the exit window: the server still believes the client
+    /// holds an entity the client has already destroyed.
     bool dropClientMessages = false;
 
     explicit Harness(ReplicationConfig config = {})
@@ -185,18 +176,16 @@ ECS::Entity SpawnReplicated(ECS::Scene &scene, glm::vec3 position = {})
     return entity;
 }
 
-/// Bytes and snapshots together — the oracle for every zero-bytes claim below,
-/// and the only honest one available.
+/// Bytes and snapshots together — the oracle for every zero-bytes claim below.
 ///
 /// Payloads are bit-packed, so scanning them for an id finds coincidences
-/// rather than references, and decoding them would just be reimplementing the
-/// client. What "contributes zero bytes" actually means is that the byte counter
-/// does not move, so that is what is measured, always differentially against a
-/// phase of the same connection where the entity is known to be silent.
+/// rather than references. "Contributes zero bytes" therefore means the byte
+/// counter does not move, measured differentially against a phase of the same
+/// connection where the entity is known to be silent.
 ///
 /// Snapshots go out every third tick, so a fixed-length window of ticks holds
-/// five or six of them depending on where it started — which is a difference in
-/// alignment, not in cost, and comparing raw totals would report it as one.
+/// five or six of them depending on where it started — a difference in
+/// alignment, not in cost, which comparing raw totals would report as one.
 struct SendCost
 {
     std::uint64_t bytes     = 0;
@@ -316,8 +305,8 @@ TEST_CASE("leaving the set is a despawn, and it heals like one")
     provider->Remove(netId);
     harness.Step(10);
 
-    // The mirror is gone, and the server has forgotten it was ever delivered —
-    // the ordinary despawn bookkeeping, reached by a different route.
+    // The mirror is gone and the connection no longer holds it relevant — the
+    // ordinary despawn path, reached by a different route.
     CHECK(harness.client.EntityOf(netId) == ECS::NullEntity);
     CHECK_FALSE(harness.server.IsRelevant(harness.serverSide(), netId));
     CHECK(harness.serverScene.IsAlive(entity)); // the entity itself is untouched
@@ -389,12 +378,11 @@ TEST_CASE("an entity outside the set costs zero bytes, and the mover proves it")
 
 TEST_CASE("the body-state pass filters too, or zero bytes is a lie")
 {
-    // The fourth seam, and the one that does not follow from the other three.
-    // WriteBodyStates walks the live set independently, gated on whether the
-    // client has *acked* the entity — and a revoked entity stays acked until its
-    // despawn round-trips, so that gate says yes for the whole exit window and
-    // for as long as the despawn keeps being resent. Left unfiltered, a falling
-    // box the connection cannot see ships its pose every single snapshot.
+    // WriteBodyStates is an independent walk with its own acked-based gate, and
+    // a revoked entity stays acked until its despawn round-trips, so that gate
+    // says yes for the whole exit window and for as long as the despawn keeps
+    // being resent. Walking the live set there rather than the filtered one
+    // would ship a falling box the connection cannot see every snapshot.
     Net::NetTransport transport;
     ECS::Scene serverScene;
     ECS::Scene clientScene;
@@ -540,11 +528,9 @@ TEST_CASE("re-entering before the despawn acks sends full state, not a delta")
     harness.dropClientMessages = false;
     harness.Step(12);
 
-    // The mirror is whole. Without the forget rule the re-grant is sent as a
-    // delta against a baseline that says "you already have the Transform" — and
-    // the client, rebuilding from nothing, ends up with an entity that has no
-    // Transform at all and no prospect of one until the next keyframe sweep,
-    // eight seconds away.
+    // The mirror is whole, Transform included. Without the forget rule the
+    // re-grant arrives as a delta that omits it, leaving the rebuilt entity with
+    // no Transform until the next keyframe sweep.
     const ECS::Entity mirror = harness.client.EntityOf(netId);
     REQUIRE(mirror != ECS::NullEntity);
     const ECS::Transform *transform = harness.clientScene.Get<ECS::Transform>(mirror);
@@ -582,10 +568,9 @@ TEST_CASE("an explicit grant outranks the provider")
 
 TEST_CASE("a connection always sees what it controls")
 {
-    // Without the implicit grant, a player's own pawn can leave its own radius
-    // whenever the view anchor is somewhere else — which is both absurd on its
-    // face and fatal to any future prediction, since a controller must always
-    // hold its subject.
+    // Without the implicit grant, a player's own pawn leaves its set whenever
+    // the view anchor is elsewhere — fatal to prediction, which needs the
+    // controller to always hold its subject.
     Harness harness;
     auto *provider = new ScriptedProvider();
     harness.server.SetRelevancyProvider(std::unique_ptr<RelevancyProvider>(provider));
@@ -633,10 +618,9 @@ TEST_CASE("priority does not climb for entities outside the set")
 
     CHECK(harness.client.ReplicatedEntityCount() == 1);
 
-    // Everything else enters at once. If their accumulators had been climbing
-    // all along they would arrive with an enormous head start; either way the
-    // world converges, and the check that matters is that it converges at all
-    // rather than starving the entity that was visible the whole time.
+    // Everything else enters at once. Accumulators are not observable from
+    // here, so what is checked is the consequence: the world converges without
+    // starving the entity that was visible the whole time.
     std::vector<NetId> all;
     for (const ECS::Entity entity : entities)
         all.push_back(harness.server.NetIdOf(entity));

@@ -2,7 +2,7 @@
 #pragma once
 
 /// @file ImGuiQueries.hpp
-/// @brief Small shared ImGui helpers used across the sandbox's translation units.
+/// @brief Small shared ImGui helpers used across the editor's translation units.
 
 #include <imgui.h>
 

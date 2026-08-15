@@ -29,9 +29,8 @@ ComponentRegistry &ComponentRegistry::Instance()
 
 void ComponentRegistry::Register(ComponentMeta meta)
 {
-    // Round-6 M4(a). Once an id has been issued the registry is immutable, and a
-    // late Register is refused rather than honoured. Two independent reasons, both
-    // fatal:
+    // Once an id has been issued the registry is immutable, and a late Register is
+    // refused rather than honoured. Two independent reasons:
     //
     //   1. Ids are positions in the name-sorted list — that ordering is what makes
     //      them reproducible across builds and machines, since static-init order
@@ -42,13 +41,12 @@ void ComponentRegistry::Register(ComponentMeta meta)
     //   2. ById()/All() hand out pointers *into* _metas, and _serializable holds
     //      them too. Growing the vector would dangle every one of them.
     //
-    // Appending with a fresh id instead of re-sorting would fix (1) and not (2),
-    // so refusing is the only option that keeps both invariants. Every legitimate
-    // registration comes from a static initializer and therefore runs before any
-    // query; arriving late means a dynamically-loaded module (unsupported) or a
-    // genuine bug, so this is loud in debug and a dropped component in release —
-    // a component that is absent fails visibly at Find(), whereas renumbering
-    // silently mis-maps every id in the process.
+    // Appending with a fresh id instead of re-sorting fixes (1) and not (2), so
+    // refusing is the only option that keeps both. Legitimate registrations come
+    // from static initializers and run before any query; a late one means a
+    // dynamically-loaded module (unsupported) or a bug. Loud in debug, a dropped
+    // component in release — an absent component fails visibly at Find(), whereas
+    // renumbering silently mis-maps every id in the process.
     if (_finalized.load(std::memory_order_acquire))
     {
         // Log first, assert second: the assert does not return — it aborts (or, under
@@ -71,11 +69,11 @@ void ComponentRegistry::Register(ComponentMeta meta)
 void ComponentRegistry::EnsureFinalized() const
 {
     // Acquire, and it is the whole point: a thread that sees the flag set must
-    // also see every table the finalizing thread built below. A plain bool here
-    // was a data race — the sort, the id assignment and the _serializable /
-    // _replicable vectors are all written under it, and the first ask can come
-    // from a worker (async travel deserializes off the main thread and walks
-    // this registry there) while the main thread asks for the same thing.
+    // also see every table the finalizing thread built below — the sort, the id
+    // assignment, and the _serializable / _replicable vectors. The first ask can
+    // come from a worker (async travel deserializes off the main thread and walks
+    // this registry there) while the main thread asks for the same thing, so a
+    // plain bool here is a data race.
     if (_finalized.load(std::memory_order_acquire))
         return;
 

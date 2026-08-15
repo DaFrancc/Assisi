@@ -47,9 +47,8 @@ JobSystem::~JobSystem()
 
 void JobSystem::WorkerLoop(uint32_t workerIndex)
 {
-    // This is the only place a worker's identity exists, so it is where the
-    // capture learns the name — and it names the thread for the OS debugger at
-    // the same time, which the engine had never done for any of its threads.
+    // The only place a worker's index exists, so the only place that can name
+    // the thread for the capture and the OS debugger.
     //
     // Safe with the capture runtime down: headless tests and tools build a
     // JobSystem with no Application and therefore no InitGuard, and every Chiara

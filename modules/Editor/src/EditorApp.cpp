@@ -788,8 +788,8 @@ void EditorApp::OnFixedUpdate(float dt)
         // what lets them share one Jolt thread pool.
         //
         // Both conditions matter. Dormant means "resident and inspectable, but not
-        // stepped", and a stale `simulate` must not be able to break that: resuming
-        // while viewing the dormant edited world once stepped its physics.
+        // stepped", and a stale `simulate` must not be able to break that — a
+        // resume while the dormant edited world is on screen would step it.
         _worlds.ForEach(
             [this, dt](Assisi::App::World &world)
             {
@@ -995,10 +995,9 @@ void EditorApp::OnUpdate(float dt)
     // revision is the signal; resolving is idempotent, so acting on it late costs
     // a frame of billboard and never correctness.
     //
-    // Ordinary mirrored entities are what this is now *for*. A blueprint
-    // instance's members resolve as the expander places them (round-7 S14) —
-    // they have to, because that path has to work in a build with no editor in
-    // it, and this loop is one.
+    // Ordinary mirrored entities only. A blueprint instance's members resolve as
+    // the expander places them — they have to, because that path has to work in a
+    // build with no editor in it, and this loop is one.
 #if defined(ASSISI_NETWORKING)
     if (_netSession != nullptr && _netSession->Client() != nullptr)
     {
@@ -1037,11 +1036,10 @@ void EditorApp::OnUpdate(float dt)
 
     // Game logic ticks only while Playing, after the editor's own systems, in every
     // simulated world and out of each world's own registry — never against the
-    // *viewed* world, which used to tick game logic into the dormant edited world
-    // while its FixedUpdate stayed frozen. A world that is not simulating runs
-    // nothing, whichever one is on screen. Systems that consume input opt out of
-    // the non-active worlds by declaring ActiveWorldOnly(): one InputContext, N
-    // worlds.
+    // *viewed* world, which would tick logic into a dormant world whose FixedUpdate
+    // is frozen. A world that is not simulating runs nothing, whichever one is on
+    // screen. Systems that consume input opt out of the non-active worlds by
+    // declaring ActiveWorldOnly(): one InputContext, N worlds.
     if (IsSimulating())
     {
         _worlds.ForEach(
@@ -1459,8 +1457,8 @@ void EditorApp::OnImGui()
     // the inspector below and read by the end-of-frame capture sweep.
     _captureEditingActive = false;
 
-    // Same shape, for the physics freeze the Inspector applies while a field is
-    // held (HandlePhysicsEditing). Released at the end of this function.
+    // Same shape, for the physics freeze the Inspector and the gizmo raise while a
+    // placement gesture is held. Released at the end of this function.
     _physicsFreezeRequested = false;
 
     // One profile scope per panel, so the breakdown names the panel rather than
@@ -1513,21 +1511,21 @@ void EditorApp::OnImGui()
     }
 #endif
 
-    // **Release the Inspector's physics freeze here, unconditionally, not inside
-    // the panel.** DrawInspector early-returns when nothing is selected, so
-    // deselecting or destroying the entity on the frame the drag ends skips the
-    // restore entirely and leaves the body Static for the rest of the session —
-    // stuck in mid-air with a descriptor that still reads dynamic.
+    // **Release the physics freeze here, unconditionally, not inside the panel.**
+    // DrawInspector early-returns when nothing is selected, so deselecting or
+    // destroying the entity on the frame the drag ends would skip the restore
+    // entirely and leave the body Static for the rest of the session — stuck in
+    // mid-air with a descriptor that still reads dynamic.
     if (!_physicsFreezeRequested)
         ThawEditedBody();
 
     // The same shape one gesture up. The gizmo and the Inspector both move an
     // instance's placement and neither can see whether the other still holds it;
-    // the gizmo draws first, so closing the gesture there on "nobody is holding
-    // *me*" cut an Inspector scrub into one transaction per frame. Both only raise
-    // a hold now, and here, with every panel drawn, is where the drag is known to
-    // be over. Its position relative to the sweep below is readability only — the
-    // two gesture systems are independent.
+    // the gizmo draws first, so closing the gesture there would cut an Inspector
+    // scrub into one transaction per frame. Both only raise a hold, and here, with
+    // every panel drawn, is where the drag is known to be over. Its position
+    // relative to the sweep below is readability only — the two gesture systems
+    // are independent.
     SweepInstanceGesture();
 
     // Commit finished drags and typing, drop no-ops, abandon dead-entity gestures.
@@ -1576,9 +1574,9 @@ void EditorApp::LogImGuiWedgeDiagnostics()
     // the cursor, so ImGui ignores all mouse input. **The focus test must be the
     // GLFW attrib, a level, not io.AppFocusLost**, which is an edge ImGui clears
     // every frame; an unfocused window with the cursor elsewhere legitimately has
-    // no mouse position, and alt-tabbing away once logged exactly that as a wedge.
-    // While focused the glfw backend re-polls the cursor as a fallback every frame,
-    // so this firing at all means something upstream is genuinely stuck.
+    // no mouse position, and alt-tabbing away would read as a wedge. While focused
+    // the glfw backend re-polls the cursor as a fallback every frame, so this
+    // firing at all means something upstream is genuinely stuck.
     const bool wedgedMousePos =
         !ImGui::IsMousePosValid() && !GetInput().IsMouseCaptured() && GetWindow().IsFocused();
     const bool suspicious = wedgedActiveId || wedgedMousePos;

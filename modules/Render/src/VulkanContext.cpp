@@ -98,13 +98,11 @@ VkInstance CreateInstance()
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
-    // VK_EXT_debug_utils carries two unrelated things, and they used to be
-    // enabled together under !NDEBUG: the validation messenger (expensive,
-    // debug-only) and command-buffer labels (free, and what RenderDoc/Nsight
-    // read to show engine pass names instead of anonymous draws). Bundling them
-    // meant an optimized build — the only build worth profiling — silently had
-    // no labels: nvrhi's beginMarker() is a no-op without the extension, so the
-    // markers compiled in and did nothing. They are separated now.
+    // VK_EXT_debug_utils carries two unrelated things: the validation messenger
+    // (expensive, debug-only) and command-buffer labels (free, and what
+    // RenderDoc/Nsight read to show engine pass names instead of anonymous draws).
+    // Hence the two independent conditions — nvrhi's beginMarker() is a silent
+    // no-op without the extension, so an optimized marker build needs it too.
 #if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 #endif
@@ -623,20 +621,15 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
     VKD.vkGetPhysicalDeviceSurfaceFormatsKHR(_physicalDevice, _surface, &formatCount, formats.data());
 
-    // Round-6 M6. This used to default to formats[0] and only override it on an
-    // exact match, which could leave two silently-wrong outcomes on a device that
-    // does not advertise the preferred format:
-    //   - an unmappable format (ToNvrhiFormat -> UNKNOWN), failing swapchain
-    //     creation far below with a message about NVRHI rather than about the
-    //     surface; or
-    //   - an _SRGB format, which maps fine but makes the hardware apply the sRGB
-    //     transfer function to values the fragment shader has *already* gamma
-    //     encoded (cube_min.frag's pow(1/2.2)) — a washed-out image and no error
-    //     anywhere. Lighting stage L2 moves that encode into a tonemap pass, at
-    //     which point an sRGB surface becomes the correct choice; until then a
-    //     linear (UNORM) surface is the only correct one.
-    // So: take the ideal pair, else any mappable non-sRGB format, else a mappable
-    // sRGB one with a warning that names the symptom, else fail while saying why.
+    // Take the ideal pair, else any mappable non-sRGB format, else a mappable sRGB
+    // one with a warning that names the symptom, else fail while saying why. Never
+    // just formats[0]: an unmappable format (ToNvrhiFormat -> UNKNOWN) fails
+    // swapchain creation far below with a message about NVRHI rather than about the
+    // surface, and an _SRGB format maps fine but makes the hardware apply the sRGB
+    // transfer function to values the fragment shader has *already* gamma encoded
+    // (cube_min.frag's pow(1/2.2)) — a washed-out image with no error anywhere.
+    // Lighting stage L2 moves that encode into a tonemap pass, at which point an
+    // sRGB surface becomes the correct choice; until then linear (UNORM) is.
     const auto isSrgb = [](VkFormat f) { return f == VK_FORMAT_B8G8R8A8_SRGB; };
 
     const VkSurfaceFormatKHR *ideal = nullptr;
@@ -943,9 +936,9 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
 
     // Throttle to kFramesInFlight: block until the frame that last used THIS slot
     // has finished on the GPU — and only that frame, so the other in-flight frame
-    // keeps executing (the whole point, vs. the old full waitForIdle()). This
-    // gates reuse of the slot's image-available semaphore and the ImGui buffers
-    // that frame round-robined. Guarded by a per-slot flag so an early-out below
+    // keeps executing rather than being drained with it. This gates reuse of the
+    // slot's image-available semaphore and the ImGui buffers that frame
+    // round-robined. Guarded by a per-slot flag so an early-out below
     // (stale swapchain) doesn't leave a query waited-but-never-reset.
     _lastGpuWaitMs = 0.0;
     if (_frameQueryPending[slot])
@@ -1064,11 +1057,8 @@ void VulkanContext::EndFrame()
     // Genuine main-thread CPU work: this releases every retired submit's resources,
     // so destroying large/numerous streaming allocations is paid here. Kept out of
     // _lastGpuWaitMs because it is CPU cost, not a GPU stall, and it is otherwise
-    // invisible in a frame breakdown.
-    //
-    // This is the frame's most important slice for the case Chiara was built for:
-    // allocation churn caused several frames ago is *paid here*, so the flows that
-    // terminate near it are what name the cause (see design notes §7).
+    // invisible in a frame breakdown. Allocation churn caused several frames ago
+    // is paid here, so the Chiara flows terminating near this slice name the cause.
     {
         ASSISI_PROFILE_SCOPE("gpu-gc");
         const std::chrono::steady_clock::time_point gcStart = std::chrono::steady_clock::now();

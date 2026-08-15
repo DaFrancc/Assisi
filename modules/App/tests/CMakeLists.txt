@@ -28,9 +28,9 @@ add_executable(Assisi-App-Tests
 # Added with if() rather than a $<BOOL:...> generator expression on purpose.
 # Assisi_apply_test_defaults reads the target's SOURCES property to attach
 # per-source warning opt-outs, and an unevaluated genex comes back as its own
-# literal text — it matches no file, so the opt-outs silently missed this one
-# source and only this one. A plain conditional keeps SOURCES a list of real
-# filenames, which is what that property is being read as.
+# literal text — it matches no file, so the opt-outs silently skip that source. A
+# plain conditional keeps SOURCES a list of real filenames, which is what that
+# property is being read as.
 if (ASSISI_ENABLE_NETWORKING)
   target_sources(Assisi-App-Tests PRIVATE TestBlueprintReplication.cpp)
 endif()

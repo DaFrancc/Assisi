@@ -75,7 +75,7 @@ private:
     nvrhi::BindingLayoutHandle _bindingLayout;
     nvrhi::BindingSetHandle _bindingSet;    // push constants only
 
-    // Two pipelines over the same state, differing only in depth-test enable.
+    // Two pipelines over the same state, differing only in depth test and bias.
     nvrhi::GraphicsPipelineHandle _depthTestedPipeline;
     nvrhi::GraphicsPipelineHandle _onTopPipeline;
 

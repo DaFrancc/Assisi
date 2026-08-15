@@ -987,8 +987,7 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
         // that was there, and wiping the session's undo history over it would be its
         // own bug. A file the deserializer got *into* and then refused — two
         // entities under one name, an unreadable component, a reference to an entity
-        // the file never declares — was refused with the scene already emptied, and
-        // that is the more reachable half of B20.
+        // the file never declares — was refused with the scene already emptied.
         if (loaded.error().sceneReplaced)
             AbandonReplacedScene(virtualPath);
         return false;
@@ -1010,14 +1009,10 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
     // function is what normally catches that, and has to — by here the scene has
     // already been replaced.
     //
-    // "Normally" used to be the whole problem: two checks for one condition, only
-    // one of them positioned safely, so any disagreement between them landed right
-    // here on the far side of the point of no return. Both halves of that are now
-    // closed (ENG-126). The pre-check subsumes this one by construction — same
-    // `Find` predicate, and the same `ParseSystemNames` for the list they run it
-    // over, so neither can see a name the other does not. And this return is
-    // survivable regardless, because the argument above is exactly the kind that
-    // stops being true quietly.
+    // The pre-check subsumes this one by construction: same `Find` predicate, and
+    // the same `ParseSystemNames` for the list they run it over, so neither can see
+    // a name the other does not. This return stays survivable regardless, because
+    // that argument is exactly the kind that stops being true quietly.
     if (!_worlds.ApplySystems(*_world, header.systems, virtualPath))
     {
         Assisi::Core::Log::Error("Editor: '{}' names a system this build does not declare.", virtualPath);

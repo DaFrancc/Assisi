@@ -22,8 +22,7 @@
 /// member path contains a separator and no name does. So the two namespaces are
 /// disjoint *by construction* rather than by anyone remembering to cross-check
 /// them — which is why an entity called `car` and an instance called `car` are
-/// fine, and why round-7 S17's suggestion to forbid that would have rejected
-/// levels that were never in danger.
+/// fine, and why forbidding that would only reject levels never in danger.
 ///
 /// **Every write of a Name goes through a door here.** Rule 2 holds only if it
 /// holds for every path that creates an entity, so no call site spells the write
@@ -114,7 +113,7 @@ template <typename TakenFn>
     for (std::uint32_t suffix = 1;; ++suffix)
     {
         // The suffix is what must survive, so the stem is what gives way: at most
-        // 11 bytes of `_4294967295`, which leaves 21 of any stem.
+        // 11 bytes of `_4294967295`, which leaves 53 of any stem.
         const std::string tail = "_" + std::to_string(suffix);
         const std::string candidate =
             base.substr(0, std::min(base.size(), Core::kEntityNameMax - tail.size())) + tail;

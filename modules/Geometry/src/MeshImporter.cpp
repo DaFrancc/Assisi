@@ -142,8 +142,8 @@ struct ImportWarnings
     bool secondaryTexCoord = false;
 };
 
-/* Replaces every external-file buffer (left as a URI because we deliberately did
-   NOT pass Options::LoadExternalBuffers) with bytes read through AssetSystem, so
+/* Replaces every external-file buffer (left as a URI because the parser is not
+   given Options::LoadExternalBuffers) with bytes read through AssetSystem, so
    glTF's sibling .bin files stay inside the escape-protected asset root. Buffers
    that are already resolved (GLB binary chunk, embedded base64 data URIs decoded
    at parse time) are left untouched. Returns false if any external read fails. */
@@ -564,8 +564,8 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
     }
 
     // --- Phase 2: bucket by (LOD, material slot). Stable sort preserves traversal
-    // order within a bucket, so same-material primitives still merge exactly as
-    // the flat importer did. ---
+    // order within a bucket, so same-material primitives merge in authoring
+    // order. ---
     std::ranges::stable_sort(records, [](const PrimitiveRecord &a, const PrimitiveRecord &b)
         {
             if (a.lodIndex != b.lodIndex)
@@ -581,9 +581,9 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
     bool allHaveUv       = true;
 
     // One LodRange per dense LOD level, indexed directly by the (dense) lod value.
-    // Pre-sizing — rather than push_back as drawable buckets appear — is what keeps
-    // a LOD whose buckets are all non-drawable (skipped below) from desynchronizing
-    // Lods.size() from the lod index and writing out of bounds.
+    // Pre-sized rather than push_back'd: a LOD whose buckets are all non-drawable
+    // is skipped below, which would otherwise desynchronize Lods.size() from the
+    // lod index and write out of bounds.
     merged.Lods.assign(distinctLods.size(), LodRange{});
 
     for (size_t i = 0; i < records.size();)
@@ -659,8 +659,7 @@ std::expected<MeshData, MeshImportError> ImportMesh(std::string_view virtualPath
 
     // Fit the whole-mesh bounds here, on the import worker — after tangents, so
     // the vertex array is final. The main-thread publish (MeshBuffer::Upload)
-    // then just reads them; re-walking a large mesh's vertices there was the
-    // streaming publish's dominant main-thread cost.
+    // then only reads them instead of re-walking a large mesh's vertices.
     EnsureMeshBounds(merged);
 
     return merged;

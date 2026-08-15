@@ -54,8 +54,7 @@ struct WindowConfiguration
 /// after it dies. There is no unsubscribe — the expected lifetimes are strictly
 /// nested (Application owns the window and everything that subscribes to it).
 ///
-/// Only one context should be current on a thread at a time.  Move semantics
-/// transfer window ownership; copying is disabled.
+/// Move semantics transfer window ownership; copying is disabled.
 class WindowContext
 {
 public:
@@ -64,7 +63,7 @@ public:
     /// On failure (GLFW not initialised, or window creation error) the object
     /// is left in an invalid state — check IsValid() before use.
     ///
-    /// @param configuration    Window dimensions, title, and feature flags.
+    /// @param configuration    Window dimensions and title.
     explicit WindowContext(const WindowConfiguration &configuration);
 
     /// @brief Destroys the underlying GLFW window.
@@ -129,8 +128,9 @@ public:
 
 private:
     /// @brief Points the window's GLFW user pointer at this object and installs
-    /// the GLFW callbacks that fan out to subscribers. Called on construction
-    /// and after a move (which re-seats the user pointer on the new owner).
+    /// the GLFW callbacks that fan out to subscribers. Called on construction;
+    /// a move only re-seats the user pointer, since the trampolines stay
+    /// installed on the same window handle.
     void InstallCallbacks();
 
     // GLFW C-callback trampolines: recover the WindowContext from the user

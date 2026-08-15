@@ -38,8 +38,8 @@ std::string ReadFile(const fs::path &path)
     return buffer.str();
 }
 
-// A clean, populated asset tree rooted at a fresh temp directory. Returns the
-// root. Two payload files, one already carrying a hand-written sidecar.
+// A clean asset tree rooted at a fresh temp directory: two payload files and no
+// sidecars. Returns the root. Cases that want a sidecar write their own.
 fs::path MakeTree()
 {
     const fs::path root = fs::temp_directory_path() / "assisi_assetdb_test";
@@ -170,7 +170,7 @@ TEST_CASE("AssetSidecar round-trips a composite manifest")
     CHECK(parsed->subAssets[1].slot == 1);
     CHECK(parsed->subAssets[1].material == matB);
 
-    // A leaf sidecar (no manifest) stays that way, and is byte-identical to S1.
+    // A leaf sidecar stays a leaf: no manifest, no source hash.
     const std::expected<AssetSidecar, AssetSidecarError> leaf =
         DeserializeSidecar(SerializeSidecar(AssetSidecar::Leaf(meshId)));
     REQUIRE(leaf.has_value());
@@ -196,8 +196,8 @@ TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMateria
 {
     const fs::path root = MakeTree();
 
-    // Give checker.amat a known manifest via a hand-written glTF-style sidecar on
-    // crate.png (any file can carry one; the DB does not care about the type).
+    // Give crate.png a hand-written glTF-style sidecar carrying a manifest (any
+    // file can carry one; the DB does not care about the type).
     const AssetId meshId = *AssetId::Parse("11111111-2222-4333-8444-555555555555");
     const AssetId matId  = *AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000009");
     AssetSidecar sidecar = AssetSidecar::Leaf(meshId);
@@ -224,14 +224,14 @@ TEST_CASE("AssetDatabase reads a manifest from a sidecar and answers SlotMateria
         CHECK_FALSE(id.IsReserved());
 }
 
-// --- Malformed-sidecar robustness (round-6 review C1/C2) --------------------
+// --- Malformed-sidecar robustness -------------------------------------------
 // The contract is "skip a malformed sidecar with a warning, never crash." These
-// exercise wrong-typed JSON fields (which nlohmann's value() throws on) and a
-// hostile manifest slot (which the database resizes a vector to).
+// exercise wrong-typed JSON fields (the naive `value(key, default)` spelling
+// throws on those) and a hostile manifest slot (which sizes a vector).
 
 TEST_CASE("DeserializeSidecar returns an error, never throws, on a wrong-typed 'type'")
 {
-    // "type" present but a number: value("type", std::string{}) throws
+    // "type" present but a number: `value("type", std::string{})` would throw
     // json::type_error rather than substituting the default.
     std::expected<AssetSidecar, AssetSidecarError> result;
     CHECK_NOTHROW(result = DeserializeSidecar(R"({"version":1,"type":123})"));
@@ -264,16 +264,16 @@ TEST_CASE("DeserializeSidecar sanitizes a negative manifest slot (no ~0u wrap)")
     std::expected<AssetSidecar, AssetSidecarError> parsed;
     CHECK_NOTHROW(parsed = DeserializeSidecar(json));
     REQUIRE(parsed.has_value());
-    // Rejected, or a sane slot — never ~0u, which wraps slot+1 to 0 in Rebuild.
+    // Rejected, or a sane slot — never ~0u, which Rebuild would size a vector to.
     if (!parsed->subAssets.empty())
         CHECK(parsed->subAssets[0].slot < (1u << 20));
 }
 
 TEST_CASE("Rebuild survives a sidecar with an out-of-range manifest slot")
 {
-    // A huge but syntactically valid unsigned slot: Rebuild resizes the slot
-    // vector to ~4 billion entries (a multi-GB reservation / OOM risk). The
-    // database must reject the entry instead.
+    // A huge but syntactically valid unsigned slot. Unrejected, it would size the
+    // slot vector to ~4 billion entries (a multi-GB reservation / OOM risk); the
+    // slot cap must drop the entry instead.
     const fs::path root = MakeTree();
     const std::string json = R"({"version":1,"type":"AssetSidecar",)"
                              R"("guid":"11111111-2222-4333-8444-555555555555",)"
@@ -289,9 +289,9 @@ TEST_CASE("Rebuild survives a sidecar with an out-of-range manifest slot")
 
 TEST_CASE("Rebuild survives a sidecar with a wrapping (negative) manifest slot")
 {
-    // slot -1 deserializes to 0xFFFFFFFF; Rebuild's `resize(slot + 1)` then wraps
-    // to resize(0) and writes slots[0xFFFFFFFF] — an out-of-bounds heap write
-    // (segfault). The database must reject the entry instead.
+    // A naive read of slot -1 yields 0xFFFFFFFF, and `resize(slot + 1)` in uint32
+    // wraps that to resize(0) before writing slots[0xFFFFFFFF] — an out-of-bounds
+    // heap write. The entry must be dropped at deserialize instead.
     const fs::path root = MakeTree();
     const std::string json = R"({"version":1,"type":"AssetSidecar",)"
                              R"("guid":"11111111-2222-4333-8444-555555555555",)"
@@ -349,8 +349,8 @@ TEST_CASE("A duplicate asset id is re-minted rather than left unaddressable")
     REQUIRE(db.Rebuild().has_value());
 
     // First writer keeps the shared id; the loser is re-minted, NOT dropped —
-    // being dropped was permanent, since its sidecar parses fine and so the
-    // mint-on-missing path would never fire for it on any later Rebuild.
+    // dropping is permanent, since its sidecar parses fine and so the
+    // mint-on-missing path never fires for it on any later Rebuild.
     const std::optional<AssetId> idA = db.IdFor("textures/copy_a.png");
     const std::optional<AssetId> idB = db.IdFor("textures/copy_b.png");
     REQUIRE(idA.has_value());

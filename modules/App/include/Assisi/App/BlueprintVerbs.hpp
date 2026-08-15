@@ -50,9 +50,8 @@ namespace Assisi::App
 ///
 /// All or nothing — a missing nested file three members in leaves nothing behind.
 ///
-/// `std::optional`, not a sentinel: an earlier draft returned a struct whose
-/// `instanceId == 0` meant failure, which is ignorable in a way `if (auto car =
-/// …)` is not.
+/// `std::optional`, not a sentinel: an `instanceId == 0` meaning failure is
+/// ignorable in a way `if (auto car = …)` is not.
 ///
 /// **The id is what you may keep; entity handles are for right now.** A handle
 /// goes stale when its entity dies, but the id survives members dying, because

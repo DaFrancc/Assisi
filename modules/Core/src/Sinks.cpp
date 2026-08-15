@@ -90,10 +90,10 @@ ConsoleSink::ConsoleSink() : _color(StdoutIsTerminal())
 
 void ConsoleSink::Write(LogLevel level, std::string_view message)
 {
-    // Streamed in pieces rather than formatted into one string, which allocated
-    // a decorated copy of every line to write it once. The caller holds the
-    // logger lock, so the pieces cannot interleave — except under Fatal, which
-    // try-locks and accepts that by design.
+    // Streamed in pieces rather than formatted into one string, which would
+    // allocate a decorated copy of every line to write it once. The caller holds
+    // the logger lock, so the pieces cannot interleave — except under Fatal,
+    // which try-locks and accepts that by design.
     if (_color)
     {
         std::cout << LevelColor(level) << message << Reset << '\n';
@@ -124,15 +124,14 @@ std::string Timestamp()
 }
 } // namespace
 
-// Truncate, not append: appending accumulates every run forever (the multi-MB
-// assisi.log). One file per launch, pruned by Application, keeps it bounded.
+// Truncate, not append: appending accumulates every run forever. One file per
+// launch, pruned by Application, keeps it bounded.
 FileSink::FileSink(const std::filesystem::path &path) : _file(path, std::ios::trunc)
 {
-    // Say so rather than going quietly missing. A read-only user root — an
-    // install under Program Files or /opt with no ASSISI_USER_ROOT set —
-    // otherwise produces no log and no explanation for its absence. This sink
-    // is not registered yet, so the warning goes to the console sink and cannot
-    // recurse into this one.
+    // A read-only user root — an install under Program Files or /opt with no
+    // ASSISI_USER_ROOT set — otherwise produces no log and no explanation for
+    // its absence. This sink is not registered yet, so the warning goes to the
+    // console sink and cannot recurse into this one.
     if (!_file.is_open())
     {
         Log::Warn("FileSink: could not open {} — this run will leave no log file.", path.string());

@@ -54,8 +54,6 @@ namespace Layers
 {
 static constexpr JPH::ObjectLayer kStatic = 0;
 static constexpr JPH::ObjectLayer kDynamic = 1;
-// (no kCount here: the broad-phase layer count is BPLayers::kCount, which Jolt
-// actually queries; an object-layer count had no reader.)
 } // namespace Layers
 
 namespace BPLayers
@@ -144,29 +142,21 @@ public:
    The scratch allocator is deliberately NOT here — it is per-world (see Impl).
    TempAllocatorImpl is a stack, used throughout a step by the pool workers a
    single Update() dispatches; two worlds' Update()s sharing one would interleave
-   their frames. Sharing it was only ever "safe" while worlds stepped strictly
-   sequentially, and even then the accesses cross pool-worker threads without a
-   happens-before edge (a real data race ThreadSanitizer flags). A per-world
-   allocator is 10 MiB of scratch each — cheap — and makes stepping safe whether
-   worlds run sequentially or (later) in parallel. The pool stays shared; Jolt is
-   built for many PhysicsSystems on one JobSystem. */
+   their frames, and the accesses cross pool-worker threads with no happens-before
+   edge (a data race ThreadSanitizer flags). A per-world allocator is 10 MiB of
+   scratch each — cheap — and makes stepping safe whether worlds run sequentially
+   or in parallel. The pool stays shared; Jolt is built for many PhysicsSystems on
+   one JobSystem. */
 /* Under ThreadSanitizer the pool is replaced by Jolt's single-threaded job
    system. Jolt's solver coordinates its workers through its own barriers and
-   atomics rather than through anything tsan models as a happens-before edge, so
-   a threaded step reports races inside `JobSystem.h` and `TempAllocator.h` —
-   Jolt's own headers, which reach the instrumentation only because they are
-   headers inlined into this TU (the Jolt library itself does not link
-   Assisi::Sanitize). Those reports are not ours and cannot be fixed here, and
-   left alone they bury any real race in noise: four suites go red for reasons
-   nobody can act on, which is the same as having no tsan gate at all.
-
-   Stepping on one thread removes them at the source rather than hiding them
-   behind a suppression. It costs nothing that matters — Jolt's results do not
-   depend on worker count, so a sanitized run exercises the same physics, just
-   more slowly, which a sanitized build is anyway. Everything *around* physics
-   still runs threaded, so the async-travel worker, the job system and the
-   blueprint cache are all still under test. Speed is not a question a sanitized
-   build answers (see Chiara's TestOverhead for the same reasoning). */
+   atomics rather than anything tsan models as a happens-before edge, so a
+   threaded step reports races inside `JobSystem.h` and `TempAllocator.h` — Jolt's
+   own headers, instrumented only because they are inlined into this TU (the Jolt
+   library does not link Assisi::Sanitize). Those reports cannot be fixed here and
+   bury any real race in noise. Stepping on one thread removes them at the source
+   rather than hiding them behind a suppression, and costs only speed: Jolt's
+   results do not depend on worker count, and everything around physics still runs
+   threaded. */
 struct JoltRuntime
 {
 #if defined(ASSISI_PHYSICS_TSAN)
@@ -756,8 +746,7 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
     // dirty-skip and network delta replication both filter on that tick, and a
     // write through a plain Query's `Transform&` stamps nothing — the body would
     // move with both consumers still reporting it unchanged. The proxy stamps
-    // exactly like Scene::GetMut, which is what the old explicit MarkChanged-by-id
-    // call here was standing in for.
+    // exactly like Scene::GetMut.
     //
     // RigidBody comes along as a Mut proxy because QueryMut wraps every type, but
     // it is only read — through the const Get(), which never stamps (and RigidBody
@@ -810,22 +799,17 @@ void PhysicsWorld::InterpolateTransforms(Assisi::ECS::Scene &scene, float alpha,
             }
         }
 
-        // Nothing moved: skip the write entirely rather than stamp a change tick
-        // for a pose identical to the one already there.
+        // Nothing moved: skip the write rather than stamp a change tick for a pose
+        // identical to the one already there. Every mutable access through the
+        // proxy stamps, so a resting body would otherwise read as changed every
+        // frame for the rest of the session — dirty-subtree work for
+        // PropagateTransforms, and bandwidth for a visual-only mirror, which has
+        // no body channel and travels by Transform delta.
         //
-        // Every mutable access through the proxy stamps, and a resting body would
-        // otherwise be marked changed on every single frame for the rest of the
-        // session — a permanent false positive that PropagateTransforms pays for
-        // in dirty-subtree work and that replication pays for in bandwidth, since
-        // a visual-only mirror (one whose descriptor its entity declines to send)
-        // has no body channel and travels by Transform delta.
-        //
-        // Exact comparison is right here rather than epsilon'd: a resting body's
-        // snapshot poses are frozen — nothing integrates them — so the computed
-        // target is bit-identical frame to frame, and the rest-snap branches above
-        // already absorbed the near-rest jitter that would otherwise need a
-        // tolerance. Anything genuinely in motion differs in the low bits and is
-        // written.
+        // Exact comparison rather than epsilon'd: a resting body's snapshot poses
+        // are frozen, so the computed target is bit-identical frame to frame, and
+        // the rest-snap branches above already absorbed the near-rest jitter.
+        // Anything genuinely in motion differs in the low bits and is written.
         const Assisi::ECS::Transform &current = transform.Get();
         if (current.position == targetPosition && current.rotation == targetRotation)
             continue;
@@ -1025,13 +1009,12 @@ void PhysicsWorld::SetBodyCCD(const RigidBody &body, bool enable)
     if (!bodies.IsAdded(body.bodyId))
         return;
 
-    // Set motion quality even when the body is currently Static. Motion quality
-    // is a stored property (our bodies always have motion properties, since
+    // Set motion quality even when the body is currently Static, rather than
+    // guarding on Dynamic: the inspector freezes the selected body to Static while
+    // a widget is active, so a guard would silently drop the CCD checkbox. Motion
+    // quality is a stored property (our bodies always have motion properties, since
     // AddBody sets mAllowDynamicOrKinematic), so it sticks and takes effect once
-    // the body is Dynamic again. Guarding on Dynamic here used to make this a
-    // silent no-op: the inspector freezes the selected body to Static while a
-    // widget is active, so the CCD checkbox toggled on a frozen body and never
-    // applied. Jolt no-ops safely if a body genuinely has no motion properties.
+    // the body is Dynamic again. Jolt no-ops safely if a body genuinely has none.
     const JPH::EMotionQuality quality =
         enable ? JPH::EMotionQuality::LinearCast : JPH::EMotionQuality::Discrete;
     bodies.SetMotionQuality(body.bodyId, quality);

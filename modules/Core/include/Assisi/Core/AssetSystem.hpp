@@ -27,10 +27,8 @@
 /// writable API is usable before Initialize() (the logger relies on this).
 ///
 /// @note Intentional service-locator: each root is a single process-wide
-/// resource, and SetRoot()/SetUserRoot() keep them test-controllable (see the
-/// Core tests, which point them at temp dirs) — so the shared state does not
-/// block testing. The static API is a deliberate convenience over threading a
-/// handle through every asset load.
+/// resource, and SetRoot()/SetUserRoot() keep them test-controllable (the Core
+/// tests point them at temp dirs).
 
 #include <cstddef>
 #include <expected>

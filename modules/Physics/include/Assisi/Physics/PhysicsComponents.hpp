@@ -82,15 +82,14 @@ struct RigidBodyDescriptor
 ///
 /// Needs a RigidBody to act on, and only reports contacts in a world whose
 /// PhysicsWorld has contact reporting switched on (PhysicsWorld::SetContactReporting) —
-/// that is the profile installer's job, so worlds with no bouncers pay nothing.
+/// which the bounce system does for itself when it runs, so a world whose level
+/// did not name that system pays nothing.
 ///
-/// Replicated, and the reasoning is worth keeping because the first pass got it
-/// wrong. "A client-side bounce is a local guess at what the server's bounce
-/// also did" is true — but only if the client *has* one. Under local simulation
-/// the client runs its own physics, and a mirror missing this component simply
-/// does not bounce: it falls, rests, and is snapped back up by every correction.
-/// The result is a simulation that is continuously wrong in a way the correction
-/// stream keeps papering over, which reads on screen as a body lagging its own
+/// Replicated, despite the bounce itself being a local guess at what the server's
+/// bounce did. Under local simulation the client runs its own physics, and a
+/// mirror missing this component does not bounce at all: it falls, rests, and is
+/// snapped back up by every correction — a simulation continuously wrong in a way
+/// the correction stream papers over, reading on screen as a body lagging its own
 /// authoritative position. The component is authored data that changes ~never;
 /// only its *effect* is local.
 ACOMP(replicable)

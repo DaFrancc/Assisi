@@ -108,8 +108,8 @@ template <typename T> struct SparseSet
     ///
     /// Compares the full handle (index *and* generation): a stale handle whose
     /// slot was reused by a newer entity will not match the generation stored
-    /// in the dense array, so it correctly reports false instead of aliasing
-    /// the new occupant's component.
+    /// in the packed entity array, so it correctly reports false instead of
+    /// aliasing the new occupant's component.
     bool Has(Entity entity) const
     {
         if (entity.index >= _sparse.size())

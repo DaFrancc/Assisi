@@ -42,13 +42,13 @@ void MessageRegistry::EnsureFinalized() const
     std::sort(_metas.begin(), _metas.end(),
               [](const MessageMeta &lhs, const MessageMeta &rhs) { return lhs.name < rhs.name; });
 
-    // Duplicate names are fatal here, where duplicate *components* are merely
-    // dropped with an error. The difference is what the id means: two messages
-    // sharing a name share a dense id, so one machine encodes type A and the
-    // other decodes type B — same bytes, different meaning, no error anywhere.
-    // That is precisely the silent corruption the protocol hash exists to
-    // prevent, and it would sail straight past the hash because both builds
-    // agree on the (identical) name list.
+    // Duplicate names abort here in debug, where duplicate *components* are
+    // merely dropped with an error. The difference is what a name means: Find
+    // and IdOf(name) can only ever reach one of the two, and the sort leaves the
+    // order of equal names unspecified, so which one that is need not agree
+    // across builds — one machine encodes type A where the other decodes type B,
+    // same bytes, different meaning, no error anywhere. The protocol hash cannot
+    // catch it either: both builds agree on the (identical) name list.
     for (std::size_t i = 1; i < _metas.size(); ++i)
     {
         if (_metas[i].name == _metas[i - 1].name)
@@ -62,13 +62,12 @@ void MessageRegistry::EnsureFinalized() const
 
     _idByType.clear();
     _idByType.reserve(_metas.size());
-    // Ids start at one so that a zero-initialized MessageId is invalid, matching
-    // every other id in the engine.
     for (std::size_t i = 0; i < _metas.size(); ++i)
     {
         // Braced rather than a cast: this is the one place a count becomes an
         // id, and braces refuse the narrowing that static_cast would perform
-        // silently. One-based, so zero stays the value nothing ever has.
+        // silently. One-based, so a zero-initialized MessageId is never a real
+        // id (unlike ComponentId, whose ordinals start at zero).
         _metas[i].id = MessageId{static_cast<std::uint32_t>(i + 1)};
         _idByType.emplace(_metas[i].typeIndex, _metas[i].id);
     }

@@ -4,17 +4,16 @@
 /// @brief A gizmo drag is its own transaction, over its own entities, and it ends
 /// where it ends.
 ///
-/// The failure this exists to prevent is an **orphaned release edge** (ENG-127).
-/// The gizmo's force-commit used to sit at the bottom of the draw function, past
-/// four early returns — instance mode, a dead or non-editable entity, a Transform
-/// that went away. Ending a drag through any of them skipped the commit and left
-/// the "was dragging" flag raised, so the next frame that *did* reach the bottom
-/// read that stale edge and committed it against whatever was selected by then:
-/// a commit fired at an entity the drag never touched.
+/// The failure this exists to prevent is an **orphaned release edge**. A
+/// force-commit at the bottom of the draw function sits past four early returns —
+/// instance mode, a dead or non-editable entity, a Transform that went away —
+/// so a drag ending through any of them skips the commit and leaves the edge
+/// raised, for the next frame that *does* reach the bottom to fire against
+/// whatever is selected by then: a commit at an entity the drag never touched.
 ///
-/// The same function rebuilt the also-dragged set from the live selection on every
-/// frame, so even a well-formed release could name entities that were not part of
-/// the drag.
+/// The also-dragged set has the same shape of problem: rebuilt from the live
+/// selection each frame, even a well-formed release names entities that were not
+/// part of the drag.
 ///
 /// So the assertions that matter are about *whose* edit gets committed and when —
 /// not merely that something lands in the history.
@@ -175,9 +174,9 @@ TEST_CASE("GizmoDrag: deleting the dragged entity ends the drag without committi
     for (int32_t frame = 0; frame < 10; ++frame)
         fixture.HeldFrame(dragged, {}, 0.1f);
 
-    // The author deletes what they were dragging. This is the path the old code
-    // could not reach its own release edge through: the draw function returns at
-    // `!IsAlive(_selectedEntity)`, long before the commit at the bottom.
+    // The author deletes what they were dragging — the path a draw-function commit
+    // cannot reach: it returns at `!IsAlive(_selectedEntity)`, long before the
+    // bottom.
     fixture.scene.Destroy(dragged);
     fixture.scene.FlushDestroyed();
 
@@ -187,19 +186,19 @@ TEST_CASE("GizmoDrag: deleting the dragged entity ends the drag without committi
     // as a *removal* and push a transaction whose undo re-adds a Transform to a dead
     // handle. EditHistory's own sweep drops such gestures; so does this.
     CHECK(fixture.history.UndoDepth() == 0);
-    // And the edge is spent, which is the half that used to go wrong.
+    // And the edge is spent, which is the half that goes wrong without this.
     CHECK_FALSE(fixture.drag.IsOpen());
 
     // The next frame: the author selects something else, and the inspector opens a
-    // gesture on it. The stale edge used to fire right here, against this entity.
+    // gesture on it. This is where a stale edge would fire, against this entity.
     fixture.history.RecordBefore(next, fixture.kTransformId, "Edit Transform", next);
     fixture.ReleasedFrame();
     fixture.Nudge(next, 3.f);
     fixture.history.EndFrameSweep(false);
 
     // Its gesture survived the release intact — one transaction, holding the whole
-    // edit. A stale edge would have closed it while before == after, dropping the
-    // gesture, and this edit would have gone unrecorded.
+    // edit. A stale edge would close it while before == after, dropping the gesture
+    // and losing this edit.
     REQUIRE(fixture.history.UndoDepth() == 1);
     (void)fixture.history.Undo();
     CHECK(fixture.X(next) == doctest::Approx(9.f));

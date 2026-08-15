@@ -148,9 +148,9 @@ public:
     //
     // Off by default, and off costs nothing: with reporting disabled the world
     // installs no Jolt contact listener at all, so the simulation never makes the
-    // call. Switch it on per world — a profile installer is the natural place,
-    // since "this level has bouncy things in it" is exactly the kind of decision a
-    // profile encodes (docs/world-system-binding-design-notes.md §3).
+    // call. It is per world, and a system that needs contacts switches it on for
+    // itself when it runs — so a world whose level named no such system never pays
+    // for it (docs/world-system-binding-design-notes.md §3).
 
     /// @brief Starts or stops recording new contacts during Update().
     /// Turning it off also drops whatever is currently logged.
@@ -221,13 +221,11 @@ public:
 
     // --- Authoritative body state (replication) -------------------------------
     //
-    // Replication used to read the render-side Transform, which is wrong twice
-    // over: a headless host never runs the writeback at all (so its
-    // physics-driven entities replicate their load pose forever), and the
-    // writeback stamps *every* body every frame including sleeping ones (so a
-    // settled world never stops costing bandwidth). Both are the same root
-    // cause — the render pose is not the physics truth — and reading the world
-    // directly removes it rather than patching it twice.
+    // Replication reads the simulation directly, not the render-side Transform:
+    // the render pose is not the physics truth. A headless host never runs the
+    // writeback at all (its physics-driven entities would replicate their load
+    // pose forever), and the writeback covers every body every frame including
+    // sleeping ones (a settled world would never stop costing bandwidth).
 
     /// @brief One active body's authoritative motion state.
     struct ActiveBodyState
@@ -258,8 +256,8 @@ public:
     ///
     /// Deliberately not composed from the pieces above, because those have the
     /// wrong semantics for a correction three times over: SetBodyTransform
-    /// reactivates unconditionally (so an "asleep" correction applied through it
-    /// would wake the body), it zeroes the velocities, and there is no
+    /// reactivates every non-static body (so an "asleep" correction applied through
+    /// it would wake the body), it zeroes the velocities, and there is no
     /// angular-velocity setter at all.
     ///
     /// Like SetBodyTransform it collapses both render-interpolation snapshots

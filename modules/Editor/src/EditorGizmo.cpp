@@ -245,10 +245,9 @@ void EditorApp::DrawTransformGizmo()
     // Held is the *only* thing the drawing below reports back, and the release edge
     // is read here rather than at the bottom of it. Every early return in there —
     // instance mode, a dead or non-editable entity, a Transform that went away — is
-    // a frame in which the handles are not held, so each of them ends the drag. Left
-    // inside, the commit was unreachable from all four, and the "was dragging" flag
-    // it never cleared was read a frame later against a different selection
-    // (ENG-127).
+    // a frame in which the handles are not held, so each of them ends the drag. A
+    // release read inside the drawing is unreachable from all four, leaving an open
+    // drag to commit a frame later against a different selection.
     const bool held = !instanceMode && DrawTransformGizmoHandles();
     if (!held)
         _gizmoDrag.Release(_scene, ActiveHistory(), Assisi::Core::Reflect::ComponentIdOf<Rt::Transform>());

@@ -96,8 +96,7 @@ TEST_CASE("ImportMesh: a single-material mesh degenerates to one full-range subm
     const std::expected<MeshData, MeshImportError> result = ImportMesh("triangle.gltf");
     REQUIRE(result.has_value());
 
-    // One submesh spanning the whole index range, one LOD, one material slot —
-    // the shape the flat importer's output maps onto with no behaviour change.
+    // One submesh spanning the whole index range, one LOD, one material slot.
     REQUIRE(result->SubMeshes.size() == 1);
     CHECK(result->SubMeshes[0].IndexOffset == 0);
     CHECK(result->SubMeshes[0].IndexCount == result->Indices.size());
@@ -345,8 +344,8 @@ namespace
 {
 // Round-6 review C6: LOD0's node has a mesh whose only primitive lacks POSITION
 // (non-drawable), while LOD1's node is drawable. The importer skips LOD0's empty
-// bucket without pushing a LodRange, then pushes LOD1's — but increments
-// Lods[lod=1] on a size-1 vector, an out-of-bounds write.
+// bucket, so the LOD table has to be pre-sized by distinct LOD count — indexing
+// it by the dense lod value is otherwise an out-of-bounds write.
 constexpr std::string_view kLodOobGltf = R"({
   "asset": { "version": "2.0" },
   "scene": 0,
@@ -479,7 +478,7 @@ TEST_CASE("ImportMesh: a mirrored (negative-scale) node flips winding back to CC
     // Under back-face culling with a CCW front face, the importer must swap two
     // indices per triangle to restore CCW-front in world space -> {0, 2, 1}.
     CHECK(result->Indices[0] == 0);
-    CHECK(result->Indices[1] == 2); // importer leaves the reversed winding {0,1,2}
+    CHECK(result->Indices[1] == 2);
     CHECK(result->Indices[2] == 1);
 
     fs::remove_all(root);

@@ -43,7 +43,7 @@ VkDescriptorPool s_descriptorPool = VK_NULL_HANDLE;
 // Descriptor-set budget for user textures (asset-browser thumbnails, etc.). The
 // per-frame mark-and-sweep below keeps the live set bounded to what is actually
 // requested each frame — roughly one directory of thumbnails — so this is a
-// generous ceiling, not a per-session accumulator like the old maxSets=16.
+// generous ceiling rather than a per-session accumulator.
 constexpr std::uint32_t kMaxDebugTextures = 256;
 
 // A texture's descriptor set can be referenced by in-flight command buffers for up

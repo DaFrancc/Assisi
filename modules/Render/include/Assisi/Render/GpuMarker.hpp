@@ -9,13 +9,9 @@
 /// ASSISI_PROFILE_GPU_SCOPE(frame.commandList, "scene");
 /// ```
 ///
-/// This is the bridge between the two halves of a frame. Chiara knows what the
-/// engine was *doing* but cannot see the GPU; RenderDoc and Nsight see the GPU
-/// perfectly but only in Vulkan's vocabulary — 350 anonymous draws where the
-/// engine sees eight passes. `ASSISI_PROFILE_GPU_SCOPE` emits both from one
-/// name, so a slice in Perfetto and a labelled range in RenderDoc are
-/// guaranteed to mean the same thing. Using two macros with two string literals
-/// would let them drift, which is the whole failure mode this avoids.
+/// `ASSISI_PROFILE_GPU_SCOPE` emits the Chiara scope and the GPU label from one
+/// name, so a slice in Perfetto and a labelled range in RenderDoc are guaranteed
+/// to mean the same thing; two macros with two string literals would drift.
 ///
 /// **Only wrap code that records commands.** A marker around CPU-only work
 /// (transform propagation, cull-table building) produces an empty range that
@@ -28,11 +24,9 @@
 /// accepts commands. That is why `begin-frame` and `end-frame` keep plain CPU
 /// scopes.
 ///
-/// Gated on ASSISI_ENABLE_GPU_MARKERS, which defaults to following
-/// ASSISI_ENABLE_CHIARA — the `-chiara` presets are the builds anyone profiles.
-/// It is a separate option because the two are genuinely independent: a plain
-/// Release build handed to RenderDoc still wants labels, and a Chiara capture on
-/// a machine with no GPU tooling has no use for them.
+/// Gated on ASSISI_ENABLE_GPU_MARKERS, which defaults to ASSISI_ENABLE_CHIARA
+/// but stays its own option: a plain Release build handed to RenderDoc still
+/// wants labels, and a Chiara capture on a machine with no GPU tooling does not.
 
 #include <Assisi/Chiara/Profile.hpp>
 

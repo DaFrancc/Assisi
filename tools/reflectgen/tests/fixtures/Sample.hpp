@@ -1,12 +1,14 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 #pragma once
 
-// Fixture header for reflectgen's golden tests. Deliberately exercises every
-// supported field type, a transient field, a tracked (change-detection)
-// component, a replicable component with a norep field, an empty component,
-// namespaced components, comment stripping, nested-brace initializers, and
-// EntityRef include emission. If you change this header, regenerate the golden
-// output:
+// Fixture header for reflectgen's golden tests. Exercises the scalar, glm,
+// enum, AssetPath/ShortString and path-vector field types, a transient field, a
+// tracked (change-detection) component, a replicable component with a norep
+// field, an empty component, namespaced components, comment stripping,
+// nested-brace initializers, and EntityRef include emission. AssetId,
+// EntityName and InstanceId have their own cases in test_reflectgen.py rather
+// than living here; ComponentMask has none. If you change this header,
+// regenerate the golden output:
 //   REFLECTGEN_UPDATE_GOLDEN=1 python tools/reflectgen/tests/test_reflectgen.py
 
 #include <cstdint>
@@ -41,7 +43,7 @@ enum class SampleShape : uint32_t
 };
 
 // ACOMP(tracked): opts into change detection, so its registration carries
-// tracksChanges = true. Doubles as the "all supported field types" component.
+// tracksChanges = true. Doubles as the component carrying the field types above.
 ACOMP(tracked)
 struct SampleAllTypes
 {
@@ -121,9 +123,9 @@ struct SampleRadio
 
 // ACOMP(replicable): grants the capability to cross the wire, which implies
 // tracked — so its registration carries tracksChanges *and* replicable.
-// `serverOnly` is
-// AFIELD(norep): saved to disk like any other field, excluded from the binary
-// codec, which is the one place the two serializers deliberately disagree.
+// `serverOnly` is AFIELD(norep): saved to disk like any other field, excluded
+// from the binary codec, which is the one place the two serializers
+// deliberately disagree.
 ACOMP(replicable)
 struct SampleReplicated
 {

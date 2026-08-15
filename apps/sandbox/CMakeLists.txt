@@ -39,8 +39,7 @@ endif()
 # five refusal paths to reach: NetTransport::Connect takes IP literals only, so
 # this fails inside NetSession::Join, synchronously, during OnStart — no peer to
 # stand up, no port to bind, no timeout to wait out, and nothing about it varies
-# with the machine. WILL_FAIL is the assertion: the test passes only on a
-# non-zero exit, which is exactly what B18 says the server does not produce.
+# with the machine. WILL_FAIL asserts the non-zero exit.
 if (ASSISI_BUILD_TESTS AND ASSISI_ENABLE_NETWORKING)
   add_test(NAME SandboxRefusedStart
     COMMAND Assisi-Sandbox --connect not-an-ip:27015 --ticks 1
@@ -105,22 +104,17 @@ add_custom_target(Assisi-CopyAssets ALL
 
 add_dependencies(Assisi-Sandbox Assisi-CopyAssets)
 
-# --- Vulkan shaders: compile GLSL -> SPIR-V at build time (OpenGL shaders are
-# compiled at runtime instead; these Vulkan-only shaders are the exception
-# during the migration, matching apps/vk_triangle's approach).
+# --- Vulkan shaders: compile GLSL -> SPIR-V at build time.
 #
 # The copy into place is its own OUTPUT-tracked custom command per shader,
 # depending on that shader's compiled .spv — NOT a POST_BUILD hook on
 # Assisi-Sandbox. A POST_BUILD hook only re-runs when the executable itself
 # relinks, which a shader-only edit never triggers (no C++ source changed),
 # so ninja would silently skip copying the freshly compiled SPIR-V next to
-# the exe and the app would keep running a stale shader. Learned this the
-# hard way debugging what looked like a persistent lighting bug that was
-# actually just an out-of-date .spv.
+# the exe and the app would keep running a stale shader.
+#
 # Auto-discovered, like the assets glob above — a new .vert/.frag/.comp under
-# assets/shaders/ just needs the file created, no CMakeLists.txt edit. (The old
-# hardcoded file list was easy to forget to update: add a shader, wire it up in
-# C++, and get a runtime "file not found" instead of a build error.)
+# assets/shaders/ just needs the file created, no CMakeLists.txt edit.
 file(GLOB_RECURSE _sandbox_vk_shader_sources
     CONFIGURE_DEPENDS
     LIST_DIRECTORIES false

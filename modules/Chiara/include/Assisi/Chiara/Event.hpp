@@ -89,10 +89,9 @@ namespace Detail
 ///    `C - capacity` — the oldest live record. Reading it would race a partial
 ///    write. Sacrificing that one slot removes the only unsynchronized read.
 ///
-/// Point 2 costs one event per ring and is invisible in any other framing; it is
-/// wrong only on the full-ring "dump everything" path, which is exactly the path
-/// that matters. Producers must be stopped (recording paused) before a read, so
-/// each can complete at most one straggler past the observed cursor.
+/// Point 2 costs one event per ring, visible only on the full-ring "dump
+/// everything" path. Producers must be stopped (recording paused) before a read,
+/// so each can complete at most one straggler past the observed cursor.
 class EventRing
 {
 public:

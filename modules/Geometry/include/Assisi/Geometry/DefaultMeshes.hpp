@@ -94,9 +94,7 @@ inline MeshData CreateUnitCubeMesh()
      * the ImGui path), and every face is oriented so the texture reads upright and
      * un-mirrored when viewed from outside: side faces put texture-up along world
      * +Y; the top (+Y) and bottom (-Y) faces put texture-up along world -Z. Each
-     * face's u x v points along -normal, i.e. no face is mirrored. Positions and
-     * the index buffer below are unchanged, so triangle winding / back-face culling
-     * are unaffected — only the UV assignment differs. */
+     * face's u x v points along -normal, i.e. no face is mirrored. */
     mesh.Vertices = {
         /* +X face (up = +Y) */
         {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},

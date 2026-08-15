@@ -123,11 +123,9 @@ Logger &GetLogger();
 
 /// @brief Parses a level name, case-insensitively. Empty if unrecognised.
 ///
-/// Names only, deliberately — no numeric ordinals. LogLevel's enumerators are
-/// dense and unnamed in the ABI, so inserting a level renumbers every one after
-/// it, and a `--verbosity 2` sitting in someone's launch script or shortcut
-/// would quietly start meaning something else. A name either resolves or is
-/// rejected out loud.
+/// Names only, no numeric ordinals: LogLevel's enumerators are dense, so
+/// inserting a level renumbers every one after it and a `--verbosity 2` in
+/// someone's launch script would quietly start meaning something else.
 [[nodiscard]] std::optional<LogLevel> ParseLogLevel(std::string_view name);
 
 /// @brief All level names, lowest first — for help text and error messages.

@@ -142,18 +142,16 @@ TEST_CASE("AssetSystem::ReadUserText reports a clean error for a missing file")
 // ---------------------------------------------------------------------------
 // Roots that cannot be set.
 //
-// SetRoot / SetUserRoot are noexcept and used to call std::filesystem's
-// *throwing* overloads with no handler, so an OS-level failure was
-// std::terminate rather than a returned error. They now use the error_code
-// overloads.
+// SetRoot / SetUserRoot are noexcept, so they must use std::filesystem's
+// error_code overloads — the throwing ones would make an OS-level failure
+// std::terminate rather than a returned error.
 //
-// **These cases do not reproduce that.** A path that merely does not exist is
-// not an OS failure — is_directory reports false with a clear error_code and
-// never threw. Provoking the real thing needs a genuine failure (permission
-// denied on a parent, an unmounted volume), which is not portably constructible
-// in a unit test and would be skipped on the CI that runs as root. What these
-// pin is the contract around it: the documented rejection, by value, with
-// nothing escaping.
+// **These cases do not reproduce that failure.** A path that merely does not
+// exist is not an OS failure: is_directory answers false with a clear
+// error_code. The real thing needs permission denied on a parent or an
+// unmounted volume, neither portably constructible in a unit test and both
+// skipped on CI running as root. What these pin is the contract around it: the
+// documented rejection, by value, with nothing escaping.
 // ---------------------------------------------------------------------------
 
 TEST_CASE("AssetSystem::SetRoot refuses a path that is not a directory, and does not throw")
@@ -187,8 +185,8 @@ TEST_CASE("AssetSystem::Exists answers false for an unreadable path rather than 
     REQUIRE(AssetSystem::SetRoot(TempRoot()).has_value());
 
     // A path with an interior component that is a *file*, so the OS reports
-    // ENOTDIR when it stats it — an error_code, where the throwing overload of
-    // fs::exists would have raised.
+    // ENOTDIR when it stats it — an error_code here, where the throwing overload
+    // of fs::exists would raise.
     const std::filesystem::path file = TempRoot() / "assisi_notdir_probe.txt";
     {
         std::ofstream out(file);

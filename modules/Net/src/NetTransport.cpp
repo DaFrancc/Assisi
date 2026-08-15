@@ -54,7 +54,7 @@ std::int32_t g_libraryRefs = 0;
 /// Listen() needs this to tell two very different situations apart, both of
 /// which surface identically as "GNS bound IPv4 only". Asked once and cached:
 /// the answer cannot change while the process runs, and the probe is a syscall
-/// we would otherwise repeat on every Host().
+/// we would otherwise repeat on every Listen().
 bool HostSupportsIPv6()
 {
     static const bool supported = []
@@ -356,7 +356,7 @@ bool NetTransport::Listen(std::uint16_t port)
     // keep separate wildcard port spaces and an existing dual-stack bind does
     // not reserve the plain-IPv4 slot. It is not a harmless duplicate either:
     // the IPv4-only latecomer takes delivery of the IPv4 traffic, so a second
-    // Host() on a busy port would quietly steal the first server's clients.
+    // Listen() on a busy port would quietly steal the first server's clients.
     //
     // GNS documents the tell (isteamnetworkingsockets.h): ::0 back means "any
     // IPv4 or IPv6", ::ffff:0:0 means "any IPv4". So getting IPv4 when we asked
@@ -509,7 +509,7 @@ void NetTransport::Poll(std::vector<NetEvent> &outEvents)
     outEvents.swap(_impl->pendingEvents);
     _impl->pendingEvents.clear();
 
-    // Drain in bounded batches so one very busy tick cannot spin here forever.
+    // Fixed-size receive array, so drain in batches until one comes back short.
     constexpr int kBatchSize = 64;
     SteamNetworkingMessage_t *batch[kBatchSize];
     for (;;)

@@ -5,14 +5,12 @@
 /// @brief Runtime descriptor for a reflected *message* type — what other engines
 /// spell as an RPC.
 ///
-/// A message is a plain struct annotated `AMSG(direction, reliability)`, and
-/// that is the whole design. It is not a function, and the difference is not
-/// cosmetic: a struct goes through reflectgen's existing field path, so it gets
-/// binary and JSON codecs, the inspector, and — the part that matters most —
-/// inclusion in the protocol hash, all for free. A function-shaped RPC would
-/// need a signature parser, a parameter model, and dispatch codegen, and would
-/// lose the hash inclusion, which is the thing that makes a mismatched pair
-/// refuse to connect instead of misparsing each other.
+/// A message is a plain struct annotated `AMSG(direction, reliability)`, not a
+/// function, and the difference is not cosmetic: a struct goes through
+/// reflectgen's existing field path, so it gets binary and JSON codecs, the
+/// inspector, and — the part that matters most — inclusion in the protocol hash,
+/// which is what makes a mismatched pair refuse to connect instead of misparsing
+/// each other.
 ///
 /// Addressing is data, not a receiver. There is no "call this on that object"
 /// because there is no object: a message about an entity carries a `NetId`
@@ -155,9 +153,7 @@ static_assert(StrongId<Reflect::MessageId>);
 } // namespace Assisi::Core
 
 /// Prints as the bare number, so a log line reads "message 7" without every
-/// call site spelling `.value`. Without it the type would be strictly worse to
-/// hold than the integer it replaces, which is how a good rule gets worked
-/// around.
+/// call site spelling `.value`.
 template <> struct std::formatter<Assisi::Core::Reflect::MessageId> : std::formatter<std::uint32_t>
 {
     auto format(Assisi::Core::Reflect::MessageId id, std::format_context &ctx) const

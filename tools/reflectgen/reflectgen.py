@@ -14,13 +14,14 @@ Usage:
                      the header path (e.g. '.../include/Assisi/Foo/Bar.hpp'
                      becomes 'Assisi/Foo/Bar.hpp').
 
-The implementation is split across three sibling modules; this file is the CLI
-plus a stable facade that re-exports their public surface so `import reflectgen`
-keeps working for callers and tests:
+The implementation is split across sibling modules; this file is the CLI plus a
+stable facade that re-exports their public surface so `import reflectgen` keeps
+working for callers and tests:
 
     reflect_types    the C++ type -> codegen mapping (TYPES, TypeCodegen, ...)
     reflect_parser   header scanning + the parse-time data model
     reflect_codegen  emission of the .generated.cpp registration code
+    blueprint_views  InstanceView<T> generation from .abp files
 """
 
 import sys
@@ -85,15 +86,13 @@ from reflect_codegen import (  # noqa: F401
 def count_replicable(headers) -> int:
     """How many ACOMP(replicable) component types exist across @p headers.
 
-    A whole-tree question asked once, unlike the per-header code generation
-    everywhere else here: the answer sizes ComponentMask, the exclusion bitset on
+    Whole-tree, because the count sizes ComponentMask — the exclusion bitset on
     the Replicated marker, whose bit index is a component's ordinal among the
-    replicable types. Sizing it from an actual count rather than a configured
-    ceiling is what keeps that a detail nobody has to know about.
+    replicable types. Assets and ACOMP(transient) types do not count.
 
-    Deliberately tolerant of headers it cannot parse: a malformed one is already
-    a hard error in the per-header pass, and duplicating that failure here would
-    only bury the real message under a second, worse-located one.
+    Tolerant of headers it cannot parse: a malformed one is already a hard error
+    in the per-header pass, and repeating the failure here would bury the real
+    message.
     """
     total = 0
     for header in headers:

@@ -4,11 +4,10 @@
 /// @file SystemCatalog.hpp
 /// @brief Every system this build declares, by the name a file uses to ask for it.
 ///
-/// **Profiles are gone.** A file lists the individual systems it needs, by name —
-/// closer to a module import than an include. Longer, and more straightforward: a
-/// profile was a second vocabulary a level had to know, defined somewhere else,
-/// and "which systems does profile X install?" was answerable only by reading the
-/// game's C++ (docs/blueprint-system-concept.md §8).
+/// A file lists the individual systems it needs, by name — closer to a module
+/// import than an include. There are no named profiles: one vocabulary, and
+/// "which systems does this level install?" is answerable from the file
+/// (docs/blueprint-system-concept.md §8).
 ///
 /// A system is `(phase, name, function, ordering, scope)`, and data can supply
 /// only the name — so the definitions live here, and the catalog is *generated*
@@ -135,7 +134,7 @@ private:
 /// walk over systems begins.
 ///
 /// The queue is `World::pendingSystems` — the world's own, so it cannot outlive
-/// it. See that member for what the process-global version cost.
+/// it. See that member for why it is not a process-global list keyed by `World*`.
 void QueueSystemInstall(World &world, std::span<const std::string> names, std::string_view context);
 
 /// @brief Applies @p world's queued installs. Driven once per frame by

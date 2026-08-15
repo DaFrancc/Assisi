@@ -428,9 +428,9 @@ Assisi::ECS::Entity EditorApp::CreateEntity()
 // ---------------------------------------------------------------------------
 //
 // One list, `_selection`, in click order. `_selectedEntity` is its last element —
-// the *active* entity — and is what the inspector, the gizmo and every older caller
-// read. Both are needed: with two things selected, "which one am I editing" and
-// "what will Delete take" are different questions.
+// the *active* entity — and is what the inspector, the gizmo and every
+// single-selection caller read. Both are needed: with two things selected, "which
+// one am I editing" and "what will Delete take" are different questions.
 
 void EditorApp::SelectEntity(Assisi::ECS::Entity entity, SelectMode mode)
 {
@@ -692,8 +692,8 @@ void EditorApp::DrawGameControlWindow()
 {
     // What Run does on the network. Host and Join share one surface on purpose —
     // both halves of the same feature, so "where do I join from?" is answered "the
-    // same place you host from". The Network panel is the detail/stats view, not a
-    // second place sessions start.
+    // same place you host from". The Network panel's Host/Join start a session too,
+    // but it is the detail/stats view; this is the primary surface.
     struct NetModeEntry
     {
         const char *label;
@@ -717,8 +717,8 @@ void EditorApp::DrawGameControlWindow()
     const NetModeEntry &netMode = kNetModes[0];
 #endif
 
-    // The one place a play session starts, so the key and the button cannot
-    // drift into meaning different things.
+    // Shared by the Run button and F5, so the key and the button cannot drift
+    // into meaning different things.
     const auto runOrResume = [this, &netMode]
                              {
                                  if (_playState == PlayState::Paused)
@@ -870,10 +870,9 @@ void EditorApp::DrawGameControlWindow()
     ImGui::Separator();
     ImGui::Text("Worlds resident: %zu", _worlds.Count());
 
-    // During play only. While Editing there is exactly one world — the edited one —
-    // which is what keeps Play/Stop's snapshot-and-restore unambiguous; a second
-    // resident level that nothing simulates would have no restore story anyway
-    // (docs/multi-scene-design-notes.md).
+    // During play only. Play/Stop's snapshot-and-restore is defined for the edited
+    // world alone, and a second resident level that nothing simulates has no restore
+    // story (docs/multi-scene-design-notes.md).
     const bool canAddWorld =
         (playing || paused) && !networked && !_levelFiles.empty() && !_pendingWorldLoad.has_value();
     ImGui::BeginDisabled(!canAddWorld);
