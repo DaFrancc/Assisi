@@ -36,9 +36,9 @@ namespace
 struct DumpState
 {
     std::atomic<bool>       running{false};
-    std::mutex              resultMutex;
+    std::mutex resultMutex;
     Chiara::SerializeResult lastResult;
-    std::string             lastPath;
+    std::string lastPath;
 };
 
 std::shared_ptr<DumpState> &SharedDumpState()
@@ -53,11 +53,11 @@ std::shared_ptr<DumpState> &SharedDumpState()
 [[nodiscard]] std::filesystem::path NextCapturePath(const char *prefix = "chiara")
 {
     const std::filesystem::path directory = Core::AssetSystem::GetUserRoot() / "captures";
-    std::error_code             ec;
+    std::error_code ec;
     std::filesystem::create_directories(directory, ec);
 
     const std::time_t now = std::time(nullptr);
-    std::tm           local{};
+    std::tm local{};
 #    if defined(_WIN32)
     localtime_s(&local, &now);
 #    else
@@ -104,15 +104,15 @@ void Application::DumpChiaraCapture(double lastSeconds)
     // them, and a frame should never wait on that.
     _jobs.Run(Core::Pool::Worker,
               [state, path, lastSeconds]
-              {
-                  Chiara::SerializeResult result = Chiara::SerializeCapture(path, lastSeconds);
-                  {
-                      const std::lock_guard<std::mutex> lock(state->resultMutex);
-                      state->lastResult = std::move(result);
-                      state->lastPath   = path.string();
-                  }
-                  state->running.store(false, std::memory_order_release);
-              });
+        {
+            Chiara::SerializeResult result = Chiara::SerializeCapture(path, lastSeconds);
+            {
+                const std::lock_guard<std::mutex> lock(state->resultMutex);
+                state->lastResult = std::move(result);
+                state->lastPath   = path.string();
+            }
+            state->running.store(false, std::memory_order_release);
+        });
 }
 
 void Application::StartChiaraSession()
@@ -127,7 +127,7 @@ void Application::StartChiaraSession()
 void Application::StopChiaraSession()
 {
     // Read the path first: the stats are empty once the session is closed.
-    const std::string             path   = Chiara::GetSessionStats().path;
+    const std::string path   = Chiara::GetSessionStats().path;
     const Chiara::SerializeResult result = Chiara::EndSession();
     if (!result.success)
     {
@@ -143,7 +143,7 @@ void Application::StopChiaraSession()
 void Application::DrawChiaraPanel()
 {
     const std::shared_ptr<DumpState> state   = SharedDumpState();
-    const bool                       dumping = state->running.load(std::memory_order_acquire);
+    const bool dumping = state->running.load(std::memory_order_acquire);
 
     const Chiara::CaptureStats stats = Chiara::GetCaptureStats();
 
@@ -262,7 +262,7 @@ void Application::DrawChiaraPanel()
         // Not a spinner widget: ImGui has none, and a rotating character is
         // enough to say "still going" without pretending to know progress.
         static constexpr char kSpin[] = {'|', '/', '-', '\\'};
-        const std::size_t     tick    = static_cast<std::size_t>(ImGui::GetTime() * 8.0) % sizeof(kSpin);
+        const std::size_t tick    = static_cast<std::size_t>(ImGui::GetTime() * 8.0) % sizeof(kSpin);
         ImGui::Text("Writing %c", kSpin[tick]);
     }
     else

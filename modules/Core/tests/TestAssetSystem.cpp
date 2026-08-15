@@ -3,6 +3,7 @@
 #include <doctest/doctest.h>
 
 #include <filesystem>
+#include <fstream>
 
 #include <Assisi/Core/AssetSystem.hpp>
 #include <Assisi/Core/Errors.hpp>
@@ -56,11 +57,11 @@ TEST_CASE("AssetSystem::Resolve rejects escaping and malformed paths")
     REQUIRE(AssetSystem::SetRoot(TempRoot()).has_value());
 
     auto expectInvalid = [](const char *vpath)
-    {
-        auto r = AssetSystem::Resolve(vpath);
-        REQUIRE_FALSE(r.has_value());
-        CHECK(r.error() == AssetError::InvalidVirtualPath);
-    };
+                         {
+                             auto r = AssetSystem::Resolve(vpath);
+                             REQUIRE_FALSE(r.has_value());
+                             CHECK(r.error() == AssetError::InvalidVirtualPath);
+                         };
 
     expectInvalid("");           // empty
     expectInvalid("/etc/passwd"); // absolute
@@ -136,4 +137,66 @@ TEST_CASE("AssetSystem::ReadUserText reports a clean error for a missing file")
     REQUIRE_FALSE(read.has_value());
     CHECK(read.error() == AssetError::FileOpenFailed);
     CHECK_FALSE(AssetSystem::UserExists("does-not-exist.json"));
+}
+
+// ---------------------------------------------------------------------------
+// Roots that cannot be set.
+//
+// SetRoot / SetUserRoot are noexcept, so they must use std::filesystem's
+// error_code overloads — the throwing ones would make an OS-level failure
+// std::terminate rather than a returned error.
+//
+// **These cases do not reproduce that failure.** A path that merely does not
+// exist is not an OS failure: is_directory answers false with a clear
+// error_code. The real thing needs permission denied on a parent or an
+// unmounted volume, neither portably constructible in a unit test and both
+// skipped on CI running as root. What these pin is the contract around it: the
+// documented rejection, by value, with nothing escaping.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("AssetSystem::SetRoot refuses a path that is not a directory, and does not throw")
+{
+    // A regular file, not a directory: is_directory answers false rather than
+    // failing, which is the ordinary rejection.
+    const std::filesystem::path file = MakeUserRoot("notadir") / "afile.txt";
+    {
+        std::ofstream out(file);
+        REQUIRE(out.good());
+    }
+
+    std::expected<void, AssetError> result;
+    CHECK_NOTHROW(result = AssetSystem::SetRoot(file));
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == AssetError::InvalidRoot);
+}
+
+TEST_CASE("AssetSystem::SetUserRoot refuses a path that does not exist, and does not throw")
+{
+    const std::filesystem::path missing = TempRoot() / "assisi_no_such_root_9f3a" / "deeper";
+
+    std::expected<void, AssetError> result;
+    CHECK_NOTHROW(result = AssetSystem::SetUserRoot(missing));
+    REQUIRE_FALSE(result.has_value());
+    CHECK(result.error() == AssetError::InvalidRoot);
+}
+
+TEST_CASE("AssetSystem::Exists answers false for an unreadable path rather than throwing")
+{
+    REQUIRE(AssetSystem::SetRoot(TempRoot()).has_value());
+
+    // A path with an interior component that is a *file*, so the OS reports
+    // ENOTDIR when it stats it — an error_code here, where the throwing overload
+    // of fs::exists would raise.
+    const std::filesystem::path file = TempRoot() / "assisi_notdir_probe.txt";
+    {
+        std::ofstream out(file);
+        REQUIRE(out.good());
+    }
+
+    bool answer = true;
+    CHECK_NOTHROW(answer = AssetSystem::Exists("assisi_notdir_probe.txt/below"));
+    CHECK_FALSE(answer);
+
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
 }

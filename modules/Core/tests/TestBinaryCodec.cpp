@@ -37,7 +37,9 @@ using Assisi::Core::AssetId;
 using Assisi::Core::AssetPath;
 using Assisi::Core::BitReader;
 using Assisi::Core::BitWriter;
+using Assisi::Core::EntityName;
 using Assisi::Core::ShortString;
+using Assisi::Core::Reflect::ComponentId;
 using Assisi::Core::Reflect::ComponentMeta;
 using Assisi::Core::Reflect::FieldMask;
 using Assisi::Core::Reflect::FieldMeta;
@@ -79,13 +81,13 @@ enum class Mode : std::uint16_t
 /// layout, no glm dependency in Core.
 struct AllTypes
 {
-    float         floatValue  = 0.f;
-    double        doubleValue = 0.0;
-    std::int32_t  int32Value  = 0;
+    float floatValue  = 0.f;
+    double doubleValue = 0.0;
+    std::int32_t int32Value  = 0;
     std::uint32_t uint32Value = 0;
-    std::int64_t  int64Value  = 0;
+    std::int64_t int64Value  = 0;
     std::uint64_t uint64Value = 0;
-    bool          boolValue   = false;
+    bool boolValue   = false;
 
     std::array<float, 2>  vec2{};
     std::array<float, 3>  vec3{};
@@ -93,13 +95,14 @@ struct AllTypes
     std::array<float, 4>  quat{};
     std::array<float, 16> mat4{};
 
-    Mode         mode = Mode::Off;
-    ShortString  name;
+    Mode mode = Mode::Off;
+    ShortString name;
+    EntityName entityName;
     EntityHandle target;
-    AssetPath    path;
+    AssetPath path;
 
     std::vector<AssetPath> paths;
-    AssetId                assetId;
+    AssetId assetId;
     std::vector<AssetId>   assetIds;
 
     float notReplicated = 0.f; ///< transient: never on the wire.
@@ -149,10 +152,12 @@ ComponentMeta MakeGatedMeta()
                        .addToScene      = {},
                        .iterateEntities = {},
                        .getByEntity     = {},
+                       .construct       = {},
+                       .getMutable      = {},
                        .serializable    = true,
                        .tracksChanges   = true,
                        .replicable      = true,
-                       .id              = 5};
+                       .id              = ComponentId{5}};
 
     meta.fields.push_back(Field("shared", FieldType::Int32, OffsetOf(&Gated::shared)));
     meta.fields.push_back(Field("secret", FieldType::Int32, OffsetOf(&Gated::secret), false, true));
@@ -171,10 +176,12 @@ ComponentMeta MakeAllTypesMeta()
                        .addToScene      = {},
                        .iterateEntities = {},
                        .getByEntity     = {},
+                       .construct       = {},
+                       .getMutable      = {},
                        .serializable    = true,
                        .tracksChanges   = true,
                        .replicable      = true,
-                       .id              = 3};
+                       .id              = ComponentId{3}};
 
     meta.fields.push_back(Field("floatValue", FieldType::Float, OffsetOf(&AllTypes::floatValue)));
     meta.fields.push_back(Field("doubleValue", FieldType::Double, OffsetOf(&AllTypes::doubleValue)));
@@ -196,6 +203,7 @@ ComponentMeta MakeAllTypesMeta()
     meta.fields.push_back(mode);
 
     meta.fields.push_back(Field("name", FieldType::String, OffsetOf(&AllTypes::name)));
+    meta.fields.push_back(Field("entityName", FieldType::EntityName, OffsetOf(&AllTypes::entityName)));
     meta.fields.push_back(Field("target", FieldType::EntityRef, OffsetOf(&AllTypes::target)));
     meta.fields.push_back(Field("path", FieldType::AssetPath, OffsetOf(&AllTypes::path)));
     meta.fields.push_back(Field("paths", FieldType::AssetPathVector, OffsetOf(&AllTypes::paths)));
@@ -227,6 +235,9 @@ AllTypes MakePopulated()
         value.mat4[i] = static_cast<float>(i) * 1.25f;
     value.mode   = Mode::Fast;
     value.name   = ShortString("player one");
+    // Past a ShortString's 32 on purpose: the two differ only in capacity, so a
+    // codec that read one into the other truncates rather than fails.
+    value.entityName = EntityName("a name longer than a short string would ever hold");
     value.target = EntityHandle{42u, 7u};
     value.path   = AssetPath("meshes/crate.gltf");
     value.paths  = {AssetPath("a/one.png"), AssetPath("b/two.png"), AssetPath("")};
@@ -243,7 +254,7 @@ AllTypes MakePopulated()
 /// whole point of a committed fuzz harness.
 class Rng
 {
-  public:
+public:
     explicit Rng(std::uint64_t seed) : _state(seed ? seed : 0x9E3779B97F4A7C15ULL) {}
 
     std::uint64_t Next()
@@ -256,7 +267,7 @@ class Rng
 
     std::uint32_t Below(std::uint32_t bound) { return static_cast<std::uint32_t>(Next() % bound); }
 
-  private:
+private:
     std::uint64_t _state;
 };
 
@@ -280,8 +291,8 @@ bool RoundTrip(const ComponentMeta &meta, const AllTypes &source, AllTypes &dest
 TEST_CASE("BinaryCodec: a component with every field type round-trips at full state")
 {
     const ComponentMeta meta     = MakeAllTypesMeta();
-    const AllTypes      source   = MakePopulated();
-    AllTypes            decoded;
+    const AllTypes source   = MakePopulated();
+    AllTypes decoded;
 
     REQUIRE(RoundTrip(meta, source, decoded, kAllFields));
 
@@ -314,7 +325,7 @@ TEST_CASE("BinaryCodec: a component with every field type round-trips at full st
 TEST_CASE("BinaryCodec: the block starts with the component id and a mask of the non-transient fields")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    const AllTypes      source = MakePopulated();
+    const AllTypes source = MakePopulated();
 
     BitWriter writer;
     REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
@@ -331,9 +342,9 @@ TEST_CASE("BinaryCodec: the block starts with the component id and a mask of the
 TEST_CASE("BinaryCodec: an empty mask writes only the header and patches nothing")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    const AllTypes      source = MakePopulated();
+    const AllTypes source = MakePopulated();
 
-    AllTypes  decoded;
+    AllTypes decoded;
     FieldMask applied = kAllFields;
     REQUIRE(RoundTrip(meta, source, decoded, 0, &applied));
 
@@ -344,14 +355,14 @@ TEST_CASE("BinaryCodec: an empty mask writes only the header and patches nothing
 TEST_CASE("BinaryCodec: a partial mask patches only the named fields")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    const AllTypes      source = MakePopulated();
+    const AllTypes source = MakePopulated();
 
     // Bits are indexed over the *non-transient* fields in declaration order:
-    // 0 floatValue, 2 int32Value, 13 name, 16 paths.
+    // 0 floatValue, 2 int32Value, 13 name, 17 paths.
     const FieldMask mask = Assisi::Core::Reflect::FieldMaskBit(0) | Assisi::Core::Reflect::FieldMaskBit(2) |
-                           Assisi::Core::Reflect::FieldMaskBit(13) | Assisi::Core::Reflect::FieldMaskBit(16);
+                           Assisi::Core::Reflect::FieldMaskBit(13) | Assisi::Core::Reflect::FieldMaskBit(17);
 
-    AllTypes  decoded;
+    AllTypes decoded;
     FieldMask applied = 0;
     REQUIRE(RoundTrip(meta, source, decoded, mask, &applied));
     CHECK(applied == mask);
@@ -377,7 +388,7 @@ TEST_CASE("BinaryCodec: a partial mask patches only the named fields")
 TEST_CASE("BinaryCodec: a partial mask over a populated destination overwrites only its fields")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    const AllTypes      source = MakePopulated();
+    const AllTypes source = MakePopulated();
 
     AllTypes destination     = MakePopulated();
     destination.floatValue   = 111.f;
@@ -396,8 +407,8 @@ TEST_CASE("BinaryCodec: a partial mask over a populated destination overwrites o
 TEST_CASE("BinaryCodec: bits above the field count are ignored, not written")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    const AllTypes      source = MakePopulated();
-    const std::size_t   fields = Assisi::Core::Reflect::CountCodecFields(meta);
+    const AllTypes source = MakePopulated();
+    const std::size_t fields = Assisi::Core::Reflect::CountCodecFields(meta);
 
     BitWriter all;
     REQUIRE(WriteComponent(meta, &source, all, kAllFields));
@@ -415,7 +426,7 @@ TEST_CASE("BinaryCodec: bits above the field count are ignored, not written")
 TEST_CASE("BinaryCodec: EntityRef routes through the remap hooks")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    AllTypes            source = MakePopulated();
+    AllTypes source = MakePopulated();
     source.target              = EntityHandle{5u, 9u};
 
     // Stand-in for Stage 5's NetId map: the codec must not care what the hook
@@ -451,15 +462,15 @@ TEST_CASE("BinaryCodec: EntityRef routes through the remap hooks")
 TEST_CASE("BinaryCodec: a null context writes raw handles")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    const AllTypes      source = MakePopulated();
-    AllTypes            decoded;
+    const AllTypes source = MakePopulated();
+    AllTypes decoded;
     REQUIRE(RoundTrip(meta, source, decoded, kAllFields));
     CHECK(decoded.target == source.target);
 }
 
 TEST_CASE("BinaryCodec: an unfinalized component id is refused")
 {
-    ComponentMeta  meta   = MakeAllTypesMeta();
+    ComponentMeta meta   = MakeAllTypesMeta();
     meta.id               = kInvalidComponentId;
     const AllTypes source = MakePopulated();
 
@@ -531,16 +542,20 @@ TEST_CASE("BinaryCodec: the protocol hash is stable across calls")
 TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
 {
     const std::array<ComponentMeta, 1> baseline{MakeAllTypesMeta()};
-    const std::uint64_t                base = ProtocolHash(baseline);
+    const std::uint64_t base = ProtocolHash(baseline);
 
     auto hashWith = [](auto &&mutate)
-    {
-        std::array<ComponentMeta, 1> table{MakeAllTypesMeta()};
-        mutate(table[0]);
-        return ProtocolHash(table);
-    };
+                    {
+                        std::array<ComponentMeta, 1> table{MakeAllTypesMeta()};
+                        mutate(table[0]);
+                        return ProtocolHash(table);
+                    };
 
-    SUBCASE("a renamed field") { CHECK(hashWith([](ComponentMeta &m) { m.fields[0].name = "renamed"; }) != base); }
+    SUBCASE("a renamed field") {
+        CHECK(hashWith([](ComponentMeta &m) {
+            m.fields[0].name = "renamed";
+        }) != base);
+    }
     SUBCASE("a retyped field")
     {
         CHECK(hashWith([](ComponentMeta &m) { m.fields[0].type = FieldType::UInt32; }) != base);
@@ -555,8 +570,16 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
         // the protocol at all (see the companion test below).
         CHECK(hashWith([](ComponentMeta &m) { m.fields.erase(m.fields.end() - 2); }) != base);
     }
-    SUBCASE("a renamed component") { CHECK(hashWith([](ComponentMeta &m) { m.name = "Other"; }) != base); }
-    SUBCASE("a reassigned id") { CHECK(hashWith([](ComponentMeta &m) { m.id = 4; }) != base); }
+    SUBCASE("a renamed component") {
+        CHECK(hashWith([](ComponentMeta &m) {
+            m.name = "Other";
+        }) != base);
+    }
+    SUBCASE("a reassigned id") {
+        CHECK(hashWith([](ComponentMeta &m) {
+            m.id = ComponentId{4};
+        }) != base);
+    }
     SUBCASE("a field turning transient — the mask width changes")
     {
         CHECK(hashWith([](ComponentMeta &m) { m.fields[1].transient = true; }) != base);
@@ -576,19 +599,27 @@ TEST_CASE("BinaryCodec: the protocol hash changes when the wire layout changes")
     {
         CHECK(hashWith(
                   [](ComponentMeta &m)
-                  {
-                      m.fields[0].hasMax   = true;
-                      m.fields[0].maxValue = 10.f;
-                  }) != base);
+        {
+            m.fields[0].hasMax   = true;
+            m.fields[0].maxValue = 10.f;
+        }) != base);
     }
-    SUBCASE("a renumbered enumerator") { CHECK(hashWith([](ComponentMeta &m) { m.fields[12].enumConstants[1].value = 8; }) != base); }
-    SUBCASE("a narrower enum") { CHECK(hashWith([](ComponentMeta &m) { m.fields[12].enumSize = 4; }) != base); }
+    SUBCASE("a renumbered enumerator") {
+        CHECK(hashWith([](ComponentMeta &m) {
+            m.fields[12].enumConstants[1].value = 8;
+        }) != base);
+    }
+    SUBCASE("a narrower enum") {
+        CHECK(hashWith([](ComponentMeta &m) {
+            m.fields[12].enumSize = 4;
+        }) != base);
+    }
 }
 
 TEST_CASE("BinaryCodec: the protocol hash ignores things the wire does not carry")
 {
     const std::array<ComponentMeta, 1> baseline{MakeAllTypesMeta()};
-    const std::uint64_t                base = ProtocolHash(baseline);
+    const std::uint64_t base = ProtocolHash(baseline);
 
     // Field offsets are local memory layout: two builds whose padding differs are
     // still wire-compatible, and rejecting them would be a false positive.
@@ -619,10 +650,10 @@ TEST_CASE("BinaryCodec: a norep field occupies no mask bit and never leaves the 
     CHECK(Assisi::Core::Reflect::CountCodecFields(meta) == 1);
 
     const Gated source{7, 1234};
-    BitWriter   writer;
+    BitWriter writer;
     REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
 
-    Gated     destination{0, -1};
+    Gated destination{0, -1};
     BitReader reader(writer.Data());
     REQUIRE(ReadComponentId(reader) == meta.id);
     REQUIRE(ReadComponent(meta, &destination, reader));
@@ -652,7 +683,7 @@ TEST_CASE("BinaryCodec: the protocol summary is human-readable and carries the h
     CHECK(description.find("AllTypes replicated") != std::string::npos);
 
     const std::array<ComponentMeta, 1> gated{MakeGatedMeta()};
-    const std::string                  gatedText = ProtocolLayoutDescription(gated);
+    const std::string gatedText = ProtocolLayoutDescription(gated);
     CHECK(gatedText.find("shared") != std::string::npos);
     CHECK(gatedText.find("secret") == std::string::npos); // norep: not part of the protocol either
 }
@@ -664,7 +695,7 @@ TEST_CASE("BinaryCodec: the protocol summary is human-readable and carries the h
 TEST_CASE("BinaryCodec: truncation at every length fails cleanly")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    const AllTypes      source = MakePopulated();
+    const AllTypes source = MakePopulated();
 
     BitWriter writer;
     REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
@@ -690,7 +721,7 @@ TEST_CASE("BinaryCodec: truncation at every length fails cleanly")
 TEST_CASE("BinaryCodec: bit-flipped blocks never crash or read out of bounds")
 {
     const ComponentMeta meta   = MakeAllTypesMeta();
-    const AllTypes      source = MakePopulated();
+    const AllTypes source = MakePopulated();
 
     BitWriter writer;
     REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
@@ -727,11 +758,11 @@ TEST_CASE("BinaryCodec: bit-flipped blocks never crash or read out of bounds")
 TEST_CASE("BinaryCodec: random noise decoded as a component block stays in bounds")
 {
     const ComponentMeta meta = MakeAllTypesMeta();
-    Rng                 rng(0xF00D);
+    Rng rng(0xF00D);
 
     for (std::int32_t iteration = 0; iteration < 2000; ++iteration)
     {
-        const std::size_t      size = rng.Below(96);
+        const std::size_t size = rng.Below(96);
         std::vector<std::byte> noise(size);
         for (std::byte &byte : noise)
             byte = static_cast<std::byte>(static_cast<std::uint8_t>(rng.Next()));
@@ -746,4 +777,214 @@ TEST_CASE("BinaryCodec: random noise decoded as a component block stays in bound
         CHECK(decoded.paths.size() <= Assisi::Core::Reflect::kMaxVectorElements);
         CHECK(decoded.assetIds.size() <= Assisi::Core::Reflect::kMaxVectorElements);
     }
+}
+
+TEST_CASE("BinaryCodec: an instanceRef field survives the whole fuzz corpus with its hook installed")
+{
+    // The three cases above never decode a FieldType::InstanceRef: the hand-built
+    // AllTypes meta declares none, which would leave the one field type whose
+    // decode hands an attacker-chosen integer to caller-supplied code unfuzzed.
+    ComponentMeta meta = MakeAllTypesMeta();
+    for (FieldMeta &field : meta.fields)
+    {
+        if (field.name == "uint32Value")
+            field.type = FieldType::InstanceRef;
+    }
+
+    // Deliberately not the identity: the field must end up holding what the hook
+    // returned and never the number off the wire, and a hook that mapped a value
+    // to itself could not tell those two outcomes apart.
+    const auto translate = [](std::uint32_t wire) { return wire ^ 0x5A5A5A5Au; };
+
+    std::uint32_t lastWire  = 0;
+    std::uint32_t hookCalls = 0;
+
+    Assisi::Core::Reflect::CodecContext context;
+    context.instanceFromWire = [&](std::uint32_t wire)
+                               {
+                                   lastWire = wire;
+                                   ++hookCalls;
+                                   return translate(wire);
+                               };
+
+    // One decode, plus everything that must hold no matter what the bytes were.
+    const auto decode = [&](std::span<const std::byte> bytes)
+                        {
+                            lastWire  = 0;
+                            hookCalls = 0;
+
+                            BitReader reader(bytes);
+                            (void)ReadComponentId(reader);
+
+                            AllTypes decoded;
+                            (void)ReadComponent(meta, &decoded, reader, nullptr, &context);
+
+                            CHECK(reader.BitsRead() <= bytes.size() * 8u);
+                            CHECK(decoded.paths.size() <= Assisi::Core::Reflect::kMaxVectorElements);
+                            CHECK(decoded.assetIds.size() <= Assisi::Core::Reflect::kMaxVectorElements);
+
+                            // One instanceRef field means at most one call — a decoder that read it
+                            // twice would be consuming bits it had already spent.
+                            CHECK(hookCalls <= 1u);
+                            if (hookCalls == 1u)
+                            {
+                                // Including when the block is truncated *at* this field: the read
+                                // fails, the hook still sees whatever the reader produced, and the
+                                // translated value is what lands. What must never happen is the raw
+                                // wire number reaching the field.
+                                CHECK(decoded.uint32Value == translate(lastWire));
+                            }
+                            else
+                            {
+                                CHECK(decoded.uint32Value == 0u); // never reached: left at its default
+                            }
+                        };
+
+    const AllTypes source = MakePopulated();
+    BitWriter writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields));
+    const std::vector<std::byte> original(writer.Data().begin(), writer.Data().end());
+
+    SUBCASE("truncated at every length")
+    {
+        for (std::size_t length = 0; length < original.size(); ++length)
+        {
+            CAPTURE(length);
+            decode(std::span{original.data(), length});
+        }
+    }
+
+    SUBCASE("bit-flipped")
+    {
+        Rng rng(0x1257A9CE);
+        for (std::int32_t iteration = 0; iteration < 2000; ++iteration)
+        {
+            std::vector<std::byte> corrupt = original;
+
+            const std::uint32_t flips = 1u + rng.Below(4);
+            for (std::uint32_t f = 0; f < flips; ++f)
+            {
+                const std::size_t bitIndex = rng.Below(static_cast<std::uint32_t>(corrupt.size() * 8u));
+                corrupt[bitIndex / 8u] ^= static_cast<std::byte>(static_cast<std::uint8_t>(1u << (bitIndex % 8u)));
+            }
+
+            CAPTURE(iteration);
+            decode(corrupt);
+        }
+    }
+
+    SUBCASE("random noise")
+    {
+        Rng rng(0xC0FFEE);
+        for (std::int32_t iteration = 0; iteration < 1500; ++iteration)
+        {
+            const std::size_t size = rng.Below(96);
+            std::vector<std::byte> noise(size);
+            for (std::byte &byte : noise)
+                byte = static_cast<std::byte>(static_cast<std::uint8_t>(rng.Next()));
+
+            CAPTURE(iteration);
+            decode(noise);
+        }
+    }
+}
+
+TEST_CASE("BinaryCodec: an instanceRef UInt32 translates through the instance hooks")
+{
+    // A blueprint instance id is a per-world counter — a server's "instance 7"
+    // names nothing on a client — so the wire carries the instance's baseNetId and
+    // each side translates at the codec boundary. Same shape as EntityRef, applied
+    // to a plain integer, which is why it needs a field flag to be told apart from
+    // every other UInt32.
+    ComponentMeta meta = MakeAllTypesMeta();
+
+    // uint32Value stands in for BlueprintMember::instanceId.
+    FieldMeta *tagged = nullptr;
+    for (FieldMeta &field : meta.fields)
+    {
+        if (field.name == "uint32Value")
+            tagged = &field;
+    }
+    REQUIRE(tagged != nullptr);
+    tagged->type = FieldType::InstanceRef;
+
+    AllTypes source     = MakePopulated();
+    source.uint32Value  = 7u;
+
+    Assisi::Core::Reflect::CodecContext context;
+    context.instanceToWire   = [](std::uint32_t local) { return local + 5000u; };
+    context.instanceFromWire = [](std::uint32_t wire) { return wire - 5000u; };
+
+    BitWriter writer;
+    REQUIRE(WriteComponent(meta, &source, writer, kAllFields, &context));
+
+    SUBCASE("the inverse hook restores the local id")
+    {
+        BitReader reader(writer.Data());
+        REQUIRE(ReadComponentId(reader) == meta.id);
+        AllTypes decoded;
+        REQUIRE(ReadComponent(meta, &decoded, reader, nullptr, &context));
+        CHECK(decoded.uint32Value == 7u);
+    }
+
+    SUBCASE("decoding without the hook exposes the wire value")
+    {
+        BitReader reader(writer.Data());
+        REQUIRE(ReadComponentId(reader) == meta.id);
+        AllTypes decoded;
+        REQUIRE(ReadComponent(meta, &decoded, reader, nullptr, nullptr));
+        CHECK(decoded.uint32Value == 5007u);
+    }
+
+    SUBCASE("an unflagged UInt32 in the same component is untouched")
+    {
+        // The flag is per field, not per component: only the one that names an
+        // instance is translated, or every counter in the engine would be.
+        BitReader reader(writer.Data());
+        REQUIRE(ReadComponentId(reader) == meta.id);
+        AllTypes decoded;
+        REQUIRE(ReadComponent(meta, &decoded, reader, nullptr, &context));
+        CHECK(decoded.int32Value == source.int32Value);
+        CHECK(decoded.uint64Value == source.uint64Value);
+    }
+}
+
+TEST_CASE("BinaryCodec: instanceRef with no hook installed is a plain integer")
+{
+    // The same-process round trip — a save game, the editor, this test suite —
+    // has one id space, so translating would be wrong. A null hook writes through.
+    ComponentMeta meta = MakeAllTypesMeta();
+    for (FieldMeta &field : meta.fields)
+    {
+        if (field.name == "uint32Value")
+            field.type = FieldType::InstanceRef;
+    }
+
+    AllTypes source    = MakePopulated();
+    source.uint32Value = 41u;
+    AllTypes decoded;
+
+    REQUIRE(RoundTrip(meta, source, decoded, kAllFields));
+    CHECK(decoded.uint32Value == 41u);
+}
+
+TEST_CASE("BinaryCodec: instanceRef is part of the protocol layout")
+{
+    // Unlike AFIELD(controlled), which changes which messages are accepted and
+    // never how bytes decode. A build that translates and one that does not would
+    // exchange numbers from two different id spaces and agree about every one of
+    // them — silent, and exactly what the handshake exists to prevent.
+    ComponentMeta plain = MakeAllTypesMeta();
+
+    ComponentMeta flagged = MakeAllTypesMeta();
+    for (FieldMeta &field : flagged.fields)
+    {
+        if (field.name == "uint32Value")
+            field.type = FieldType::InstanceRef;
+    }
+
+    const std::array<ComponentMeta, 1> plainSet{plain};
+    const std::array<ComponentMeta, 1> flaggedSet{flagged};
+
+    CHECK(ProtocolLayoutDescription(plainSet) != ProtocolLayoutDescription(flaggedSet));
 }

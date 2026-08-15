@@ -19,7 +19,12 @@ namespace
 
 std::int32_t g_evaluations = 0;
 
-[[nodiscard]] double CountedValue()
+/// `maybe_unused` because being unreferenced is the thing the second case below
+/// proves: in a Chiara-disabled build ASSISI_PROFILE_COUNTER never evaluates its
+/// argument, so this is parsed, type-checked and never called. Clang notices
+/// (-Wunneeded-internal-declaration) and is right — it is describing the
+/// behaviour under test, not a mistake.
+[[nodiscard]] [[maybe_unused]] double CountedValue()
 {
     ++g_evaluations;
     return 1.0;
@@ -61,8 +66,8 @@ TEST_CASE("Scoped names may be dynamic through interning")
 {
     // Exercises the documented path for a name that is not a literal. In a
     // default build InternString is an inline stub, so this still compiles.
-    const std::string   dynamicName = std::string("dynamic-") + "scope";
-    const char * const  interned    = Assisi::Chiara::InternString(dynamicName);
+    const std::string dynamicName = std::string("dynamic-") + "scope";
+    const char * const interned    = Assisi::Chiara::InternString(dynamicName);
     ASSISI_PROFILE_SCOPE(interned);
 
     CHECK(interned != nullptr);

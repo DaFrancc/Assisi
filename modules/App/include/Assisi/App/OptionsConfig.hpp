@@ -19,11 +19,11 @@ enum class FrameSyncMode : std::uint8_t
     FpsLimit, ///< IMMEDIATE present mode — frame rate governed by OptionsConfig::fpsLimit.
 };
 
-/// @brief User preferences loaded from and saved to options.json in the working directory.
+/// @brief User preferences loaded from and saved to options.json under the user root.
 struct OptionsConfig
 {
     Render::AaMode aaMode      = Render::AaMode::None;
-    int32_t        msaaSamples = 4; ///< MSAA sample count; valid values: 2, 4, 8.
+    int32_t msaaSamples = 4;        ///< MSAA sample count; valid values: 2, 4, 8.
 
     FrameSyncMode frameSync = FrameSyncMode::VSync;
 
@@ -32,11 +32,11 @@ struct OptionsConfig
     /// Any positive value is the FPS cap the frame pacer targets.
     std::int16_t fpsLimit = -1;
 
-    /// @brief Reads options.json from the working directory.
+    /// @brief Reads options.json from the user root.
     /// Returns defaults if the file is missing or malformed.
     static OptionsConfig LoadFromJson();
 
-    /// @brief Writes the current settings to options.json in the working directory.
+    /// @brief Writes the current settings to options.json under the user root.
     void SaveToJson() const;
 };
 

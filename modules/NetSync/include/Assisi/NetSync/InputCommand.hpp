@@ -100,7 +100,7 @@ bool ClampInputCommand(InputCommand &command, const InputLimits &limits);
 /// the pattern Overwatch documented and the Quake lineage has used throughout.
 class InputCommandBuffer
 {
-  public:
+public:
     /// @param redundancy How many recent commands each packet repeats. Three is
     ///   the usual starting point: it survives two consecutive losses and costs
     ///   well under a hundred bytes.
@@ -128,9 +128,9 @@ class InputCommandBuffer
     /// @brief The most recent command, or nullptr if none has been pushed.
     [[nodiscard]] const InputCommand *Latest() const;
 
-  private:
+private:
     std::deque<InputCommand> _commands;
-    std::size_t              _redundancy;
+    std::size_t _redundancy;
 };
 
 /// @brief The server's per-connection queue of commands waiting to be applied.
@@ -141,7 +141,7 @@ class InputCommandBuffer
 /// the simulation never sees the same input twice.
 class InputCommandQueue
 {
-  public:
+public:
     /// @brief Offer a received command. Ignored if it duplicates one already
     /// queued or targets a tick at or before the last one applied.
     /// @return true if it was accepted into the queue.
@@ -171,11 +171,11 @@ class InputCommandQueue
 
     void Clear();
 
-  private:
+private:
     std::deque<InputCommand> _commands; ///< Sorted ascending by tick.
-    std::uint64_t            _lastAppliedTick = 0;
-    bool                     _hasApplied      = false;
-    std::uint64_t            _starvedTicks    = 0;
+    std::uint64_t _lastAppliedTick = 0;
+    bool _hasApplied      = false;
+    std::uint64_t _starvedTicks    = 0;
 
     /// The most recent command handed out, kept alive so Consume() can return a
     /// pointer that outlives the queue entry it came from.

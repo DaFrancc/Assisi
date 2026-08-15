@@ -34,8 +34,6 @@
 /// The null check is not defensive noise: ctx.actions/ctx.input are null on a
 /// headless server. A system that must also run there reads its input from
 /// replicated commands instead of polling here.
-/// @code
-/// @endcode
 
 #include <Assisi/Core/StringHash.hpp>
 #include <Assisi/Window/InputContext.hpp>
@@ -86,7 +84,7 @@ using ActionTable = std::unordered_map<std::string, std::vector<ActionBinding>,
 /// remove existing ones — call Unbind() first if you want to replace them.
 class ActionMap
 {
-  public:
+public:
     // -------------------------------------------------------------------------
     // Registration
     // -------------------------------------------------------------------------
@@ -140,7 +138,7 @@ class ActionMap
     // Introspection
     // -------------------------------------------------------------------------
 
-    /// @brief Returns all bindings for the named action, or an empty span if unregistered.
+    /// @brief Returns all bindings for the named action, or an empty vector if unregistered.
     [[nodiscard]] const std::vector<ActionBinding> &GetBindings(std::string_view action) const;
 
     /// @brief Returns the full action → bindings map.
@@ -162,7 +160,7 @@ class ActionMap
     /// @brief Parse a MouseButton from its name string. std::nullopt if unrecognised.
     [[nodiscard]] static std::optional<MouseButton> MouseButtonFromName(std::string_view name) noexcept;
 
-  private:
+private:
     ActionTable _actions;
 
     static const std::vector<ActionBinding> _emptyBindings;

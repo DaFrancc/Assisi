@@ -46,7 +46,7 @@ constexpr std::array<int, LaneCount> kLanePriorities{
 /// GNS's global init is refcounted here rather than left to the caller: the
 /// listen server constructs two NetTransports in one process, and neither can
 /// be the one that owns library lifetime.
-std::mutex   g_libraryMutex;
+std::mutex g_libraryMutex;
 std::int32_t g_libraryRefs = 0;
 
 /// Does this host have IPv6 at all?
@@ -54,26 +54,26 @@ std::int32_t g_libraryRefs = 0;
 /// Listen() needs this to tell two very different situations apart, both of
 /// which surface identically as "GNS bound IPv4 only". Asked once and cached:
 /// the answer cannot change while the process runs, and the probe is a syscall
-/// we would otherwise repeat on every Host().
+/// we would otherwise repeat on every Listen().
 bool HostSupportsIPv6()
 {
     static const bool supported = []
-    {
+                                  {
 #ifdef _WIN32
-        // Safe without our own WSAStartup: this is only ever reached after GNS
-        // has opened a listen socket, so Winsock is already initialised.
-        const SOCKET probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-        if (probe == INVALID_SOCKET)
-            return false;
-        ::closesocket(probe);
+                                      // Safe without our own WSAStartup: this is only ever reached after GNS
+                                      // has opened a listen socket, so Winsock is already initialised.
+                                      const SOCKET probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+                                      if (probe == INVALID_SOCKET)
+                                          return false;
+                                      ::closesocket(probe);
 #else
-        const int probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
-        if (probe < 0)
-            return false;
-        ::close(probe);
+                                      const int probe = ::socket(AF_INET6, SOCK_DGRAM, IPPROTO_UDP);
+                                      if (probe < 0)
+                                          return false;
+                                      ::close(probe);
 #endif
-        return true;
-    }();
+                                      return true;
+                                  }();
     return supported;
 }
 
@@ -97,7 +97,11 @@ struct NetTransport::Impl
     // Ids start at 1 and only ever increase: InvalidConnection is 0, and never
     // recycling means a stale handle is always rejected instead of silently
     // addressing whoever took its slot.
-    ConnectionId nextId = 1;
+    //
+    // Raw counter, not a ConnectionId — see NetSync::ReplicationServer::
+    // _nextNetId for why: the type is opaque everywhere except Register, the one
+    // place that turns a count into an identity.
+    std::uint32_t nextId = 1;
 
     /// Events produced by the status callback between Poll() calls. Poll()
     /// appends received messages to the caller's vector after draining this, so
@@ -134,7 +138,8 @@ struct NetTransport::Impl
 
     ConnectionId Register(HSteamNetConnection handle)
     {
-        const ConnectionId id = nextId++;
+        // The one place that turns a raw counter into an id — see nextId.
+        const ConnectionId id{nextId++};
         byId.emplace(id, handle);
         byHandle.emplace(handle, id);
         return id;
@@ -351,7 +356,7 @@ bool NetTransport::Listen(std::uint16_t port)
     // keep separate wildcard port spaces and an existing dual-stack bind does
     // not reserve the plain-IPv4 slot. It is not a harmless duplicate either:
     // the IPv4-only latecomer takes delivery of the IPv4 traffic, so a second
-    // Host() on a busy port would quietly steal the first server's clients.
+    // Listen() on a busy port would quietly steal the first server's clients.
     //
     // GNS documents the tell (isteamnetworkingsockets.h): ::0 back means "any
     // IPv4 or IPv6", ::ffff:0:0 means "any IPv4". So getting IPv4 when we asked
@@ -504,8 +509,8 @@ void NetTransport::Poll(std::vector<NetEvent> &outEvents)
     outEvents.swap(_impl->pendingEvents);
     _impl->pendingEvents.clear();
 
-    // Drain in bounded batches so one very busy tick cannot spin here forever.
-    constexpr int             kBatchSize = 64;
+    // Fixed-size receive array, so drain in batches until one comes back short.
+    constexpr int kBatchSize = 64;
     SteamNetworkingMessage_t *batch[kBatchSize];
     for (;;)
     {
@@ -576,7 +581,7 @@ bool NetTransport::SetSimulatedConditions(const SimulatedConditions &conditions)
         return false;
 
     ISteamNetworkingUtils *utils = SteamNetworkingUtils();
-    bool                   ok    = true;
+    bool ok    = true;
     ok &= utils->SetGlobalConfigValueFloat(k_ESteamNetworkingConfig_FakePacketLoss_Send, conditions.sendLossPercent);
     ok &= utils->SetGlobalConfigValueFloat(k_ESteamNetworkingConfig_FakePacketLoss_Recv, conditions.recvLossPercent);
     ok &= utils->SetGlobalConfigValueInt32(k_ESteamNetworkingConfig_FakePacketLag_Send, conditions.sendLagMs);

@@ -16,19 +16,19 @@ namespace Assisi::Render
 /// NVML, a headless run, etc.) — always check `valid` before displaying.
 struct GpuTelemetrySample
 {
-    bool        valid           = false;
-    uint64_t    sequence        = 0;     ///< Increments on each fresh driver query; lets callers detect new samples (Poll() is throttled).
+    bool valid           = false;
+    uint64_t sequence        = 0;        ///< Increments on each fresh driver query; lets callers detect new samples (Poll() is throttled).
     std::string name;                   ///< e.g. "NVIDIA GeForce RTX 3070".
-    uint32_t    coreClockMhz    = 0;     ///< Graphics clock.
-    uint32_t    memClockMhz     = 0;     ///< Memory clock (as reported by the driver, e.g. 7001 for GDDR6).
-    uint32_t    gpuUtilPct      = 0;     ///< % of the last window the GPU was busy.
-    uint32_t    memUtilPct      = 0;     ///< % of the last window memory was being read/written.
-    bool        powerSupported  = false; ///< False when this GPU reports no power draw (common on laptops); show N/A, not 0.
-    double      powerWatts      = 0.0;   ///< Board power draw (only meaningful when powerSupported).
-    double      powerLimitWatts = 0.0;   ///< Enforced power limit, for context.
-    uint32_t    temperatureC    = 0;
-    uint64_t    memUsedBytes    = 0;
-    uint64_t    memTotalBytes   = 0;
+    uint32_t coreClockMhz    = 0;        ///< Graphics clock.
+    uint32_t memClockMhz     = 0;        ///< Memory clock (as reported by the driver, e.g. 7001 for GDDR6).
+    uint32_t gpuUtilPct      = 0;        ///< % of the last window the GPU was busy.
+    uint32_t memUtilPct      = 0;        ///< % of the last window memory was being read/written.
+    bool powerSupported  = false;        ///< False when this GPU reports no power draw (common on laptops); show N/A, not 0.
+    double powerWatts      = 0.0;        ///< Board power draw (only meaningful when powerSupported).
+    double powerLimitWatts = 0.0;        ///< Enforced power limit, for context.
+    uint32_t temperatureC    = 0;
+    uint64_t memUsedBytes    = 0;
+    uint64_t memTotalBytes   = 0;
 };
 
 /// Polls NVIDIA GPU telemetry through NVML, which is loaded dynamically at
@@ -41,17 +41,19 @@ struct GpuTelemetrySample
 /// blocks — so the render thread's frame time never absorbs an NVML round-trip.
 class GpuTelemetry
 {
-  public:
+public:
     GpuTelemetry();
     ~GpuTelemetry();
     GpuTelemetry(const GpuTelemetry &)            = delete;
     GpuTelemetry &operator=(const GpuTelemetry &) = delete;
 
-    /// The latest sample, re-querying the driver only once the throttle interval
-    /// has elapsed since the last query. Lazily initialises NVML on first call.
+    /// The latest sample the background worker has published — never touches the
+    /// driver, never blocks. The first call spins the worker up (and with it the
+    /// NVML init); the worker re-queries on its own throttle interval. The
+    /// reference stays valid until the next Poll().
     const GpuTelemetrySample &Poll();
 
-  private:
+private:
     struct Impl;
     std::unique_ptr<Impl> _impl;
 };

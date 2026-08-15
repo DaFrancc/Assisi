@@ -26,7 +26,10 @@
 #include <Assisi/ECS/Transform.hpp>
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/NetComponents.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 #include <Assisi/NetSync/TestNetComponents.hpp>
 
 #include <cstdint>
@@ -42,8 +45,8 @@ namespace
 struct Harness
 {
     Net::NetTransport transport;
-    ECS::Scene        serverScene;
-    ECS::Scene        clientScene;
+    ECS::Scene serverScene;
+    ECS::Scene clientScene;
 
     std::pair<Net::ConnectionId, Net::ConnectionId> pair;
 
@@ -53,9 +56,11 @@ struct Harness
     std::uint64_t tick = 0;
 
     explicit Harness(ReplicationConfig config = {})
-        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/nullptr, config),
-          client(transport, clientScene, pair.second)
+        : pair(transport.CreateLoopbackPair()), server(transport, serverScene, /*physics=*/ nullptr, config),
+        client(transport, clientScene, pair.second)
     {
+        server.SetContentSetHash(0);
+        client.SetContentSetHash(0);
         server.AddConnection(pair.first);
     }
 
@@ -98,10 +103,9 @@ std::size_t OrdinalOf(const std::type_info &type)
 }
 
 /// An entity carrying a Transform and a Health — two replicable components, so
-/// a test can exclude one and watch the other carry on. (Runtime's Name and
-/// MeshRenderer would make a richer fixture, but this suite deliberately does
-/// not link Runtime; two is enough to prove exclusion is per component rather
-/// than a switch on the entity.)
+/// a test can exclude one and watch the other carry on. Two is enough to prove
+/// exclusion is per component rather than a switch on the entity, and this
+/// suite does not link Runtime, whose components would be the richer fixture.
 ECS::Entity SpawnRich(ECS::Scene &scene, Core::Reflect::ComponentMask excluded = {})
 {
     const ECS::Entity entity = scene.Create();
@@ -117,7 +121,7 @@ ECS::Entity SpawnRich(ECS::Scene &scene, Core::Reflect::ComponentMask excluded =
 ECS::Entity SoleMirror(const Harness &harness)
 {
     return harness.client.EntityOf(harness.server.NetIdOf(
-        [&]
+                                       [&]
         {
             for (auto [entity, marker] : const_cast<ECS::Scene &>(harness.serverScene).Query<Replicated>())
             {
@@ -308,14 +312,14 @@ TEST_CASE("excluding a component stops costing bandwidth for it")
     harness.Step(20);
 
     const auto churn = [&](std::uint32_t steps)
-    {
-        for (std::uint32_t i = 0; i < steps; ++i)
-        {
-            Test::Health *health = harness.serverScene.GetMut<Test::Health>(entity);
-            health->value        = static_cast<std::int32_t>(i);
-            harness.Step(1);
-        }
-    };
+                       {
+                           for (std::uint32_t i = 0; i < steps; ++i)
+                           {
+                               Test::Health *health = harness.serverScene.GetMut<Test::Health>(entity);
+                               health->value        = static_cast<std::int32_t>(i);
+                               harness.Step(1);
+                           }
+                       };
 
     const std::uint64_t before = harness.BytesSent();
     churn(40);
@@ -338,9 +342,8 @@ TEST_CASE("excluding a component stops costing bandwidth for it")
 //
 // The gate between a type's capability and an entity's own exclusion mask: a
 // game says once that it never sends something, instead of saying it on every
-// entity that happens to carry it. This is the direct answer to the incident
-// that started the plan — an engine module marking Physics::Bounce replicable to
-// serve one test level, and thereby setting policy for every game.
+// entity that happens to carry it. Without it, an engine module marking one of
+// its own types replicable sets network policy for every game.
 
 TEST_CASE("a game-vetoed component never reaches any client")
 {

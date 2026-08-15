@@ -452,8 +452,8 @@ TEST_CASE("Only one session runs at a time")
 
 TEST_CASE("Serializing while other threads emit stays consistent")
 {
-    // Stage 6 runs the dump on a JobSystem worker while the frame keeps going,
-    // so the pause-drain-read protocol has to hold with producers live.
+    // The dump runs on a JobSystem worker while the frame keeps going, so the
+    // pause-drain-read protocol has to hold with producers live.
     EnsureInitialized();
     const TempTrace trace("concurrent");
 
@@ -464,14 +464,14 @@ TEST_CASE("Serializing while other threads emit stays consistent")
     {
         emitters.emplace_back(
             [&keepEmitting]
+        {
+            Chiara::RegisterCurrentThread("chiara-emit");
+            while (keepEmitting.load(std::memory_order_relaxed))
             {
-                Chiara::RegisterCurrentThread("chiara-emit");
-                while (keepEmitting.load(std::memory_order_relaxed))
-                {
-                    ASSISI_PROFILE_SCOPE("concurrent-work");
-                    ASSISI_PROFILE_COUNTER("concurrent/value", 1.0);
-                }
-            });
+                ASSISI_PROFILE_SCOPE("concurrent-work");
+                ASSISI_PROFILE_COUNTER("concurrent/value", 1.0);
+            }
+        });
     }
 
     const Chiara::SerializeResult result = Chiara::SerializeCapture(trace.Path());

@@ -122,7 +122,7 @@ TEST_CASE("a stable connection tracks without snapping")
     clock.OnSnapshot(Healthy(1000), 50);
 
     const std::uint32_t initialCorrections = clock.CorrectionCount();
-    std::uint64_t       serverTick         = 1000;
+    std::uint64_t serverTick         = 1000;
 
     // Both clocks advance at the same rate and the connection stays healthy;
     // nothing here should ever justify a snap.

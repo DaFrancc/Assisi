@@ -1,25 +1,37 @@
 {
-  "version": 1,
   "entities": [
     {
       "components": {
         "DirectionalLight": {
-          "direction": [
-            -0.3,
-            -1.0,
-            -0.4
-          ],
           "color": [
             1.0,
             1.0,
             1.0
           ],
+          "direction": [
+            -0.3,
+            -1.0,
+            -0.4
+          ],
           "intensity": 2.5
         }
-      }
+      },
+      "name": "Entity"
     },
     {
       "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
         "Transform": {
           "position": [
             0.0,
@@ -37,23 +49,19 @@
             1.0,
             20.0
           ]
-        },
-        "MeshRenderer": {
-          "mesh": {
-            "guid": "00000000-0000-0000-0000-000000000001",
-            "path": "prim://cube"
-          },
-          "materialOverrides": [
-            {
-              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
-              "path": "materials/checker.amat"
-            }
-          ]
         }
-      }
+      },
+      "name": "Entity_1"
     },
     {
       "components": {
+        "MeshRenderer": {
+          "materialOverrides": [],
+          "mesh": {
+            "guid": "f8cbc6e4-d21e-4ea9-a59b-1c8914b87553",
+            "path": "models/DamagedHelmet/DamagedHelmet.gltf"
+          }
+        },
         "Transform": {
           "position": [
             0.0,
@@ -71,18 +79,21 @@
             1.5,
             1.5
           ]
-        },
-        "MeshRenderer": {
-          "mesh": {
-            "guid": "f8cbc6e4-d21e-4ea9-a59b-1c8914b87553",
-            "path": "models/DamagedHelmet/DamagedHelmet.gltf"
-          },
-          "materialOverrides": []
         }
-      }
+      },
+      "name": "Entity_2"
     },
     {
       "components": {
+        "PointLight": {
+          "color": [
+            1.0,
+            0.95,
+            0.9
+          ],
+          "intensity": 40.0,
+          "radius": 12.0
+        },
         "Transform": {
           "position": [
             3.0,
@@ -100,20 +111,21 @@
             1.0,
             1.0
           ]
-        },
-        "PointLight": {
-          "color": [
-            1.0,
-            0.95,
-            0.9
-          ],
-          "intensity": 40.0,
-          "radius": 12.0
         }
-      }
+      },
+      "name": "Entity_3"
     },
     {
       "components": {
+        "PointLight": {
+          "color": [
+            0.4,
+            0.6,
+            1.0
+          ],
+          "intensity": 30.0,
+          "radius": 12.0
+        },
         "Transform": {
           "position": [
             -3.0,
@@ -131,20 +143,21 @@
             1.0,
             1.0
           ]
-        },
-        "PointLight": {
-          "color": [
-            0.4,
-            0.6,
-            1.0
-          ],
-          "intensity": 30.0,
-          "radius": 12.0
         }
-      }
+      },
+      "name": "Entity_4"
     },
     {
       "components": {
+        "PointLight": {
+          "color": [
+            1.0,
+            0.5,
+            0.3
+          ],
+          "intensity": 25.0,
+          "radius": 12.0
+        },
         "Transform": {
           "position": [
             0.0,
@@ -162,20 +175,19 @@
             1.0,
             1.0
           ]
-        },
-        "PointLight": {
-          "color": [
-            1.0,
-            0.5,
-            0.3
-          ],
-          "intensity": 25.0,
-          "radius": 12.0
         }
-      }
+      },
+      "name": "Entity_5"
     },
     {
       "components": {
+        "MeshRenderer": {
+          "materialOverrides": [],
+          "mesh": {
+            "guid": "ca562793-5aa4-4475-a784-1c1c6e5957ee",
+            "path": "models/car_lod/car_lod.gltf"
+          }
+        },
         "Transform": {
           "position": [
             6.0,
@@ -193,15 +205,10 @@
             1.0,
             1.0
           ]
-        },
-        "MeshRenderer": {
-          "mesh": {
-            "guid": "ca562793-5aa4-4475-a784-1c1c6e5957ee",
-            "path": "models/car_lod/car_lod.gltf"
-          },
-          "materialOverrides": []
         }
-      }
+      },
+      "name": "Entity_6"
     }
-  ]
+  ],
+  "version": 2
 }

@@ -38,10 +38,10 @@ struct MaterialData
 {
     // --- Factors (glTF pbrMetallicRoughness + friends) ---
     AFIELD() glm::vec4 BaseColorFactor{1.f, 1.f, 1.f, 1.f};
-    AFIELD() float     MetallicFactor = 1.f;
-    AFIELD() float     RoughnessFactor = 1.f;
-    AFIELD() float     NormalScale = 1.f;
-    AFIELD() float     OcclusionStrength = 1.f;
+    AFIELD() float MetallicFactor = 1.f;
+    AFIELD() float RoughnessFactor = 1.f;
+    AFIELD() float NormalScale = 1.f;
+    AFIELD() float OcclusionStrength = 1.f;
     AFIELD() glm::vec3 EmissiveFactor{0.f, 0.f, 0.f};
 
     // --- Texture channels (GUID references; nil = factor-only) ---

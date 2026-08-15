@@ -52,21 +52,19 @@ struct Registry
     ///
     /// Unlike Create(), which allocates whatever slot/generation is next, this
     /// resurrects a specific handle so every reference to it stays valid with no
-    /// scanning or patching. It is a neutral capability (undo of delete, redo of
-    /// create, prefab instantiation, netcode rollback), but carries a sharp
-    /// invariant: it is valid *only* when no other live handle exists for the
+    /// scanning or patching (undo of delete, redo of create, prefab instantiation,
+    /// netcode rollback). Valid *only* when no other live handle exists for the
     /// slot — i.e. under a strictly linear history where the slot was freed
-    /// newest-first. The generation is set exactly as given and so may *decrease*,
-    /// breaking the engine-wide monotonic-generation assumption; this is the only
-    /// context where that is allowed. Scrubs the slot from the free list (else the
-    /// next Create() would hand out a duplicate live handle) and re-flags it live.
-    /// Asserts the slot is currently free; the entity is not added to any
-    /// component pool (the caller repopulates components separately).
+    /// newest-first; asserts the slot is currently free. The generation is set
+    /// exactly as given and so may *decrease*, the one sanctioned break of the
+    /// engine-wide monotonic-generation assumption. Scrubs the slot from the free
+    /// list (else the next Create() would hand out a duplicate live handle) and
+    /// re-flags it live. The entity is added to no component pool; the caller
+    /// repopulates components separately.
     ///
     /// Grows the slot table if the target index is past its end, creating the
-    /// skipped slots free. That covers the restore-across-a-reset case: a scene
-    /// that has been Clear()ed reports no slots at all, and a snapshot taken
-    /// before the clear must still restore at exact identity.
+    /// skipped slots free — a Clear()ed scene reports no slots at all, and a
+    /// snapshot taken before the clear must still restore at exact identity.
     void ReviveAt(Entity entity);
 
     /// @brief Returns true if the entity handle is still valid.
@@ -117,7 +115,7 @@ struct Registry
         _aliveCount = 0;
     }
 
-  private:
+private:
     template <typename T> static void RemoveFn(void *pool, Entity entity)
     {
         static_cast<SparseSet<T> *>(pool)->Remove(entity);
@@ -126,10 +124,10 @@ struct Registry
     std::vector<uint32_t> _generations; ///< One generation counter per slot.
     std::vector<uint32_t> _freeSlots;   ///< Slots available for reuse.
     std::vector<bool>     _alive;       ///< Live flag per slot: O(1) liveness for
-                                        ///< IsAlive/EntityAt instead of scanning
-                                        ///< the free list (and it closes the hole
-                                        ///< where a forged handle carrying a freed
-                                        ///< slot's current generation passed).
+                                        ///< IsAlive/EntityAt without scanning the
+                                        ///< free list, and the only thing that
+                                        ///< rejects a handle carrying a freed
+                                        ///< slot's current generation.
     std::vector<PoolEntry> _pools;      ///< Registered component pools.
 
     std::size_t _aliveCount = 0;

@@ -42,29 +42,39 @@
 namespace Assisi::Runtime
 {
 
+/// @brief The always-on-top border around a selected entity's mesh or icon.
+inline constexpr glm::vec3 kSelectionOutline{1.0f, 0.55f, 0.05f};
+
+/// @brief The same, for the **active** entity of a selection — the last one
+/// clicked, which the inspector shows and the gizmo drives.
+///
+/// Redder than the rest so the viewport can answer "which one is the inspector
+/// talking about" while several entities move together. A single selection is its
+/// own active entity, so this is the colour of an ordinary click.
+inline constexpr glm::vec3 kActiveSelectionOutline{1.0f, 0.28f, 0.05f};
+
 class SceneRenderer
 {
-  public:
+public:
     SceneRenderer() = default;
 
-    /// @brief Everything Initialize() needs, gathered so callers name what they
-    /// set (the positional list had reached eight parameters).
+    /// @brief Everything Initialize() needs, gathered so callers name what they set.
     struct InitParams
     {
-        nvrhi::IDevice        *device = nullptr;
+        nvrhi::IDevice *device = nullptr;
         /// Format/sample-count the mesh pipeline targets
         /// (e.g. Application::GetSceneFramebufferInfo()).
         nvrhi::FramebufferInfo framebufferInfo;
         /// Viewport size in pixels, for the initial cluster grid.
-        int32_t                width  = 0;
-        int32_t                height = 0;
+        int32_t width  = 0;
+        int32_t height = 0;
         /// Projection params (near/far/FOV) of the active camera.
-        Camera                 camera;
+        Camera camera;
         /// The scene AssetCache's bindless material-texture table + layout,
         /// threaded into the mesh pipeline (stage D). Must outlive the renderer.
-        nvrhi::IBindingLayout   *bindlessLayout = nullptr;
+        nvrhi::IBindingLayout *bindlessLayout = nullptr;
         nvrhi::IDescriptorTable *bindlessTable  = nullptr;
-        nvrhi::IBuffer          *materialTable  = nullptr;
+        nvrhi::IBuffer *materialTable  = nullptr;
         /// Editor overlay passes: selection outline, entity icons, overlay
         /// lines. Off by default — they cost three extra pipelines and load
         /// editor-only assets (assets/editor/**), and a game has no use for
@@ -152,20 +162,68 @@ class SceneRenderer
     void SetDebugView(Render::MaterialDebugView view) { _debugView = view; }
     [[nodiscard]] Render::MaterialDebugView DebugView() const { return _debugView; }
 
+    /// @brief The uniform ambient term, in linear colour and intensity.
+    ///
+    /// Defaults to white at Render::kDefaultAmbientIntensity. The blueprint editor
+    /// turns it up: inspecting a model means seeing all of it, and a scene lit only
+    /// by a key light hides half of one in black.
+    void SetAmbient(const glm::vec3 &color, float intensity)
+    {
+        _ambientColor     = color;
+        _ambientIntensity = intensity;
+    }
+    [[nodiscard]] glm::vec3 AmbientColor() const { return _ambientColor; }
+    [[nodiscard]] float     AmbientIntensity() const { return _ambientIntensity; }
+
     /// @brief Drawn/culled counts from the most recent Render(); zero before the
     /// first frame. Reflects whether culling is actually removing anything.
     [[nodiscard]] DrawStats LastDrawStats() const { return _lastDrawStats; }
 
     /// @brief Mark one entity to receive an always-on-top orange silhouette
-    /// outline (a selection highlight). Pass ECS::NullEntity to clear it. The
-    /// entity must carry a Transform and a MeshRenderer with a resolved mesh, or
-    /// the outline is silently skipped. Drawn each Render() after the scene.
-    /// No-op unless InitParams::enableEditorVisuals was set.
+    /// outline (a selection highlight). Pass ECS::NullEntity to clear it. The entity
+    /// must carry a Transform: a resolved mesh outlines its silhouette, an entity
+    /// drawn as an editor icon outlines that billboard, and anything else is
+    /// silently skipped. Drawn each Render() after the scene. No-op unless
+    /// InitParams::enableEditorVisuals was set.
     void SetHighlightedEntity(ECS::Entity entity)
     {
-        _highlightedEntity = _editorVisuals ? entity : ECS::NullEntity;
+        _highlightedEntities.clear();
+        if (_editorVisuals && entity != ECS::NullEntity)
+            _highlightedEntities.push_back(entity);
+        _activeHighlight = entity;
     }
-    [[nodiscard]] ECS::Entity HighlightedEntity() const { return _highlightedEntity; }
+    /// @brief The same, for a multi-entity selection: every one of @p entities gets
+    /// its own outline. Replaces whatever was highlighted before; an empty span
+    /// clears. Copied rather than referenced — the caller's list is free to change
+    /// between here and Render().
+    void SetHighlightedEntities(std::span<const ECS::Entity> entities)
+    {
+        _highlightedEntities.clear();
+        if (!_editorVisuals)
+            return;
+        for (const ECS::Entity entity : entities)
+            if (entity != ECS::NullEntity)
+                _highlightedEntities.push_back(entity);
+    }
+
+    /// @brief Which highlighted entity is the *active* one — the last clicked, what
+    /// the inspector shows and the gizmo drives. It outlines in
+    /// kActiveSelectionOutline instead of kSelectionOutline.
+    ///
+    /// Set separately rather than read off the end of the list above, because the
+    /// caller filters that list: an entity already outlined some other way (a
+    /// rigidbody, drawn by its collider) is dropped from it, so its last survivor is
+    /// not the active entity — it just happens to be last.
+    ///
+    /// Harmless if it names an entity that is not in the list, or none at all.
+    void SetActiveHighlight(ECS::Entity entity) { _activeHighlight = entity; }
+    [[nodiscard]] ECS::Entity ActiveHighlight() const { return _activeHighlight; }
+    /// @brief The first highlighted entity, or NullEntity. Kept for callers that
+    /// only ever set one.
+    [[nodiscard]] ECS::Entity HighlightedEntity() const
+    {
+        return _highlightedEntities.empty() ? ECS::NullEntity : _highlightedEntities.front();
+    }
 
     /// @brief Show/hide the editor's entity icons — world-space billboards marking
     /// entities that have a Transform but no mesh. Off by default (games don't want
@@ -190,6 +248,24 @@ class SceneRenderer
     /// suppress nothing.
     void SetIconSuppressedEntities(std::span<const ECS::Entity> entities);
 
+    /// @brief Queue editor billboards at world positions that belong to no entity.
+    ///
+    /// A blueprint instance's root is exactly that: it evaporates at expansion
+    /// (docs/blueprint-system-concept.md §3), so there is no Transform anywhere in
+    /// the scene marking where the copy was placed — and without a mark the author
+    /// has nothing to click and nothing to look at while dragging the group. The
+    /// positions come from the world's instance table, which is editor knowledge, so
+    /// they are pushed in rather than queried out.
+    ///
+    /// Consumed and cleared each Render(), like the overlay lines; re-submit every
+    /// frame. Drawn with the same icon as an entity's, and skipped entirely when
+    /// editor icons are hidden.
+    void SubmitEditorIcons(std::span<const glm::vec3> positions);
+
+    /// @brief Outline one of those billboards, so a selected instance reads the same
+    /// as a selected entity. Cleared each Render(); re-submit every frame.
+    void SubmitIconOutline(const glm::vec3 &position);
+
     /// @brief Queue one independent silhouette outline for the next Render(): the
     /// @p items' silhouettes union into a SINGLE border of @p color (e.g. a capsule
     /// collider is a cylinder + two spheres that must merge). Each call is its own
@@ -202,21 +278,26 @@ class SceneRenderer
     /// @brief Convenience for a single-mesh outline group. See SubmitOutlineGroup.
     void SubmitOutline(const Render::MeshBuffer *mesh, const glm::mat4 &model, const glm::vec3 &color);
 
-  private:
+private:
     /// @brief Rebuild the froxel grid on its own command list (setup/resize path).
     void RebuildClusterGrid(int32_t width, int32_t height, const Camera &camera, const glm::mat4 &projection);
 
-    /// @brief Draw the selection outline for _highlightedEntity (if any) as an
+    /// @brief Draw a selection outline for every highlighted entity as an
     /// always-on-top overlay after the scene: a mesh silhouette, or — for a
     /// placement-only entity shown as an icon — its billboard quad (editor only).
     /// No-op when nothing is highlighted or the outline pass is unavailable.
     void DrawHighlightOutline(const Render::RenderFrame &frame, const glm::mat4 &viewProjection,
                               const glm::mat4 &view, ECS::Scene &scene);
+    /// @brief One entity's share of the above.
+    void DrawHighlightOutlineFor(ECS::Entity entity, const Render::RenderFrame &frame,
+                                 const glm::mat4 &viewProjection, const glm::mat4 &view, ECS::Scene &scene);
 
-    /// @brief Draw a world-space billboard for every entity with a Transform but no
-    /// MeshRenderer, using the camera basis from @p view to face them. Icons beyond
-    /// a fixed distance from @p cameraPosition are skipped (a simple render/don't
-    /// LOD). No-op when icons are hidden or the icon pass is unavailable.
+    /// @brief Draw world-space billboards facing the camera basis from @p view: one
+    /// per placement-only entity (Transform, no MeshRenderer), one per MeshRenderer
+    /// still waiting on its mesh, and the positions SubmitEditorIcons queued.
+    /// Placement icons beyond a fixed distance from @p cameraPosition are skipped (a
+    /// simple render/don't LOD). Hiding editor icons leaves only the loading-mesh
+    /// placeholders; no-op when the icon pass is unavailable.
     void DrawEditorIcons(const Render::RenderFrame &frame, const glm::mat4 &viewProjection, const glm::mat4 &view,
                          const glm::vec3 &cameraPosition, ECS::Scene &scene);
 
@@ -224,20 +305,20 @@ class SceneRenderer
     /// SetIconSuppressedEntities) — it is marked in the world some other way.
     [[nodiscard]] bool IsIconSuppressed(ECS::Entity entity) const;
 
-    nvrhi::IDevice     *_device = nullptr;
-    LightingSystem      _lighting;
-    Render::MeshPass    _meshPass;
+    nvrhi::IDevice *_device = nullptr;
+    LightingSystem _lighting;
+    Render::MeshPass _meshPass;
     // GPU-driven cull (stage F1): the compute cull pass + the reused host-side
     // table builder it uploads from. Initialized alongside the mesh pass; the draw
     // path uses them only when _gpuCulling is on (else the CPU path runs).
-    Render::MeshCuller       _meshCuller;
+    Render::MeshCuller _meshCuller;
     Render::CullTableBuilder _cullBuilder;
     Render::OutlinePass _outlinePass;
-    Render::IconPass    _iconPass;
-    Render::LinePass    _linePass;
+    Render::IconPass _iconPass;
+    Render::LinePass _linePass;
 
-    // The entity drawn with a selection outline this frame (NullEntity = none).
-    ECS::Entity _highlightedEntity = ECS::NullEntity;
+    // The entities drawn with a selection outline this frame (empty = none).
+    std::vector<ECS::Entity> _highlightedEntities;
 
     // Editor overlay passes were requested at Initialize (InitParams::
     // enableEditorVisuals). When false the passes were never built and every
@@ -259,21 +340,32 @@ class SceneRenderer
     struct OutlineGroup
     {
         std::vector<Render::OutlinePass::OutlineItem> items;
-        glm::vec3                                     color;
+        glm::vec3 color;
     };
     std::vector<OutlineGroup> _outlineGroups;
     // Entities whose editor icon is suppressed this frame (drawn some other way).
     // Consumed and cleared each Render().
     std::vector<ECS::Entity> _iconSuppressed;
 
+    // Billboards belonging to no entity — a blueprint instance's root, which has no
+    // Transform in the scene to be found by a query. Pushed in by the editor and
+    // cleared each Render(). See SubmitEditorIcons.
+    std::vector<glm::vec3> _submittedIcons;
+    std::vector<glm::vec3> _submittedIconOutlines;
+
+    // Which highlighted entity outlines in the active colour. See SetActiveHighlight.
+    ECS::Entity _activeHighlight = ECS::NullEntity;
+
     // Projection the froxel grid was last built against; a mismatch in Render()
     // triggers a rebuild. Identity forces one on the first frame.
     glm::mat4 _clusterProjection{1.f};
 
-    bool      _frustumCulling = true; // default draw path culls off-screen meshes
-    bool      _sortDraws      = true; // default draw path sorts by sort key before submit
-    bool      _gpuCulling     = false; // GPU-driven cull path (stage F1); CPU path is the default reference
+    bool _frustumCulling = true;      // default draw path culls off-screen meshes
+    bool _sortDraws      = true;      // default draw path sorts by sort key before submit
+    bool _gpuCulling     = false;      // GPU-driven cull path (stage F1); CPU path is the default reference
     Render::MaterialDebugView _debugView = Render::MaterialDebugView::None; // material-channel debug visualization
+    glm::vec3 _ambientColor{1.f, 1.f, 1.f};                                 // uniform ambient, linear
+    float _ambientIntensity = Render::kDefaultAmbientIntensity;             // raised by SetAmbient
     DrawStats _lastDrawStats;         // drawn/culled from the last Render(), for the overlay
 
     // Change-detection bookmark for PropagateTransforms used by the single-scene

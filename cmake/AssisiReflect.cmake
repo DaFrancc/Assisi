@@ -208,6 +208,76 @@ function(assisi_generate_message_traits)
     add_dependencies(Assisi-NetSync Assisi-MessageTraits)
 endfunction()
 
+# Emit the generated InstanceView<T> specializations for the blueprints a project
+# opts in, so `SpawnBlueprint<Car>(world, at)` names its members as fields and a
+# typo stops being a NullEntity at runtime.
+#
+#   assisi_generate_instance_views(
+#       ASSET_ROOT "${CMAKE_SOURCE_DIR}/assets"
+#       BLUEPRINTS "Car=blueprints/car.abp"
+#                  "Lot=blueprints/parking_lot.abp")
+#
+# **An explicit list, not a glob.** This is the one place content reaches into
+# the build graph — editing a .abp recompiles every call site — so which files
+# have that power is stated rather than inferred from where they happen to sit.
+# Adding a blueprint to a project does not slow anyone's build until somebody
+# writes it down here.
+#
+# Unlike the passes above this takes no header list: its inputs are .abp files.
+# It also cannot state its own dependencies up front, because a blueprint that
+# instances another is only discovered by reading it — hence the depfile, which
+# is what makes editing a *nested* file regenerate the view.
+function(assisi_generate_instance_views)
+    cmake_parse_arguments(ARG "" "ASSET_ROOT" "BLUEPRINTS" ${ARGN})
+
+    if (NOT ARG_ASSET_ROOT)
+        message(FATAL_ERROR "assisi_generate_instance_views: ASSET_ROOT is required")
+    endif()
+    if (NOT ARG_BLUEPRINTS)
+        message(FATAL_ERROR
+            "assisi_generate_instance_views: BLUEPRINTS is required. Call this only "
+            "when a project actually opts a blueprint in.")
+    endif()
+
+    set(_args "")
+    foreach(_spec ${ARG_BLUEPRINTS})
+        if (NOT _spec MATCHES "^[^=]+=[^=]+$")
+            message(FATAL_ERROR
+                "assisi_generate_instance_views: BLUEPRINTS entries are TypeName=path, got '${_spec}'")
+        endif()
+        list(APPEND _args --blueprint "${_spec}")
+    endforeach()
+
+    set(_dir "${CMAKE_BINARY_DIR}/generated/Assisi/Runtime")
+    set(_out "${_dir}/InstanceViews.hpp")
+    set(_tmp "${_out}.tmp")
+    set(_dep "${CMAKE_BINARY_DIR}/generated/instance_views.d")
+
+    # Same copy_if_different reasoning as the passes above: a blueprint edit that
+    # only moves a member re-runs the generator and rebuilds nothing, because the
+    # *names* did not change. Only adding, removing or renaming a member touches
+    # the file, which is exactly when call sites do need recompiling.
+    add_custom_command(
+        OUTPUT  "${_out}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${_dir}"
+        COMMAND Python3::Interpreter "${_ASSISI_REFLECTGEN}"
+                --instance-views "${_tmp}" --asset-root "${ARG_ASSET_ROOT}"
+                --depfile "${_dep}" ${_args}
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_tmp}" "${_out}"
+        DEPENDS "${_ASSISI_REFLECTGEN}" ${_ASSISI_REFLECTGEN_SOURCES}
+        DEPFILE "${_dep}"
+        COMMENT "reflectgen: instance views"
+        VERBATIM
+    )
+
+    add_custom_target(Assisi-InstanceViews DEPENDS "${_out}")
+
+    # App is what publishes the typed verbs, so it is what must wait. The include
+    # directory is already published by Assisi-Core (same generated root as
+    # ReplicableLimits.hpp), so nothing else needs to know where this lands.
+    add_dependencies(Assisi-App Assisi-InstanceViews)
+endfunction()
+
 function(assisi_check_message_handlers)
     get_property(_headers GLOBAL PROPERTY ASSISI_REFLECTED_HEADERS)
     if (NOT _headers)

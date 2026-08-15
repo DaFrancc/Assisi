@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """reflect_parser — header scanning and the parse-time data model for reflectgen.
 
-Turns a C++ header into a list[ComponentInfo]: strips comments, tracks the
-namespace stack, extracts ACOMP/AASSET/AENUM/AFIELD annotations, and resolves
+Reads a C++ header: strips comments, tracks the namespace stack, extracts the
+ACOMP/AASSET/AENUM/AFIELD/AMSG/AMSG_HANDLER/ASYSTEM annotations, and resolves
 enum-typed fields and the AFIELD(radio ...) references (with cycle detection).
 Everything here is about *understanding* the header; nothing emits C++ (that is
 reflect_codegen). The dataclasses below are the contract between the two.
@@ -61,6 +61,10 @@ class FieldInfo:
     args:      AnnotArgs
     enum_info: Optional[EnumInfo]  = None  # set when cpp_type names an AENUM enum
     radio:     Optional[RadioInfo] = None  # set by _resolve_radio after parsing
+    # Why this field's type reaches an InstanceView without spelling one — an
+    # alias, an alias of an alias, a struct that holds one. Set from
+    # find_view_spellings below; read by reflectgen's storage ban, which quotes it.
+    view_via:  Optional[str]       = None
 
 
 @dataclass
@@ -111,6 +115,33 @@ class HandlerInfo:
     @property
     def fqn(self) -> str:
         return '::'.join(['', *self.namespaces, self.name]) if self.namespaces else f'::{self.name}'
+
+
+@dataclass
+class SystemInfo:
+    """One ASYSTEM() declaration: `void Name(SystemContext &);`
+
+    A system is (phase, name, function, ordering, scope) and data can supply only
+    the name, so everything but the name lives here — on the function, rather than
+    in a registration call elsewhere or restated in every level file. The
+    declaration *is* the registration; linking a module registers its systems.
+    """
+    function:        str    # unqualified function name
+    namespaces:      list   # enclosing namespaces at the declaration
+    name:            str    # the name a file uses; defaults to function minus a trailing "System"
+    phase:           str    # PreUpdate | FixedUpdate | Update | PostUpdate | Render
+    after:           list   # system names this must run after
+    before:          list   # system names this must run before
+    active_world_only: bool
+    header:          str    # source header, for diagnostics
+
+    @property
+    def fqn(self) -> str:
+        return '::'.join(['', *self.namespaces, self.function]) if self.namespaces else f'::{self.function}'
+
+    @property
+    def is_render(self) -> bool:
+        return self.phase == 'Render'
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -220,6 +251,25 @@ _AMSG_HANDLER_RE = re.compile(
     r'\)\s*;'
 )
 
+# ASYSTEM(phase, ...) followed by one fixed shape:
+#   void Name(SystemContext &ctx);
+# Rigid for the same reason AMSG_HANDLER is: extracting a phase and a name from a
+# fixed pattern does not reopen the C++-signature-parsing problem, and every
+# system has the same signature by construction — the context type is decided by
+# the phase, not by the author.
+_ASYSTEM_RE = re.compile(
+    r'\bASYSTEM\s*\((?P<args>[^)]*)\)\s*'
+    r'(?:inline\s+)?'                      # a header-only system is still a system
+    r'(?P<ret>[\w:]+)\s+'                  # return type (must be void)
+    r'(?P<fn>\w+)\s*\('
+    r'\s*(?P<ctx>[\w:]+)\s*&\s*\w*\s*'     # SystemContext &ctx / RenderContext &ctx
+    r'\)\s*;'
+)
+
+_ASYSTEM_PHASES = ('PreUpdate', 'FixedUpdate', 'Update', 'PostUpdate', 'Render')
+_ASYSTEM_FLAGS  = {'activeWorldOnly'}
+_ASYSTEM_KEYS   = {'name', 'after', 'before'}
+
 # Both AMSG positional arguments, in the order the grammar fixes.
 _AMSG_DIRECTIONS   = ('intent', 'event')
 _AMSG_RELIABILITY  = ('reliable', 'unreliable')
@@ -232,9 +282,8 @@ _ENUM_RE   = re.compile(r'\benum\s+(?:class|struct)\s+(\w+)\s*(?::\s*([^{]+))?')
 _NS_RE     = re.compile(r'\bnamespace\s+([\w:]+)')
 
 # Underlying-type spelling → (byte width, is_signed). Whitespace is normalised to
-# single spaces before lookup. Only fixed-width types and the `int`/`unsigned`
-# defaults are supported; platform-dependent `long`/`unsigned long` are omitted
-# on purpose so their ambiguous width fails the build (see _enum_underlying).
+# single spaces before lookup. `long` and `unsigned long` are absent on purpose,
+# so their platform-dependent width fails the build (see _enum_underlying).
 _ENUM_UNDERLYING: dict[str, tuple[int, bool]] = {
     'char':                   (1, True),   # impl-defined signedness; treat as signed
     'signed char':            (1, True),
@@ -510,6 +559,97 @@ def parse_amsg_args(content: str, struct_name: str, header_name: str) -> tuple[s
     return direction, reliability, extras
 
 
+def find_systems(text: str, path: Path) -> list:
+    """Every ASYSTEM() declaration in an already-comment-stripped header.
+
+    A second independent walk, like find_handlers and for the same reason: one
+    rigid regex over the whole text is simpler than threading a rare declaration
+    through a scanner built around struct bodies.
+    """
+    systems: list = []
+    for match in _ASYSTEM_RE.finditer(text):
+        where = f"{path.name}: system '{match.group('fn')}'"
+
+        if match.group('ret') != 'void':
+            raise ValueError(
+                f"{where} returns '{match.group('ret')}'. A system returns void — the scheduler has "
+                f"nowhere to put a value, and anything it wanted to say belongs in a component.")
+
+        args = _split_args(match.group('args'))
+        if not args or not args[0]:
+            raise ValueError(
+                f"{where} has no phase. Phase is mandatory and positional: "
+                f"ASYSTEM({'|'.join(_ASYSTEM_PHASES)}).")
+
+        phase = args[0].strip()
+        if phase not in _ASYSTEM_PHASES:
+            raise ValueError(
+                f"{where} names phase '{phase}', which is not one of "
+                f"{', '.join(_ASYSTEM_PHASES)}.")
+
+        # The context type follows from the phase rather than from the author, so
+        # a mismatch is caught here instead of becoming a wrong cast at runtime.
+        # This is the check the manual Register/RegisterRender split leaves to the
+        # caller.
+        wanted_ctx = 'RenderContext' if phase == 'Render' else 'SystemContext'
+        if not match.group('ctx').endswith(wanted_ctx):
+            raise ValueError(
+                f"{where} is in phase {phase} and takes '{match.group('ctx')} &'. A {phase} system "
+                f"takes {wanted_ctx} & — the phase decides the context, so the two cannot disagree.")
+
+        name              = ''
+        after, before     = [], []
+        active_world_only = False
+
+        for arg in args[1:]:
+            arg = arg.strip()
+            if not arg:
+                continue
+            if '=' in arg:
+                key, _, value = arg.partition('=')
+                key, value    = key.strip(), value.strip().strip('"')
+                if key not in _ASYSTEM_KEYS:
+                    raise ValueError(
+                        f"{where} sets unknown key '{key}'. Recognised: "
+                        f"{', '.join(sorted(_ASYSTEM_KEYS))}.")
+                if not value:
+                    raise ValueError(f"{where} sets '{key}' to nothing.")
+                if key == 'name':
+                    name = value
+                elif key == 'after':
+                    after.append(value)
+                else:
+                    before.append(value)
+                continue
+
+            if arg not in _ASYSTEM_FLAGS:
+                raise ValueError(
+                    f"{where} carries unknown flag '{arg}'. Recognised: "
+                    f"{', '.join(sorted(_ASYSTEM_FLAGS))}. Note that RequireAny is deliberately not "
+                    f"part of ASYSTEM — a gate reflectgen cannot verify, and too tight a one is a "
+                    f"system that silently never runs.")
+            active_world_only = True
+
+        if active_world_only and phase == 'Render':
+            raise ValueError(
+                f"{where} is a Render system with activeWorldOnly. Render already runs for the world "
+                f"being drawn and nothing else, so the flag would say nothing.")
+
+        # Default: the function name with a trailing "System" stripped, because
+        # `BounceSystem` in code is `Bounce` in a file and repeating the suffix in
+        # every level would be noise.
+        if not name:
+            name = match.group('fn')
+            if name.endswith('System') and len(name) > len('System'):
+                name = name[: -len('System')]
+
+        systems.append(SystemInfo(function=match.group('fn'),
+                                  namespaces=_namespaces_at(text, match.start()),
+                                  name=name, phase=phase, after=after, before=before,
+                                  active_world_only=active_world_only, header=str(path)))
+    return systems
+
+
 def find_handlers(text: str, path: Path) -> list:
     """Every AMSG_HANDLER() declaration in an already-comment-stripped header.
 
@@ -619,6 +759,99 @@ def _find_fields_in_body(body: str, source_header: str) -> list[FieldInfo]:
     return fields
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# The InstanceView storage ban: spellings that reach a view without saying so
+# ──────────────────────────────────────────────────────────────────────────────
+
+# `using Name = Type;`. `using namespace X;` and `using Base::member;` carry no
+# '=' and are skipped by construction.
+_USING_RE   = re.compile(r'\busing\s+(\w+)\s*=\s*([^;]+);')
+# `typedef Type Name;` — the name is the last identifier before the semicolon.
+_TYPEDEF_RE = re.compile(r'\btypedef\s+(.+?)\s+(\w+)\s*;')
+# `struct Name {`, `class Name final : Base {` — where a holder is declared.
+_RECORD_RE  = re.compile(r'\b(?:struct|class)\s+(\w+)\s*(?:final\b\s*)?(?::[^{;]*)?\{')
+# Every identifier in a type spelling, template arguments included.
+_TYPE_NAME_RE = re.compile(r'[A-Za-z_][\w:]*')
+
+
+def _reaches_a_view(spelling: str, poisoned: dict) -> Optional[str]:
+    """How @p spelling reaches an InstanceView, or None if it does not.
+
+    Returns the empty string when the spelling says so itself — that case is the
+    plainer check in reflectgen and has its own message — and otherwise the
+    sentence explaining the name it went through.
+    """
+    if 'InstanceView<' in spelling.replace(' ', ''):
+        return ''
+    for token in _TYPE_NAME_RE.findall(spelling):
+        # A qualified spelling of a local name still names it: `N::CarView` is
+        # the `CarView` this header declares.
+        reason = poisoned.get(token.rsplit('::', 1)[-1])
+        if reason is not None:
+            return reason
+    return None
+
+
+def find_view_spellings(text: str) -> dict:
+    """Every type name in @p text that reaches an InstanceView without being one.
+
+    Maps the name to the sentence a build error quotes: *'CarHandle' is an alias
+    for 'CarView', and 'CarView' is an alias for 'InstanceView<Car>'*. Aliases,
+    aliases of aliases, and structs that hold one all land here, because the ban
+    is on storing a view and none of those stops it being stored.
+
+    Only what this header spells is visible: an alias declared in a header this
+    one includes reads as an ordinary word. The static_assert reflectgen emits
+    into the generated file is what covers that half.
+    """
+    aliases: list = []
+    for m in _USING_RE.finditer(text):
+        aliases.append((m.group(1), ' '.join(m.group(2).split())))
+    for m in _TYPEDEF_RE.finditer(text):
+        aliases.append((m.group(2), ' '.join(m.group(1).split())))
+
+    # Member declarations only. _FIELD_RE's shape ends at a ';' with no parameter
+    # list between, so a method that *returns* a view is not a struct that
+    # *stores* one — the distinction the ban is about. A view declared as a local
+    # inside an inline method body is over-read as storage, which is the
+    # default-deny side to err on.
+    records: list = []
+    for m in _RECORD_RE.finditer(text):
+        body, _ = _extract_brace_body(text, m.end() - 1)
+        if body is None:
+            continue
+        records.append((m.group(1), [f.group(1).strip() for f in _FIELD_RE.finditer(body)]))
+
+    # To a fixpoint: an alias of an alias, or a struct holding a struct holding a
+    # view, is as stored as the direct spelling, and neither declaration order
+    # nor depth may decide whether it is caught.
+    poisoned: dict = {}
+    changed = True
+    while changed:
+        changed = False
+        for name, spelling in aliases:
+            if name in poisoned:
+                continue
+            via = _reaches_a_view(spelling, poisoned)
+            if via is None:
+                continue
+            poisoned[name] = (f"'{name}' is an alias for '{spelling}'"
+                              + (f", and {via}" if via else ''))
+            changed = True
+        for name, members in records:
+            if name in poisoned:
+                continue
+            for member in members:
+                via = _reaches_a_view(member, poisoned)
+                if via is None:
+                    continue
+                poisoned[name] = (f"'{name}' has a member of type '{member}'"
+                                  + (f", and {via}" if via else ''))
+                changed = True
+                break
+    return poisoned
+
+
 def parse_header(path: Path) -> list[ComponentInfo]:
     """Parse a header file and return all ACOMP-annotated components.
 
@@ -629,12 +862,20 @@ def parse_header(path: Path) -> list[ComponentInfo]:
     return parse_header_full(path)[0]
 
 
+def parse_header_systems(path: Path) -> list:
+    """Every ASYSTEM() declaration in @p path.
+
+    Its own entry point rather than a fourth element of parse_header_full's
+    tuple, so callers that want only components are unaffected.
+    """
+    return find_systems(strip_comments(path.read_text(encoding='utf-8')), path)
+
+
 def parse_header_full(path: Path) -> tuple[list, list, list]:
     """Everything a header declares: (components, messages, handlers).
 
-    parse_header stays the components-only facade because that is what almost
-    every caller and every existing test wants; this is the form the message
-    milestone needs.
+    parse_header is the components-only facade over this, which is all most
+    callers want. Systems come from parse_header_systems.
     """
     text = strip_comments(path.read_text(encoding='utf-8'))
     components: list[ComponentInfo] = []
@@ -786,6 +1027,15 @@ def parse_header_full(path: Path) -> tuple[list, list, list]:
     for msg in messages:
         for f in msg.fields:
             f.enum_info = enums.get(f.cpp_type)
+
+    # The InstanceView storage ban is on storing one, not on spelling one, so a
+    # field's type is resolved through this header's aliases and holder structs
+    # before reflectgen judges it. An empty reason means the type spells a view
+    # outright, which is the other check's message to give.
+    view_spellings = find_view_spellings(text)
+    for owner in (*components, *messages):
+        for f in owner.fields:
+            f.view_via = _reaches_a_view(f.cpp_type, view_spellings) or None
 
     # Radio references resolve against sibling fields (and their enum_info), so
     # this must run after enum resolution. Any misuse raises here.

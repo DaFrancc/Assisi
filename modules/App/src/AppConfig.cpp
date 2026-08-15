@@ -64,6 +64,13 @@ AppConfig AppConfig::LoadFromJson()
             const auto &t = json.at("timing");
             if (t.contains("physicsHz")) cfg.physicsHz = t.at("physicsHz").get<double>();
         }
+
+        if (json.contains("diagnostics"))
+        {
+            const auto &d = json.at("diagnostics");
+            if (d.contains("keepLogs"))  cfg.keepLogs  = d.at("keepLogs").get<uint32_t>();
+            if (d.contains("keepDumps")) cfg.keepDumps = d.at("keepDumps").get<uint32_t>();
+        }
     }
     catch (const nlohmann::json::exception &e)
     {

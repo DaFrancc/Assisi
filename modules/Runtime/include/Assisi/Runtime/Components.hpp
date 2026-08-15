@@ -51,10 +51,9 @@ using ECS::Transform;
 ///     Material per mesh slot (override or mesh default); a slot with no entry
 ///     draws with the cache's fallback material.
 ///
-/// Replicable: a mirror with no mesh reference draws nothing, which is exactly
-/// how the first live two-editor test failed. Only the durable GUID layer
-/// travels — the transient resolved pointers are local to whichever process
-/// owns them, and every machine resolves its own from the same ids.
+/// Replicable: a mirror with no mesh reference draws nothing. Only the durable
+/// GUID layer travels — a resolved pointer is local to the process that owns it,
+/// and every machine resolves its own from the same ids.
 ACOMP(replicable)
 struct MeshRenderer
 {
@@ -75,17 +74,16 @@ struct MeshRenderer
 /// to obtain the matrices needed for rendering.
 ///
 /// Deliberately **not** ACOMP(replicable), and the founding case for opt-in wire
-/// gating. Under "everything serializable travels" a marked entity shipped its
-/// Camera, and `isActive` arriving on the receiving side let the host hand a
-/// client a different view than the one that client chose. Which camera a
-/// machine looks through is that machine's business.
+/// gating: an arriving `isActive` would let the host hand a client a different
+/// view than the one that client chose. Which camera a machine looks through is
+/// that machine's business.
 ACOMP()
 struct Camera
 {
     AFIELD() float fovDegrees = 60.f;  ///< Vertical field of view in degrees.
     AFIELD() float nearZ      = 0.1f;  ///< Near clip plane distance.
     AFIELD() float farZ       = 200.f; ///< Far clip plane distance.
-    AFIELD() bool  isActive   = false; ///< True for the scene's active camera.
+    AFIELD() bool isActive   = false;  ///< True for the scene's active camera.
 };
 
 } // namespace Assisi::Runtime

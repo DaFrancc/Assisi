@@ -5,20 +5,19 @@
 /// @brief Runtime descriptor for a reflected *message* type — what other engines
 /// spell as an RPC.
 ///
-/// A message is a plain struct annotated `AMSG(direction, reliability)`, and
-/// that is the whole design. It is not a function, and the difference is not
-/// cosmetic: a struct goes through reflectgen's existing field path, so it gets
-/// binary and JSON codecs, the inspector, and — the part that matters most —
-/// inclusion in the protocol hash, all for free. A function-shaped RPC would
-/// need a signature parser, a parameter model, and dispatch codegen, and would
-/// lose the hash inclusion, which is the thing that makes a mismatched pair
-/// refuse to connect instead of misparsing each other.
+/// A message is a plain struct annotated `AMSG(direction, reliability)`, not a
+/// function, and the difference is not cosmetic: a struct goes through
+/// reflectgen's existing field path, so it gets binary and JSON codecs, the
+/// inspector, and — the part that matters most — inclusion in the protocol hash,
+/// which is what makes a mismatched pair refuse to connect instead of misparsing
+/// each other.
 ///
 /// Addressing is data, not a receiver. There is no "call this on that object"
 /// because there is no object: a message about an entity carries a `NetId`
 /// field like any other field.
 
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <string>
 #include <typeindex>
@@ -27,6 +26,7 @@
 #include <nlohmann/json.hpp>
 
 #include <Assisi/Core/Reflect/FieldMeta.hpp>
+#include <Assisi/Core/StrongId.hpp>
 
 namespace Assisi::Core::Reflect
 {
@@ -35,11 +35,26 @@ namespace Assisi::Core::Reflect
 /// registry finalize — the same scheme, and the same safety argument, as
 /// `ComponentId`: the handshake refuses on a protocol-hash mismatch, and
 /// hash-equal builds have identical message sets and therefore identical ids.
-using MessageId = std::uint32_t;
+/// An aggregate, matching ComponentId and the NetSync ids: aggregate
+/// initialization (`MessageId{7}`) is the only way in, which is what blocks the
+/// implicit conversion in both directions. No arithmetic — the one place a
+/// count becomes an id is the registry's finalize loop, and it says so.
+///
+/// Note the sentinel differs from ComponentId's despite the shared scheme: zero
+/// is invalid *here*, because message ids start at one.
+struct MessageId
+{
+    std::uint32_t value = 0;
+
+    [[nodiscard]] constexpr bool IsValid() const { return value != 0; }
+
+    friend constexpr bool operator==(MessageId, MessageId)  = default;
+    friend constexpr auto operator<=>(MessageId, MessageId) = default;
+};
 
 /// @brief The never-valid MessageId. Zero, so a value-initialized id is invalid
 /// and dense ids start at one.
-inline constexpr MessageId kInvalidMessageId = 0;
+inline constexpr MessageId kInvalidMessageId{0};
 
 /// @brief Which way a message travels, and therefore who is allowed to send it.
 ///
@@ -78,11 +93,11 @@ enum class MessageReliability : std::uint8_t
 /// @brief Runtime descriptor for one `AMSG` type.
 struct MessageMeta
 {
-    std::string            name;
-    std::type_index        typeIndex;
+    std::string name;
+    std::type_index typeIndex;
     std::vector<FieldMeta> fields;
 
-    MessageDirection   direction   = MessageDirection::Intent;
+    MessageDirection direction   = MessageDirection::Intent;
     MessageReliability reliability = MessageReliability::Unreliable;
 
     /// @brief `AMSG(..., independent)`: this message names no entity, so
@@ -92,6 +107,11 @@ struct MessageMeta
     /// recipient already knowing about some entity. An independent message
     /// bypasses the hold-until-the-target-arrives queue entirely, because there
     /// is no target to wait for.
+    ///
+    /// The exact complement of `FieldMeta::subject`, and reflectgen enforces
+    /// that: an event is independent and marks no subject, or it marks exactly
+    /// one and is not independent. Never both, never neither — those are the two
+    /// declarations that leave the send site guessing at the audience.
     bool independent = false;
 
     /// @brief Dense wire id, finalized by the registry. `kInvalidMessageId`
@@ -104,7 +124,10 @@ struct MessageMeta
 
     /// @brief Deserialize JSON into a caller-owned instance. Absent keys leave
     /// the instance's current value untouched.
-    std::function<void(const nlohmann::json &j, void *out_ptr)> deserialize;
+    ///
+    /// @return false when a field is present but unreadable, having logged which
+    ///         one. Absent keys are not failures — see ComponentMeta::addToScene.
+    std::function<bool(const nlohmann::json &j, void *out_ptr)> deserialize;
 };
 
 /// @brief The same three facts as MessageMeta's grammar fields, available at
@@ -119,3 +142,30 @@ template <typename T>
 struct MessageTraits;
 
 } // namespace Assisi::Core::Reflect
+
+namespace Assisi::Core
+{
+/// Encodes as a varint — the id prefix on every intent and event packet.
+template <> struct IsStrongId<Reflect::MessageId> : std::true_type
+{
+};
+static_assert(StrongId<Reflect::MessageId>);
+} // namespace Assisi::Core
+
+/// Prints as the bare number, so a log line reads "message 7" without every
+/// call site spelling `.value`.
+template <> struct std::formatter<Assisi::Core::Reflect::MessageId> : std::formatter<std::uint32_t>
+{
+    auto format(Assisi::Core::Reflect::MessageId id, std::format_context &ctx) const
+    {
+        return std::formatter<std::uint32_t>::format(id.value, ctx);
+    }
+};
+
+template <> struct std::hash<Assisi::Core::Reflect::MessageId>
+{
+    [[nodiscard]] std::size_t operator()(Assisi::Core::Reflect::MessageId id) const noexcept
+    {
+        return std::hash<std::uint32_t>{}(id.value);
+    }
+};

@@ -61,13 +61,24 @@ struct CapturingSink final : Assisi::Core::Sink
 /// means the registry has not assigned wire identities yet).
 ComponentMeta MaskHolderMeta()
 {
-    ComponentMeta meta{.name = "MaskHolder", .typeIndex = std::type_index(typeid(ComponentMask))};
-    FieldMeta     field;
+    // Exhaustive rather than partial: typeIndex has no default constructor, so
+    // this has to be aggregate-initialized, and a partial list is what
+    // -Wmissing-field-initializers is for. The hooks are unused here.
+    ComponentMeta meta{.name            = "MaskHolder",
+                       .typeIndex       = std::type_index(typeid(ComponentMask)),
+                       .fields          = {},
+                       .serialize       = {},
+                       .addToScene      = {},
+                       .iterateEntities = {},
+                       .getByEntity     = {},
+                       .construct       = {},
+                       .getMutable      = {}};
+    FieldMeta field;
     field.name   = "excluded";
     field.type   = FieldType::ComponentMask;
     field.offset = 0;
     meta.fields.push_back(field);
-    meta.id = 0;
+    meta.id = ComponentId{0}; // finalized-looking id for WriteComponent's check; 0 is a real id here
     return meta;
 }
 
@@ -91,14 +102,13 @@ TEST_CASE("this binary actually has replicable components to test against")
 {
     // A guard, not a formality. Every test below translates through real
     // component names, and if the replicable set ever emptied they would all
-    // pass by doing nothing — which is exactly the failure that moved these
-    // tests out of the Core suite in the first place.
+    // pass by doing nothing.
     REQUIRE_FALSE(ComponentRegistry::Instance().ReplicableComponents().empty());
 }
 
 TEST_CASE("a mask round-trips through JSON as component names")
 {
-    const ComponentRegistry                    &registry   = ComponentRegistry::Instance();
+    const ComponentRegistry &registry   = ComponentRegistry::Instance();
     const std::span<const ComponentMeta *const> replicable = registry.ReplicableComponents();
 
     ComponentMask mask;
@@ -181,7 +191,7 @@ TEST_CASE("a mask round-trips through the binary codec as names")
     Assisi::Core::BitWriter writer;
     REQUIRE(WriteComponent(meta, &mask, writer, kAllFields, nullptr));
 
-    ComponentMask           decoded;
+    ComponentMask decoded;
     Assisi::Core::BitReader reader(writer.Data());
     REQUIRE(ReadWholeComponent(meta, &decoded, reader));
     CHECK(decoded == mask);
@@ -189,15 +199,15 @@ TEST_CASE("a mask round-trips through the binary codec as names")
 
 TEST_CASE("an empty mask costs a single count varint on the wire")
 {
-    // Not a size assertion for its own sake: the default policy is "exclude
-    // nothing", so the empty case is what almost every entity pays, and it must
-    // stay negligible.
-    const ComponentMeta     meta = MaskHolderMeta();
-    const ComponentMask     empty;
+    // The default policy is "exclude nothing", so the empty mask is what almost
+    // every entity carries: it has to encode, decode, and clear whatever the
+    // destination was already holding.
+    const ComponentMeta meta = MaskHolderMeta();
+    const ComponentMask empty;
     Assisi::Core::BitWriter writer;
     REQUIRE(WriteComponent(meta, &empty, writer, kAllFields, nullptr));
 
-    ComponentMask           decoded;
+    ComponentMask decoded;
     decoded.Set(FirstReplicableOrdinal()); // start dirty, so a no-op read would show
     Assisi::Core::BitReader reader(writer.Data());
     REQUIRE(ReadWholeComponent(meta, &decoded, reader));
@@ -209,7 +219,7 @@ TEST_CASE("a truncated mask payload fails the reader instead of inventing bits")
     ComponentMask mask;
     mask.Set(FirstReplicableOrdinal());
 
-    const ComponentMeta     meta = MaskHolderMeta();
+    const ComponentMeta meta = MaskHolderMeta();
     Assisi::Core::BitWriter writer;
     REQUIRE(WriteComponent(meta, &mask, writer, kAllFields, nullptr));
 
@@ -220,7 +230,7 @@ TEST_CASE("a truncated mask payload fails the reader instead of inventing bits")
     for (std::size_t cut = 0; cut < full.size(); ++cut)
     {
         CAPTURE(cut);
-        ComponentMask           decoded;
+        ComponentMask decoded;
         Assisi::Core::BitReader reader(std::span{full}.first(cut));
         (void)ReadWholeComponent(meta, &decoded, reader);
         CHECK((!reader.Ok() || decoded.Empty() || decoded == mask));
@@ -236,17 +246,17 @@ TEST_CASE("a hostile element count cannot outrun the buffer")
     const ComponentMeta meta = MaskHolderMeta();
 
     Assisi::Core::BitWriter writer;
-    const ComponentMask     empty;
+    const ComponentMask empty;
     REQUIRE(WriteComponent(meta, &empty, writer, kAllFields, nullptr));
 
     // Same framing WriteComponent produces — id, then the one-bit field mask —
     // with an absurd count spliced into the body.
     Assisi::Core::BitWriter hostile;
-    hostile.WriteVarUInt32(meta.id);
+    hostile.WriteVarUInt32(meta.id.value);
     hostile.WriteBits64(1, 1); // the single wire field is present
     hostile.WriteVarUInt64(1'000'000'000ull);
 
-    ComponentMask           decoded;
+    ComponentMask decoded;
     Assisi::Core::BitReader reader(hostile.Data());
     (void)ReadWholeComponent(meta, &decoded, reader);
     // Either the framing rejects it or the count check does; what must not

@@ -37,10 +37,10 @@ constexpr const char *kValidationLayer = "VK_LAYER_KHRONOS_validation";
 // Routes every validation message into Core::Log. Returns VK_FALSE so the
 // offending Vulkan call is NOT aborted — we want to observe, not intercept.
 VKAPI_ATTR VkBool32 VKAPI_CALL DebugCallback(
-    VkDebugUtilsMessageSeverityFlagBitsEXT       severity,
-    VkDebugUtilsMessageTypeFlagsEXT              /*types*/,
-    const VkDebugUtilsMessengerCallbackDataEXT  *data,
-    void                                        * /*userData*/)
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT /*types*/,
+    const VkDebugUtilsMessengerCallbackDataEXT *data,
+    void * /*userData*/)
 {
     if (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
         Core::Log::Error("[Vulkan] {}", data->pMessage);
@@ -98,13 +98,11 @@ VkInstance CreateInstance()
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.pApplicationInfo = &appInfo;
 
-    // VK_EXT_debug_utils carries two unrelated things, and they used to be
-    // enabled together under !NDEBUG: the validation messenger (expensive,
-    // debug-only) and command-buffer labels (free, and what RenderDoc/Nsight
-    // read to show engine pass names instead of anonymous draws). Bundling them
-    // meant an optimized build — the only build worth profiling — silently had
-    // no labels: nvrhi's beginMarker() is a no-op without the extension, so the
-    // markers compiled in and did nothing. They are separated now.
+    // VK_EXT_debug_utils carries two unrelated things: the validation messenger
+    // (expensive, debug-only) and command-buffer labels (free, and what
+    // RenderDoc/Nsight read to show engine pass names instead of anonymous draws).
+    // Hence the two independent conditions — nvrhi's beginMarker() is a silent
+    // no-op without the extension, so an optimized marker build needs it too.
 #if !defined(NDEBUG) || defined(ASSISI_ENABLE_GPU_MARKERS)
     extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 #endif
@@ -170,9 +168,9 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
 
     const bool hasSwapchain = std::any_of(extensions.begin(), extensions.end(),
                                           [](const VkExtensionProperties &ext) {
-                                              return std::strcmp(ext.extensionName,
-                                                                 VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
-                                          });
+                return std::strcmp(ext.extensionName,
+                                   VK_KHR_SWAPCHAIN_EXTENSION_NAME) == 0;
+            });
     if (!hasSwapchain)
     {
         Core::Log::Info("  rejected: missing {}", VK_KHR_SWAPCHAIN_EXTENSION_NAME);
@@ -297,7 +295,7 @@ std::optional<PhysicalDeviceChoice> ChoosePhysicalDevice(VkInstance instance, Vk
         const bool isDiscrete = props.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU;
 
         Core::Log::Info("Vulkan candidate: {} ({})", props.deviceName,
-                         isDiscrete ? "discrete" : "integrated/other");
+                        isDiscrete ? "discrete" : "integrated/other");
 
         // Selection must agree with CreateLogicalDevice's hard requirements, or a
         // capable-looking-but-unsupported device gets chosen and then fails at
@@ -404,7 +402,7 @@ nvrhi::Format ToNvrhiFormat(VkFormat format)
 
 struct DepthFormatChoice
 {
-    VkFormat      vk        = VK_FORMAT_UNDEFINED;
+    VkFormat vk        = VK_FORMAT_UNDEFINED;
     nvrhi::Format nvrhiFmt  = nvrhi::Format::UNKNOWN;
 };
 
@@ -457,7 +455,8 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
                               "Could not initialize Vulkan.\n\n"
                               "Assisi renders with Vulkan 1.3 and could not create a Vulkan instance. "
                               "This usually means the graphics drivers are missing or out of date.\n\n"
-                              "Please install or update your graphics drivers. See assisi.log for details.");
+                              "Please install or update your graphics drivers. For details, see the newest "
+                              "assisi-*.log file next to the game.");
         return nullptr;
     }
     VKD.init(vk::Instance(context->_instance));
@@ -478,7 +477,8 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
                               "Assisi requires a graphics device with Vulkan 1.3 support "
                               "(dynamic rendering, synchronization2, and timeline semaphores).\n\n"
                               "Please update your graphics drivers. If they are already up to date, "
-                              "your GPU is likely too old to run Assisi. See assisi.log for details.");
+                              "your GPU is likely too old to run Assisi. For details, see the newest "
+                              "assisi-*.log file next to the game.");
         return nullptr;
     }
     context->_physicalDevice = physicalDeviceChoice->physicalDevice;
@@ -492,7 +492,7 @@ std::unique_ptr<VulkanContext> VulkanContext::Create(const Assisi::Window::Windo
     // the sampler request to the device's limit. 8x is a good quality/cost
     // default for texture minification at grazing angles (plain trilinear
     // over-blurs there); samplers read this back via GetMaxAnisotropy().
-    constexpr float          kDesiredMaxAnisotropy = 8.0f;
+    constexpr float kDesiredMaxAnisotropy = 8.0f;
     VkPhysicalDeviceFeatures supportedFeatures{};
     VKD.vkGetPhysicalDeviceFeatures(context->_physicalDevice, &supportedFeatures);
     const bool anisotropySupported = supportedFeatures.samplerAnisotropy == VK_TRUE;
@@ -621,20 +621,15 @@ bool VulkanContext::CreateSwapchainResources(uint32_t width, uint32_t height)
     std::vector<VkSurfaceFormatKHR> formats(formatCount);
     VKD.vkGetPhysicalDeviceSurfaceFormatsKHR(_physicalDevice, _surface, &formatCount, formats.data());
 
-    // Round-6 M6. This used to default to formats[0] and only override it on an
-    // exact match, which could leave two silently-wrong outcomes on a device that
-    // does not advertise the preferred format:
-    //   - an unmappable format (ToNvrhiFormat -> UNKNOWN), failing swapchain
-    //     creation far below with a message about NVRHI rather than about the
-    //     surface; or
-    //   - an _SRGB format, which maps fine but makes the hardware apply the sRGB
-    //     transfer function to values the fragment shader has *already* gamma
-    //     encoded (cube_min.frag's pow(1/2.2)) — a washed-out image and no error
-    //     anywhere. Lighting stage L2 moves that encode into a tonemap pass, at
-    //     which point an sRGB surface becomes the correct choice; until then a
-    //     linear (UNORM) surface is the only correct one.
-    // So: take the ideal pair, else any mappable non-sRGB format, else a mappable
-    // sRGB one with a warning that names the symptom, else fail while saying why.
+    // Take the ideal pair, else any mappable non-sRGB format, else a mappable sRGB
+    // one with a warning that names the symptom, else fail while saying why. Never
+    // just formats[0]: an unmappable format (ToNvrhiFormat -> UNKNOWN) fails
+    // swapchain creation far below with a message about NVRHI rather than about the
+    // surface, and an _SRGB format maps fine but makes the hardware apply the sRGB
+    // transfer function to values the fragment shader has *already* gamma encoded
+    // (cube_min.frag's pow(1/2.2)) — a washed-out image with no error anywhere.
+    // Lighting stage L2 moves that encode into a tonemap pass, at which point an
+    // sRGB surface becomes the correct choice; until then linear (UNORM) is.
     const auto isSrgb = [](VkFormat f) { return f == VK_FORMAT_B8G8R8A8_SRGB; };
 
     const VkSurfaceFormatKHR *ideal = nullptr;
@@ -941,9 +936,9 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
 
     // Throttle to kFramesInFlight: block until the frame that last used THIS slot
     // has finished on the GPU — and only that frame, so the other in-flight frame
-    // keeps executing (the whole point, vs. the old full waitForIdle()). This
-    // gates reuse of the slot's image-available semaphore and the ImGui buffers
-    // that frame round-robined. Guarded by a per-slot flag so an early-out below
+    // keeps executing rather than being drained with it. This gates reuse of the
+    // slot's image-available semaphore and the ImGui buffers that frame
+    // round-robined. Guarded by a per-slot flag so an early-out below
     // (stale swapchain) doesn't leave a query waited-but-never-reset.
     _lastGpuWaitMs = 0.0;
     if (_frameQueryPending[slot])
@@ -968,7 +963,7 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     // in submit/present below). Fold it into _lastGpuWaitMs so it's excluded from
     // the CPU frame-time figure rather than mislabeled as CPU work.
     const std::chrono::steady_clock::time_point acquireStart = std::chrono::steady_clock::now();
-    VkResult                                    acquireResult = VK_SUCCESS;
+    VkResult acquireResult = VK_SUCCESS;
     {
         ASSISI_PROFILE_SCOPE("acquire");
         acquireResult = VKD.vkAcquireNextImageKHR(_device, _swapchain, UINT64_MAX, _imageAvailableSemaphores[slot],
@@ -987,14 +982,14 @@ std::optional<RenderFrame> VulkanContext::BeginFrame()
     if (acquireResult != VK_SUCCESS && acquireResult != VK_SUBOPTIMAL_KHR)
     {
         Core::Log::Error("VulkanContext: vkAcquireNextImageKHR failed with VkResult {}",
-                          static_cast<int32_t>(acquireResult));
+                         static_cast<int32_t>(acquireResult));
         return std::nullopt;
     }
 
     _commandList->open();
     _commandList->beginTimerQuery(_timerQueries[slot]); // spans the whole frame; ended in EndFrame()
     _commandList->setTextureState(_swapchainTextures[_currentImageIndex], nvrhi::AllSubresources,
-                                   nvrhi::ResourceStates::RenderTarget);
+                                  nvrhi::ResourceStates::RenderTarget);
 
     RenderFrame frame;
     frame.commandList = _commandList;
@@ -1017,30 +1012,30 @@ void VulkanContext::EndFrame()
     // CPU work, so time it and fold it into _lastGpuWaitMs. GC (below, after this
     // window) is genuine CPU work and stays counted.
     const std::chrono::steady_clock::time_point presentWaitStart = std::chrono::steady_clock::now();
-    VkResult                                    presentResult    = VK_SUCCESS;
+    VkResult presentResult    = VK_SUCCESS;
     {
-    ASSISI_PROFILE_SCOPE("submit-present");
+        ASSISI_PROFILE_SCOPE("submit-present");
 
-    _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
-    _commandList->close();
+        _commandList->endTimerQuery(_timerQueries[slot]); // paired with beginTimerQuery in BeginFrame()
+        _commandList->close();
 
-    _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
-    _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphores[_currentImageIndex], 0);
-    _nvrhiDevice->executeCommandList(_commandList);
+        _nvrhiDevice->queueWaitForSemaphore(nvrhi::CommandQueue::Graphics, _imageAvailableSemaphores[slot], 0);
+        _nvrhiDevice->queueSignalSemaphore(nvrhi::CommandQueue::Graphics, _renderFinishedSemaphores[_currentImageIndex], 0);
+        _nvrhiDevice->executeCommandList(_commandList);
 
-    // Snapshot this submission's completion into the slot's query; the frame that
-    // reuses this slot kFramesInFlight later waits on it in BeginFrame().
-    _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
-    _frameQueryPending[slot] = true;
+        // Snapshot this submission's completion into the slot's query; the frame that
+        // reuses this slot kFramesInFlight later waits on it in BeginFrame().
+        _nvrhiDevice->setEventQuery(_frameQueries[slot], nvrhi::CommandQueue::Graphics);
+        _frameQueryPending[slot] = true;
 
-    VkPresentInfoKHR presentInfo{};
-    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-    presentInfo.waitSemaphoreCount = 1;
-    presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
-    presentInfo.swapchainCount = 1;
-    presentInfo.pSwapchains = &_swapchain;
-    presentInfo.pImageIndices = &_currentImageIndex;
-    presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
+        VkPresentInfoKHR presentInfo{};
+        presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+        presentInfo.waitSemaphoreCount = 1;
+        presentInfo.pWaitSemaphores = &_renderFinishedSemaphores[_currentImageIndex];
+        presentInfo.swapchainCount = 1;
+        presentInfo.pSwapchains = &_swapchain;
+        presentInfo.pImageIndices = &_currentImageIndex;
+        presentResult = VKD.vkQueuePresentKHR(_graphicsQueue, &presentInfo);
     }
     _lastGpuWaitMs +=
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - presentWaitStart).count();
@@ -1062,11 +1057,8 @@ void VulkanContext::EndFrame()
     // Genuine main-thread CPU work: this releases every retired submit's resources,
     // so destroying large/numerous streaming allocations is paid here. Kept out of
     // _lastGpuWaitMs because it is CPU cost, not a GPU stall, and it is otherwise
-    // invisible in a frame breakdown.
-    //
-    // This is the frame's most important slice for the case Chiara was built for:
-    // allocation churn caused several frames ago is *paid here*, so the flows that
-    // terminate near it are what name the cause (see design notes §7).
+    // invisible in a frame breakdown. Allocation churn caused several frames ago
+    // is paid here, so the Chiara flows terminating near this slice name the cause.
     {
         ASSISI_PROFILE_SCOPE("gpu-gc");
         const std::chrono::steady_clock::time_point gcStart = std::chrono::steady_clock::now();

@@ -38,7 +38,7 @@ struct LineVertex
 /// buffer that grows to fit the largest batch it is handed.
 class LinePass
 {
-  public:
+public:
     /// @param sceneFramebufferInfo  Format/samples of the framebuffer the lines
     ///        composite into (the scene target, including its depth attachment).
     [[nodiscard]] bool Initialize(nvrhi::IDevice *device, const nvrhi::FramebufferInfo &sceneFramebufferInfo,
@@ -59,7 +59,7 @@ class LinePass
     void Draw(const RenderFrame &frame, const glm::mat4 &viewProjection, std::span<const LineVertex> vertices,
               bool onTop);
 
-  private:
+private:
     [[nodiscard]] bool BuildPipelines(const nvrhi::FramebufferInfo &sceneFramebufferInfo);
     /// @brief Grow buffer @p slot to hold at least @p vertexCount vertices, reusing
     /// it while it is already large enough. Returns false on a failed allocation.
@@ -69,13 +69,13 @@ class LinePass
 
     nvrhi::IDevice *_device = nullptr;
 
-    nvrhi::ShaderHandle        _vertexShader;
-    nvrhi::ShaderHandle        _pixelShader;
-    nvrhi::InputLayoutHandle   _inputLayout;
+    nvrhi::ShaderHandle _vertexShader;
+    nvrhi::ShaderHandle _pixelShader;
+    nvrhi::InputLayoutHandle _inputLayout;
     nvrhi::BindingLayoutHandle _bindingLayout;
-    nvrhi::BindingSetHandle    _bindingSet; // push constants only
+    nvrhi::BindingSetHandle _bindingSet;    // push constants only
 
-    // Two pipelines over the same state, differing only in depth-test enable.
+    // Two pipelines over the same state, differing only in depth test and bias.
     nvrhi::GraphicsPipelineHandle _depthTestedPipeline;
     nvrhi::GraphicsPipelineHandle _onTopPipeline;
 
@@ -83,7 +83,7 @@ class LinePass
     // each grown to fit the largest batch it has drawn. Separate buffers so the two
     // Draw() calls in a frame never write the same resource.
     nvrhi::BufferHandle _vertexBuffers[2];
-    uint32_t            _vertexCapacities[2] = {0, 0}; // in vertices
+    uint32_t _vertexCapacities[2] = {0, 0};            // in vertices
 };
 
 } // namespace Assisi::Render

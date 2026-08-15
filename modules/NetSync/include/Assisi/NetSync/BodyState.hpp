@@ -41,10 +41,10 @@ namespace Assisi::NetSync
 /// The defaults are the published state-synchronization shape
 /// (https://gafferongames.com/post/snapshot_compression/) fitted to a level-sized
 /// world: ~2 mm of position resolution over a ±256 m box, a smallest-three
-/// quaternion at 2+9+9+9 bits, and velocities at ~16 mm/s. Gaffer's own caution
-/// applies — state-sync extrapolation wants *finer* position quantization than
-/// snapshot interpolation does — so these are a starting point to be moved
-/// against measured divergence, not a settled answer.
+/// quaternion at 2+9+9+9 bits, and linear velocity at ~62 mm/s. Gaffer's own
+/// caution applies — state-sync extrapolation wants *finer* position
+/// quantization than snapshot interpolation does — so these are a starting point
+/// to be moved against measured divergence, not a settled answer.
 struct BodyQuantization
 {
     /// Symmetric world half-extent, in metres. A body outside it is clamped to
@@ -176,12 +176,12 @@ void LoadSmoothingFromConfig(std::string_view configPath = "game.json");
 /// @brief One body's authoritative state, as it crosses the wire.
 struct BodyState
 {
-    NetId     netId = InvalidNetId;
+    NetId netId = InvalidNetId;
     glm::vec3 position{};
     glm::quat rotation{1.f, 0.f, 0.f, 0.f};
     glm::vec3 linearVelocity{};  ///< Omitted on the wire when asleep.
     glm::vec3 angularVelocity{}; ///< Ditto.
-    bool      asleep = false;
+    bool asleep = false;
 };
 
 /// @brief Write one body record: id, the at-rest bit, pose, and — only when

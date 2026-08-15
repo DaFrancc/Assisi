@@ -1,0 +1,38 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "name": "sign",
+      "components": {
+        "Transform": {
+          "position": [0.0, 2.0, 0.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "name": "car_body",
+      "components": {
+        "Transform": {
+          "position": [9.0, 0.0, 0.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    }
+  ],
+  "instances": [
+    {
+      "name": "car",
+      "source": "car.abp",
+      "transform": { "position": [4.0, 0.0, 0.0] }
+    },
+    {
+      "name": "spare",
+      "source": "car.abp",
+      "transform": { "position": [-4.0, 0.0, 0.0] },
+      "removed": ["wheel_fr"]
+    }
+  ]
+}

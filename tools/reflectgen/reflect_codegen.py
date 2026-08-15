@@ -98,8 +98,9 @@ def _field_tc(f: FieldInfo) -> Optional[TypeCodegen]:
         return TypeCodegen(
             'Enum',
             'static_cast<std::int64_t>({a})',
-            'if (j.contains("{f}")) {a} = static_cast<' + f.enum_info.fqn +
-            '>(j.at("{f}").get<std::int64_t>());')
+            '{{ std::int64_t _n = static_cast<std::int64_t>({a}); '
+            'if (!Assisi::Core::Reflect::ReadInt64(j, _comp, "{f}", _n)) return false; '
+            '{a} = static_cast<' + f.enum_info.fqn + '>(_n); }}')
     return TYPES.get(f.cpp_type)
 
 
@@ -114,22 +115,23 @@ def _gen_field_meta(f: FieldInfo) -> str:
     enum_active       = f.enum_info is not None
     listener_active   = f.radio is not None and f.radio.source != ''
     controlled_active = f.args.has('controlled')
+    subject_active    = f.args.has('subject')
 
     # FieldMeta's trailing members are positional — bounds, then the enum block
-    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled —
-    # so emitting any block forces every *earlier* block to be emitted at its
-    # default. Blocks nobody needs are omitted, which keeps an unannotated field
-    # at the short, golden-stable initializer form.
+    # (enumConstants/enumSize/enumSigned), then the radio trio, then controlled,
+    # then subject — so emitting any block forces every *earlier* block to be
+    # emitted at its default. Blocks nobody needs are omitted, which keeps an
+    # unannotated field at the short, golden-stable initializer form.
     tail: list[str] = []
 
-    if bounds_active or enum_active or listener_active or controlled_active:
+    if bounds_active or enum_active or listener_active or controlled_active or subject_active:
         has_min = 'true' if vmin is not None else 'false'
         has_max = 'true' if vmax is not None else 'false'
         min_v   = f'{vmin}f' if vmin is not None else '0.f'
         max_v   = f'{vmax}f' if vmax is not None else '0.f'
         tail += [has_min, has_max, min_v, max_v]
 
-    if enum_active or listener_active or controlled_active:
+    if enum_active or listener_active or controlled_active or subject_active:
         if enum_active:
             consts = ', '.join(f'{{ "{n}", {v} }}' for n, v in f.enum_info.constants)
             tail.append(f'{{ {consts} }}')
@@ -139,7 +141,7 @@ def _gen_field_meta(f: FieldInfo) -> str:
             # Not an enum: empty enumConstants, size 0 (which marks "not an enum").
             tail += ['{}', '0', 'false']
 
-    if listener_active or controlled_active:
+    if listener_active or controlled_active or subject_active:
         if listener_active:
             values = ', '.join(str(v) for v in f.radio.values)
             tail += [
@@ -150,7 +152,10 @@ def _gen_field_meta(f: FieldInfo) -> str:
         else:
             tail += ['""', '{}', 'Assisi::Core::Reflect::RadioBehavior::None']
 
-    if controlled_active:
+    if controlled_active or subject_active:
+        tail.append('true' if controlled_active else 'false')
+
+    if subject_active:
         tail.append('true')
 
     base = f'{{ "{f.name}", {ftype}, offsetof(T, {f.name}), {transient}, {norep}'
@@ -229,13 +234,16 @@ def _gen_message_serialize(fields: list[FieldInfo]) -> str:
     return '\n'.join(lines)
 
 
-def _gen_message_deserialize(fields: list[FieldInfo]) -> str:
+def _gen_message_deserialize(fields: list[FieldInfo], name: str) -> str:
     serializable = [f for f in fields if _is_serializable(f)]
     if not serializable:
-        return '(void)j;\n(void)out_ptr;'
-    lines = ['auto& a = *static_cast<T*>(out_ptr);']
+        return '(void)j;\n(void)out_ptr;\nreturn true;'
+    lines = [f'constexpr const char* _comp = "{name}";',
+             '(void)_comp;',
+             'auto& a = *static_cast<T*>(out_ptr);']
     for f in serializable:
         lines.append(_message_field_tc(f).deserialize.format(f=f.name, a=f'a.{f.name}'))
+    lines.append('return true;')
     return '\n'.join(lines)
 
 
@@ -256,10 +264,15 @@ def _gen_serialize(fields: list[FieldInfo]) -> str:
     return '\n'.join(lines)
 
 
-def _gen_deserialize(fields: list[FieldInfo]) -> str:
+def _gen_deserialize(fields: list[FieldInfo], name: str) -> str:
+    """The addToScene body. Returns false without touching the scene when a field
+    is present but unreadable — the component is never half-applied, because every
+    field lands on a local `comp` and only a complete one reaches Scene::Add."""
     serializable = [f for f in fields if _is_serializable(f)]
 
     lines = [
+        f'constexpr const char* _comp = "{name}";',
+        '(void)_comp;',
         'auto& scene = *static_cast<Assisi::ECS::Scene*>(scene_ptr);',
         'Assisi::ECS::Entity e{entity_index, entity_gen};',
         'T comp{};',
@@ -272,21 +285,29 @@ def _gen_deserialize(fields: list[FieldInfo]) -> str:
             lines.append(_field_tc(f).deserialize.format(f=f.name, a=f'comp.{f.name}'))
 
     lines.append('(void)scene.Add(e, comp);')
+    lines.append('return true;')
     return '\n'.join(lines)
 
 
-def _gen_deserialize_asset(fields: list[FieldInfo]) -> str:
+def _gen_deserialize_asset(fields: list[FieldInfo], name: str) -> str:
     """Deserialize for an AASSET: write fields into a caller-owned instance
     (out_ptr), no scene/entity machinery. Per-field 'if present' so absent keys
-    leave the instance's current value untouched (forward-compat)."""
+    leave the instance's current value untouched (forward-compat).
+
+    Unlike the component path this writes straight into the caller's instance, so
+    a false return can leave the fields before the bad one already applied. The
+    caller is handing in an instance it owns and is expected to drop it."""
     serializable = [f for f in fields if _is_serializable(f)]
 
     if not serializable:
-        return '(void)j;\n(void)out_ptr;'
+        return '(void)j;\n(void)out_ptr;\nreturn true;'
 
-    lines = ['auto& a = *static_cast<T*>(out_ptr);']
+    lines = [f'constexpr const char* _comp = "{name}";',
+             '(void)_comp;',
+             'auto& a = *static_cast<T*>(out_ptr);']
     for f in serializable:
         lines.append(_field_tc(f).deserialize.format(f=f.name, a=f'a.{f.name}'))
+    lines.append('return true;')
     return '\n'.join(lines)
 
 
@@ -314,10 +335,8 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
     reads as "keep this off the wire" while nothing about the type is on the wire
     to begin with.
 
-    The retired `replicated` spelling is rejected here by name. It would
-    otherwise parse as an unknown flag and be ignored, silently un-replicating a
-    component that used to travel — the worst possible outcome for a rename whose
-    entire purpose was to stop conflating capability with policy.
+    `replicated` is rejected here by name rather than left to the unknown-flag
+    path, which would ignore it and take the component off the wire in silence.
     """
     for comp in components:
         where = f"{header_name}: {'asset' if comp.is_asset else 'component'} '{comp.name}'"
@@ -361,23 +380,17 @@ def _check_messages(messages: list, header_name: str) -> None:
 
     The first two rejections are about field annotations whose whole purpose is
     to distinguish disk from wire — a distinction a message does not have,
-    because a message *is* its wire form and is never saved anywhere. The third
-    is about an annotation the dispatch site could not act on.
+    because a message *is* its wire form and is never saved anywhere. The rest
+    are about annotations the dispatch site could not act on, and about an event
+    that has not said which entity it is about — the one thing relevancy cannot
+    work out for itself and must not guess at.
     """
     for msg in messages:
-        # An event that is not `independent` is scoped by the entity it is
-        # about: relevancy sends it to whoever can see that entity, and holds it
-        # for whoever has not been told about it yet. With no entity reference
-        # there is nothing to scope by, so the declaration is asking for two
-        # incompatible things and the fix is one word either way.
-        if msg.direction == 'event' and not msg.args.has('independent'):
-            if not any(f.cpp_type in _ENTITY_REF_TYPES for f in msg.fields):
-                raise ValueError(
-                    f"{header_name}: message '{msg.name}' is an event that names no entity, but it is not "
-                    f"marked independent. Relevancy scopes an event by the entity it is about — give it an "
-                    f"EntityRef field, or write AMSG(event, {msg.reliability}, independent) if it genuinely "
-                    f"concerns no entity (a round banner, a chat line).")
+        subjects = [f for f in msg.fields if f.args.has('subject')]
 
+        # Misplaced annotations first, so a field marked with the wrong one is
+        # told which one it wanted rather than being reported as a message that
+        # forgot its subject.
         for f in msg.fields:
             where = f"{header_name}: field '{msg.name}::{f.name}'"
             if f.args.has('norep'):
@@ -402,14 +415,67 @@ def _check_messages(messages: list, header_name: str) -> None:
                         f"{where} is marked AFIELD(controlled) but its type is '{f.cpp_type}'. "
                         f"Only an EntityRef field can name an entity for the dispatch site to "
                         f"check control of.")
+            if f.args.has('subject'):
+                if msg.direction != 'event':
+                    raise ValueError(
+                        f"{where} is marked AFIELD(subject), but '{msg.name}' is an intent. The "
+                        f"annotation names the entity relevancy scopes delivery by, and an intent has "
+                        f"exactly one recipient — the server — so there is nothing to scope. It only "
+                        f"applies to AMSG(event, ...). For 'the entity the sender must control', the "
+                        f"annotation is AFIELD(controlled).")
+                if f.cpp_type not in _ENTITY_REF_TYPES:
+                    raise ValueError(
+                        f"{where} is marked AFIELD(subject) but its type is '{f.cpp_type}'. Only an "
+                        f"EntityRef field can name the entity relevancy scopes the message by.")
+
+        # `independent` says "no entity scopes this", so a marked subject is the
+        # declaration contradicting itself in the same breath.
+        if msg.args.has('independent') and subjects:
+            raise ValueError(
+                f"{header_name}: event '{msg.name}' is marked independent but its field "
+                f"'{subjects[0].name}' is marked AFIELD(subject). Independent means no entity scopes "
+                f"this message; a subject is that entity. Drop one of the two.")
+
+        # An event that is not `independent` is scoped by the entity it is about:
+        # relevancy sends it to whoever can see that entity, and holds it for
+        # whoever has not been told about it yet. Which field names that entity is
+        # *marked*, never inferred: inferring it from declaration order lets a
+        # reorder change the audience, and makes an event whose reference happens
+        # to be null indistinguishable from an independent one — broadcast to
+        # everyone. AFIELD(controlled) is the same answer on the intent side.
+        if msg.direction == 'event' and not msg.args.has('independent'):
+            if not any(f.cpp_type in _ENTITY_REF_TYPES for f in msg.fields):
+                raise ValueError(
+                    f"{header_name}: message '{msg.name}' is an event that names no entity, but it is "
+                    f"not marked independent. Relevancy scopes an event by the entity it is about — give "
+                    f"it an AFIELD(subject) EntityRef field, or write "
+                    f"AMSG(event, {msg.reliability}, independent) if it genuinely concerns no entity "
+                    f"(a round banner, a chat line).")
+            if not subjects:
+                raise ValueError(
+                    f"{header_name}: event '{msg.name}' names an entity but marks none of its EntityRef "
+                    f"fields AFIELD(subject). Relevancy has to know *which* entity scopes the message, "
+                    f"and guessing from declaration order makes reordering two fields silently change who "
+                    f"is told. Mark the one the event is about.")
+            if len(subjects) > 1:
+                names = ', '.join(f"'{f.name}'" for f in subjects)
+                raise ValueError(
+                    f"{header_name}: event '{msg.name}' marks {len(subjects)} fields AFIELD(subject) "
+                    f"({names}). An event has exactly one subject: it is what relevancy scopes delivery "
+                    f"by, what the recipient's queue holds the message for, and what evicts it when that "
+                    f"entity dies — and none of those three has an answer for two. Mark the one the event "
+                    f"is about and leave the others as ordinary fields; they still travel.")
 
 
 def _check_controlled_outside_messages(components: list, header_name: str) -> None:
-    """AFIELD(controlled) on a component field would silently mean nothing.
+    """AFIELD(controlled) / AFIELD(subject) on a component field would silently
+    mean nothing.
 
     There is no sender for a component — it is state, and state has no dispatch
-    site to reject it at — so the annotation would read as a rule being enforced
-    while nothing enforced it.
+    site to reject it at — so `controlled` would read as a rule being enforced
+    while nothing enforced it. `subject` is the same shape one step along: it
+    names what relevancy scopes a *message* by, and a component is not delivered
+    to anyone, it is replicated as part of the entity that owns it.
     """
     for comp in components:
         for f in comp.fields:
@@ -418,13 +484,19 @@ def _check_controlled_outside_messages(components: list, header_name: str) -> No
                     f"{header_name}: field '{comp.name}::{f.name}' is marked AFIELD(controlled), "
                     f"but '{comp.name}' is not a message. The annotation is a rule the intent "
                     f"dispatch site enforces about a sender, and a component has no sender.")
+            if f.args.has('subject'):
+                raise ValueError(
+                    f"{header_name}: field '{comp.name}::{f.name}' is marked AFIELD(subject), "
+                    f"but '{comp.name}' is not a message. The annotation names the entity relevancy "
+                    f"scopes a message's delivery by, and a component is not delivered — it travels "
+                    f"as part of the entity that owns it.")
 
 
 def _gen_message_block(msg: MessageInfo) -> str:
     var_name    = f'_reflectgen_msg_{msg.name}'
     field_metas = ',\n            '.join(_gen_field_meta(f) for f in msg.fields)
     serialize   = _indent(_gen_message_serialize(msg.fields), 12)
-    deserialize = _indent(_gen_message_deserialize(msg.fields), 12)
+    deserialize = _indent(_gen_message_deserialize(msg.fields, msg.name), 12)
 
     direction   = 'Intent' if msg.direction == 'intent' else 'Event'
     reliability = 'Reliable' if msg.reliability == 'reliable' else 'Unreliable'
@@ -506,7 +578,7 @@ def _gen_asset_block(comp: ComponentInfo) -> str:
     var_name = f'_reflectgen_{comp.name}'
     field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
     serialize   = _indent(_gen_serialize(comp.fields), 12)
-    deserialize = _indent(_gen_deserialize_asset(comp.fields), 12)
+    deserialize = _indent(_gen_deserialize_asset(comp.fields, comp.name), 12)
 
     return f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
@@ -574,14 +646,58 @@ const bool {var} = []() -> bool
 """
 
 
+def gen_system_registration(system) -> str:
+    """One ASYSTEM declaration's catalog entry.
+
+    The declaration *is* the registration: linking a module registers its
+    systems. It lands in the module's generated OBJECT library, which
+    cmake/AssisiReflect.cmake pulls fully into the final link precisely so a
+    static initializer nobody references still runs.
+
+    The function is wrapped in a lambda with an explicit fully-qualified call
+    rather than taken by address, for the same reason handler binding is: nothing
+    about which function runs should depend on name lookup.
+    """
+    names   = lambda values: '{' + ', '.join(f'"{v}"' for v in values) + '}'
+    context = 'RenderContext' if system.is_render else 'SystemContext'
+    run     = ('nullptr' if system.is_render else
+               f'[](Assisi::App::SystemContext &ctx) {{ {system.fqn}(ctx); }}')
+    render  = (f'[](Assisi::App::RenderContext &ctx) {{ {system.fqn}(ctx); }}' if system.is_render
+               else 'nullptr')
+
+    return f"""\
+// ── {system.name} (system) {'─' * max(0, 65 - len(system.name))}
+static const bool _reflectgen_system_{system.function} = []() -> bool
+{{
+    Assisi::App::SystemCatalog::Instance().Register({{
+        "{system.name}",
+        Assisi::App::SystemPhase::{system.phase if not system.is_render else 'Update'},
+        {str(system.is_render).lower()},   // render phase — runs through RunRender, not Run
+        {run},
+        {render},
+        {names(system.after)},
+        {names(system.before)},
+        {str(system.active_world_only).lower()},
+    }});
+    return true;
+}}();
+
+"""
+
+
 def generate_cpp(components: list[ComponentInfo], include_path: str, messages: Optional[list] = None,
-                 handlers: Optional[list] = None) -> str:
+                 handlers: Optional[list] = None, systems: Optional[list] = None) -> str:
     messages = messages or []
     handlers = handlers or []
+    systems  = systems or []
 
     # Default-deny is enforced here (not only in main) so every path that emits
     # code — the CLI and direct callers such as the golden tests — refuses an
     # unserializable field rather than silently dropping it.
+    # Before the serialization checks, because "a view may not be stored" is the
+    # more specific complaint and the one worth reading first.
+    _check_no_instance_views(components, include_path)
+    _check_no_instance_views(messages, include_path)
     _check_unsupported(components, include_path)
     _check_unsupported(messages, include_path)
     _check_asset_fields(components, include_path)
@@ -633,6 +749,9 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     # asset-only header (e.g. Geometry's MaterialData) must NOT pull in
     # ComponentRegistry / ECS::Scene — its home module does not link ECS.
     includes = []
+    # Unconditional: every deserialize body reads its fields through these, and
+    # every kind of registration (component, asset, message) emits one.
+    includes.append('#include <Assisi/Core/Reflect/JsonRead.hpp>')
     if component_infos:
         includes.append('#include <Assisi/Core/Reflect/ComponentRegistry.hpp>')
         includes.append('#include <Assisi/ECS/Scene.hpp>')
@@ -644,6 +763,8 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
         includes.append('#include <Assisi/Core/Reflect/MessageRegistry.hpp>')
     if handlers:
         includes.append('#include <Assisi/NetSync/MessageDispatch.hpp>')
+    if systems:
+        includes.append('#include <Assisi/App/SystemCatalog.hpp>')
     if has_asset_ids:
         includes.append('#include <Assisi/Core/AssetIdJson.hpp>')
     if has_component_masks:
@@ -653,16 +774,24 @@ def generate_cpp(components: list[ComponentInfo], include_path: str, messages: O
     includes.append(f'#include <{include_path}>')
     include_block = '\n'.join(includes)
 
+    # Emitted only when there is a field to assert on, so a header that reflects
+    # nothing but id-only components does not carry a declaration it never uses.
+    view_ban = _gen_view_ban([*components, *messages])
+    view_fwd = ('\n// Declared, never defined — the real one lives in '
+                '<Assisi/Runtime/InstanceView.hpp>.\n'
+                'namespace Assisi::Runtime { template <typename T> struct InstanceView; }\n'
+                ) if view_ban else ''
+
     blocks = []
     blocks.append(f"""\
 // AUTO-GENERATED by reflectgen — do not edit.
 // Source: {include_path}
 
 {include_block}
-
+{view_fwd}
 namespace
 {{
-""")
+{view_ban}""")
 
     for comp in component_infos:
         fqn      = '::'.join(comp.namespaces + [comp.name]) if comp.namespaces else comp.name
@@ -702,7 +831,7 @@ static const bool {var_name} = []() -> bool
 
         field_metas = ',\n            '.join(_gen_field_meta(f) for f in comp.fields)
         serialize   = _indent(_gen_serialize(comp.fields), 12)
-        deserialize = _indent(_gen_deserialize(comp.fields), 12)
+        deserialize = _indent(_gen_deserialize(comp.fields, comp.name), 12)
 
         blocks.append(f"""\
 // ── {comp.name} {'─' * max(0, 74 - len(comp.name))}
@@ -776,7 +905,88 @@ static const bool {var_name} = []() -> bool
     for handler in handlers:
         blocks.append('\n' + _gen_handler_block(handler))
 
+    for system in systems:
+        blocks.append('\n' + gen_system_registration(system))
+
     return ''.join(blocks)
+
+
+def _gen_view_ban(owners: list) -> str:
+    """The InstanceView storage ban, restated for the compiler.
+
+    _check_no_instance_views matches spellings, and a spelling can lie: an alias
+    declared in a header this one includes arrives at a regex parser as an
+    ordinary word. decltype cannot be fooled that way, so every reflected field —
+    transient ones included, since the objection is to storing a view at all —
+    carries the question to the compiler as well.
+
+    The primary template is redeclared rather than included: it is a declaration,
+    it costs no include and no module dependency (Geometry reflects types and
+    does not link Runtime), and if it ever stops matching the real one in
+    <Assisi/Runtime/InstanceView.hpp>, this fails to compile saying so.
+    """
+    asserts = []
+    for owner in owners:
+        fqn = '::'.join(owner.namespaces + [owner.name]) if owner.namespaces else owner.name
+        for f in owner.fields:
+            # No message: the failing expression already names the field, and
+            # the rule is four lines above it in this same file.
+            asserts.append(
+                f'static_assert(!_reflectgen_is_instance_view<decltype({fqn}::{f.name})>);')
+    if not asserts:
+        return ''
+
+    body = '\n'.join(asserts)
+    return f"""\
+// ── The InstanceView storage ban {'─' * 45}
+// Also checked by reflectgen, which matches spellings — and a spelling can lie:
+// an alias declared in another header reaches the generator as an ordinary word,
+// where decltype sees the type itself. A stored view is a member list that goes
+// stale; keep the ECS::InstanceId and re-resolve with FindInstance<T>. Transient
+// fields are asserted too: the objection is to storing one at all.
+template <typename T> inline constexpr bool _reflectgen_is_instance_view = false;
+template <typename T>
+inline constexpr bool _reflectgen_is_instance_view<Assisi::Runtime::InstanceView<T>> = true;
+
+{body}
+
+"""
+
+
+def _check_no_instance_views(components: list[ComponentInfo], header_name: str) -> None:
+    """Default-deny an InstanceView field anywhere in a reflected type.
+
+    Stronger than _check_unsupported below, and deliberately so: that one lets a
+    field through once it is marked AFIELD(transient), and skips a transient
+    component's fields entirely. Neither annotation is a way through here,
+    because the problem is not that a view cannot be serialized — it is that a
+    view *stored* anywhere is a member list that goes stale, which is the failure
+    the whole blueprint design is built to prevent
+    (docs/blueprint-system-concept.md §7). A view lives in the scope of the call
+    that produced it; only the instance id may outlive it, and an ECS::InstanceId
+    field is the supported way to say so.
+
+    The ban is on the type, not on the spelling: an alias, an alias of an alias,
+    and a struct that holds a view are all caught. The parser resolves those
+    spellings within the header and records the chain in FieldInfo.view_via,
+    which this quotes; the static_assert emitted alongside the registration
+    covers the half no regex can see, an alias declared in some other header.
+    """
+    for comp in components:
+        for f in comp.fields:
+            bare = f.cpp_type.replace(' ', '')
+            if 'InstanceView<' in bare:
+                detail = ''
+            elif f.view_via:
+                detail = f" ({f.view_via})"
+            else:
+                continue
+            raise ValueError(
+                f"{header_name}: field '{comp.name}::{f.name}' has type "
+                f"'{f.cpp_type}'{detail}. A reflected type may not hold an "
+                f"InstanceView: the handles in one go stale, so storing it is a "
+                f"member list by another name. Keep the ECS::InstanceId instead "
+                f"and re-resolve with FindInstance<T> when you need the members.")
 
 
 def _check_unsupported(components: list[ComponentInfo], header_name: str) -> None:

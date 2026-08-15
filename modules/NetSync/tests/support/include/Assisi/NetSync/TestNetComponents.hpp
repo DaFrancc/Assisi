@@ -4,18 +4,18 @@
 /// @file TestNetComponents.hpp
 /// @brief Test-only reflected components for the replication suite.
 ///
-/// The engine's own replicable component set is currently Transform plus the
-/// Replicated marker, and removing the marker means despawn rather than
-/// component removal — so proving that a *component* can be removed and
-/// replicated away needs a second, ordinary component that exists only here.
+/// The engine's own replicable component set is Transform plus the Replicated
+/// marker, and removing the marker means despawn rather than component removal
+/// — so proving that a *component* can be removed and replicated away needs a
+/// second, ordinary component that exists only here.
 ///
-/// The gating milestone added two more jobs: a component that is reflected,
-/// serializable, and deliberately *not* marked replicable (so "unmarked types
-/// never travel" has something to be true about), and a norep field inside a
-/// replicable one (so "saved to disk, never sent" has something to be true
-/// about).
+/// Two more fixtures are here for the same reason: a component that is
+/// reflected, serializable, and deliberately *not* marked replicable (so
+/// "unmarked types never travel" has something to be true about), and a norep
+/// field inside a replicable one (so "saved to disk, never sent" does too).
 
 #include <Assisi/ECS/Entity.hpp>
+#include <Assisi/ECS/InstanceId.hpp>
 #include <Assisi/Prelude.hpp>
 
 #include <cstdint>
@@ -38,23 +38,22 @@ struct Health
 
 /// @brief Reflected, serializable, tracked — and deliberately not replicated.
 ///
-/// The negative control for wire gating. Before opt-in, every serializable
-/// component travelled, which is how a marked entity could ship a `Camera` whose
-/// `isActive` hijacked the receiving client's view.
+/// The negative control for wire gating. Without opt-in every serializable
+/// component travels, and a marked entity ships things like a `Camera` whose
+/// `isActive` hijacks the receiving client's view.
 ACOMP(tracked)
 struct LocalOnly
 {
     AFIELD() int32_t value = 0;
 };
 
-/// @brief One message per cell of the AMSG grammar, so every combination has
-/// something to be true about.
+/// @brief Messages covering every cell of the AMSG grammar, so each combination
+/// of direction, reliability, and independence has something to be true about.
 ///
-/// A test build is the only place all four exist together; a real game would
-/// declare whichever it needs. They are also what the registry, the codec
-/// round-trip, the hash-moves property, and the generated handler table are
-/// exercised against — none of which can be tested by a build that registers no
-/// messages at all.
+/// A real game declares whichever it needs; a test build is the only place they
+/// all exist together. They are also what the registry, the codec round-trip,
+/// the hash-moves property, and the generated handler table are exercised
+/// against — none of which a build registering no messages can test at all.
 
 /// @brief Client → server, must arrive. The shape of a deliberate action whose
 /// loss the player would notice.
@@ -62,7 +61,7 @@ AMSG(intent, reliable)
 struct TestPlaceMarker
 {
     AFIELD() uint32_t target = 0;
-    AFIELD() int32_t  slot   = 0;
+    AFIELD() int32_t slot   = 0;
 };
 
 /// @brief Client → server, freshest wins. The spammy case, where a resent stale
@@ -88,21 +87,78 @@ struct TestMovePawn
 {
     AFIELD(controlled) Assisi::ECS::Entity pawn;
     AFIELD()           Assisi::ECS::Entity target;
-    AFIELD()           int32_t             mode = 0;
+    AFIELD()           int32_t mode = 0;
 };
 
 /// @brief Server → client, loss tolerable. The default form: rides the snapshot,
 /// so its ordering against the entity it names is free.
 ///
-/// `source` is the entity this is about, and it is what relevancy scopes the
-/// message by — a connection that cannot see the entity is not told the event
-/// happened either, which is the zero-bytes guarantee covering messages and not
-/// only state.
+/// `source` is the entity this is about, and marking it `subject` is what
+/// relevancy scopes the message by — a connection that cannot see the entity is
+/// not told the event happened either, which is the zero-bytes guarantee
+/// covering messages and not only state.
 AMSG(event, unreliable)
 struct TestBurst
 {
-    AFIELD() Assisi::ECS::Entity source;
-    AFIELD() int32_t             intensity = 1;
+    AFIELD(subject) Assisi::ECS::Entity source;
+    AFIELD()        int32_t intensity = 1;
+};
+
+/// @brief Two entity references, and the subject is deliberately the *second*
+/// one.
+///
+/// Declaring `instigator` ahead of the marked `victim` means any test that
+/// passes here could not be passing on declaration order — scoping by whichever
+/// entity field comes first would let swapping two declarations silently change
+/// who is told.
+///
+/// `instigator` is the ordinary case for a non-subject reference: it travels and
+/// translates like any other, and a recipient that has never been told about that
+/// entity decodes it as `NullEntity` — a message, unlike a component, has no
+/// deferred patch-up for a reference that arrives early.
+AMSG(event, unreliable)
+struct TestKnockback
+{
+    AFIELD()        Assisi::ECS::Entity instigator;
+    AFIELD(subject) Assisi::ECS::Entity victim;
+    AFIELD()        int32_t force = 0;
+};
+
+/// @brief Server → client, must arrive, and scoped by an entity.
+///
+/// The reliable counterpart to TestBurst. Reliable events leave by a different
+/// door — immediately, on the control lane, rather than riding the snapshot — so
+/// a rule about who may receive an event has two delivery sites to hold at, and
+/// a fixture that only covers the unreliable one would let the other leak.
+AMSG(event, reliable)
+struct TestReliableHit
+{
+    AFIELD(subject) Assisi::ECS::Entity target;
+    AFIELD()        int32_t damage = 0;
+};
+
+/// @brief An intent that names a blueprint instance rather than an entity.
+///
+/// The instance-id counterpart to TestMovePawn's entity ref, and the shape
+/// reflectgen actively recommends: an `InstanceView` may not be stored, so
+/// "which instance" is spelled as an `ECS::InstanceId` field that outlives the
+/// view. The number is a per-world counter, so the codec has to translate it the
+/// way it translates an entity ref — otherwise following that recommendation
+/// hands the server the *sender's* instance id and the recommendation is a trap.
+AMSG(intent, reliable)
+struct TestTagInstance
+{
+    AFIELD() Assisi::ECS::InstanceId instance;
+    AFIELD() int32_t note = 0;
+};
+
+/// @brief The same question in the other direction, naming no entity — so
+/// relevancy has nothing to scope it by and the instance id is the only thing
+/// the test can be wrong about.
+AMSG(event, reliable, independent)
+struct TestInstanceNamed
+{
+    AFIELD() Assisi::ECS::InstanceId instance;
 };
 
 /// @brief A registered intent that nothing handles.

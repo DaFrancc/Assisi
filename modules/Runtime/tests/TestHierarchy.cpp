@@ -165,8 +165,8 @@ TEST_CASE("PropagateTransforms: a shared ancestor is memoised correctly across b
     CHECK(scene.Get<Transform>(gp)->worldMatrix[3][0] == doctest::Approx(100.f));
 }
 
-// Regression for the missing cycle guard: a parent loop must not recurse until
-// the stack overflows. The guard breaks the cycle and leaves finite matrices.
+// A parent loop must not recurse until the stack overflows: the cycle guard
+// breaks it and leaves finite matrices.
 TEST_CASE("PropagateTransforms: a parent cycle does not overflow the stack")
 {
     ECS::Scene scene;
@@ -243,14 +243,12 @@ TEST_CASE("PropagateTransforms: moving a parent recomputes an unchanged child")
     CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(101.f)); // 100 + 1
 }
 
-// Round-6 review M3: attaching a Parent after the first propagation must dirty the
-// child. Parent is NOT a tracked component and Scene::Add does not stamp the
-// child's Transform change tick, so nothing marks the child dirty — yet its world
-// transform must now compose the parent's. The dirty-skip in PropagateTransforms
-// keys only on the Transform change tick, so this reparent is silently missed.
+// Attaching a Parent after the first propagation must dirty the child: Scene::Add
+// does not stamp the child's Transform, so only Parent being ACOMP(tracked) — and
+// PropagateTransforms keying on its change tick too — makes the child recompose.
 TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the child")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
     const ECS::Entity child  = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
@@ -267,14 +265,12 @@ TEST_CASE("PropagateTransforms: attaching a Parent after propagation dirties the
     CHECK(scene.Get<Transform>(child)->worldMatrix[3][0] == doctest::Approx(11.f)); // 10 + 1
 }
 
-// Round-6 review M3: reparenting an already-parented child to a different parent —
-// through the stamping GetMut<Parent>, the way a real reparent must — has to follow
-// the new parent. The child's own Transform is never touched, so before the fix
-// (Parent untracked + PropagateTransforms keying only on the Transform tick) the
-// child stayed composed against its OLD parent.
+// Reparenting an already-parented child — through the stamping GetMut<Parent>, the
+// way a real reparent must — has to follow the new parent. The child's own
+// Transform is never touched, so only the Parent change tick carries the move.
 TEST_CASE("PropagateTransforms: reparenting a child to a different parent follows the new parent")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity p1    = scene.Create();
     const ECS::Entity p2    = scene.Create();
     const ECS::Entity child = scene.Create();
@@ -300,17 +296,16 @@ TEST_CASE("PropagateTransforms: reparenting a child to a different parent follow
 // load-bearing rather than oversights, and both are easy to "fix" into a bug, so
 // they are pinned here.
 //
-// If either stamped, every entity propagation touched would carry a tick newer
-// than the tick the pass returns, so the next pass would find the whole scene
-// dirty and recompute it forever (the dirty-skip becomes a no-op) — and network
-// delta replication, which filters on the same signal, would ship every Transform
-// in the scene every tick. It is safe precisely because worldMatrix is derived
-// output: it has no AFIELD, is never serialized and never replicated, and a peer
-// rebuilds it from the local TRS with its own propagation pass.
+// If either stamped, every entity the pass touched would carry a tick newer than
+// the one it returns, so the next pass would find the whole scene dirty forever
+// (the dirty-skip becomes a no-op) — and network delta replication, filtering on
+// the same signal, would ship every Transform every tick. Safe because worldMatrix
+// is derived output: no AFIELD, never serialized, never replicated, and a peer
+// rebuilds it from the local TRS in its own propagation pass.
 
 TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dirty itself")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
     const ECS::Entity child  = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);
@@ -343,7 +338,7 @@ TEST_CASE("PropagateTransforms: a pass burns no change ticks and does not re-dir
 
 TEST_CASE("PropagateTransforms: moving a parent leaves the child's local Transform unchanged")
 {
-    ECS::Scene        scene;
+    ECS::Scene scene;
     const ECS::Entity parent = scene.Create();
     const ECS::Entity child  = scene.Create();
     REQUIRE(scene.Add(parent, Transform{.position = {10.f, 0.f, 0.f}}) != nullptr);

@@ -106,9 +106,9 @@ std::expected<DecodedImage, Assisi::Core::AssetError> Texture::DecodeImage(std::
         return std::unexpected(resolved.error());
     }
 
-    int            width    = 0;
-    int            height   = 0;
-    int            channels = 0;
+    int width    = 0;
+    int height   = 0;
+    int channels = 0;
     unsigned char *data     = stbi_load(resolved->string().c_str(), &width, &height, &channels, 4);
     if (data == nullptr)
     {
@@ -120,7 +120,7 @@ std::expected<DecodedImage, Assisi::Core::AssetError> Texture::DecodeImage(std::
     image.width      = static_cast<uint32_t>(width);
     image.height     = static_cast<uint32_t>(height);
     image.colorSpace = colorSpace;
-    BuildMipChain(image, data, /*generateMips=*/true);
+    BuildMipChain(image, data, /*generateMips=*/ true);
 
     stbi_image_free(data);
     return image;
@@ -141,7 +141,7 @@ Texture::DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace) noexc
     webpData.size  = bytes->size();
 
     // AnimDecoder composites frame disposal/blending for us and hands back full
-    // 256x256-ish RGBA canvases — exactly what we upload. MODE_RGBA matches our
+    // canvas-sized RGBA frames — exactly what we upload. MODE_RGBA matches our
     // top-down RGBA8 convention (WebP rows are top-down like Vulkan's V=0).
     WebPAnimDecoderOptions options;
     if (!WebPAnimDecoderOptionsInit(&options))
@@ -172,7 +172,7 @@ Texture::DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace) noexc
     while (WebPAnimDecoderHasMoreFrames(decoder))
     {
         uint8_t *frameRgba = nullptr; // owned by the decoder; valid only until the next call
-        int      timestamp = 0;       // milliseconds (unused: playback speed is set by the caller)
+        int timestamp = 0;            // milliseconds (unused: playback speed is set by the caller)
         if (!WebPAnimDecoderGetNext(decoder, &frameRgba, &timestamp))
         {
             Assisi::Core::Log::Warn("Texture: WebPAnimDecoderGetNext failed at frame {} of '{}'", frames.size(), vpath);
@@ -185,7 +185,7 @@ Texture::DecodeAnimatedWebp(std::string_view vpath, ColorSpace colorSpace) noexc
         image.colorSpace = colorSpace;
         // No mip chain: the spinner is drawn near its native size, and a chain per
         // frame would multiply the (already many) uploads for no visible gain.
-        BuildMipChain(image, frameRgba, /*generateMips=*/false);
+        BuildMipChain(image, frameRgba, /*generateMips=*/ false);
         frames.push_back(std::move(image));
     }
     WebPAnimDecoderDelete(decoder);
@@ -234,7 +234,7 @@ void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, c
     // Record into the caller's shared list when given one (it opens/closes/executes
     // and batches many uploads into a single submit); otherwise run self-contained.
     nvrhi::CommandListHandle ownList;
-    nvrhi::ICommandList     *commandList = sharedList;
+    nvrhi::ICommandList *commandList = sharedList;
     if (commandList == nullptr)
     {
         ownList     = device->createCommandList();
@@ -252,7 +252,7 @@ void Texture::UploadDecoded(nvrhi::IDevice *device, const DecodedImage &image, c
 }
 
 std::expected<void, Assisi::Core::AssetError> Texture::LoadFromAssets(nvrhi::IDevice *device, std::string_view vpath,
-                                                                       ColorSpace colorSpace) noexcept
+                                                                      ColorSpace colorSpace) noexcept
 {
     std::expected<DecodedImage, Assisi::Core::AssetError> image = DecodeImage(vpath, colorSpace);
     if (!image)

@@ -5,23 +5,20 @@
 /// @brief Bit-granular little-endian writer/reader — the network codec's
 ///        lowest layer.
 ///
-/// Bit-level from day one, deliberately: the two biggest wins a state-replication
-/// codec has — a 1-bit "unchanged" flag per field and smallest-three quaternions
-/// (2 + 9 + 9 + 9 = 29 bits) — are arithmetically impossible on a byte-aligned
-/// writer, and retrofitting bit granularity under a shipped wire format is a
-/// format *and* protocol-hash break at exactly the moment bandwidth starts
-/// hurting. The v1 field encoders above this layer stay whole-value (see
-/// Reflect/BinaryCodec.hpp); the primitive is bit-capable so quantizers drop in
-/// later with no format break.
+/// Bit-granular because the two biggest wins a state-replication codec has — a
+/// 1-bit "unchanged" flag per field and smallest-three quaternions
+/// (2 + 9 + 9 + 9 = 29 bits) — are impossible on a byte-aligned writer, and
+/// retrofitting bit granularity under a shipped wire format breaks the format
+/// and the protocol hash together. The v1 field encoders above this layer stay
+/// whole-value (see Reflect/BinaryCodec.hpp); quantizers drop in later with no
+/// format break.
 ///
 /// **Bit order: LSB-first within each byte.** The first bit written lands in bit
 /// 0 of byte 0, the ninth in bit 0 of byte 1. A multi-bit value is written
 /// low-bits-first, so a byte-aligned `WriteBits(v, 8)` stores exactly `v`, and a
-/// byte-aligned 32-bit write stores little-endian bytes — the same order the
-/// engine's target platforms use natively, so a future memcpy fast path is a
-/// drop-in. (LSB-first is the conventional choice: Quake, Source, yojimbo and
-/// GNS's own serializers all do it.) Reader and writer are exact mirrors; the
-/// round-trip tests pin the symmetry.
+/// byte-aligned 32-bit write stores little-endian bytes — the order the target
+/// platforms use natively, so a memcpy fast path would be a drop-in. Reader and
+/// writer are exact mirrors; the round-trip tests pin the symmetry.
 ///
 /// **Trust boundary.** BitWriter serializes data this process owns and cannot
 /// fail (it grows its own buffer). BitReader eats *untrusted network bytes*, so
@@ -30,8 +27,11 @@
 /// asserts, or touches memory outside the span. A truncated or bit-flipped packet
 /// must be a clean rejection, never UB — see TestBitStream.cpp's fuzz cases.
 
+#include <Assisi/Core/StrongId.hpp>
+
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <span>
 #include <string>
 #include <string_view>
@@ -50,13 +50,24 @@ namespace Assisi::Core
 /// the attack.
 inline constexpr std::size_t kMaxStringBytes = 4096;
 
+// The varint id encoding below is available to any type that opts in via
+// Core::IsStrongId — see StrongId.hpp. Core never names those types: NetId and
+// ClientId live in NetSync, InstanceId in ECS, and Core sits below both, so
+// naming one would invert the dependency.
+//
+// Routing them through here rather than open-coding `WriteVarUInt32(id.value)`
+// takes the width from the id's own declaration, so widening an id is an edit
+// to that declaration and nothing else. An open-coded call keeps the old width,
+// and a too-narrow *read* truncates — which does not fail, it just yields a
+// valid id naming something else.
+
 /// @brief Bit-granular writer over a growable byte buffer.
 ///
 /// Cannot fail: the buffer grows on demand and the process owns everything it
 /// serializes. Writes past 32 bits go through WriteBits64.
 class BitWriter
 {
-  public:
+public:
     BitWriter() = default;
 
     /// @brief Constructs a writer with @p reserveBytes of capacity pre-allocated
@@ -94,6 +105,13 @@ class BitWriter
     void WriteVarUInt32(std::uint32_t value) { WriteVarUInt64(value); }
     void WriteVarUInt64(std::uint64_t value);
 
+    /// @brief A strong id as a varint, at whatever width its `value` is.
+    ///
+    /// Always the 64-bit writer: the encoding of any value a narrower id can
+    /// hold is byte-identical, so the write side is width-independent already
+    /// and only `BitReader::ReadVarId` has to track the type. See `StrongId`.
+    void WriteVarId(StrongId auto id) { WriteVarUInt64(id.value); }
+
     /// @brief Raw bytes, 8 bits each in order. Not byte-aligned — the bytes land
     /// wherever the cursor is, so no padding is spent.
     void WriteBytes(std::span<const std::byte> bytes);
@@ -105,12 +123,11 @@ class BitWriter
 
     /// @brief Maps @p value from [@p min, @p max] onto @p bits of resolution.
     ///
-    /// Reserved for the quantizers the design defers past v1 (positions,
-    /// velocities, smallest-three quaternions): the field encoders in
-    /// Reflect/BinaryCodec.hpp stay whole-value, so nothing calls this yet. It
-    /// exists now so the primitive is provably bit-capable rather than
-    /// aspirationally so. Values outside the range are clamped; @p bits must be
-    /// in 1..32 and @p max must exceed @p min.
+    /// Reserved for the quantizers deferred past v1 (positions, velocities,
+    /// smallest-three quaternions): the field encoders in
+    /// Reflect/BinaryCodec.hpp stay whole-value, so nothing calls this yet — it
+    /// exists so the primitive is provably bit-capable. Values outside the range
+    /// are clamped; @p bits must be in 1..32 and @p max must exceed @p min.
     void WriteFloatQuantized(float value, float min, float max, std::uint32_t bits);
 
     /// @brief Advances to the next byte boundary, zero-filling. Only needed by a
@@ -132,9 +149,9 @@ class BitWriter
     /// packets.
     void Clear();
 
-  private:
+private:
     std::vector<std::byte> _bytes;
-    std::size_t            _bitCount = 0; ///< Bits written; _bytes.size() == ceil(_bitCount / 8).
+    std::size_t _bitCount = 0;            ///< Bits written; _bytes.size() == ceil(_bitCount / 8).
 };
 
 /// @brief Bit-granular reader over a borrowed byte span. Every read is
@@ -147,7 +164,7 @@ class BitWriter
 /// with zeroes, never with adjacent heap bytes.
 class BitReader
 {
-  public:
+public:
     /// @brief Reads from @p data, which must outlive the reader (it is borrowed,
     /// not copied).
     explicit BitReader(std::span<const std::byte> data) : _data(data) {}
@@ -172,6 +189,28 @@ class BitReader
     /// stream would otherwise spin the decode loop.
     std::uint32_t ReadVarUInt32();
     std::uint64_t ReadVarUInt64();
+
+    /// @brief Reads a strong id, refusing a value its `value` type cannot hold.
+    ///
+    /// This is the side that carries the width, and the reason `StrongId` exists:
+    /// the range check comes from the id's own declaration, so widening the type
+    /// widens what the wire accepts with no edit here and none at the call sites.
+    ///
+    /// Refused rather than truncated, on the same principle as ReadStringInto:
+    /// a truncated id is not a detectably broken id, it is a valid one naming a
+    /// different object, and it propagates silently from there.
+    template <StrongId T> T ReadVarId()
+    {
+        const std::uint64_t raw = ReadVarUInt64();
+        if (_failed)
+            return T{};
+        if (raw > std::numeric_limits<decltype(T::value)>::max())
+        {
+            Fail();
+            return T{};
+        }
+        return T{static_cast<decltype(T::value)>(raw)};
+    }
 
     /// @brief Reads exactly `out.size()` bytes into @p out. On overrun, fails and
     /// zero-fills @p out.
@@ -216,7 +255,7 @@ class BitReader
     [[nodiscard]] std::size_t BitsRead() const { return _bitPos; }
     [[nodiscard]] std::size_t BitsRemaining() const { return TotalBits() - _bitPos; }
 
-  private:
+private:
     [[nodiscard]] std::size_t TotalBits() const { return _data.size() * 8u; }
 
     /// Latches failure and parks the cursor at the end, so a subsequent
@@ -242,8 +281,8 @@ class BitReader
     }
 
     std::span<const std::byte> _data;
-    std::size_t                _bitPos = 0;
-    bool                       _failed = false;
+    std::size_t _bitPos = 0;
+    bool _failed = false;
 };
 
 } // namespace Assisi::Core

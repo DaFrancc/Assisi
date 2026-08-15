@@ -14,13 +14,14 @@ Usage:
                      the header path (e.g. '.../include/Assisi/Foo/Bar.hpp'
                      becomes 'Assisi/Foo/Bar.hpp').
 
-The implementation is split across three sibling modules; this file is the CLI
-plus a stable facade that re-exports their public surface so `import reflectgen`
-keeps working for callers and tests:
+The implementation is split across sibling modules; this file is the CLI plus a
+stable facade that re-exports their public surface so `import reflectgen` keeps
+working for callers and tests:
 
     reflect_types    the C++ type -> codegen mapping (TYPES, TypeCodegen, ...)
     reflect_parser   header scanning + the parse-time data model
     reflect_codegen  emission of the .generated.cpp registration code
+    blueprint_views  InstanceView<T> generation from .abp files
 """
 
 import sys
@@ -52,8 +53,18 @@ from reflect_parser import (  # noqa: F401
     parse_radio_spec,
     parse_enum_constants,
     find_handlers,
+    find_systems,
+    parse_header_systems,
+    SystemInfo,
     strip_comments,
     _detect_include_path,
+)
+from blueprint_views import (  # noqa: F401
+    ViewError,
+    build_tree,
+    flatten_member_names,
+    generate as generate_instance_views,
+    render_instance_views,
 )
 import reflect_codegen  # noqa: F401
 from reflect_codegen import (  # noqa: F401
@@ -75,15 +86,13 @@ from reflect_codegen import (  # noqa: F401
 def count_replicable(headers) -> int:
     """How many ACOMP(replicable) component types exist across @p headers.
 
-    A whole-tree question asked once, unlike the per-header code generation
-    everywhere else here: the answer sizes ComponentMask, the exclusion bitset on
+    Whole-tree, because the count sizes ComponentMask — the exclusion bitset on
     the Replicated marker, whose bit index is a component's ordinal among the
-    replicable types. Sizing it from an actual count rather than a configured
-    ceiling is what keeps that a detail nobody has to know about.
+    replicable types. Assets and ACOMP(transient) types do not count.
 
-    Deliberately tolerant of headers it cannot parse: a malformed one is already
-    a hard error in the per-header pass, and duplicating that failure here would
-    only bury the real message under a second, worse-located one.
+    Tolerant of headers it cannot parse: a malformed one is already a hard error
+    in the per-header pass, and repeating the failure here would bury the real
+    message.
     """
     total = 0
     for header in headers:
@@ -281,12 +290,91 @@ def check_message_handlers(headers) -> str:
     # without the build refusing to proceed over a decision that is theirs.
     for fqn in sorted(set(messages_by_fqn) - {f.lstrip(':') for f in bound}):
         lines.append(f'  {fqn} -> (no handler)')
+
+    lines.extend(check_systems(headers))
     return '\n'.join(lines) + '\n'
+
+
+def check_systems(headers) -> list:
+    """Duplicate names, dangling after/before, and ordering cycles — whole-tree.
+
+    All three are only answerable at this scope: a name is what a *file* says, so
+    two modules claiming it collide no matter which one a level loads, and an
+    `after` naming a system in a module this build did not link is a level that
+    installs a system that never runs. The alternative to catching them here is
+    catching them as a level that quietly does nothing.
+    """
+    systems: list = []
+    for header in headers:
+        try:
+            systems.extend(parse_header_systems(Path(header).resolve()))
+        except ValueError:
+            raise
+        except Exception:
+            # A header that will not parse is already a hard error in the
+            # per-header pass; repeating it here would bury the real message.
+            continue
+
+    by_name: dict = {}
+    for system in sorted(systems, key=lambda s: (s.header, s.function)):
+        if system.name in by_name:
+            first = by_name[system.name]
+            raise ValueError(
+                f"two systems are named '{system.name}':\n"
+                f"  {first.fqn} in {first.header}\n"
+                f"  {system.fqn} in {system.header}\n"
+                f"A file names a system by this string, so two of them cannot be told apart. Give one "
+                f"an explicit ASYSTEM(..., name = \"...\").")
+        by_name[system.name] = system
+
+    # Edges: after means "this runs later", before means "this runs earlier".
+    # Both are checked against the whole tree, because an ordering constraint on a
+    # system nobody declares is a constraint that will never be honoured.
+    edges: dict = {name: set() for name in by_name}
+    for system in systems:
+        for target in system.after + system.before:
+            if target not in by_name:
+                raise ValueError(
+                    f"{Path(system.header).name}: system '{system.name}' orders itself against "
+                    f"'{target}', which no ASYSTEM declares. An ordering constraint naming nothing is "
+                    f"silently no constraint at all.")
+        for target in system.after:
+            edges[system.name].add(target)   # target runs first
+        for target in system.before:
+            edges[target].add(system.name)   # this one runs first
+
+    # Depth-first with a colour mark: grey means "on the current path", which is
+    # exactly a cycle when we meet it again.
+    WHITE, GREY, BLACK = 0, 1, 2
+    colour = {name: WHITE for name in by_name}
+
+    def visit(name: str, path: list) -> None:
+        colour[name] = GREY
+        for dependency in sorted(edges[name]):
+            if colour[dependency] == GREY:
+                loop = path[path.index(dependency):] if dependency in path else [dependency]
+                raise ValueError(
+                    f"systems order themselves in a cycle: {' -> '.join(loop + [dependency])}. "
+                    f"No execution order satisfies it, so one of the after/before pairs has to go.")
+            if colour[dependency] == WHITE:
+                visit(dependency, path + [dependency])
+        colour[name] = BLACK
+
+    for name in sorted(by_name):
+        if colour[name] == WHITE:
+            visit(name, [name])
+
+    lines = [f'{len(by_name)} system(s)']
+    for name, system in sorted(by_name.items()):
+        lines.append(f'  {name} [{system.phase}] -> {system.fqn.lstrip(":")}')
+    return lines
 
 
 def main():
     parser = argparse.ArgumentParser(description='Assisi reflection code generator')
-    parser.add_argument('headers', nargs='+', type=Path,
+    # Optional only because --instance-views reads .abp files instead; every
+    # other mode still requires at least one, checked below.
+    parser.add_argument('headers', nargs='*', type=Path,
                         help='Header file(s) to process')
     parser.add_argument('--outdir', type=Path,
                         help='Output directory for .generated.cpp files')
@@ -304,7 +392,49 @@ def main():
                         help='Instead of generating registrations, check that no message type '
                              'has two AMSG_HANDLER declarations across every header given, and '
                              'write the handler map to this path.')
+    parser.add_argument('--instance-views', dest='views_out', type=Path, default=None,
+                        help='Instead of generating registrations, write the generated '
+                             'InstanceView<T> specializations for every blueprint given '
+                             'with --blueprint to this path.')
+    parser.add_argument('--blueprint', dest='blueprints', action='append', default=[],
+                        metavar='TypeName=path/to/file.abp',
+                        help='Opt one blueprint into typed-view generation. Repeatable.')
+    parser.add_argument('--asset-root', dest='asset_root', type=Path, default=None,
+                        help='Directory the --blueprint paths are relative to.')
+    parser.add_argument('--depfile', dest='depfile', type=Path, default=None,
+                        help='Write a Make-style depfile for --instance-views. Nested '
+                             'blueprints are only discovered by reading the files, so the '
+                             'build cannot state the dependency list up front.')
     args = parser.parse_args()
+
+    if args.views_out is not None:
+        if args.asset_root is None:
+            parser.error('--instance-views requires --asset-root')
+
+        specs = []
+        for entry in args.blueprints:
+            name, separator, source = entry.partition('=')
+            if not separator or not name or not source:
+                parser.error(f"--blueprint expects TypeName=path, got '{entry}'")
+            specs.append((name, source))
+
+        args.views_out.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            text, dependencies = generate_instance_views(args.asset_root, specs)
+        except ViewError as error:
+            print(f'reflectgen: error: {error}', file=sys.stderr)
+            sys.exit(1)
+
+        args.views_out.write_text(text, encoding='utf-8')
+        if args.depfile is not None:
+            args.depfile.parent.mkdir(parents=True, exist_ok=True)
+            paths = ' '.join(str(Path(args.asset_root) / source) for source in dependencies)
+            args.depfile.write_text(f'{args.views_out}: {paths}\n', encoding='utf-8')
+        print(f'reflectgen: {len(specs)} instance view(s) -> {args.views_out}')
+        sys.exit(0)
+
+    if not args.headers:
+        parser.error('at least one header is required')
 
     if args.traits_out is not None:
         args.traits_out.parent.mkdir(parents=True, exist_ok=True)
@@ -352,9 +482,10 @@ def main():
         # traceback with the reason buried at the bottom.
         try:
             components, messages, handlers = parse_header_full(header)
+            systems = parse_header_systems(header)
             _check_unsupported(components, header.name)
 
-            if not components and not messages and not handlers:
+            if not components and not messages and not handlers and not systems:
                 # Still write the file, empty. The build declares this path as an
                 # output, so producing nothing turns a header that legitimately
                 # registers nothing — a handler-only header, say — into a missing
@@ -378,8 +509,10 @@ def main():
                       f'{len(msg.fields)} field(s))')
             for handler in handlers:
                 print(f'  found: {handler.name} (handler for {handler.message})')
+            for system in systems:
+                print(f'  found: {system.name} (system, {system.phase})')
 
-            cpp = generate_cpp(components, include_path, messages, handlers)
+            cpp = generate_cpp(components, include_path, messages, handlers, systems)
         except Exception as e:
             print(f'  error: {e}', file=sys.stderr)
             ok = False

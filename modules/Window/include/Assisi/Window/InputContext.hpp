@@ -35,7 +35,7 @@ namespace Assisi::Window
 
 class InputContext
 {
-  public:
+public:
     /// @brief Binds this InputContext to a window and subscribes to its scroll
     /// events. The WindowContext must outlive the InputContext (see
     /// WindowContext's subscriber-lifetime warning).
@@ -100,7 +100,7 @@ class InputContext
     /// @brief Returns true if the cursor is currently captured.
     [[nodiscard]] bool IsMouseCaptured() const;
 
-  private:
+private:
     /* GLFW_KEY_LAST = 348; one slot per key code index. */
     static constexpr int32_t kKeyCount = 349;
     /* GLFW_MOUSE_BUTTON_LAST = 7; one slot per button index. */

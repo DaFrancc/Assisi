@@ -24,7 +24,7 @@ namespace
 /// a per-session copy because it is inside the protocol hash: two ends that
 /// disagree refuse to pair, so "which session is this" never comes up.
 BodyQuantization gQuantization;
-ViewSmoothing    gSmoothing;
+ViewSmoothing gSmoothing;
 
 /// Bits for the smallest-three quaternion: two to say which component was
 /// dropped, then nine each for the rest.
@@ -67,7 +67,7 @@ glm::quat ReadQuaternion(Core::BitReader &reader)
     const std::uint32_t largest = reader.ReadBits(kQuatIndexBits);
 
     std::array<float, 4> components{};
-    float                sumOfSquares = 0.f;
+    float sumOfSquares = 0.f;
     for (std::uint32_t i = 0; i < 4; ++i)
     {
         if (i == largest)
@@ -201,7 +201,7 @@ void WriteBodyState(const BodyState &state, Core::BitWriter &writer)
 {
     const BodyQuantization &q = gQuantization;
 
-    writer.WriteVarUInt32(state.netId);
+    writer.WriteVarId(state.netId); // wire write
     writer.WriteBool(state.asleep);
 
     writer.WriteFloatQuantized(state.position.x, -q.positionExtent, q.positionExtent, q.positionBits);
@@ -235,7 +235,7 @@ bool ReadBodyState(Core::BitReader &reader, BodyState &outState)
     const BodyQuantization &q = gQuantization;
 
     BodyState state;
-    state.netId  = reader.ReadVarUInt32();
+    state.netId  = reader.ReadVarId<NetId>(); // wire read
     state.asleep = reader.ReadBool();
 
     state.position.x = reader.ReadFloatQuantized(-q.positionExtent, q.positionExtent, q.positionBits);

@@ -43,10 +43,10 @@ inline void ComputeTangents(MeshData &mesh)
 
         const glm::vec3 e1  = p1 - p0;
         const glm::vec3 e2  = p2 - p0;
-        const float     du1 = uv1.x - uv0.x;
-        const float     dv1 = uv1.y - uv0.y;
-        const float     du2 = uv2.x - uv0.x;
-        const float     dv2 = uv2.y - uv0.y;
+        const float du1 = uv1.x - uv0.x;
+        const float dv1 = uv1.y - uv0.y;
+        const float du2 = uv2.x - uv0.x;
+        const float dv2 = uv2.y - uv0.y;
 
         const float det = du1 * dv2 - du2 * dv1;
         if (!std::isfinite(det) || det == 0.0f)
@@ -54,7 +54,7 @@ inline void ComputeTangents(MeshData &mesh)
             continue;
         }
 
-        const float     r    = 1.0f / det;
+        const float r    = 1.0f / det;
         const glm::vec3 sdir = (dv2 * e1 - dv1 * e2) * r;
         const glm::vec3 tdir = (du1 * e2 - du2 * e1) * r;
 
@@ -94,9 +94,7 @@ inline MeshData CreateUnitCubeMesh()
      * the ImGui path), and every face is oriented so the texture reads upright and
      * un-mirrored when viewed from outside: side faces put texture-up along world
      * +Y; the top (+Y) and bottom (-Y) faces put texture-up along world -Z. Each
-     * face's u x v points along -normal, i.e. no face is mirrored. Positions and
-     * the index buffer below are unchanged, so triangle winding / back-face culling
-     * are unaffected — only the UV assignment differs. */
+     * face's u x v points along -normal, i.e. no face is mirrored. */
     mesh.Vertices = {
         /* +X face (up = +Y) */
         {{0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
@@ -155,7 +153,7 @@ inline MeshData CreateUnitCubeMesh()
 inline MeshData CreateUnitSphereMesh(uint32_t slices = 48, uint32_t stacks = 24)
 {
     constexpr float kPi = 3.14159265358979323846f;
-    MeshData        mesh;
+    MeshData mesh;
 
     for (uint32_t i = 0; i <= stacks; ++i)
     {
@@ -165,8 +163,8 @@ inline MeshData CreateUnitSphereMesh(uint32_t slices = 48, uint32_t stacks = 24)
         const float ring = std::sin(phi);
         for (uint32_t j = 0; j <= slices; ++j)
         {
-            const float     u     = static_cast<float>(j) / static_cast<float>(slices);
-            const float     theta = u * 2.0f * kPi;
+            const float u     = static_cast<float>(j) / static_cast<float>(slices);
+            const float theta = u * 2.0f * kPi;
             const glm::vec3 p(ring * std::cos(theta), y, ring * std::sin(theta));
             mesh.Vertices.push_back({p, p, {u, v}});
         }
@@ -195,7 +193,7 @@ inline MeshData CreateUnitSphereMesh(uint32_t slices = 48, uint32_t stacks = 24)
 inline MeshData CreateUnitCylinderMesh(uint32_t slices = 48)
 {
     constexpr float kPi = 3.14159265358979323846f;
-    MeshData        mesh;
+    MeshData mesh;
 
     // Side rim vertices, top (y=+1) then bottom (y=−1), with radial normals.
     for (uint32_t j = 0; j <= slices; ++j)
@@ -216,21 +214,21 @@ inline MeshData CreateUnitCylinderMesh(uint32_t slices = 48)
 
     // Cap fans: a centre vertex for each end, fanned over its own rim ring.
     const auto addCap = [&mesh, slices](float y, float ny) { // kPi is constexpr — no capture needed
-        const uint32_t center = static_cast<uint32_t>(mesh.Vertices.size());
-        mesh.Vertices.push_back({{0.0f, y, 0.0f}, {0.0f, ny, 0.0f}, {0.5f, 0.5f}});
-        const uint32_t first = static_cast<uint32_t>(mesh.Vertices.size());
-        for (uint32_t j = 0; j <= slices; ++j)
-        {
-            const float theta = static_cast<float>(j) / static_cast<float>(slices) * 2.0f * kPi;
-            const float x     = std::cos(theta);
-            const float z     = std::sin(theta);
-            mesh.Vertices.push_back({{x, y, z}, {0.0f, ny, 0.0f}, {0.5f + 0.5f * x, 0.5f + 0.5f * z}});
-        }
-        for (uint32_t j = 0; j < slices; ++j)
-        {
-            mesh.Indices.insert(mesh.Indices.end(), {center, first + j, first + j + 1});
-        }
-    };
+                            const uint32_t center = static_cast<uint32_t>(mesh.Vertices.size());
+                            mesh.Vertices.push_back({{0.0f, y, 0.0f}, {0.0f, ny, 0.0f}, {0.5f, 0.5f}});
+                            const uint32_t first = static_cast<uint32_t>(mesh.Vertices.size());
+                            for (uint32_t j = 0; j <= slices; ++j)
+                            {
+                                const float theta = static_cast<float>(j) / static_cast<float>(slices) * 2.0f * kPi;
+                                const float x     = std::cos(theta);
+                                const float z     = std::sin(theta);
+                                mesh.Vertices.push_back({{x, y, z}, {0.0f, ny, 0.0f}, {0.5f + 0.5f * x, 0.5f + 0.5f * z}});
+                            }
+                            for (uint32_t j = 0; j < slices; ++j)
+                            {
+                                mesh.Indices.insert(mesh.Indices.end(), {center, first + j, first + j + 1});
+                            }
+                        };
     addCap(1.0f, 1.0f);
     addCap(-1.0f, -1.0f);
 

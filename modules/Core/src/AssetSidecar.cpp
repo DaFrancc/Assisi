@@ -32,7 +32,7 @@ std::string SerializeSidecar(const AssetSidecar &sidecar)
     document["guid"]    = sidecar.guid.ToString();
 
     // Composite manifest: emitted only when present, so a leaf asset's sidecar
-    // stays a plain `{version,type,guid}` (unchanged from S1).
+    // stays a plain `{version,type,guid}`.
     if (!sidecar.subAssets.empty())
     {
         nlohmann::json subAssets = nlohmann::json::array();
@@ -58,7 +58,7 @@ std::string SerializeSidecar(const AssetSidecar &sidecar)
 
 std::expected<AssetSidecar, AssetSidecarError> DeserializeSidecar(std::string_view jsonText)
 {
-    const nlohmann::json document = nlohmann::json::parse(jsonText, nullptr, /*allow_exceptions=*/false);
+    const nlohmann::json document = nlohmann::json::parse(jsonText, nullptr, /*allow_exceptions=*/ false);
     if (document.is_discarded() || !document.is_object())
     {
         return std::unexpected(AssetSidecarError::ParseFailed);

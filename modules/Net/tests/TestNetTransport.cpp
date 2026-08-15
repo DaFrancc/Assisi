@@ -264,8 +264,8 @@ TEST_CASE("network-loopback pair under simulated lag and loss still converges")
     std::vector<std::vector<NetEvent>> events;
     const bool arrived = PumpUntil({&transport}, events,
                                    [](const auto &e) {
-                                       return CountOfType(e[0], NetEvent::Type::Message) == kMessages;
-                                   },
+        return CountOfType(e[0], NetEvent::Type::Message) == kMessages;
+    },
                                    std::chrono::milliseconds{15000});
 
     // Reset before asserting: these are process-global in GNS, so leaving them

@@ -19,6 +19,19 @@ namespace Assisi::Core
 {
 namespace fs = std::filesystem;
 
+/// Every `std::filesystem` call in this file goes through the `std::error_code`
+/// overload rather than the throwing one. They are the same functions — the ec
+/// form is `noexcept` and reports by value — and choosing it is what makes the
+/// `noexcept` on every function here true rather than aspirational.
+///
+/// Getting this wrong terminates: a `noexcept` function calling the throwing
+/// `weakly_canonical` / `is_directory` turns a permission error or an unmounted
+/// volume into `std::terminate` rather than a bad return.
+///
+/// A few `try` blocks survive below and each says why: constructing an
+/// `fs::path` from an OS or environment string performs an encoding conversion
+/// that has no ec overload, and the byte read/write paths use iostreams.
+
 // Shortened spellings for the deeply-scoped result types this file returns.
 using PathResult = std::expected<fs::path, AssetError>;
 using BytesResult = std::expected<std::vector<std::byte>, AssetError>;
@@ -75,21 +88,20 @@ std::optional<fs::path> ExeDir() noexcept
     {
         return std::nullopt;
     }
-    try
-    {
-        return exe->parent_path();
-    }
-    catch (const std::exception &)
-    {
-        return std::nullopt;
-    }
+    /* parent_path() is lexical — it touches no filesystem and cannot fail for a
+       path we already hold. */
+    return exe->parent_path();
 }
 
 /* Reads an ASSISI_* env var as a path, returning it only when it names a directory. */
 std::optional<fs::path> EnvDir(const char *name) noexcept
 {
+    /* The try is for the fs::path construction below, which converts an
+       environment string into the platform's native encoding and has no
+       error_code form. is_directory does, and uses it. */
     try
     {
+        std::error_code ec;
 #ifdef _WIN32
         char *env = nullptr;
         size_t len = 0;
@@ -98,7 +110,7 @@ std::optional<fs::path> EnvDir(const char *name) noexcept
         {
             fs::path envPath(env);
             free(env);
-            if (fs::is_directory(envPath))
+            if (fs::is_directory(envPath, ec) && !ec)
             {
                 return envPath;
             }
@@ -107,7 +119,7 @@ std::optional<fs::path> EnvDir(const char *name) noexcept
         if (const char *env = std::getenv(name))
         {
             fs::path envPath(env);
-            if (fs::is_directory(envPath))
+            if (fs::is_directory(envPath, ec) && !ec)
             {
                 return envPath;
             }
@@ -160,13 +172,24 @@ BytesResult ReadFileBytes(const fs::path &path) noexcept
 /* Writes bytes to path, creating parent directories and truncating any existing file. */
 VoidResult WriteFileBytes(const fs::path &path, std::span<const std::byte> data) noexcept
 {
+    if (path.has_parent_path())
+    {
+        /* Already-exists is not an error and reports as ec-clear + false, so the
+           return value is deliberately ignored — only ec decides. */
+        std::error_code ec;
+        fs::create_directories(path.parent_path(), ec);
+        if (ec)
+        {
+            Log::Warn("AssetSystem: cannot create the directory for '{}' ({}).", path.string(),
+                      ec.message());
+            return std::unexpected(AssetError::FileWriteFailed);
+        }
+    }
+
+    /* The try covers the ofstream below, which reports through exceptions when a
+       stream's exception mask is set and can throw from its own allocations. */
     try
     {
-        if (path.has_parent_path())
-        {
-            fs::create_directories(path.parent_path());
-        }
-
         std::ofstream file(path, std::ios::binary | std::ios::trunc);
         if (!file)
         {
@@ -202,7 +225,15 @@ VoidResult AssetSystem::Initialize() noexcept
         return std::unexpected(root.error());
     }
 
-    gAssetRoot = fs::weakly_canonical(*root);
+    std::error_code ec;
+    fs::path canonical = fs::weakly_canonical(*root, ec);
+    if (ec)
+    {
+        Log::Warn("AssetSystem: cannot canonicalize the asset root '{}' ({}).", root->string(), ec.message());
+        return std::unexpected(AssetError::InvalidRoot);
+    }
+
+    gAssetRoot   = std::move(canonical);
     gInitialized = true;
 
     return {};
@@ -210,12 +241,20 @@ VoidResult AssetSystem::Initialize() noexcept
 
 VoidResult AssetSystem::SetRoot(const fs::path &root) noexcept
 {
-    if (!fs::is_directory(root))
+    std::error_code ec;
+    if (!fs::is_directory(root, ec) || ec)
     {
         return std::unexpected(AssetError::InvalidRoot);
     }
 
-    gAssetRoot = fs::weakly_canonical(root);
+    fs::path canonical = fs::weakly_canonical(root, ec);
+    if (ec)
+    {
+        Log::Warn("AssetSystem: cannot canonicalize '{}' ({}).", root.string(), ec.message());
+        return std::unexpected(AssetError::InvalidRoot);
+    }
+
+    gAssetRoot   = std::move(canonical);
     gInitialized = true;
 
     return {};
@@ -229,17 +268,28 @@ const fs::path &AssetSystem::GetRoot() noexcept
 
 void AssetSystem::SetAuthoringRoot(const fs::path &root) noexcept
 {
-    try
+    if (root.empty())
     {
-        gAuthoringRoot = root.empty() ? fs::path{} : fs::weakly_canonical(root);
-        if (!gAuthoringRoot.empty() && gAuthoringRoot == gAssetRoot)
-        {
-            /* Same tree — mirroring would be a self-copy. */
-            gAuthoringRoot.clear();
-        }
+        gAuthoringRoot.clear();
+        return;
     }
-    catch (const std::exception &)
+
+    std::error_code ec;
+    gAuthoringRoot = fs::weakly_canonical(root, ec);
+    if (ec)
     {
+        /* Mirroring off rather than pointed somewhere unresolved — but said out
+           loud, because a silently disabled authoring mirror looks exactly like a
+           working one until somebody goes looking for the sidecars. */
+        Log::Warn("AssetSystem: cannot use '{}' as the authoring root ({}); mirroring is off.",
+                  root.string(), ec.message());
+        gAuthoringRoot.clear();
+        return;
+    }
+
+    if (gAuthoringRoot == gAssetRoot)
+    {
+        /* Same tree — mirroring would be a self-copy. */
         gAuthoringRoot.clear();
     }
 }
@@ -251,32 +301,31 @@ const fs::path &AssetSystem::GetAuthoringRoot() noexcept
 
 PathResult AssetSystem::ResolveUnder(const fs::path &root, std::string_view vpath) noexcept
 {
-    try
+    const PathResult relative = NormalizeVirtualPath(vpath);
+    if (!relative)
     {
-        const PathResult relative = NormalizeVirtualPath(vpath);
-        if (!relative)
-        {
-            return std::unexpected(relative.error());
-        }
-
-        const fs::path absolute = fs::weakly_canonical(root / *relative);
-
-        // Prevent escaping the root. Compare path components rather than string
-        // prefixes: a raw starts_with would accept a sibling like "<root>-evil/".
-        // lexically_relative yields a path starting with ".." (or empty) when
-        // 'absolute' is not contained within the root.
-        const fs::path rel = absolute.lexically_relative(root);
-        if (rel.empty() || *rel.begin() == "..")
-        {
-            return std::unexpected(AssetError::RootEscape);
-        }
-
-        return absolute;
+        return std::unexpected(relative.error());
     }
-    catch (const std::exception &)
+
+    std::error_code ec;
+    const fs::path absolute = fs::weakly_canonical(root / *relative, ec);
+    if (ec)
     {
         return std::unexpected(AssetError::FileReadFailed);
     }
+
+    // Prevent escaping the root. Compare path components rather than string
+    // prefixes: a raw starts_with would accept a sibling like "<root>-evil/".
+    // lexically_relative yields a path starting with ".." (or empty) when
+    // 'absolute' is not contained within the root. Purely lexical — it consults
+    // no filesystem, so it has no error_code form and needs none.
+    const fs::path rel = absolute.lexically_relative(root);
+    if (rel.empty() || *rel.begin() == "..")
+    {
+        return std::unexpected(AssetError::RootEscape);
+    }
+
+    return absolute;
 }
 
 PathResult AssetSystem::Resolve(std::string_view vpath) noexcept
@@ -290,15 +339,13 @@ PathResult AssetSystem::Resolve(std::string_view vpath) noexcept
 
 bool AssetSystem::Exists(std::string_view vpath) noexcept
 {
-    try
-    {
-        const PathResult resolved = Resolve(vpath);
-        return resolved && fs::exists(*resolved);
-    }
-    catch (const std::exception &)
+    const PathResult resolved = Resolve(vpath);
+    if (!resolved)
     {
         return false;
     }
+    std::error_code ec;
+    return fs::exists(*resolved, ec) && !ec;
 }
 
 std::expected<std::string, AssetError> AssetSystem::ReadText(std::string_view vpath) noexcept
@@ -336,23 +383,27 @@ void AssetSystem::EnsureUserRoot() noexcept
         return;
     }
 
-    try
+    std::error_code ec;
+    if (const std::optional<fs::path> env = EnvDir("ASSISI_USER_ROOT"))
     {
-        if (const std::optional<fs::path> env = EnvDir("ASSISI_USER_ROOT"))
-        {
-            gUserRoot = fs::weakly_canonical(*env);
-        }
-        else if (const std::optional<fs::path> exe = ExeDir())
-        {
-            gUserRoot = fs::weakly_canonical(*exe);
-        }
-        else
-        {
-            gUserRoot = fs::current_path();
-        }
+        gUserRoot = fs::weakly_canonical(*env, ec);
     }
-    catch (const std::exception &)
+    else if (const std::optional<fs::path> exe = ExeDir())
     {
+        gUserRoot = fs::weakly_canonical(*exe, ec);
+    }
+    else
+    {
+        gUserRoot = fs::current_path(ec);
+    }
+
+    if (ec)
+    {
+        /* The process still needs somewhere to write. "." is where it was
+           launched from, which is wrong often enough to be worth saying. */
+        Log::Warn("AssetSystem: cannot resolve a user-data root ({}); falling back to the working "
+                  "directory.",
+                  ec.message());
         gUserRoot = fs::path(".");
     }
 
@@ -361,12 +412,20 @@ void AssetSystem::EnsureUserRoot() noexcept
 
 VoidResult AssetSystem::SetUserRoot(const fs::path &root) noexcept
 {
-    if (!fs::is_directory(root))
+    std::error_code ec;
+    if (!fs::is_directory(root, ec) || ec)
     {
         return std::unexpected(AssetError::InvalidRoot);
     }
 
-    gUserRoot = fs::weakly_canonical(root);
+    fs::path canonical = fs::weakly_canonical(root, ec);
+    if (ec)
+    {
+        Log::Warn("AssetSystem: cannot canonicalize the user root '{}' ({}).", root.string(), ec.message());
+        return std::unexpected(AssetError::InvalidRoot);
+    }
+
+    gUserRoot            = std::move(canonical);
     gUserRootInitialized = true;
 
     return {};
@@ -388,15 +447,13 @@ PathResult AssetSystem::ResolveUser(std::string_view vpath) noexcept
 
 bool AssetSystem::UserExists(std::string_view vpath) noexcept
 {
-    try
-    {
-        const PathResult resolved = ResolveUser(vpath);
-        return resolved && fs::exists(*resolved);
-    }
-    catch (const std::exception &)
+    const PathResult resolved = ResolveUser(vpath);
+    if (!resolved)
     {
         return false;
     }
+    std::error_code ec;
+    return fs::exists(*resolved, ec) && !ec;
 }
 
 std::expected<std::string, AssetError> AssetSystem::ReadUserText(std::string_view vpath) noexcept
@@ -452,59 +509,63 @@ bool AssetSystem::IsInitialized() noexcept
 
 PathResult AssetSystem::DiscoverRoot() noexcept
 {
-    try
+    /* Prefer an explicit environment override if present. */
+    if (const std::optional<fs::path> env = EnvDir("ASSISI_ASSET_ROOT"))
     {
-        /* Prefer an explicit environment override if present. */
-        if (const std::optional<fs::path> env = EnvDir("ASSISI_ASSET_ROOT"))
-        {
-            return *env;
-        }
+        return *env;
+    }
 
-        /* Helper: walk upward from a starting directory looking for assets/.
-           Lambda type is unnameable, so this is the one place auto stays. */
-        auto walkUp = [](fs::path dir) -> std::optional<fs::path>
-        {
-            for (int32_t i = 0; i < 10; ++i)
-            {
-                const fs::path candidate = dir / "assets";
-                if (fs::is_directory(candidate))
-                {
-                    return candidate;
-                }
-                if (!dir.has_parent_path())
-                {
-                    break;
-                }
-                dir = dir.parent_path();
-            }
-            return std::nullopt;
-        };
+    /* Helper: walk upward from a starting directory looking for assets/.
+       Lambda type is unnameable, so this is the one place auto stays.
+       A directory it cannot stat is simply not a match — the walk carries on
+       upward rather than abandoning discovery over one unreadable parent. */
+    auto walkUp = [](fs::path dir) -> std::optional<fs::path>
+                  {
+                      for (int32_t i = 0; i < 10; ++i)
+                      {
+                          std::error_code ec;
+                          const fs::path candidate = dir / "assets";
+                          if (fs::is_directory(candidate, ec) && !ec)
+                          {
+                              return candidate;
+                          }
+                          if (!dir.has_parent_path())
+                          {
+                              break;
+                          }
+                          dir = dir.parent_path();
+                      }
+                      return std::nullopt;
+                  };
 
-        /* Walk upward from the executable's directory first — works regardless of CWD. */
-        if (const std::optional<fs::path> exe = ExeDir())
-        {
-            if (const std::optional<fs::path> found = walkUp(*exe))
-            {
-                return *found;
-            }
-        }
-
-        /* Fall back to walking upward from the current working directory. */
-        if (const std::optional<fs::path> found = walkUp(fs::current_path()))
+    /* Walk upward from the executable's directory first — works regardless of CWD. */
+    if (const std::optional<fs::path> exe = ExeDir())
+    {
+        if (const std::optional<fs::path> found = walkUp(*exe))
         {
             return *found;
         }
+    }
 
-        return std::unexpected(AssetError::RootNotFound);
-    }
-    catch (const std::exception &)
+    /* Fall back to walking upward from the current working directory. */
+    std::error_code cwdEc;
+    const fs::path cwd = fs::current_path(cwdEc);
+    if (!cwdEc)
     {
-        return std::unexpected(AssetError::RootNotFound);
+        if (const std::optional<fs::path> found = walkUp(cwd))
+        {
+            return *found;
+        }
     }
+    return std::unexpected(AssetError::RootNotFound);
 }
 
 PathResult AssetSystem::NormalizeVirtualPath(std::string_view vpath) noexcept
 {
+    /* Wholly lexical — nothing here consults the filesystem, so there is no
+       error_code overload to reach for. The try is for the fs::path construction,
+       which converts a caller-supplied string into the native encoding and throws
+       on Windows if it is not valid UTF-8. */
     try
     {
         /* Reject empty, absolute, or drive-qualified paths. */

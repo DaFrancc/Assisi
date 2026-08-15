@@ -10,19 +10,19 @@
 ///
 /// @par Frame ordering
 /// @code
-/// // One render frame:
+/// // One render frame, as Application::Run drives it (system names below are
+/// // illustrative — the phases are the real thing):
 ///
-///   glfwPollEvents()    ← GLFW dispatches window/input callbacks
+///   PollEvents()        ← window/input callbacks dispatched
 ///   _input->Poll()      ← InputContext updated; input state is now fresh
 ///
 ///   OnFixedUpdate (may run N times):
-///     PhysicsStep     → Push(CollisionEvent{a, b})
-///     PhysicsSyncTransforms
+///     FixedUpdate     → e.g. Push(CollisionEvent{a, b})
 ///
 ///   OnUpdate:
 ///     PreUpdate       → input is available; first chance to react this frame
-///     Update          → DamageSystem: Read<CollisionEvent>()  ← visible, same frame as FixedUpdate
-///     PostUpdate      → CleanupSystem: Read<DestroyRequestEvent>()  ← visible, pushed in Update
+///     Update          → Read<CollisionEvent>()  ← visible, same frame as FixedUpdate
+///     PostUpdate      → reads whatever Update pushed
 ///
 ///   RenderFrame + OnImGui
 ///     (events pushed here are NOT visible to systems this frame —
@@ -81,7 +81,7 @@ namespace Assisi::Core
 /// pointer+size in release.
 template <typename E> class EventSpan
 {
-  public:
+public:
     EventSpan() = default;
 
     // `version` points at the queue's debug-only per-type counter, or is null in
@@ -96,9 +96,9 @@ template <typename E> class EventSpan
 
     struct Iterator
     {
-        const E             *ptr      = nullptr;
+        const E *ptr      = nullptr;
         const std::uint32_t *version  = nullptr; ///< Debug counter, or null (release / unchecked).
-        std::uint32_t        snapshot = 0;
+        std::uint32_t snapshot = 0;
 
         const E &operator*() const
         {
@@ -163,11 +163,11 @@ template <typename E> class EventSpan
         return std::span<const E>(_data, _size);
     }
 
-  private:
-    const E             *_data     = nullptr;
-    std::size_t          _size     = 0;
+private:
+    const E *_data     = nullptr;
+    std::size_t _size     = 0;
     const std::uint32_t *_version  = nullptr; ///< Debug counter address (read by begin/end), null in release.
-    std::uint32_t        _snapshot = 0;
+    std::uint32_t _snapshot = 0;
 };
 
 /// @brief Per-frame event queue.
@@ -176,7 +176,7 @@ template <typename E> class EventSpan
 /// ends.  All queues are cleared by Flush() once per frame.
 class EventQueue
 {
-  public:
+public:
     /// @brief Append an event of type E to its queue.
     template <typename E>
     void Push(E event)
@@ -222,7 +222,7 @@ class EventQueue
             queue->Clear();
     }
 
-  private:
+private:
     struct IQueue
     {
         virtual ~IQueue() = default;

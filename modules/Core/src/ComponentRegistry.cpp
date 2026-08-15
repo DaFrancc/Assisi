@@ -6,7 +6,17 @@
 #include <Assisi/Core/Reflect/ReplicableLimits.hpp>
 
 #include <algorithm>
+#include <mutex>
 #include <utility>
+
+namespace
+{
+/// Guards the one-time finalization below. A file static rather than a member so
+/// <mutex> stays out of a header most of the engine includes; the registry is a
+/// singleton, and a second instance in a test sharing this lock is merely
+/// coarser, never wrong.
+std::mutex g_finalizeMutex;
+} // namespace
 
 namespace Assisi::Core::Reflect
 {
@@ -19,9 +29,8 @@ ComponentRegistry &ComponentRegistry::Instance()
 
 void ComponentRegistry::Register(ComponentMeta meta)
 {
-    // Round-6 M4(a). Once an id has been issued the registry is immutable, and a
-    // late Register is refused rather than honoured. Two independent reasons, both
-    // fatal:
+    // Once an id has been issued the registry is immutable, and a late Register is
+    // refused rather than honoured. Two independent reasons:
     //
     //   1. Ids are positions in the name-sorted list — that ordering is what makes
     //      them reproducible across builds and machines, since static-init order
@@ -32,14 +41,13 @@ void ComponentRegistry::Register(ComponentMeta meta)
     //   2. ById()/All() hand out pointers *into* _metas, and _serializable holds
     //      them too. Growing the vector would dangle every one of them.
     //
-    // Appending with a fresh id instead of re-sorting would fix (1) and not (2),
-    // so refusing is the only option that keeps both invariants. Every legitimate
-    // registration comes from a static initializer and therefore runs before any
-    // query; arriving late means a dynamically-loaded module (unsupported) or a
-    // genuine bug, so this is loud in debug and a dropped component in release —
-    // a component that is absent fails visibly at Find(), whereas renumbering
-    // silently mis-maps every id in the process.
-    if (_finalized)
+    // Appending with a fresh id instead of re-sorting fixes (1) and not (2), so
+    // refusing is the only option that keeps both. Legitimate registrations come
+    // from static initializers and run before any query; a late one means a
+    // dynamically-loaded module (unsupported) or a bug. Loud in debug, a dropped
+    // component in release — an absent component fails visibly at Find(), whereas
+    // renumbering silently mis-maps every id in the process.
+    if (_finalized.load(std::memory_order_acquire))
     {
         // Log first, assert second: the assert does not return — it aborts (or, under
         // the test handler, throws) — so anything after it is unreachable in debug.
@@ -50,8 +58,8 @@ void ComponentRegistry::Register(ComponentMeta meta)
                          "finalized and its ids are in use. The component will not be reflected.",
                          meta.name);
         ASSISI_ASSERT(false, "ComponentRegistry::Register after an id was issued — ids are positions in the "
-                             "name-sorted list, so registering now would renumber ids that callers have "
-                             "already cached and saved scenes already store");
+                      "name-sorted list, so registering now would renumber ids that callers have "
+                      "already cached and saved scenes already store");
         return;
     }
 
@@ -60,7 +68,20 @@ void ComponentRegistry::Register(ComponentMeta meta)
 
 void ComponentRegistry::EnsureFinalized() const
 {
-    if (_finalized)
+    // Acquire, and it is the whole point: a thread that sees the flag set must
+    // also see every table the finalizing thread built below — the sort, the id
+    // assignment, and the _serializable / _replicable vectors. The first ask can
+    // come from a worker (async travel deserializes off the main thread and walks
+    // this registry there) while the main thread asks for the same thing, so a
+    // plain bool here is a data race.
+    if (_finalized.load(std::memory_order_acquire))
+        return;
+
+    const std::lock_guard lock(g_finalizeMutex);
+
+    // Re-checked under the lock: the loser of the race would otherwise sort and
+    // re-id a table the winner has already handed pointers into.
+    if (_finalized.load(std::memory_order_relaxed))
         return;
 
     std::sort(_metas.begin(), _metas.end(),
@@ -91,10 +112,14 @@ void ComponentRegistry::EnsureFinalized() const
     _serializable.clear();
     _replicable.clear();
     _replicableOrdinal.assign(_metas.size(), kInvalidOrdinal);
-    for (ComponentId i = 0; i < _metas.size(); ++i)
+    // Raw counter, not a ComponentId — this is the loop that walks the
+    // name-sorted table and hands the position itself out as the id, the one
+    // place a plain count becomes an identity. Every other use of `i` below is
+    // an array index (into _metas/_replicableOrdinal), not an id operation.
+    for (std::uint32_t i = 0; i < _metas.size(); ++i)
     {
-        _metas[i].id = i;
-        _idByType.emplace(_metas[i].typeIndex, i);
+        _metas[i].id = ComponentId{i}; // the one place a raw counter becomes an id
+        _idByType.emplace(_metas[i].typeIndex, ComponentId{i});
         if (_metas[i].serializable)
             _serializable.push_back(&_metas[i]);
         // Ordinal is position among the replicable types, in the same ascending
@@ -120,7 +145,9 @@ void ComponentRegistry::EnsureFinalized() const
                          _replicable.size(), kReplicableComponentCount);
     }
 
-    _finalized = true;
+    // Release, pairing with the acquire above: everything written in this
+    // function happens-before any thread that observes the flag set.
+    _finalized.store(true, std::memory_order_release);
 }
 
 std::span<const ComponentMeta *const> ComponentRegistry::ReplicableComponents() const
@@ -132,7 +159,8 @@ std::span<const ComponentMeta *const> ComponentRegistry::ReplicableComponents() 
 std::size_t ComponentRegistry::ReplicableOrdinalOf(ComponentId id) const
 {
     EnsureFinalized();
-    return id < _replicableOrdinal.size() ? _replicableOrdinal[id] : kInvalidOrdinal;
+    // .value: array index into _replicableOrdinal.
+    return id.value < _replicableOrdinal.size() ? _replicableOrdinal[id.value] : kInvalidOrdinal;
 }
 
 const ComponentMeta *ComponentRegistry::Find(std::string_view name) const
@@ -179,7 +207,8 @@ ComponentId ComponentRegistry::IdOf(std::string_view name) const
 const ComponentMeta *ComponentRegistry::ById(ComponentId id) const
 {
     EnsureFinalized();
-    return id < _metas.size() ? &_metas[id] : nullptr;
+    // .value: array index into _metas.
+    return id.value < _metas.size() ? &_metas[id.value] : nullptr;
 }
 
 ComponentId ComponentIdOfType(std::type_index type)

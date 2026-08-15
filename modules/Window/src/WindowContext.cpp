@@ -1,5 +1,4 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
-#define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 
 #include <Assisi/Core/Logger.hpp>
@@ -17,7 +16,6 @@ WindowContext::WindowContext(const WindowConfiguration &configuration) : _glfwLi
     /* Vulkan owns presentation — GLFW must not create a client API context. */
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
-    /* Create the GLFW window. */
     _nativeWindowHandle =
         glfwCreateWindow(configuration.Width, configuration.Height, configuration.Title, nullptr, nullptr);
 
@@ -96,10 +94,10 @@ WindowContext::~WindowContext()
 
 WindowContext::WindowContext(WindowContext &&other) noexcept
     : _glfwLibrary(std::move(other._glfwLibrary)), _nativeWindowHandle(other._nativeWindowHandle),
-      _isValid(other._isValid),
-      _framebufferSizeCallbacks(std::move(other._framebufferSizeCallbacks)),
-      _scrollCallbacks(std::move(other._scrollCallbacks)),
-      _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks))
+    _isValid(other._isValid),
+    _framebufferSizeCallbacks(std::move(other._framebufferSizeCallbacks)),
+    _scrollCallbacks(std::move(other._scrollCallbacks)),
+    _windowRefreshCallbacks(std::move(other._windowRefreshCallbacks))
 {
     other._nativeWindowHandle = nullptr;
     other._isValid = false;
@@ -116,7 +114,6 @@ WindowContext &WindowContext::operator=(WindowContext &&other) noexcept
 {
     if (this != &other)
     {
-        /* Destroy any currently owned window. */
         if (_nativeWindowHandle != nullptr)
         {
             glfwDestroyWindow(_nativeWindowHandle);

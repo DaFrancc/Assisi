@@ -49,14 +49,14 @@ struct DrawStats
 /// sensible defaults. Built at the call site with designated initializers.
 struct DrawSceneParams
 {
-    Assisi::ECS::Scene        &scene;    ///< ECS scene to draw.
+    Assisi::ECS::Scene &scene;           ///< ECS scene to draw.
     const Assisi::Render::MeshPass &meshPass; ///< Shared pipeline; must be initialized.
     const Assisi::Render::RenderFrame &frame; ///< Command list + framebuffer + viewport size.
 
     glm::mat4 view{1.f};       ///< View matrix (e.g. Runtime::ViewMatrix).
     glm::mat4 projection{1.f}; ///< Projection matrix (e.g. Runtime::ProjectionMatrix).
-    float     nearZ = 0.f;     ///< Camera near plane, for the sort key's depth quantization.
-    float     farZ  = 0.f;     ///< Camera far plane.
+    float nearZ = 0.f;         ///< Camera near plane, for the sort key's depth quantization.
+    float farZ  = 0.f;         ///< Camera far plane.
 
     bool frustumCulling = true; ///< Skip meshes outside the view frustum.
     bool sortDraws      = true; ///< Sort the draw list by sort key before submitting.
@@ -79,9 +79,10 @@ struct DrawSceneParams
 ///        entity in the scene, through the shared mesh pass.
 ///
 /// The producer half: each entity whose MeshRenderer is resolved is whole-mesh
-/// frustum-culled (conservative sphere test — nothing visible is ever culled),
-/// its LOD0 submeshes emitted as one DrawItem each (skipping slots with no
-/// resolved material), and — when `sortDraws` is true — the list is sorted by
+/// frustum-culled (a cheap sphere reject then an AABB refine, both conservative —
+/// nothing visible is ever culled), its LOD0 submeshes emitted as one DrawItem
+/// each (skipping slots with no resolved material), and — when `sortDraws` is
+/// true — the list is sorted by
 /// DrawItem::sortKey so MeshPass::Submit records it in material/mesh-major,
 /// front-to-back order. `frustumCulling` false submits every mesh; `sortDraws`
 /// false submits in query order — both for A/B comparing the seam (the image is

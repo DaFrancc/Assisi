@@ -41,9 +41,11 @@ __pycache__/
 *.VC.opendb
 *.cache
 
-# Logs
+# Logs and crash artifacts. Both are written under the user root, which is the
+# exe directory by default — so running from the repo root leaves them here.
 *.log
-assisi.log
+crash-*.txt
+*.dmp
 
 # Runtime-generated user state (written under the user root at runtime; the
 # repo-root copies are artifacts of running the app from the repo root). The

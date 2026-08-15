@@ -17,8 +17,8 @@ using Assisi::Core::Reflect::kInvalidComponentId;
 namespace
 {
 // Distinctive names/types so the assertions hold regardless of whatever else is
-// linked into the test binary's registry. The registry is a process singleton,
-// so everything shares one TEST_CASE to register exactly once.
+// linked into the test binary's registry, which is a process singleton shared
+// with every other suite in this executable.
 struct RegAlpha
 {
 };
@@ -32,8 +32,7 @@ struct RegHidden
 {
 };
 
-// Round-6 review M4 fixtures. Distinctive names/types so the assertions hold
-// regardless of what else is linked into this binary's shared registry.
+// Fixtures for the late-registration and duplicate-name cases below.
 struct ZzzM4Late
 {
 };
@@ -50,30 +49,38 @@ struct M4DupB
 ComponentMeta Meta(const char *name, std::type_index type, bool serializable = true)
 {
     // Every member listed so -Wmissing-field-initializers stays quiet; the
-    // type-erased hooks are unused by these tests.
-    return ComponentMeta{
-        .name = name, .typeIndex = type, .fields = {}, .serialize = {}, .addToScene = {},
-        .iterateEntities = {}, .getByEntity = {}, .serializable = serializable, .id = kInvalidComponentId};
+    // type-erased hooks are unused by these tests. Keep it exhaustive as
+    // ComponentMeta gains members.
+    return ComponentMeta{.name            = name,
+                         .typeIndex       = type,
+                         .fields          = {},
+                         .serialize       = {},
+                         .addToScene      = {},
+                         .iterateEntities = {},
+                         .getByEntity     = {},
+                         .construct       = {},
+                         .getMutable      = {},
+                         .serializable    = serializable,
+                         .id              = kInvalidComponentId};
 }
 
 // Registered from a static initializer, before main and therefore before any
 // test can query (and finalize) the registry — exactly how generated component
-// registrations behave. Registering lazily inside a TEST_CASE only worked while
-// a late Register silently renumbered; it is now refused (round-6 M4a), and the
-// order these arrive in is deliberately not alphabetical so the id-assignment
-// tests still prove the sort.
+// registrations behave, and the only window a Register is accepted in. The
+// arrival order is deliberately not alphabetical so the id-assignment tests
+// still prove the sort.
 const bool s_fixturesRegistered = []
-{
-    auto &registry = ComponentRegistry::Instance();
-    registry.Register(Meta("RegZeta", typeid(RegZeta)));
-    registry.Register(Meta("RegAlpha", typeid(RegAlpha)));
-    registry.Register(Meta("RegMu", typeid(RegMu)));
-    registry.Register(Meta("RegHidden", typeid(RegHidden), /*serializable=*/false));
-    registry.Register(Meta("ZzzM4_Late", typeid(ZzzM4Late)));
-    registry.Register(Meta("M4_DupName", typeid(M4DupA)));
-    registry.Register(Meta("M4_DupName", typeid(M4DupB))); // duplicate on purpose
-    return true;
-}();
+                                  {
+                                      auto &registry = ComponentRegistry::Instance();
+                                      registry.Register(Meta("RegZeta", typeid(RegZeta)));
+                                      registry.Register(Meta("RegAlpha", typeid(RegAlpha)));
+                                      registry.Register(Meta("RegMu", typeid(RegMu)));
+                                      registry.Register(Meta("RegHidden", typeid(RegHidden), /*serializable=*/ false));
+                                      registry.Register(Meta("ZzzM4_Late", typeid(ZzzM4Late)));
+                                      registry.Register(Meta("M4_DupName", typeid(M4DupA)));
+                                      registry.Register(Meta("M4_DupName", typeid(M4DupB))); // duplicate on purpose
+                                      return true;
+                                  }();
 } // namespace
 
 TEST_CASE("ComponentRegistry assigns dense alphabetical ids")
@@ -134,9 +141,14 @@ TEST_CASE("ComponentRegistry assigns dense alphabetical ids")
         const auto all = registry.All();
         // <= not < : other test files may register their own fixtures into this
         // shared registry, and duplicate names would still be a valid sort.
-        for (ComponentId i = 0; i < all.size(); ++i)
+        //
+        // Raw counter, not a ComponentId — this walks the table by array index
+        // (into `all`) and does arithmetic (`i - 1`), neither of which a
+        // ComponentId supports on purpose. See ComponentRegistry::EnsureFinalized
+        // for the one place a counter like this becomes an id.
+        for (std::uint32_t i = 0; i < all.size(); ++i)
         {
-            CHECK(all[i].id == i);
+            CHECK(all[i].id == ComponentId{i});
             if (i > 0)
                 CHECK(all[i - 1].name <= all[i].name);
         }
@@ -170,13 +182,11 @@ TEST_CASE("ComponentRegistry assigns dense alphabetical ids")
     }
 }
 
-// Round-6 review M4 (a), FIXED: the registry is immutable once an id has been
-// issued. Ids are positions in the name-sorted list (the property that makes them
-// reproducible across builds), so honouring a late Register would renumber ids
-// that ComponentIdOf<T> has already memoised and that saved scenes already store
-// — and would reallocate _metas, dangling every pointer ById()/All() handed out.
-// Register therefore refuses: it asserts in debug and drops the component with an
-// error in release. Both are better than silent renumbering.
+// The registry is immutable once an id has been issued. Ids are positions in the
+// name-sorted list, so honouring a late Register would renumber ids that
+// ComponentIdOf<T> has memoised and that saved scenes store — and would
+// reallocate _metas, dangling every pointer ById()/All() handed out. Register
+// refuses instead: assert in debug, log and drop in release.
 TEST_CASE("ComponentRegistry: a late Register is refused and leaves issued ids stable")
 {
     auto &registry = ComponentRegistry::Instance();
@@ -205,9 +215,8 @@ TEST_CASE("ComponentRegistry: a late Register is refused and leaves issued ids s
     CHECK(registry.IdOf(std::string_view{"AaaM4_Early"}) == kInvalidComponentId);
 }
 
-// Round-6 review M4: Register performs no name-uniqueness check, so two metas with
-// the same name (different types) both survive into All() and every save/Find path.
-// A correct registry rejects or dedups the duplicate.
+// Two metas registered under one name would collide in every save/Find path, so
+// finalize keeps the first and drops the rest.
 TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both kept")
 {
     auto &registry = ComponentRegistry::Instance();
@@ -218,5 +227,109 @@ TEST_CASE("ComponentRegistry: duplicate component names are rejected, not both k
         if (meta.name == "M4_DupName")
             ++count;
 
-    CHECK(count == 1); // no uniqueness check → both duplicates persist
+    CHECK(count == 1); // the duplicate was dropped, not kept alongside
 }
+
+// ---------------------------------------------------------------------------
+// EnsureFinalized's thread safety — verified, but not compilable as it stands
+// ---------------------------------------------------------------------------
+//
+// Finalization is lazy: the first ask sorts _metas, drops duplicates, assigns
+// every id and fills _serializable/_replicable/_replicableOrdinal. That ask can
+// come from any thread — async travel deserializes on a worker and walks this
+// registry there while the main thread does too — so it is guarded by an atomic
+// flag with acquire/release plus a double-checked lock.
+//
+// **This case cannot be compiled here.** It needs a registry that has *never*
+// been queried, and the only one this file can reach is Instance(), which
+// earlier cases in this binary have already finalized — every thread would take
+// the fast path and the case would pass whether or not the lock exists. A fresh
+// registry is what makes it real, and ComponentRegistry() is private on purpose
+// (one registry per process).
+//
+// It was run, by making that constructor public temporarily:
+//   * with the lock — clean under `make gcc-tsan`;
+//   * with the `lock_guard` in EnsureFinalized removed — 393 data races,
+//     naming ComponentRegistry.cpp's sort comparator and ComponentMeta's move
+//     constructor/assignment, i.e. two threads sorting the same vector.
+//
+// To re-run it: make ComponentRegistry() public, uncomment below, add <atomic>,
+// <cstdint>, <string>, <thread> and <vector>, then `make test-gcc-tsan`. To keep
+// it permanently instead, it needs its own test binary — nothing else linked
+// into it may query the registry — following the Assisi-Chiara-PreInit-Tests
+// pattern in modules/Chiara/tests/CMakeLists.txt, which exists for the same
+// reason ("Initialize has not been called yet" cannot hold in a shared process).
+//
+// TEST_CASE("ComponentRegistry: racing the first finalize is safe")
+// {
+//     ComponentRegistry registry;
+//
+//     // Enough entries that the sort is not a single compare — the wider the
+//     // finalize window, the more reliably two threads are inside it at once.
+//     // Deliberately not in name order, so the sort actually moves things.
+//     std::vector<std::string> names;
+//     names.reserve(64);
+//     for (std::int32_t i = 63; i >= 0; --i)
+//         names.push_back("Race" + std::string(i < 10 ? "0" : "") + std::to_string(i));
+//     for (const std::string &name : names)
+//         registry.Register(Meta(name.c_str(), typeid(RegAlpha))); // typeIndex is not under test
+//
+//     constexpr std::int32_t kThreads = 8;
+//
+//     // Released together, so they arrive at EnsureFinalized simultaneously
+//     // rather than one winning outright and the rest taking the fast path.
+//     std::atomic<bool>         go{false};
+//     std::atomic<std::int32_t> ready{0};
+//     std::atomic<std::int32_t> disagreements{0};
+//     std::vector<std::thread>  workers;
+//     workers.reserve(kThreads);
+//
+//     for (std::int32_t index = 0; index < kThreads; ++index)
+//     {
+//         workers.emplace_back(
+//             [index, &registry, &go, &ready, &disagreements]
+//             {
+//                 ready.fetch_add(1, std::memory_order_release);
+//                 while (!go.load(std::memory_order_acquire))
+//                 {
+//                 }
+//
+//                 // A different finalizing entry point per thread, so whichever
+//                 // one wins, the others are inside a different accessor.
+//                 switch (index % 3)
+//                 {
+//                 case 0:
+//                     if (registry.All().size() != 64)
+//                         disagreements.fetch_add(1, std::memory_order_relaxed);
+//                     break;
+//                 case 1:
+//                     if (registry.SerializableComponents().size() != 64)
+//                         disagreements.fetch_add(1, std::memory_order_relaxed);
+//                     break;
+//                 default:
+//                     if (registry.IdOf("Race00") == kInvalidComponentId)
+//                         disagreements.fetch_add(1, std::memory_order_relaxed);
+//                     break;
+//                 }
+//
+//                 // Ids are handed out during finalization, so a half-numbered
+//                 // or re-sorted table shows up here.
+//                 for (const auto &meta : registry.All())
+//                 {
+//                     if (registry.ById(meta.id) != &meta)
+//                         disagreements.fetch_add(1, std::memory_order_relaxed);
+//                 }
+//             });
+//     }
+//
+//     while (ready.load(std::memory_order_acquire) < kThreads)
+//     {
+//     }
+//     go.store(true, std::memory_order_release);
+//
+//     for (std::thread &worker : workers)
+//         worker.join();
+//
+//     CHECK(disagreements.load(std::memory_order_relaxed) == 0);
+//     CHECK(registry.All().size() == 64);
+// }

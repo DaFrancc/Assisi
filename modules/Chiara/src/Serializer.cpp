@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file Serializer.cpp
-/// @brief Chrome JSON export. Excluded from the build unless ASSISI_ENABLE_CHIARA.
+/// @brief Chrome JSON export. Compiles to nothing unless ASSISI_ENABLE_CHIARA is on.
 ///
 /// The JSON emission at the bottom is the easy half. The real work is rebuilding
 /// which scope each arg belongs to: a scope is only written when it *ends*, so
@@ -37,8 +37,8 @@ struct Slice
 {
     std::uint64_t beginTicks = 0;
     std::uint64_t endTicks   = 0;
-    const char   *name       = nullptr;
-    bool          stillOpen  = false;
+    const char *name       = nullptr;
+    bool stillOpen  = false;
 
     // Args are folded into the owning slice's `args` object rather than emitted
     // as their own trace events — that is what makes "click a slice, see which
@@ -51,18 +51,18 @@ struct Slice
 struct PendingArg
 {
     std::uint64_t ticks    = 0;
-    const char   *key      = nullptr;
-    const char   *text     = nullptr; // Set for ArgString.
+    const char *key      = nullptr;
+    const char *text     = nullptr;   // Set for ArgString.
     std::uint64_t value    = 0;       // Set for ArgU64.
-    bool          isString = false;
+    bool isString = false;
 };
 
 /// @brief Everything one thread contributes to the trace.
 struct ThreadTrace
 {
-    const char        *name     = nullptr;
-    std::int32_t       traceTid = 0;
-    bool               isMain   = false;
+    const char *name     = nullptr;
+    std::int32_t traceTid = 0;
+    bool isMain   = false;
     std::vector<Slice> slices;
     std::vector<Event> pointEvents; // Counters, flows, async, frame marks, instants.
 };
@@ -112,7 +112,7 @@ public:
 
     [[nodiscard]] bool IsOpen() const { return _out.is_open(); }
 
-    template <typename... Args> void Write(std::format_string<Args...> pattern, Args &&...args)
+    template <typename... Args> void Write(std::format_string<Args...> pattern, Args &&... args)
     {
         std::format_to(std::back_inserter(_buffer), pattern, std::forward<Args>(args)...);
         if (_buffer.size() >= kFlushThreshold)
@@ -137,7 +137,7 @@ private:
     static constexpr std::size_t kFlushThreshold = 1u << 20;
 
     std::ofstream _out;
-    std::string   _buffer;
+    std::string _buffer;
     std::uint64_t _bytesWritten = 0;
 };
 
@@ -157,22 +157,22 @@ private:
 /// counted, because a silently vanishing arg looks exactly like one that was
 /// never emitted.
 [[nodiscard]] std::uint64_t BindArgsToSlices(std::vector<Slice> &slices, std::vector<PendingArg> &args,
-                                            std::vector<PendingArg> *unbound = nullptr)
+                                             std::vector<PendingArg> *unbound = nullptr)
 {
     std::ranges::sort(slices,
                       [](const Slice &left, const Slice &right)
-                      {
-                          if (left.beginTicks != right.beginTicks)
-                          {
-                              return left.beginTicks < right.beginTicks;
-                          }
-                          return left.endTicks > right.endTicks; // Enclosing slice first.
-                      });
+            {
+                if (left.beginTicks != right.beginTicks)
+                {
+                    return left.beginTicks < right.beginTicks;
+                }
+                return left.endTicks > right.endTicks;           // Enclosing slice first.
+            });
     std::ranges::sort(args, [](const PendingArg &left, const PendingArg &right) { return left.ticks < right.ticks; });
 
-    std::uint64_t             orphaned = 0;
+    std::uint64_t orphaned = 0;
     std::vector<std::size_t>  openStack;
-    std::size_t               nextSlice = 0;
+    std::size_t nextSlice = 0;
 
     for (const PendingArg &arg : args)
     {
@@ -215,7 +215,7 @@ private:
 /// seconds apart measure the same thing over a baseline thousands of times
 /// longer. This is why the snapshots are emitted at all, and it costs nothing.
 [[nodiscard]] double RefineTicksPerSecond(const std::vector<std::pair<std::uint64_t, std::uint64_t>> &snapshots,
-                                          double                                                     fallback)
+                                          double fallback)
 {
     if (snapshots.size() < 2)
     {
@@ -279,7 +279,7 @@ void WritePointEvent(TraceWriter &writer, const Event &event, std::int32_t trace
                      double ticksPerSecond, bool &needsComma)
 {
     const double timestamp = ToMicroseconds(event.timestampTicks, originTicks, ticksPerSecond);
-    const auto   comma     = needsComma ? "," : "";
+    const auto comma     = needsComma ? "," : "";
 
     switch (event.type)
     {
@@ -409,9 +409,9 @@ constexpr std::size_t kMaxCarriedArgs = 4096;
 /// One thread's place in an ongoing session.
 struct SessionThread
 {
-    std::int32_t            traceTid        = 0;
-    std::uint64_t           nextIndex       = 0;
-    bool                    metadataWritten = false;
+    std::int32_t traceTid        = 0;
+    std::uint64_t nextIndex       = 0;
+    bool metadataWritten = false;
     /// Args whose enclosing scope had not ended yet when the last chunk was
     /// written. A scope reaches the ring only when it closes, so an arg near a
     /// chunk boundary routinely outlives its owner's absence — dropping it here
@@ -421,20 +421,20 @@ struct SessionThread
 
 struct Session
 {
-    std::mutex                                          mutex;
-    bool                                                active = false;
+    std::mutex mutex;
+    bool active = false;
     std::unique_ptr<TraceWriter>                        writer;
-    std::filesystem::path                               path;
-    std::uint64_t                                       originTicks    = 0;
-    double                                              ticksPerSecond = 1.0;
-    bool                                                needsComma     = false;
-    std::int32_t                                        nextTraceTid   = 0;
-    std::uint64_t                                       eventsWritten  = 0;
-    std::uint64_t                                       orphanedArgs   = 0;
-    std::uint64_t                                       drains         = 0;
-    std::uint64_t                                       eventsLost     = 0;
-    std::uint64_t                                       lastDrainTicks = 0;
-    std::uint64_t                                       lastTotalEvents = 0;
+    std::filesystem::path path;
+    std::uint64_t originTicks    = 0;
+    double ticksPerSecond = 1.0;
+    bool needsComma     = false;
+    std::int32_t nextTraceTid   = 0;
+    std::uint64_t eventsWritten  = 0;
+    std::uint64_t orphanedArgs   = 0;
+    std::uint64_t drains         = 0;
+    std::uint64_t eventsLost     = 0;
+    std::uint64_t lastDrainTicks = 0;
+    std::uint64_t lastTotalEvents = 0;
     std::map<const Detail::EventRing *, SessionThread>  threads;
 };
 
@@ -493,7 +493,7 @@ void DrainLocked(Session &session)
         std::vector<Event>      pointEvents;
         thread.carriedArgs.clear();
 
-        GatherRange(snapshot, thread.nextIndex, snapshot.endIndex, /*windowBegin=*/0, slices, args, pointEvents);
+        GatherRange(snapshot, thread.nextIndex, snapshot.endIndex, /*windowBegin=*/ 0, slices, args, pointEvents);
         thread.nextIndex = snapshot.endIndex;
 
         std::vector<PendingArg> unbound;
@@ -503,11 +503,9 @@ void DrainLocked(Session &session)
         // its scope may simply still be running, in which case it will close in
         // a later chunk and claim it then. The shadow stack is what tells the
         // two cases apart — if the arg was emitted at or after the outermost
-        // still-open scope began, an open scope can still be its owner.
-        //
-        // Getting this wrong is silent: a first attempt carried args by "newer
-        // than any slice in this chunk", which drops every arg followed by
-        // shorter sibling work — exactly the common case.
+        // still-open scope began, an open scope can still be its owner. Carrying
+        // by "newer than any slice in this chunk" instead silently drops every
+        // arg followed by shorter sibling work, which is the common case.
         std::uint64_t oldestOpenBegin = UINT64_MAX;
         for (const OpenScope &open : snapshot.openScopes)
         {
@@ -553,7 +551,7 @@ void DrainLocked(Session &session)
 
 bool BeginSession(const std::filesystem::path &path)
 {
-    Session                          &session = TheSession();
+    Session &session = TheSession();
     const std::lock_guard<std::mutex> lock(session.mutex);
     if (session.active)
     {
@@ -623,11 +621,11 @@ void PumpSession()
     // Both are needed — the first alone would never flush an idle session, and
     // the second alone would lose a burst.
     constexpr std::uint64_t kEventsPerDrain  = 20'000;
-    constexpr double        kSecondsPerDrain = 2.0;
+    constexpr double kSecondsPerDrain = 2.0;
 
     const std::uint64_t totalEvents = GetCaptureStats().totalEventsWritten;
     const std::uint64_t sinceDrain  = totalEvents - session.lastTotalEvents;
-    const double        elapsed =
+    const double elapsed =
         static_cast<double>(ReadTicks() - session.lastDrainTicks) / session.ticksPerSecond;
 
     if (sinceDrain < kEventsPerDrain && elapsed < kSecondsPerDrain)
@@ -647,7 +645,7 @@ void PumpSession()
 
 SerializeResult EndSession()
 {
-    Session                          &session = TheSession();
+    Session &session = TheSession();
     const std::lock_guard<std::mutex> lock(session.mutex);
 
     SerializeResult result;
@@ -681,7 +679,7 @@ SerializeResult EndSession()
 
 SessionStats GetSessionStats()
 {
-    Session                          &session = TheSession();
+    Session &session = TheSession();
     const std::lock_guard<std::mutex> lock(session.mutex);
 
     SessionStats stats;
@@ -714,11 +712,11 @@ SerializeResult SerializeCapture(const std::filesystem::path &path, double lastS
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
 
     const std::vector<ThreadSnapshot> snapshots = SnapshotThreads();
-    const std::uint64_t               dumpTicks = ReadTicks();
+    const std::uint64_t dumpTicks = ReadTicks();
 
     // --- Pass one: bounds and clock -----------------------------------------
-    std::uint64_t                                        newestTicks = 0;
-    std::uint64_t                                        oldestTicks = UINT64_MAX;
+    std::uint64_t newestTicks = 0;
+    std::uint64_t oldestTicks = UINT64_MAX;
     std::vector<std::pair<std::uint64_t, std::uint64_t>> clockSnapshots;
 
     for (const ThreadSnapshot &snapshot : snapshots)

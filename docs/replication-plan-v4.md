@@ -7,7 +7,7 @@
 > checked is everything whose DoD says "by eye" or needs two editor windows;
 > that list is §4a below, and it is the honest remainder of this plan.
 
-Status: **planned, not started**. This replaces `replication-authoring-plan.md`
+Status: **planned, not started**. This replaces `old/replication-authoring-plan.md`
 (v3.5), which stays in the tree as the historical record. v4 is written from
 scratch rather than amended into v3.5 because two of that plan's foundations
 were overturned by decision — mirrors are no longer passive, and joining is no
@@ -1110,6 +1110,42 @@ or a two-window sequence:
 
 ## 5. Explicitly deferred
 
+- **The authored level as a shared baseline — replacing strip-and-resend.**
+  Today a joining client loads the level, then strips every entity carrying
+  replicated components and receives them back from the host. The reason is
+  narrow and stated at `EditorNet.cpp:176-200`: the level file's copies are
+  the host's authored originals, "so keeping both would double every
+  replicated object in the world." It is de-duplication, not a safety
+  mechanism — the stale-NetId hazard is a *different* problem, solved
+  separately by `SetDeferHandshake` (`Replication.hpp:1143-1155`).
+
+  The better model: **both machines already hold the same hash-verified level
+  file, so it is a shared baseline and everything on the wire is a delta
+  against it.** NetIds for authored content are assigned deterministically at
+  load — entity *i*, or instance *i* member *j* — identically on both sides,
+  so nothing has to be told which entity is which. The host then sends only
+  what changed since the level loaded, filtered by relevancy as usual.
+
+  Most of it already exists. A delta baseline is just a change tick, so "what
+  changed since load" is the query that already drives every snapshot, seeded
+  from the load tick instead of from empty; relevancy filtering is unchanged.
+  What has to be built: deterministic NetId assignment at load on both sides,
+  an explicit **destroyed list** (a deleted entity has no components to delta,
+  so deletions cannot fall out of the tick query), and seeding the join from
+  the load tick.
+
+  Deferred because it is a rework of the join path affecting every level,
+  while the current path works. What it deletes when it lands: the strip
+  itself, and `BlueprintSpawnFromLevel` — the provisional record that exists
+  only so a stripped level instance can be rebuilt with its overrides
+  (`docs/blueprint-system-concept.md` §9). Blueprints exposed this; they did
+  not cause it.
+
+  Related and further out: **world streaming** — a client loading only what is
+  near it rather than the whole level. That is chunking, load/unload as the
+  player moves, and a per-client notion of what is resident; it motivates the
+  baseline model but is a much larger feature, and the baseline model does not
+  depend on it. v1 assumes a client loads the whole level.
 - **Player pawn possession, prediction, and resimulation** — the Rocket
   League/UE-Resimulation architecture (§3.1 option 3), with its measured
   cost. Waits on the Game/GameEditor template split (Phase 2), which owns

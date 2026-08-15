@@ -35,24 +35,11 @@ const Core::AssetPath kWhiteTexture{std::string_view{"prim://white"}};          
 const Core::AssetPath kWhiteLinearTexture{std::string_view{"prim://white-linear"}}; // metallic-roughness / occlusion.
 const Core::AssetPath kFlatNormalTexture{std::string_view{"prim://flat-normal"}};   // unperturbed tangent-space normal.
 
-// Starting slot count for the bindless material-texture table; it grows past this
-// on demand as more distinct textures resolve.
 // Bindless texture-table capacity (slots). Fixed at table creation: nvrhi's
 // Vulkan backend implements resizeDescriptorTable as an assert-only no-op, so
 // the descriptor table's real capacity is whatever the layout was built with and
 // can never change. Slots past this saturate onto slot 0 with a one-time warning.
 constexpr uint32_t kBindlessCapacity = 16384u;
-
-// Material-table capacity (rows). Fixed so the buffer handle is stable across
-// Clear() and the MeshPass binds it once; generous enough for any real scene
-// (the opaque sort key allows ~1M, but a level with thousands of *distinct*
-// materials is unheard of). Materials past this saturate onto the fallback row
-// (see MintMaterialId) rather than resizing the buffer — keeping the handle
-// stable matters more than the ceiling, and at 96 B/row raising the ceiling is
-// cheap (the whole table is 384 KB) if a scene ever needs it.
-// (The capacity constant lives on AssetCache so MeshPass can assert against it.
-// No file-local alias: inside AssetCache's own member functions, unqualified
-// kMaxMaterials already resolves to the class member.)
 
 // The five PBR texture channels, in MaterialTextures order (base, normal,
 // metallic-roughness, occlusion, emissive). Each pairs the colour space the
@@ -61,9 +48,9 @@ constexpr uint32_t kBindlessCapacity = 16384u;
 // normal-mapping bit.
 struct ChannelDesc
 {
-    ColorSpace             space;
+    ColorSpace space;
     const Core::AssetPath *fallback;
-    bool                   isNormal;
+    bool isNormal;
 };
 
 const std::array<ChannelDesc, 5> kChannels = {{
@@ -91,9 +78,6 @@ Core::AssetId ChannelId(const Geometry::MaterialData &data, std::size_t channel)
     default: return data.EmissiveTexture;
     }
 }
-
-// (DecodedChannel and MaterialLoadBundle are private nested types of AssetCache —
-// OnMaterialLoaded takes a MaterialLoadBundle by value, so they live in the header.)
 } // namespace
 
 void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, ColorSpace textureColorSpace)
@@ -130,7 +114,7 @@ void AssetCache::Initialize(nvrhi::IDevice *device, Core::JobSystem *jobs, Color
     // Material table (GPU-driven stage D): one MaterialConstants row per material,
     // indexed by Material::Id(). Fixed capacity — the handle stays put across
     // Clear() so MeshPass binds it once; BuildFallbackMaterial fills row 0 below.
-    _materialTable.Create(_device, sizeof(MaterialConstants), kMaxMaterials, /*allowUnorderedAccess=*/false,
+    _materialTable.Create(_device, sizeof(MaterialConstants), kMaxMaterials, /*allowUnorderedAccess=*/ false,
                           "AssetCache::MaterialTable");
 
     _primitiveFactories.emplace(kCubePrimitive, &Geometry::CreateUnitCubeMesh);
@@ -200,9 +184,9 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
 
     // A mesh file. If a load is already in flight, report "still loading" (null) so
     // the caller shows a placeholder; the re-resolve loop will pick up the buffer
-    // once it's uploaded. Otherwise kick the import: assimp runs on a worker (pure
-    // CPU over the path + a copy of the path→id resolver), then the arena upload
-    // and cache insert publish back on the main thread.
+    // once it's uploaded. Otherwise kick the import: Geometry::ImportMesh runs on a
+    // worker (pure CPU over the path + a copy of the path→id resolver), then the
+    // arena upload and cache insert publish back on the main thread.
     if (_meshLoading.contains(path))
         return nullptr;
 
@@ -211,9 +195,8 @@ const MeshBuffer *AssetCache::ResolveMeshPath(const Core::AssetPath &path)
     // decode at once and starve the main thread. The path enters _meshLoading now
     // (queued counts as pending) so the re-resolve loop won't re-request it.
     _meshLoading.insert(path);
-    // The material-only members are named and left empty rather than omitted:
-    // PendingLoad is a poor-man's variant, so "unset" is meaningful here and
-    // spelling it out is what distinguishes it from a field someone forgot.
+    // PendingLoad is a poor-man's variant: the material-only members are spelled
+    // out empty so "unset" reads as deliberate rather than forgotten.
     _pendingLoads.push_back(PendingLoad{.isMaterial   = false,
                                         .path         = path,
                                         .epoch        = _loadEpoch.load(std::memory_order_relaxed),
@@ -236,7 +219,7 @@ const Texture *AssetCache::ResolveTexture(const Core::AssetPath &path, ColorSpac
         prim != _texturePrimitives.end())
     {
         const SolidColor &color = prim->second;
-        TextureKey        key{path, color.space};
+        TextureKey key{path, color.space};
         if (std::unordered_map<TextureKey, Texture, TextureKeyHash>::iterator it = _textures.find(key);
             it != _textures.end())
             return it->second.IsValid() ? &it->second : nullptr;
@@ -295,23 +278,23 @@ const Texture *AssetCache::ResolveThumbnail(const Core::AssetPath &path)
     }
 
     _thumbnailLoading.insert(path);
-    const uint64_t               epoch      = _thumbnailEpoch.load(std::memory_order_relaxed);
+    const uint64_t epoch      = _thumbnailEpoch.load(std::memory_order_relaxed);
     const std::atomic<uint64_t> *thumbEpoch = &_thumbnailEpoch; // worker reads it to bail early (read-only)
-    const std::string            vpath(path.View());
+    const std::string vpath(path.View());
 
     _jobs
-        ->Run(Core::Pool::Worker,
-              [vpath, epoch, thumbEpoch]() -> std::expected<DecodedImage, Core::AssetError> {
-                  // Skip the decode if a directory change already superseded this
-                  // thumbnail (the main-thread publish drops it regardless; this just
-                  // avoids the wasted work when browsing folders quickly). The error
-                  // value is never inspected — the continuation returns on the epoch
-                  // mismatch before it looks at the result.
-                  if (thumbEpoch->load(std::memory_order_relaxed) != epoch)
-                      return std::unexpected(Core::AssetError::FileReadFailed);
-                  return Texture::DecodeImage(vpath, ColorSpace::Linear);
-              })
-        .Then(Core::Pool::Main, [this, path, epoch](std::expected<DecodedImage, Core::AssetError> decoded) {
+    ->Run(Core::Pool::Worker,
+          [vpath, epoch, thumbEpoch]() -> std::expected<DecodedImage, Core::AssetError> {
+            // Skip the decode if a directory change already superseded this
+            // thumbnail (the main-thread publish drops it regardless; this just
+            // avoids the wasted work when browsing folders quickly). The error
+            // value is never inspected — the continuation returns on the epoch
+            // mismatch before it looks at the result.
+            if (thumbEpoch->load(std::memory_order_relaxed) != epoch)
+                return std::unexpected(Core::AssetError::FileReadFailed);
+            return Texture::DecodeImage(vpath, ColorSpace::Linear);
+        })
+    .Then(Core::Pool::Main, [this, path, epoch](std::expected<DecodedImage, Core::AssetError> decoded) {
             if (epoch != _thumbnailEpoch.load(std::memory_order_relaxed))
                 return; // superseded (see the mesh path's twin): return before erasing so a stale
                         // completion can't drop a live epoch's loading marker and re-kick a load.
@@ -465,7 +448,7 @@ void AssetCache::WriteMaterialToTable(const Material &material, nvrhi::ICommandL
     // This row is brand new (no draw references this material yet — loading entities
     // use the fallback), so writing it touches no bytes an in-flight frame reads.
     const MaterialConstants row    = material.Constants();
-    const uint64_t          offset = static_cast<uint64_t>(id) * sizeof(MaterialConstants);
+    const uint64_t offset = static_cast<uint64_t>(id) * sizeof(MaterialConstants);
     if (sharedList != nullptr)
     {
         // Async publish: record into the caller's shared list (PumpPublishes submits).
@@ -599,10 +582,10 @@ AssetCache::ImportAndStageMesh(AssetCache &cache, Core::AssetPath path, const Pa
     bundle.indexCount  = static_cast<uint32_t>(imported->Indices.size());
 
     // Copy the geometry into a GPU staging buffer HERE, on the worker — this is the
-    // bulk memcpy that used to land on the main thread inside writeBuffer (O(mesh
-    // bytes) mid-frame). The main-thread publish then only records a copy. The
-    // buffer is pooled: creating and destroying one per mesh would just move the
-    // cost into the next frame's runGarbageCollection, on the main thread.
+    // bulk memcpy that would otherwise land on the main thread inside writeBuffer
+    // (O(mesh bytes) mid-frame). The main-thread publish then only records a copy.
+    // The buffer is pooled: creating and destroying one per mesh would just move
+    // the cost into the next frame's runGarbageCollection, on the main thread.
     const std::uint64_t stagingBytes = MeshBuffer::MeshStagingBytes(*imported);
     if (stagingBytes > 0)
     {
@@ -633,10 +616,10 @@ void AssetCache::StartMeshLoad(Core::AssetPath path, PathToIdFn pathToId, std::u
     // the parse for a load nobody awaits anymore.
     const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
     _jobs
-        ->Run(Core::Pool::Worker, [this, path, pathToId, epoch, loadEpoch]()
-              { return ImportAndStageMesh(*this, path, pathToId, epoch, *loadEpoch); })
-        .Then(Core::Pool::Main, [this, path, epoch](std::expected<MeshLoadBundle, Geometry::MeshImportError> r)
-              { OnMeshLoaded(path, epoch, std::move(r)); });
+    ->Run(Core::Pool::Worker, [this, path, pathToId, epoch, loadEpoch]()
+          { return ImportAndStageMesh(*this, path, pathToId, epoch, *loadEpoch); })
+    .Then(Core::Pool::Main, [this, path, epoch](std::expected<MeshLoadBundle, Geometry::MeshImportError> r)
+          { OnMeshLoaded(path, epoch, std::move(r)); });
 }
 
 void AssetCache::OnMeshLoaded(Core::AssetPath path, std::uint64_t epoch,
@@ -707,7 +690,7 @@ AssetCache::MaterialLoadBundle AssetCache::DecodeAndRecordMaterialChannels(
             list = cache.AcquireUploadList(); // pooled: no per-material create/destroy
             list->open();
         }
-        const std::string    name(channelPaths[ch].View());
+        const std::string name(channelPaths[ch].View());
         nvrhi::TextureHandle texture = Texture::CreateImage(device, *img, name.c_str());
         Texture::RecordMips(list, texture, *img);
 
@@ -732,11 +715,11 @@ void AssetCache::StartMaterialLoad(Core::AssetPath path, Geometry::MaterialData 
     // then only submits the recorded list, adopts the textures, and builds.
     const std::atomic<std::uint64_t> *loadEpoch = &_loadEpoch;
     _jobs
-        ->Run(Core::Pool::Worker,
-              [this, data = std::move(data), channelPaths, epoch, loadEpoch]() mutable
-              { return DecodeAndRecordMaterialChannels(*this, std::move(data), channelPaths, epoch, *loadEpoch); })
-        .Then(Core::Pool::Main, [this, path, epoch](MaterialLoadBundle bundle)
-              { OnMaterialLoaded(path, epoch, std::move(bundle)); });
+    ->Run(Core::Pool::Worker,
+          [this, data = std::move(data), channelPaths, epoch, loadEpoch]() mutable
+          { return DecodeAndRecordMaterialChannels(*this, std::move(data), channelPaths, epoch, *loadEpoch); })
+    .Then(Core::Pool::Main, [this, path, epoch](MaterialLoadBundle bundle)
+          { OnMaterialLoaded(path, epoch, std::move(bundle)); });
 }
 
 void AssetCache::OnMaterialLoaded(Core::AssetPath path, std::uint64_t epoch, MaterialLoadBundle bundle)
@@ -799,8 +782,8 @@ void AssetCache::PublishMaterial(PendingPublish publish)
     // references this material yet (loading entities use the fallback), so nothing
     // an in-flight frame reads is mutated.
     MaterialTextures textures;
-    uint32_t        *slots[5] = {&textures.baseColor, &textures.normal, &textures.metallicRoughness,
-                                 &textures.occlusion, &textures.emissive};
+    uint32_t *slots[5] = {&textures.baseColor, &textures.normal, &textures.metallicRoughness,
+                          &textures.occlusion, &textures.emissive};
     for (std::size_t ch = 0; ch < kChannels.size(); ++ch)
     {
         RecordedChannel &rc = publish.material.channels[ch];
@@ -893,10 +876,9 @@ void AssetCache::RecycleRetiredStaging()
         // a later pump. Never wait here — that would trade a GC spike for a GPU stall.
         if (_device->pollEventQuery(_stagingInFlight[i].query))
         {
-            // The effect end of the flow opened when this batch was parked. The
-            // arrow the viewer draws from there to here is what makes "this
-            // frame's cost was caused four frames ago" a thing you can see
-            // rather than infer.
+            // Effect end of the flow opened when this batch was parked, so the
+            // viewer draws an arrow from the frame that caused the cost to the
+            // (much later) frame that pays it.
             ASSISI_PROFILE_FLOW_END("staging-lifetime", _stagingInFlight[i].chiaraFlowId);
 
             for (nvrhi::BufferHandle &buffer : _stagingInFlight[i].buffers)
@@ -971,8 +953,8 @@ void AssetCache::FlushUploads()
             _device->setEventQuery(parked.query, nvrhi::CommandQueue::Graphics);
             parked.buffers = std::move(_batchStaging);
 
-            // The cause end of the flow. It is opened inside the flush-uploads
-            // scope, so the arrow starts on the work that created the debt.
+            // Cause end of the flow, opened inside the flush-uploads scope so the
+            // arrow starts on the work that created the debt.
             parked.chiaraFlowId = Chiara::NewFlowId();
             ASSISI_PROFILE_FLOW_BEGIN("staging-lifetime", parked.chiaraFlowId);
 
@@ -998,17 +980,17 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
 
     using Clock = std::chrono::steady_clock;
     const auto elapsedMsSince = [](Clock::time_point t)
-    { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); };
+                                { return std::chrono::duration<double, std::milli>(Clock::now() - t).count(); };
 
-    // `start` drives the pump's time budget. Per-phase *timing* is no longer
-    // accumulated here: the profile scopes below give the same mesh/material/flush
-    // split, scrubbable and nested under the frame, so hand-summed milliseconds
-    // would be a second set of numbers to keep honest for no extra information.
+    // `start` drives the pump's time budget. Per-phase timing is left to the
+    // profile scopes below, which give the same mesh/material/flush split nested
+    // under the frame — hand-summed milliseconds would only be a second set of
+    // numbers to keep honest.
     const Clock::time_point start     = Clock::now();
-    std::size_t             bytes     = 0;
-    std::size_t             meshCount = 0;
-    std::size_t             matCount  = 0;
-    bool                    any       = false;
+    std::size_t bytes     = 0;
+    std::size_t meshCount = 0;
+    std::size_t matCount  = 0;
+    bool any       = false;
     while (!_pendingPublishes.empty())
     {
         // Budget stops the batch — but always publish at least one (a single asset
@@ -1032,10 +1014,9 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
         const std::size_t publishBytes = publish.byteSize;
         if (publish.isMaterial)
         {
-            // The scope name is the aggregation key and stays constant; which
-            // asset it was goes in an arg. Naming the scope after the path would
-            // shatter cross-frame aggregation into one bucket per asset, and it
-            // is the arg that makes "click the slice, see the asset" work.
+            // The scope name is the aggregation key, so it stays constant and the
+            // asset goes in an arg — naming the scope after the path would shatter
+            // cross-frame aggregation into one bucket per asset.
             ASSISI_PROFILE_SCOPE("publish-material");
             ASSISI_PROFILE_ARG_STR("asset", publish.path.View());
             ASSISI_PROFILE_ARG_U64("bytes", static_cast<std::uint64_t>(publishBytes));
@@ -1060,20 +1041,17 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
     if (any)
         FlushUploads();
 
-    // The ≥2 ms log line that used to live here is a capture now. It was the
-    // regression sensor the streaming plan called permanent (R5), and it stays
-    // one — the scopes above give the same phase split (mesh = arena memcpy,
-    // material = descriptor writes, flush = submit, all-low-but-total-high = the
-    // main thread was preempted), except scrubbable, nested under the frame, and
-    // without a threshold that has to be guessed in advance.
+    // The streaming plan's permanent regression sensor (R5). Together with the
+    // scopes above these give the phase split: mesh = arena memcpy, material =
+    // descriptor writes, flush = submit; all-low-but-total-high means the main
+    // thread was preempted.
     ASSISI_PROFILE_COUNTER("stream/pending-publishes", static_cast<double>(_pendingPublishes.size()));
     ASSISI_PROFILE_COUNTER("stream/pump-bytes", static_cast<double>(bytes));
     ASSISI_PROFILE_COUNTER("stream/mesh-count", static_cast<double>(meshCount));
     ASSISI_PROFILE_COUNTER("stream/mat-count", static_cast<double>(matCount));
 
-    // Emitted here rather than from a central pump because this is the only code
-    // that moves these numbers, and a memory graph is only useful if its samples
-    // land where the change happened.
+    // Emitted here, not from a central pump: this is the only code that moves
+    // these numbers, and a memory graph wants its samples where the change happened.
     ASSISI_PROFILE_COUNTER("mem/arena-vertex-used", static_cast<double>(_arena.VertexUsedBytes()));
     ASSISI_PROFILE_COUNTER("mem/arena-vertex-capacity", static_cast<double>(_arena.VertexCapacityBytes()));
     ASSISI_PROFILE_COUNTER("mem/arena-index-used", static_cast<double>(_arena.IndexUsedBytes()));
@@ -1081,7 +1059,7 @@ void AssetCache::PumpPublishes(double timeBudgetMs, std::size_t byteBudget)
 
     {
         std::lock_guard<std::mutex> lock(_poolMutex);
-        std::size_t                 parkedBuffers = 0;
+        std::size_t parkedBuffers = 0;
         for (const StagingInFlight &parked : _stagingInFlight)
         {
             parkedBuffers += parked.buffers.size();

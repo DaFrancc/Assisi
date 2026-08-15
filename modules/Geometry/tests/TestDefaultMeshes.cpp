@@ -15,11 +15,10 @@ using Assisi::Geometry::Vertex;
 // A texture maps onto a face without mirroring iff the world-space tangent
 // (d pos / d u) and bitangent (d pos / d v) form a frame whose cross product
 // opposes the outward normal — i.e. dot(cross(T, B), normal) < 0 — under the
-// top-left UV origin the engine samples with. (Derive T/B via Lengyel's method,
-// same as ComputeTangents.) A flipped or transposed face would make this
-// positive. This is the invariant CreateUnitCubeMesh's UVs were corrected to
-// satisfy; assert it per face so a regression can't silently bring back a
-// mirrored or sideways face.
+// top-left UV origin the engine samples with. (T/B derived via Lengyel's method,
+// same as ComputeTangents.) A flipped or transposed face makes this positive.
+// Asserted per face so a regression can't silently bring back a mirrored or
+// sideways face.
 TEST_CASE("CreateUnitCubeMesh: every face maps its texture upright, not mirrored")
 {
     const MeshData mesh = CreateUnitCubeMesh();

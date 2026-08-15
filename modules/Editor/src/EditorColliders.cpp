@@ -1,16 +1,18 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file EditorColliders.cpp
-/// @brief Editor collider wireframes: outline every RigidBodyDescriptor's shape in
-/// the world while authoring, so invisible collision geometry is visible and
-/// selectable. Built here (the editor knows Physics) and drawn through the renderer's
+/// @brief Collider wireframes: outline every RigidBodyDescriptor's shape while
+/// authoring, so invisible collision geometry can be seen and picked.
+///
+/// Built here, because the editor knows Physics, and drawn through the renderer's
 /// generic overlay-line facility (Render::LinePass), which stays Physics-free.
 ///
-/// The wireframe traces the collider's actual edges (a box's 12 edges, a sphere's
-/// three great circles, ...), not a filled silhouette. Unselected colliders draw
-/// light green and depth-tested (occluded by scene geometry, so they recede);
-/// the selected collider draws yellow-orange and on-top (x-ray), so it is never
-/// lost behind a wall. Hidden entirely while the game is playing.
+/// The wireframe traces the collider's real edges — a box's 12, a sphere's three
+/// great circles — not a filled silhouette. Unselected colliders are light green
+/// and depth-tested, so scene geometry occludes them; a selected one draws on top
+/// (x-ray) in the selection colours from Runtime/SceneRenderer.hpp, so it is never
+/// lost behind a wall and never disagrees with the silhouette around the same
+/// object's mesh. Hidden entirely while the game is playing.
 
 #include <Assisi/Editor/EditorApp.hpp>
 
@@ -19,10 +21,14 @@
 #include <vector>
 
 #include <Assisi/ECS/Transform.hpp>
+#include <Assisi/Editor/ColliderPose.hpp>
 #include <Assisi/Math/GLM.hpp>
 #include <Assisi/Physics/PhysicsComponents.hpp>
 #include <Assisi/Render/LinePass.hpp>
 #include <Assisi/Runtime/Components.hpp>
+#include <Assisi/Runtime/SceneRenderer.hpp>
+
+#include <algorithm>
 
 namespace Assisi::Editor
 {
@@ -31,11 +37,14 @@ namespace
 {
 using Assisi::Render::LineVertex;
 
-// Wireframe colours (written straight to the scene target, like the selection
-// outline's orange — see outline_edge.frag). Selected is a distinct yellow-orange
-// so it never reads as the red-orange selection silhouette drawn around the mesh.
+// Wireframe colours, written straight to the scene target (see outline_edge.frag).
+// Only the unselected one is defined here: a selected collider borrows the very
+// constants the mesh silhouette uses, so a rigidbody and a plain mesh say
+// "selected" and "this is the one being edited" in one vocabulary rather than two
+// kept in step by hand.
 constexpr glm::vec4 kUnselectedColor{0.40f, 0.95f, 0.45f, 1.0f}; // light green
-constexpr glm::vec4 kSelectedColor{1.00f, 0.65f, 0.10f, 1.0f};   // yellow-orange
+constexpr glm::vec4 kSelectedColor{Assisi::Runtime::kSelectionOutline, 1.0f};
+constexpr glm::vec4 kActiveSelectedColor{Assisi::Runtime::kActiveSelectionOutline, 1.0f};
 
 // Tessellation of curved shapes. 24 segments per full circle is smooth enough for
 // an editor overlay without flooding the line batch.
@@ -63,7 +72,7 @@ void AddArc(std::vector<LineVertex> &out, const glm::mat4 &model, const glm::vec
     for (int32_t i = 1; i <= segments; ++i)
     {
         const float t   = a0 + (a1 - a0) * (static_cast<float>(i) / static_cast<float>(segments));
-        glm::vec3   cur = center + radius * (std::cos(t) * u + std::sin(t) * v);
+        glm::vec3 cur = center + radius * (std::cos(t) * u + std::sin(t) * v);
         AddSegment(out, model, color, prev, cur);
         prev = cur;
     }
@@ -81,8 +90,8 @@ void AddBoxWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, const
     }
     // 12 edges: pairs of corners differing in exactly one axis bit.
     constexpr int32_t edges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7},  // along X
-                                  {0, 2}, {1, 3}, {4, 6}, {5, 7},  // along Y
-                                  {0, 4}, {1, 5}, {2, 6}, {3, 7}}; // along Z
+        {0, 2}, {1, 3}, {4, 6}, {5, 7},                            // along Y
+        {0, 4}, {1, 5}, {2, 6}, {3, 7}};                           // along Z
     for (const auto &e : edges)
     {
         AddSegment(out, model, color, c[e[0]], c[e[1]]);
@@ -104,12 +113,12 @@ void AddCylinderBody(std::vector<LineVertex> &out, const glm::mat4 &model, const
 {
     const glm::vec3 top(0.f, halfHeight, 0.f);
     const glm::vec3 bot(0.f, -halfHeight, 0.f);
-    const float     full = glm::two_pi<float>();
+    const float full = glm::two_pi<float>();
     AddArc(out, model, color, top, kAxisX, kAxisZ, radius, 0.f, full, kCircleSegments);
     AddArc(out, model, color, bot, kAxisX, kAxisZ, radius, 0.f, full, kCircleSegments);
     for (int32_t k = 0; k < 4; ++k)
     {
-        const float     angle = static_cast<float>(k) * glm::half_pi<float>();
+        const float angle = static_cast<float>(k) * glm::half_pi<float>();
         const glm::vec3 offset = radius * (std::cos(angle) * kAxisX + std::sin(angle) * kAxisZ);
         AddSegment(out, model, color, top + offset, bot + offset);
     }
@@ -122,10 +131,10 @@ void AddCapsuleWireframe(std::vector<LineVertex> &out, const glm::mat4 &model, c
 
     const glm::vec3 top(0.f, halfHeight, 0.f);
     const glm::vec3 bot(0.f, -halfHeight, 0.f);
-    const float     pi = glm::pi<float>();
-    const int32_t   capSegs = kCircleSegments / 2;
-    // Two orthogonal profile half-arcs per hemisphere: from one rim point, over the
-    // pole, to the opposite rim point. Top domes up (+Y), bottom domes down (−Y).
+    const float pi = glm::pi<float>();
+    const int32_t capSegs = kCircleSegments / 2;
+    // Two orthogonal profile half-arcs per hemisphere: rim point, over the pole, to
+    // the opposite rim point. Top domes up (+Y), bottom domes down (−Y).
     AddArc(out, model, color, top, kAxisX, kAxisY, radius, 0.f, pi, capSegs);
     AddArc(out, model, color, top, kAxisZ, kAxisY, radius, 0.f, pi, capSegs);
     AddArc(out, model, color, bot, kAxisX, kAxisY, radius, 0.f, -pi, capSegs);
@@ -161,49 +170,59 @@ void EditorApp::SubmitColliderWireframes()
     _colliderLinesOnTop.clear();
     _colliderEntities.clear();
 
-    // Editor-only: colliders are hidden while the game is live. Nothing submitted,
-    // no billboards suppressed (the renderer clears both each frame anyway).
+    // Editor-only: colliders are hidden while the game is live. Returning early
+    // submits nothing and suppresses no billboards — the renderer clears both
+    // every frame.
     if (_scene == nullptr || _playState == PlayState::Playing)
     {
         return;
     }
 
-    bool selectedIsRigidBody = false;
+    // Selected entities that turned out to be rigid bodies. They get the orange
+    // collider outline below, so the generic selection highlight would draw a
+    // second mesh silhouette on top of it; the tail of this function removes them
+    // from it.
+    std::vector<Assisi::ECS::Entity> outlinedAsBodies;
 
     for (auto [entity, tc, desc] :
          _scene->Query<Assisi::ECS::Transform, Assisi::Physics::RigidBodyDescriptor>())
     {
         _colliderEntities.push_back(entity);
 
-        const bool selected = (entity == _selectedEntity);
+        const bool selected = IsSelected(entity);
+        const bool active   = selected && entity == _selectedEntity;
 
-        // Selected body draws on top in orange; the rest are depth-tested green.
-        const glm::vec4 lineColor = selected ? kSelectedColor : kUnselectedColor;
+        // A selected body draws on top in orange, the rest depth-tested green. The
+        // active one is redder still, so a multi-selection says which member the
+        // inspector and the gizmo are actually addressing.
+        const glm::vec4 lineColor = active     ? kActiveSelectedColor
+                                    : selected ? kSelectedColor
+                                               : kUnselectedColor;
 
-        // The Jolt body is placed from the Transform's local position+rotation only
-        // (no scale — see AddPhysicsBody), and the descriptor's dimensions are
-        // absolute world units, so the wireframe/outline match the body exactly.
-        glm::mat4 bodyModel = glm::mat4_cast(tc.rotation);
-        bodyModel[3]        = glm::vec4(tc.position, 1.f);
+        // The world pose the Jolt body was built at, position and rotation only —
+        // see ColliderBodyModel. A parented body lives at its resolved world pose,
+        // so tracing its local offset would put the wireframe somewhere the body
+        // is not, and disagree with the mesh silhouette drawn below.
+        const glm::mat4 bodyModel = ColliderBodyModel(*_scene, entity, tc);
 
-        // Traced collider edges (line wireframe) — drawn for EVERY collider.
+        // The traced edges go out for EVERY collider.
         std::vector<Assisi::Render::LineVertex> &lineOut =
             selected ? _colliderLinesOnTop : _colliderLinesDepthTested;
         AppendColliderWireframe(lineOut, bodyModel, lineColor, desc);
 
         // Silhouette outlines (collider volume + entity mesh) are a selection
-        // highlight — drawn only for the selected object. Outlining every rigidbody
-        // meant one full-screen edge-detect pass per object per frame, which is what
-        // other engines avoid (they wireframe colliders and outline only the
-        // selection). The outline is orange and on top, like a selection highlight.
+        // highlight, so only the selection gets them: each one costs a full-screen
+        // edge-detect pass per frame, which outlining every rigidbody would
+        // multiply by the body count.
         if (selected)
         {
-            selectedIsRigidBody = true;
-            const glm::vec3 outlineColor = glm::vec3(kSelectedColor);
+            outlinedAsBodies.push_back(entity);
+            const glm::vec3 outlineColor = glm::vec3(active ? kActiveSelectedColor : kSelectedColor);
             SubmitColliderOutline(bodyModel, desc, outlineColor);
 
-            // Entity mesh silhouette (if the body has a visible mesh). Uses the full
-            // world matrix so it hugs the rendered mesh, scale/parenting included.
+            // Entity mesh silhouette, if the body has a visible mesh. Full world
+            // matrix here, so it hugs the rendered mesh — scale and parenting
+            // included.
             if (const Assisi::Runtime::MeshRenderer *mrc = _scene->Get<Assisi::Runtime::MeshRenderer>(entity);
                 mrc != nullptr && mrc->meshBuffer != nullptr)
             {
@@ -212,28 +231,37 @@ void EditorApp::SubmitColliderWireframes()
         }
     }
 
-    _sceneRenderer.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/false);
-    _sceneRenderer.SubmitOverlayLines(_colliderLinesOnTop, /*onTop=*/true);
+    _sceneRenderer.SubmitOverlayLines(_colliderLinesDepthTested, /*onTop=*/ false);
+    _sceneRenderer.SubmitOverlayLines(_colliderLinesOnTop, /*onTop=*/ true);
     _sceneRenderer.SetIconSuppressedEntities(_colliderEntities);
 
-    // A selected rigidbody's mesh + collider outline already come from the orange
-    // on-top submissions above, so drop the generic selection highlight to avoid a
-    // redundant second mesh outline; a selected non-rigidbody still uses it.
-    if (selectedIsRigidBody)
+    // Drop the bodies from the generic selection highlight: their mesh and collider
+    // outlines already went out above, and the highlight would draw a second mesh
+    // silhouette over them. Per entity rather than all-or-nothing — with a body and
+    // a plain mesh both selected, clearing the whole set would leave the mesh with
+    // no outline at all.
+    if (!outlinedAsBodies.empty())
     {
-        _sceneRenderer.SetHighlightedEntity(Assisi::ECS::NullEntity);
+        std::vector<Assisi::ECS::Entity> stillHighlighted;
+        stillHighlighted.reserve(_selection.size());
+        for (const Assisi::ECS::Entity entity : _selection)
+        {
+            if (std::find(outlinedAsBodies.begin(), outlinedAsBodies.end(), entity) == outlinedAsBodies.end())
+                stillHighlighted.push_back(entity);
+        }
+        _sceneRenderer.SetHighlightedEntities(stillHighlighted);
     }
 }
 
 void EditorApp::SubmitColliderOutline(const glm::mat4 &bodyModel,
-                                       const Assisi::Physics::RigidBodyDescriptor &desc, const glm::vec3 &color)
+                                      const Assisi::Physics::RigidBodyDescriptor &desc, const glm::vec3 &color)
 {
     using Assisi::Physics::ColliderShape;
     using Item = Assisi::Render::OutlinePass::OutlineItem;
 
-    // One group per collider — its own outline pass, independent of the entity mesh
-    // outline (they must not merge). A capsule needs several meshes that DO union
-    // together (cylinder body + two end spheres) to form its single silhouette.
+    // One group per collider: its own outline pass, so it cannot merge with the
+    // entity mesh's outline. Within a group the meshes DO union — a capsule's
+    // cylinder body and two end spheres are one silhouette.
     std::vector<Item> items;
     switch (desc.shape)
     {

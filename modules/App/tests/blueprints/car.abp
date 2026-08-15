@@ -1,0 +1,37 @@
+{
+  "version": 2,
+  "entities": [
+    {
+      "name": "body",
+      "components": {
+        "Transform": {
+          "position": [0.0, 0.0, 0.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        }
+      }
+    },
+    {
+      "name": "wheel_fl",
+      "components": {
+        "Transform": {
+          "position": [-1.0, 0.0, 1.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Parent": { "parent": "body" }
+      }
+    },
+    {
+      "name": "wheel_fr",
+      "components": {
+        "Transform": {
+          "position": [1.0, 0.0, 1.0],
+          "rotation": [1.0, 0.0, 0.0, 0.0],
+          "scale": [1.0, 1.0, 1.0]
+        },
+        "Parent": { "parent": "body" }
+      }
+    }
+  ]
+}

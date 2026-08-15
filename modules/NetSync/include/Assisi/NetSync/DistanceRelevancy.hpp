@@ -5,7 +5,8 @@
 /// @brief The relevancy provider almost every game wants: a radius around what
 /// you are looking at, with hysteresis so the boundary is not a bug.
 
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationProviders.hpp>
 
 #include <cstdint>
 #include <unordered_map>
@@ -54,7 +55,7 @@ namespace Assisi::NetSync
 /// read. Nothing is built until a profile says so; the trigger is Chiara.
 class DistanceRelevancy final : public RelevancyProvider
 {
-  public:
+public:
     explicit DistanceRelevancy(RelevancyConfig config);
 
     void Compute(const RelevancyQuery &query, std::vector<NetId> &out) override;
@@ -62,7 +63,7 @@ class DistanceRelevancy final : public RelevancyProvider
 
     [[nodiscard]] const RelevancyConfig &Config() const { return _config; }
 
-  private:
+private:
     /// What one (connection, entity) pair is doing, kept only for pairs that
     /// are currently *in* the set — the ones a revoke could apply to.
     struct PairState

@@ -24,8 +24,8 @@ struct Healed
 
 } // namespace
 
-// Constructing a local EventQueue here is the point of de-singletonizing it:
-// tests get an isolated queue instead of sharing one process-wide instance.
+// Each case builds its own EventQueue: it is not a global, so tests never share
+// state through it.
 TEST_CASE("EventQueue: push then read returns events in order")
 {
     EventQueue queue;
@@ -98,28 +98,28 @@ TEST_CASE("EventQueue: flush clears every queue")
 TEST_CASE("EventQueue guard: pushing the same type while reading is caught")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    EventQueue                                queue;
+    EventQueue queue;
     for (int32_t i = 0; i < 4; ++i)
         queue.Push(Damage{i});
 
     CHECK_THROWS_AS(([&]
-                     {
-                         int32_t safety = 0;
-                         for (const Damage &damage : queue.Read<Damage>())
-                         {
-                             (void)damage;
-                             queue.Push(Damage{99}); // same type: may realloc the vector being read
-                             if (++safety > 1000)    // stop a missed detection from looping forever
-                                 break;
-                         }
-                     }()),
+    {
+        int32_t safety = 0;
+        for (const Damage &damage : queue.Read<Damage>())
+        {
+            (void)damage;
+            queue.Push(Damage{99});                  // same type: may realloc the vector being read
+            if (++safety > 1000)                     // stop a missed detection from looping forever
+                break;
+        }
+    }()),
                     ContractViolation);
 }
 
 TEST_CASE("EventQueue guard: indexing past the end of a read view is caught")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    EventQueue                                queue;
+    EventQueue queue;
     queue.Push(Damage{5});
 
     const EventSpan<Damage> events = queue.Read<Damage>();
@@ -130,7 +130,7 @@ TEST_CASE("EventQueue guard: indexing past the end of a read view is caught")
 TEST_CASE("EventQueue guard: pushing a different type while reading is allowed")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    EventQueue                                queue;
+    EventQueue queue;
     for (int32_t i = 0; i < 4; ++i)
         queue.Push(Damage{i});
 
@@ -138,30 +138,30 @@ TEST_CASE("EventQueue guard: pushing a different type while reading is allowed")
     // Healed lives in a different vector than the Damage view, so pushing it is
     // safe and must not trip the guard.
     CHECK_NOTHROW(([&]
-                   {
-                       for (const Damage &damage : queue.Read<Damage>())
-                       {
-                           (void)damage;
-                           ++seen;
-                           queue.Push(Healed{1});
-                       }
-                   }()));
+    {
+        for (const Damage &damage : queue.Read<Damage>())
+        {
+            (void)damage;
+            ++seen;
+            queue.Push(Healed{1});
+        }
+    }()));
     CHECK(seen == 4);
 }
 
 TEST_CASE("EventQueue guard: copying out then pushing after the loop is allowed")
 {
     Assisi::Testing::ThrowOnContractViolation guard;
-    EventQueue                                queue;
+    EventQueue queue;
     for (int32_t i = 0; i < 4; ++i)
         queue.Push(Damage{i});
 
     std::vector<int32_t> collected;
     CHECK_NOTHROW(([&]
-                   {
-                       for (const Damage &damage : queue.Read<Damage>())
-                           collected.push_back(damage.amount);
-                   }()));
+    {
+        for (const Damage &damage : queue.Read<Damage>())
+            collected.push_back(damage.amount);
+    }()));
     // Deferring the push until after the loop is the sanctioned pattern.
     CHECK_NOTHROW(queue.Push(Damage{100}));
     CHECK(collected.size() == 4);

@@ -16,6 +16,12 @@ namespace Assisi::App
 
 void BounceSystem(SystemContext &ctx)
 {
+    // Its own need, turned on where the need is rather than in whatever file
+    // happened to name this system. Idempotent, so it also survives a world that
+    // switched reporting off.
+    if (!ctx.world.physics.IsContactReporting())
+        ctx.world.physics.SetContactReporting(true);
+
     ECS::Scene &scene = ctx.world.scene;
 
     // Walk the contact log rather than querying for Bounce entities: contacts
@@ -77,7 +83,7 @@ void BounceSystem(SystemContext &ctx)
         // clamped rather than trusted: the inspector floors the field, but a level
         // file is just text and can hold anything.
         const glm::vec3 reflected = contact.velocity - 2.f * closingSpeed * contact.normal;
-        const float     rebound   = glm::max(bounce->rebound, 0.f);
+        const float rebound   = glm::max(bounce->rebound, 0.f);
         ctx.world.physics.SetBodyLinearVelocity(*body, reflected * rebound);
     }
 }

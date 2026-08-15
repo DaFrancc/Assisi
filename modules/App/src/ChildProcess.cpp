@@ -57,7 +57,7 @@ void ChildProcess::Terminate(double) { _pid = 0; }
 
 bool ChildProcess::Spawn(const std::filesystem::path &executable, const std::vector<std::string> &args,
                          const std::vector<std::string> &environment,
-                         const std::filesystem::path   &workingDirectory)
+                         const std::filesystem::path &workingDirectory)
 {
     Terminate();
 
@@ -107,6 +107,18 @@ bool ChildProcess::Spawn(const std::filesystem::path &executable, const std::vec
     if (pid == 0)
     {
         // --- child ---------------------------------------------------------
+        // First, before anything that can take time. Until execv replaces the
+        // image the child still carries the *parent's* signal handlers, and a
+        // signal arriving in that window runs the parent's handler in the child
+        // — with the parent's atexit chain behind it. Terminate() sends SIGTERM
+        // and can easily beat exec: the window is short, but a sanitized build
+        // widens it enough for the test suite to hit it every run, where doctest's
+        // own handler reports a crash from a process that was never a test runner.
+        // An editor spawning and immediately closing a play-in-editor client is
+        // the same shape.
+        for (int sig = 1; sig < NSIG; ++sig)
+            ::signal(sig, SIG_DFL); // EINVAL on the unmaskable ones; nothing to do about those
+
 #if defined(__linux__)
         // The one case the parent cannot clean up from its own side. Without
         // this, an editor that crashes (or is killed with -9) leaves its viewer
@@ -141,7 +153,7 @@ bool ChildProcess::IsRunning()
     if (_pid <= 0)
         return false;
 
-    int         status = 0;
+    int status = 0;
     const pid_t result = ::waitpid(static_cast<pid_t>(_pid), &status, WNOHANG);
     if (result == 0)
         return true; // still going

@@ -11,14 +11,11 @@
 ///
 /// ## The listen server is just a host in a windowed process
 ///
-/// The design notes describe wiring a host's own client through
-/// `CreateLoopbackPair` so the local player travels the same path as a remote
-/// one. That is not what this does, and deliberately: the same notes also say
-/// **one scene, not two** — the host's scene *is* the server scene, and it
-/// renders it directly. Given one scene there is nothing for a local loopback
-/// client to do except copy state onto itself and add a frame of interpolation
-/// delay to the one player who does not need any. So `Host()` from a windowed
-/// process *is* the listen server. Remote clients connect to it over UDP.
+/// `Host()` from a windowed process *is* the listen server: one scene, not two,
+/// rendered directly. There is deliberately **no loopback client for the local
+/// player** — with a single scene it could only copy state onto itself and add a
+/// frame of interpolation delay to the one player who needs none. Remote clients
+/// connect over UDP.
 ///
 /// (`NetTransport::CreateLoopbackPair` still earns its keep: it is how the
 /// replication tests run both halves in one process, and how a soak runs under
@@ -28,7 +25,9 @@
 #include <Assisi/Net/NetTransport.hpp>
 #include <Assisi/NetSync/InputCommand.hpp>
 #include <Assisi/NetSync/NetClock.hpp>
-#include <Assisi/NetSync/Replication.hpp>
+#include <Assisi/NetSync/ReplicationClient.hpp>
+#include <Assisi/NetSync/ReplicationConfig.hpp>
+#include <Assisi/NetSync/ReplicationServer.hpp>
 
 #include <cstdint>
 #include <memory>
@@ -54,19 +53,19 @@ struct SessionStats
 
     // Both roles.
     std::int32_t pingMs           = 0;
-    float        connectionQuality = 0.f; ///< 0..1; negative means "not measured yet".
-    float        inBytesPerSec    = 0.f;
-    float        outBytesPerSec   = 0.f;
+    float connectionQuality = 0.f;        ///< 0..1; negative means "not measured yet".
+    float inBytesPerSec    = 0.f;
+    float outBytesPerSec   = 0.f;
 
     // Host.
-    std::size_t   clientCount        = 0;
+    std::size_t clientCount        = 0;
     std::uint64_t snapshotsSent      = 0;
     std::uint64_t bytesSent          = 0;
     std::uint64_t replicatedEntities = 0;
 
     // Client.
-    bool          synchronized      = false;
-    bool          worldComplete     = false;
+    bool synchronized      = false;
+    bool worldComplete     = false;
     std::uint64_t snapshotsApplied  = 0;
     std::uint64_t snapshotsRejected = 0;
     std::uint64_t serverTick        = 0;
@@ -78,8 +77,8 @@ struct SessionStats
     // window, and whoever is drawing this already has both.
     std::uint64_t correctionsApplied = 0;
     std::uint64_t correctionBytes    = 0;
-    float         divergenceMean     = 0.f; ///< Metres, averaged over every correction so far.
-    float         divergenceMax      = 0.f; ///< Metres, worst since the session began.
+    float divergenceMean     = 0.f;         ///< Metres, averaged over every correction so far.
+    float divergenceMax      = 0.f;         ///< Metres, worst since the session began.
     std::uint64_t mirrorsResurrected = 0;
 
     // Host.
@@ -111,7 +110,7 @@ struct SessionStats
 
 class NetSession
 {
-  public:
+public:
     /// @param scene The scene this session replicates *from* (host) or *into*
     ///   (client). Captured by reference and must outlive the session — which
     ///   is why an application that swaps scenes should destroy the session
@@ -155,6 +154,20 @@ class NetSession
 
     /// @brief Tell a deferred join that the local world is built.
     void ConfirmLevelReady();
+
+    /// @brief The set of level and blueprint files this build holds, hashed.
+    ///
+    /// A **host** cannot be reached until it has one — every ServerHello is
+    /// withheld until then — and a **client** cannot answer one. Both are
+    /// deliberate: the two hellos are each sent exactly once, so one sent with a
+    /// placeholder is a join with no correct outcome. Computing the hash is a job
+    /// (App::ContentSetHashJob), so this normally lands a frame or two after
+    /// hosting or joining starts, and whichever side was waiting completes then.
+    void SetContentSetHash(std::uint64_t hash);
+
+    /// @brief Whether SetContentSetHash has been called on whichever half this
+    /// session is. True for an offline session, which needs no hash at all.
+    [[nodiscard]] bool HasContentSetHash() const;
 
     /// @brief Give up on a deferred join; @p reason lands in LastError() and in
     /// the client's reject message, so the UI can name the cause.
@@ -284,12 +297,12 @@ class NetSession
     /// @brief The replication client, client only. Null when not joined.
     [[nodiscard]] ReplicationClient *Client() { return _client.get(); }
 
-  private:
+private:
     void EnsureTransport();
 
-    ECS::Scene            &_scene;
+    ECS::Scene &_scene;
     Physics::PhysicsWorld *_physics = nullptr;
-    ReplicationConfig      _config;
+    ReplicationConfig _config;
 
     /// Created on the first Host()/Join() and destroyed on Disconnect(), so an
     /// offline process never initializes the networking library at all.
@@ -298,13 +311,13 @@ class NetSession
     std::unique_ptr<ReplicationClient>  _client;
     std::unique_ptr<NetClock>           _clock;
 
-    SessionRole                    _role       = SessionRole::Offline;
-    Net::ConnectionId              _connection = Net::InvalidConnection;
+    SessionRole _role       = SessionRole::Offline;
+    Net::ConnectionId _connection = Net::InvalidConnection;
     std::vector<Net::ConnectionId> _clients;
     std::vector<Net::NetEvent>     _events;
-    InputCommandBuffer             _inputBuffer;
-    std::string                    _lastError;
-    std::uint64_t                  _simTick = 0;
+    InputCommandBuffer _inputBuffer;
+    std::string _lastError;
+    std::uint64_t _simTick = 0;
 };
 
 } // namespace Assisi::NetSync

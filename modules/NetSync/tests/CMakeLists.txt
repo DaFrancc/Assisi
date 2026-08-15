@@ -22,12 +22,14 @@ add_executable(Assisi-NetSync-Tests
   TestInputCommand.cpp
   TestNetClock.cpp
   TestNetSession.cpp
+  TestBlueprintReplication.cpp
   TestBodyReplication.cpp
   TestComponentMaskCodec.cpp
   TestControl.cpp
   TestDistanceRelevancy.cpp
   TestEvents.cpp
   TestInstancePolicy.cpp
+  TestContentSet.cpp
   TestIntents.cpp
   TestMessages.cpp
   TestRelevancy.cpp

@@ -59,7 +59,7 @@ ECS::Entity SpawnSimulatedBody(ECS::Scene &scene, Physics::PhysicsWorld &world, 
 
 TEST_CASE("InterpolateTransforms: the physics writeback stamps the Transform change tick")
 {
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld world;
 
     const ECS::Entity e = SpawnSimulatedBody(scene, world, {0.f, 10.f, 0.f}, Physics::BodyMotion::Dynamic);
@@ -83,7 +83,7 @@ TEST_CASE("InterpolateTransforms: the physics writeback stamps the Transform cha
 
 TEST_CASE("InterpolateTransforms: a static body is skipped and never stamped")
 {
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld world;
 
     const ECS::Entity e = SpawnSimulatedBody(scene, world, {0.f, 10.f, 0.f}, Physics::BodyMotion::Static);
@@ -104,7 +104,7 @@ TEST_CASE("InterpolateTransforms: a static body is skipped and never stamped")
 
 TEST_CASE("InterpolateTransforms: an entity without a RigidBody is untouched")
 {
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld world;
 
     // A plain placement entity, alongside a simulated one so the query is non-empty.
@@ -121,7 +121,7 @@ TEST_CASE("InterpolateTransforms: an entity without a RigidBody is untouched")
 
 TEST_CASE("InterpolateTransforms: one moved body costs exactly one change tick")
 {
-    ECS::Scene            scene;
+    ECS::Scene scene;
     Physics::PhysicsWorld world;
 
     (void)SpawnSimulatedBody(scene, world, {0.f, 10.f, 0.f}, Physics::BodyMotion::Dynamic);

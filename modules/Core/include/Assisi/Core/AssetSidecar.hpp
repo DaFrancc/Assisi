@@ -10,13 +10,12 @@
 /// missing sidecars; the database reads their ids to build the GUID→path map.
 /// See docs/asset-database-architecture.md §2.
 ///
-/// S1 stored only the id. S3 adds the **composite manifest** — a glTF's
-/// `slot → material GUID` list (`subAssets`) written by the material-explosion
-/// pass. A leaf asset (texture, `.amat`, level) has an empty manifest. Import
-/// settings (texture color space, compression) and a `sourceHash` for
-/// stale-detection (D5/S4) are named in the doc and land later; the envelope
-/// (`version`/`type`) is forward-compatible, so older sidecars keep loading as
-/// fields are added.
+/// A composite (a glTF) also carries the **manifest** — its `slot → material
+/// GUID` list (`subAssets`) written by the material-explosion pass (S3) — and
+/// the `sourceHash` of the source it was exploded from (S4/D5). A leaf asset
+/// (texture, `.amat`, level) has neither. Import settings (texture color space,
+/// compression) land later; the envelope (`version`/`type`) is
+/// forward-compatible, so older sidecars keep loading as fields are added.
 ///
 /// The `.aast` file is an **editor source artifact** — it does not ship (the
 /// cooker consumes it into a baked pak index, S5). The *reader* below ships
@@ -37,12 +36,12 @@ namespace Assisi::Core
 
 /// @brief One entry of a composite asset's manifest: the material a mesh slot
 ///        binds to by default. Written by the glTF material-explosion pass (S3),
-///        read back as the default mesh→material binding (retiring the live
-///        `AssetCache::MeshDefaultMaterial` derivation — D4).
+///        read back as the default mesh→material binding — the stored form the
+///        renderer uses instead of deriving it live (D4).
 struct AssetSubAsset
 {
     std::uint32_t slot = 0;  ///< Dense material-slot index in the mesh.
-    AssetId       material;  ///< The `.amat` GUID exploded for that slot.
+    AssetId material;        ///< The `.amat` GUID exploded for that slot.
 };
 
 /// @brief The deserialized contents of a `.aast` sidecar.
@@ -56,18 +55,14 @@ struct AssetSidecar
 
     /// @brief Content hash of the composite's *source* (the `.gltf`/`.glb`) at
     ///        the time its materials were exploded (S4/D5). Absent on a leaf
-    ///        asset, and on a composite sidecar written before S4. A mismatch
-    ///        against the current source marks the composite stale.
+    ///        asset, and on any sidecar written before hashing existed. A
+    ///        mismatch against the current source marks the composite stale.
     std::optional<std::uint64_t> sourceHash;
 
     /// @brief A leaf asset's sidecar: identity only, no manifest and no source
-    /// hash — which is exactly what the two fields above document as "empty" and
-    /// "absent" for a leaf.
-    ///
-    /// Every caller that mints a sidecar wants this, and spelling it
-    /// `AssetSidecar{.guid = id}` left the other two members to their defaults,
-    /// which is correct but draws -Wmissing-field-initializers at each site.
-    /// Naming the case says what is meant instead of listing what is omitted.
+    ///        hash. Every mint site wants this; spelling it
+    ///        `AssetSidecar{.guid = id}` instead draws
+    ///        -Wmissing-field-initializers.
     [[nodiscard]] static AssetSidecar Leaf(AssetId id)
     {
         AssetSidecar sidecar;
@@ -84,7 +79,7 @@ struct AssetSidecar
 [[nodiscard]] AssetId MintAssetId();
 
 /// @brief Why reading a `.aast` sidecar failed.
-enum class AssetSidecarError
+enum class AssetSidecarError : std::uint8_t
 {
     ParseFailed, ///< Not valid JSON, or not a JSON object.
     WrongType,   ///< The envelope `type` is not the sidecar type.
