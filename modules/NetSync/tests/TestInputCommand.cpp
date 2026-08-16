@@ -246,7 +246,7 @@ TEST_CASE("InputCommandQueue refuses a command flood far in the future")
 TEST_CASE("InputCommandQueue refuses a command flood before anything has been applied" *
           doctest::should_fail())
 {
-    // ENG-117, open. InputCommand.cpp:164 computes the lookahead horizon as
+    // Open. InputCommand.cpp:164 computes the lookahead horizon as
     //   horizon = _hasApplied ? _lastAppliedTick : command.tick
     // so on a fresh connection every command is measured against *itself* and
     // `command.tick > horizon + kMaxQueueLookahead` can never be true. The case

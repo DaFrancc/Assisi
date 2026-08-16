@@ -1,7 +1,7 @@
 #version 450
 
-// FXAA 3.11 — simplified implementation, ported from docs/reference-shaders/fxaa.frag
-// (the pre-migration OpenGL version) to Vulkan GLSL: texture2D/sampler split
+// FXAA 3.11 — simplified implementation, ported from the pre-migration OpenGL
+// version to Vulkan GLSL: texture2D/sampler split
 // instead of combined sampler2D, and texel size passed as a push constant
 // instead of a loose uniform. Based on Timothy Lottes' FXAA technique.
 

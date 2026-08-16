@@ -12,8 +12,7 @@
 /// AssetCache), so opening one is an error.
 ///
 /// Editor-only: it depends on the mutable database and the loose asset tree,
-/// neither of which exists in a shipped build. See
-/// docs/asset-database-architecture.md §3.
+/// neither of which exists in a shipped build.
 
 #include <cstddef>
 #include <expected>

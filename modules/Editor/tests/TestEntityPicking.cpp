@@ -1,7 +1,7 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 
 /// @file TestEntityPicking.cpp
-/// @brief A viewport click hits the mesh, not a stand-in cube around it (ENG-125).
+/// @brief A viewport click hits the mesh, not a stand-in cube around it.
 ///
 /// Testing every meshed entity against a unit cube — ±0.5 in model space — picks
 /// anything not roughly unit-sized wrong in both directions: a large mesh cannot

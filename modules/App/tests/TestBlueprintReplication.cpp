@@ -8,7 +8,7 @@
 /// format and the id discipline. What it cannot check is the claim the whole
 /// design rests on: that the client's *own* expansion of the same file produces
 /// the same members, in the same order, at the same places — without the server
-/// sending any of it (docs/blueprint-system-concept.md §9).
+/// sending any of it.
 ///
 /// Both sides share an asset root here, which is what a matching content-set
 /// hash means in production.
@@ -459,8 +459,7 @@ TEST_CASE("Blueprint over the wire: the guest installs the systems the blueprint
 
     // A car that needs a system to behave. The guest never ran SpawnBlueprint,
     // so without the install hook it would hold the components and run none of
-    // the code — the founding failure of this whole design, across machines
-    // (docs/blueprint-concept-review.md W1).
+    // the code — the founding failure of this whole design, across machines.
     nlohmann::json car   = CarFile();
     car["systems"]       = nlohmann::json::array({"Counter"});
     Write(root, "car.abp", car);

@@ -3,7 +3,7 @@
 /// @file EditorWorlds.cpp
 /// @brief Multiple resident levels in the editor: switching which world is shown,
 ///        loading a second one alongside the first, and tearing down whatever a
-///        play session created. Design: docs/multi-scene-design-notes.md.
+///        play session created.
 
 #include <Assisi/Editor/EditorApp.hpp>
 #include "ImGuiQueries.hpp"

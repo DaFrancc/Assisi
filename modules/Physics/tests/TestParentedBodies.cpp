@@ -13,7 +13,7 @@
 /// parent again — a body that drifts by its parent's transform, forever.
 ///
 /// Blueprint members are routinely both parented and physics-driven — a car's
-/// wheels are exactly that (docs/blueprint-system-concept.md §12).
+/// wheels are exactly that.
 ///
 /// The tests supply their own resolver rather than a Runtime::Parent chain, which
 /// is the honest scope: the contract PhysicsWorld has is with the callable, and

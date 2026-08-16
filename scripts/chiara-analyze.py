@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read a Chiara capture and explain one frame, or the whole run.
 
-Chiara writes Chrome Trace Event JSON (docs/chiara-design-notes.md), which
+Chiara writes Chrome Trace Event JSON, which
 Perfetto renders beautifully and answers nothing specific about. This does the
 other half: pick a frame, print its scope tree with a duration against every
 slice, and show what the counters said at that instant.

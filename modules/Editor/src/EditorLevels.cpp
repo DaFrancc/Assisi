@@ -995,8 +995,8 @@ bool EditorApp::LoadLevelFromPath(const std::string &virtualPath)
 
     // Open Level reuses the edited world, clearing its scene in place rather than
     // creating a second one. That is what keeps the undo history's Scene& binding
-    // (and every panel's) valid for the whole session — see
-    // docs/multi-scene-design-notes.md. Only the world's level identity changes.
+    // (and every panel's) valid for the whole session. Only the world's level
+    // identity changes.
     _world->levelPath = virtualPath;
 
     // ...and its systems, which belong to the level now in it. This is the re-target

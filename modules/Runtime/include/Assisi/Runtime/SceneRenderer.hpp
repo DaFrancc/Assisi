@@ -251,7 +251,7 @@ public:
     /// @brief Queue editor billboards at world positions that belong to no entity.
     ///
     /// A blueprint instance's root is exactly that: it evaporates at expansion
-    /// (docs/blueprint-system-concept.md §3), so there is no Transform anywhere in
+    /// so there is no Transform anywhere in
     /// the scene marking where the copy was placed — and without a mark the author
     /// has nothing to click and nothing to look at while dragging the group. The
     /// positions come from the world's instance table, which is editor knowledge, so

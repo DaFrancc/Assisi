@@ -190,8 +190,7 @@ void EditorApp::OnStart()
     // own list, resolved through SystemCatalog, which every ASYSTEM declaration in
     // the link has already populated — the game registers nothing here. Each world
     // gets its own instances of them, so a system's cross-frame state does not
-    // advance N× across resident worlds
-    // (docs/world-system-binding-design-notes.md).
+    // advance N× across resident worlds.
     if (!_warnedGameRenderSystems && !Assisi::App::SystemCatalog::Instance().All().empty())
     {
         for (const Assisi::App::SystemDefinition &definition : Assisi::App::SystemCatalog::Instance().All())
@@ -1212,7 +1211,7 @@ bool EditorApp::IsEditable() const
     // Every history binds the *edited* world's scene by reference, and Save writes
     // that scene — so an edit made while a different world is shown would be
     // captured into the wrong scene's history and could never be saved. Other
-    // resident worlds are inspect-only (docs/multi-scene-design-notes.md).
+    // resident worlds are inspect-only.
     return _world != nullptr && _world == _worlds.Edited();
 }
 

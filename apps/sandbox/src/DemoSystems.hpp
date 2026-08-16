@@ -10,8 +10,7 @@
 /// spin on its own.
 ///
 /// All three are *stateless* — everything they touch lives in components — which
-/// is the shape a system installed into several worlds must have
-/// (docs/world-system-binding-design-notes.md §1).
+/// is the shape a system installed into several worlds must have.
 ///
 /// They live in a header rather than in main.cpp because ASYSTEM is read by
 /// reflectgen, and a declaration in a scanned header *is* the registration.

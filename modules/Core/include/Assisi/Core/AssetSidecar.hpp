@@ -8,7 +8,6 @@
 /// Every file under the asset root gets a `<file>.aast` sidecar carrying that
 /// file's `AssetId` (the Unity `.meta` model). The reconcile pass generates
 /// missing sidecars; the database reads their ids to build the GUID→path map.
-/// See docs/asset-database-architecture.md §2.
 ///
 /// A composite (a glTF) also carries the **manifest** — its `slot → material
 /// GUID` list (`subAssets`) written by the material-explosion pass (S3) — and

@@ -12,7 +12,6 @@
 /// records the `slot → material GUID` binding into the glTF's own `.aast`
 /// manifest. After this pass the mesh→material default is a *stored fact* the
 /// database reads back, instead of being re-derived from the glTF every load.
-/// See docs/asset-database-architecture.md §4 (step 3), §5, D4.
 ///
 /// Editor-only tooling. It lives in Geometry (not Core) because it needs the
 /// glTF importer and `.amat` serializer; when a dedicated editor/tools `Assets`

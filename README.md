@@ -440,8 +440,7 @@ keeps all mesh data in a few shared vertex and index buffers instead of one buff
 turns asset paths into GPU meshes and textures, reusing anything already loaded (including the built-in
 `prim://` primitives and the fallback textures) and doing its uploads off the main thread. `OutlinePass`,
 `IconPass` and `LinePass` are the editor's overlays, opt-in so a game build never compiles them.
-`GpuMarker.hpp` labels command buffers so RenderDoc and Nsight captures are readable; see
-[`docs/gpu-profiling-guide.md`](docs/gpu-profiling-guide.md).
+`GpuMarker.hpp` labels command buffers so RenderDoc and Nsight captures are readable.
 
 ## ECS
 ECS (Entity-Component-System) is how game objects are represented: an entity is just an ID, its data
@@ -524,9 +523,7 @@ Steps 1 and 2 are deliberately separate decisions made by separate people. An en
 component *is able to* replicate, but only the game says whether it actually *does* — so marking
 something in an engine header never quietly adds it to every game's bandwidth bill. Steps 3 and 4 are
 what you edit in the editor: each component header gets a clickable glyph, and the `Replicated` component
-shows the same choices as a checklist. Design notes and the reasoning behind all of this are in
-[`docs/replication-optin-plan-v1.md`](docs/replication-optin-plan-v1.md) and
-[`docs/replication-plan-v4.md`](docs/replication-plan-v4.md).
+shows the same choices as a checklist.
 
 ## Debug
 Debug is the developer UI: [Dear ImGui](https://github.com/ocornut/imgui) and
@@ -581,30 +578,18 @@ permanently rather than rotting. Press **F9** in the sandbox for the capture pan
 past out of the ring, or stream a longer session straight to disk.
 
 Chiara has no dependencies of its own, which is what lets `Core` (and therefore everything else) sit
-above it. Design notes are in [`docs/chiara-design-notes.md`](docs/chiara-design-notes.md), and
-[`scripts/chiara-analyze.py`](scripts/chiara-analyze.py) reads a capture from the terminal when you want
-numbers rather than a flame chart.
+above it. [`scripts/chiara-analyze.py`](scripts/chiara-analyze.py) reads a capture from the terminal
+when you want numbers rather than a flame chart.
 
 # Documentation
 Per-module overviews are in the section above, and the public API is documented with Doxygen-style
-comments in the headers. Design notes and the rolling code-review docket live in [`docs/`](docs/) —
-including the architecture notes for [clustered lighting](docs/light-culling-design-notes.md),
-[GPU-driven rendering](docs/gpu-driven-rendering-design-notes.md),
-[multi-scene worlds](docs/multi-scene-design-notes.md), the [job system](docs/job-system-design-notes.md),
-[asset streaming](docs/asset-streaming-design-notes.md), [replication](docs/replication-plan-v4.md) and
-its [opt-in model](docs/replication-optin-plan-v1.md), and [Chiara](docs/chiara-design-notes.md).
+comments in the headers. Those headers are the reference: a header states what its type guarantees and
+why, next to the code that has to keep the promise.
 
-The replication docs come with [a survey of how other ECS engines solve the same
-problem](docs/replication-research-ecs-survey.md) — Unity NetCode, bevy_replicon, lightyear, Flecs,
-EnTT, Unreal (classic/Iris/Mass), Photon Quantum, Overwatch, SpatialOS and Godot — with a source beside
-every claim and the unverifiable ones marked as such. It is the evidence the design argues from,
-including the two places it deliberately departs from the majority.
-
-Two practical guides:
-- [`docs/gpu-profiling-guide.md`](docs/gpu-profiling-guide.md) — capturing and reading a frame with
-  RenderDoc, written for someone who has never used a GPU profiler. Includes the Wayland/NVIDIA
-  pitfalls, which are not guessable.
-- [`docs/remaining-work.md`](docs/remaining-work.md) — the running list of known gaps.
+There are no design documents in this repository, deliberately. Plans, design rationale and the running
+list of known gaps live in the issue tracker instead, where they are edited by the same act that
+advances the work. A markdown file in the tree is a copy that stops being true without anything
+noticing, which is what happened to the tree this replaced.
 
 # Useful Links
 - [Issue Tracker](https://github.com/DaFrancc/Assisi/issues)

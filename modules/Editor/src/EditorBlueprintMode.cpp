@@ -3,7 +3,7 @@
 /// @file EditorBlueprintMode.cpp
 /// @brief Editing a blueprint in its own world, with its own light.
 ///
-/// A blueprint is an ordinary level file (docs/blueprint-system-concept.md), so
+/// A blueprint is an ordinary level file, so
 /// editing one is opening it as a level — no second format, no second loader. What
 /// this file adds is the *mode*: the level you came from stays resident behind it,
 /// the blueprint world takes the edited role and its own undo stack, and the panels

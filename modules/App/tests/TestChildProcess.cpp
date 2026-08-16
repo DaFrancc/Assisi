@@ -9,7 +9,7 @@
 /// editor's play-in-editor clients are the caller, and a leaked one holds a
 /// window, a socket, and a GPU context for the rest of the session.
 ///
-/// POSIX-only, like the implementation (docs/replication-plan-v4.md §5).
+/// POSIX-only, like the implementation.
 
 #include <doctest/doctest.h>
 

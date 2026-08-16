@@ -3,7 +3,7 @@
 
 /// @file DrawItem.hpp
 /// @brief One drawable submesh instance + the key it sorts by — the mesh pass's
-///        producer/consumer seam (docs/mesh-material-architecture.md §5).
+///        producer/consumer seam.
 ///
 /// A runtime *producer* extracts one DrawItem per visible submesh (cull → LOD
 /// select → emit), sorts a span of them by `sortKey`, and hands that span to

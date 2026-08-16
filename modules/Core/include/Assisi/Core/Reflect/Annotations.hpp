@@ -64,10 +64,6 @@
 /// (redundant), and on AFIELD(norep) in a component that is not replicable (the
 /// annotation would mean nothing).
 ///
-/// Full rationale, alternatives weighed, and the survey of how other ECS engines
-/// answer this: docs/replication-optin-plan-v1.md and
-/// docs/replication-research-ecs-survey.md.
-///
 /// Radio (declarative editor visibility driven by a sibling enum's value):
 ///   AFIELD(radioBroadcast)       -- marks an AENUM enum field as a broadcaster
 ///   AFIELD(radioListen = { source = shape, value = Box, behavior = vanish })

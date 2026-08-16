@@ -2,8 +2,7 @@
 #pragma once
 
 /// @file JobSystem.hpp
-/// @brief The engine's general-purpose task scheduler (design:
-///        docs/job-system-design-notes.md, stage 1 — the core).
+/// @brief The engine's general-purpose task scheduler.
 ///
 /// A pool of worker threads draining a shared task queue, plus a separate
 /// main-thread queue for work that must run on the main thread (GPU submit, ECS

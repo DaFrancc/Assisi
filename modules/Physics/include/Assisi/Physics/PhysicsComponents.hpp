@@ -56,7 +56,7 @@ enum class ColliderShape : std::uint8_t
 /// dynamic body for every mirrored entity, and this descriptor is what it builds
 /// it from. It is also the discriminator between the client's two kinds of
 /// mirror — an entity with one is body-corrected, an entity without one is
-/// interpolated (docs/replication-plan-v4.md §3.5).
+/// interpolated.
 ACOMP(replicable)
 struct RigidBodyDescriptor
 {

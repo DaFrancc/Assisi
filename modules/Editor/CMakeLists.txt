@@ -1,7 +1,7 @@
 add_library(Assisi-Editor)
 Assisi_apply_defaults(Assisi-Editor)
 
-# The editor tooling library (docs/editor-extraction-plan.md). A library, not
+# The editor tooling library. A library, not
 # an executable: component reflection registers per final binary, so the
 # editor must be linked INTO the same executable as the game code it inspects
 # (the Phase 2 GameEditor target). Nothing links this except editor

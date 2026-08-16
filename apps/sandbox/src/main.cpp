@@ -6,8 +6,7 @@
 /// executable just parses arguments, builds an EditorConfig, and runs it. Its
 /// only "game" content is DemoSystems.hpp, which exists so the per-world system
 /// binding has something observable to run. (The Phase 2 template splits
-/// this into Game/GameEditor targets over a shared GameLib; see
-/// docs/editor-extraction-plan.md.)
+/// this into Game/GameEditor targets over a shared GameLib.)
 
 #include "ServerApp.hpp"
 

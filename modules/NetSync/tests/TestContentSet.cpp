@@ -8,7 +8,7 @@
 /// neither machine ever loads — and what it buys is the property the rest of the
 /// design leans on: after a successful join, both sides are known to expand any
 /// blueprint identically, so a spawn can travel as "expand file #7" rather than
-/// as every component of every member (docs/blueprint-system-concept.md §9).
+/// as every component of every member.
 ///
 /// The subtle half is the *timing*. Both hellos are sent exactly once and never
 /// resent, so a hello sent before its side knows its content set is a join with

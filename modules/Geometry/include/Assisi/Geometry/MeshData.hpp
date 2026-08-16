@@ -12,7 +12,7 @@
 /// One vertex array + one index array per mesh asset, addressed through
 /// SubMesh index ranges. SubMesh offsets are relative, so the data
 /// sub-allocates into Render's shared GeometryArena by adding a base offset
-/// without any consumer changing. See docs/mesh-material-architecture.md §1.
+/// without any consumer changing.
 
 #include <cmath>
 #include <cstdint>

@@ -3,7 +3,7 @@
 
 /// @file Chiara.hpp
 /// @brief The capture runtime — rings, threads, clocks, and the emit entry
-///        points (design: docs/chiara-design-notes.md).
+///        points.
 ///
 /// Chiara records what the engine spent time and memory on, into per-thread ring
 /// buffers, and hands a recent window to a serializer on demand. It is a capture

@@ -37,7 +37,7 @@ option(ASSISI_ENABLE_FAST_MATH "Enable fast-math in Release" ON)
 # Unit tests (pure-logic modules: ECS, asset-path, action-map, topo-sort).
 option(ASSISI_BUILD_TESTS "Build unit tests" ON)
 
-# Chiara, the performance/memory capture system (docs/chiara-design-notes.md).
+# Chiara, the performance/memory capture system.
 # OFF on every configuration — debug, dev and ship alike — because capture is a
 # decision independent of optimization level, and the build worth profiling is
 # the optimized one. The `-chiara` presets and the `-c` make targets (gd-c,

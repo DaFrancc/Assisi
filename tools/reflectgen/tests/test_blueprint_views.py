@@ -244,7 +244,7 @@ class TestRefusals(ViewTestCase):
 
     @unittest.expectedFailure
     def test_one_blueprint_opted_in_under_two_type_names(self):
-        # ENG-117, open. `generate` (blueprint_views.py:513) dedupes type names
+        # Open. `generate` (blueprint_views.py:513) dedupes type names
         # and nothing dedupes sources, so the reverse collision goes through.
         # kGeneratedInstanceViews is keyed by *source* (:495), so both entries
         # name the same .abp under different views and TestInstanceViews checks

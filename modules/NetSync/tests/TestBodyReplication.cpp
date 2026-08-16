@@ -5,8 +5,8 @@
 /// worlds, one loopback, and the question of whether the second world ends up
 /// arranged like the first.
 ///
-/// The model under test is the one in docs/replication-plan-v4.md — both sides
-/// step the same physics at 60 Hz, and the wire's job is to periodically
+/// The model under test is local simulation with authoritative correction — both
+/// sides step the same physics at 60 Hz, and the wire's job is to periodically
 /// re-anchor the client rather than stream it a movie. So the oracle is not "did
 /// the bytes arrive" but "did the two piles settle the same way, and did they
 /// both stop talking about it afterwards".

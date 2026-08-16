@@ -66,8 +66,7 @@ class WorldManager;
 ///
 /// Carries the **world**, not a bare scene: a system reaches its entities
 /// through `ctx.world.scene` and its bodies through `ctx.world.physics`, which
-/// is what makes the same system function usable in whichever worlds install it
-/// (docs/world-system-binding-design-notes.md §2).
+/// is what makes the same system function usable in whichever worlds install it.
 struct SystemContext
 {
     World &world;
@@ -157,7 +156,7 @@ public:
         /// For anything that consumes input or drives the one camera/HUD: the app
         /// has a single InputContext but may have several worlds simulating, so an
         /// ungated controller system would apply the same keypresses in all of
-        /// them (docs/multi-scene-design-notes.md §1). Meaningless on render
+        /// them. Meaningless on render
         /// systems, which only ever run for the world being drawn — calling it
         /// there logs an error and changes nothing.
         SystemHandle &ActiveWorldOnly();
@@ -166,8 +165,7 @@ public:
         ///
         /// What makes it affordable to install a system that a given world may
         /// never need — an open-world level names everything, and the regions
-        /// that stream in decide what actually runs
-        /// (docs/world-system-binding-design-notes.md §5). Idle cost is a couple
+        /// that stream in decide what actually runs. Idle cost is a couple
         /// of array loads per phase, so frame cost tracks resident entities
         /// rather than how many systems were registered.
         ///

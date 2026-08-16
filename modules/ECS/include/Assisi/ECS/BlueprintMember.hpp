@@ -50,7 +50,7 @@ namespace Assisi::ECS
 /// ## Why it replicates
 ///
 /// Membership is state with a current value, and nothing with a current value
-/// becomes an event (docs/replication-plan-v4.md §5). Without it, a host that
+/// becomes an event. Without it, a host that
 /// prunes a member leaves the client believing the wheel still belongs to the car.
 /// `instanceId` is a per-world counter, so the wire carries the instance's
 /// baseNetId and the client maps it to its own local id on receipt — the same

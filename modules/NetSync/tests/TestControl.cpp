@@ -14,8 +14,6 @@
 /// component decides for itself what it controls; and an entity resurrected by
 /// the editor's play/stop restore leaves the reverse index describing a world
 /// that no longer exists.
-///
-/// See docs/replication-messaging-relevancy-plan-v1.md M0.
 
 #include <doctest/doctest.h>
 

@@ -277,7 +277,7 @@ class CodegenTest(unittest.TestCase):
 
     @unittest.expectedFailure
     def test_int64_bounds_are_emitted(self):
-        # ENG-117, open. NUMERIC_BOUND_RANGES (reflect_codegen.py:40) is keyed by
+        # Open. NUMERIC_BOUND_RANGES (reflect_codegen.py:40) is keyed by
         # FieldType enum value and is wrong at both ends: it carries an 'Int' key
         # that is not a FieldType value at all (bare `int` is in
         # UNSUPPORTED_TYPES, so nothing can ever produce it), and it omits Int64
@@ -1445,12 +1445,12 @@ class EmptyRegistrationUnitTest(unittest.TestCase):
 
     @unittest.expectedFailure
     def test_empty_unit_names_a_flag_that_exists(self):
-        # ENG-117, open. reflectgen.py:499 tells the reader that handlers are
+        # Open. reflectgen.py:499 tells the reader that handlers are
         # bound by `--message-handlers`. argparse defines no such option — the
         # real one is `--check-handlers` (reflectgen.py:391) — so following the
         # instruction produces "unrecognized arguments" and nothing else. It sits
         # inside a Python string literal, i.e. generated output rather than a
-        # comment, which is why the ENG-117 comment sweep left it alone.
+        # comment, which is why the comment sweep left it alone.
         #
         # expectedFailure until the flag name is corrected; the fix removes this
         # decorator.

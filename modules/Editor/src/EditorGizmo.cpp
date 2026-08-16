@@ -238,8 +238,7 @@ void EditorApp::DrawTransformGizmo()
 
     // Instance mode: the group moves as one and it is the instance *record* that
     // changes, so no member overrides are recorded. Writing overrides here would
-    // pin every member the first time somebody nudged an instance
-    // (docs/blueprint-system-concept.md).
+    // pin every member the first time somebody nudged an instance.
     const bool instanceMode = _selectedEntity == Assisi::ECS::NullEntity && _selectedInstance.IsValid();
 
     // Held is the *only* thing the drawing below reports back, and the release edge

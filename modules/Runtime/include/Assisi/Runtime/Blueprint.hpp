@@ -11,9 +11,6 @@
 /// browser to filter on — the extension never gates behaviour, and instancing a
 /// `.alvl` into another `.alvl` works because the loader cannot tell them apart
 /// and a distinction enforced weakly is worse than one enforced not at all.
-///
-/// See docs/blueprint-system-concept.md; the sections are cited where the code
-/// implements a decision that would otherwise read as arbitrary.
 
 #include <cstddef>
 #include <cstdint>
@@ -444,7 +441,7 @@ bool PruneFromInstance(ECS::Scene &scene, ECS::Entity entity);
 /// **One function, called by both sides.** Client expansion has to agree with host
 /// expansion field for field, because the first snapshot is a delta against the
 /// blueprint; two spellings of this that differ in the low bits are a silent
-/// cross-build desync (docs/blueprint-implementation-plan.md §5, risk 1).
+/// cross-build desync.
 [[nodiscard]] ECS::Transform ComposeTransform(const ECS::Transform &placement, const ECS::Transform &local);
 
 /// @brief The exact inverse: what @p local would have to be for

@@ -17,7 +17,7 @@
 /// LOD convention is a `*_LOD<n>` node- or mesh-name suffix. Materials are
 /// extracted into MeshData::Materials (factors + texture paths resolved
 /// relative to the file); embedded images are NOT decoded — unpack .glb to
-/// separate files (see docs/mesh-material-architecture.md §3).
+/// separate files.
 
 #include <cstdint>
 #include <expected>

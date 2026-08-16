@@ -123,7 +123,7 @@ struct ComponentMeta
     /// actually sends it is decided elsewhere — by the `Replicated` marker's
     /// exclusion mask (per entity) and the game's `neverReplicate` list (per
     /// game). Keeping them apart is what stops an engine module setting network
-    /// policy for every game built on it. See docs/replication-optin-plan-v1.md.
+    /// policy for every game built on it.
     ///
     /// Opt-in: a type must not acquire a wire form by accident. "Everything
     /// serializable travels" replicates things like a `Camera` whose `isActive`

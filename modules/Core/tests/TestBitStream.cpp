@@ -328,7 +328,7 @@ TEST_CASE("BitStream: quantized floats round-trip within their step size")
 TEST_CASE("BitStream: a 32-bit quantized float round-trips at the top of its range" *
           doctest::should_fail())
 {
-    // ENG-117, open. At bits == 32 the level count is 0xFFFFFFFF, whose float
+    // Open. At bits == 32 the level count is 0xFFFFFFFF, whose float
     // conversion rounds *up* to 4294967296.0f. `scaled + 0.5f` at the top of the
     // range therefore lands one past UINT32_MAX, and BitStream.cpp:138's
     // static_cast<std::uint32_t> of it is undefined. On x86-64 the out-of-range

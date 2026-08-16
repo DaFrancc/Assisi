@@ -2,14 +2,14 @@
 
 /// @file TestLevelSystemsPrecheck.cpp
 /// @brief The two checks standing between a level and its systems must reach the
-/// same verdict — ENG-126, the half of round-7 B20 that ENG-114 left open.
+/// same verdict.
 ///
 /// `LoadLevelFromPath` asks twice whether a level's systems can be installed.
 /// `LevelSystemsAreDeclared` asks *before* anything is touched, reading the names
 /// straight out of the file. `WorldManager::ApplySystems` asks again on the far
 /// side of the scene replacement, against the names `Load` parsed into the level
-/// header. ENG-114 made that late refusal survivable; it did not establish that
-/// it cannot fire, and only the early check can refuse cheaply — with the level
+/// header. An earlier fix made that late refusal survivable; it did not establish
+/// that it cannot fire, and only the early check can refuse cheaply — with the level
 /// on screen still the one that was there.
 ///
 /// The hazard is that these are two readers of one array, in two files. Let them
@@ -153,8 +153,8 @@ TEST_CASE("The systems pre-check and ApplySystems agree on every shape of the ar
     {
         // The sharpest case. Two hand-written parsers diverge here first: one
         // skips the junk, the other coerces it, or refuses the file outright.
-        // Either way the pre-check would pass a file ApplySystems then rejects —
-        // ENG-126's window, entered without a single bad *name* in the file.
+        // Either way the pre-check would pass a file ApplySystems then rejects,
+        // entered without a single bad *name* in the file.
         WriteLevel(root, "Junk.alvl",
                    nlohmann::json::array({"Counter", 42, nullptr, nlohmann::json::object({{"a", 1}}),
                                           nlohmann::json::array({"Follower"})}));

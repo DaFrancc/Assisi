@@ -13,8 +13,7 @@
 /// bytes — parsing `.amat` JSON, uploading a mesh, resolving texture channels.
 ///
 /// So the seam is this interface. Deserializers and the render `AssetCache` are
-/// written against it and never learn which backend served them. See
-/// docs/asset-database-architecture.md §3.
+/// written against it and never learn which backend served them.
 ///
 /// This interface ships in every build. Its editor backend (LooseFileProvider)
 /// does not.
