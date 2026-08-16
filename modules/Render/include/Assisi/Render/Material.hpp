@@ -21,19 +21,37 @@
 namespace Assisi::Render
 {
 
-/// @brief Per-material constants (std140-friendly, 96 bytes). Mirrors the
-/// `MaterialConstants` uniform block in the mesh shader. The texIndices words
-/// are each channel's slot in the bindless descriptor table (stage D).
+/// @brief Named bits of MaterialConstants::flags.x. Mirrored by the flag
+/// constants in mesh.frag — the two must change together.
+enum MaterialFlagBits : uint32_t
+{
+    kMaterialFlagHasNormalTexture = 1u << 0,
+    kMaterialFlagEnergyPreservingDiffuse = 1u << 1, ///< EON diffuse; set when BaseDiffuseRoughness > 0.
+};
+
+/// @brief Per-material constants — one row of the shared material table.
+/// Mirrors the `MaterialRow` struct in mesh.frag; the two must change
+/// together. The layout contract that keeps them trivially in sync: every
+/// member is a vec4/uvec4 lane, so the C++ layout, std140 and std430 all
+/// agree with no padding, and the row size is wherever sizeof lands — every
+/// buffer stride derives from it, nothing hardcodes a byte count. To extend
+/// the material model, claim a reserved lane component (or append a new
+/// vec4 lane) here and in the shader, and assign it in Material::Create.
+/// The texIndices words are each channel's slot in the bindless descriptor
+/// table (stage D).
 struct MaterialConstants
 {
     glm::vec4 baseColorFactor{1.f, 1.f, 1.f, 1.f};
     glm::vec4 emissiveFactorNormalScale{0.f, 0.f, 0.f, 1.f};  ///< xyz = emissive, w = normalScale.
-    glm::vec4 metalRoughOcclusion{1.f, 1.f, 1.f, 0.f};        ///< x = metallic, y = roughness, z = occlusion, w = pad.
-    glm::uvec4 flags{0u, 0u, 0u, 0u};                          ///< bit0 = has normal texture; rest reserved.
-    glm::uvec4 texIndices{0u, 0u, 0u, 0u};        ///< bindless slots: x=baseColor y=normal z=metalRough w=occlusion.
+    glm::vec4 metalRoughOcclusion{1.f, 1.f, 1.f, 0.f};        ///< x = metallic, y = roughness, z = occlusion, w = reserved.
+    glm::vec4 specularColorIor{1.f, 1.f, 1.f, 1.5f};          ///< rgb = specularColor, w = specularIor.
+    glm::vec4 openPbrParams{1.f, 1.f, 0.f, 0.f};   ///< x = baseWeight, y = specularWeight, z = baseDiffuseRoughness, w = reserved.
+    glm::uvec4 flags{0u, 0u, 0u, 0u};              ///< x = MaterialFlagBits; yzw reserved.
+    glm::uvec4 texIndices{0u, 0u, 0u, 0u};         ///< bindless slots: x=baseColor y=normal z=metalRough w=occlusion.
     glm::uvec4 texIndicesEmissive{0u, 0u, 0u, 0u}; ///< x = emissive bindless slot; yzw reserved.
 };
-static_assert(sizeof(MaterialConstants) == 96, "MaterialConstants must match the shader's uniform block.");
+static_assert(sizeof(MaterialConstants) % sizeof(glm::vec4) == 0,
+              "MaterialConstants must stay vec4-granular so the GLSL mirror shares its layout.");
 
 /// @brief The five texture channels of a PBR material, resolved to their slots
 /// in the bindless descriptor table (empty channels resolve to a default

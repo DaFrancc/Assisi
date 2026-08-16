@@ -26,6 +26,11 @@ MaterialData MakeFullMaterial()
     m.NormalScale = 0.75f;
     m.OcclusionStrength = 0.5f;
     m.EmissiveFactor = {1.0f, 0.5f, 0.25f};
+    m.BaseWeight = 0.8f;
+    m.SpecularWeight = 0.7f;
+    m.SpecularColor = {0.9f, 0.8f, 0.6f};
+    m.SpecularIor = 1.33f;
+    m.BaseDiffuseRoughness = 0.4f;
     // Distinct GUIDs per channel so a round-trip that swapped or dropped one is
     // caught.
     m.BaseColorTexture         = *Assisi::Core::AssetId::Parse("aaaaaaaa-0000-4000-8000-000000000001");
@@ -55,6 +60,11 @@ TEST_CASE("MaterialFile: a full material survives a serialize -> deserialize rou
     CHECK(restored->NormalScale == doctest::Approx(0.75f));
     CHECK(restored->OcclusionStrength == doctest::Approx(0.5f));
     CHECK(restored->EmissiveFactor.y == doctest::Approx(0.5f));
+    CHECK(restored->BaseWeight == doctest::Approx(0.8f));
+    CHECK(restored->SpecularWeight == doctest::Approx(0.7f));
+    CHECK(restored->SpecularColor.z == doctest::Approx(0.6f));
+    CHECK(restored->SpecularIor == doctest::Approx(1.33f));
+    CHECK(restored->BaseDiffuseRoughness == doctest::Approx(0.4f));
     CHECK(restored->BaseColorTexture == original.BaseColorTexture);
     CHECK(restored->NormalTexture == original.NormalTexture);
     CHECK(restored->MetallicRoughnessTexture == original.MetallicRoughnessTexture);
@@ -81,10 +91,19 @@ TEST_CASE("MaterialFile: absent fields keep their default (forward-compatible lo
     const auto restored = DeserializeMaterial(minimal);
     REQUIRE(restored.has_value());
     CHECK(restored->MetallicFactor == doctest::Approx(0.9f));
-    // Defaults preserved for everything absent.
+    // Defaults preserved for everything absent. The OpenPBR fields are the
+    // live case: every .amat written before they existed omits them, and the
+    // defaults are chosen to reproduce the pre-OpenPBR shading exactly
+    // (specular_ior 1.5 -> F0 0.04).
     CHECK(restored->RoughnessFactor == doctest::Approx(1.0f));
     CHECK(restored->BaseColorFactor.x == doctest::Approx(1.0f));
     CHECK(restored->BaseColorTexture.IsNil());
+    CHECK(restored->BaseWeight == doctest::Approx(1.0f));
+    CHECK(restored->SpecularWeight == doctest::Approx(1.0f));
+    CHECK(restored->SpecularColor.x == doctest::Approx(1.0f));
+    CHECK(restored->SpecularColor.z == doctest::Approx(1.0f));
+    CHECK(restored->SpecularIor == doctest::Approx(1.5f));
+    CHECK(restored->BaseDiffuseRoughness == doctest::Approx(0.0f));
 }
 
 TEST_CASE("MaterialFile: invalid JSON and wrong type are rejected")
