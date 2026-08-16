@@ -1,0 +1,5750 @@
+{
+  "entities": [
+    {
+      "components": {
+        "Camera": {
+          "farZ": 500.0,
+          "fovDegrees": 60.0,
+          "isActive": true,
+          "nearZ": 0.1
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            34.0,
+            72.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.213231,
+            0.977002
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "MeasurementCamera"
+    },
+    {
+      "components": {
+        "DirectionalLight": {
+          "color": [
+            1.0,
+            0.98,
+            0.95
+          ],
+          "direction": [
+            -0.4,
+            -1.0,
+            -0.35
+          ],
+          "intensity": 2.0
+        }
+      },
+      "name": "Sun"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-000000000001",
+            "path": "prim://cube"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            -0.25,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            90.0,
+            0.5,
+            90.0
+          ]
+        }
+      },
+      "name": "Ground"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.350925,
+            3.0,
+            -35.381469
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_0"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -30.955606,
+            3.0,
+            -35.526752
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_1"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -23.746957,
+            3.0,
+            -34.754518
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_2"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -18.95196,
+            3.0,
+            -35.162317
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_3"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -10.71999,
+            3.0,
+            -35.461481
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_4"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -6.372259,
+            3.0,
+            -37.060282
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_5"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -0.266618,
+            3.0,
+            -36.560764
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_6"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            4.286987,
+            3.0,
+            -36.42163
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_7"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            12.545651,
+            3.0,
+            -34.76896
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_8"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            17.078033,
+            3.0,
+            -35.037514
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_9"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            22.109377,
+            3.0,
+            -34.486611
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_10"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            28.672129,
+            3.0,
+            -36.679905
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_11"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            35.898052,
+            3.0,
+            -36.098005
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_12"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.613619,
+            3.0,
+            -29.859858
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_13"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -30.157443,
+            3.0,
+            -29.044182
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_14"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -23.56028,
+            3.0,
+            -28.734275
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_15"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -18.234468,
+            3.0,
+            -28.23177
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_16"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -11.229928,
+            3.0,
+            -30.21323
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_17"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -4.756783,
+            3.0,
+            -29.042175
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_18"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            1.696742,
+            3.0,
+            -28.075639
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_19"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            7.06246,
+            3.0,
+            -28.369162
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_20"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            10.748571,
+            3.0,
+            -28.649196
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_21"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            17.146306,
+            3.0,
+            -31.083953
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_22"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            22.545709,
+            3.0,
+            -29.38159
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_23"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            30.735089,
+            3.0,
+            -31.059714
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_24"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            34.797895,
+            3.0,
+            -27.847373
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_25"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.568941,
+            3.0,
+            -24.443044
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_26"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -28.058317,
+            3.0,
+            -21.92905
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_27"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -25.256544,
+            3.0,
+            -24.885086
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_28"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -19.25511,
+            3.0,
+            -23.405218
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_29"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -12.015612,
+            3.0,
+            -24.846806
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_30"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -5.956962,
+            3.0,
+            -25.088154
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_31"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            1.733179,
+            3.0,
+            -23.925671
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_32"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            4.393717,
+            3.0,
+            -24.362931
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_33"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            12.631092,
+            3.0,
+            -24.183657
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_34"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            17.602135,
+            3.0,
+            -23.85123
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_35"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            22.0587,
+            3.0,
+            -22.212289
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_36"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            30.42301,
+            3.0,
+            -24.371135
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_37"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            36.630898,
+            3.0,
+            -24.433856
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_38"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -36.650261,
+            3.0,
+            -16.243034
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_39"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -29.265105,
+            3.0,
+            -15.924522
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_40"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -24.2309,
+            3.0,
+            -17.655195
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_41"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -17.011514,
+            3.0,
+            -19.30077
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_42"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -11.326813,
+            3.0,
+            -17.258384
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_43"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -7.190651,
+            3.0,
+            -19.189525
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_44"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -0.28933,
+            3.0,
+            -17.406938
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_45"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            6.453406,
+            3.0,
+            -18.873388
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_46"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            10.472929,
+            3.0,
+            -19.327196
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_47"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            18.13224,
+            3.0,
+            -16.989015
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_48"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            25.070245,
+            3.0,
+            -16.580702
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_49"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            28.679145,
+            3.0,
+            -16.104702
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_50"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            33.843578,
+            3.0,
+            -17.583854
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_51"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.176195,
+            3.0,
+            -10.528273
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_52"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -28.913646,
+            3.0,
+            -11.139869
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_53"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -23.774068,
+            3.0,
+            -10.444415
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_54"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -18.628206,
+            3.0,
+            -12.848593
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_55"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -11.137509,
+            3.0,
+            -10.305633
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_56"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -4.666719,
+            3.0,
+            -11.607715
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_57"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            1.130376,
+            3.0,
+            -10.94905
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_58"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            4.604836,
+            3.0,
+            -13.50552
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_59"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            10.086081,
+            3.0,
+            -12.190139
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_60"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            17.349963,
+            3.0,
+            -11.145676
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_61"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            23.788084,
+            3.0,
+            -11.807928
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_62"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            28.974409,
+            3.0,
+            -12.738805
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_63"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            35.190413,
+            3.0,
+            -11.822764
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_64"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.468143,
+            3.0,
+            -5.48978
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_65"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -28.381512,
+            3.0,
+            -7.369628
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_66"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -24.916515,
+            3.0,
+            -7.034742
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_67"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -16.889678,
+            3.0,
+            -5.556568
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_68"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -11.768051,
+            3.0,
+            -4.722172
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_69"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -6.765037,
+            3.0,
+            -4.299688
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_70"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -0.366968,
+            3.0,
+            -6.518902
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_71"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            4.928931,
+            3.0,
+            -6.181954
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_72"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            11.001664,
+            3.0,
+            -5.100823
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_73"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            16.11254,
+            3.0,
+            -6.154184
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_74"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            25.119414,
+            3.0,
+            -5.35146
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_75"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            28.415323,
+            3.0,
+            -7.529326
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_76"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            33.756297,
+            3.0,
+            -4.508941
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_77"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.269861,
+            3.0,
+            1.384683
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_78"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -29.389841,
+            3.0,
+            -0.449927
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_79"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -22.840201,
+            3.0,
+            0.835461
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_80"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -17.604274,
+            3.0,
+            0.852828
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_81"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -10.474216,
+            3.0,
+            1.057126
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_82"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -4.901911,
+            3.0,
+            1.483792
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_83"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.522124,
+            3.0,
+            0.59979
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_84"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            4.818888,
+            3.0,
+            -0.307055
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_85"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            11.103254,
+            3.0,
+            -0.164627
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_86"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            19.033815,
+            3.0,
+            -0.775681
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_87"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            22.361974,
+            3.0,
+            -0.69982
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_88"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            29.639683,
+            3.0,
+            1.743506
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_89"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            36.720954,
+            3.0,
+            0.509712
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_90"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.409548,
+            3.0,
+            6.325555
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_91"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -28.571469,
+            3.0,
+            6.57924
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_92"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -23.449517,
+            3.0,
+            4.362754
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_93"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -17.306236,
+            3.0,
+            4.389436
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_94"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -12.677929,
+            3.0,
+            5.034486
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_95"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -5.683105,
+            3.0,
+            6.249841
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_96"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.44862,
+            3.0,
+            6.140952
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_97"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            5.446325,
+            3.0,
+            6.280231
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_98"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            10.715909,
+            3.0,
+            7.23143
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_99"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            18.983635,
+            3.0,
+            5.374183
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_100"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            24.333547,
+            3.0,
+            7.486542
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_101"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            28.948543,
+            3.0,
+            5.276468
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_102"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            34.792177,
+            3.0,
+            4.665963
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_103"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.386221,
+            3.0,
+            12.065466
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_104"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -30.24841,
+            3.0,
+            12.315679
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_105"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -25.005157,
+            3.0,
+            11.360712
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_106"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -19.37162,
+            3.0,
+            12.096206
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_107"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -12.983825,
+            3.0,
+            12.627536
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_108"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -7.242461,
+            3.0,
+            13.191277
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_109"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.765628,
+            3.0,
+            12.502739
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_110"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            6.462009,
+            3.0,
+            12.669939
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_111"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            11.024136,
+            3.0,
+            11.586362
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_112"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            19.239205,
+            3.0,
+            12.873111
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_113"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            23.394034,
+            3.0,
+            11.71193
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_114"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            29.002363,
+            3.0,
+            12.686003
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_115"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            35.178293,
+            3.0,
+            12.213336
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_116"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -36.333492,
+            3.0,
+            18.725137
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_117"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -27.908185,
+            3.0,
+            17.527638
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_118"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -22.402338,
+            3.0,
+            16.25138
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_119"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -18.839096,
+            3.0,
+            17.571177
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_120"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -11.334921,
+            3.0,
+            17.041559
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_121"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -5.404096,
+            3.0,
+            16.193691
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_122"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            0.957449,
+            3.0,
+            18.695476
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_123"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            5.981587,
+            3.0,
+            16.774725
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_124"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            10.991305,
+            3.0,
+            19.091642
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_125"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            17.704875,
+            3.0,
+            17.317035
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_126"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            22.668739,
+            3.0,
+            18.741626
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_127"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            28.199125,
+            3.0,
+            18.843579
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_128"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            34.516506,
+            3.0,
+            17.64482
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_129"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -35.240845,
+            3.0,
+            24.718195
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_130"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -30.455618,
+            3.0,
+            24.720415
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_131"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -21.82837,
+            3.0,
+            22.338852
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_132"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -16.172054,
+            3.0,
+            22.276091
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_133"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -12.535009,
+            3.0,
+            24.273572
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_134"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -5.104053,
+            3.0,
+            23.047913
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_135"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -0.903387,
+            3.0,
+            23.176385
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_136"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            5.877434,
+            3.0,
+            25.159388
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_137"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            12.969852,
+            3.0,
+            24.057251
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_138"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            18.823425,
+            3.0,
+            21.953419
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_139"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            23.325571,
+            3.0,
+            21.777929
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_140"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            29.800597,
+            3.0,
+            23.279706
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_141"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            34.973896,
+            3.0,
+            24.382336
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_142"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -33.94746,
+            3.0,
+            29.225965
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_143"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -29.685366,
+            3.0,
+            29.560314
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_144"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -25.147012,
+            3.0,
+            31.156281
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_145"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -18.630206,
+            3.0,
+            29.549489
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_146"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -11.89574,
+            3.0,
+            31.06418
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_147"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -5.773349,
+            3.0,
+            28.862599
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_148"
+    },
+    {
+      "components": {
+        "MeshRenderer": {
+          "materialOverrides": [
+            {
+              "guid": "8c08e9c0-e9fb-4f84-a9ba-7a90223526fd",
+              "path": "materials/checker.amat"
+            }
+          ],
+          "mesh": {
+            "guid": "00000000-0000-0000-0000-00000000000a",
+            "path": "prim://icosphere-high"
+          }
+        },
+        "Transform": {
+          "position": [
+            -0.829297,
+            3.0,
+            31.115296
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            3.0,
+            3.0,
+            3.0
+          ]
+        }
+      },
+      "name": "Icosphere_149"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.943224,
+            0.947755,
+            0.697897
+          ],
+          "intensity": 10.503453,
+          "radius": 24.75
+        },
+        "Transform": {
+          "position": [
+            29.25,
+            3.924319,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Point_0"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.759232,
+            0.932089,
+            0.69894
+          ],
+          "intensity": 8.489982,
+          "radius": 24.75
+        },
+        "Transform": {
+          "position": [
+            20.682873,
+            5.401671,
+            20.682873
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Point_1"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.903155,
+            0.996979,
+            0.791276
+          ],
+          "intensity": 10.960743,
+          "radius": 24.75
+        },
+        "Transform": {
+          "position": [
+            0.0,
+            3.01416,
+            29.25
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Point_2"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.827871,
+            0.694388,
+            0.928433
+          ],
+          "intensity": 10.604943,
+          "radius": 24.75
+        },
+        "Transform": {
+          "position": [
+            -20.682873,
+            4.401188,
+            20.682873
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Point_3"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.810488,
+            0.732716,
+            0.993995
+          ],
+          "intensity": 9.038552,
+          "radius": 24.75
+        },
+        "Transform": {
+          "position": [
+            -29.25,
+            3.691623,
+            0.0
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Point_4"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.929459,
+            0.834374,
+            0.884966
+          ],
+          "intensity": 7.526434,
+          "radius": 24.75
+        },
+        "Transform": {
+          "position": [
+            -20.682873,
+            5.243793,
+            -20.682873
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Point_5"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.66016,
+            0.726663,
+            0.866166
+          ],
+          "intensity": 8.849083,
+          "radius": 24.75
+        },
+        "Transform": {
+          "position": [
+            -0.0,
+            4.887175,
+            -29.25
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Point_6"
+    },
+    {
+      "components": {
+        "PointLight": {
+          "color": [
+            0.893027,
+            0.603903,
+            0.788373
+          ],
+          "intensity": 9.276464,
+          "radius": 24.75
+        },
+        "Transform": {
+          "position": [
+            20.682873,
+            2.941037,
+            -20.682873
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Point_7"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.902362,
+            0.757902,
+            0.897958
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "innerAngle": 18.0,
+          "intensity": 23.906694,
+          "outerAngle": 32.0,
+          "radius": 36.0
+        },
+        "Transform": {
+          "position": [
+            11.136932,
+            8.0,
+            11.136932
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Spot_0"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.940316,
+            0.960578,
+            0.942854
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "innerAngle": 18.0,
+          "intensity": 20.28875,
+          "outerAngle": 32.0,
+          "radius": 36.0
+        },
+        "Transform": {
+          "position": [
+            -11.136932,
+            8.0,
+            11.136932
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Spot_1"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.985762,
+            0.812094,
+            0.914383
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "innerAngle": 18.0,
+          "intensity": 24.602891,
+          "outerAngle": 32.0,
+          "radius": 36.0
+        },
+        "Transform": {
+          "position": [
+            -11.136932,
+            8.0,
+            -11.136932
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Spot_2"
+    },
+    {
+      "components": {
+        "SpotLight": {
+          "color": [
+            0.812378,
+            0.992329,
+            0.956777
+          ],
+          "direction": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "innerAngle": 18.0,
+          "intensity": 19.998942,
+          "outerAngle": 32.0,
+          "radius": 36.0
+        },
+        "Transform": {
+          "position": [
+            11.136932,
+            8.0,
+            -11.136932
+          ],
+          "rotation": [
+            1.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "name": "Spot_3"
+    }
+  ],
+  "systems": [],
+  "version": 2
+}

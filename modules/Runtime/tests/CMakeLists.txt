@@ -9,6 +9,7 @@ add_executable(Assisi-Runtime-Tests
   TestDrawItem.cpp
   TestMaterialConstants.cpp
   TestMeshCuller.cpp
+  TestPerfScenes.cpp
   TestFrustum.cpp
   TestSceneSerializer.cpp
   TestHierarchy.cpp
