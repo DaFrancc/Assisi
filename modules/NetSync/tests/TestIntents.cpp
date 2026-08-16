@@ -14,8 +14,6 @@
 /// The host is tested alongside the clients on purpose. A listen server's player
 /// is not a connection, so without deliberate work it would be the one
 /// participant whose intents skipped the door.
-///
-/// See docs/replication-messaging-relevancy-plan-v1.md M4.
 
 #include <doctest/doctest.h>
 

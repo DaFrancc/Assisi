@@ -12,8 +12,7 @@
 /// Editor-only, never linked into a shipped game. It rests on two neutral
 /// runtime primitives added for it: Scene::ReviveAt (exact-identity
 /// resurrection) and SceneSerializer::ScopedRawEntityContext (raw-handle
-/// EntityRef serialization). Background in
-/// docs/editor-undo-redo-design-notes.md.
+/// EntityRef serialization).
 
 #include <cstddef>
 #include <cstdint>

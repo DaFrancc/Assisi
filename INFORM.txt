@@ -3,8 +3,7 @@ INFORM — deferred work & deliberate omissions
 
 This note tracks things that were consciously *deferred*, not forgotten. If you
 are new to the repo (or future me), read this before "fixing" something that
-looks missing — it may be parked on purpose. Source of the audit is
-docs/code-review-2026-07-round4.md.
+looks missing — it may be parked on purpose.
 
 Deferred by decision
 --------------------

@@ -461,7 +461,7 @@ TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Remov
 
     // The reverse (one material exploded, source grows to two) reports slot 1
     // Added — the additive-safe case, no conflict.
-    // ENG-117, open: `root2` is not a second root — see the case below.
+    // Open: `root2` is not a second root — see the case below.
     const fs::path root2   = WriteMaterialAssets(MintAssetId());
     const auto resMat2 = [&root2](const AssetId &id) { return ResolveMaterialPathIn(root2, id); };
     REQUIRE(ExplodeGltfMaterials("model.gltf", resolveTex).has_value());
@@ -480,7 +480,7 @@ TEST_CASE("DiffGltfMaterials: an appended slot is Added, a dropped slot is Remov
 TEST_CASE("WriteMaterialAssets hands out a root per call, not one shared directory" *
           doctest::should_fail())
 {
-    // ENG-117, open, and a test-integrity finding rather than a product bug: the
+    // Open, and a test-integrity finding rather than a product bug: the
     // Added/Removed case above reads as running its two halves against two
     // independent roots, and does not. WriteMaterialAssets pins the fixed
     // directory `assisi_assetimport_test`, so its second call wipes and recreates

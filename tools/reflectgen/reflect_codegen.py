@@ -14,8 +14,8 @@ worse than a build error.
 The spelling is `replicable`, not `replicated`, and the difference is the whole
 point: the annotation grants a *capability* (this type has a wire form), while
 whether any given entity actually sends it is policy decided elsewhere — the
-Replicated marker's exclusion mask, and the game's neverReplicate list. See
-docs/replication-optin-plan-v1.md. The old spelling is rejected by name rather
+Replicated marker's exclusion mask, and the game's neverReplicate list. The old
+spelling is rejected by name rather
 than ignored, because "unknown flag" and "this flag changed meaning" are
 different problems for a reader to debug.
 """
@@ -347,7 +347,7 @@ def _check_replication(components: list[ComponentInfo], header_name: str) -> Non
                 f"was renamed to 'replicable'. The flag grants a capability — this type *can* "
                 f"cross the wire — while whether a given entity sends it is policy, held by the "
                 f"Replicated marker's exclusion mask and the game's neverReplicate list. Write "
-                f"'replicable'. See docs/replication-optin-plan-v1.md.")
+                f"'replicable'.")
 
         if comp.args.has('replicable'):
             if comp.is_asset:
@@ -961,8 +961,8 @@ def _check_no_instance_views(components: list[ComponentInfo], header_name: str) 
     component's fields entirely. Neither annotation is a way through here,
     because the problem is not that a view cannot be serialized — it is that a
     view *stored* anywhere is a member list that goes stale, which is the failure
-    the whole blueprint design is built to prevent
-    (docs/blueprint-system-concept.md §7). A view lives in the scope of the call
+    the whole blueprint design is built to prevent. A view lives in the scope of
+    the call
     that produced it; only the instance id may outlive it, and an ECS::InstanceId
     field is the supported way to say so.
 

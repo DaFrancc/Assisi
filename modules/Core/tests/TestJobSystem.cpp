@@ -405,7 +405,7 @@ TEST_CASE("A JobSystem built with the capture runtime down is harmless" * doctes
     // Application, so no InitGuard, so worker registration happens with nothing
     // initialized. It must behave exactly as it does in a default build.
     //
-    // ENG-117, open, and a test-integrity finding: the precondition is destroyed
+    // Open, and a test-integrity finding: the precondition is destroyed
     // by the case above, which calls Chiara::Initialize() and never undoes it.
     // Chiara::Shutdown() would not help — it only clears the recording flag
     // (Chiara.cpp:370); g_initialized stays set and the registered thread

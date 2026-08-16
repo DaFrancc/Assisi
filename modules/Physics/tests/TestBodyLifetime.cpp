@@ -59,7 +59,7 @@ TEST_CASE("RemoveBody refuses a default-constructed handle instead of passing it
 
 TEST_CASE("GetBodyTransform refuses a handle that names nothing, like its sibling accessors")
 {
-    // ENG-117. PhysicsWorld.cpp:914 is the one accessor with no `IsAdded` guard —
+    // PhysicsWorld.cpp:914 is the one accessor with no `IsAdded` guard —
     // GetBodyVelocity (:930) and IsBodyCCDEnabled (:944) both check first, and
     // RemoveBody checks `IsInvalid()`. This pins what the unguarded path actually
     // does with the two handles a caller can hold by mistake, so the guard can be

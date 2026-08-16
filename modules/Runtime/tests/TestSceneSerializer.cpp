@@ -420,7 +420,7 @@ TEST_CASE("SceneSerializer: a refusal after the clear says the scene was replace
 }
 
 // ---------------------------------------------------------------------------
-// A malformed *shape* is refused by value, not thrown (ENG-120).
+// A malformed *shape* is refused by value, not thrown.
 //
 // Load's contract is std::expected-shaped: every way a file can be wrong comes
 // back as a LevelError. Left unguarded, a `version` that is a string or a missing
@@ -505,7 +505,7 @@ TEST_CASE("SceneSerializer: loading through a file reports the replacement too")
     }
     {
         // Valid JSON, right version, no `entities`. Load guards its own top-level
-        // reads (ENG-120) and refuses before the clear, which is why this file is
+        // reads and refuses before the clear, which is why this file is
         // grouped with the parse failure rather than with the replacement below.
         // Unguarded it throws instead, and LoadFromFile's catch clears the scene on
         // the way out — a shape Load could see coming costing the caller its level.
@@ -883,7 +883,7 @@ TEST_CASE("SceneSerializer: a Save nested inside another context hands it back u
     CHECK(level.at("entities").size() == 1);
 
     const nlohmann::json after = SceneSerializer::EntityToRef(target);
-    REQUIRE(after.is_string()); // was null before ENG-121: Save blanked the outer context
+    REQUIRE(after.is_string()); // was null once: Save blanked the outer context
     CHECK(after.get<std::string>() == "outer_target");
 }
 

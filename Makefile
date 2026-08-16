@@ -129,8 +129,8 @@ test-clang-asan: clang-asan
 test-clang-tsan: clang-tsan
 	ctest --preset clang-tsan
 
-# Chiara builds: the same configs with the capture system compiled in
-# (docs/chiara-design-notes.md). Off by default everywhere, so these are the
+# Chiara builds: the same configs with the capture system compiled in.
+# Off by default everywhere, so these are the
 # only way to get it. Configure + build in one step like the sanitizer targets;
 # the configure is a cached no-op after the first run.
 #

@@ -5,7 +5,7 @@
 ///
 /// "Create blueprint from selection" is not a new mechanism — it is *save the
 /// selection as a file, and replace it with an instance of that file*
-/// (docs/blueprint-system-concept.md §1). So the property that matters is that
+/// So the property that matters is that
 /// the swap is invisible: the entities that come back stand exactly where the
 /// originals did, and a second copy placed elsewhere carries the same shape.
 ///

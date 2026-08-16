@@ -6,7 +6,7 @@
 /// Overrides are **recorded, not computed**: one exists because somebody edited
 /// that field, and a field nobody touched re-reads from the source on every load.
 /// That is what makes "fix it once, fixed everywhere" true, and it is the whole
-/// point of the format (docs/blueprint-system-concept.md §5).
+/// point of the format.
 ///
 /// The cases that matter are the ones where two claims meet, because those are
 /// the ones that get decided differently at two keyboards: outer beats inner per

@@ -491,7 +491,7 @@ TEST_CASE("Serializing while other threads emit stays consistent")
 }
 
 // ---------------------------------------------------------------------------
-// PumpSession's unsynchronised read of session.active — ENG-117, open
+// PumpSession's unsynchronised read of session.active — open
 // ---------------------------------------------------------------------------
 //
 // PumpSession's fast path (Serializer.cpp:608) reads `session.active` without
@@ -499,8 +499,8 @@ TEST_CASE("Serializing while other threads emit stays consistent")
 // BeginSession (:601) and EndSession both write it under that lock. That is a
 // data race in the formal sense — not a benign one — and the header compounds
 // it by describing the fast path as costing "a few atomic loads", which is a
-// synchronisation the code does not have. The ENG-117 sweep corrected the
-// comment and left the race.
+// synchronisation the code does not have. The comment sweep that found this
+// corrected the comment and left the race.
 //
 // **This case cannot be kept in the suite.** A race is only observable to the
 // thread sanitizer, and a tsan report fails the *process*, not a case — there is

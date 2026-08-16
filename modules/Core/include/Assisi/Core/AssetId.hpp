@@ -7,8 +7,7 @@
 ///
 /// An `AssetId` is a plain 16-byte value: trivially copyable, heap-free, cheap
 /// to hash, safe to store inline in a component or serialize into a level. It is
-/// the identity half of the asset-database architecture
-/// (docs/asset-database-architecture.md §1): stored references point at an
+/// the identity half of the asset-database architecture: stored references point at an
 /// `AssetId`, and the database maps that id to the file currently holding it, so
 /// references survive any rename or move.
 ///

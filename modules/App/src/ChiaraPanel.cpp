@@ -1,6 +1,6 @@
 /* Copyright (c) 2025 Francisco Vivas Puerto (aka "DaFrancc"). */
 /// @file ChiaraPanel.cpp
-/// @brief The capture control panel (design: docs/chiara-design-notes.md §10).
+/// @brief The capture control panel.
 ///
 /// Lives in App rather than Editor so a game gets it too — a shipped build made
 /// with `-c` is exactly the one you want to capture from, and it has no editor.

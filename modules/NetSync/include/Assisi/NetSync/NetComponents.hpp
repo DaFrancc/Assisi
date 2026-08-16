@@ -73,7 +73,7 @@ struct Replicated
     /// capability — this *can* cross the wire — and this decides, per entity,
     /// which of those capabilities are actually used. An engine module can no
     /// longer set network policy for a game by editing one of its own headers,
-    /// which is the whole point (docs/replication-optin-plan-v1.md).
+    /// which is the whole point.
     ///
     /// Empty by default, meaning "send every capable component present". That
     /// polarity is Unity's, and it is deliberate: `Transform`, `Name`,
@@ -103,9 +103,8 @@ struct Replicated
 ///
 /// Absent on everything uncontrolled — AI, props, the world — which is the
 /// default and costs nothing. Deliberately named for what it *is* rather than
-/// "Owner": the survey behind
-/// docs/replication-messaging-relevancy-plan-v1.md found that "ownership" in
-/// shipping engines is up to five unrelated jobs fused onto one pointer, and
+/// "Owner": the survey behind this design found that "ownership" in shipping
+/// engines is up to five unrelated jobs fused onto one pointer, and
 /// the systems with the fewest ownership bugs are the ones whose names refuse
 /// to say the word. This component does exactly three of those jobs — input
 /// binding, directed-message addressing, and disconnect cleanup — and state

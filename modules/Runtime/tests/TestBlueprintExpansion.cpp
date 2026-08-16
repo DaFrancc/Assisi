@@ -7,8 +7,7 @@
 /// The load-bearing property is that expansion is a pure function of the file's
 /// bytes plus a placement: the member list's *order* becomes NetId assignment and
 /// the composed transforms become a delta baseline, so a host and a client that
-/// expand the same file must agree exactly
-/// (docs/blueprint-system-concept.md §9). These cases pin the order, the
+/// expand the same file must agree exactly. These cases pin the order, the
 /// composition, the naming, and every refusal that keeps a file from meaning two
 /// things at once.
 

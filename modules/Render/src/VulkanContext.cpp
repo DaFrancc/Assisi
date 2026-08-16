@@ -208,8 +208,8 @@ bool DeviceMeetsRequirements(VkPhysicalDevice device, const VkPhysicalDeviceProp
     // The bindless material table needs an unbounded, partially-bound,
     // non-uniformly-indexed sampled-image array, and the indirect-draw stages
     // need drawIndirectCount. Required here (well before D) so unsupported
-    // hardware fails loudly at selection instead of mid-migration — see
-    // docs/mesh-material-architecture.md §10. Must stay in lock-step with the
+    // hardware fails loudly at selection instead of mid-migration. Must stay in
+    // lock-step with the
     // enables in CreateLogicalDevice.
     if (features12.descriptorIndexing != VK_TRUE || features12.runtimeDescriptorArray != VK_TRUE ||
         features12.shaderSampledImageArrayNonUniformIndexing != VK_TRUE ||

@@ -13,8 +13,7 @@
 ///
 /// The CPU vertex/index data is NOT retained after upload — bounds live in the
 /// submesh table, and any future CPU consumer (mesh colliders, editor picking)
-/// re-imports or opts in at resolve time (see
-/// docs/mesh-material-architecture.md §1, §8).
+/// re-imports or opts in at resolve time.
 
 #include <cstddef>
 #include <cstdint>
@@ -180,8 +179,8 @@ public:
 
     /// @brief Stable, process-unique id assigned by AssetCache at upload (never
     /// reused; survives Clear()). 0 = unassigned. Symmetric with Material::Id —
-    /// it keys the draw sort by mesh and becomes the arena mesh index later
-    /// (docs/mesh-material-architecture.md §1). Set once by the cache; the
+    /// it keys the draw sort by mesh and becomes the arena mesh index later.
+    /// Set once by the cache; the
     /// MeshBuffer itself never mints.
     uint32_t Id() const { return _id; }
     void SetId(uint32_t id) { _id = id; }

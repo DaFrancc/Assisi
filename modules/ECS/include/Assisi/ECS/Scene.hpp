@@ -219,8 +219,7 @@ struct Scene
     ///
     /// By ComponentId rather than static type so a caller holding only a runtime
     /// id can ask — notably the system registry's activation gate, which decides
-    /// whether a system has anything to do before calling it
-    /// (docs/world-system-binding-design-notes.md §5). Cheap by construction:
+    /// whether a system has anything to do before calling it. Cheap by construction:
     /// ids index a bounds-checked array, so this is two loads and a compare, with
     /// no hashing and no iteration.
     ///

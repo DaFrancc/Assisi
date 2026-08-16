@@ -77,7 +77,7 @@ TEST_CASE("ComputeBoundingSphere: a range past the end of the index array return
 
 // ── An index that names no vertex ────────────────────────────────────────────
 //
-// ENG-117, open. MeshData.hpp:86 and :127 validate the index *range* against
+// Open. MeshData.hpp:86 and :127 validate the index *range* against
 // Indices.size(); nothing validates the indices themselves, and neither the
 // check nor the loop ever looks at Vertices.size(). So `Vertices[Indices[i]]`
 // (:95, :138) runs off the vertex array for any glTF whose index array outruns

@@ -14,9 +14,8 @@
 /// path and every reference still resolves.
 ///
 /// This is **editor-only**. A shipped build never scans an asset tree or mints
-/// ids — it consumes a baked pak index (PakProvider, S5). See
-/// docs/asset-database-architecture.md §3a, §4. It moves behind that gate once a
-/// shipped/editor build split exists; until then it lives in Core and builds in
+/// ids — it consumes a baked pak index (PakProvider, S5). It moves behind that
+/// gate once a shipped/editor build split exists; until then it lives in Core and builds in
 /// every configuration.
 ///
 /// Reconcile-not-clobber (D3): an existing sidecar is never rewritten or

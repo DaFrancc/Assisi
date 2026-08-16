@@ -108,7 +108,7 @@ const bool s_registered = []
 TEST_CASE("ComponentRegistry: Count agrees with the table before the first finalize" *
           doctest::should_fail())
 {
-    // ENG-117, open. ComponentRegistry.cpp:189 is the only accessor that does not
+    // Open. ComponentRegistry.cpp:189 is the only accessor that does not
     // call EnsureFinalized() first — All(), Find(), ById(), IdOf(),
     // SerializableComponents() and ReplicableComponents() all do. So before the
     // first finalize, Count() reports the raw registration total, duplicates
@@ -157,7 +157,7 @@ TEST_CASE("ComponentRegistry: after finalize the duplicate is gone and Count agr
 TEST_CASE("MessageRegistry: a duplicate message name leaves one entry, not two" *
           doctest::should_fail())
 {
-    // ENG-117, open. MessageRegistry::EnsureFinalized (MessageRegistry.cpp:52)
+    // Open. MessageRegistry::EnsureFinalized (MessageRegistry.cpp:52)
     // diagnoses duplicate names and then keeps them: it logs, it asserts, and it
     // never erases. ComponentRegistry handles the same situation with
     // std::unique + erase. The assert is debug-only, so a release build retains

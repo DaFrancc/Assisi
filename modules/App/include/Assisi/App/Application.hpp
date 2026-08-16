@@ -182,8 +182,7 @@ protected:
     /// (ctx.events); this accessor is for app code outside a system.
     Core::EventQueue &GetEvents() { return _events; }
 
-    /// @brief The engine's shared task scheduler (design:
-    /// docs/job-system-design-notes.md). Owned by Application; its main-thread
+    /// @brief The engine's shared task scheduler. Owned by Application; its main-thread
     /// queue is drained once per frame in Run() just before OnUpdate. Use
     /// Jobs().RunOnMain(...) to marshal background results back to a safe point,
     /// ParallelFor(...) to fan work out, or Run(pool, fn) for async chains.
@@ -272,7 +271,7 @@ private:
     /// Declared first so the capture runtime is up before anything else exists —
     /// in particular before _jobs spawns its workers, which register themselves
     /// with it — and so it is torn down last. Inert and empty unless built with
-    /// -c (see docs/chiara-design-notes.md).
+    /// -c.
     Chiara::InitGuard _chiara;
 
     AppConfig _config;

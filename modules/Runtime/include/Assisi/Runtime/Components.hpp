@@ -9,7 +9,7 @@
 /// is not required. Transform/Camera stay trivially copyable (plain data), but
 /// MeshRenderer deliberately spends that property: its material lists are
 /// std::vectors (variable slot count), so it is movable but not trivially
-/// copyable — see docs/mesh-material-architecture.md §4.
+/// copyable.
 /// Use Transform for position/rotation/scale and MeshRenderer
 /// to associate a mesh and its materials with an entity.
 ///

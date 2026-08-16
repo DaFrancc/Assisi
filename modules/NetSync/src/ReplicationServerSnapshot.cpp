@@ -164,8 +164,7 @@ void ReplicationServer::WriteEntityComponents(NetId netId, ECS::Entity entity, s
         // Afterwards it is suppressed, at a known cost — a *non-pose* Transform
         // edit on a live body (a runtime scale change) reaches clients only at
         // the next keyframe sweep. Accepted for v1, because a live scale change
-        // needs a collider reshape the engine does not do either
-        // (docs/replication-plan-v4.md §5).
+        // needs a collider reshape the engine does not do either.
         //
         // Suppression yields to the force-send above for the same reason the
         // change gate does: a client that has never received this Transform has

@@ -83,8 +83,8 @@ enum class AssetCacheReset : std::uint8_t
     /// Leave the cache alone: the new level's assets are added to whatever is
     /// already there, and assets shared with a resident level are reused rather
     /// than re-uploaded. Required for any load that happens while another world
-    /// is alive (docs/multi-scene-design-notes.md §0 — the Clear moves out of
-    /// the load path and becomes a post-travel sweep).
+    /// is alive: the Clear moves out of the load path and becomes a post-travel
+    /// sweep.
     Keep,
 };
 
@@ -110,8 +110,7 @@ struct LevelLoadOptions
     AssetCacheReset reset = AssetCacheReset::ClearFirst;
 
     /// Receives the level's non-entity metadata — notably the list of systems it
-    /// names, which the caller applies to the world it loaded into
-    /// (docs/world-system-binding-design-notes.md §3).
+    /// names, which the caller applies to the world it loaded into.
     Runtime::LevelHeader *header = nullptr;
 };
 

@@ -21,7 +21,7 @@
 /// path (stages A5–E) stays behind a runtime toggle as the pixel-exact reference
 /// to validate this against. GPU instance coalescing, screen-size LOD selection,
 /// and a dirty-tracked ECS→GPU object mirror (so the per-frame CPU table build
-/// disappears too) are stage F2. See docs/mesh-material-architecture.md §9.
+/// disappears too) are stage F2.
 
 #include <array>
 #include <cstdint>

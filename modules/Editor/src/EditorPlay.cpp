@@ -872,7 +872,7 @@ void EditorApp::DrawGameControlWindow()
 
     // During play only. Play/Stop's snapshot-and-restore is defined for the edited
     // world alone, and a second resident level that nothing simulates has no restore
-    // story (docs/multi-scene-design-notes.md).
+    // story.
     const bool canAddWorld =
         (playing || paused) && !networked && !_levelFiles.empty() && !_pendingWorldLoad.has_value();
     ImGui::BeginDisabled(!canAddWorld);

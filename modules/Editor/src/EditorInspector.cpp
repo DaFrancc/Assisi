@@ -1522,7 +1522,7 @@ void EditorApp::DrawInspector()
         // otherwise looks like any other entity's, right up until a save turns the
         // edit into an override. The marking doubles as the cheap substitute for
         // an override validator: a component shown as overridden that nobody
-        // touched is visible at once. See docs/blueprint-system-concept.md.
+        // touched is visible at once.
         if (const nlohmann::json *claim = OverrideClaimFor(_selectedEntity, meta->name))
         {
             ImGui::SameLine();

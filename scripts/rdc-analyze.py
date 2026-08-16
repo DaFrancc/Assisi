@@ -4,7 +4,7 @@ RenderDoc's GUI answers this too, but only by hand. This prints the same numbers
 as text so they can be diffed, pasted, and kept next to a Chiara capture — the
 CPU half of the same frame.
 
-Usage (see docs/gpu-profiling-guide.md for the whole workflow):
+Usage:
 
     RDC_CAPTURE=capture.rdc qrenderdoc --python scripts/rdc-analyze.py
 

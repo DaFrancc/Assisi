@@ -8,7 +8,7 @@
 /// pbrMetallicRoughness, the content of a .amat asset file, and the input the
 /// renderer turns into a GPU Material. It lives in Geometry so importers,
 /// tools, and tests can produce/consume materials without linking the
-/// renderer. See docs/mesh-material-architecture.md §2.
+/// renderer.
 
 #include <string>
 
