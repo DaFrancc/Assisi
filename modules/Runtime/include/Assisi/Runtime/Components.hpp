@@ -86,4 +86,29 @@ struct Camera
     AFIELD() bool isActive   = false;  ///< True for the scene's active camera.
 };
 
+/// @brief Drives an entity's Transform back and forth along a fixed axis.
+///
+/// Pair with Transform, and run App::OscillateSystem in FixedUpdate. The pose is
+/// **evaluated** from the fixed-step tick rather than integrated per frame:
+/// position is `origin + axis * amplitude * sin(...)` every step, so it cannot
+/// accumulate drift and two runs of the same level produce the same motion at
+/// the same tick. That is what makes it usable in a measurement fixture, where a
+/// mover that wandered between runs would put noise straight into the numbers.
+///
+/// `origin` is authored rather than captured on the first tick, for the same
+/// reason: capturing would make the path depend on when the system first ran.
+///
+/// Not ACOMP(replicable) — every machine evaluates the same closed form from the
+/// same tick and arrives at the same pose, so sending it would restate what both
+/// ends already know.
+ACOMP()
+struct Oscillator
+{
+    AFIELD() glm::vec3 origin{0.f, 0.f, 0.f};  ///< World position the travel is centred on.
+    AFIELD() glm::vec3 axis{0.f, 1.f, 0.f};    ///< Direction of travel; normalised on use, zero disables.
+    AFIELD() float amplitude     = 1.f;         ///< Peak displacement from `origin`, in metres.
+    AFIELD(min = 0) float periodSeconds = 4.f;  ///< Seconds for one full there-and-back cycle; 0 disables.
+    AFIELD() float phase         = 0.f;         ///< Cycle offset in turns, so movers do not travel in lockstep.
+};
+
 } // namespace Assisi::Runtime
